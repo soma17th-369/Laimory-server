@@ -1,4 +1,4 @@
-package com.soma369.server;
+package com.laimory.server;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
