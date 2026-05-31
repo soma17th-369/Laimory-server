@@ -12,11 +12,12 @@ import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
-public class StatusController {
+public class SystemController {
+
     private final DataSource dataSource;
 
     @GetMapping("/status")
-    public ResponseEntity<Map<String, String>> health() {
+    public ResponseEntity<Map<String, String>> status() {
         Map<String, String> result = new HashMap<>();
 
         try (Connection conn = dataSource.getConnection()) {
