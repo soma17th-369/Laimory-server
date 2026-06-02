@@ -1,0 +1,74 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+Laimory is the backend **web application server for an Android app**. It exposes a REST API consumed by the mobile client.
+
+## Tech Stack
+
+- **Spring Boot 4.0.6** (Spring MVC, Spring Data JPA)
+- **Java 25** (Gradle toolchain)
+- **MySQL** (via `mysql-connector-j`)
+- **Lombok** for boilerplate reduction
+- **Gradle** build (`./gradlew`)
+
+## Commands
+
+```bash
+./gradlew build          # compile + test
+./gradlew test           # run tests
+./gradlew bootRun        # run the server locally
+```
+
+Datasource is configured via environment variables: `DB_HOST`, `DB_USERNAME`, `DB_PASSWORD` (see `application.properties`).
+
+## Architecture
+
+Strict **3-layer architecture**: `Controller → Service → Repository`.
+
+```
+Controller   HTTP 진입점, 요청/응답 처리. Service만 호출.
+Service      비즈니스 로직. Repository 또는 다른 Service에 접근.
+Repository   Spring Data JPA. DB 접근 전담.
+```
+
+### 핵심 규칙: Service는 단 하나의 Repository에만 접근한다
+
+각 Service는 **자신과 1:1로 대응하는 Repository 하나에만** 접근합니다. 여러 도메인에 걸친 기능은 Repository를 여러 개 주입하지 말고, **여러 Service를 조합**해서 구현합니다.
+
+- ✅ `TimeLineService` → `TimeLineRepository` (only)
+- ✅ `UserService` → `UserRepository` (only)
+- ✅ 새 기능은 `TimeLineService` + `UserService`에 의존하는 별도 Service로 구현
+- ❌ `TimeLineService`가 `TimeLineRepository`와 `UserRepository`를 둘 다 주입
+
+즉, Service 간 협력은 **Service 합성**으로, 절대 **Repository 직접 접근**으로 풀지 않습니다.
+
+### 패키지 구조 (feature 단위)
+
+각 기능은 자체 패키지에 Controller / Service / Repository / Entity / Response DTO를 모두 포함합니다.
+
+```
+com.laimory.server
+├── ServerApplication.java        # 부트 진입점
+├── SystemController.java         # 헬스체크 (/status)
+└── appconfig/                    # feature 패키지 예시
+    ├── AppConfigController.java
+    ├── AppConfigService.java
+    ├── AppConfigRepository.java
+    ├── AppConfig.java            # JPA Entity
+    └── AppConfigResponse.java    # 응답 DTO
+```
+
+## Conventions
+
+- **API 버전**: 엔드포인트는 `/api/v1` 하위에 둔다 (`@RequestMapping("/api/v1")`).
+- **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
+- **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
+- **Controller 반환 타입**: `ResponseEntity<T>`.
+
+## Database
+
+- `spring.jpa.hibernate.ddl-auto=validate` — Hibernate가 스키마를 생성하지 않고 **검증만** 한다. 새 Entity를 추가하면 대상 DB에 테이블/컬럼이 먼저 존재해야 기동된다.
+- **DDL은 수동 적용**: Flyway/Liquibase 미사용. Entity 추가/변경 시 대응하는 테이블 변경을 DB에 직접 반영해야 한다.
