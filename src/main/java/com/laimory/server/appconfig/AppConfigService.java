@@ -10,7 +10,7 @@ public class AppConfigService {
     private final AppConfigRepository appConfigRepository;
 
     public AppConfigResponse getAppConfig() {
-        AppConfig config = appConfigRepository.findById(1L)
+        AppConfig config = appConfigRepository.findFirstBy()
                 .orElseThrow(() -> new IllegalStateException("AppConfig not found"));
         return AppConfigResponse.from(config);
     }
