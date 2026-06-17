@@ -15,7 +15,8 @@ public class TimelineItemService {
         return timelineItemRepository.save(item);
     }
 
+    /** 해당 카드의 아이템을 start_at, id 오름차순으로 반환(표시 순서 고정). */
     public List<TimelineItem> findByTimelineCardId(Long timelineCardId) {
-        return timelineItemRepository.findByTimelineCardId(timelineCardId);
+        return timelineItemRepository.findByTimelineCardIdOrderByStartAtAscIdAsc(timelineCardId);
     }
 }

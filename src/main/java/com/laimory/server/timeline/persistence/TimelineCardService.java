@@ -15,7 +15,8 @@ public class TimelineCardService {
         return timelineCardRepository.save(card);
     }
 
+    /** 해당 일자 카드를 start_at, id 오름차순으로 반환(표시 순서 고정). */
     public List<TimelineCard> findByDailyRecordId(Long dailyRecordId) {
-        return timelineCardRepository.findByDailyRecordId(dailyRecordId);
+        return timelineCardRepository.findByDailyRecordIdOrderByStartAtAscIdAsc(dailyRecordId);
     }
 }
