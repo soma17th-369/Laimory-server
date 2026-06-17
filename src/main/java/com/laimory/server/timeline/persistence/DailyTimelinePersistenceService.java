@@ -1,6 +1,6 @@
 package com.laimory.server.timeline.persistence;
 
-import com.laimory.server.timeline.dto.CardProposalDto;
+import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import java.time.LocalDate;
 import java.util.List;
@@ -32,7 +32,7 @@ public class DailyTimelinePersistenceService {
      */
     @Transactional
     public Long persist(Long userId, LocalDate recordDate,
-                        List<SourceItemDto> sourceItems, List<CardProposalDto> cards) {
+                        List<SourceItemDto> sourceItems, List<CardSuggestionDto> cards) {
         DailyRecord dailyRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
                 .orElseGet(() -> dailyRecordService.save(DailyRecord.createDraft(userId, recordDate)));
         Long dailyRecordId = dailyRecord.getId();
@@ -40,7 +40,7 @@ public class DailyTimelinePersistenceService {
         Map<Integer, SourceItemDto> byItemId = sourceItems.stream()
                 .collect(Collectors.toMap(SourceItemDto::itemId, Function.identity()));
 
-        for (CardProposalDto cardDto : cards) {
+        for (CardSuggestionDto cardDto : cards) {
             TimelineCard savedCard = timelineCardService.save(
                     TimelineCard.of(dailyRecordId, cardDto.startAt(), cardDto.endAt(),
                             cardDto.title(), cardDto.subtitle()));

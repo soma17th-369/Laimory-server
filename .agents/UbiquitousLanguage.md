@@ -56,9 +56,9 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
-| 카드 제안 | Card Proposal | AI가 source items를 보고 반환하는 카드 초안이다. |
+| 카드 제안 | Card Suggestion | AI가 source items를 보고 반환하는 카드 초안이다. |
 | 아이템 ID 목록 | Item IDs | AI가 카드에 포함하겠다고 반환한 request item id 목록이다. |
-| 카드 생성 검증 | Card Proposal Validation | 서버가 AI 응답의 `itemIds`, 시간 범위, 빈 카드 여부 등을 검증하는 과정이다. |
+| 카드 생성 검증 | Card Suggestion Validation | 서버가 AI 응답의 `itemIds`, 시간 범위, 빈 카드 여부 등을 검증하는 과정이다. |
 
 ## 비동기 작성 작업
 
@@ -69,7 +69,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 작성 작업 | Draft Task | DRAFT 상태 daily record를 비동기로 생성하는 작업이다. POST가 즉시 반환하는 리소스이며, draft 본체와는 별개다. Redis에 상태를 보관한다. |
 | 작업 ID | Task ID | 작성 작업의 식별자(UUID)다. 클라이언트가 이 ID로 결과를 폴링한다. |
 | 작업 상태 | Task Status | 작성 작업의 진행 상태다. `PROCESSING`(진행중), `SUCCESS`(완료), `FAILED`(실패) 중 하나다. |
-| 카드 생성 콜백 | Card Proposal Callback | AI가 카드 제안 결과를 서버로 되돌려주는 내부 호출이다. 이 콜백 시점에 draft가 MySQL에 저장된다. |
+| 카드 생성 콜백 | Card Suggestion Callback | AI가 카드 제안 결과를 서버로 되돌려주는 내부 호출이다. 이 콜백 시점에 draft가 MySQL에 저장된다. |
 
 ## 저장 규칙
 

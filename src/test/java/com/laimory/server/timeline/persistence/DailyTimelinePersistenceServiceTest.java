@@ -7,7 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.timeline.dto.CardProposalDto;
+import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -51,8 +51,8 @@ class DailyTimelinePersistenceServiceTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
-        List<CardProposalDto> cards = List.of(
-                new CardProposalDto("아침", "산책", t, t.plusHours(1), List.of(0)));
+        List<CardSuggestionDto> cards = List.of(
+                new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
 
         Long result = persistenceService.persist(USER_ID, RECORD_DATE, sources, cards);
 
@@ -81,9 +81,9 @@ class DailyTimelinePersistenceServiceTest {
                         new LocationPayload("place", "area", 3.0, 4.0)),
                 new SourceItemDto(2, t.plusHours(2), null, "s2", new PhotoPayload("uri2", 5.0, 6.0)));
         // 카드 A: item 0,2 / 카드 B: item 1
-        List<CardProposalDto> cards = List.of(
-                new CardProposalDto("A", "subA", t, t.plusHours(2), List.of(0, 2)),
-                new CardProposalDto("B", "subB", t.plusHours(1), null, List.of(1)));
+        List<CardSuggestionDto> cards = List.of(
+                new CardSuggestionDto("A", "subA", t, t.plusHours(2), List.of(0, 2)),
+                new CardSuggestionDto("B", "subB", t.plusHours(1), null, List.of(1)));
 
         Long result = persistenceService.persist(USER_ID, RECORD_DATE, sources, cards);
 
