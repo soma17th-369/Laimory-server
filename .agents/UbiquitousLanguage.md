@@ -48,7 +48,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | --- | --- | --- |
 | 아이템 페이로드 | Timeline Item Payload | 모든 payload 타입의 공통 인터페이스다. Java sealed interface로 표현한다. |
 | 사진 페이로드 | Photo Payload | 사진 URI, 사진 위치 정보 등을 담는다. |
-| 일정 페이로드 | Calendar Payload | 일정 제목, 캘린더명, 위치 텍스트, 참석자 수 등을 담는다. |
+| 일정 페이로드 | Calendar Payload | 일정 제목, 캘린더명, 위치 텍스트 등을 담는다. |
 | 장소 페이로드 | Location Payload | 장소명, 지역명, 위도, 경도 등을 담는다. |
 | 이동 페이로드 | Movement Payload | 출발지, 도착지, 이동수단, 노선명 등을 담는다. |
 

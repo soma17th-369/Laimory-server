@@ -5,8 +5,7 @@ import com.laimory.server.timeline.ItemType;
 public record CalendarPayload(
         String title,
         String calendarName,
-        String locationText,
-        Integer attendeesCount
+        String locationText
 ) implements TimelineItemPayload {
 
     @Override

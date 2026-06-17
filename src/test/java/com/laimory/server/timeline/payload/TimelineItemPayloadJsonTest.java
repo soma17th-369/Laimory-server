@@ -31,7 +31,7 @@ class TimelineItemPayloadJsonTest {
 
     @Test
     void calendarPayload_roundTrip() throws Exception {
-        CalendarPayload original = new CalendarPayload("주간 회의", "회사", "회의실 A", 4);
+        CalendarPayload original = new CalendarPayload("주간 회의", "회사", "회의실 A");
 
         String json = objectMapper.writeValueAsString(original);
 

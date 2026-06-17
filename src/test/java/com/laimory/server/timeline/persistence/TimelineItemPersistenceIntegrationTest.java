@@ -77,7 +77,7 @@ class TimelineItemPersistenceIntegrationTest {
                 TimelineCard.of(record.getId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 
         TimelineItemPayload photo = new PhotoPayload("content://media/external/images/media/12345", 37.5445, 127.0557);
-        TimelineItemPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A", 4);
+        TimelineItemPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A");
         TimelineItemPayload location = new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557);
 
         Long photoId = timelineItemRepository.save(
