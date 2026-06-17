@@ -77,7 +77,7 @@ com.laimory.server
 
 ## Git / Branch 전략
 
-`prod` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `prod` 순으로 머지한다. 상세 규칙은 [branch.md](branch.md) 참조.
+`main` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `main` 순으로 머지한다. 상세 규칙은 [branch.md](branch.md) 참조.
 
 ## Database
 
