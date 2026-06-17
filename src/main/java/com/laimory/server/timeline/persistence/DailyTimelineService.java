@@ -1,8 +1,12 @@
 package com.laimory.server.timeline.persistence;
 
 import com.laimory.server.timeline.dto.CardSuggestionDto;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.dto.TimelineCardResponse;
+import com.laimory.server.timeline.dto.TimelineItemResponse;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -12,13 +16,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 타임라인 영속 오케스트레이터. 3개 leaf 서비스를 합성한다(레포 직접 접근 금지).
+ * 하루 타임라인 오케스트레이터. 3개 leaf 서비스를 합성한다(레포 직접 접근 금지).
  *
- * <p>같은 날짜 daily record가 이미 있으면 그대로 재사용하고 카드/아이템을 append 한다(용어 사전의 "추가 데이터 처리").
+ * <p>쓰기(persist)와 읽기(getDailyTimeline)는 같은 애그리거트(하루 타임라인)를 다루므로 한 서비스에 둔다.
+ * 트랜잭션 경계는 메서드별로 지정한다(쓰기 vs readOnly). 읽기/쓰기가 서로 다른 이유로 갈라지면 그때 분리한다.
  */
 @Service
 @RequiredArgsConstructor
-public class DailyTimelinePersistenceService {
+public class DailyTimelineService {
 
     private final DailyRecordService dailyRecordService;
     private final TimelineCardService timelineCardService;
@@ -26,8 +31,7 @@ public class DailyTimelinePersistenceService {
 
     /**
      * daily record(없으면 DRAFT 생성, 있으면 재사용)에 카드 제안과 채택된 source item을 저장한다.
-     * 입력(itemIds·시간 범위·빈 카드 등)은 상위 validator가 이미 검증했다고 가정한다 - 여기서 재검증하지 않는다.
-     * SAVED 상태 거부도 상위(caller) 책임이며 여기서 재확인하지 않는다.
+     * 입력(itemIds·시간 범위·빈 카드 등) 검증과 SAVED 상태 거부는 상위(caller) 책임이며 여기서 재확인하지 않는다.
      * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다.
      */
     @Transactional
@@ -52,5 +56,23 @@ public class DailyTimelinePersistenceService {
         }
 
         return dailyRecordId;
+    }
+
+    /** dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 카드/아이템 정렬은 leaf 서비스 쿼리가 보장. */
+    @Transactional(readOnly = true)
+    public DailyTimelineResponse getDailyTimeline(Long dailyRecordId) {
+        DailyRecord record = dailyRecordService.findById(dailyRecordId)
+                .orElseThrow(() -> new IllegalStateException("daily record not found: " + dailyRecordId));
+
+        List<TimelineCardResponse> cardResponses = new ArrayList<>();
+        for (TimelineCard card : timelineCardService.findByDailyRecordId(dailyRecordId)) {
+            List<TimelineItemResponse> itemResponses = timelineItemService.findByTimelineCardId(card.getId())
+                    .stream()
+                    .map(TimelineItemResponse::from)
+                    .toList();
+            cardResponses.add(TimelineCardResponse.from(card, itemResponses));
+        }
+
+        return new DailyTimelineResponse(record.getRecordDate(), record.getEmotionType(), cardResponses);
     }
 }
