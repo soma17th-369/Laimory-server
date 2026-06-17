@@ -49,10 +49,10 @@ class DailyTimelineServiceTest {
     private static final Long USER_ID = 7L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 6, 17);
 
-    // --- persist (쓰기) ---
+    // --- appendDailyTimeline (쓰기) ---
 
     @Test
-    void persist_reusesExistingDraftRecord_withoutSavingRecord() {
+    void appendDailyTimeline_reusesExistingDraftRecord_withoutSavingRecord() {
         DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
         ReflectionTestUtils.setField(existing, "id", 100L);
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
@@ -65,7 +65,7 @@ class DailyTimelineServiceTest {
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
 
-        Long result = dailyTimelineService.persist(USER_ID, RECORD_DATE, sources, cards);
+        Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards);
 
         assertThat(result).isEqualTo(100L);
         // 기존 DRAFT 재사용: record는 save 하지 않는다.
@@ -75,7 +75,7 @@ class DailyTimelineServiceTest {
     }
 
     @Test
-    void persist_createsDraftWhenAbsent_andMapsItemsToCorrectCardByItemId() {
+    void appendDailyTimeline_createsDraftWhenAbsent_andMapsItemsToCorrectCardByItemId() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.empty());
         when(dailyRecordService.save(any())).thenAnswer(invocation -> {
@@ -96,7 +96,7 @@ class DailyTimelineServiceTest {
                 new CardSuggestionDto("A", "subA", t, t.plusHours(2), List.of(0, 2)),
                 new CardSuggestionDto("B", "subB", t.plusHours(1), null, List.of(1)));
 
-        Long result = dailyTimelineService.persist(USER_ID, RECORD_DATE, sources, cards);
+        Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards);
 
         assertThat(result).isEqualTo(200L);
         // 없을 때 DRAFT 생성된다.

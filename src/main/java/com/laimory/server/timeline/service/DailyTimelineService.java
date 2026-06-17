@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 하루 타임라인 오케스트레이터. 3개 leaf 서비스를 합성한다(레포 직접 접근 금지).
  *
- * <p>쓰기(persist)와 읽기(getDailyTimeline)는 같은 애그리거트(하루 타임라인)를 다루므로 한 서비스에 둔다.
+ * <p>쓰기(appendDailyTimeline)와 읽기(getDailyTimeline)는 같은 애그리거트(하루 타임라인)를 다루므로 한 서비스에 둔다.
  * 트랜잭션 경계는 메서드별로 지정한다(쓰기 vs readOnly). 읽기/쓰기가 서로 다른 이유로 갈라지면 그때 분리한다.
  */
 @Service
@@ -38,7 +38,7 @@ public class DailyTimelineService {
      * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다.
      */
     @Transactional
-    public Long persist(Long userId, LocalDate recordDate,
+    public Long appendDailyTimeline(Long userId, LocalDate recordDate,
                         List<SourceItemDto> sourceItems, List<CardSuggestionDto> cards) {
         DailyRecord dailyRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
                 .orElseGet(() -> dailyRecordService.save(DailyRecord.createDraft(userId, recordDate)));
