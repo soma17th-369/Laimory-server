@@ -1,5 +1,15 @@
 -- Laimory timeline 도메인 DDL (MySQL 8). ddl-auto=validate 이므로 앱 기동 전에 적용되어 있어야 한다.
 -- 운영/스테이징: 수동 적용. 로컬: docker-compose가 /docker-entrypoint-initdb.d/ 로 첫 기동 시 자동 적용.
+-- ddl-auto=validate는 전체 엔티티를 검증하므로 로컬 DB엔 app_config 등 기존 테이블도 있어야 한다.
+
+-- 기존 appconfig 도메인 테이블 (AppConfig 엔티티 대응)
+CREATE TABLE IF NOT EXISTS app_config (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    min_app_version BIGINT NULL,
+    recommend_app_version BIGINT NULL,
+    debug_test_message VARCHAR(255) NULL,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS daily_records (
     id BIGINT NOT NULL AUTO_INCREMENT,
