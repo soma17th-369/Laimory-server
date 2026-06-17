@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.entity;
 
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;

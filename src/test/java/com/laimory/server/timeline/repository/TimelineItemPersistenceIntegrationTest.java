@@ -1,7 +1,10 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.entity.TimelineCard;
+import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementPayload;

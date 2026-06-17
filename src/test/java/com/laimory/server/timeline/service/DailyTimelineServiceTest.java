@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,6 +15,9 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineCardResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.entity.TimelineCard;
+import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.LocalDate;

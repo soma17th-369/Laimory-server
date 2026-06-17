@@ -54,18 +54,26 @@ Repository   Spring Data JPA. DB 접근 전담.
 
 ### 패키지 구조 (feature 단위)
 
-각 기능은 자체 패키지에 Controller / Service / Repository / Entity / Response DTO를 모두 포함합니다.
+각 기능은 `com.laimory.server.<feature>` 하위 자체 패키지에 Controller / Service / Repository / Entity / DTO를 모두 포함한다.
+
+- **작은 기능**: 한 패키지에 평평하게 둔다 (예: `appconfig/`).
+- **큰 기능**: 레이어별 하위 패키지로 나눈다 (예: `timeline/`) — `controller/` · `service/` · `repository/` · `entity/` · `dto/`. 도메인 enum은 feature 루트에, 타입별 payload는 `payload/`에 둔다.
 
 ```
 com.laimory.server
-├── ServerApplication.java        # 부트 진입점
-├── SystemController.java         # 헬스체크 (/status)
-└── appconfig/                    # feature 패키지 예시
-    ├── AppConfigController.java
-    ├── AppConfigService.java
-    ├── AppConfigRepository.java
-    ├── AppConfig.java            # JPA Entity
-    └── AppConfigResponse.java    # 응답 DTO
+├── appconfig/                    # 작은 기능: 평평하게
+│   ├── AppConfigController.java
+│   ├── AppConfigService.java
+│   ├── AppConfigRepository.java
+│   ├── AppConfig.java            # JPA Entity
+│   └── AppConfigResponse.java    # 응답 DTO
+└── timeline/                     # 큰 기능: 레이어별 하위 패키지
+    ├── entity/                   # JPA 엔티티
+    ├── repository/               # Spring Data 레포 (+ Redis 스토어)
+    ├── service/                  # 비즈니스 로직 (leaf 서비스 + 오케스트레이터)
+    ├── controller/               # HTTP 진입점
+    ├── dto/                      # 요청/응답 DTO
+    └── payload/                  # sealed payload 타입
 ```
 
 ## Conventions

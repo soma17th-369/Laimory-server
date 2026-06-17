@@ -1,5 +1,7 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;

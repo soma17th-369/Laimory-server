@@ -2,7 +2,7 @@ package com.laimory.server.timeline.dto;
 
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
-import com.laimory.server.timeline.persistence.TimelineItem;
+import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDateTime;
 
 /**

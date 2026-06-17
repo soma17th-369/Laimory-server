@@ -1,5 +1,6 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.repository;
 
+import com.laimory.server.timeline.entity.TimelineCard;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 

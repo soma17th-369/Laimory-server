@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

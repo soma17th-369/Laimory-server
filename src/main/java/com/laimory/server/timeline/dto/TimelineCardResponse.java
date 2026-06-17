@@ -1,6 +1,6 @@
 package com.laimory.server.timeline.dto;
 
-import com.laimory.server.timeline.persistence.TimelineCard;
+import com.laimory.server.timeline.entity.TimelineCard;
 import java.time.LocalDateTime;
 import java.util.List;
 

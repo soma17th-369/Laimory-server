@@ -1,5 +1,7 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.entity.TimelineCard;
+import com.laimory.server.timeline.repository.TimelineCardRepository;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

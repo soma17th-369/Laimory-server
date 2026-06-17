@@ -1,9 +1,11 @@
-package com.laimory.server.timeline.persistence;
+package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
