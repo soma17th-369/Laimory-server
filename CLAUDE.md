@@ -73,6 +73,7 @@ com.laimory.server
 - **API 버전**: 엔드포인트는 `/api/v1` 하위에 둔다 (`@RequestMapping("/api/v1")`).
 - **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
 - **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
+- **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).
 - **Controller 반환 타입**: `ResponseEntity<T>`.
 
 ## Git / Branch 전략
