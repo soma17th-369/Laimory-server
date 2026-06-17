@@ -6,10 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Laimory is the backend **web application server for an Android app**. It exposes a REST API consumed by the mobile client.
 
+## 용어 사전 (Ubiquitous Language)
+
+도메인 용어(엔티티명, 상태명, 필드명, 클래스/변수 네이밍 등)가 필요하면 반드시 [.agents/UbiquitousLanguage.md](.agents/UbiquitousLanguage.md)의 표현을 기준으로 사용한다. 이 문서가 도메인 용어와 **사용 금지 표현**의 단일 기준(single source of truth)이다.
+
+- 새 코드를 작성하거나 도메인 개념을 명명할 때는 먼저 이 문서를 확인해 한글명↔영문명을 일치시킨다.
+- 임의의 동의어를 만들지 말고, 문서의 "사용 금지 표현"에 있는 단어(예: `Candidate`, `Card Item`, `Map<String, Object> payload`)는 대체 표현으로 바꿔 쓴다.
+
 ## Tech Stack
 
-- **Spring Boot 4.0.6** (Spring MVC, Spring Data JPA)
-- **Java 25** (Gradle toolchain)
+- **Spring Boot 3.5.8** (Spring MVC, Spring Data JPA)
+- **Java 21** (Gradle toolchain)
 - **MySQL** (via `mysql-connector-j`)
 - **Lombok** for boilerplate reduction
 - **Gradle** build (`./gradlew`)
@@ -67,6 +74,10 @@ com.laimory.server
 - **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
 - **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
 - **Controller 반환 타입**: `ResponseEntity<T>`.
+
+## Git / Branch 전략
+
+`prod` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `prod` 순으로 머지한다. 상세 규칙은 [branch.md](branch.md) 참조.
 
 ## Database
 
