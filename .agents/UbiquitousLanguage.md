@@ -8,7 +8,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | --- | --- | --- |
 | 일일 기록 | Daily Record | 한 사용자의 특정 날짜 기록이다. `user_id + record_date`는 유일해야 한다. |
 | 기록 날짜 | Record Date | 일일 기록의 대상 날짜다. |
-| 하루 감정 | Emotion Type | 하루 전체를 대표하는 감정이다. 카드별 감정은 MVP에 없다. |
+| 하루 감정 | Emotion Type | 하루 전체를 대표하는 감정이다. 5단계: `VERY_HAPPY`/`HAPPY`/`NEUTRAL`/`UNHAPPY`/`VERY_UNHAPPY`. draft 생성 흐름에선 미설정(NULL), 별도 save 흐름에서 설정. 카드별 감정은 MVP에 없다. |
 | 작성중 | Draft | AI가 생성했거나 사용자가 아직 편집 중인 일일 기록 상태다. |
 | 작성완료 | Saved | 사용자가 저장을 완료한 일일 기록 상태다. |
 
