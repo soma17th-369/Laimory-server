@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
@@ -117,6 +118,62 @@ class DailyTimelineServiceTest {
         assertThat(savedItems.get(1).getStartAt()).isEqualTo(t.plusHours(2));
         assertThat(savedItems.get(2).getTimelineCardId()).isEqualTo(2L);
         assertThat(savedItems.get(2).getStartAt()).isEqualTo(t.plusHours(1));
+    }
+
+    @Test
+    void appendDailyTimeline_rejectsSavedRecord() {
+        DailyRecord saved = DailyRecord.createDraft(USER_ID, RECORD_DATE);
+        ReflectionTestUtils.setField(saved, "id", 100L);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(saved));
+
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+        List<CardSuggestionDto> cards = List.of(
+                new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
+
+        assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards))
+                .isInstanceOf(IllegalStateException.class);
+        // SAVED record면 카드를 하나도 저장하지 않는다.
+        verify(timelineCardService, never()).save(any());
+    }
+
+    @Test
+    void appendDailyTimeline_rejectsEmptyItemIds() {
+        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
+        ReflectionTestUtils.setField(existing, "id", 100L);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(existing));
+
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+        List<CardSuggestionDto> cards = List.of(
+                new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of()));
+
+        assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void appendDailyTimeline_rejectsUnknownItemId() {
+        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
+        ReflectionTestUtils.setField(existing, "id", 100L);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(existing));
+        stubCardSaveWithSequentialIds();
+
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+        // 카드가 sourceItems에 없는 itemId 1을 참조한다.
+        List<CardSuggestionDto> cards = List.of(
+                new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(1)));
+
+        assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     // --- getDailyTimeline (읽기) ---
