@@ -16,6 +16,10 @@ public class DailyRecordService {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate);
     }
 
+    public Optional<DailyRecord> findById(Long id) {
+        return dailyRecordRepository.findById(id);
+    }
+
     public DailyRecord save(DailyRecord dailyRecord) {
         return dailyRecordRepository.save(dailyRecord);
     }
