@@ -41,7 +41,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_processing_returnsProcessing() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
 
-        DraftTaskStatusResponse res = service.poll("t");
+        DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(res.result()).isNull();
@@ -52,7 +52,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_failed_returnsError() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.failed(DATE, "boom")));
 
-        DraftTaskStatusResponse res = service.poll("t");
+        DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(res.error()).isEqualTo("boom");
@@ -68,7 +68,7 @@ class TimelineDraftTaskPollingServiceTest {
         DailyTimelineResponse timeline = new DailyTimelineResponse(DATE, null, List.of());
         when(dailyTimelineService.getDailyTimeline(42L)).thenReturn(timeline);
 
-        DraftTaskStatusResponse res = service.poll("t");
+        DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(res.result()).isSameAs(timeline);
@@ -78,7 +78,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_notFound_throws404() {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.poll("missing"))
+        assertThatThrownBy(() -> service.poll("v1", "missing"))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
     }

@@ -2,6 +2,7 @@ package com.laimory.server.timeline.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -57,7 +58,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -66,7 +67,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -75,7 +76,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalStateTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any()))
                 .thenThrow(new IllegalStateException("daily record already SAVED: 1"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -84,7 +85,8 @@ class TimelineControllerTest {
 
     @Test
     void pollDraftTask_returns200WithStatus() throws Exception {
-        when(timelineDraftTaskPollingService.poll("t-1")).thenReturn(DraftTaskStatusResponse.processing());
+        when(timelineDraftTaskPollingService.poll(any(), eq("t-1")))
+                .thenReturn(DraftTaskStatusResponse.processing());
 
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isOk())
@@ -93,7 +95,7 @@ class TimelineControllerTest {
 
     @Test
     void pollDraftTask_mapsNotFoundTo404() throws Exception {
-        when(timelineDraftTaskPollingService.poll("missing"))
+        when(timelineDraftTaskPollingService.poll(any(), eq("missing")))
                 .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
 
         mockMvc.perform(get(TASKS + "/missing"))
@@ -129,7 +131,7 @@ class TimelineControllerTest {
     @Test
     void callback_taskNotFound_returns404() throws Exception {
         doThrow(new ResponseStatusException(HttpStatus.NOT_FOUND))
-                .when(timelineCallbackService).handleCallback(anyString(), any());
+                .when(timelineCallbackService).handleCallback(anyString(), anyString(), any());
 
         mockMvc.perform(post(CALLBACK)
                         .header("X-Internal-Secret", "test-secret")

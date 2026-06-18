@@ -39,6 +39,7 @@ class TimelineDraftTaskServiceTest {
     private TimelineDraftTaskService service;
 
     private static final String BASE_URL = "http://localhost:8080";
+    private static final String VERSION = "v1";
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
 
     @BeforeEach
@@ -56,15 +57,16 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_happyPath_createsProcessingAndDispatchesWithCallbackUrl() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(DATE, oneSource());
+        String taskId = service.createDraftTask(VERSION, DATE, oneSource());
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE));
 
         ArgumentCaptor<String> urlCaptor = ArgumentCaptor.forClass(String.class);
         verify(cardSuggestionDispatcher).dispatch(eq(taskId), any(), urlCaptor.capture());
+        // 콜백 URL에 요청 버전이 그대로 실린다.
         assertThat(urlCaptor.getValue()).isEqualTo(
-                BASE_URL + "/s/api/v1/timeline/daily-records/draft-tasks/" + taskId + "/callback");
+                BASE_URL + "/s/api/" + VERSION + "/timeline/daily-records/draft-tasks/" + taskId + "/callback");
     }
 
     @Test
@@ -73,7 +75,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(draft, "id", 3L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
 
-        String taskId = service.createDraftTask(DATE, oneSource());
+        String taskId = service.createDraftTask(VERSION, DATE, oneSource());
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE));
@@ -86,7 +88,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.createDraftTask(DATE, oneSource()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, DATE, oneSource()))
                 .isInstanceOf(IllegalStateException.class);
         verify(timelineTaskService, never()).createProcessing(anyString(), any());
         verify(cardSuggestionDispatcher, never()).dispatch(anyString(), any(), anyString());
@@ -94,13 +96,13 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_rejectsNullRecordDate() {
-        assertThatThrownBy(() -> service.createDraftTask(null, oneSource()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, null, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createDraftTask_rejectsEmptySourceItems() {
-        assertThatThrownBy(() -> service.createDraftTask(DATE, List.of()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, DATE, List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -55,7 +55,7 @@ class TimelineCallbackServiceTest {
     void handleCallback_taskNotFound_throws404() {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.handleCallback("missing", successRequest()))
+        assertThatThrownBy(() -> service.handleCallback("v1", "missing", successRequest()))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
     }
@@ -64,7 +64,7 @@ class TimelineCallbackServiceTest {
     void handleCallback_alreadyTerminal_isIdempotentNoOp() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE)));
 
-        service.handleCallback("t", successRequest());
+        service.handleCallback("v1", "t", successRequest());
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any());
@@ -77,7 +77,7 @@ class TimelineCallbackServiceTest {
         DraftTaskCallbackRequest req =
                 new DraftTaskCallbackRequest(TaskStatus.FAILED, "ai gave up", null, null);
 
-        service.handleCallback("t", req);
+        service.handleCallback("v1", "t", req);
 
         verify(timelineTaskService).markFailed("t", DATE, "ai gave up");
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
@@ -88,7 +88,7 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
         DraftTaskCallbackRequest req = successRequest();
 
-        service.handleCallback("t", req);
+        service.handleCallback("v1", "t", req);
 
         verify(cardSuggestionValidator).validate(req.sourceItems(), req.cards());
         verify(dailyTimelineService).appendDailyTimeline(0L, DATE, req.sourceItems(), req.cards());
@@ -103,7 +103,7 @@ class TimelineCallbackServiceTest {
                 .when(cardSuggestionValidator).validate(any(), any());
 
         // 검증 실패는 밖으로 던지지 않고 FAILED로 기록한다(콜백은 200).
-        service.handleCallback("t", successRequest());
+        service.handleCallback("v1", "t", successRequest());
 
         verify(timelineTaskService).markFailed("t", DATE, "dup itemId");
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
@@ -116,7 +116,7 @@ class TimelineCallbackServiceTest {
         DraftTaskCallbackRequest req =
                 new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null, null);
 
-        assertThatThrownBy(() -> service.handleCallback("t", req))
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", req))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

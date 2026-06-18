@@ -25,7 +25,8 @@ public class TimelineCallbackService {
     private final CardSuggestionValidator cardSuggestionValidator;
     private final DailyTimelineService dailyTimelineService;
 
-    public void handleCallback(String taskId, DraftTaskCallbackRequest request) {
+    public void handleCallback(String applicationVersion, String taskId, DraftTaskCallbackRequest request) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found: " + taskId));
 

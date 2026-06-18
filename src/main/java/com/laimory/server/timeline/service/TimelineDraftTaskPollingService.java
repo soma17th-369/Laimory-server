@@ -22,7 +22,8 @@ public class TimelineDraftTaskPollingService {
     private final DailyRecordService dailyRecordService;
     private final DailyTimelineService dailyTimelineService;
 
-    public DraftTaskStatusResponse poll(String taskId) {
+    public DraftTaskStatusResponse poll(String applicationVersion, String taskId) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found: " + taskId));
 
