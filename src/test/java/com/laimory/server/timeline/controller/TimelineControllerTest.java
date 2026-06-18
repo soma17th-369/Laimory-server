@@ -33,7 +33,7 @@ class TimelineControllerTest {
 
     private static final String TASKS = "/api/v1/timeline/daily-records/draft-tasks";
     private static final String CALLBACK =
-            "/internal/api/v1/timeline/daily-records/draft-tasks/t-1/callback";
+            "/s/api/v1/timeline/daily-records/draft-tasks/t-1/callback";
 
     private static final String CREATE_BODY = """
             {

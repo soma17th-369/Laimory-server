@@ -11,7 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * 내부 콜백 공유 secret 검증. {@code /internal/**} 요청의 X-Internal-Secret 헤더를 상수시간 비교한다.
+ * 콜백 공유 secret 검증. 서버간 통신 경로 {@code /s/**} 요청의 X-Internal-Secret 헤더를 상수시간 비교한다.
  *
  * <p>누락/불일치면 401(요청 위조 방어 — 서버↔서버라 CSRF 아님). 콜백 공유 secret '하나'만 책임진다 —
  * OAuth2 redirect·사용자 인증·웹훅 서명 등 다른 검증은 각자(주로 Spring Security)에서 처리한다.

@@ -64,7 +64,7 @@ class TimelineDraftTaskServiceTest {
         ArgumentCaptor<String> urlCaptor = ArgumentCaptor.forClass(String.class);
         verify(cardSuggestionDispatcher).dispatch(eq(taskId), any(), urlCaptor.capture());
         assertThat(urlCaptor.getValue()).isEqualTo(
-                BASE_URL + "/internal/api/v1/timeline/daily-records/draft-tasks/" + taskId + "/callback");
+                BASE_URL + "/s/api/v1/timeline/daily-records/draft-tasks/" + taskId + "/callback");
     }
 
     @Test

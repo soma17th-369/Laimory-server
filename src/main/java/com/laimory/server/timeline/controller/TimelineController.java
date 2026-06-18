@@ -18,8 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 타임라인 draft 작성 작업 API.
  *
- * <p>POST(작업 생성)·GET(폴링)은 공개 API(/api/v1), 콜백은 내부 전용(/internal/api/v1, secret 인터셉터가 보호)이다.
- * 클래스 단위 prefix가 다르므로(/api/v1 vs /internal/api/v1) 매핑은 메서드별 전체 경로로 둔다.
+ * <p>POST(작업 생성)·GET(폴링)은 공개 API(/api/v1), 콜백은 서버간 통신(/s/api/v1, secret 인터셉터가 보호)이다.
+ * 클래스 단위 prefix가 다르므로(/api/v1 vs /s/api/v1) 매핑은 메서드별 전체 경로로 둔다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -38,7 +38,7 @@ public class TimelineController {
         return ResponseEntity.accepted().body(new CreateDraftTaskResponse(taskId));
     }
 
-    @PostMapping("/internal" + DRAFT_TASKS_PATH + "/{taskId}/callback")
+    @PostMapping("/s" + DRAFT_TASKS_PATH + "/{taskId}/callback")
     public ResponseEntity<Void> callback(@PathVariable String taskId,
                                          @RequestBody DraftTaskCallbackRequest request) {
         timelineCallbackService.handleCallback(taskId, request);

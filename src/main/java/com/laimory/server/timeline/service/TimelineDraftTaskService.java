@@ -19,8 +19,9 @@ import org.springframework.stereotype.Service;
 public class TimelineDraftTaskService {
 
     // 콜백 절대 URL 구성용 path 템플릿(%s=taskId). 컨트롤러의 콜백 매핑과 동일해야 한다(TimelineController 참고).
+    // 서버간 통신이므로 /s prefix.
     private static final String CALLBACK_PATH_TEMPLATE =
-            "/internal/api/v1/timeline/daily-records/draft-tasks/%s/callback";
+            "/s/api/v1/timeline/daily-records/draft-tasks/%s/callback";
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;

@@ -78,7 +78,10 @@ com.laimory.server
 
 ## Conventions
 
-- **API 버전**: 엔드포인트는 `/api/v1` 하위에 둔다 (`@RequestMapping("/api/v1")`).
+- **API 경로 prefix**: 호출 주체에 따라 prefix를 구분하고, 그 아래에 버전 `/api/v1`을 둔다.
+  - **일반(공개) 요청**: `/api/v1/...` — 인증 없이 접근하는 공개 엔드포인트.
+  - **서버간 통신**: `/s/api/v1/...` — 내부 서버↔서버 호출(예: AI 카드 생성 콜백). 공유 secret 헤더로 보호한다(`CallbackSecretInterceptor`가 `/s/**`를 검증).
+  - **인증 필요 요청**: `/a/api/v1/...` — 사용자 인증이 필요한 엔드포인트(사용자 도입 시 사용).
 - **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
 - **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
 - **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).
