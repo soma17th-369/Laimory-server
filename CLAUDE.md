@@ -89,9 +89,11 @@ com.laimory.server
 - **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).
 - **Controller 반환 타입**: `ResponseEntity<T>`.
 
-## Git / Branch 전략
+## Git / Branch / Commit 전략
 
-`main` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `main` 순으로 머지한다. 상세 규칙은 [branch.md](branch.md) 참조.
+`main` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `main` 순으로 머지한다. 상세 규칙은 [.agents/branch.md](.agents/branch.md) 참조.
+
+커밋 메시지는 `<type>: <간단한 작업 내용>` 형식의 Commit Type 컨벤션을 따른다. 사용 가능한 type 목록과 규칙은 [.agents/commit.md](.agents/commit.md) 참조.
 
 ## Database
 
