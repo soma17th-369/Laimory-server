@@ -54,30 +54,46 @@ Repository   Spring Data JPA. DB 접근 전담.
 
 ### 패키지 구조 (feature 단위)
 
-각 기능은 자체 패키지에 Controller / Service / Repository / Entity / Response DTO를 모두 포함합니다.
+각 기능은 `com.laimory.server.<feature>` 하위 자체 패키지에 Controller / Service / Repository / Entity / DTO를 모두 포함한다.
+
+- **작은 기능**: 한 패키지에 평평하게 둔다 (예: `appconfig/`).
+- **큰 기능**: 레이어별 하위 패키지로 나눈다 (예: `timeline/`) — `controller/` · `service/` · `repository/` · `entity/` · `dto/`. 도메인 enum은 feature 루트에, 타입별 payload는 `payload/`에 둔다.
 
 ```
 com.laimory.server
-├── ServerApplication.java        # 부트 진입점
-├── SystemController.java         # 헬스체크 (/status)
-└── appconfig/                    # feature 패키지 예시
-    ├── AppConfigController.java
-    ├── AppConfigService.java
-    ├── AppConfigRepository.java
-    ├── AppConfig.java            # JPA Entity
-    └── AppConfigResponse.java    # 응답 DTO
+├── appconfig/                    # 작은 기능: 평평하게
+│   ├── AppConfigController.java
+│   ├── AppConfigService.java
+│   ├── AppConfigRepository.java
+│   ├── AppConfig.java            # JPA Entity
+│   └── AppConfigResponse.java    # 응답 DTO
+└── timeline/                     # 큰 기능: 레이어별 하위 패키지
+    ├── entity/                   # JPA 엔티티
+    ├── repository/               # Spring Data 레포 (+ Redis 스토어)
+    ├── service/                  # 비즈니스 로직 (leaf 서비스 + 오케스트레이터)
+    ├── controller/               # HTTP 진입점
+    ├── dto/                      # 요청/응답 DTO
+    └── payload/                  # sealed payload 타입
 ```
 
 ## Conventions
 
-- **API 버전**: 엔드포인트는 `/api/v1` 하위에 둔다 (`@RequestMapping("/api/v1")`).
+- **API 경로 prefix**: 호출 주체에 따라 prefix를 구분하고, 그 아래에 버전 세그먼트를 둔다.
+  - **일반(공개) 요청**: `/api/{applicationVersion}/...` — 인증 없이 접근하는 공개 엔드포인트.
+  - **서버간 통신**: `/s/api/{applicationVersion}/...` — 내부 서버↔서버 호출(예: AI 카드 생성 콜백). 각 엔드포인트가 자체 인증한다(블랭킷 인터셉터 없음). AI 콜백은 **task별 one-time Callback-Token** 헤더로 검증한다(원문 토큰은 발급 시 AI에만 전달, Redis엔 SHA-256 해시만 보관, 상수시간 비교).
+  - **인증 필요 요청**: `/a/api/{applicationVersion}/...` — 사용자 인증이 필요한 엔드포인트(사용자 도입 시 사용).
+  - prefix 상수는 `com.laimory.server.common.ApiUrls`(`API_URL`/`SERVER_API_URL`/`AUTHENTICATED_API_URL`)에 모으고, 컨트롤러는 **클래스 레벨 `@RequestMapping(ApiUrls.…)`**으로 base 경로를 선언한다. prefix가 다른 엔드포인트(예: 공개 vs 서버간 콜백)는 별도 컨트롤러로 나눈다.
+- **API 버저닝**: 버전은 하드코딩하지 않고 **정규식으로 제약한 path variable**로 받는다 (예: `/api/{applicationVersion:v\d+}/...`). 컨트롤러는 이 값을 `@PathVariable String applicationVersion`으로 받아 **그대로 Service에 전달**하고, **버전별 동작 분기는 Service 계층에서 해결**한다. 컨트롤러에는 버전 해석 로직을 두지 않는다. (정규식 패턴은 `ApiUrls.VERSION` 한 곳에 모아 둔다.)
 - **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
 - **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
+- **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).
 - **Controller 반환 타입**: `ResponseEntity<T>`.
 
-## Git / Branch 전략
+## Git / Branch / Commit 전략
 
-`prod` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `prod` 순으로 머지한다. 상세 규칙은 [branch.md](branch.md) 참조.
+`main` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `main` 순으로 머지한다. 상세 규칙은 [.agents/branch.md](.agents/branch.md) 참조.
+
+커밋 메시지는 `<type>: <간단한 작업 내용>` 형식의 Commit Type 컨벤션을 따른다. 사용 가능한 type 목록과 규칙은 [.agents/commit.md](.agents/commit.md) 참조.
 
 ## Database
 

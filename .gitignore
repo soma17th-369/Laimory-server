@@ -55,6 +55,10 @@ out/
 ### VS Code ###
 .vscode/
 
+### Python ###
+__pycache__/
+*.py[cod]
+
 ### Security & Local Config ###
 application-local.yml
 application-local.properties
