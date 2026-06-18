@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 타임라인 컨트롤러 예외 매핑. IllegalArgumentException→400, IllegalStateException→409.
  * 404(task 미존재)는 서비스/인터셉터가 던지는 ResponseStatusException을 프레임워크가 처리하므로 별도 매핑이 없다.
  */
-@RestControllerAdvice(assignableTypes = TimelineController.class)
+@RestControllerAdvice(assignableTypes = {TimelineController.class, TimelineCallbackController.class})
 public class TimelineExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
