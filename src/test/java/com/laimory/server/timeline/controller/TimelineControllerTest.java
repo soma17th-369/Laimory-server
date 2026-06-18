@@ -26,7 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 @WebMvcTest(TimelineController.class)
 class TimelineControllerTest {
 
-    private static final String TASKS = "/api/v1/timeline/daily-records/draft-tasks";
+    private static final String TASKS = "/api/v1/timeline/drafts";
 
     private static final String CREATE_BODY = """
             {

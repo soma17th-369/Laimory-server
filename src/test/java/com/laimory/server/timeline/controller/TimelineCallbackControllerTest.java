@@ -26,7 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 class TimelineCallbackControllerTest {
 
     private static final String CALLBACK =
-            "/s/api/v1/timeline/daily-records/draft-tasks/t-1/callback";
+            "/s/api/v1/timeline/drafts/t-1/callback";
     private static final String BODY = "{\"status\":\"FAILED\",\"error\":\"x\"}";
 
     @Autowired

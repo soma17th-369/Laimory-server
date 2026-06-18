@@ -70,7 +70,7 @@ class TimelineDraftTaskServiceTest {
         verify(cardSuggestionDispatcher).dispatch(eq(taskId), anyString(), any(), urlCaptor.capture());
         // 콜백 URL에 요청 버전이 그대로 실린다.
         assertThat(urlCaptor.getValue()).isEqualTo(
-                BASE_URL + "/s/api/" + VERSION + "/timeline/daily-records/draft-tasks/" + taskId + "/callback");
+                BASE_URL + "/s/api/" + VERSION + "/timeline/drafts/" + taskId + "/callback");
     }
 
     @Test

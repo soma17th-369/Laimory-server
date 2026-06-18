@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping(ApiUrls.SERVER_API_URL + "/timeline/daily-records/draft-tasks")
+@RequestMapping(ApiUrls.SERVER_API_URL + "/timeline/drafts")
 public class TimelineCallbackController {
 
     private final TimelineCallbackService timelineCallbackService;

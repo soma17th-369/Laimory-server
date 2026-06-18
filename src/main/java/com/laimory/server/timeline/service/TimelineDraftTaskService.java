@@ -65,7 +65,7 @@ public class TimelineDraftTaskService {
         // AI가 같은 버전 경로로 콜백하도록 요청 버전을 콜백 URL에 싣는다. 서버간 통신 prefix는 ApiUrls 헬퍼로 만든다.
         String callbackUrl = callbackBaseUrl
                 + ApiUrls.serverApi(applicationVersion)
-                + "/timeline/daily-records/draft-tasks/" + taskId + "/callback";
+                + "/timeline/drafts/" + taskId + "/callback";
         // dispatch는 fire-and-forget이어야 하지만, 실제 구현이 동기 예외를 던질 경우 task가 PROCESSING으로 고아가 되지
         // 않도록 FAILED로 고정한다. taskId는 정상 반환해 클라가 폴링으로 실패를 확인할 수 있게 한다.
         try {

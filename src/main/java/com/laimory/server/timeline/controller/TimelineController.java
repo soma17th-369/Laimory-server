@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping(ApiUrls.API_URL + "/timeline/daily-records/draft-tasks")
+@RequestMapping(ApiUrls.API_URL + "/timeline/drafts")
 public class TimelineController {
 
     private final TimelineDraftTaskService timelineDraftTaskService;
