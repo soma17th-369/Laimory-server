@@ -9,7 +9,9 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 작성 작업 생성(POST) 오케스트레이터. SAVED 거절 + taskId 발급 + PROCESSING 기록 + AI 디스패치를 합성한다.
@@ -36,7 +38,8 @@ public class TimelineDraftTaskService {
     }
 
     /**
-     * 작성 작업을 만들고 taskId를 반환한다. 이미 SAVED인 daily record면 IllegalStateException(409)으로 거절한다.
+     * 작성 작업을 만들고 taskId를 반환한다. 이미 SAVED인 daily record면 409(ResponseStatusException)로 거절한다.
+     * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
      */
     public String createDraftTask(String applicationVersion, LocalDate recordDate,
                                   List<SourceItemDto> sourceItems) {
@@ -50,7 +53,8 @@ public class TimelineDraftTaskService {
         dailyRecordService.findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate)
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
-                    throw new IllegalStateException("daily record already SAVED: " + record.getId());
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "daily record already SAVED: " + record.getId());
                 });
 
         String taskId = UUID.randomUUID().toString();
@@ -62,7 +66,14 @@ public class TimelineDraftTaskService {
         String callbackUrl = callbackBaseUrl
                 + ApiUrls.serverApi(applicationVersion)
                 + "/timeline/daily-records/draft-tasks/" + taskId + "/callback";
-        cardSuggestionDispatcher.dispatch(taskId, callbackToken, sourceItems, callbackUrl);
+        // dispatch는 fire-and-forget이어야 하지만, 실제 구현이 동기 예외를 던질 경우 task가 PROCESSING으로 고아가 되지
+        // 않도록 FAILED로 고정한다. taskId는 정상 반환해 클라가 폴링으로 실패를 확인할 수 있게 한다.
+        try {
+            cardSuggestionDispatcher.dispatch(taskId, callbackToken, sourceItems, callbackUrl);
+        } catch (RuntimeException e) {
+            timelineTaskService.markFailed(taskId, recordDate,
+                    "card suggestion dispatch failed: " + e.getMessage());
+        }
 
         return taskId;
     }

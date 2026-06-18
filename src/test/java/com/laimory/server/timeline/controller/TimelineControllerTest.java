@@ -65,9 +65,9 @@ class TimelineControllerTest {
     }
 
     @Test
-    void createDraftTask_mapsIllegalStateTo409() throws Exception {
+    void createDraftTask_mapsSavedConflictTo409() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any()))
-                .thenThrow(new IllegalStateException("daily record already SAVED: 1"));
+                .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT, "daily record already SAVED: 1"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict());

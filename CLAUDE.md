@@ -83,7 +83,7 @@ com.laimory.server
   - **서버간 통신**: `/s/api/{applicationVersion}/...` — 내부 서버↔서버 호출(예: AI 카드 생성 콜백). 각 엔드포인트가 자체 인증한다(블랭킷 인터셉터 없음). AI 콜백은 **task별 one-time Callback-Token** 헤더로 검증한다(원문 토큰은 발급 시 AI에만 전달, Redis엔 SHA-256 해시만 보관, 상수시간 비교).
   - **인증 필요 요청**: `/a/api/{applicationVersion}/...` — 사용자 인증이 필요한 엔드포인트(사용자 도입 시 사용).
   - prefix 상수는 `com.laimory.server.common.ApiUrls`(`API_URL`/`SERVER_API_URL`/`AUTHENTICATED_API_URL`)에 모으고, 컨트롤러는 **클래스 레벨 `@RequestMapping(ApiUrls.…)`**으로 base 경로를 선언한다. prefix가 다른 엔드포인트(예: 공개 vs 서버간 콜백)는 별도 컨트롤러로 나눈다.
-- **API 버저닝**: 버전은 하드코딩하지 않고 **정규식으로 제약한 path variable**로 받는다 (예: `/api/{applicationVersion:v\d+}/...`). 컨트롤러는 이 값을 `@PathVariable String applicationVersion`으로 받아 **그대로 Service에 전달**하고, **버전별 동작 분기는 Service 계층에서 해결**한다. 컨트롤러에는 버전 해석 로직을 두지 않는다. (정규식 패턴은 컨트롤러 내 상수 한 곳에 모아 둔다.)
+- **API 버저닝**: 버전은 하드코딩하지 않고 **정규식으로 제약한 path variable**로 받는다 (예: `/api/{applicationVersion:v\d+}/...`). 컨트롤러는 이 값을 `@PathVariable String applicationVersion`으로 받아 **그대로 Service에 전달**하고, **버전별 동작 분기는 Service 계층에서 해결**한다. 컨트롤러에는 버전 해석 로직을 두지 않는다. (정규식 패턴은 `ApiUrls.VERSION` 한 곳에 모아 둔다.)
 - **의존성 주입**: 필드 주입 대신 `@RequiredArgsConstructor` + `private final` 생성자 주입.
 - **응답 DTO**: Entity를 직접 반환하지 않고 Response DTO로 변환한다. 정적 팩토리 `from(Entity)` 패턴 사용 (`AppConfigResponse.from(config)` 참고).
 - **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).

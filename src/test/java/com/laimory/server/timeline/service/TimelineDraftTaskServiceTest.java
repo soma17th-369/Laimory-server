@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,7 +25,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 /** POST 오케스트레이터 단위 검증. SAVED 거절·가드·taskId 발급·토큰 발급·디스패치 합성. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
@@ -109,9 +112,26 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, DATE, oneSource()))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyString());
         verify(cardSuggestionDispatcher, never()).dispatch(anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void createDraftTask_whenDispatchThrows_marksFailedAndReturnsTaskId() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("boom"))
+                .when(cardSuggestionDispatcher).dispatch(anyString(), anyString(), any(), anyString());
+
+        // dispatch가 동기 예외를 던져도 taskId는 반환되고 task는 FAILED로 고정된다(고아 PROCESSING 방지).
+        String taskId = service.createDraftTask(VERSION, DATE, oneSource());
+
+        assertThat(taskId).isNotBlank();
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
+        ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), errorCaptor.capture());
+        assertThat(errorCaptor.getValue()).contains("boom");
     }
 
     @Test
