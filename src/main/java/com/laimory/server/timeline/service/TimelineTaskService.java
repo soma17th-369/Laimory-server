@@ -25,8 +25,8 @@ public class TimelineTaskService {
         timelineTaskStore.save(taskId, TimelineDraftTask.processing(recordDate), PROCESSING_TTL);
     }
 
-    public void markSuccess(String taskId, LocalDate recordDate, Long dailyRecordId) {
-        timelineTaskStore.save(taskId, TimelineDraftTask.success(recordDate, dailyRecordId), TERMINAL_TTL);
+    public void markSuccess(String taskId, LocalDate recordDate) {
+        timelineTaskStore.save(taskId, TimelineDraftTask.success(recordDate), TERMINAL_TTL);
     }
 
     public void markFailed(String taskId, LocalDate recordDate, String error) {
