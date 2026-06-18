@@ -128,10 +128,6 @@ class DailyTimelineServiceTest {
 
     @Test
     void appendDailyTimeline_rejectsEmptyItemIds() {
-        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
-        ReflectionTestUtils.setField(existing, "id", 100L);
-        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(existing);
-
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
@@ -140,15 +136,13 @@ class DailyTimelineServiceTest {
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards))
                 .isInstanceOf(IllegalArgumentException.class);
+        // 검증은 record 생성 전에 끝나므로, 잘못된 콜백은 daily record를 만들지 않는다(고아 빈 DRAFT 방지).
+        verify(dailyRecordService, never()).findOrCreateDraft(any(), any());
+        verify(timelineCardService, never()).save(any());
     }
 
     @Test
     void appendDailyTimeline_rejectsUnknownItemId() {
-        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
-        ReflectionTestUtils.setField(existing, "id", 100L);
-        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(existing);
-        stubCardSaveWithSequentialIds();
-
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
@@ -158,6 +152,9 @@ class DailyTimelineServiceTest {
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards))
                 .isInstanceOf(IllegalArgumentException.class);
+        // record 생성·카드 저장 전에 검증 실패 → 고아 빈 DRAFT 없음.
+        verify(dailyRecordService, never()).findOrCreateDraft(any(), any());
+        verify(timelineCardService, never()).save(any());
     }
 
     // --- getDailyTimeline (읽기) ---
