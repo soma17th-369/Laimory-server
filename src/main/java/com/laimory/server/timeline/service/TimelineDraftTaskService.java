@@ -55,9 +55,9 @@ public class TimelineDraftTaskService {
         String taskId = UUID.randomUUID().toString();
         timelineTaskService.createProcessing(taskId, recordDate);
 
-        // AI가 같은 버전 경로로 콜백하도록 요청 버전을 콜백 URL에 싣는다. prefix는 ApiUrls(서버간 통신)에서 가져온다.
+        // AI가 같은 버전 경로로 콜백하도록 요청 버전을 콜백 URL에 싣는다. 서버간 통신 prefix는 ApiUrls 헬퍼로 만든다.
         String callbackUrl = callbackBaseUrl
-                + ApiUrls.SERVER_API_URL.replace(ApiUrls.VERSION, applicationVersion)
+                + ApiUrls.serverApi(applicationVersion)
                 + "/timeline/daily-records/draft-tasks/" + taskId + "/callback";
         cardSuggestionDispatcher.dispatch(taskId, sourceItems, callbackUrl);
 
