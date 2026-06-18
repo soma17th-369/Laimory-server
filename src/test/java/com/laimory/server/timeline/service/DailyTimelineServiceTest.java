@@ -53,11 +53,10 @@ class DailyTimelineServiceTest {
     // --- appendDailyTimeline (쓰기) ---
 
     @Test
-    void appendDailyTimeline_reusesExistingDraftRecord_withoutSavingRecord() {
+    void appendDailyTimeline_reusesRecordFromFindOrCreate() {
         DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
         ReflectionTestUtils.setField(existing, "id", 100L);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(existing));
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(existing);
         stubCardSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
@@ -69,21 +68,15 @@ class DailyTimelineServiceTest {
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards);
 
         assertThat(result).isEqualTo(100L);
-        // 기존 DRAFT 재사용: record는 save 하지 않는다.
-        verify(dailyRecordService, never()).save(any());
         verify(timelineCardService, times(1)).save(any());
         verify(timelineItemService, times(1)).save(any());
     }
 
     @Test
     void appendDailyTimeline_createsDraftWhenAbsent_andMapsItemsToCorrectCardByItemId() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.empty());
-        when(dailyRecordService.save(any())).thenAnswer(invocation -> {
-            DailyRecord created = invocation.getArgument(0);
-            ReflectionTestUtils.setField(created, "id", 200L);
-            return created;
-        });
+        DailyRecord created = DailyRecord.createDraft(USER_ID, RECORD_DATE);
+        ReflectionTestUtils.setField(created, "id", 200L);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(created);
         stubCardSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 8, 0);
@@ -100,12 +93,6 @@ class DailyTimelineServiceTest {
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, sources, cards);
 
         assertThat(result).isEqualTo(200L);
-        // 없을 때 DRAFT 생성된다.
-        ArgumentCaptor<DailyRecord> recordCaptor = ArgumentCaptor.forClass(DailyRecord.class);
-        verify(dailyRecordService).save(recordCaptor.capture());
-        assertThat(recordCaptor.getValue().getUserId()).isEqualTo(USER_ID);
-        assertThat(recordCaptor.getValue().getRecordDate()).isEqualTo(RECORD_DATE);
-
         verify(timelineCardService, times(2)).save(any());
 
         // item이 올바른 카드(첫 카드 id=1, 둘째 카드 id=2)로 매핑되는지 확인.
@@ -125,8 +112,7 @@ class DailyTimelineServiceTest {
         DailyRecord saved = DailyRecord.createDraft(USER_ID, RECORD_DATE);
         ReflectionTestUtils.setField(saved, "id", 100L);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(saved));
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(saved);
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
@@ -144,8 +130,7 @@ class DailyTimelineServiceTest {
     void appendDailyTimeline_rejectsEmptyItemIds() {
         DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
         ReflectionTestUtils.setField(existing, "id", 100L);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(existing));
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(existing);
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
@@ -161,8 +146,7 @@ class DailyTimelineServiceTest {
     void appendDailyTimeline_rejectsUnknownItemId() {
         DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE);
         ReflectionTestUtils.setField(existing, "id", 100L);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(existing));
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE)).thenReturn(existing);
         stubCardSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);

@@ -43,8 +43,7 @@ public class DailyTimelineService {
     @Transactional
     public Long appendDailyTimeline(Long userId, LocalDate recordDate,
                         List<SourceItemDto> sourceItems, List<CardSuggestionDto> cards) {
-        DailyRecord dailyRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
-                .orElseGet(() -> dailyRecordService.save(DailyRecord.createDraft(userId, recordDate)));
+        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
             throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getId());
         }
