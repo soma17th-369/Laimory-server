@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -27,7 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
-/** 콜백 오케스트레이터 단위 검증. 404·멱등·status 분기·검증실패→FAILED. 인프라 0. */
+/** 콜백 오케스트레이터 단위 검증. 404·멱등·토큰 검증(401)·status 분기·검증실패→FAILED. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
 class TimelineCallbackServiceTest {
 
@@ -42,6 +43,12 @@ class TimelineCallbackServiceTest {
     private TimelineCallbackService service;
 
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
+    private static final String TOKEN = "raw-callback-token";
+    private static final String TOKEN_HASH = CallbackTokens.hash(TOKEN);
+
+    private TimelineDraftTask processingTask() {
+        return TimelineDraftTask.processing(DATE, TOKEN_HASH);
+    }
 
     private DraftTaskCallbackRequest successRequest() {
         List<SourceItemDto> sources = List.of(new SourceItemDto(0,
@@ -55,16 +62,37 @@ class TimelineCallbackServiceTest {
     void handleCallback_taskNotFound_throws404() {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.handleCallback("v1", "missing", successRequest()))
+        assertThatThrownBy(() -> service.handleCallback("v1", "missing", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test
-    void handleCallback_alreadyTerminal_isIdempotentNoOp() {
+    void handleCallback_withoutCallbackToken_throws401() {
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", null, successRequest()))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCallback_withWrongCallbackToken_throws401() {
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+    }
+
+    @Test
+    void handleCallback_reusedTokenAfterSuccess_doesNotPersistAgain() {
+        // 이미 SUCCESS(종결)된 task면 토큰 검증 이전에 idempotent no-op (재저장 없음 = replay 무효).
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE)));
 
-        service.handleCallback("v1", "t", successRequest());
+        service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any());
@@ -73,11 +101,11 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_aiReportedFailure_marksFailed() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         DraftTaskCallbackRequest req =
                 new DraftTaskCallbackRequest(TaskStatus.FAILED, "ai gave up", null, null);
 
-        service.handleCallback("v1", "t", req);
+        service.handleCallback("v1", "t", TOKEN, req);
 
         verify(timelineTaskService).markFailed("t", DATE, "ai gave up");
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
@@ -85,10 +113,10 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_success_validatesPersistsAndMarksSuccess() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         DraftTaskCallbackRequest req = successRequest();
 
-        service.handleCallback("v1", "t", req);
+        service.handleCallback("v1", "t", TOKEN, req);
 
         verify(cardSuggestionValidator).validate(req.sourceItems(), req.cards());
         verify(dailyTimelineService).appendDailyTimeline(0L, DATE, req.sourceItems(), req.cards());
@@ -98,12 +126,12 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_validationFails_marksFailedAndDoesNotPersist() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         doThrow(new IllegalArgumentException("dup itemId"))
                 .when(cardSuggestionValidator).validate(any(), any());
 
         // 검증 실패는 밖으로 던지지 않고 FAILED로 기록한다(콜백은 200).
-        service.handleCallback("v1", "t", successRequest());
+        service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(timelineTaskService).markFailed("t", DATE, "dup itemId");
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
@@ -112,11 +140,11 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_invalidStatus_throwsBadRequest() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         DraftTaskCallbackRequest req =
                 new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null, null);
 
-        assertThatThrownBy(() -> service.handleCallback("v1", "t", req))
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, req))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

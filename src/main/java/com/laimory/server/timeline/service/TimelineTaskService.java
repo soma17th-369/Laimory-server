@@ -21,8 +21,9 @@ public class TimelineTaskService {
 
     private final TimelineTaskStore timelineTaskStore;
 
-    public void createProcessing(String taskId, LocalDate recordDate) {
-        timelineTaskStore.save(taskId, TimelineDraftTask.processing(recordDate), PROCESSING_TTL);
+    public void createProcessing(String taskId, LocalDate recordDate, String callbackTokenHash) {
+        timelineTaskStore.save(taskId,
+                TimelineDraftTask.processing(recordDate, callbackTokenHash), PROCESSING_TTL);
     }
 
     public void markSuccess(String taskId, LocalDate recordDate) {

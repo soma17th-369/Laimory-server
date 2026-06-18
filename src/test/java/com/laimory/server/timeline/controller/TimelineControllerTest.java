@@ -16,17 +16,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 공개 컨트롤러 슬라이스 테스트(MockMvc). 상태 매핑(202/400/409/404)을 검증한다. 인프라 0.
- * secret 인터셉터는 /s/** 전용이라 공개 /api 경로엔 적용되지 않는다(인터셉터 빈 로드용 secret 프로퍼티만 제공).
  */
 @WebMvcTest(TimelineController.class)
-@TestPropertySource(properties = "internal.callback.secret=test-secret")
 class TimelineControllerTest {
 
     private static final String TASKS = "/api/v1/timeline/daily-records/draft-tasks";

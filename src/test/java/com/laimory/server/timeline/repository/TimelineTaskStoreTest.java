@@ -66,7 +66,7 @@ class TimelineTaskStoreTest {
     @Test
     void find_returnsDeserializedTask() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        TimelineDraftTask task = TimelineDraftTask.processing(LocalDate.of(2026, 5, 8));
+        TimelineDraftTask task = TimelineDraftTask.processing(LocalDate.of(2026, 5, 8), "token-hash");
         when(valueOps.get("timeline:draft-task:abc")).thenReturn(objectMapper.writeValueAsString(task));
 
         Optional<TimelineDraftTask> found = store.find("abc");
@@ -74,6 +74,7 @@ class TimelineTaskStoreTest {
         assertThat(found).isPresent();
         assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(found.get().recordDate()).isEqualTo(LocalDate.of(2026, 5, 8));
+        assertThat(found.get().callbackTokenHash()).isEqualTo("token-hash");
         assertThat(found.get()).isEqualTo(task);
     }
 

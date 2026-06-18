@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
@@ -53,13 +54,15 @@ public class TimelineDraftTaskService {
                 });
 
         String taskId = UUID.randomUUID().toString();
-        timelineTaskService.createProcessing(taskId, recordDate);
+        // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
+        String callbackToken = CallbackTokens.generate();
+        timelineTaskService.createProcessing(taskId, recordDate, CallbackTokens.hash(callbackToken));
 
         // AI가 같은 버전 경로로 콜백하도록 요청 버전을 콜백 URL에 싣는다. 서버간 통신 prefix는 ApiUrls 헬퍼로 만든다.
         String callbackUrl = callbackBaseUrl
                 + ApiUrls.serverApi(applicationVersion)
                 + "/timeline/daily-records/draft-tasks/" + taskId + "/callback";
-        cardSuggestionDispatcher.dispatch(taskId, sourceItems, callbackUrl);
+        cardSuggestionDispatcher.dispatch(taskId, callbackToken, sourceItems, callbackUrl);
 
         return taskId;
     }

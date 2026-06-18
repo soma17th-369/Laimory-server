@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -25,7 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** POST 오케스트레이터 단위 검증. SAVED 거절·가드·taskId 발급·디스패치 합성. 인프라 0. */
+/** POST 오케스트레이터 단위 검증. SAVED 거절·가드·taskId 발급·토큰 발급·디스패치 합성. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
 class TimelineDraftTaskServiceTest {
 
@@ -60,13 +61,32 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, DATE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE));
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
 
         ArgumentCaptor<String> urlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(cardSuggestionDispatcher).dispatch(eq(taskId), any(), urlCaptor.capture());
+        verify(cardSuggestionDispatcher).dispatch(eq(taskId), anyString(), any(), urlCaptor.capture());
         // 콜백 URL에 요청 버전이 그대로 실린다.
         assertThat(urlCaptor.getValue()).isEqualTo(
                 BASE_URL + "/s/api/" + VERSION + "/timeline/daily-records/draft-tasks/" + taskId + "/callback");
+    }
+
+    @Test
+    void createDraftTask_storesOnlyTokenHash_notRawToken() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+
+        String taskId = service.createDraftTask(VERSION, DATE, oneSource());
+
+        // Redis에 저장되는 값(createProcessing 인자)은 해시, AI에 전달되는 값(dispatch 인자)은 원문이어야 한다.
+        ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), hashCaptor.capture());
+        ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
+        verify(cardSuggestionDispatcher).dispatch(eq(taskId), tokenCaptor.capture(), any(), anyString());
+
+        String storedHash = hashCaptor.getValue();
+        String dispatchedToken = tokenCaptor.getValue();
+        assertThat(dispatchedToken).isNotBlank();
+        assertThat(storedHash).isNotEqualTo(dispatchedToken);
+        assertThat(storedHash).isEqualTo(CallbackTokens.hash(dispatchedToken));
     }
 
     @Test
@@ -78,7 +98,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, DATE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE));
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
     }
 
     @Test
@@ -90,8 +110,8 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, DATE, oneSource()))
                 .isInstanceOf(IllegalStateException.class);
-        verify(timelineTaskService, never()).createProcessing(anyString(), any());
-        verify(cardSuggestionDispatcher, never()).dispatch(anyString(), any(), anyString());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyString());
+        verify(cardSuggestionDispatcher, never()).dispatch(anyString(), anyString(), any(), anyString());
     }
 
     @Test

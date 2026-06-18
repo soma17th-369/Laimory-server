@@ -39,7 +39,7 @@ class TimelineDraftTaskPollingServiceTest {
 
     @Test
     void poll_processing_returnsProcessing() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE)));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE, "hash")));
 
         DraftTaskStatusResponse res = service.poll("v1", "t");
 
