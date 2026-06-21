@@ -4,10 +4,10 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
-import com.laimory.server.timeline.dto.TimelineCardResponse;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
-import com.laimory.server.timeline.entity.TimelineCard;
+import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DailyTimelineService {
 
     private final DailyRecordService dailyRecordService;
-    private final TimelineCardService timelineCardService;
+    private final TimelineEventService timelineEventService;
     private final TimelineItemService timelineItemService;
 
     /**
@@ -62,40 +62,40 @@ public class DailyTimelineService {
         // 2. 검증 통과 후 record 생성/조회 + SAVED 가드.
         DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
-            throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getId());
+            throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());
         }
-        Long dailyRecordId = dailyRecord.getId();
+        Long dailyRecordId = dailyRecord.getDailyRecordId();
 
-        // 3. 영속(검증 완료된 입력만 도달). 여기서 남는 실패는 카드/아이템 insert의 DB 장애뿐.
+        // 3. 영속(검증 완료된 입력만 도달). 여기서 남는 실패는 이벤트/아이템 insert의 DB 장애뿐.
         for (CardSuggestionDto cardDto : cards) {
-            TimelineCard savedCard = timelineCardService.save(
-                    TimelineCard.of(dailyRecordId, cardDto.startAt(), cardDto.endAt(),
+            TimelineEvent savedEvent = timelineEventService.save(
+                    TimelineEvent.of(dailyRecordId, cardDto.startAt(), cardDto.endAt(),
                             cardDto.title(), cardDto.subtitle()));
             for (Integer itemId : cardDto.itemIds()) {
                 SourceItemDto src = byItemId.get(itemId);
                 timelineItemService.save(
-                        TimelineItem.of(savedCard.getId(), src.startAt(), src.endAt(), src.payload()));
+                        TimelineItem.of(savedEvent.getTimelineEventId(), src.startAt(), src.endAt(), src.payload()));
             }
         }
 
         return dailyRecordId;
     }
 
-    /** dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 카드/아이템 정렬은 leaf 서비스 쿼리가 보장. */
+    /** dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 이벤트/아이템 정렬은 leaf 서비스 쿼리가 보장. */
     @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new IllegalStateException("daily record not found: " + dailyRecordId));
 
-        List<TimelineCardResponse> cardResponses = new ArrayList<>();
-        for (TimelineCard card : timelineCardService.findByDailyRecordId(dailyRecordId)) {
-            List<TimelineItemResponse> itemResponses = timelineItemService.findByTimelineCardId(card.getId())
+        List<TimelineEventResponse> eventResponses = new ArrayList<>();
+        for (TimelineEvent event : timelineEventService.findByDailyRecordId(dailyRecordId)) {
+            List<TimelineItemResponse> itemResponses = timelineItemService.findByTimelineEventId(event.getTimelineEventId())
                     .stream()
                     .map(TimelineItemResponse::from)
                     .toList();
-            cardResponses.add(TimelineCardResponse.from(card, itemResponses));
+            eventResponses.add(TimelineEventResponse.from(event, itemResponses));
         }
 
-        return new DailyTimelineResponse(record.getRecordDate(), record.getEmotionType(), cardResponses);
+        return new DailyTimelineResponse(record.getRecordDate(), record.getEmotionType(), eventResponses);
     }
 }

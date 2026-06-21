@@ -23,7 +23,8 @@ public class DailyRecord {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "daily_record_id")
+    private Long dailyRecordId;
 
     @Column(nullable = false)
     private Long userId;

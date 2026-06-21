@@ -95,7 +95,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_reusesDraftRecord_doesNotReject() {
         DailyRecord draft = DailyRecord.createDraft(0L, DATE);
-        ReflectionTestUtils.setField(draft, "id", 3L);
+        ReflectionTestUtils.setField(draft, "dailyRecordId", 3L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
 
         String taskId = service.createDraftTask(VERSION, DATE, oneSource());
@@ -107,7 +107,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsSavedRecord() {
         DailyRecord saved = DailyRecord.createDraft(0L, DATE);
-        ReflectionTestUtils.setField(saved, "id", 5L);
+        ReflectionTestUtils.setField(saved, "dailyRecordId", 5L);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
 

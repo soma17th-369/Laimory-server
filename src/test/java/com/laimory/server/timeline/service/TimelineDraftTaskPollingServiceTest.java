@@ -63,7 +63,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_success_assemblesTimeline() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE)));
         DailyRecord record = DailyRecord.createDraft(0L, DATE);
-        ReflectionTestUtils.setField(record, "id", 42L);
+        ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(record));
         DailyTimelineResponse timeline = new DailyTimelineResponse(DATE, null, List.of());
         when(dailyTimelineService.getDailyTimeline(42L)).thenReturn(timeline);

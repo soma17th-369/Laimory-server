@@ -35,7 +35,7 @@ public class TimelineDraftTaskPollingService {
                         .findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, task.recordDate())
                         .orElseThrow(() -> new IllegalStateException(
                                 "daily record missing for SUCCESS task: " + taskId));
-                DailyTimelineResponse result = dailyTimelineService.getDailyTimeline(record.getId());
+                DailyTimelineResponse result = dailyTimelineService.getDailyTimeline(record.getDailyRecordId());
                 yield DraftTaskStatusResponse.success(result);
             }
         };

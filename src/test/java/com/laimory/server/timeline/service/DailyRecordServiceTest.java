@@ -56,7 +56,7 @@ class DailyRecordServiceTest {
     void findOrCreateDraft_returnsExistingWhenFound_withoutSaving() {
         LocalDate date = LocalDate.of(2026, 5, 8);
         DailyRecord existing = DailyRecord.createDraft(0L, date);
-        ReflectionTestUtils.setField(existing, "id", 100L);
+        ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(existing));
 
         DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date);
@@ -70,7 +70,7 @@ class DailyRecordServiceTest {
         LocalDate date = LocalDate.of(2026, 5, 8);
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.empty());
         DailyRecord created = DailyRecord.createDraft(0L, date);
-        ReflectionTestUtils.setField(created, "id", 200L);
+        ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
         when(dailyRecordRepository.saveAndFlush(any())).thenReturn(created);
 
         DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date);
@@ -83,7 +83,7 @@ class DailyRecordServiceTest {
     void findOrCreateDraft_onDuplicateInsert_requeriesAndReturnsExisting() {
         LocalDate date = LocalDate.of(2026, 5, 8);
         DailyRecord existing = DailyRecord.createDraft(0L, date);
-        ReflectionTestUtils.setField(existing, "id", 300L);
+        ReflectionTestUtils.setField(existing, "dailyRecordId", 300L);
         // 첫 조회는 empty(경합 상대가 아직 commit 전), 위반 후 재조회는 상대가 만든 record를 본다.
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date))
                 .thenReturn(Optional.empty())
