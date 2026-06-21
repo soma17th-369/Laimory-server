@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import org.junit.jupiter.api.Test;
 
@@ -82,6 +83,41 @@ class TimelineItemPayloadJsonTest {
         assertThat(dto.itemType()).isEqualTo(ItemType.PHOTO);
         assertThat(dto.payload()).isInstanceOf(PhotoPayload.class)
                 .isEqualTo(new PhotoPayload("u", 1.0, 2.0));
+    }
+
+    @Test
+    void sourceItemDto_externalProperty_itemTypeAfterPayload() throws Exception {
+        // 필드 순서 회귀: payload가 먼저, itemType(외부 디스크리미네이터)이 마지막.
+        // Jackson은 itemType을 볼 때까지 payload를 버퍼링해야 한다.
+        String json = """
+                {"itemId":0,"startAt":null,"endAt":null,"summary":"s",
+                 "payload":{"photoUri":"u","latitude":1.0,"longitude":2.0},"itemType":"PHOTO"}
+                """;
+
+        SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
+
+        assertThat(dto.payload()).isInstanceOf(PhotoPayload.class)
+                .isEqualTo(new PhotoPayload("u", 1.0, 2.0));
+        assertThat(dto.itemType()).isEqualTo(ItemType.PHOTO);
+    }
+
+    @Test
+    void createDraftTaskRequest_nested_itemTypeAfterPayload() throws Exception {
+        // 컨트롤러가 역직렬화하는 실제 요청 바디 형태: sourceItems 배열의 각 아이템에서
+        // payload가 itemType보다 먼저 온다. 중첩 컨텍스트에서도 외부 프로퍼티 버퍼링이 동작해야 한다.
+        String json = """
+                {"recordDate":"2026-05-08","sourceItems":[
+                  {"itemId":0,"startAt":null,"endAt":null,"summary":"s",
+                   "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"},
+                   "itemType":"MOVEMENT"}
+                ]}
+                """;
+
+        CreateDraftTaskRequest req = objectMapper.readValue(json, CreateDraftTaskRequest.class);
+
+        assertThat(req.sourceItems().get(0).payload()).isInstanceOf(MovementPayload.class)
+                .isEqualTo(new MovementPayload("강남역", "성수역", "SUBWAY", "7호선"));
+        assertThat(req.sourceItems().get(0).itemType()).isEqualTo(ItemType.MOVEMENT);
     }
 
     @Test
