@@ -17,8 +17,8 @@ public class TimelineItemService {
         return timelineItemRepository.save(item);
     }
 
-    /** 해당 이벤트의 아이템을 표시 순서로 반환: start_at NULLS-LAST(시간 미상 아이템은 맨 뒤), 그다음 timeline_item_id 오름차순. */
+    /** 해당 이벤트의 아이템을 표시 순서로 반환: start_at, timeline_item_id 오름차순 (null 위치 미보장). */
     public List<TimelineItem> findByTimelineEventId(Long timelineEventId) {
-        return timelineItemRepository.findByTimelineEventIdOrderByStartAtNullsLast(timelineEventId);
+        return timelineItemRepository.findByTimelineEventIdOrderByStartAtAscTimelineItemIdAsc(timelineEventId);
     }
 }
