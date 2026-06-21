@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * payload도 JSON 직렬화 시 자체 itemType discriminator를 내보내지만, 둘은 서로 다른 JSON 위치라 충돌하지 않는다.
  */
 public record TimelineItemResponse(
-        Long id,
+        Long timelineItemId,
         ItemType itemType,
         LocalDateTime startAt,
         LocalDateTime endAt,
@@ -21,7 +21,7 @@ public record TimelineItemResponse(
 
     public static TimelineItemResponse from(TimelineItem item) {
         return new TimelineItemResponse(
-                item.getId(),
+                item.getTimelineItemId(),
                 item.itemType(),
                 item.getStartAt(),
                 item.getEndAt(),

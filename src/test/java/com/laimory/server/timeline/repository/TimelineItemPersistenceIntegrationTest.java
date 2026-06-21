@@ -3,7 +3,7 @@ package com.laimory.server.timeline.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.timeline.entity.DailyRecord;
-import com.laimory.server.timeline.entity.TimelineCard;
+import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
@@ -38,7 +38,7 @@ class TimelineItemPersistenceIntegrationTest {
     private DailyRecordRepository dailyRecordRepository;
 
     @Autowired
-    private TimelineCardRepository timelineCardRepository;
+    private TimelineEventRepository timelineEventRepository;
 
     @Autowired
     private TimelineItemRepository timelineItemRepository;
@@ -49,15 +49,15 @@ class TimelineItemPersistenceIntegrationTest {
     @Test
     void persistsAndReloadsTypedPayloadFromJsonColumn() {
         DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8)));
-        TimelineCard card = timelineCardRepository.save(
-                TimelineCard.of(record.getId(),
+        TimelineEvent event = timelineEventRepository.save(
+                TimelineEvent.of(record.getDailyRecordId(),
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         "출근길", "강남역 -> 성수역 · 7호선"));
 
         TimelineItemPayload movement = new MovementPayload("강남역", "성수역", "SUBWAY", "7호선");
         TimelineItem saved = timelineItemRepository.save(
-                TimelineItem.of(card.getId(),
+                TimelineItem.of(event.getTimelineEventId(),
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         movement));
@@ -65,30 +65,30 @@ class TimelineItemPersistenceIntegrationTest {
         em.flush();
         em.clear();
 
-        TimelineItem reloaded = timelineItemRepository.findById(saved.getId()).orElseThrow();
+        TimelineItem reloaded = timelineItemRepository.findById(saved.getTimelineItemId()).orElseThrow();
         assertThat(reloaded.getPayload())
                 .isInstanceOf(MovementPayload.class)
                 .isEqualTo(movement);
         assertThat(reloaded.itemType()).isEqualTo(movement.itemType());
-        assertThat(reloaded.getTimelineCardId()).isEqualTo(card.getId());
+        assertThat(reloaded.getTimelineEventId()).isEqualTo(event.getTimelineEventId());
     }
 
     @Test
     void persistsAndReloadsAllPayloadSubtypes() {
         DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9)));
-        TimelineCard card = timelineCardRepository.save(
-                TimelineCard.of(record.getId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
+        TimelineEvent event = timelineEventRepository.save(
+                TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 
         TimelineItemPayload photo = new PhotoPayload("content://media/external/images/media/12345", 37.5445, 127.0557);
         TimelineItemPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A");
         TimelineItemPayload location = new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557);
 
         Long photoId = timelineItemRepository.save(
-                TimelineItem.of(card.getId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, photo)).getId();
+                TimelineItem.of(event.getTimelineEventId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, photo)).getTimelineItemId();
         Long calendarId = timelineItemRepository.save(
-                TimelineItem.of(card.getId(), LocalDateTime.of(2026, 5, 9, 12, 1), null, calendar)).getId();
+                TimelineItem.of(event.getTimelineEventId(), LocalDateTime.of(2026, 5, 9, 12, 1), null, calendar)).getTimelineItemId();
         Long locationId = timelineItemRepository.save(
-                TimelineItem.of(card.getId(), LocalDateTime.of(2026, 5, 9, 12, 2), null, location)).getId();
+                TimelineItem.of(event.getTimelineEventId(), LocalDateTime.of(2026, 5, 9, 12, 2), null, location)).getTimelineItemId();
 
         em.flush();
         em.clear();

@@ -72,7 +72,7 @@ class TimelineCallbackTokenIntegrationTest {
     @AfterEach
     void cleanUp() {
         dailyRecordService.findByUserIdAndRecordDate(0L, DATE)
-                .ifPresent(record -> dailyRecordRepository.deleteById(record.getId())); // DB FK cascade로 카드/아이템도 삭제
+                .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())); // DB FK cascade로 이벤트/아이템도 삭제
         createdTaskIds.forEach(id -> redis.delete("timeline:draft-task:" + id));
         createdTaskIds.clear();
     }
@@ -99,7 +99,7 @@ class TimelineCallbackTokenIntegrationTest {
 
         DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
-        assertThat(status.result().cards()).isNotEmpty();
+        assertThat(status.result().events()).isNotEmpty();
         assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
     }
 

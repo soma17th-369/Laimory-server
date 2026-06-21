@@ -10,17 +10,18 @@ import java.time.LocalDateTime;
 import lombok.Getter;
 
 /**
- * 타임라인 카드. daily_record에 plain Long FK로 연결(@OneToMany 미사용 - 서비스=레포 1개 규칙 보존).
+ * 타임라인 이벤트. daily_record에 plain Long FK로 연결(@OneToMany 미사용 - 서비스=레포 1개 규칙 보존).
  * memo는 사용자가 나중에 작성하므로 생성 시점엔 비어 있다.
  */
 @Entity
-@Table(name = "timeline_cards")
+@Table(name = "timeline_events")
 @Getter
-public class TimelineCard {
+public class TimelineEvent {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "timeline_event_id")
+    private Long timelineEventId;
 
     @Column(nullable = false)
     private Long dailyRecordId;
@@ -38,10 +39,10 @@ public class TimelineCard {
     @Column(columnDefinition = "TEXT")
     private String memo;
 
-    protected TimelineCard() {
+    protected TimelineEvent() {
     }
 
-    private TimelineCard(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
+    private TimelineEvent(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
                          String title, String subtitle) {
         this.dailyRecordId = dailyRecordId;
         this.startAt = startAt;
@@ -50,8 +51,8 @@ public class TimelineCard {
         this.subtitle = subtitle;
     }
 
-    public static TimelineCard of(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
+    public static TimelineEvent of(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
                                   String title, String subtitle) {
-        return new TimelineCard(dailyRecordId, startAt, endAt, title, subtitle);
+        return new TimelineEvent(dailyRecordId, startAt, endAt, title, subtitle);
     }
 }

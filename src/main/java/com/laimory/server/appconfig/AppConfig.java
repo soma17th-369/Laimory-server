@@ -10,7 +10,8 @@ public class AppConfig {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @Column(name = "app_config_id")
+    private Long appConfigId;
 
     private Long minAppVersion;
 

@@ -54,7 +54,7 @@ public class TimelineDraftTaskService {
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "daily record already SAVED: " + record.getId());
+                            "daily record already SAVED: " + record.getDailyRecordId());
                 });
 
         String taskId = UUID.randomUUID().toString();
