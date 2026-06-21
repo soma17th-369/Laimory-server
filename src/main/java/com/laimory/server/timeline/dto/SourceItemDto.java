@@ -1,20 +1,36 @@
 package com.laimory.server.timeline.dto;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.payload.CalendarPayload;
+import com.laimory.server.timeline.payload.LocationPayload;
+import com.laimory.server.timeline.payload.MovementPayload;
+import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
 import java.time.LocalDateTime;
 
 /**
  * 소스 아이템(서버가 AI 요청 전에 만든 임시 입력 데이터). DB 엔티티가 아니다.
  *
- * <p>{@code itemId}는 클라이언트가 부여한 요청 범위 인덱스(request item id)일 뿐 DB의 timeline_items.timeline_item_id가 아니다.
+ * <p>{@code itemType}은 payload 밖 형제 필드(external property)로 받는 타입 디스크리미네이터다. payload JSON엔 타입 정보가 없다.
+ * {@code visible = true}라 itemType이 이 레코드 컴포넌트에도 바인딩된다.
+ * {@code itemId}는 클라이언트가 부여한 요청 범위 인덱스(request item id)일 뿐 DB의 timeline_items.timeline_item_id가 아니다.
  * {@code summary}는 AI 입력 컨텍스트로만 쓰이며 DB에 저장하지 않는다.
- * 아이템 타입은 payload의 discriminator가 단일 권위이므로 별도 itemType 필드를 두지 않는다.
  */
 public record SourceItemDto(
         Integer itemId,
+        ItemType itemType,
         LocalDateTime startAt,
         LocalDateTime endAt,
         String summary,
+        @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXTERNAL_PROPERTY, property = "itemType", visible = true)
+        @JsonSubTypes({
+                @JsonSubTypes.Type(value = PhotoPayload.class, name = "PHOTO"),
+                @JsonSubTypes.Type(value = CalendarPayload.class, name = "CALENDAR"),
+                @JsonSubTypes.Type(value = LocationPayload.class, name = "LOCATION"),
+                @JsonSubTypes.Type(value = MovementPayload.class, name = "MOVEMENT")
+        })
         TimelineItemPayload payload
 ) {
 }

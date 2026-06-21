@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -19,7 +20,7 @@ class CardSuggestionValidatorTest {
     private static final LocalDateTime T = LocalDateTime.of(2026, 6, 17, 9, 0);
 
     private SourceItemDto source(int itemId) {
-        return new SourceItemDto(itemId, T, T.plusHours(1), "summary-" + itemId,
+        return new SourceItemDto(itemId, ItemType.PHOTO, T, T.plusHours(1), "summary-" + itemId,
                 new PhotoPayload("uri-" + itemId, 1.0, 2.0));
     }
 
@@ -52,7 +53,7 @@ class CardSuggestionValidatorTest {
     @Test
     void validate_rejectsNullSourceItemId() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, T, T.plusHours(1), "s", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(null, ItemType.PHOTO, T, T.plusHours(1), "s", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(card("아침", List.of(0)));
 
         assertThatThrownBy(() -> validator.validate(sources, cards))
@@ -154,7 +155,7 @@ class CardSuggestionValidatorTest {
     @Test
     void validate_rejectsSourceItemEndBeforeStart() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, T, T.minusHours(1), "s", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, T, T.minusHours(1), "s", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(card("아침", List.of(0)));
 
         assertThatThrownBy(() -> validator.validate(sources, cards))
@@ -165,7 +166,7 @@ class CardSuggestionValidatorTest {
     @Test
     void validate_allowsNullEndAt() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, T, null, "s", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, T, null, "s", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "sub", T, null, List.of(0)));
 

@@ -1,28 +1,28 @@
 package com.laimory.server.timeline.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDateTime;
 
 /**
  * 타임라인 아이템 응답 DTO.
  *
- * <p>최상위 {@code itemType}은 문서화된 API 응답 형태와 일치하도록 의도적으로 둔다.
- * payload도 JSON 직렬화 시 자체 itemType discriminator를 내보내지만, 둘은 서로 다른 JSON 위치라 충돌하지 않는다.
+ * <p>최상위 {@code itemType}이 타입의 권위다(엔티티 item_type 컬럼에서 온다).
+ * {@code payload}는 타입 정보 없는 raw JSON({@link JsonNode})이라 그 안엔 itemType이 없다.
  */
 public record TimelineItemResponse(
         Long timelineItemId,
         ItemType itemType,
         LocalDateTime startAt,
         LocalDateTime endAt,
-        TimelineItemPayload payload
+        JsonNode payload
 ) {
 
     public static TimelineItemResponse from(TimelineItem item) {
         return new TimelineItemResponse(
                 item.getTimelineItemId(),
-                item.itemType(),
+                item.getItemType(),
                 item.getStartAt(),
                 item.getEndAt(),
                 item.getPayload()

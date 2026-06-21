@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -9,6 +10,7 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
+import com.laimory.server.timeline.payload.ItemTypes;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,7 @@ public class DailyTimelineService {
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
     private final TimelineItemService timelineItemService;
+    private final ObjectMapper objectMapper;
 
     /**
      * daily record(없으면 DRAFT 생성, 있으면 재사용)에 카드 제안과 채택된 source item을 저장한다.
@@ -74,7 +77,10 @@ public class DailyTimelineService {
             for (Integer itemId : cardDto.itemIds()) {
                 SourceItemDto src = byItemId.get(itemId);
                 timelineItemService.save(
-                        TimelineItem.of(savedEvent.getTimelineEventId(), src.startAt(), src.endAt(), src.payload()));
+                        TimelineItem.of(savedEvent.getTimelineEventId(),
+                                ItemTypes.typeOf(src.payload()),
+                                src.startAt(), src.endAt(),
+                                objectMapper.valueToTree(src.payload())));
             }
         }
 

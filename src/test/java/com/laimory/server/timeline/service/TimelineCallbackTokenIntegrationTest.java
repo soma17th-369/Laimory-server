@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 import com.laimory.server.timeline.CallbackTokens;
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -118,7 +119,7 @@ class TimelineCallbackTokenIntegrationTest {
     }
 
     private List<SourceItemDto> sources() {
-        return List.of(new SourceItemDto(0, DATE.atTime(9, 0), null, "s",
+        return List.of(new SourceItemDto(0, ItemType.PHOTO, DATE.atTime(9, 0), null, "s",
                 new PhotoPayload("content://p", 37.5, 127.0)));
     }
 
