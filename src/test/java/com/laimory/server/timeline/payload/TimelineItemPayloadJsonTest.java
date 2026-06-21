@@ -13,7 +13,6 @@ import org.junit.jupiter.api.Test;
  * - payload 직렬화엔 itemType이 전혀 없다(타입 정보 없는 raw JSON).
  * - SourceItemDto는 itemType을 payload 형제 필드(EXTERNAL_PROPERTY)로 받아 round-trip된다.
  * - 직렬화 시 itemType은 payload 밖 형제로 나간다(payload 안이 아님).
- * - {@link ItemTypes#typeOf}가 구체 타입을 올바른 ItemType으로 매핑한다.
  *
  * SourceItemDto.startAt(LocalDateTime) 때문에 JSR-310 모듈 등록이 필요하다(findAndRegisterModules).
  */
@@ -133,15 +132,5 @@ class TimelineItemPayloadJsonTest {
         assertThat(tree.has("itemType")).isTrue();
         assertThat(tree.get("itemType").asText()).isEqualTo("MOVEMENT");
         assertThat(tree.get("payload").has("itemType")).isFalse();
-    }
-
-    // --- ItemTypes.typeOf ---
-
-    @Test
-    void typeOf_mapsEveryConcretePayload() {
-        assertThat(ItemTypes.typeOf(new PhotoPayload("u", 1.0, 2.0))).isEqualTo(ItemType.PHOTO);
-        assertThat(ItemTypes.typeOf(new CalendarPayload("t", "c", "l"))).isEqualTo(ItemType.CALENDAR);
-        assertThat(ItemTypes.typeOf(new LocationPayload("p", "a", 1.0, 2.0))).isEqualTo(ItemType.LOCATION);
-        assertThat(ItemTypes.typeOf(new MovementPayload("f", "t", "m", "l"))).isEqualTo(ItemType.MOVEMENT);
     }
 }

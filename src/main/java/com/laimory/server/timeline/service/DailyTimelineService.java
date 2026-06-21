@@ -10,7 +10,6 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.payload.ItemTypes;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -78,7 +77,7 @@ public class DailyTimelineService {
                 SourceItemDto src = byItemId.get(itemId);
                 timelineItemService.save(
                         TimelineItem.of(savedEvent.getTimelineEventId(),
-                                ItemTypes.typeOf(src.payload()),
+                                src.itemType(),
                                 src.startAt(), src.endAt(),
                                 objectMapper.valueToTree(src.payload())));
             }

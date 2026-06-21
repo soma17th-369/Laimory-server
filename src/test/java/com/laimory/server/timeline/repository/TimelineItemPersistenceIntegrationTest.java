@@ -8,7 +8,6 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
-import com.laimory.server.timeline.payload.ItemTypes;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -65,7 +64,7 @@ class TimelineItemPersistenceIntegrationTest {
         MovementPayload movement = new MovementPayload("강남역", "성수역", "SUBWAY", "7호선");
         TimelineItem saved = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(),
-                        ItemTypes.typeOf(movement),
+                        ItemType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         objectMapper.valueToTree(movement)));
