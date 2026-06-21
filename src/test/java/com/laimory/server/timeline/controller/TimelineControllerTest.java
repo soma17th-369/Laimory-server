@@ -8,9 +8,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
+import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -90,5 +98,34 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/missing"))
                 .andExpect(status().isNotFound());
+    }
+
+    /**
+     * SUCCESS 폴링 응답의 직렬화 계약을 컨트롤러 레벨에서 고정한다(STAGE 0 lockstep):
+     * 새 이름(events/timelineEventId/timelineItemId)이 실제 JSON에 나오고, 옛 이름(cards/id)은 없어야 한다.
+     */
+    @Test
+    void pollDraftTask_success_serializesEventContract() throws Exception {
+        TimelineItemResponse item = new TimelineItemResponse(
+                10L, ItemType.PHOTO,
+                LocalDateTime.parse("2026-06-17T09:00:00"), null,
+                new PhotoPayload("u", 1.0, 2.0));
+        TimelineEventResponse event = new TimelineEventResponse(
+                1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
+                "title", "subtitle", "memo", List.of(item));
+        DailyTimelineResponse result = new DailyTimelineResponse(
+                LocalDate.parse("2026-06-17"), null, List.of(event));
+        when(timelineDraftTaskPollingService.poll(any(), eq("t-ok")))
+                .thenReturn(DraftTaskStatusResponse.success(result));
+
+        mockMvc.perform(get(TASKS + "/t-ok"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.result.events[0].timelineEventId").value(1))
+                .andExpect(jsonPath("$.result.events[0].items[0].timelineItemId").value(10))
+                .andExpect(jsonPath("$.result.events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.result.cards").doesNotExist())
+                .andExpect(jsonPath("$.result.events[0].id").doesNotExist())
+                .andExpect(jsonPath("$.result.events[0].items[0].id").doesNotExist());
     }
 }
