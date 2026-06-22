@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-public class CardSuggestionDispatcher {
+public class TimelineEventSuggestionDispatcher {
 
     public void dispatch(String taskId, String callbackToken) {
         // callbackToken은 의도적으로 로그에서 제외한다.

@@ -62,7 +62,7 @@ class TimelineCallbackTokenIntegrationTest {
     private StringRedisTemplate redis;
 
     @MockitoSpyBean
-    private CardSuggestionDispatcher dispatcher;
+    private TimelineEventSuggestionDispatcher dispatcher;
 
     private static final String VERSION = "v1";
     private static final String ZONE = "Asia/Seoul";
