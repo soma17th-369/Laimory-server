@@ -54,7 +54,7 @@ class TimelineItemPersistenceIntegrationTest {
 
     @Test
     void persistsAndReloadsTypedPayloadFromJsonColumn() throws Exception {
-        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8)));
+        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(),
                         LocalDateTime.of(2026, 5, 8, 8, 30),
@@ -81,7 +81,7 @@ class TimelineItemPersistenceIntegrationTest {
 
     @Test
     void persistsAndReloadsAllPayloadSubtypes() throws Exception {
-        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9)));
+        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 

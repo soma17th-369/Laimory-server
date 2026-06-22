@@ -26,12 +26,14 @@ public class TimelineTaskService {
                 TimelineDraftTask.processing(recordDate, callbackTokenHash), PROCESSING_TTL);
     }
 
-    public void markSuccess(String taskId, LocalDate recordDate) {
-        timelineTaskStore.save(taskId, TimelineDraftTask.success(recordDate), TERMINAL_TTL);
+    public void markSuccess(String taskId, LocalDate recordDate, String callbackTokenHash) {
+        timelineTaskStore.save(taskId,
+                TimelineDraftTask.success(recordDate, callbackTokenHash), TERMINAL_TTL);
     }
 
-    public void markFailed(String taskId, LocalDate recordDate, String error) {
-        timelineTaskStore.save(taskId, TimelineDraftTask.failed(recordDate, error), TERMINAL_TTL);
+    public void markFailed(String taskId, LocalDate recordDate, String error, String callbackTokenHash) {
+        timelineTaskStore.save(taskId,
+                TimelineDraftTask.failed(recordDate, error, callbackTokenHash), TERMINAL_TTL);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {

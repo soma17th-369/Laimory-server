@@ -39,7 +39,8 @@ class TimelineControllerTest {
 
     private static final String CREATE_BODY = """
             {
-              "recordDate": "2026-06-17",
+              "recordAnchorAt": "2026-06-17T12:00:00",
+              "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
                 {"itemId": 0, "itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
                  "payload": {"photoUri": "u", "latitude": 1.0, "longitude": 2.0}}
@@ -59,7 +60,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -68,7 +69,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -77,7 +78,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT, "daily record already SAVED: 1"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))

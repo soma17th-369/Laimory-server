@@ -1,27 +1,25 @@
 package com.laimory.server.timeline.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.DailyRecordStatus;
-import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
-import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 하루 타임라인 오케스트레이터. 3개 leaf 서비스를 합성한다(레포 직접 접근 금지).
+ * 하루 타임라인 오케스트레이터. leaf 서비스 + 검증기를 합성한다(레포 직접 접근 금지).
  *
  * <p>쓰기(appendDailyTimeline)와 읽기(getDailyTimeline)는 같은 애그리거트(하루 타임라인)를 다루므로 한 서비스에 둔다.
  * 트랜잭션 경계는 메서드별로 지정한다(쓰기 vs readOnly). 읽기/쓰기가 서로 다른 이유로 갈라지면 그때 분리한다.
@@ -33,55 +31,59 @@ public class DailyTimelineService {
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
     private final TimelineItemService timelineItemService;
-    private final ObjectMapper objectMapper;
+    private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineEventSuggestionValidator timelineEventSuggestionValidator;
 
     /**
-     * daily record(없으면 DRAFT 생성, 있으면 재사용)에 카드 제안과 채택된 source item을 저장한다.
-     * 빈 카드·byItemId에 없는 itemId 검증을 record 생성(findOrCreateDraft) 전에 수행한다 —
-     * findOrCreateDraft가 REQUIRES_NEW로 record를 별도 커밋하므로, 생성 후 검증이 실패하면 바깥 트랜잭션이
-     * 롤백돼도 빈 DRAFT record가 고아로 남기 때문이다. SAVED 상태(async race: POST 체크 이후 SAVED 전환)는
-     * record 조회 후 가드한다(found된 기존 record에만 해당돼 고아를 만들지 않음).
-     * 그 외 상세 검증(시간 범위 등)은 상위(caller) validator 책임이다.
-     * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다.
+     * 콜백 SUCCESS의 단일 finalize 트랜잭션 단위(all-or-nothing): events 검증 → daily record(없으면 DRAFT 생성)
+     * → timeline_events/timeline_items 저장 → 소비한 draft 행 삭제. 어느 단계가 실패해도 전부 롤백된다.
+     *
+     * <p>이 메서드가 {@code @Transactional} 경계다 — 콜백 서비스는 별도 빈인 이 메서드를 Spring 프록시를 통해 호출해야
+     * 트랜잭션이 활성화된다(같은 클래스 self-invocation이면 AOP를 안 거쳐 트랜잭션이 조용히 무효화됨).
+     * {@code findOrCreateDraft}가 {@code REQUIRED}라 record 생성도 이 트랜잭션에 합류 → 롤백 시 record까지 사라진다.
+     *
+     * <p>아이템은 draft 행에서 그대로 복사한다(itemType/start/end/payload). payload는 이미 JsonNode이므로 재변환·ObjectMapper 없음.
+     * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다(draft 행에만 남고 finalize에서 옮기지 않음).
      */
     @Transactional
     public Long appendDailyTimeline(Long userId, LocalDate recordDate,
-                        List<SourceItemDto> sourceItems, List<CardSuggestionDto> cards) {
-        // 1. 입력 검증을 record 생성 전에 끝낸다(아래 영속 단계 전 DB 쓰기 없음). 잘못된 콜백이 고아 DRAFT를 남기지 않도록.
-        Map<Integer, SourceItemDto> byItemId = sourceItems.stream()
-                .collect(Collectors.toMap(SourceItemDto::itemId, Function.identity()));
-        for (CardSuggestionDto cardDto : cards) {
-            if (cardDto.itemIds() == null || cardDto.itemIds().isEmpty()) {
-                throw new IllegalArgumentException("card has no itemIds: " + cardDto.title());
-            }
-            for (Integer itemId : cardDto.itemIds()) {
-                if (!byItemId.containsKey(itemId)) {
-                    throw new IllegalArgumentException("unknown itemId in card: " + itemId);
-                }
-            }
+                                    List<TimelineDraftSourceItem> draftRows,
+                                    List<TimelineEventSuggestionDto> events) {
+        // 1. 검증을 record 생성 전에 끝낸다(아래 영속 단계 전 DB 쓰기 없음). 위반은 IAE로 던져 트랜잭션 롤백 + 콜백이 FAILED 기록.
+        timelineEventSuggestionValidator.validate(draftRows, events);
+
+        Map<Integer, TimelineDraftSourceItem> byItemId = new HashMap<>();
+        for (TimelineDraftSourceItem row : draftRows) {
+            byItemId.put(row.getRequestItemId(), row);
         }
 
-        // 2. 검증 통과 후 record 생성/조회 + SAVED 가드.
-        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate);
+        // 모든 draft 행이 같은 record_timezone을 공유한다(POST에서 한 zone으로 저장).
+        String recordTimezone = draftRows.get(0).getRecordTimezone();
+
+        // 2. record 생성/조회 + SAVED 가드.
+        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordTimezone);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
             throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());
         }
         Long dailyRecordId = dailyRecord.getDailyRecordId();
 
-        // 3. 영속(검증 완료된 입력만 도달). 여기서 남는 실패는 이벤트/아이템 insert의 DB 장애뿐.
-        for (CardSuggestionDto cardDto : cards) {
+        // 3. 영속(검증 완료된 입력만 도달). 아이템은 draft 행에서 그대로 복사.
+        for (TimelineEventSuggestionDto event : events) {
             TimelineEvent savedEvent = timelineEventService.save(
-                    TimelineEvent.of(dailyRecordId, cardDto.startAt(), cardDto.endAt(),
-                            cardDto.title(), cardDto.subtitle()));
-            for (Integer itemId : cardDto.itemIds()) {
-                SourceItemDto src = byItemId.get(itemId);
+                    TimelineEvent.of(dailyRecordId, event.startAt(), event.endAt(),
+                            event.title(), event.subtitle()));
+            for (Integer itemId : event.itemIds()) {
+                TimelineDraftSourceItem src = byItemId.get(itemId);
                 timelineItemService.save(
                         TimelineItem.of(savedEvent.getTimelineEventId(),
-                                src.itemType(),
-                                src.startAt(), src.endAt(),
-                                objectMapper.valueToTree(src.payload())));
+                                src.getItemType(),
+                                src.getStartAt(), src.getEndAt(),
+                                src.getPayload()));
             }
         }
+
+        // 4. 소비한 draft 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다).
+        timelineDraftSourceItemService.deleteByTaskId(draftRows.get(0).getTaskId());
 
         return dailyRecordId;
     }
