@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.controller;
 
+import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
@@ -29,18 +30,18 @@ public class TimelineController {
     private final TimelineDraftTaskPollingService timelineDraftTaskPollingService;
 
     @PostMapping
-    public ResponseEntity<CreateDraftTaskResponse> createDraftTask(
+    public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @PathVariable String applicationVersion,
             @RequestBody CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
                 applicationVersion, request.recordAnchorAt(), request.recordTimeZone(), request.sourceItems());
-        return ResponseEntity.accepted().body(new CreateDraftTaskResponse(taskId));
+        return ResponseEntity.accepted().body(ApiResponse.success(new CreateDraftTaskResponse(taskId)));
     }
 
     @GetMapping("/{taskId}")
-    public ResponseEntity<DraftTaskStatusResponse> pollDraftTask(
+    public ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
             @PathVariable String applicationVersion,
             @PathVariable String taskId) {
-        return ResponseEntity.ok(timelineDraftTaskPollingService.poll(applicationVersion, taskId));
+        return ResponseEntity.ok(ApiResponse.success(timelineDraftTaskPollingService.poll(applicationVersion, taskId)));
     }
 }

@@ -64,7 +64,8 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.taskId").value("task-123"));
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.taskId").value("task-123"));
     }
 
     @Test
@@ -92,7 +93,8 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("PROCESSING"));
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("PROCESSING"));
     }
 
     @Test
@@ -124,12 +126,13 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-ok"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.result.events[0].timelineEventId").value(1))
-                .andExpect(jsonPath("$.result.events[0].items[0].timelineItemId").value(10))
-                .andExpect(jsonPath("$.result.events[0].items[0].itemType").value("PHOTO"))
-                .andExpect(jsonPath("$.result.cards").doesNotExist())
-                .andExpect(jsonPath("$.result.events[0].id").doesNotExist())
-                .andExpect(jsonPath("$.result.events[0].items[0].id").doesNotExist());
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.result.cards").doesNotExist())
+                .andExpect(jsonPath("$.body.result.events[0].id").doesNotExist())
+                .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist());
     }
 }
