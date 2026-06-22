@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -53,5 +55,29 @@ class TimelineDraftCleanupSchedulerTest {
         assertThat(cutoffCaptor.getValue())
                 .isEqualTo(LocalDateTime.now(FIXED).minusDays(30))
                 .isEqualTo(LocalDateTime.of(2026, 5, 23, 3, 0));
+    }
+
+    // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 1h) ---
+
+    @Test
+    void validate_rejectsZeroOrNegativeRetention() {
+        for (long bad : new long[] {0L, -1L}) {
+            TimelineDraftCleanupScheduler scheduler =
+                    new TimelineDraftCleanupScheduler(timelineDraftSourceItemService, FIXED);
+            ReflectionTestUtils.setField(scheduler, "retentionDays", bad);
+
+            assertThatThrownBy(scheduler::validateRetentionDays)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("retention-days");
+        }
+    }
+
+    @Test
+    void validate_acceptsMinimumRetention() {
+        TimelineDraftCleanupScheduler scheduler =
+                new TimelineDraftCleanupScheduler(timelineDraftSourceItemService, FIXED);
+        ReflectionTestUtils.setField(scheduler, "retentionDays", 1L);
+
+        assertThatCode(scheduler::validateRetentionDays).doesNotThrowAnyException();
     }
 }
