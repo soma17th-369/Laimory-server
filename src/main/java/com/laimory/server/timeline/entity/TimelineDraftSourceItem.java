@@ -22,7 +22,6 @@ import org.hibernate.type.SqlTypes;
  * 콜백 finalize 시 이 행에서 그대로 복사해 timeline_items로 옮기고 삭제한다(해피패스). 미완료 행은 cleanup이 보관기간 후 purge.
  *
  * <p>타입은 item_type 컬럼이 권위다(payload 밖). payload는 타입 정보 없는 raw JSON({@link JsonNode})으로 보관한다.
- * request_item_id는 요청범위 인덱스(클라가 source item에 부여, DB id 아님). (task_id, request_item_id) 유일.
  */
 @Entity
 @Table(name = "timeline_draft_source_items")
@@ -46,9 +45,6 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "record_timezone", nullable = false)
     private String recordTimezone;
 
-    @Column(name = "request_item_id", nullable = false)
-    private Integer requestItemId;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "item_type", nullable = false, length = 32)
     private ItemType itemType;
@@ -70,13 +66,12 @@ public class TimelineDraftSourceItem extends BaseEntity {
     }
 
     private TimelineDraftSourceItem(String taskId, Long userId, LocalDate recordDate, String recordTimezone,
-                                    Integer requestItemId, ItemType itemType, LocalDateTime startAt,
+                                    ItemType itemType, LocalDateTime startAt,
                                     LocalDateTime endAt, String summary, JsonNode payload) {
         this.taskId = taskId;
         this.userId = userId;
         this.recordDate = recordDate;
         this.recordTimezone = recordTimezone;
-        this.requestItemId = requestItemId;
         this.itemType = itemType;
         this.startAt = startAt;
         this.endAt = endAt;
@@ -85,9 +80,9 @@ public class TimelineDraftSourceItem extends BaseEntity {
     }
 
     public static TimelineDraftSourceItem of(String taskId, Long userId, LocalDate recordDate, String recordTimezone,
-                                             Integer requestItemId, ItemType itemType, LocalDateTime startAt,
+                                             ItemType itemType, LocalDateTime startAt,
                                              LocalDateTime endAt, String summary, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, recordDate, recordTimezone, requestItemId, itemType,
+        return new TimelineDraftSourceItem(taskId, userId, recordDate, recordTimezone, itemType,
                 startAt, endAt, summary, payload);
     }
 }

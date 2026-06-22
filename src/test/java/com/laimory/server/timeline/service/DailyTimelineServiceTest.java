@@ -60,15 +60,19 @@ class DailyTimelineServiceTest {
     private static final String ZONE = "Asia/Seoul";
     private static final String TASK_ID = "task-1";
 
-    private TimelineDraftSourceItem photoRow(int itemId, LocalDateTime startAt) {
-        return TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, itemId, ItemType.PHOTO,
-                startAt, null, "summary-" + itemId, MAPPER.valueToTree(new PhotoPayload("uri" + itemId, 1.0, 2.0)));
+    private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, ItemType.PHOTO,
+                startAt, null, "summary-" + pk, MAPPER.valueToTree(new PhotoPayload("uri" + pk, 1.0, 2.0)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
+        return row;
     }
 
-    private TimelineDraftSourceItem locationRow(int itemId, LocalDateTime startAt) {
-        return TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, itemId, ItemType.LOCATION,
-                startAt, null, "summary-" + itemId,
+    private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, ItemType.LOCATION,
+                startAt, null, "summary-" + pk,
                 MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
+        return row;
     }
 
     // --- appendDailyTimeline (finalize) ---
@@ -81,9 +85,9 @@ class DailyTimelineServiceTest {
         stubEventSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
-        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(0, t));
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
+                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(10L)));
 
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, draftRows, events);
 
@@ -97,7 +101,7 @@ class DailyTimelineServiceTest {
         TimelineItem saved = itemCaptor.getValue();
         assertThat(saved.getItemType()).isEqualTo(ItemType.PHOTO);
         assertThat(saved.getStartAt()).isEqualTo(t);
-        assertThat(saved.getPayload().get("photoUri").asText()).isEqualTo("uri0");
+        assertThat(saved.getPayload().get("photoUri").asText()).isEqualTo("uri10");
 
         // 소비한 draft 행을 taskId로 삭제한다(같은 트랜잭션).
         verify(timelineDraftSourceItemService).deleteByTaskId(TASK_ID);
@@ -112,13 +116,13 @@ class DailyTimelineServiceTest {
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 8, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(
-                photoRow(0, t),
-                locationRow(1, t.plusHours(1)),
-                photoRow(2, t.plusHours(2)));
-        // 이벤트 A: item 0,2 / 이벤트 B: item 1
+                photoRow(10, t),
+                locationRow(11, t.plusHours(1)),
+                photoRow(12, t.plusHours(2)));
+        // 이벤트 A: item PK 10,12 / 이벤트 B: item PK 11
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("A", "subA", t, t.plusHours(2), List.of(0, 2)),
-                new TimelineEventSuggestionDto("B", "subB", t.plusHours(1), null, List.of(1)));
+                new TimelineEventSuggestionDto("A", "subA", t, t.plusHours(2), List.of(10L, 12L)),
+                new TimelineEventSuggestionDto("B", "subB", t.plusHours(1), null, List.of(11L)));
 
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, draftRows, events);
 
@@ -146,9 +150,9 @@ class DailyTimelineServiceTest {
         when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, ZONE)).thenReturn(saved);
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
-        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(0, t));
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
+                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(10L)));
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, draftRows, events))
                 .isInstanceOf(IllegalStateException.class);
@@ -164,9 +168,9 @@ class DailyTimelineServiceTest {
                 .when(timelineEventSuggestionValidator).validate(any(), any());
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
-        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(0, t));
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(1)));
+                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(99L)));
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class);

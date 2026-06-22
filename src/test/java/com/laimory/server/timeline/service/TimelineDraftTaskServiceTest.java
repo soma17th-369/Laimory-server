@@ -65,7 +65,7 @@ class TimelineDraftTaskServiceTest {
     }
 
     private List<SourceItemDto> oneSource() {
-        return List.of(new SourceItemDto(0, ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
+        return List.of(new SourceItemDto(ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
                 new PhotoPayload("u", 1.0, 2.0)));
     }
 
@@ -104,7 +104,6 @@ class TimelineDraftTaskServiceTest {
         assertThat(row.getUserId()).isEqualTo(0L);
         assertThat(row.getRecordDate()).isEqualTo(DATE);
         assertThat(row.getRecordTimezone()).isEqualTo(ZONE);
-        assertThat(row.getRequestItemId()).isEqualTo(0);
         assertThat(row.getItemType()).isEqualTo(ItemType.PHOTO);
         assertThat(row.getStartAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
         assertThat(row.getSummary()).isEqualTo("s");
@@ -211,26 +210,9 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_rejectsNullSourceItemId() {
-        List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, ItemType.PHOTO, null, null, "s", new PhotoPayload("u", 1.0, 2.0)));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void createDraftTask_rejectsDuplicateSourceItemId() {
-        List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, ItemType.PHOTO, null, null, "s", new PhotoPayload("u", 1.0, 2.0)),
-                new SourceItemDto(0, ItemType.PHOTO, null, null, "s2", new PhotoPayload("v", 3.0, 4.0)));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, null, null, null, "s", new PhotoPayload("u", 1.0, 2.0)));
+                new SourceItemDto(null, null, null, "s", new PhotoPayload("u", 1.0, 2.0)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -238,7 +220,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullPayload() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, ItemType.PHOTO, null, null, "s", null));
+                new SourceItemDto(ItemType.PHOTO, null, null, "s", null));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }

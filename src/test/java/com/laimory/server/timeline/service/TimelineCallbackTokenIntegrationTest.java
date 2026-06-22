@@ -13,6 +13,7 @@ import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
+import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
@@ -105,8 +106,12 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(stored.callbackTokenHash()).isNotNull().isNotEqualTo(token);
         assertThat(CallbackTokens.matches(token, stored.callbackTokenHash())).isTrue();
 
+        // 저장된 draft 행의 PK를 모아 콜백 itemIds로 쓴다(콜백은 PK로 source item을 참조한다).
+        List<Long> pks = draftSourceItemService.findByTaskId(taskId).stream()
+                .map(TimelineDraftSourceItem::getTimelineDraftSourceItemId).toList();
+
         // 유효 토큰으로 콜백 → SUCCESS + MySQL 영속 + draft 삭제.
-        callbackService.handleCallback(VERSION, taskId, token, successCallback());
+        callbackService.handleCallback(VERSION, taskId, token, successCallback(pks));
 
         DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
@@ -119,7 +124,7 @@ class TimelineCallbackTokenIntegrationTest {
                 .isEqualTo(stored.callbackTokenHash());
 
         // 재콜백(같은 토큰) → 멱등(중복 이벤트 없음).
-        callbackService.handleCallback(VERSION, taskId, token, successCallback());
+        callbackService.handleCallback(VERSION, taskId, token, successCallback(pks));
         DraftTaskStatusResponse afterReplay = pollingService.poll(VERSION, taskId);
         assertThat(afterReplay.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(afterReplay.result().events()).hasSameSizeAs(status.result().events());
@@ -130,7 +135,7 @@ class TimelineCallbackTokenIntegrationTest {
         String taskId = draftTaskService.createDraftTask(VERSION, ANCHOR, ZONE, sources());
         createdTaskIds.add(taskId);
 
-        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", successCallback()))
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", successCallback(List.of(1L))))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
 
@@ -141,13 +146,13 @@ class TimelineCallbackTokenIntegrationTest {
     }
 
     private List<SourceItemDto> sources() {
-        return List.of(new SourceItemDto(0, ItemType.PHOTO, DATE.atTime(9, 0), null, "s",
+        return List.of(new SourceItemDto(ItemType.PHOTO, DATE.atTime(9, 0), null, "s",
                 new PhotoPayload("content://p", 37.5, 127.0)));
     }
 
-    private DraftTaskCallbackRequest successCallback() {
+    private DraftTaskCallbackRequest successCallback(List<Long> itemIds) {
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", null, DATE.atTime(9, 0), null, List.of(0)));
+                new TimelineEventSuggestionDto("아침", null, DATE.atTime(9, 0), null, itemIds));
         return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, events);
     }
 }
