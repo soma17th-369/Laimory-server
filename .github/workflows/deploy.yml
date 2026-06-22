@@ -8,6 +8,12 @@ permissions:
   id-token: write      # OIDC 필수
   contents: read
 
+# dev 배포 직렬화: 동시 실행 시 옛 SHA가 최신을 덮는 레이스 차단.
+# cancel-in-progress=false → 진행 중 배포는 끊지 않고 큐잉(최신이 마지막에 실행되어 승리).
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: laimory
@@ -44,17 +50,22 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          cat > params.json <<EOF
-          { "commands": [
-            "set -e",
-            "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}",
-            "docker pull ${IMG}",
-            "docker stop laimory 2>/dev/null || true",
-            "docker rm laimory 2>/dev/null || true",
-            "docker run -d --name laimory --restart always -p 8080:8080 --env-file /home/ubuntu/app/.env ${IMG}",
-            "docker image prune -f"
-          ] }
+          # 원격 배포 스크립트: docker run 뒤 /status 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
+          # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
+          read -r -d '' SCRIPT <<EOF || true
+          set -e
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
+          docker pull ${IMG}
+          docker stop laimory 2>/dev/null || true
+          docker rm laimory 2>/dev/null || true
+          docker run -d --name laimory --restart always -p 8080:8080 --env-file /home/ubuntu/app/.env ${IMG}
+          echo "waiting for /status ..."
+          ok=0
+          for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/status >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
+          if [ "\$ok" != "1" ]; then echo "HEALTH CHECK FAILED"; docker logs --tail 80 laimory 2>&1 || true; exit 1; fi
+          docker image prune -f
           EOF
+          jq -n --arg s "$SCRIPT" '{commands: [$s]}' > params.json
           CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
