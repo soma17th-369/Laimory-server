@@ -1,5 +1,6 @@
 package com.laimory.server.appconfig;
 
+import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +17,7 @@ public class AppConfigController {
     private final AppConfigService appConfigService;
 
     @GetMapping("/intro")
-    public ResponseEntity<AppConfigResponse> intro(@PathVariable String applicationVersion) {
-        return ResponseEntity.ok(appConfigService.getAppConfig(applicationVersion));
+    public ResponseEntity<ApiResponse<AppConfigResponse>> intro(@PathVariable String applicationVersion) {
+        return ResponseEntity.ok(ApiResponse.success(appConfigService.getAppConfig(applicationVersion)));
     }
 }

@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.controller;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -64,7 +65,8 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.taskId").value("task-123"));
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.taskId").value("task-123"));
     }
 
     @Test
@@ -92,7 +94,25 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("PROCESSING"));
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("PROCESSING"));
+    }
+
+    /**
+     * FAILED 폴링도 에러가 아니라 성공 envelope다: HTTP 200 + header.code=COMMON_0000, 실제 상태는 body.status.
+     * (FAILED를 별도 에러 응답으로 매핑하는 회귀 방지 — error는 body.error에, result는 null.)
+     */
+    @Test
+    void pollDraftTask_failed_returns200WithEnvelope() throws Exception {
+        when(timelineDraftTaskPollingService.poll(any(), eq("t-failed")))
+                .thenReturn(DraftTaskStatusResponse.failed("ai timeout"));
+
+        mockMvc.perform(get(TASKS + "/t-failed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("FAILED"))
+                .andExpect(jsonPath("$.body.error").value("ai timeout"))
+                .andExpect(jsonPath("$.body.result").value(nullValue()));
     }
 
     @Test
@@ -124,12 +144,13 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-ok"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.result.events[0].timelineEventId").value(1))
-                .andExpect(jsonPath("$.result.events[0].items[0].timelineItemId").value(10))
-                .andExpect(jsonPath("$.result.events[0].items[0].itemType").value("PHOTO"))
-                .andExpect(jsonPath("$.result.cards").doesNotExist())
-                .andExpect(jsonPath("$.result.events[0].id").doesNotExist())
-                .andExpect(jsonPath("$.result.events[0].items[0].id").doesNotExist());
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.result.cards").doesNotExist())
+                .andExpect(jsonPath("$.body.result.events[0].id").doesNotExist())
+                .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist());
     }
 }
