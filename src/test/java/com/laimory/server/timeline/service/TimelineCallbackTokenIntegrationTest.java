@@ -16,8 +16,8 @@ import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
-import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -68,7 +68,7 @@ class TimelineCallbackTokenIntegrationTest {
     private static final String ZONE = "Asia/Seoul";
     // 다른 데이터와 충돌하지 않을 고정 날짜. anchor는 local 12:00(정오 경계상 당일=2000-01-01).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
-    private static final Instant ANCHOR = Instant.parse("2000-01-01T03:00:00Z"); // KST 12:00
+    private static final LocalDateTime ANCHOR = LocalDateTime.of(2000, 1, 1, 12, 0); // 정오 → 당일(2000-01-01)
 
     private final List<String> createdTaskIds = new ArrayList<>();
 

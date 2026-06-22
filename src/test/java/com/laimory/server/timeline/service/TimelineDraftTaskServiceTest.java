@@ -53,8 +53,8 @@ class TimelineDraftTaskServiceTest {
 
     private static final String VERSION = "v1";
     private static final String ZONE = "Asia/Seoul";
-    // 2026-06-17T03:00:00Z = local(Asia/Seoul) 2026-06-17T12:00 → 정오 경계상 당일(6/17).
-    private static final Instant ANCHOR = Instant.parse("2026-06-17T03:00:00Z");
+    // 벽시계 정오(12:00) → 정오 경계상 당일(6/17).
+    private static final LocalDateTime ANCHOR = LocalDateTime.of(2026, 6, 17, 12, 0);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
 
     @BeforeEach

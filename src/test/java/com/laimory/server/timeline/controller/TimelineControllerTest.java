@@ -39,7 +39,7 @@ class TimelineControllerTest {
 
     private static final String CREATE_BODY = """
             {
-              "recordAnchorAt": "2026-06-17T03:00:00Z",
+              "recordAnchorAt": "2026-06-17T12:00:00",
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
                 {"itemId": 0, "itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",

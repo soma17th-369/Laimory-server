@@ -7,7 +7,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -41,7 +41,7 @@ public class TimelineDraftTaskService {
      * 이미 SAVED인 daily record면 409(ResponseStatusException)로 거절한다.
      * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
      */
-    public String createDraftTask(String applicationVersion, Instant recordAnchorAt, String recordTimeZone,
+    public String createDraftTask(String applicationVersion, LocalDateTime recordAnchorAt, String recordTimeZone,
                                   List<SourceItemDto> sourceItems) {
         if (recordAnchorAt == null) {
             throw new IllegalArgumentException("recordAnchorAt is required");
@@ -53,8 +53,9 @@ public class TimelineDraftTaskService {
             throw new IllegalArgumentException("sourceItems is required");
         }
 
-        // 잘못된 zone은 RecordDates가 IllegalArgumentException으로 래핑해 400 처리된다.
-        LocalDate recordDate = RecordDates.resolveRecordDate(recordAnchorAt, recordTimeZone);
+        // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400). 날짜는 anchor 벽시계의 정오 경계로 산출(zone 불필요).
+        RecordDates.requireValidTimeZone(recordTimeZone);
+        LocalDate recordDate = RecordDates.resolveRecordDate(recordAnchorAt);
 
         dailyRecordService.findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate)
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
