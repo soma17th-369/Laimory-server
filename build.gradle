@@ -30,6 +30,9 @@ dependencies {
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+// 멀티스테이지 Docker 빌드에서 실행 가능한 bootJar 하나만 산출되도록 plain jar 비활성화
+tasks.named('jar') { enabled = false }
+
 tasks.named('test') {
 	useJUnitPlatform {
 		excludeTags 'integration'
