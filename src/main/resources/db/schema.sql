@@ -60,3 +60,26 @@ CREATE TABLE IF NOT EXISTS timeline_items (
     CONSTRAINT fk_timeline_items_event
         FOREIGN KEY (timeline_event_id) REFERENCES timeline_events (timeline_event_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI draft 작업의 원본 source item(app↔AI 데이터 교환 경유). 콜백 finalize 시 timeline_items로 옮기고 삭제.
+CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
+    timeline_draft_source_item_id BIGINT NOT NULL AUTO_INCREMENT,
+    task_id VARCHAR(36) NOT NULL,
+    user_id BIGINT NOT NULL,
+    record_date DATE NOT NULL,
+    record_timezone VARCHAR(64) NOT NULL,
+    request_item_id INT NOT NULL,                    -- 요청범위 인덱스(클라 부여). DB id 아님
+    item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
+    start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
+    end_at DATETIME NULL,
+    summary TEXT NULL,
+    payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by_type VARCHAR(32) NOT NULL,
+    PRIMARY KEY (timeline_draft_source_item_id),
+    UNIQUE KEY uq_draft_source_item (task_id, request_item_id),
+    KEY idx_draft_source_task (task_id),
+    KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
