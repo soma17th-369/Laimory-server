@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.laimory.server.common.BaseEntity;
 import com.laimory.server.timeline.ItemType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -23,7 +24,7 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(name = "timeline_items")
 @Getter
-public class TimelineItem {
+public class TimelineItem extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

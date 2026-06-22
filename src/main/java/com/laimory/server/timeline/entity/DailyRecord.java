@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.entity;
 
+import com.laimory.server.common.BaseEntity;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import jakarta.persistence.Column;
@@ -19,7 +20,7 @@ import lombok.Getter;
 @Entity
 @Table(name = "daily_records")
 @Getter
-public class DailyRecord {
+public class DailyRecord extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
