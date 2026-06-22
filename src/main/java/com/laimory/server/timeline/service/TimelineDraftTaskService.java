@@ -9,7 +9,9 @@ import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -52,6 +54,7 @@ public class TimelineDraftTaskService {
         if (sourceItems == null || sourceItems.isEmpty()) {
             throw new IllegalArgumentException("sourceItems is required");
         }
+        requireValidSourceItems(sourceItems);
 
         // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400). 날짜는 anchor 벽시계의 정오 경계로 산출(zone 불필요).
         RecordDates.requireValidTimeZone(recordTimeZone);
@@ -96,5 +99,24 @@ public class TimelineDraftTaskService {
         }
 
         return taskId;
+    }
+
+    /** row 생성·DB 제약(NOT NULL/unique) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지). */
+    private void requireValidSourceItems(List<SourceItemDto> sourceItems) {
+        Set<Integer> seenItemIds = new HashSet<>();
+        for (SourceItemDto src : sourceItems) {
+            if (src.itemId() == null) {
+                throw new IllegalArgumentException("sourceItem has null itemId");
+            }
+            if (!seenItemIds.add(src.itemId())) {
+                throw new IllegalArgumentException("duplicate sourceItem itemId: " + src.itemId());
+            }
+            if (src.itemType() == null) {
+                throw new IllegalArgumentException("sourceItem has null itemType: itemId=" + src.itemId());
+            }
+            if (src.payload() == null) {
+                throw new IllegalArgumentException("sourceItem has null payload: itemId=" + src.itemId());
+            }
+        }
     }
 }

@@ -39,6 +39,7 @@ public class TimelineCallbackService {
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final DailyTimelineService dailyTimelineService;
+    private final DailyRecordService dailyRecordService;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String callbackToken, DraftTaskCallbackRequest request) {
@@ -71,9 +72,17 @@ public class TimelineCallbackService {
         // 3. SUCCESS: draft 행을 DB에서 로드.
         List<TimelineDraftSourceItem> draftRows = timelineDraftSourceItemService.findByTaskId(taskId);
         if (draftRows.isEmpty()) {
-            // PROCESSING인데 draft 부재 = 이전 finalize가 이미 커밋·삭제한 상태(cleanup 불변식: 보관기간 ≫ TTL).
-            // 재작성 없이 Redis SUCCESS만 set(멱등 복구).
-            timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
+            // PROCESSING인데 draft 부재 = 보통 이전 finalize가 record 생성+draft 삭제를 커밋한 상태(멱등 복구).
+            // 단, record가 실제로 존재할 때만 SUCCESS를 확정한다 — record 없이 SUCCESS로 두면 polling이
+            // 'daily record missing for SUCCESS task' 500을 낸다(draft도 record도 없는 이상 상태). 없으면 FAILED로 종결.
+            boolean recordExists = dailyRecordService
+                    .findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate).isPresent();
+            if (recordExists) {
+                timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
+            } else {
+                timelineTaskService.markFailed(taskId, recordDate,
+                        "draft rows missing but no finalized daily record", callbackTokenHash);
+            }
             return;
         }
 

@@ -17,6 +17,7 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
+import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -43,6 +44,8 @@ class TimelineCallbackServiceTest {
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
     private DailyTimelineService dailyTimelineService;
+    @Mock
+    private DailyRecordService dailyRecordService;
 
     @InjectMocks
     private TimelineCallbackService service;
@@ -155,15 +158,31 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_success_draftAbsent_idempotentRecovery_marksSuccessWithoutFinalize() {
-        // PROCESSING인데 draft 부재 = 이전 finalize가 이미 커밋·삭제 → 재작성 없이 Redis SUCCESS만 set.
+    void handleCallback_success_draftAbsent_recordExists_idempotentRecovery_marksSuccess() {
+        // draft 부재 + record 존재 = 이전 finalize가 커밋·삭제한 상태 → 재작성 없이 Redis SUCCESS만 set.
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE))
+                .thenReturn(Optional.of(DailyRecord.createDraft(0L, DATE, "Asia/Seoul")));
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
+        verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void handleCallback_success_draftAbsent_recordMissing_marksFailed() {
+        // draft도 record도 없는 이상 상태 = SUCCESS로 두면 폴링이 500을 낸다 → FAILED로 종결한다.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
     }
 
     @Test
