@@ -69,7 +69,6 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     user_id BIGINT NOT NULL,
     record_date DATE NOT NULL,
     record_timezone VARCHAR(64) NOT NULL,
-    request_item_id INT NOT NULL,                    -- 요청범위 인덱스(클라 부여). DB id 아님
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
@@ -80,7 +79,6 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     updated_at DATETIME(6) NOT NULL,
     modified_by_type VARCHAR(32) NOT NULL,
     PRIMARY KEY (timeline_draft_source_item_id),
-    UNIQUE KEY uq_draft_source_item (task_id, request_item_id),
     KEY idx_draft_source_task (task_id),
     KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

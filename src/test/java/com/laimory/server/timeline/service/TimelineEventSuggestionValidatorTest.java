@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /** 콜백 events ↔ 저장행 정합 검증기 단위 테스트. title/startAt 필수, itemIds 참조·유일 등. 인프라 0. */
 class TimelineEventSuggestionValidatorTest {
@@ -23,13 +24,15 @@ class TimelineEventSuggestionValidatorTest {
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private TimelineDraftSourceItem draftRow(int requestItemId) {
-        return TimelineDraftSourceItem.of("task-1", 0L, DATE, "Asia/Seoul", requestItemId, ItemType.PHOTO,
-                T, T.plusHours(1), "summary-" + requestItemId,
-                MAPPER.valueToTree(new PhotoPayload("uri-" + requestItemId, 1.0, 2.0)));
+    private TimelineDraftSourceItem draftRow(int id) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-1", 0L, DATE, "Asia/Seoul", ItemType.PHOTO,
+                T, T.plusHours(1), "summary-" + id,
+                MAPPER.valueToTree(new PhotoPayload("uri-" + id, 1.0, 2.0)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", (long) id);
+        return row;
     }
 
-    private TimelineEventSuggestionDto event(String title, List<Integer> itemIds) {
+    private TimelineEventSuggestionDto event(String title, List<Long> itemIds) {
         return new TimelineEventSuggestionDto(title, "subtitle", T, T.plusHours(2), itemIds);
     }
 
@@ -37,18 +40,18 @@ class TimelineEventSuggestionValidatorTest {
     void validate_passesForWellFormedPayload() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0), draftRow(1), draftRow(2));
         List<TimelineEventSuggestionDto> events = List.of(
-                event("아침", List.of(0, 2)),
-                event("점심", List.of(1)));
+                event("아침", List.of(0L, 2L)),
+                event("점심", List.of(1L)));
 
         assertThatCode(() -> validator.validate(draftRows, events)).doesNotThrowAnyException();
     }
 
-    // --- 이벤트 itemId는 저장행 request_item_id에 존재 ---
+    // --- 이벤트 itemId는 저장행 PK(timeline_draft_source_item_id)에 존재 ---
 
     @Test
     void validate_rejectsUnknownItemIdInEvent() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
-        List<TimelineEventSuggestionDto> events = List.of(event("아침", List.of(1)));
+        List<TimelineEventSuggestionDto> events = List.of(event("아침", List.of(1L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -58,7 +61,7 @@ class TimelineEventSuggestionValidatorTest {
     @Test
     void validate_rejectsNullItemIdInEvent() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
-        List<TimelineEventSuggestionDto> events = List.of(event("아침", Arrays.asList(0, null)));
+        List<TimelineEventSuggestionDto> events = List.of(event("아침", Arrays.asList(0L, null)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -71,8 +74,8 @@ class TimelineEventSuggestionValidatorTest {
     void validate_rejectsItemIdAssignedToMultipleEvents() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0), draftRow(1));
         List<TimelineEventSuggestionDto> events = List.of(
-                event("아침", List.of(0, 1)),
-                event("점심", List.of(1)));
+                event("아침", List.of(0L, 1L)),
+                event("점심", List.of(1L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -104,7 +107,7 @@ class TimelineEventSuggestionValidatorTest {
     @Test
     void validate_rejectsBlankTitle() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
-        List<TimelineEventSuggestionDto> events = List.of(event("  ", List.of(0)));
+        List<TimelineEventSuggestionDto> events = List.of(event("  ", List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -114,7 +117,7 @@ class TimelineEventSuggestionValidatorTest {
     @Test
     void validate_rejectsNullTitle() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
-        List<TimelineEventSuggestionDto> events = List.of(event(null, List.of(0)));
+        List<TimelineEventSuggestionDto> events = List.of(event(null, List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -127,7 +130,7 @@ class TimelineEventSuggestionValidatorTest {
     void validate_rejectsNullEventStartAt() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", null, T.plusHours(1), List.of(0)));
+                new TimelineEventSuggestionDto("아침", "sub", null, T.plusHours(1), List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -140,7 +143,7 @@ class TimelineEventSuggestionValidatorTest {
     void validate_rejectsEventEndBeforeStart() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", T, T.minusHours(1), List.of(0)));
+                new TimelineEventSuggestionDto("아침", "sub", T, T.minusHours(1), List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -151,7 +154,7 @@ class TimelineEventSuggestionValidatorTest {
     void validate_allowsNullEndAt() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", T, null, List.of(0)));
+                new TimelineEventSuggestionDto("아침", "sub", T, null, List.of(0L)));
 
         assertThatCode(() -> validator.validate(draftRows, events)).doesNotThrowAnyException();
     }
@@ -161,8 +164,8 @@ class TimelineEventSuggestionValidatorTest {
     @Test
     void validate_allowsUnreferencedDraftRow() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0), draftRow(1), draftRow(2));
-        // requestItemId 2는 어떤 이벤트도 참조하지 않음 → 통과(미저장 대상).
-        List<TimelineEventSuggestionDto> events = List.of(event("아침", List.of(0, 1)));
+        // PK 2는 어떤 이벤트도 참조하지 않음 → 통과(미저장 대상).
+        List<TimelineEventSuggestionDto> events = List.of(event("아침", List.of(0L, 1L)));
 
         assertThatCode(() -> validator.validate(draftRows, events)).doesNotThrowAnyException();
     }

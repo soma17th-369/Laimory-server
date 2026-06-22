@@ -15,11 +15,9 @@ import java.time.LocalDateTime;
  *
  * <p>{@code itemType}은 payload 밖 형제 필드(external property)로 받는 타입 디스크리미네이터다. payload JSON엔 타입 정보가 없다.
  * {@code visible = true}라 itemType이 이 레코드 컴포넌트에도 바인딩된다.
- * {@code itemId}는 클라이언트가 부여한 요청 범위 인덱스(request item id)일 뿐 DB의 timeline_items.timeline_item_id가 아니다.
  * {@code summary}는 AI 입력 컨텍스트로만 쓰이며 DB에 저장하지 않는다.
  */
 public record SourceItemDto(
-        Integer itemId,
         ItemType itemType,
         LocalDateTime startAt,
         LocalDateTime endAt,

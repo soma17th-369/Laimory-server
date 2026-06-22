@@ -38,7 +38,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 소스 아이템 | Source Item | Android에서 받은 데이터를 서버가 AI 요청 전에 만든 임시 입력 데이터다. DB 엔티티가 아니다. |
-| 요청 아이템 ID | Request Item ID | AI 요청 배열에서 source item의 0-based index다. `timeline_draft_source_items.request_item_id`로 저장되며, DB PK인 `timeline_items.timeline_item_id`가 아니다. |
+| 소스 아이템 ID | Source Item ID | DB에 저장된 source item 행(`timeline_draft_source_items`)의 PK `timeline_draft_source_item_id`다. AI는 콜백의 `itemIds`에 이 값을 담아 어떤 source item을 이벤트에 넣을지 가리킨다. 클라가 부여하는 별도 요청 인덱스는 없다(POST는 순수 배열). |
 | 채택된 소스 아이템 | Accepted Source Item | AI가 이벤트의 `itemIds`에 포함한 source item이다. 이것만 Timeline Item으로 저장된다. |
 | 누락된 소스 아이템 | Omitted Source Item | AI가 어떤 이벤트에도 포함하지 않은 source item이다. MVP에서는 저장하지 않는다. |
 
@@ -57,7 +57,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 타임라인 이벤트 제안 | Timeline Event Suggestion | AI가 source items를 보고 반환하는 타임라인 이벤트 초안이다. |
-| 아이템 ID 목록 | Item IDs | AI가 이벤트에 포함하겠다고 반환한 request item id 목록이다. |
+| 아이템 ID 목록 | Item IDs | AI가 이벤트에 포함하겠다고 반환한 source item PK(`timeline_draft_source_item_id`) 목록이다. |
 | 타임라인 이벤트 제안 검증 | Timeline Event Suggestion Validation | 서버가 AI 응답의 `itemIds`, 시간 범위, 빈 이벤트 여부 등을 검증하는 과정이다. |
 
 ## 비동기 작성 작업

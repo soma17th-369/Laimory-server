@@ -43,7 +43,7 @@ class TimelineControllerTest {
               "recordAnchorAt": "2026-06-17T12:00:00",
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
-                {"itemId": 0, "itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
+                {"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
                  "payload": {"photoUri": "u", "latitude": 1.0, "longitude": 2.0}}
               ]
             }

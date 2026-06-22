@@ -52,9 +52,9 @@ public class DailyTimelineService {
         // 1. 검증을 record 생성 전에 끝낸다(아래 영속 단계 전 DB 쓰기 없음). 위반은 IAE로 던져 트랜잭션 롤백 + 콜백이 FAILED 기록.
         timelineEventSuggestionValidator.validate(draftRows, events);
 
-        Map<Integer, TimelineDraftSourceItem> byItemId = new HashMap<>();
+        Map<Long, TimelineDraftSourceItem> byItemId = new HashMap<>();
         for (TimelineDraftSourceItem row : draftRows) {
-            byItemId.put(row.getRequestItemId(), row);
+            byItemId.put(row.getTimelineDraftSourceItemId(), row);
         }
 
         // 모든 draft 행이 같은 record_timezone을 공유한다(POST에서 한 zone으로 저장).
@@ -72,7 +72,7 @@ public class DailyTimelineService {
             TimelineEvent savedEvent = timelineEventService.save(
                     TimelineEvent.of(dailyRecordId, event.startAt(), event.endAt(),
                             event.title(), event.subtitle()));
-            for (Integer itemId : event.itemIds()) {
+            for (Long itemId : event.itemIds()) {
                 TimelineDraftSourceItem src = byItemId.get(itemId);
                 timelineItemService.save(
                         TimelineItem.of(savedEvent.getTimelineEventId(),

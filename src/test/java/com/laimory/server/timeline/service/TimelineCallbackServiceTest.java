@@ -32,6 +32,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 /** 콜백 오케스트레이터 단위 검증. 404·token-first(401)·멱등·draft 로드·커밋후-Redis·검증실패→FAILED. 인프라 0. */
@@ -61,14 +62,16 @@ class TimelineCallbackServiceTest {
 
     private DraftTaskCallbackRequest successRequest() {
         List<TimelineEventSuggestionDto> events = List.of(new TimelineEventSuggestionDto("제목", "부제",
-                LocalDateTime.of(2026, 6, 17, 9, 0), null, List.of(0)));
+                LocalDateTime.of(2026, 6, 17, 9, 0), null, List.of(0L)));
         return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, events);
     }
 
     private List<TimelineDraftSourceItem> draftRows() {
-        return List.of(TimelineDraftSourceItem.of("t", 0L, DATE, "Asia/Seoul", 0, ItemType.PHOTO,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, DATE, "Asia/Seoul", ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
-                MAPPER.valueToTree(new PhotoPayload("u", 1.0, 2.0))));
+                MAPPER.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 0L);
+        return List.of(row);
     }
 
     @Test

@@ -9,9 +9,7 @@ import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -76,7 +74,7 @@ public class TimelineDraftTaskService {
         List<TimelineDraftSourceItem> rows = sourceItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, TimelineDefaults.DEFAULT_USER_ID, recordDate, recordTimeZone,
-                        src.itemId(), src.itemType(), src.startAt(), src.endAt(), src.summary(),
+                        src.itemType(), src.startAt(), src.endAt(), src.summary(),
                         objectMapper.valueToTree(src.payload())))
                 .toList();
         timelineDraftSourceItemService.saveAll(rows);
@@ -101,21 +99,15 @@ public class TimelineDraftTaskService {
         return taskId;
     }
 
-    /** row 생성·DB 제약(NOT NULL/unique) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지). */
+    /** row 생성·DB 제약(NOT NULL) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지). */
     private void requireValidSourceItems(List<SourceItemDto> sourceItems) {
-        Set<Integer> seenItemIds = new HashSet<>();
-        for (SourceItemDto src : sourceItems) {
-            if (src.itemId() == null) {
-                throw new IllegalArgumentException("sourceItem has null itemId");
-            }
-            if (!seenItemIds.add(src.itemId())) {
-                throw new IllegalArgumentException("duplicate sourceItem itemId: " + src.itemId());
-            }
+        for (int i = 0; i < sourceItems.size(); i++) {
+            SourceItemDto src = sourceItems.get(i);
             if (src.itemType() == null) {
-                throw new IllegalArgumentException("sourceItem has null itemType: itemId=" + src.itemId());
+                throw new IllegalArgumentException("sourceItem has null itemType: index=" + i);
             }
             if (src.payload() == null) {
-                throw new IllegalArgumentException("sourceItem has null payload: itemId=" + src.itemId());
+                throw new IllegalArgumentException("sourceItem has null payload: index=" + i);
             }
         }
     }
