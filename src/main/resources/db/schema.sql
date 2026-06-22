@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS daily_records (
     record_date DATE NOT NULL,
     emotion_type VARCHAR(32) NULL,                  -- 별도 save(DRAFT->SAVED)에서 설정
     status VARCHAR(32) NOT NULL,                     -- DRAFT|SAVED
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by_type VARCHAR(32) NOT NULL,
     PRIMARY KEY (daily_record_id),
     UNIQUE KEY uq_daily_records_user_date (user_id, record_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -29,6 +33,10 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     title VARCHAR(255) NOT NULL,                     -- 검증에서 title 필수
     subtitle VARCHAR(255) NULL,
     memo TEXT NULL,
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by_type VARCHAR(32) NOT NULL,
     PRIMARY KEY (timeline_event_id),
     KEY idx_timeline_events_daily_record (daily_record_id),
     CONSTRAINT fk_timeline_events_daily_record
@@ -42,6 +50,10 @@ CREATE TABLE IF NOT EXISTS timeline_items (
     start_at DATETIME NULL,                           -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON. 검색 필요 시 generated column 후속 추가
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by_type VARCHAR(32) NOT NULL,
     PRIMARY KEY (timeline_item_id),
     KEY idx_timeline_items_event (timeline_event_id),
     KEY idx_timeline_items_type (item_type),

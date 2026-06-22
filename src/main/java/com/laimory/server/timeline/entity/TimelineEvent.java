@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.entity;
 
+import com.laimory.server.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -16,7 +17,7 @@ import lombok.Getter;
 @Entity
 @Table(name = "timeline_events")
 @Getter
-public class TimelineEvent {
+public class TimelineEvent extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
