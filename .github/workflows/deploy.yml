@@ -50,7 +50,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          # 원격 배포 스크립트: docker run 뒤 /status 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
+          # 원격 배포 스크립트: docker run 뒤 /api/v1/intro 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
           # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
           read -r -d '' SCRIPT <<EOF || true
           set -e
@@ -59,9 +59,9 @@ jobs:
           docker stop laimory 2>/dev/null || true
           docker rm laimory 2>/dev/null || true
           docker run -d --name laimory --restart always --network host --env-file /home/ubuntu/app/.env ${IMG}
-          echo "waiting for /status ..."
+          echo "waiting for /api/v1/intro ..."
           ok=0
-          for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/status >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
+          for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
           if [ "\$ok" != "1" ]; then echo "HEALTH CHECK FAILED"; docker logs --tail 80 laimory 2>&1 || true; exit 1; fi
           docker image prune -f
           EOF
