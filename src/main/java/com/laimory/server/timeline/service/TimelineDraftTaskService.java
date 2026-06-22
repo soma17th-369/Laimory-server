@@ -35,7 +35,7 @@ public class TimelineDraftTaskService {
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
-    private final CardSuggestionDispatcher cardSuggestionDispatcher;
+    private final TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
     private final ObjectMapper objectMapper;
 
     /**
@@ -92,10 +92,10 @@ public class TimelineDraftTaskService {
         // 3. AI dispatch. 동기 예외(RuntimeException)면 task를 FAILED로 고정하고 draft는 보존(cleanup이 나중에 정리).
         //    taskId는 정상 반환해 클라가 폴링으로 실패를 확인하게 한다.
         try {
-            cardSuggestionDispatcher.dispatch(taskId, callbackToken);
+            timelineEventSuggestionDispatcher.dispatch(taskId, callbackToken);
         } catch (RuntimeException e) {
             timelineTaskService.markFailed(taskId, recordDate,
-                    "card suggestion dispatch failed: " + e.getMessage(), callbackTokenHash);
+                    "timeline event suggestion dispatch failed: " + e.getMessage(), callbackTokenHash);
         }
 
         return taskId;

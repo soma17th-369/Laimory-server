@@ -47,7 +47,7 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
-    private CardSuggestionDispatcher cardSuggestionDispatcher;
+    private TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
 
     private TimelineDraftTaskService service;
 
@@ -61,7 +61,7 @@ class TimelineDraftTaskServiceTest {
     void setUp() {
         service = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftSourceItemService,
-                cardSuggestionDispatcher, new ObjectMapper());
+                timelineEventSuggestionDispatcher, new ObjectMapper());
     }
 
     private List<SourceItemDto> oneSource() {
@@ -79,13 +79,13 @@ class TimelineDraftTaskServiceTest {
         // recordDate가 anchor+zone에서 정오 경계로 도출돼 createProcessing에 전달된다.
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
         // dispatch는 2-arg(taskId, token) — sourceItems·callbackUrl 없음.
-        verify(cardSuggestionDispatcher).dispatch(eq(taskId), anyString());
+        verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
 
         // 순서 불변식: draft 저장 → Redis PROCESSING → dispatch.
-        InOrder order = inOrder(timelineDraftSourceItemService, timelineTaskService, cardSuggestionDispatcher);
+        InOrder order = inOrder(timelineDraftSourceItemService, timelineTaskService, timelineEventSuggestionDispatcher);
         order.verify(timelineDraftSourceItemService).saveAll(anyList());
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
-        order.verify(cardSuggestionDispatcher).dispatch(eq(taskId), anyString());
+        order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
     }
 
     @Test
@@ -123,7 +123,7 @@ class TimelineDraftTaskServiceTest {
         ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), hashCaptor.capture());
         ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
-        verify(cardSuggestionDispatcher).dispatch(eq(taskId), tokenCaptor.capture());
+        verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), tokenCaptor.capture());
 
         String storedHash = hashCaptor.getValue();
         String dispatchedToken = tokenCaptor.getValue();
@@ -156,7 +156,7 @@ class TimelineDraftTaskServiceTest {
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyString());
-        verify(cardSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
     }
 
     @Test
@@ -171,14 +171,14 @@ class TimelineDraftTaskServiceTest {
 
         // 보상 삭제: 방금 저장한 draft 행을 taskId로 지운다(고아 draft 방지). dispatch는 호출되지 않는다.
         verify(timelineDraftSourceItemService).deleteByTaskId(anyString());
-        verify(cardSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
     }
 
     @Test
     void createDraftTask_whenDispatchThrows_marksFailedKeepsDraftsAndReturnsTaskId() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("boom"))
-                .when(cardSuggestionDispatcher).dispatch(anyString(), anyString());
+                .when(timelineEventSuggestionDispatcher).dispatch(anyString(), anyString());
 
         // dispatch가 동기 예외를 던져도 taskId는 반환되고 task는 FAILED로 고정된다(고아 PROCESSING 방지).
         String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
