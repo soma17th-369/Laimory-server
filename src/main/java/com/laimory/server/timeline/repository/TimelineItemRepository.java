@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long> {
 
-    // 표시 순서 고정(DB 반환순 의존 제거): start_at, timeline_item_id 오름차순
+    // 표시 순서 고정(DB 반환순 의존 제거): start_at, timeline_item_id 오름차순.
+    // start_at은 nullable이며 정렬은 MySQL 기본(ASC NULLS-FIRST)을 그대로 사용 — null 위치는 보장하지 않는다.
     List<TimelineItem> findByTimelineEventIdOrderByStartAtAscTimelineItemIdAsc(Long timelineEventId);
 }

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.CallbackTokens;
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.CardSuggestionDto;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -51,7 +52,7 @@ class TimelineCallbackServiceTest {
     }
 
     private DraftTaskCallbackRequest successRequest() {
-        List<SourceItemDto> sources = List.of(new SourceItemDto(0,
+        List<SourceItemDto> sources = List.of(new SourceItemDto(0, ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "s", new PhotoPayload("u", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(new CardSuggestionDto("제목", "부제",
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, List.of(0)));

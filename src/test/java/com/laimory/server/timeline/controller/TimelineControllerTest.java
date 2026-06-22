@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -40,14 +41,16 @@ class TimelineControllerTest {
             {
               "recordDate": "2026-06-17",
               "sourceItems": [
-                {"itemId": 0, "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
-                 "payload": {"itemType": "PHOTO", "photoUri": "u", "latitude": 1.0, "longitude": 2.0}}
+                {"itemId": 0, "itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
+                 "payload": {"photoUri": "u", "latitude": 1.0, "longitude": 2.0}}
               ]
             }
             """;
 
     @Autowired
     private MockMvc mockMvc;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @MockitoBean
     private TimelineDraftTaskService timelineDraftTaskService;
@@ -109,7 +112,7 @@ class TimelineControllerTest {
         TimelineItemResponse item = new TimelineItemResponse(
                 10L, ItemType.PHOTO,
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                new PhotoPayload("u", 1.0, 2.0));
+                objectMapper.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));

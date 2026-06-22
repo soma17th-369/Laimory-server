@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -53,7 +54,7 @@ class TimelineDraftTaskServiceTest {
     }
 
     private List<SourceItemDto> oneSource() {
-        return List.of(new SourceItemDto(0, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
+        return List.of(new SourceItemDto(0, ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
                 new PhotoPayload("u", 1.0, 2.0)));
     }
 

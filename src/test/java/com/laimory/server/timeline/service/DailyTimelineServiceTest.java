@@ -19,6 +19,7 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.LocalDate;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -43,6 +45,9 @@ class DailyTimelineServiceTest {
     private TimelineEventService timelineEventService;
     @Mock
     private TimelineItemService timelineItemService;
+    // 실제 ObjectMapper. valueToTree가 실 동작해야 하므로 mock이 아닌 spy로 주입한다.
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     private DailyTimelineService dailyTimelineService;
@@ -61,7 +66,7 @@ class DailyTimelineServiceTest {
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
 
@@ -81,10 +86,10 @@ class DailyTimelineServiceTest {
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 8, 0);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, t, null, "s0", new PhotoPayload("uri0", 1.0, 2.0)),
-                new SourceItemDto(1, t.plusHours(1), null, "s1",
+                new SourceItemDto(0, ItemType.PHOTO, t, null, "s0", new PhotoPayload("uri0", 1.0, 2.0)),
+                new SourceItemDto(1, ItemType.LOCATION, t.plusHours(1), null, "s1",
                         new LocationPayload("place", "area", 3.0, 4.0)),
-                new SourceItemDto(2, t.plusHours(2), null, "s2", new PhotoPayload("uri2", 5.0, 6.0)));
+                new SourceItemDto(2, ItemType.PHOTO, t.plusHours(2), null, "s2", new PhotoPayload("uri2", 5.0, 6.0)));
         // 이벤트 A: item 0,2 / 이벤트 B: item 1
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("A", "subA", t, t.plusHours(2), List.of(0, 2)),
@@ -116,7 +121,7 @@ class DailyTimelineServiceTest {
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(0)));
 
@@ -130,7 +135,7 @@ class DailyTimelineServiceTest {
     void appendDailyTimeline_rejectsEmptyItemIds() {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of()));
 
@@ -145,7 +150,7 @@ class DailyTimelineServiceTest {
     void appendDailyTimeline_rejectsUnknownItemId() {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(0, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
+                new SourceItemDto(0, ItemType.PHOTO, t, null, "summary-0", new PhotoPayload("uri", 1.0, 2.0)));
         // 이벤트가 sourceItems에 없는 itemId 1을 참조한다.
         List<CardSuggestionDto> cards = List.of(
                 new CardSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(1)));
@@ -174,9 +179,10 @@ class DailyTimelineServiceTest {
 
         PhotoPayload photo = new PhotoPayload("uri", 1.0, 2.0);
         LocationPayload location = new LocationPayload("카페", "강남", 3.0, 4.0);
-        TimelineItem item0 = TimelineItem.of(11L, t, null, photo);
+        TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, t, null, objectMapper.valueToTree(photo));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
-        TimelineItem item1 = TimelineItem.of(11L, t.plusHours(1), t.plusHours(2), location);
+        TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, t.plusHours(1), t.plusHours(2),
+                objectMapper.valueToTree(location));
         ReflectionTestUtils.setField(item1, "timelineItemId", 22L);
         when(timelineItemService.findByTimelineEventId(11L)).thenReturn(List.of(item0, item1));
 
@@ -200,12 +206,14 @@ class DailyTimelineServiceTest {
         assertThat(itemResponse0.itemType()).isEqualTo(ItemType.PHOTO);
         assertThat(itemResponse0.startAt()).isEqualTo(t);
         assertThat(itemResponse0.endAt()).isNull();
-        assertThat(itemResponse0.payload()).isSameAs(photo);
+        // payload는 이제 raw JsonNode(타입 정보 없음).
+        assertThat(itemResponse0.payload().get("photoUri").asText()).isEqualTo("uri");
+        assertThat(itemResponse0.payload().has("itemType")).isFalse();
 
         TimelineItemResponse itemResponse1 = eventResponse.items().get(1);
         assertThat(itemResponse1.timelineItemId()).isEqualTo(22L);
         assertThat(itemResponse1.itemType()).isEqualTo(ItemType.LOCATION);
-        assertThat(itemResponse1.payload()).isSameAs(location);
+        assertThat(itemResponse1.payload().get("placeName").asText()).isEqualTo("카페");
     }
 
     @Test
