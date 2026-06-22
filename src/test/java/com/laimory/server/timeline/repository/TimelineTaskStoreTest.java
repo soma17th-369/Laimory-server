@@ -48,7 +48,7 @@ class TimelineTaskStoreTest {
     @Test
     void save_serializesWithKeyAndTtl() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
-        TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8));
+        TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), "token-hash");
 
         store.save("abc", task, Duration.ofHours(24));
 

@@ -105,7 +105,7 @@ class TimelineItemPayloadJsonTest {
         // 컨트롤러가 역직렬화하는 실제 요청 바디 형태: sourceItems 배열의 각 아이템에서
         // payload가 itemType보다 먼저 온다. 중첩 컨텍스트에서도 외부 프로퍼티 버퍼링이 동작해야 한다.
         String json = """
-                {"recordDate":"2026-05-08","sourceItems":[
+                {"recordAnchorAt":"2026-05-08T03:00:00Z","recordTimeZone":"Asia/Seoul","sourceItems":[
                   {"itemId":0,"startAt":null,"endAt":null,"summary":"s",
                    "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"},
                    "itemType":"MOVEMENT"}

@@ -33,7 +33,7 @@ public class TimelineController {
             @PathVariable String applicationVersion,
             @RequestBody CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
-                applicationVersion, request.recordDate(), request.sourceItems());
+                applicationVersion, request.recordAnchorAt(), request.recordTimeZone(), request.sourceItems());
         return ResponseEntity.accepted().body(new CreateDraftTaskResponse(taskId));
     }
 

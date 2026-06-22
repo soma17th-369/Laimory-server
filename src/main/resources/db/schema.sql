@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS daily_records (
     daily_record_id BIGINT NOT NULL AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
     record_date DATE NOT NULL,
+    record_timezone VARCHAR(64) NOT NULL,           -- record_date 계산에 쓴 zone(draft 행과 동일). reader가 wall-clock 해석용
     emotion_type VARCHAR(32) NULL,                  -- 별도 save(DRAFT->SAVED)에서 설정
     status VARCHAR(32) NOT NULL,                     -- DRAFT|SAVED
     -- 감사 컬럼 (BaseEntity)

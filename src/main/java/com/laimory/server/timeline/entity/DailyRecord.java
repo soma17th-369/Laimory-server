@@ -33,6 +33,9 @@ public class DailyRecord extends BaseEntity {
     @Column(nullable = false)
     private LocalDate recordDate;
 
+    @Column(name = "record_timezone", nullable = false, length = 64)
+    private String recordTimezone;
+
     @Enumerated(EnumType.STRING)
     @Column(length = 32)
     private EmotionType emotionType;
@@ -44,13 +47,14 @@ public class DailyRecord extends BaseEntity {
     protected DailyRecord() {
     }
 
-    private DailyRecord(Long userId, LocalDate recordDate, DailyRecordStatus status) {
+    private DailyRecord(Long userId, LocalDate recordDate, String recordTimezone, DailyRecordStatus status) {
         this.userId = userId;
         this.recordDate = recordDate;
+        this.recordTimezone = recordTimezone;
         this.status = status;
     }
 
-    public static DailyRecord createDraft(Long userId, LocalDate recordDate) {
-        return new DailyRecord(userId, recordDate, DailyRecordStatus.DRAFT);
+    public static DailyRecord createDraft(Long userId, LocalDate recordDate, String recordTimezone) {
+        return new DailyRecord(userId, recordDate, recordTimezone, DailyRecordStatus.DRAFT);
     }
 }

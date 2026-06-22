@@ -65,7 +65,7 @@ class TimelineCallbackControllerTest {
         mockMvc.perform(post(CALLBACK)
                         .header("Callback-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SUCCESS\",\"sourceItems\":[],\"cards\":[]}"))
+                        .content("{\"status\":\"SUCCESS\",\"events\":[]}"))
                 .andExpect(status().isNotFound());
     }
 }

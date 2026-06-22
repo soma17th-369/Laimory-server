@@ -33,7 +33,7 @@ class TimelineTaskStoreIntegrationTest {
     void savesAndFindsTaskFromRealRedis() {
         String taskId = "it-" + UUID.randomUUID();
         try {
-            TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8));
+            TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), "token-hash");
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
