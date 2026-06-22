@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.controller;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -95,6 +96,23 @@ class TimelineControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("PROCESSING"));
+    }
+
+    /**
+     * FAILED 폴링도 에러가 아니라 성공 envelope다: HTTP 200 + header.code=COMMON_0000, 실제 상태는 body.status.
+     * (FAILED를 별도 에러 응답으로 매핑하는 회귀 방지 — error는 body.error에, result는 null.)
+     */
+    @Test
+    void pollDraftTask_failed_returns200WithEnvelope() throws Exception {
+        when(timelineDraftTaskPollingService.poll(any(), eq("t-failed")))
+                .thenReturn(DraftTaskStatusResponse.failed("ai timeout"));
+
+        mockMvc.perform(get(TASKS + "/t-failed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.status").value("FAILED"))
+                .andExpect(jsonPath("$.body.error").value("ai timeout"))
+                .andExpect(jsonPath("$.body.result").value(nullValue()));
     }
 
     @Test
