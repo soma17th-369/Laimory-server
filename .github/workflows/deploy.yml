@@ -58,7 +58,7 @@ jobs:
           docker pull ${IMG}
           docker stop laimory 2>/dev/null || true
           docker rm laimory 2>/dev/null || true
-          docker run -d --name laimory --restart always -p 8080:8080 --env-file /home/ubuntu/app/.env ${IMG}
+          docker run -d --name laimory --restart always --network host --env-file /home/ubuntu/app/.env ${IMG}
           echo "waiting for /status ..."
           ok=0
           for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/status >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
