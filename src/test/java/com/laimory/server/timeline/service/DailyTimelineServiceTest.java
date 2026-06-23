@@ -57,18 +57,19 @@ class DailyTimelineServiceTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Long USER_ID = 7L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 6, 17);
+    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 6, 17, 12, 0);
     private static final String ZONE = "Asia/Seoul";
     private static final String TASK_ID = "task-1";
 
     private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, ItemType.PHOTO,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, RECORD_AT, ZONE, ItemType.PHOTO,
                 startAt, null, "summary-" + pk, MAPPER.valueToTree(new PhotoPayload("uri" + pk, 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
     }
 
     private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, ZONE, ItemType.LOCATION,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, RECORD_AT, ZONE, ItemType.LOCATION,
                 startAt, null, "summary-" + pk,
                 MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
@@ -79,9 +80,9 @@ class DailyTimelineServiceTest {
 
     @Test
     void appendDailyTimeline_reusesRecordAndCopiesFromDraftRowThenDeletesDrafts() {
-        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE, ZONE);
+        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
-        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, ZONE)).thenReturn(existing);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(existing);
         stubEventSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
@@ -109,9 +110,9 @@ class DailyTimelineServiceTest {
 
     @Test
     void appendDailyTimeline_createsDraftWhenAbsent_andMapsItemsToCorrectEventByItemId() {
-        DailyRecord created = DailyRecord.createDraft(USER_ID, RECORD_DATE, ZONE);
+        DailyRecord created = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
-        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, ZONE)).thenReturn(created);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(created);
         stubEventSaveWithSequentialIds();
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 8, 0);
@@ -144,10 +145,10 @@ class DailyTimelineServiceTest {
 
     @Test
     void appendDailyTimeline_rejectsSavedRecord() {
-        DailyRecord saved = DailyRecord.createDraft(USER_ID, RECORD_DATE, ZONE);
+        DailyRecord saved = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(saved, "dailyRecordId", 100L);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
-        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, ZONE)).thenReturn(saved);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(saved);
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
@@ -174,7 +175,7 @@ class DailyTimelineServiceTest {
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(dailyRecordService, never()).findOrCreateDraft(any(), any(), any());
+        verify(dailyRecordService, never()).findOrCreateDraft(any(), any(), any(), any());
         verify(timelineEventService, never()).save(any());
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
@@ -183,7 +184,7 @@ class DailyTimelineServiceTest {
 
     @Test
     void getDailyTimeline_assemblesRecordEventsAndItems() {
-        DailyRecord record = DailyRecord.createDraft(USER_ID, RECORD_DATE, ZONE);
+        DailyRecord record = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(record, "dailyRecordId", 300L);
         ReflectionTestUtils.setField(record, "emotionType", EmotionType.HAPPY);
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));

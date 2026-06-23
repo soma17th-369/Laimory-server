@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -38,9 +39,10 @@ public class DailyRecordService {
      * (이 메서드의 유일 caller는 finalize 경로다.)
      */
     @Transactional
-    public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, String recordTimezone) {
+    public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                         String recordTimezone) {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate)
                 .orElseGet(() -> dailyRecordRepository.save(
-                        DailyRecord.createDraft(userId, recordDate, recordTimezone)));
+                        DailyRecord.createDraft(userId, recordDate, recordAt, recordTimezone)));
     }
 }

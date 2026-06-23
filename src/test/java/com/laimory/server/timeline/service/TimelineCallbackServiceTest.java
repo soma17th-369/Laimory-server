@@ -67,7 +67,7 @@ class TimelineCallbackServiceTest {
     }
 
     private List<TimelineDraftSourceItem> draftRows() {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, DATE, "Asia/Seoul", ItemType.PHOTO,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, DATE, DATE.atTime(12, 0), "Asia/Seoul", ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
                 MAPPER.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 0L);
@@ -166,7 +166,7 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE))
-                .thenReturn(Optional.of(DailyRecord.createDraft(0L, DATE, "Asia/Seoul")));
+                .thenReturn(Optional.of(DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), "Asia/Seoul")));
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 

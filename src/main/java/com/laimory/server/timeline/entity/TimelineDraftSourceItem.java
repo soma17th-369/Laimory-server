@@ -42,6 +42,9 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "record_date", nullable = false)
     private LocalDate recordDate;
 
+    @Column(name = "record_at", nullable = false)
+    private LocalDateTime recordAt;
+
     @Column(name = "record_timezone", nullable = false)
     private String recordTimezone;
 
@@ -65,12 +68,13 @@ public class TimelineDraftSourceItem extends BaseEntity {
     protected TimelineDraftSourceItem() {
     }
 
-    private TimelineDraftSourceItem(String taskId, Long userId, LocalDate recordDate, String recordTimezone,
-                                    ItemType itemType, LocalDateTime startAt,
+    private TimelineDraftSourceItem(String taskId, Long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                    String recordTimezone, ItemType itemType, LocalDateTime startAt,
                                     LocalDateTime endAt, String summary, JsonNode payload) {
         this.taskId = taskId;
         this.userId = userId;
         this.recordDate = recordDate;
+        this.recordAt = recordAt;
         this.recordTimezone = recordTimezone;
         this.itemType = itemType;
         this.startAt = startAt;
@@ -79,10 +83,10 @@ public class TimelineDraftSourceItem extends BaseEntity {
         this.payload = payload;
     }
 
-    public static TimelineDraftSourceItem of(String taskId, Long userId, LocalDate recordDate, String recordTimezone,
-                                             ItemType itemType, LocalDateTime startAt,
+    public static TimelineDraftSourceItem of(String taskId, Long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                             String recordTimezone, ItemType itemType, LocalDateTime startAt,
                                              LocalDateTime endAt, String summary, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, recordDate, recordTimezone, itemType,
+        return new TimelineDraftSourceItem(taskId, userId, recordDate, recordAt, recordTimezone, itemType,
                 startAt, endAt, summary, payload);
     }
 }

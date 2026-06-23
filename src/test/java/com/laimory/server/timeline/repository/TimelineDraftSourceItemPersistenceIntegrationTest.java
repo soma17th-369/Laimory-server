@@ -48,6 +48,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                         taskId,
                         0L,
                         LocalDate.of(2026, 5, 8),
+                        LocalDateTime.of(2026, 5, 8, 12, 0),
                         "Asia/Seoul",
                         ItemType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
@@ -63,6 +64,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getTaskId()).isEqualTo(taskId);
         assertThat(reloaded.getUserId()).isEqualTo(0L);
         assertThat(reloaded.getRecordDate()).isEqualTo(LocalDate.of(2026, 5, 8));
+        assertThat(reloaded.getRecordAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 12, 0));
         assertThat(reloaded.getRecordTimezone()).isEqualTo("Asia/Seoul");
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));

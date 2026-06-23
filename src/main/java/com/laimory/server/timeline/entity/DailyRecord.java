@@ -12,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.Getter;
 
 /**
@@ -33,6 +34,9 @@ public class DailyRecord extends BaseEntity {
     @Column(nullable = false)
     private LocalDate recordDate;
 
+    @Column(name = "record_at", nullable = false)
+    private LocalDateTime recordAt;
+
     @Column(name = "record_timezone", nullable = false, length = 64)
     private String recordTimezone;
 
@@ -47,14 +51,17 @@ public class DailyRecord extends BaseEntity {
     protected DailyRecord() {
     }
 
-    private DailyRecord(Long userId, LocalDate recordDate, String recordTimezone, DailyRecordStatus status) {
+    private DailyRecord(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+                        DailyRecordStatus status) {
         this.userId = userId;
         this.recordDate = recordDate;
+        this.recordAt = recordAt;
         this.recordTimezone = recordTimezone;
         this.status = status;
     }
 
-    public static DailyRecord createDraft(Long userId, LocalDate recordDate, String recordTimezone) {
-        return new DailyRecord(userId, recordDate, recordTimezone, DailyRecordStatus.DRAFT);
+    public static DailyRecord createDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                          String recordTimezone) {
+        return new DailyRecord(userId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
     }
 }

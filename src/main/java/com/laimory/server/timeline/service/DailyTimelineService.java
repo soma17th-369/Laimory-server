@@ -10,6 +10,7 @@ import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -57,11 +58,13 @@ public class DailyTimelineService {
             byItemId.put(row.getTimelineDraftSourceItemId(), row);
         }
 
-        // 모든 draft 행이 같은 record_timezone을 공유한다(POST에서 한 zone으로 저장).
+        // 모든 draft 행이 같은 record_at·record_timezone을 공유한다(한 POST에서 동일 값으로 저장).
+        // record가 이미 있으면 findOrCreateDraft가 기존 값을 유지하므로 record_at은 first-POST-wins(최초 기록 앵커)다.
+        LocalDateTime recordAt = draftRows.get(0).getRecordAt();
         String recordTimezone = draftRows.get(0).getRecordTimezone();
 
         // 2. record 생성/조회 + SAVED 가드.
-        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordTimezone);
+        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordAt, recordTimezone);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
             throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());
         }
