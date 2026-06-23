@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * record_date 정오 경계 계산 + timezone 유효성 검증 단위. 인프라 0.
- * anchor는 클라 zone의 벽시계 LocalDateTime이라 날짜 계산엔 zone이 필요 없다.
+ * recordAt(벽시계 시각)은 클라 zone의 벽시계 LocalDateTime이라 날짜 계산엔 zone이 필요 없다.
  */
 class RecordDatesTest {
 
@@ -41,7 +41,7 @@ class RecordDatesTest {
     }
 
     @Test
-    void resolveRecordDate_nullAnchor_throws() {
+    void resolveRecordDate_nullRecordAt_throws() {
         assertThatThrownBy(() -> RecordDates.resolveRecordDate(null))
                 .isInstanceOf(IllegalArgumentException.class);
     }

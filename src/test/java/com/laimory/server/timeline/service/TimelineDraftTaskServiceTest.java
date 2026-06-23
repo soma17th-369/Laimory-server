@@ -54,7 +54,7 @@ class TimelineDraftTaskServiceTest {
     private static final String VERSION = "v1";
     private static final String ZONE = "Asia/Seoul";
     // 벽시계 정오(12:00) → 정오 경계상 당일(6/17).
-    private static final LocalDateTime ANCHOR = LocalDateTime.of(2026, 6, 17, 12, 0);
+    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 6, 17, 12, 0);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
 
     @BeforeEach
@@ -73,10 +73,10 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_happyPath_savesDraftsThenProcessingThenDispatches() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        // recordDate가 anchor+zone에서 정오 경계로 도출돼 createProcessing에 전달된다.
+        // recordDate가 recordAt+zone에서 정오 경계로 도출돼 createProcessing에 전달된다.
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
         // dispatch는 2-arg(taskId, token) — sourceItems·callbackUrl 없음.
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
@@ -92,7 +92,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_savesDraftRowsBuiltFromSources() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
@@ -116,7 +116,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_storesOnlyTokenHash_notRawToken() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         // Redis에 저장되는 값(createProcessing 인자)은 해시, AI에 전달되는 값(dispatch 인자)은 원문이어야 한다.
         ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
@@ -137,7 +137,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(draft, "dailyRecordId", 3L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
 
-        String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
@@ -150,7 +150,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -164,7 +164,7 @@ class TimelineDraftTaskServiceTest {
         doThrow(new RuntimeException("redis down"))
                 .when(timelineTaskService).createProcessing(anyString(), any(), anyString());
 
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("redis down");
 
@@ -180,7 +180,7 @@ class TimelineDraftTaskServiceTest {
                 .when(timelineEventSuggestionDispatcher).dispatch(anyString(), anyString());
 
         // dispatch가 동기 예외를 던져도 taskId는 반환되고 task는 FAILED로 고정된다(고아 PROCESSING 방지).
-        String taskId = service.createDraftTask(VERSION, ANCHOR, ZONE, oneSource());
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
@@ -192,20 +192,20 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_rejectsNullRecordAnchorAt() {
+    void createDraftTask_rejectsNullRecordAt() {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, null, ZONE, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createDraftTask_rejectsNullRecordTimeZone() {
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, null, oneSource()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, null, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createDraftTask_rejectsEmptySourceItems() {
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, List.of()))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -213,7 +213,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(null, null, null, "s", new PhotoPayload("u", 1.0, 2.0)));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -221,7 +221,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNullPayload() {
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.PHOTO, null, null, "s", null));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, ANCHOR, ZONE, sources))
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

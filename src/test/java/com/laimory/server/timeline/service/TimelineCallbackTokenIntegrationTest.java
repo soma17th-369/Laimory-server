@@ -67,9 +67,9 @@ class TimelineCallbackTokenIntegrationTest {
 
     private static final String VERSION = "v1";
     private static final String ZONE = "Asia/Seoul";
-    // 다른 데이터와 충돌하지 않을 고정 날짜. anchor는 local 12:00(정오 경계상 당일=2000-01-01).
+    // 다른 데이터와 충돌하지 않을 고정 날짜. recordAt은 local 12:00(정오 경계상 당일=2000-01-01).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
-    private static final LocalDateTime ANCHOR = LocalDateTime.of(2000, 1, 1, 12, 0); // 정오 → 당일(2000-01-01)
+    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2000, 1, 1, 12, 0); // 정오 → 당일(2000-01-01)
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
@@ -87,7 +87,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void validToken_persistsFinalizesAndDeletesDrafts_storesOnlyHash() {
-        String taskId = draftTaskService.createDraftTask(VERSION, ANCHOR, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
         createdTaskIds.add(taskId);
 
         // POST 시점에 draft 행이 MySQL에 저장돼 있다(아직 daily_records 없음).
@@ -132,7 +132,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void wrongToken_rejected401_andNothingPersisted() {
-        String taskId = draftTaskService.createDraftTask(VERSION, ANCHOR, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
         createdTaskIds.add(taskId);
 
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", successCallback(List.of(1L))))

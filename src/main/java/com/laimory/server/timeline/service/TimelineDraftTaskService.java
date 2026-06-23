@@ -37,14 +37,14 @@ public class TimelineDraftTaskService {
     private final ObjectMapper objectMapper;
 
     /**
-     * 작성 작업을 만들고 taskId를 반환한다. recordDate는 anchor instant + zone에서 정오 경계로 계산한다.
+     * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
      * 이미 SAVED인 daily record면 409(ResponseStatusException)로 거절한다.
      * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
      */
-    public String createDraftTask(String applicationVersion, LocalDateTime recordAnchorAt, String recordTimeZone,
+    public String createDraftTask(String applicationVersion, LocalDateTime recordAt, String recordTimeZone,
                                   List<SourceItemDto> sourceItems) {
-        if (recordAnchorAt == null) {
-            throw new IllegalArgumentException("recordAnchorAt is required");
+        if (recordAt == null) {
+            throw new IllegalArgumentException("recordAt is required");
         }
         if (recordTimeZone == null) {
             throw new IllegalArgumentException("recordTimeZone is required");
@@ -54,9 +54,9 @@ public class TimelineDraftTaskService {
         }
         requireValidSourceItems(sourceItems);
 
-        // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400). 날짜는 anchor 벽시계의 정오 경계로 산출(zone 불필요).
+        // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400). 날짜는 recordAt 벽시계 시각의 정오 경계로 산출(zone 불필요).
         RecordDates.requireValidTimeZone(recordTimeZone);
-        LocalDate recordDate = RecordDates.resolveRecordDate(recordAnchorAt);
+        LocalDate recordDate = RecordDates.resolveRecordDate(recordAt);
 
         dailyRecordService.findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate)
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
