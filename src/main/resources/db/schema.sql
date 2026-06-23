@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS daily_records (
     daily_record_id BIGINT NOT NULL AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
     record_date DATE NOT NULL,
-    record_timezone VARCHAR(64) NOT NULL,           -- record_date 계산에 쓴 zone(draft 행과 동일). reader가 wall-clock 해석용
+    record_at DATETIME NOT NULL,                     -- 최초 기록 앵커 벽시계 시각(first-POST-wins). record_timezone과 짝지어 앵커 절대시각 복원
+    record_timezone VARCHAR(64) NOT NULL,           -- record_at·이벤트/아이템 wall-clock을 절대시각으로 해석할 zone
     emotion_type VARCHAR(32) NULL,                  -- 별도 save(DRAFT->SAVED)에서 설정
     status VARCHAR(32) NOT NULL,                     -- DRAFT|SAVED
     -- 감사 컬럼 (BaseEntity)
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     task_id VARCHAR(36) NOT NULL,
     user_id BIGINT NOT NULL,
     record_date DATE NOT NULL,
+    record_at DATETIME NOT NULL,                     -- 이 POST의 앵커 벽시계 시각(finalize 시 daily_records.record_at로 복사)
     record_timezone VARCHAR(64) NOT NULL,
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용

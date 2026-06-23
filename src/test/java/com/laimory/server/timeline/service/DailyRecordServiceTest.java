@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,11 +29,12 @@ class DailyRecordServiceTest {
     private DailyRecordService dailyRecordService;
 
     private static final String ZONE = "Asia/Seoul";
+    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 5, 8, 12, 0);
 
     @Test
     void findByUserIdAndRecordDate_delegatesToRepository() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        DailyRecord record = DailyRecord.createDraft(0L, date, ZONE);
+        DailyRecord record = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(record));
 
         Optional<DailyRecord> result = dailyRecordService.findByUserIdAndRecordDate(0L, date);
@@ -43,7 +45,7 @@ class DailyRecordServiceTest {
 
     @Test
     void save_delegatesToRepository() {
-        DailyRecord record = DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), ZONE);
+        DailyRecord record = DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
         when(dailyRecordRepository.save(record)).thenReturn(record);
 
         assertThat(dailyRecordService.save(record)).isSameAs(record);
@@ -55,11 +57,11 @@ class DailyRecordServiceTest {
     @Test
     void findOrCreateDraft_returnsExistingWhenFound_withoutSaving() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        DailyRecord existing = DailyRecord.createDraft(0L, date, ZONE);
+        DailyRecord existing = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(existing));
 
-        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, ZONE);
+        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, RECORD_AT, ZONE);
 
         assertThat(result).isSameAs(existing);
         verify(dailyRecordRepository, never()).save(any());
@@ -69,11 +71,11 @@ class DailyRecordServiceTest {
     void findOrCreateDraft_createsWhenAbsent() {
         LocalDate date = LocalDate.of(2026, 5, 8);
         when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.empty());
-        DailyRecord created = DailyRecord.createDraft(0L, date, ZONE);
+        DailyRecord created = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
         when(dailyRecordRepository.save(any())).thenReturn(created);
 
-        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, ZONE);
+        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, RECORD_AT, ZONE);
 
         assertThat(result).isSameAs(created);
         verify(dailyRecordRepository).save(any());

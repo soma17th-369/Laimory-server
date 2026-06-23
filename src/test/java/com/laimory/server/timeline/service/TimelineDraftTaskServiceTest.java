@@ -103,6 +103,7 @@ class TimelineDraftTaskServiceTest {
         assertThat(row.getTaskId()).isEqualTo(taskId);
         assertThat(row.getUserId()).isEqualTo(0L);
         assertThat(row.getRecordDate()).isEqualTo(DATE);
+        assertThat(row.getRecordAt()).isEqualTo(RECORD_AT);
         assertThat(row.getRecordTimezone()).isEqualTo(ZONE);
         assertThat(row.getItemType()).isEqualTo(ItemType.PHOTO);
         assertThat(row.getStartAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
@@ -133,7 +134,7 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_reusesDraftRecord_doesNotReject() {
-        DailyRecord draft = DailyRecord.createDraft(0L, DATE, ZONE);
+        DailyRecord draft = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(draft, "dailyRecordId", 3L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
 
@@ -145,7 +146,7 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_rejectsSavedRecord() {
-        DailyRecord saved = DailyRecord.createDraft(0L, DATE, ZONE);
+        DailyRecord saved = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(saved, "dailyRecordId", 5L);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));

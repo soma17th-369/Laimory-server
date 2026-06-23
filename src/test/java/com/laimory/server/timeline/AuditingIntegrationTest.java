@@ -39,7 +39,7 @@ class AuditingIntegrationTest {
 
     @Test
     void fillsAuditColumnsOnSave() {
-        DailyRecord saved = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), "Asia/Seoul"));
+        DailyRecord saved = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), LocalDateTime.of(2026, 5, 8, 12, 0), "Asia/Seoul"));
         em.flush();
 
         assertThat(saved.getCreatedAt()).isNotNull();
@@ -50,7 +50,7 @@ class AuditingIntegrationTest {
 
     @Test
     void advancesUpdatedAtButKeepsCreatedAtOnMutate() throws InterruptedException {
-        DailyRecord saved = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9), "Asia/Seoul"));
+        DailyRecord saved = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9), LocalDateTime.of(2026, 5, 9, 12, 0), "Asia/Seoul"));
         em.flush();
 
         LocalDateTime createdAt = saved.getCreatedAt();
