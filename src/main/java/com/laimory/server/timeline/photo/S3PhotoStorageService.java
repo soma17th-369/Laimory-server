@@ -10,7 +10,10 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
- * AWS S3 기반 {@link PhotoStorageService} 구현.
+ * 사진 객체 저장 서비스(S3 기반). presigned PUT URL 발급 + 객체 삭제만 담당한다.
+ *
+ * <p>구현이 하나뿐이라 인터페이스로 추상화하지 않는다(테스트는 {@link S3Presigner}/{@link S3Client}를 모킹).
+ * 다중 구현이나 손으로 짠 fake가 필요해지면 그때 port 인터페이스를 도입한다.
  *
  * <p>업로드는 {@link S3Presigner}로 presigned PUT URL을 발급하고(클라이언트가 그 URL로 S3에 직접 PUT),
  * 삭제는 {@link S3Client#deleteObject}로 처리한다. 버킷명({@code photo.s3.bucket})과 presign 유효시간
@@ -18,7 +21,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * ({@code DefaultCredentialsProvider})으로 해석하므로 여기서 명시하지 않는다.
  */
 @Service
-public class S3PhotoStorageService implements PhotoStorageService {
+public class S3PhotoStorageService {
 
     private final S3Presigner s3Presigner;
     private final S3Client s3Client;
@@ -36,7 +39,6 @@ public class S3PhotoStorageService implements PhotoStorageService {
         this.presignTtl = presignTtl;
     }
 
-    @Override
     public String generatePresignedPutUrl(String objectKey, String contentType) {
         PutObjectRequest por = PutObjectRequest.builder()
                 .bucket(bucket)
@@ -50,7 +52,6 @@ public class S3PhotoStorageService implements PhotoStorageService {
         return s3Presigner.presignPutObject(req).url().toString();
     }
 
-    @Override
     public void delete(String objectKey) {
         DeleteObjectRequest request = DeleteObjectRequest.builder()
                 .bucket(bucket)
