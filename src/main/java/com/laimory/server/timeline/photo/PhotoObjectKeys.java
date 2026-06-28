@@ -22,7 +22,7 @@ public final class PhotoObjectKeys {
      *
      * @param contentType {@code image/jpeg} / {@code image/png} / {@code image/webp}
      * @return {@code <uuidv7>.jpg|png|webp}
-     * @throws IllegalArgumentException 지원하지 않는 content-type
+     * @throws IllegalArgumentException null/blank이거나 지원하지 않는 content-type
      */
     public static String newFilename(String contentType) {
         return UuidV7.randomUuidV7() + "." + extOf(contentType);
@@ -57,8 +57,11 @@ public final class PhotoObjectKeys {
         }
     }
 
-    /** content-type → 파일 확장자 매핑. 지원하지 않는 타입은 예외. */
+    /** content-type → 파일 확장자 매핑. null/blank·미지원 타입은 모두 IllegalArgumentException(→400). */
     private static String extOf(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            throw new IllegalArgumentException("content-type은 필수입니다");
+        }
         return switch (contentType) {
             case "image/jpeg" -> "jpg";
             case "image/png" -> "png";

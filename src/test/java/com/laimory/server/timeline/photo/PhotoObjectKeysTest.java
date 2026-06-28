@@ -33,6 +33,17 @@ class PhotoObjectKeysTest {
     }
 
     @Test
+    void newFilename_nullOrBlankContentType_throwsIllegalArgument() {
+        // null/blank이 switch에서 NPE(→500)가 아니라 IllegalArgumentException(→400)으로 정규화되는지
+        assertThatThrownBy(() -> PhotoObjectKeys.newFilename(null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PhotoObjectKeys.newFilename(""))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PhotoObjectKeys.newFilename("   "))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void fullKey_hasNoDateFolderAndUsesSha256Directory() {
         String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
 
