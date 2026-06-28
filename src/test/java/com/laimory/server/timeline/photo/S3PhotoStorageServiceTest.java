@@ -38,16 +38,17 @@ class S3PhotoStorageServiceTest {
     private PresignedPutObjectRequest presignedRequest;
 
     @Test
-    void generatePresignedPutUrl_returnsPresignedUrlWithBoundBucketKeyContentTypeAndDuration() throws Exception {
+    void generatePresignedPutUrl_bindsBucketKeyContentTypeContentLengthAndDuration() throws Exception {
         S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
         String objectKey = "deadbeef/photos/a.jpg";
         String contentType = "image/jpeg";
+        long contentLength = 12_345L;
 
         URI presignedUri = URI.create("https://test-bucket.s3.amazonaws.com/" + objectKey + "?X-Amz-Signature=abc");
         when(presignedRequest.url()).thenReturn(presignedUri.toURL());
         when(s3Presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presignedRequest);
 
-        String url = service.generatePresignedPutUrl(objectKey, contentType);
+        String url = service.generatePresignedPutUrl(objectKey, contentType, contentLength);
 
         assertThat(url).isEqualTo(presignedUri.toString());
 
@@ -58,6 +59,8 @@ class S3PhotoStorageServiceTest {
         assertThat(req.putObjectRequest().bucket()).isEqualTo(BUCKET);
         assertThat(req.putObjectRequest().key()).isEqualTo(objectKey);
         assertThat(req.putObjectRequest().contentType()).isEqualTo(contentType);
+        // contentLength가 서명에 바인딩되어 S3가 정확한 크기를 강제(크기 우회 방지)
+        assertThat(req.putObjectRequest().contentLength()).isEqualTo(contentLength);
     }
 
     @Test

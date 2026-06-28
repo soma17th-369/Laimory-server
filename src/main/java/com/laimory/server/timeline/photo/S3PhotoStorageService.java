@@ -39,11 +39,21 @@ public class S3PhotoStorageService {
         this.presignTtl = presignTtl;
     }
 
-    public String generatePresignedPutUrl(String objectKey, String contentType) {
+    /**
+     * objectKey에 대한 presigned PUT URL을 발급한다.
+     *
+     * <p>서버는 데이터 경로에 없으므로 업로드 바이트를 가로채 검증할 수 없다. 대신 {@code contentType}과
+     * {@code contentLength}를 서명에 바인딩해 <b>S3가 PUT 시점에 강제</b>하게 한다 — 서명된 값과 다른
+     * Content-Type/Content-Length로 PUT하면 S3가 거부(403)한다. 따라서 URL을 받은(또는 탈취한) 클라이언트가
+     * TTL 동안 임의 크기 객체를 올려 엔드포인트의 크기 검증을 우회하는 것을 막는다. 클라이언트는 파일 크기를
+     * 알고 있으므로 정확한 {@code contentLength}를 선언할 수 있다.
+     */
+    public String generatePresignedPutUrl(String objectKey, String contentType, long contentLength) {
         PutObjectRequest por = PutObjectRequest.builder()
                 .bucket(bucket)
                 .key(objectKey)
                 .contentType(contentType)
+                .contentLength(contentLength)
                 .build();
         PutObjectPresignRequest req = PutObjectPresignRequest.builder()
                 .signatureDuration(presignTtl)
