@@ -3,6 +3,7 @@ package com.laimory.server.timeline.photo;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
@@ -48,12 +49,8 @@ public final class PhotoObjectKeys {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(Long.toString(userId).getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
-                sb.append(Character.forDigit(b & 0xF, 16));
-            }
-            return sb.toString();
+            return HexFormat.of().formatHex(hash); // 64자 소문자 hex
+
         } catch (NoSuchAlgorithmException e) {
             // SHA-256은 모든 JVM이 보장하므로 도달하지 않는다.
             throw new IllegalStateException("SHA-256 미지원", e);
