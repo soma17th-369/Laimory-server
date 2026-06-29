@@ -15,7 +15,10 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
+import com.laimory.server.timeline.dto.PhotoUploadResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import java.time.LocalDate;
@@ -58,6 +61,8 @@ class TimelineControllerTest {
     private TimelineDraftTaskService timelineDraftTaskService;
     @MockitoBean
     private TimelineDraftTaskPollingService timelineDraftTaskPollingService;
+    @MockitoBean
+    private PhotoUploadService photoUploadService;
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
@@ -85,6 +90,34 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void createPhotoUploads_returns200WithUploads() throws Exception {
+        when(photoUploadService.createUploads(any(), any()))
+                .thenReturn(new PhotoUploadCreateResponse(List.of(
+                        new PhotoUploadResponse("f.jpg", "https://example/put"))));
+
+        String body = """
+                {"photos": [{"contentType": "image/jpeg", "size": 1024}]}
+                """;
+        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.uploads[0].filename").value("f.jpg"))
+                .andExpect(jsonPath("$.body.uploads[0].uploadUrl").value("https://example/put"));
+    }
+
+    @Test
+    void createPhotoUploads_mapsIllegalArgumentTo400() throws Exception {
+        when(photoUploadService.createUploads(any(), any()))
+                .thenThrow(new IllegalArgumentException("too many photos"));
+
+        String body = """
+                {"photos": [{"contentType": "image/gif", "size": 1024}]}
+                """;
+        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

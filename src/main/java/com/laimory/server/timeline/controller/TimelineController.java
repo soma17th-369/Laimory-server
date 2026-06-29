@@ -5,6 +5,9 @@ import com.laimory.server.common.ApiUrls;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
+import com.laimory.server.timeline.dto.PhotoUploadCreateRequest;
+import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
+import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +31,7 @@ public class TimelineController {
 
     private final TimelineDraftTaskService timelineDraftTaskService;
     private final TimelineDraftTaskPollingService timelineDraftTaskPollingService;
+    private final PhotoUploadService photoUploadService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
@@ -36,6 +40,14 @@ public class TimelineController {
         String taskId = timelineDraftTaskService.createDraftTask(
                 applicationVersion, request.recordAt(), request.recordTimeZone(), request.sourceItems());
         return ResponseEntity.accepted().body(ApiResponse.success(new CreateDraftTaskResponse(taskId)));
+    }
+
+    @PostMapping("/photo-uploads")
+    public ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
+            @PathVariable String applicationVersion,
+            @RequestBody PhotoUploadCreateRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                photoUploadService.createUploads(applicationVersion, request.photos())));
     }
 
     @GetMapping("/{taskId}")
