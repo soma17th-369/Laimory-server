@@ -7,7 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.transaction.annotation.Transactional;
 
-/** timeline_draft_source_items 레포. task_id 단위 조회/삭제, 보관기간 초과 행 cleanup 삭제. */
+/** timeline_draft_source_items 레포. task_id 단위 조회/삭제, 보관기간 초과 행 조회(cleanup용). */
 public interface TimelineDraftSourceItemRepository extends JpaRepository<TimelineDraftSourceItem, Long> {
 
     List<TimelineDraftSourceItem> findByTaskId(String taskId);
@@ -16,7 +16,9 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
     @Transactional
     void deleteByTaskId(String taskId);
 
-    @Modifying
-    @Transactional
-    void deleteByCreatedAtBefore(LocalDateTime cutoff);
+    /**
+     * 보관기간 초과(created_at < cutoff) 행을 조회한다(cleanup 스케줄러용). 행마다 S3 사진 객체를 먼저 지운 뒤
+     * 개별 삭제하므로 bulk delete가 아니라 조회로 받는다.
+     */
+    List<TimelineDraftSourceItem> findByCreatedAtBefore(LocalDateTime cutoff);
 }

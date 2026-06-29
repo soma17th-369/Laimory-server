@@ -26,8 +26,13 @@ public class TimelineDraftSourceItemService {
         timelineDraftSourceItemRepository.deleteByTaskId(taskId);
     }
 
-    /** 보관기간 초과(created_at < cutoff) orphan draft 행을 삭제한다(cleanup 스케줄러용). */
-    public void deleteCreatedBefore(LocalDateTime cutoff) {
-        timelineDraftSourceItemRepository.deleteByCreatedAtBefore(cutoff);
+    /** 보관기간 초과(created_at < cutoff) draft 행을 조회한다(cleanup 스케줄러가 행별 S3 삭제 후 개별 삭제). */
+    public List<TimelineDraftSourceItem> findCreatedBefore(LocalDateTime cutoff) {
+        return timelineDraftSourceItemRepository.findByCreatedAtBefore(cutoff);
+    }
+
+    /** draft 행 하나를 PK로 삭제한다(cleanup이 S3 객체 삭제 성공한 행만 지울 때 사용). */
+    public void deleteById(Long id) {
+        timelineDraftSourceItemRepository.deleteById(id);
     }
 }
