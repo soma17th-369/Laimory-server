@@ -34,6 +34,7 @@ public class DailyTimelineService {
     private final TimelineItemService timelineItemService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final TimelineEventSuggestionValidator timelineEventSuggestionValidator;
+    private final TimelineItemResponseMapper timelineItemResponseMapper;
 
     /**
      * 콜백 SUCCESS의 단일 finalize 트랜잭션 단위(all-or-nothing): events 검증 → daily record(없으면 DRAFT 생성)
@@ -91,17 +92,22 @@ public class DailyTimelineService {
         return dailyRecordId;
     }
 
-    /** dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 이벤트/아이템 정렬은 leaf 서비스 쿼리가 보장. */
+    /**
+     * dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 이벤트/아이템 정렬은 leaf 서비스 쿼리가 보장.
+     *
+     * <p>PHOTO 아이템은 매퍼가 filename→무서명 photoUrl로 구성해 내려준다(userId는 record의 user_id).
+     */
     @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new IllegalStateException("daily record not found: " + dailyRecordId));
 
+        long userId = record.getUserId();
         List<TimelineEventResponse> eventResponses = new ArrayList<>();
         for (TimelineEvent event : timelineEventService.findByDailyRecordId(dailyRecordId)) {
             List<TimelineItemResponse> itemResponses = timelineItemService.findByTimelineEventId(event.getTimelineEventId())
                     .stream()
-                    .map(TimelineItemResponse::from)
+                    .map(item -> timelineItemResponseMapper.toResponse(item, userId))
                     .toList();
             eventResponses.add(TimelineEventResponse.from(event, itemResponses));
         }
