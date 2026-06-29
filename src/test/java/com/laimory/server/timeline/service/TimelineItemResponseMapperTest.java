@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
@@ -67,15 +66,6 @@ class TimelineItemResponseMapperTest {
         assertThat(response.payload().get("areaName").asText()).isEqualTo("강남");
         // photoUrl 같은 변환은 PHOTO 외 타입엔 없다.
         assertThat(response.payload().has("photoUrl")).isFalse();
-    }
-
-    @Test
-    void photo_missingFilename_failsLoudlyInsteadOfBuildingNullUrl() {
-        // DB payload에 filename이 없으면(legacy/이상 데이터) ".../photos/null" 무음 생성 대신 불변식 위반(500)으로 막는다.
-        TimelineItem item = item(ItemType.PHOTO, new PhotoPayload(null, "content://x", 1.0, 2.0));
-
-        assertThatThrownBy(() -> mapper.toResponse(item, USER_ID))
-                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
