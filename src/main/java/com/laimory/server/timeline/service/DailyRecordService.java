@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
@@ -37,11 +38,21 @@ public class DailyRecordService {
      * rollback-only로 오염시켜 같은 트랜잭션 안의 재조회가 무의미해지기 때문이다. 대신 동시 생성 경합은 그대로 전파시켜
      * finalize를 롤백하고, AI 콜백이 멱등 재시도로 마무리하게 한다(재시도 시 상대가 만든 기존 record를 재사용).
      * (이 메서드의 유일 caller는 finalize 경로다.)
+     *
+     * <p>같은 날짜 재요청(append)이면 기존 DRAFT의 record_at/record_timezone을 이번 POST 값으로 갱신한다
+     * (last-write-wins). 관리 엔티티라 dirty-checking으로 합류 트랜잭션 커밋 시 flush되며, repo.save 호출은 없다.
+     * SAVED record는 갱신하지 않는다(append 대상이 아님; 호출부 finalize가 이후 SAVED를 거절).
      */
     @Transactional
     public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
                                          String recordTimezone) {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate)
+                .map(existing -> {
+                    if (existing.getStatus() == DailyRecordStatus.DRAFT) {
+                        existing.updateRecordAnchor(recordAt, recordTimezone);
+                    }
+                    return existing;
+                })
                 .orElseGet(() -> dailyRecordRepository.save(
                         DailyRecord.createDraft(userId, recordDate, recordAt, recordTimezone)));
     }

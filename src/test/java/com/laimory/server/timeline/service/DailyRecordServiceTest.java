@@ -6,6 +6,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
@@ -79,5 +80,39 @@ class DailyRecordServiceTest {
 
         assertThat(result).isSameAs(created);
         verify(dailyRecordRepository).save(any());
+    }
+
+    @Test
+    void findOrCreateDraft_existingDraft_refreshesAnchorToLatest() {
+        LocalDate date = LocalDate.of(2026, 5, 8);
+        LocalDateTime latest = LocalDateTime.of(2026, 5, 8, 18, 0);
+        DailyRecord existing = DailyRecord.createDraft(0L, date, LocalDateTime.of(2026, 5, 8, 9, 0), ZONE);
+        ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
+        when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(existing));
+
+        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, latest, "UTC");
+
+        // 같은 날짜 재요청(append): 앵커가 이번 POST 값으로 갱신된다(last-write-wins). dirty-checking이라 repo.save는 안 부른다.
+        assertThat(result).isSameAs(existing);
+        assertThat(result.getRecordAt()).isEqualTo(latest);
+        assertThat(result.getRecordTimezone()).isEqualTo("UTC");
+        verify(dailyRecordRepository, never()).save(any());
+    }
+
+    @Test
+    void findOrCreateDraft_existingSaved_doesNotRefreshAnchor() {
+        LocalDate date = LocalDate.of(2026, 5, 8);
+        LocalDateTime original = LocalDateTime.of(2026, 5, 8, 9, 0);
+        DailyRecord saved = DailyRecord.createDraft(0L, date, original, ZONE);
+        ReflectionTestUtils.setField(saved, "dailyRecordId", 100L);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(saved));
+
+        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, LocalDateTime.of(2026, 5, 8, 18, 0), "UTC");
+
+        // SAVED는 append 대상이 아니라 앵커를 갱신하지 않는다(원래 값 유지).
+        assertThat(result.getRecordAt()).isEqualTo(original);
+        assertThat(result.getRecordTimezone()).isEqualTo(ZONE);
+        verify(dailyRecordRepository, never()).save(any());
     }
 }
