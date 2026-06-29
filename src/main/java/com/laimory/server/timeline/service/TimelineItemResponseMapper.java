@@ -48,6 +48,11 @@ public class TimelineItemResponseMapper {
             // 저장 시 filename 형식을 보장하므로 도달하지 않는다(불변식 위반 → 500).
             throw new IllegalStateException("invalid PHOTO payload in DB: " + payload, e);
         }
+        // treeToValue는 filename 키가 없어도 null로 성공하므로, 여기서 명시적으로 막는다 — 안 그러면
+        // buildUrl이 ".../photos/null"을 조용히 만든다. 쓰기 경계가 filename을 보장하므로 도달 시 불변식 위반(→500).
+        if (photo.filename() == null || photo.filename().isBlank()) {
+            throw new IllegalStateException("PHOTO payload missing filename in DB: " + payload);
+        }
         String photoUrl = photoUrlService.buildUrl(photo.filename(), userId);
         return objectMapper.valueToTree(new PhotoPayloadResponse(
                 photoUrl, photo.clientPhotoUri(), photo.latitude(), photo.longitude()));
