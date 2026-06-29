@@ -59,7 +59,7 @@ public class DailyTimelineService {
         }
 
         // 2. record 생성/조회 + SAVED 가드. record_at/record_timezone은 클라가 보낸 값으로 PROCESSING task에서 전달된다(draft 행엔 저장 안 함).
-        // 같은 날짜 재요청(append)이면 findOrCreateDraft가 record_at/record_timezone을 이번 POST 값으로 갱신한다(last-write-wins).
+        // 같은 날짜 재요청(append)이면 findOrCreateDraft가 record_at/record_timezone을 이번 finalize 값으로 갱신한다(마지막에 finalize된 값이 남음 — 콜백 순서 기준, POST 순서 아님).
         DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordAt, recordTimezone);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
             throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());
