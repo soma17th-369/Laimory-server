@@ -58,7 +58,9 @@ jobs:
           docker pull ${IMG}
           docker stop laimory 2>/dev/null || true
           docker rm laimory 2>/dev/null || true
-          docker run -d --name laimory --restart always --network host --env-file /home/ubuntu/app/.env ${IMG}
+          # REDIS_KEY_PREFIX=dev_ : dev/prod 공유 Redis에서 dev 키 격리. 이 워크플로는 dev 전용이라 여기 고정(누락 불가).
+          # -e가 --env-file보다 우선하므로 dev prefix가 항상 적용된다(prod는 자체 배포라 미설정 → 빈 prefix).
+          docker run -d --name laimory --restart always --network host --env-file /home/ubuntu/app/.env -e REDIS_KEY_PREFIX=dev_ ${IMG}
           echo "waiting for /api/v1/intro ..."
           ok=0
           for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
