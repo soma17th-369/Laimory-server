@@ -4,6 +4,7 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,9 +22,10 @@ public class TimelineTaskService {
 
     private final TimelineTaskStore timelineTaskStore;
 
-    public void createProcessing(String taskId, LocalDate recordDate, String callbackTokenHash) {
+    public void createProcessing(String taskId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+                                 String callbackTokenHash) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.processing(recordDate, callbackTokenHash), PROCESSING_TTL);
+                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, callbackTokenHash), PROCESSING_TTL);
     }
 
     public void markSuccess(String taskId, LocalDate recordDate, String callbackTokenHash) {

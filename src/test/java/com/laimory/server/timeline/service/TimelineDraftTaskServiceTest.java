@@ -79,14 +79,14 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         // recordDate가 recordAt+zone에서 정오 경계로 도출돼 createProcessing에 전달된다.
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
         // dispatch는 2-arg(taskId, token) — sourceItems·callbackUrl 없음.
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
 
         // 순서 불변식: draft 저장 → Redis PROCESSING → dispatch.
         InOrder order = inOrder(timelineDraftSourceItemService, timelineTaskService, timelineEventSuggestionDispatcher);
         order.verify(timelineDraftSourceItemService).saveAll(anyList());
-        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
+        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
         order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
     }
 
@@ -104,9 +104,6 @@ class TimelineDraftTaskServiceTest {
         TimelineDraftSourceItem row = rows.get(0);
         assertThat(row.getTaskId()).isEqualTo(taskId);
         assertThat(row.getUserId()).isEqualTo(0L);
-        assertThat(row.getRecordDate()).isEqualTo(DATE);
-        assertThat(row.getRecordAt()).isEqualTo(RECORD_AT);
-        assertThat(row.getRecordTimezone()).isEqualTo(ZONE);
         assertThat(row.getItemType()).isEqualTo(ItemType.PHOTO);
         assertThat(row.getStartAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
         assertThat(row.getSummary()).isEqualTo("s");
@@ -124,7 +121,7 @@ class TimelineDraftTaskServiceTest {
 
         // Redis에 저장되는 값(createProcessing 인자)은 해시, AI에 전달되는 값(dispatch 인자)은 원문이어야 한다.
         ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), hashCaptor.capture());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), hashCaptor.capture());
         ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), tokenCaptor.capture());
 
@@ -144,7 +141,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
     }
 
     @Test
@@ -158,7 +155,7 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
-        verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyString());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
     }
 
@@ -166,7 +163,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_whenRedisFails_compensatesByDeletingDraftsAndRethrows() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("redis down"))
-                .when(timelineTaskService).createProcessing(anyString(), any(), anyString());
+                .when(timelineTaskService).createProcessing(anyString(), any(), any(), any(), anyString());
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
                 .isInstanceOf(RuntimeException.class)
@@ -187,7 +184,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
         ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), errorCaptor.capture(), anyString());
         assertThat(errorCaptor.getValue()).contains("boom");

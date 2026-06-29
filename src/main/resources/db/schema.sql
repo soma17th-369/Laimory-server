@@ -68,9 +68,6 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     timeline_draft_source_item_id BIGINT NOT NULL AUTO_INCREMENT,
     task_id VARCHAR(36) NOT NULL,
     user_id BIGINT NOT NULL,
-    record_date DATE NOT NULL,
-    record_at DATETIME NOT NULL,                     -- 이 POST의 앵커 벽시계 시각(finalize 시 daily_records.record_at로 복사)
-    record_timezone VARCHAR(64) NOT NULL,
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,

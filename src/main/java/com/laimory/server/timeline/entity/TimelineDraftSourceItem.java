@@ -11,7 +11,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -39,15 +38,6 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(name = "record_date", nullable = false)
-    private LocalDate recordDate;
-
-    @Column(name = "record_at", nullable = false)
-    private LocalDateTime recordAt;
-
-    @Column(name = "record_timezone", nullable = false)
-    private String recordTimezone;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "item_type", nullable = false, length = 32)
     private ItemType itemType;
@@ -68,14 +58,10 @@ public class TimelineDraftSourceItem extends BaseEntity {
     protected TimelineDraftSourceItem() {
     }
 
-    private TimelineDraftSourceItem(String taskId, Long userId, LocalDate recordDate, LocalDateTime recordAt,
-                                    String recordTimezone, ItemType itemType, LocalDateTime startAt,
+    private TimelineDraftSourceItem(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
                                     LocalDateTime endAt, String summary, JsonNode payload) {
         this.taskId = taskId;
         this.userId = userId;
-        this.recordDate = recordDate;
-        this.recordAt = recordAt;
-        this.recordTimezone = recordTimezone;
         this.itemType = itemType;
         this.startAt = startAt;
         this.endAt = endAt;
@@ -83,10 +69,8 @@ public class TimelineDraftSourceItem extends BaseEntity {
         this.payload = payload;
     }
 
-    public static TimelineDraftSourceItem of(String taskId, Long userId, LocalDate recordDate, LocalDateTime recordAt,
-                                             String recordTimezone, ItemType itemType, LocalDateTime startAt,
+    public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
                                              LocalDateTime endAt, String summary, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, recordDate, recordAt, recordTimezone, itemType,
-                startAt, endAt, summary, payload);
+        return new TimelineDraftSourceItem(taskId, userId, itemType, startAt, endAt, summary, payload);
     }
 }
