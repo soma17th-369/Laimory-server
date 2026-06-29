@@ -15,7 +15,10 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
+import com.laimory.server.timeline.dto.PhotoUploadResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import java.time.LocalDate;
@@ -36,7 +39,7 @@ import org.springframework.web.server.ResponseStatusException;
 @WebMvcTest(TimelineController.class)
 class TimelineControllerTest {
 
-    private static final String TASKS = "/api/v1/timeline/drafts";
+    private static final String TASKS = "/a/api/v1/timeline/drafts";
 
     private static final String CREATE_BODY = """
             {
@@ -44,7 +47,8 @@ class TimelineControllerTest {
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
                 {"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
-                 "payload": {"photoUri": "u", "latitude": 1.0, "longitude": 2.0}}
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
+                             "latitude": 1.0, "longitude": 2.0}}
               ]
             }
             """;
@@ -58,6 +62,8 @@ class TimelineControllerTest {
     private TimelineDraftTaskService timelineDraftTaskService;
     @MockitoBean
     private TimelineDraftTaskPollingService timelineDraftTaskPollingService;
+    @MockitoBean
+    private PhotoUploadService photoUploadService;
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
@@ -85,6 +91,34 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void createPhotoUploads_returns200WithUploads() throws Exception {
+        when(photoUploadService.createUploads(any(), any()))
+                .thenReturn(new PhotoUploadCreateResponse(List.of(
+                        new PhotoUploadResponse("f.jpg", "https://example/put"))));
+
+        String body = """
+                {"photos": [{"contentType": "image/jpeg", "size": 1024}]}
+                """;
+        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.uploads[0].filename").value("f.jpg"))
+                .andExpect(jsonPath("$.body.uploads[0].uploadUrl").value("https://example/put"));
+    }
+
+    @Test
+    void createPhotoUploads_mapsIllegalArgumentTo400() throws Exception {
+        when(photoUploadService.createUploads(any(), any()))
+                .thenThrow(new IllegalArgumentException("too many photos"));
+
+        String body = """
+                {"photos": [{"contentType": "image/gif", "size": 1024}]}
+                """;
+        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -133,7 +167,7 @@ class TimelineControllerTest {
         TimelineItemResponse item = new TimelineItemResponse(
                 10L, ItemType.PHOTO,
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                objectMapper.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
+                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));
