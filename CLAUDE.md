@@ -95,6 +95,16 @@ com.laimory.server
 
 커밋 메시지는 `<type>: <간단한 작업 내용>` 형식의 Commit Type 컨벤션을 따른다. 사용 가능한 type 목록과 규칙은 [.agents/commit.md](.agents/commit.md) 참조.
 
+### 작업 전 이슈 등록
+
+단일 파일 수정·간단 버그픽스를 넘어서는 **일정 규모 이상의 작업**(새 컴포넌트·의존성 추가, 여러 파일에 걸친 변경, 리팩터)은 착수 전 **`create-issue` 스킬로 GitHub 이슈를 먼저 등록**하고, 작업 브랜치를 그 이슈에 연결(PR 본문에 `Closes #N`)해 진행한다. 지금 바로 코드 한 줄만 고치는 trivial 작업은 제외한다.
+
+## Redis 키 컨벤션
+
+- **모든 Redis 접근은 `com.laimory.server.common.redis.NamespacedRedis` facade를 통한다.** `StringRedisTemplate`/`RedisTemplate` 등 `org.springframework.data.redis..` 타입의 직접 주입·사용은 금지하며, `RedisAccessArchTest`(ArchUnit)가 빌드에서 강제한다(위반 시 `./gradlew test` 실패).
+- **논리 키**는 콜론 네임스페이스 `{feature}:{entity}:{id}` 형태로 쓰고(예: `timeline:draft-task:{taskId}`), feature별 `KEY_PREFIX` 상수로 키 조립을 한 곳에 모은다.
+- **환경 prefix**(dev/prod 단일 Redis 공유 시 격리용)는 `app.redis.key-prefix`(env `REDIS_KEY_PREFIX`)로 주입하며 기본값은 빈 문자열(prod·로컬). dev는 [deploy.yml](.github/workflows/deploy.yml)의 `-e REDIS_KEY_PREFIX=dev_`로 고정한다. prefix 부착은 `NamespacedRedis`가 전담하므로 호출부는 항상 **논리 키만** 넘기고, 코드에 prefix 값을 하드코딩하지 않는다.
+
 ## Database
 
 - `spring.jpa.hibernate.ddl-auto=validate` — Hibernate가 스키마를 생성하지 않고 **검증만** 한다. 새 Entity를 추가하면 대상 DB에 테이블/컬럼이 먼저 존재해야 기동된다.
