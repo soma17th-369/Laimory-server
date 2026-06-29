@@ -6,6 +6,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +63,48 @@ class S3PhotoStorageServiceTest {
         assertThat(req.putObjectRequest().contentType()).isEqualTo(contentType);
         // contentLength가 서명에 바인딩되어 S3가 정확한 크기를 강제(크기 우회 방지)
         assertThat(req.putObjectRequest().contentLength()).isEqualTo(contentLength);
+    }
+
+    /**
+     * 실제 {@link S3Presigner}(로컬 서명 연산, 네트워크 없음)로 presigned PUT URL을 발급해
+     * {@code X-Amz-SignedHeaders}에 {@code content-length}/{@code content-type}/{@code host}가
+     * 실제로 서명되는지 검증한다. contentLength를 PutObjectRequest에 바인딩하더라도 그 헤더가
+     * 서명에 포함되지 않으면 S3가 크기를 강제하지 못하므로(보안 계약), 이 부분을 모킹이 아닌
+     * 실제 서명으로 경험적으로 확인한다.
+     */
+    @Test
+    void generatePresignedPutUrl_signsContentLengthAndContentTypeHeaders() throws Exception {
+        S3Presigner realPresigner = S3Presigner.builder()
+                .region(software.amazon.awssdk.regions.Region.AP_NORTHEAST_2)
+                .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                        software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(
+                                "AKIDEXAMPLE", "secretdummy")))
+                .build();
+        S3PhotoStorageService service =
+                new S3PhotoStorageService(realPresigner, s3Client /* unused here */, BUCKET, TTL);
+
+        String url = service.generatePresignedPutUrl("deadbeef/photos/a.jpg", "image/jpeg", 12_345L);
+
+        String rawSignedHeaders = queryParam(url, "X-Amz-SignedHeaders");
+        String signedHeaders = URLDecoder.decode(rawSignedHeaders, StandardCharsets.UTF_8);
+        System.out.println("X-Amz-SignedHeaders (raw)     = " + rawSignedHeaders);
+        System.out.println("X-Amz-SignedHeaders (decoded) = " + signedHeaders);
+
+        assertThat(signedHeaders.split(";"))
+                .contains("content-length", "content-type", "host");
+    }
+
+    /** URL의 쿼리스트링에서 주어진 key의 (디코딩되지 않은) raw 값을 추출한다. */
+    private static String queryParam(String url, String key) {
+        String query = URI.create(url).getRawQuery();
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            String name = eq >= 0 ? pair.substring(0, eq) : pair;
+            if (name.equals(key)) {
+                return eq >= 0 ? pair.substring(eq + 1) : "";
+            }
+        }
+        throw new IllegalStateException("query param not found: " + key + " in " + url);
     }
 
     @Test
