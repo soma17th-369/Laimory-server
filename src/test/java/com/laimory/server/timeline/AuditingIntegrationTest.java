@@ -2,7 +2,6 @@ package com.laimory.server.timeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.laimory.server.common.ModifiedByType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import jakarta.persistence.EntityManager;
@@ -19,8 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * JPA 감사(BaseEntity) 동작 검증.
- * - ddl-auto=validate이므로 컨텍스트 기동 자체가 audit 컬럼(created_at/updated_at/modified_by_type)↔DDL 정합을 검증한다.
- * - save 시 audit 3컬럼이 채워지고 modified_by_type=OPERATION(인증 도입 전 상수)인지 확인한다.
+ * - ddl-auto=validate이므로 컨텍스트 기동 자체가 audit 컬럼(created_at/updated_at/modified_by)↔DDL 정합을 검증한다.
+ * - save 시 created_at/updated_at은 채워지고 modified_by는 NULL(사용자 도입 전, AuditorAware가 비어 있음)인지 확인한다.
  * - mutate 시 updated_at은 전진하고 created_at은 불변인지 확인한다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
@@ -44,8 +43,7 @@ class AuditingIntegrationTest {
 
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
-        assertThat(saved.getModifiedByType()).isNotNull();
-        assertThat(saved.getModifiedByType()).isEqualTo(ModifiedByType.OPERATION);
+        assertThat(saved.getModifiedBy()).isNull();
     }
 
     @Test

@@ -2,8 +2,6 @@ package com.laimory.server.common;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.EntityListeners;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.MappedSuperclass;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -27,7 +25,6 @@ public abstract class BaseEntity {
     private LocalDateTime updatedAt;
 
     @LastModifiedBy
-    @Enumerated(EnumType.STRING)
-    @Column(name = "modified_by_type", nullable = false, length = 32)
-    private ModifiedByType modifiedByType;
+    @Column(name = "modified_by", length = 32)
+    private String modifiedBy;
 }
