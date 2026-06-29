@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS daily_records (
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
-    modified_by_type VARCHAR(32) NOT NULL,
+    modified_by VARCHAR(32) NULL,
     PRIMARY KEY (daily_record_id),
     UNIQUE KEY uq_daily_records_user_date (user_id, record_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
-    modified_by_type VARCHAR(32) NOT NULL,
+    modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_event_id),
     KEY idx_timeline_events_daily_record (daily_record_id),
     CONSTRAINT fk_timeline_events_daily_record
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS timeline_items (
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
-    modified_by_type VARCHAR(32) NOT NULL,
+    modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_item_id),
     KEY idx_timeline_items_event (timeline_event_id),
     KEY idx_timeline_items_type (item_type),
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
-    modified_by_type VARCHAR(32) NOT NULL,
+    modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_draft_source_item_id),
     KEY idx_draft_source_task (task_id),
     KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용

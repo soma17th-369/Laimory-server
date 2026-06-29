@@ -68,6 +68,6 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         // audit 컬럼이 채워졌는지 확인
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
-        assertThat(reloaded.getModifiedByType()).isNotNull();
+        assertThat(reloaded.getModifiedBy()).isNull();
     }
 }
