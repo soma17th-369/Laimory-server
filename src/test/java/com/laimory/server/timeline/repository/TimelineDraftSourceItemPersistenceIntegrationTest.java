@@ -47,13 +47,9 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 TimelineDraftSourceItem.of(
                         taskId,
                         0L,
-                        LocalDate.of(2026, 5, 8),
-                        LocalDateTime.of(2026, 5, 8, 12, 0),
-                        "Asia/Seoul",
                         ItemType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
-                        "강남역 -> 성수역 · 7호선",
                         objectMapper.valueToTree(movement)));
 
         em.flush();
@@ -63,13 +59,9 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 timelineDraftSourceItemRepository.findById(saved.getTimelineDraftSourceItemId()).orElseThrow();
         assertThat(reloaded.getTaskId()).isEqualTo(taskId);
         assertThat(reloaded.getUserId()).isEqualTo(0L);
-        assertThat(reloaded.getRecordDate()).isEqualTo(LocalDate.of(2026, 5, 8));
-        assertThat(reloaded.getRecordAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 12, 0));
-        assertThat(reloaded.getRecordTimezone()).isEqualTo("Asia/Seoul");
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
         assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 9, 10));
-        assertThat(reloaded.getSummary()).isEqualTo("강남역 -> 성수역 · 7호선");
         assertThat(reloaded.getPayload().get("fromPlace").asText()).isEqualTo("강남역");
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
 

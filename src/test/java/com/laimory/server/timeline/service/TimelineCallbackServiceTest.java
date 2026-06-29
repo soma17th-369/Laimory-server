@@ -57,7 +57,7 @@ class TimelineCallbackServiceTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private TimelineDraftTask processingTask() {
-        return TimelineDraftTask.processing(DATE, TOKEN_HASH);
+        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", TOKEN_HASH);
     }
 
     private DraftTaskCallbackRequest successRequest() {
@@ -67,8 +67,8 @@ class TimelineCallbackServiceTest {
     }
 
     private List<TimelineDraftSourceItem> draftRows() {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, DATE, DATE.atTime(12, 0), "Asia/Seoul", ItemType.PHOTO,
-                LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
+                LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 0L);
         return List.of(row);
@@ -90,7 +90,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "t", null, successRequest()))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
-        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -100,7 +100,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
-        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -122,7 +122,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
@@ -137,7 +137,7 @@ class TimelineCallbackServiceTest {
         service.handleCallback("v1", "t", TOKEN, req);
 
         verify(timelineTaskService).markFailed("t", DATE, "ai gave up", TOKEN_HASH);
-        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
     }
 
@@ -150,13 +150,13 @@ class TimelineCallbackServiceTest {
         service.handleCallback("v1", "t", TOKEN, req);
 
         // draft는 바디가 아닌 서비스에서 로드돼 finalize에 전달된다.
-        verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), eq(req.events()));
+        verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), any(), any(), eq(req.events()));
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
 
         // 불변식: Redis SUCCESS는 finalize(=DB 커밋) 이후에만 set된다.
         InOrder order = inOrder(dailyTimelineService, timelineTaskService);
-        order.verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any());
+        order.verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         order.verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
     }
 
@@ -170,7 +170,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any());
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
     }
@@ -194,7 +194,7 @@ class TimelineCallbackServiceTest {
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
         // finalize 내부 검증/SAVED 실패 → 롤백되고 콜백이 IAE로 잡아 FAILED 기록.
         doThrow(new IllegalArgumentException("event references unknown itemId: 9"))
-                .when(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any());
+                .when(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), any());
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 

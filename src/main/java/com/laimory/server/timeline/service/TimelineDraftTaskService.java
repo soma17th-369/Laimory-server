@@ -76,15 +76,15 @@ public class TimelineDraftTaskService {
         // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
         List<TimelineDraftSourceItem> rows = sourceItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
-                        taskId, TimelineDefaults.DEFAULT_USER_ID, recordDate, recordAt, recordTimeZone,
-                        src.itemType(), src.startAt(), src.endAt(), src.summary(),
+                        taskId, TimelineDefaults.DEFAULT_USER_ID,
+                        src.itemType(), src.startAt(), src.endAt(),
                         objectMapper.valueToTree(src.payload())))
                 .toList();
         timelineDraftSourceItemService.saveAll(rows);
 
         // 2. Redis PROCESSING 기록. 실패하면 방금 저장한 draft를 보상 삭제하고 전파한다(고아 draft 방지).
         try {
-            timelineTaskService.createProcessing(taskId, recordDate, callbackTokenHash);
+            timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, callbackTokenHash);
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
             throw e;

@@ -45,10 +45,9 @@ public class DailyTimelineService {
      * {@code findOrCreateDraft}가 {@code REQUIRED}라 record 생성도 이 트랜잭션에 합류 → 롤백 시 record까지 사라진다.
      *
      * <p>아이템은 draft 행에서 그대로 복사한다(itemType/start/end/payload). payload는 이미 JsonNode이므로 재변환·ObjectMapper 없음.
-     * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다(draft 행에만 남고 finalize에서 옮기지 않음).
      */
     @Transactional
-    public Long appendDailyTimeline(Long userId, LocalDate recordDate,
+    public Long appendDailyTimeline(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                                     List<TimelineDraftSourceItem> draftRows,
                                     List<TimelineEventSuggestionDto> events) {
         // 1. 검증을 record 생성 전에 끝낸다(아래 영속 단계 전 DB 쓰기 없음). 위반은 IAE로 던져 트랜잭션 롤백 + 콜백이 FAILED 기록.
@@ -59,12 +58,8 @@ public class DailyTimelineService {
             byItemId.put(row.getTimelineDraftSourceItemId(), row);
         }
 
-        // 모든 draft 행이 같은 record_at·record_timezone을 공유한다(한 POST에서 동일 값으로 저장).
-        // record가 이미 있으면 findOrCreateDraft가 기존 값을 유지하므로 record_at은 first-POST-wins(최초 기록 앵커)다.
-        LocalDateTime recordAt = draftRows.get(0).getRecordAt();
-        String recordTimezone = draftRows.get(0).getRecordTimezone();
-
-        // 2. record 생성/조회 + SAVED 가드.
+        // 2. record 생성/조회 + SAVED 가드. record_at/record_timezone은 클라가 보낸 값으로 PROCESSING task에서 전달된다(draft 행엔 저장 안 함).
+        // 같은 날짜 재요청(append)이면 findOrCreateDraft가 record_at/record_timezone을 이번 finalize 값으로 갱신한다(마지막에 finalize된 값이 남음 — 콜백 순서 기준, POST 순서 아님).
         DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordAt, recordTimezone);
         if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
             throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());

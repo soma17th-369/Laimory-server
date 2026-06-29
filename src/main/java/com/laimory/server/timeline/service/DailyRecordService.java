@@ -37,11 +37,20 @@ public class DailyRecordService {
      * rollback-only로 오염시켜 같은 트랜잭션 안의 재조회가 무의미해지기 때문이다. 대신 동시 생성 경합은 그대로 전파시켜
      * finalize를 롤백하고, AI 콜백이 멱등 재시도로 마무리하게 한다(재시도 시 상대가 만든 기존 record를 재사용).
      * (이 메서드의 유일 caller는 finalize 경로다.)
+     *
+     * <p>같은 날짜 재요청(append)이면 기존 record의 record_at/record_timezone을 이번 finalize 값으로 갱신한다.
+     * 같은 날 task가 여럿이면 마지막에 finalize된 값이 남는다(콜백 순서 기준이라 POST 순서와 다를 수 있음). 관리 엔티티라
+     * dirty-checking으로 합류 트랜잭션 커밋 시 flush되며 repo.save는 없다.
+     * SAVED는 따로 거르지 않는다 — 유일 호출부 finalize가 직후 SAVED를 거절(throw)해 롤백하므로, 갱신은 flush 전에 폐기된다.
      */
     @Transactional
     public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
                                          String recordTimezone) {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate)
+                .map(existing -> {
+                    existing.updateRecordTime(recordAt, recordTimezone);
+                    return existing;
+                })
                 .orElseGet(() -> dailyRecordRepository.save(
                         DailyRecord.createDraft(userId, recordDate, recordAt, recordTimezone)));
     }

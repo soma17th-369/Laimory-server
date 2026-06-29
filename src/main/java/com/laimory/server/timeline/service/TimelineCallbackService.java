@@ -90,7 +90,8 @@ public class TimelineCallbackService {
         //    검증/SAVED 재확인 실패는 롤백되고 여기서 잡아 FAILED로 기록한다(콜백은 200).
         try {
             dailyTimelineService.appendDailyTimeline(
-                    TimelineDefaults.DEFAULT_USER_ID, recordDate, draftRows, request.events());
+                    TimelineDefaults.DEFAULT_USER_ID, recordDate, task.recordAt(), task.recordTimezone(),
+                    draftRows, request.events());
             timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
         } catch (IllegalArgumentException | IllegalStateException e) {
             timelineTaskService.markFailed(taskId, recordDate, e.getMessage(), callbackTokenHash);

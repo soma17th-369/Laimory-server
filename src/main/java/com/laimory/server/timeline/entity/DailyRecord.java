@@ -64,4 +64,14 @@ public class DailyRecord extends BaseEntity {
                                           String recordTimezone) {
         return new DailyRecord(userId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
     }
+
+    /**
+     * 같은 날짜 재기록(append) 시 record_at/record_timezone을 이번 finalize의 값으로 갱신한다.
+     * 같은 날 task가 여럿이면 마지막에 finalize(=DB write)된 값이 남는다(콜백 도착 순서 기준이라 POST 순서와 다를 수 있음).
+     * 둘은 절대시각 해석의 짝이므로 함께 갱신한다.
+     */
+    public void updateRecordTime(LocalDateTime recordAt, String recordTimezone) {
+        this.recordAt = recordAt;
+        this.recordTimezone = recordTimezone;
+    }
 }

@@ -58,8 +58,7 @@ class TimelineItemPayloadJsonTest {
     @Test
     void sourceItemDto_externalProperty_roundTrip_movement() throws Exception {
         String json = """
-                {"itemType":"MOVEMENT","startAt":"2026-05-08T08:30:00","endAt":null,"summary":"s",
-                 "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"}}
+                {"itemType":"MOVEMENT","startAt":"2026-05-08T08:30:00","endAt":null,                 "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
@@ -73,8 +72,7 @@ class TimelineItemPayloadJsonTest {
     @Test
     void sourceItemDto_externalProperty_roundTrip_photo() throws Exception {
         String json = """
-                {"itemType":"PHOTO","startAt":"2026-06-17T09:00:00","endAt":null,"summary":"s",
-                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0}}
+                {"itemType":"PHOTO","startAt":"2026-06-17T09:00:00","endAt":null,                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
@@ -89,8 +87,7 @@ class TimelineItemPayloadJsonTest {
         // 필드 순서 회귀: payload가 먼저, itemType(외부 디스크리미네이터)이 마지막.
         // Jackson은 itemType을 볼 때까지 payload를 버퍼링해야 한다.
         String json = """
-                {"startAt":null,"endAt":null,"summary":"s",
-                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0},"itemType":"PHOTO"}
+                {"startAt":null,"endAt":null,                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0},"itemType":"PHOTO"}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
@@ -106,8 +103,7 @@ class TimelineItemPayloadJsonTest {
         // payload가 itemType보다 먼저 온다. 중첩 컨텍스트에서도 외부 프로퍼티 버퍼링이 동작해야 한다.
         String json = """
                 {"recordAt":"2026-05-08T12:30:00","recordTimeZone":"Asia/Seoul","sourceItems":[
-                  {"startAt":null,"endAt":null,"summary":"s",
-                   "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"},
+                  {"startAt":null,"endAt":null,                   "payload":{"fromPlace":"강남역","toPlace":"성수역","transportMode":"SUBWAY","lineName":"7호선"},
                    "itemType":"MOVEMENT"}
                 ]}
                 """;
@@ -123,7 +119,7 @@ class TimelineItemPayloadJsonTest {
     void sourceItemDto_serializes_itemTypeAsSiblingOfPayload() throws Exception {
         SourceItemDto dto = new SourceItemDto(
                 ItemType.MOVEMENT,
-                java.time.LocalDateTime.of(2026, 5, 8, 8, 30), null, "s",
+                java.time.LocalDateTime.of(2026, 5, 8, 8, 30), null,
                 new MovementPayload("강남역", "성수역", "SUBWAY", "7호선"));
 
         com.fasterxml.jackson.databind.JsonNode tree = objectMapper.valueToTree(dto);
