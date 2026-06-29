@@ -47,7 +47,7 @@ public class DailyRecordService {
                                          String recordTimezone) {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate)
                 .map(existing -> {
-                    existing.updateRecordAnchor(recordAt, recordTimezone);
+                    existing.updateRecordTime(recordAt, recordTimezone);
                     return existing;
                 })
                 .orElseGet(() -> dailyRecordRepository.save(

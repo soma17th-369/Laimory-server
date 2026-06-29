@@ -66,10 +66,10 @@ public class DailyRecord extends BaseEntity {
     }
 
     /**
-     * 같은 날짜 재기록(append) 시 앵커를 최신 POST 값으로 갱신한다(last-write-wins).
-     * record_at·record_timezone은 절대시각 해석의 짝이므로 함께 갱신한다.
+     * 같은 날짜 재기록(append) 시 record_at/record_timezone을 이번 POST 값으로 갱신한다(last-write-wins).
+     * 둘은 절대시각 해석의 짝이므로 함께 갱신한다.
      */
-    public void updateRecordAnchor(LocalDateTime recordAt, String recordTimezone) {
+    public void updateRecordTime(LocalDateTime recordAt, String recordTimezone) {
         this.recordAt = recordAt;
         this.recordTimezone = recordTimezone;
     }
