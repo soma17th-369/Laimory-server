@@ -66,7 +66,7 @@ class DailyTimelineServiceTest {
 
     private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.PHOTO,
-                startAt, null, "summary-" + pk,
+                startAt, null,
                 MAPPER.valueToTree(new PhotoPayload("uri" + pk, "content://" + pk, 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
@@ -74,7 +74,7 @@ class DailyTimelineServiceTest {
 
     private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.LOCATION,
-                startAt, null, "summary-" + pk,
+                startAt, null,
                 MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;

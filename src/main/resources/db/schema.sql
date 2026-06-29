@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
-    summary TEXT NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,

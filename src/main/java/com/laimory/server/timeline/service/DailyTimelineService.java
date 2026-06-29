@@ -45,7 +45,6 @@ public class DailyTimelineService {
      * {@code findOrCreateDraft}가 {@code REQUIRED}라 record 생성도 이 트랜잭션에 합류 → 롤백 시 record까지 사라진다.
      *
      * <p>아이템은 draft 행에서 그대로 복사한다(itemType/start/end/payload). payload는 이미 JsonNode이므로 재변환·ObjectMapper 없음.
-     * summary는 AI 입력 컨텍스트일 뿐이므로 의도적으로 저장하지 않는다(draft 행에만 남고 finalize에서 옮기지 않음).
      */
     @Transactional
     public Long appendDailyTimeline(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,

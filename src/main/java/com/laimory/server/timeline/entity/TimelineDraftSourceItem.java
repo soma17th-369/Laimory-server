@@ -48,9 +48,6 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "end_at")
     private LocalDateTime endAt;
 
-    @Column(name = "summary", columnDefinition = "TEXT")
-    private String summary;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", nullable = false)
     private JsonNode payload;
@@ -59,18 +56,17 @@ public class TimelineDraftSourceItem extends BaseEntity {
     }
 
     private TimelineDraftSourceItem(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
-                                    LocalDateTime endAt, String summary, JsonNode payload) {
+                                    LocalDateTime endAt, JsonNode payload) {
         this.taskId = taskId;
         this.userId = userId;
         this.itemType = itemType;
         this.startAt = startAt;
         this.endAt = endAt;
-        this.summary = summary;
         this.payload = payload;
     }
 
     public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
-                                             LocalDateTime endAt, String summary, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, itemType, startAt, endAt, summary, payload);
+                                             LocalDateTime endAt, JsonNode payload) {
+        return new TimelineDraftSourceItem(taskId, userId, itemType, startAt, endAt, payload);
     }
 }

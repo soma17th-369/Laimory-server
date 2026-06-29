@@ -77,7 +77,7 @@ public class TimelineDraftTaskService {
         List<TimelineDraftSourceItem> rows = sourceItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, TimelineDefaults.DEFAULT_USER_ID,
-                        src.itemType(), src.startAt(), src.endAt(), src.summary(),
+                        src.itemType(), src.startAt(), src.endAt(),
                         objectMapper.valueToTree(src.payload())))
                 .toList();
         timelineDraftSourceItemService.saveAll(rows);
