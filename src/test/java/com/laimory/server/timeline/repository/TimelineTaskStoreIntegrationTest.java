@@ -2,6 +2,7 @@ package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.common.redis.NamespacedRedis;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -11,7 +12,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -27,7 +27,7 @@ class TimelineTaskStoreIntegrationTest {
     private TimelineTaskStore timelineTaskStore;
 
     @Autowired
-    private StringRedisTemplate stringRedisTemplate;
+    private NamespacedRedis namespacedRedis;
 
     @Test
     void savesAndFindsTaskFromRealRedis() {
@@ -41,7 +41,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(found).isPresent();
             assertThat(found.get()).isEqualTo(task);
         } finally {
-            stringRedisTemplate.delete("timeline:draft-task:" + taskId);
+            namespacedRedis.delete("timeline:draft-task:" + taskId);
         }
     }
 

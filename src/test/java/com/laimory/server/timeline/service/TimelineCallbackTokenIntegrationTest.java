@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
+import com.laimory.server.common.redis.NamespacedRedis;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
@@ -28,7 +29,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -60,7 +60,7 @@ class TimelineCallbackTokenIntegrationTest {
     @Autowired
     private TimelineDraftSourceItemService draftSourceItemService;
     @Autowired
-    private StringRedisTemplate redis;
+    private NamespacedRedis redis;
 
     @MockitoSpyBean
     private TimelineEventSuggestionDispatcher dispatcher;
@@ -81,6 +81,7 @@ class TimelineCallbackTokenIntegrationTest {
         createdTaskIds.forEach(id -> {
             draftSourceItemService.deleteByTaskId(id);
             redis.delete("timeline:draft-task:" + id);
+            // redis는 NamespacedRedis facade → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
     }
@@ -100,7 +101,7 @@ class TimelineCallbackTokenIntegrationTest {
         String token = tokenCaptor.getValue();
 
         // Redis에는 원문 토큰이 없고 해시만 보관된다.
-        String rawJson = redis.opsForValue().get("timeline:draft-task:" + taskId);
+        String rawJson = redis.get("timeline:draft-task:" + taskId);
         assertThat(rawJson).doesNotContain(token);
         TimelineDraftTask stored = taskService.find(taskId).orElseThrow();
         assertThat(stored.callbackTokenHash()).isNotNull().isNotEqualTo(token);
