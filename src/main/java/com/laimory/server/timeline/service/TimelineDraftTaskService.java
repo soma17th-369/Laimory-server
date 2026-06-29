@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.List;
@@ -99,7 +102,12 @@ public class TimelineDraftTaskService {
         return taskId;
     }
 
-    /** row 생성·DB 제약(NOT NULL) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지). */
+    /**
+     * row 생성·DB 제약(NOT NULL) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지).
+     *
+     * <p>PHOTO는 클라가 보낸 {@code filename}을 서버가 full key에 끼워 넣으므로, 이 입력 경계 한 곳에서
+     * 엄격 패턴 검증한다({@link PhotoFilenames}; UUIDv7+허용ext, 슬래시·{@code ..} 불허).
+     */
     private void requireValidSourceItems(List<SourceItemDto> sourceItems) {
         for (int i = 0; i < sourceItems.size(); i++) {
             SourceItemDto src = sourceItems.get(i);
@@ -108,6 +116,12 @@ public class TimelineDraftTaskService {
             }
             if (src.payload() == null) {
                 throw new IllegalArgumentException("sourceItem has null payload: index=" + i);
+            }
+            if (src.itemType() == ItemType.PHOTO) {
+                if (!(src.payload() instanceof PhotoPayload photo)) {
+                    throw new IllegalArgumentException("PHOTO sourceItem must have PhotoPayload: index=" + i);
+                }
+                PhotoFilenames.requireValid(photo.filename());
             }
         }
     }

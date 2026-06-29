@@ -74,7 +74,7 @@ class TimelineItemPayloadJsonTest {
     void sourceItemDto_externalProperty_roundTrip_photo() throws Exception {
         String json = """
                 {"itemType":"PHOTO","startAt":"2026-06-17T09:00:00","endAt":null,"summary":"s",
-                 "payload":{"photoUri":"u","latitude":1.0,"longitude":2.0}}
+                 "payload":{"filename":"u","latitude":1.0,"longitude":2.0}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
@@ -90,7 +90,7 @@ class TimelineItemPayloadJsonTest {
         // Jackson은 itemType을 볼 때까지 payload를 버퍼링해야 한다.
         String json = """
                 {"startAt":null,"endAt":null,"summary":"s",
-                 "payload":{"photoUri":"u","latitude":1.0,"longitude":2.0},"itemType":"PHOTO"}
+                 "payload":{"filename":"u","latitude":1.0,"longitude":2.0},"itemType":"PHOTO"}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);

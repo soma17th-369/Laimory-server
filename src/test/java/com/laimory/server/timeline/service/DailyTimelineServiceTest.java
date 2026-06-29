@@ -102,7 +102,7 @@ class DailyTimelineServiceTest {
         TimelineItem saved = itemCaptor.getValue();
         assertThat(saved.getItemType()).isEqualTo(ItemType.PHOTO);
         assertThat(saved.getStartAt()).isEqualTo(t);
-        assertThat(saved.getPayload().get("photoUri").asText()).isEqualTo("uri10");
+        assertThat(saved.getPayload().get("filename").asText()).isEqualTo("uri10");
 
         // 소비한 draft 행을 taskId로 삭제한다(같은 트랜잭션).
         verify(timelineDraftSourceItemService).deleteByTaskId(TASK_ID);
@@ -225,7 +225,7 @@ class DailyTimelineServiceTest {
         assertThat(itemResponse0.startAt()).isEqualTo(t);
         assertThat(itemResponse0.endAt()).isNull();
         // payload는 raw JsonNode(타입 정보 없음).
-        assertThat(itemResponse0.payload().get("photoUri").asText()).isEqualTo("uri");
+        assertThat(itemResponse0.payload().get("filename").asText()).isEqualTo("uri");
         assertThat(itemResponse0.payload().has("itemType")).isFalse();
 
         TimelineItemResponse itemResponse1 = eventResponse.items().get(1);
