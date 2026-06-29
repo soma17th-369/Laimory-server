@@ -37,8 +37,8 @@ class TimelineItemResponseMapperTest {
     }
 
     @Test
-    void photo_buildsUnsignedPhotoUrlFromFilename() {
-        TimelineItem item = item(ItemType.PHOTO, new PhotoPayload(FILENAME, 1.0, 2.0));
+    void photo_buildsUnsignedPhotoUrlFromFilename_andEchoesClientPhotoUri() {
+        TimelineItem item = item(ItemType.PHOTO, new PhotoPayload(FILENAME, "content://local/42", 1.0, 2.0));
 
         TimelineItemResponse response = mapper.toResponse(item, USER_ID);
 
@@ -46,6 +46,8 @@ class TimelineItemResponseMapperTest {
         // photoUrl = https://{cdn}/{sha256hex(userId)}/photos/{filename} (무서명 stable URL)
         String expected = "https://" + CDN + "/" + PhotoObjectKeys.fullKey(FILENAME, USER_ID);
         assertThat(response.payload().get("photoUrl").asText()).isEqualTo(expected);
+        // 기기 로컬 URI는 그대로 echo(1차 로컬 캐싱용).
+        assertThat(response.payload().get("clientPhotoUri").asText()).isEqualTo("content://local/42");
         assertThat(response.payload().get("latitude").asDouble()).isEqualTo(1.0);
         assertThat(response.payload().get("longitude").asDouble()).isEqualTo(2.0);
         // filename은 응답에서 사라지고 photoUrl로 대체된다.
@@ -68,7 +70,7 @@ class TimelineItemResponseMapperTest {
 
     @Test
     void copiesIdentityFields() {
-        TimelineItem item = item(ItemType.PHOTO, new PhotoPayload(FILENAME, null, null));
+        TimelineItem item = item(ItemType.PHOTO, new PhotoPayload(FILENAME, "content://x", null, null));
 
         TimelineItemResponse response = mapper.toResponse(item, USER_ID);
 

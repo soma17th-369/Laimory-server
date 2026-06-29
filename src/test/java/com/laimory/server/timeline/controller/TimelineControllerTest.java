@@ -47,7 +47,8 @@ class TimelineControllerTest {
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
                 {"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null, "summary": "s",
-                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "latitude": 1.0, "longitude": 2.0}}
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
+                             "latitude": 1.0, "longitude": 2.0}}
               ]
             }
             """;
@@ -166,7 +167,7 @@ class TimelineControllerTest {
         TimelineItemResponse item = new TimelineItemResponse(
                 10L, ItemType.PHOTO,
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                objectMapper.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
+                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));

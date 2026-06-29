@@ -47,7 +47,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 아이템 페이로드 | Timeline Item Payload | 모든 payload 타입의 공통 인터페이스다. Java sealed interface로 표현한다. |
-| 사진 페이로드 | Photo Payload | 사진 파일명(`filename`)과 위치 정보(위도/경도)를 담는다. DB엔 서빙 URL이 아니라 최소 식별자 `filename`만 저장한다. |
+| 사진 페이로드 | Photo Payload | 사진 파일명(`filename`), 기기 로컬 URI(`clientPhotoUri`), 위치 정보(위도/경도)를 담는다. DB엔 서빙 URL이 아니라 `filename`+`clientPhotoUri`를 저장한다. |
 | 일정 페이로드 | Calendar Payload | 일정 제목, 캘린더명, 위치 텍스트 등을 담는다. |
 | 장소 페이로드 | Location Payload | 장소명, 지역명, 위도, 경도 등을 담는다. |
 | 이동 페이로드 | Movement Payload | 출발지, 도착지, 이동수단, 노선명 등을 담는다. |
@@ -59,6 +59,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 파일명 | filename | DB에 저장하는 사진의 최소 식별자다. 형식은 `{uuidv7}.{ext}`(ext=jpg/png/webp). full key/서빙 URL이 아니다. |
+| 클라이언트 사진 URI | clientPhotoUri | 클라이언트 기기의 로컬 사진 URI(예: `content://...`)다. 서버는 의미를 해석하지 않고 저장·echo만 한다. 클라가 다운로드 없이 기기 원본을 즉시 표시(1차 로컬 캐싱)하도록 타임라인 아이템↔로컬 파일 연결을 보존한다. photoUrl(원격 서빙 URL)과 별개 레이어다. |
 | 전체 객체 키 | full object key | 실제 S3 객체 키다. 항상 서버가 파생한다: `{sha256hex(userId)}/photos/{filename}`. 날짜 폴더·taskId 없음. DB에 저장하지 않는다. |
 | 사진 URL | photoUrl | 무서명 CloudFront 서빙 URL(`https://{cdnDomain}/{full object key}`)이다. 응답 전용이며 읽을 때 구성한다(DB 미저장). |
 | presigned 업로드 발급 | Presigned Upload | 클라가 올릴 사진 메타(타입·크기)를 받아 photo마다 `filename` + presigned PUT URL을 발급하는 작업이다. 크기는 서명에 바인딩한다. |
@@ -107,5 +108,5 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | Display Text | Title 또는 Subtitle |
 | Metadata Map | Typed Payload |
 | Map<String, Object> payload | TimelineItemPayload |
-| photoUri / 사진 URI | filename(DB 저장) 또는 photoUrl(응답) |
+| photoUri / 사진 URI (서버 사진 식별자) | filename(DB 저장) 또는 photoUrl(응답). 단, 기기 로컬 URI는 `clientPhotoUri`로 별도 표현. |
 

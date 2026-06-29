@@ -69,7 +69,7 @@ class TimelineCallbackServiceTest {
     private List<TimelineDraftSourceItem> draftRows() {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, DATE, DATE.atTime(12, 0), "Asia/Seoul", ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
-                MAPPER.valueToTree(new PhotoPayload("u", 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 0L);
         return List.of(row);
     }

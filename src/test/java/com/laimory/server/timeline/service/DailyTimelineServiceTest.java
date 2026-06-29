@@ -66,7 +66,8 @@ class DailyTimelineServiceTest {
 
     private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, RECORD_DATE, RECORD_AT, ZONE, ItemType.PHOTO,
-                startAt, null, "summary-" + pk, MAPPER.valueToTree(new PhotoPayload("uri" + pk, 1.0, 2.0)));
+                startAt, null, "summary-" + pk,
+                MAPPER.valueToTree(new PhotoPayload("uri" + pk, "content://" + pk, 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
     }
@@ -200,7 +201,7 @@ class DailyTimelineServiceTest {
 
         LocationPayload location = new LocationPayload("카페", "강남", 3.0, 4.0);
         TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, t, null,
-                MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0)));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
         TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, t.plusHours(1), t.plusHours(2),
                 MAPPER.valueToTree(location));
@@ -210,7 +211,7 @@ class DailyTimelineServiceTest {
         // 매퍼가 PHOTO를 photoUrl로 구성해 응답을 만든다(URL 구성 로직은 TimelineItemResponseMapperTest에서 검증).
         // userId는 record의 user_id(7L)로 전달된다.
         TimelineItemResponse photoResponse = new TimelineItemResponse(21L, ItemType.PHOTO, t, null,
-                MAPPER.valueToTree(new PhotoPayloadResponse("https://cdn.example/x", 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayloadResponse("https://cdn.example/x", "content://x", 1.0, 2.0)));
         TimelineItemResponse locationResponse = new TimelineItemResponse(22L, ItemType.LOCATION,
                 t.plusHours(1), t.plusHours(2), MAPPER.valueToTree(location));
         when(timelineItemResponseMapper.toResponse(item0, 7L)).thenReturn(photoResponse);
@@ -238,6 +239,7 @@ class DailyTimelineServiceTest {
         assertThat(itemResponse0.startAt()).isEqualTo(t);
         assertThat(itemResponse0.endAt()).isNull();
         assertThat(itemResponse0.payload().get("photoUrl").asText()).isEqualTo("https://cdn.example/x");
+        assertThat(itemResponse0.payload().get("clientPhotoUri").asText()).isEqualTo("content://x");
         assertThat(itemResponse0.payload().has("filename")).isFalse();
         assertThat(itemResponse0.payload().has("itemType")).isFalse();
 

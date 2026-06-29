@@ -122,6 +122,10 @@ public class TimelineDraftTaskService {
                     throw new IllegalArgumentException("PHOTO sourceItem must have PhotoPayload: index=" + i);
                 }
                 PhotoFilenames.requireValid(photo.filename());
+                // clientPhotoUri는 1차 로컬 캐싱용 기기 URI라 PHOTO엔 필수다(서버는 내용 미해석, echo 전용).
+                if (photo.clientPhotoUri() == null || photo.clientPhotoUri().isBlank()) {
+                    throw new IllegalArgumentException("PHOTO sourceItem requires clientPhotoUri: index=" + i);
+                }
             }
         }
     }

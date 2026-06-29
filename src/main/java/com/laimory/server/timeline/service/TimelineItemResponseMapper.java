@@ -49,7 +49,7 @@ public class TimelineItemResponseMapper {
             throw new IllegalStateException("invalid PHOTO payload in DB: " + payload, e);
         }
         String photoUrl = photoUrlService.buildUrl(photo.filename(), userId);
-        return objectMapper.valueToTree(
-                new PhotoPayloadResponse(photoUrl, photo.latitude(), photo.longitude()));
+        return objectMapper.valueToTree(new PhotoPayloadResponse(
+                photoUrl, photo.clientPhotoUri(), photo.latitude(), photo.longitude()));
     }
 }

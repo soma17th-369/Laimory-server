@@ -68,7 +68,7 @@ class TimelineDraftTaskServiceTest {
 
     private List<SourceItemDto> oneSource() {
         return List.of(new SourceItemDto(ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
-                new PhotoPayload(VALID_FILENAME, 1.0, 2.0)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0)));
     }
 
     @Test
@@ -112,6 +112,7 @@ class TimelineDraftTaskServiceTest {
         assertThat(row.getSummary()).isEqualTo("s");
         // payload는 discriminator 없는 raw JsonNode.
         assertThat(row.getPayload().get("filename").asText()).isEqualTo(VALID_FILENAME);
+        assertThat(row.getPayload().get("clientPhotoUri").asText()).isEqualTo("content://x");
         assertThat(row.getPayload().has("itemType")).isFalse();
     }
 
@@ -215,7 +216,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, null, null, "s", new PhotoPayload("u", 1.0, 2.0)));
+                new SourceItemDto(null, null, null, "s", new PhotoPayload("u", "content://x", 1.0, 2.0)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -233,7 +234,18 @@ class TimelineDraftTaskServiceTest {
         // PHOTO filename이 UUIDv7+허용ext 패턴이 아니면 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
-                new PhotoPayload("../etc/passwd", 1.0, 2.0)));
+                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMissingClientPhotoUri() {
+        // clientPhotoUri는 1차 로컬 캐싱용이라 PHOTO엔 필수다(누락/blank → 400, 저장 전).
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null, "s",
+                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());

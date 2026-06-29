@@ -85,7 +85,8 @@ class TimelineItemPersistenceIntegrationTest {
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 
-        PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", 37.5445, 127.0557);
+        PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
+                "content://media/external/images/media/12345", 37.5445, 127.0557);
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A");
         LocationPayload location = new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557);
 

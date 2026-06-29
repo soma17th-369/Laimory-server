@@ -27,7 +27,7 @@ class TimelineEventSuggestionValidatorTest {
     private TimelineDraftSourceItem draftRow(int id) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-1", 0L, DATE, DATE.atTime(12, 0), "Asia/Seoul", ItemType.PHOTO,
                 T, T.plusHours(1), "summary-" + id,
-                MAPPER.valueToTree(new PhotoPayload("uri-" + id, 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayload("uri-" + id, "content://" + id, 1.0, 2.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", (long) id);
         return row;
     }
