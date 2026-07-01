@@ -19,6 +19,8 @@ class RedisAccessArchTest {
     static final ArchRule redis_access_only_through_facade =
             noClasses()
                     .that().doNotHaveFullyQualifiedName("com.laimory.server.common.redis.NamespacedRedis")
+                    .and().doNotHaveFullyQualifiedName("com.laimory.server.common.redis.RedisSslConfig")
                     .should().dependOnClassesThat().resideInAPackage("org.springframework.data.redis..")
-                    .because("Redis 접근은 환경 prefix가 강제되도록 NamespacedRedis facade만 거쳐야 한다");
+                    .because("Redis 접근은 환경 prefix가 강제되도록 NamespacedRedis facade만 거쳐야 한다"
+                            + " (RedisSslConfig는 키 접근이 아닌 Lettuce 연결 TLS 설정이라 prefix 불변식과 무관 → 예외)");
 }
