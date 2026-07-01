@@ -11,14 +11,17 @@ public_subnet_cidrs  = ["10.0.0.0/20", "10.0.16.0/20"]
 private_subnet_cidrs = ["10.0.32.0/20", "10.0.48.0/20"]
 
 was_instance_types = {
-  dev  = "t3.small"
+  dev  = "t3.micro" # dev-mysql 분리 후 강등 (#60). JVM 힙은 -Xmx로 1GB에 맞춰 튜닝 필요.
   prod = "t3.micro"
 }
 mysql_instance_type = "t3.micro"
 redis_instance_type = "t3.micro"
 ai_instance_type    = "t3.micro"
 
-mysql_private_ip = "10.0.32.10"
+mysql_private_ip = {
+  dev  = "10.0.32.12"
+  prod = "10.0.32.10"
+}
 redis_private_ip = "10.0.32.11"
 
 app_port = 8080

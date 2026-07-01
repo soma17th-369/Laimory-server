@@ -74,9 +74,12 @@ variable "ai_instance_type" {
 }
 
 variable "mysql_private_ip" {
-  description = "MySQL 박스 고정 사설 IP (private_subnet_cidrs[0] 범위 내)"
-  type        = string
-  default     = "10.0.32.10"
+  description = "환경별 MySQL 박스 고정 사설 IP (private_subnet_cidrs[0] 범위 내)"
+  type        = map(string)
+  default = {
+    dev  = "10.0.32.12"
+    prod = "10.0.32.10"
+  }
 }
 
 variable "redis_private_ip" {
