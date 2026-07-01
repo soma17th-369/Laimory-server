@@ -1,0 +1,7 @@
+#!/bin/bash
+# AI 박스: 네트워크/박스만 프로비저닝. 앱 런타임·배포는 Laimory-AI repo 소관(이번 범위 밖).
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+echo "AI box provisioned by terraform. App deploy handled separately (Laimory-AI repo)." > /root/AI_README.txt

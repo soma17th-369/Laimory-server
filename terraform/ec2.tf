@@ -1,0 +1,135 @@
+# ============================================================================
+# EC2 5대 — 최신 Ubuntu 24.04 base + user_data 스크립트 (커스텀 AMI 미사용)
+#   was(dev/prod): 퍼블릭 서브넷 + EIP, docker + nginx(80→8080 프록시)
+#   mysql:         프라이빗, 고정 IP, mysql8 + schema + binlog→S3 백업
+#   redis:         프라이빗, 고정 IP, redis7 + ACL
+#   ai:            프라이빗 (박스만; 앱 배포는 Laimory-AI 소관)
+# ============================================================================
+
+# ---------- WAS (dev/prod) ----------
+
+resource "aws_instance" "was" {
+  for_each = toset(var.environments)
+
+  ami                    = local.ubuntu_ami
+  instance_type          = var.was_instance_types[each.key]
+  subnet_id              = aws_subnet.public[index(var.environments, each.key) % length(aws_subnet.public)].id
+  vpc_security_group_ids = [aws_security_group.was.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  user_data = templatefile("${path.module}/user_data/was.sh.tftpl", {
+    region           = var.region
+    db_host          = var.mysql_private_ip
+    db_username      = var.db_app_username
+    db_password      = var.db_app_password
+    redis_host       = var.redis_private_ip
+    redis_username   = var.redis_app_username
+    redis_password   = var.redis_app_password
+    redis_ssl        = "false"
+    photo_bucket     = aws_s3_bucket.photos.bucket
+    photo_cdn_domain = aws_cloudfront_distribution.photos.domain_name
+  })
+
+  root_block_device {
+    volume_size = var.root_volume_gib
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "${var.project_name}-was-${each.key}" }
+}
+
+resource "aws_eip" "was" {
+  for_each = toset(var.environments)
+
+  instance   = aws_instance.was[each.key].id
+  domain     = "vpc"
+  depends_on = [aws_internet_gateway.main]
+
+  tags = { Name = "${var.project_name}-was-${each.key}-eip" }
+}
+
+# ---------- MySQL (프라이빗, 고정 IP) ----------
+
+resource "aws_instance" "mysql" {
+  ami                    = local.ubuntu_ami
+  instance_type          = var.mysql_instance_type
+  subnet_id              = aws_subnet.private[0].id
+  private_ip             = var.mysql_private_ip
+  vpc_security_group_ids = [aws_security_group.db.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  user_data = templatefile("${path.module}/user_data/mysql.sh.tftpl", {
+    region        = var.region
+    db_name       = "laimory"
+    app_user      = var.db_app_username
+    app_password  = var.db_app_password
+    backup_bucket = aws_s3_bucket.backup.bucket
+    schema_s3_uri = "s3://${aws_s3_bucket.backup.bucket}/bootstrap/schema.sql"
+  })
+
+  root_block_device {
+    volume_size = var.root_volume_gib
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "${var.project_name}-mysql" }
+
+  # NAT(apt)·프라이빗 라우팅·schema 업로드가 준비된 뒤 부팅되도록
+  depends_on = [
+    aws_nat_gateway.main,
+    aws_route_table_association.private,
+    aws_s3_object.schema,
+  ]
+}
+
+# ---------- Redis (프라이빗, 고정 IP) ----------
+
+resource "aws_instance" "redis" {
+  ami                    = local.ubuntu_ami
+  instance_type          = var.redis_instance_type
+  subnet_id              = aws_subnet.private[0].id
+  private_ip             = var.redis_private_ip
+  vpc_security_group_ids = [aws_security_group.redis.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  user_data = templatefile("${path.module}/user_data/redis.sh.tftpl", {
+    redis_username = var.redis_app_username
+    redis_password = var.redis_app_password
+  })
+
+  root_block_device {
+    volume_size = var.root_volume_gib
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "${var.project_name}-redis" }
+
+  depends_on = [
+    aws_nat_gateway.main,
+    aws_route_table_association.private,
+  ]
+}
+
+# ---------- AI (프라이빗, 박스만) ----------
+
+resource "aws_instance" "ai" {
+  ami                    = local.ubuntu_ami
+  instance_type          = var.ai_instance_type
+  subnet_id              = aws_subnet.private[1 % length(aws_subnet.private)].id
+  vpc_security_group_ids = [aws_security_group.ai.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  user_data = templatefile("${path.module}/user_data/ai.sh.tftpl", {})
+
+  root_block_device {
+    volume_size = var.root_volume_gib
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "${var.project_name}-ai" }
+
+  depends_on = [
+    aws_nat_gateway.main,
+    aws_route_table_association.private,
+  ]
+}

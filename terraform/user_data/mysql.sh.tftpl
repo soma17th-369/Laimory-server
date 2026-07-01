@@ -1,0 +1,52 @@
+#!/bin/bash
+# MySQL 부트스트랩: mysql8 설치 + 원격접속 + DB/앱유저 + schema.sql + binlog→S3 백업.
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y mysql-server unzip curl
+
+# AWS CLI v2 (schema 다운로드 / binlog 백업)
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install
+
+# 원격 접속 허용 (WAS 가 사설망으로 3306 연결)
+sed -ri 's/^\s*bind-address\s*=.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf
+
+# binlog 활성화 (백업 대상, datadir 에 생성)
+cat > /etc/mysql/mysql.conf.d/binlog.cnf <<'CNF'
+[mysqld]
+server-id = 1
+log_bin = mysql-bin
+binlog_format = ROW
+binlog_expire_logs_seconds = 604800
+CNF
+
+systemctl enable mysql
+systemctl restart mysql
+
+# DB + 앱 유저 ('%' 호스트로 원격 GRANT). root 는 소켓 인증 유지.
+mysql <<'SQL'
+CREATE DATABASE IF NOT EXISTS ${db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '${app_user}'@'%' IDENTIFIED BY '${app_password}';
+GRANT ALL PRIVILEGES ON ${db_name}.* TO '${app_user}'@'%';
+FLUSH PRIVILEGES;
+SQL
+
+# 스키마 적용 (ddl-auto=validate 이므로 앱 기동 전 선적용 필수)
+aws s3 cp "${schema_s3_uri}" /tmp/schema.sql --region ${region}
+mysql ${db_name} < /tmp/schema.sql
+
+# binlog → S3 백업 (매시). 기존 soma369-bucket 의 binlog→S3 방식 재현.
+cat > /usr/local/bin/binlog-backup.sh <<'BK'
+#!/bin/bash
+set -euo pipefail
+mysql -e "FLUSH BINARY LOGS;"
+for f in /var/lib/mysql/mysql-bin.[0-9]*; do
+  [ -f "$f" ] || continue
+  aws s3 cp "$f" "s3://${backup_bucket}/binlog/$(basename "$f")" --region ${region} --no-progress
+done
+BK
+chmod +x /usr/local/bin/binlog-backup.sh
+printf '0 * * * * root /usr/local/bin/binlog-backup.sh >> /var/log/binlog-backup.log 2>&1\n' > /etc/cron.d/binlog-backup
