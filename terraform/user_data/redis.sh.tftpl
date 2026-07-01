@@ -1,31 +1,11 @@
 #!/bin/bash
-# Redis 부트스트랩: 공식 apt 저장소(redis, TLS 포함) + self-signed TLS + ACL 유저.
-# 공식 저장소를 쓰는 이유: Ubuntu 기본 redis-server 는 빌드에 TLS 미포함일 수 있어 tls-port 기동이 실패할 수 있음.
+# Redis 부트스트랩: redis7 + ACL 유저. TLS 미사용 — 프라이빗 서브넷 + SG(6379는 WAS만)로 격리.
+# 실사용자 데이터 도입 시엔 관리형 Redis(ElastiCache/MemoryDB) in-transit 암호화로 전환 권장.
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg openssl unzip lsb-release
-
-# AWS CLI v2 (CA 퍼블리시)
-curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-unzip -q /tmp/awscliv2.zip -d /tmp
-/tmp/aws/install
-
-# 공식 Redis 저장소 (TLS 지원 보장)
-curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-chmod a+r /usr/share/keyrings/redis-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" > /etc/apt/sources.list.d/redis.list
-apt-get update -y
-apt-get install -y redis
-
-# self-signed TLS 인증서 (CN/SAN = 사설 IP)
-mkdir -p /etc/redis/tls
-openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-  -keyout /etc/redis/tls/redis.key -out /etc/redis/tls/redis.crt \
-  -subj "/CN=${redis_host}" -addext "subjectAltName=IP:${redis_host}"
-chown -R redis:redis /etc/redis/tls
-chmod 640 /etc/redis/tls/redis.key
+apt-get install -y redis-server
 
 # ACL 유저 (default off, 앱 유저만 허용)
 cat > /etc/redis/users.acl <<'ACL'
@@ -35,22 +15,14 @@ ACL
 chown redis:redis /etc/redis/users.acl
 chmod 640 /etc/redis/users.acl
 
-# TLS·ACL 활성화 (평문 port 0, 6379 는 TLS 전용)
+# 원격 접속 허용(평문 6379; 인바운드는 SG로 WAS SG만) + ACL
 cat >> /etc/redis/redis.conf <<'CONF'
 
 # --- terraform user_data ---
 bind 0.0.0.0
 protected-mode no
-port 0
-tls-port 6379
-tls-cert-file /etc/redis/tls/redis.crt
-tls-key-file /etc/redis/tls/redis.key
-tls-auth-clients no
 aclfile /etc/redis/users.acl
 CONF
 
 systemctl enable redis-server
 systemctl restart redis-server
-
-# 앱-신뢰용 CA 퍼블리시(truststore 방식 대비). 앱 신뢰 방식은 apply 전 확정.
-aws s3 cp /etc/redis/tls/redis.crt "s3://${backup_bucket}/bootstrap/redis-ca.crt" --region ${region} || true

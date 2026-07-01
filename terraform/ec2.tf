@@ -25,7 +25,7 @@ resource "aws_instance" "was" {
     redis_host       = var.redis_private_ip
     redis_username   = var.redis_app_username
     redis_password   = var.redis_app_password
-    redis_ssl        = "true"
+    redis_ssl        = "false"
     photo_bucket     = aws_s3_bucket.photos.bucket
     photo_cdn_domain = aws_cloudfront_distribution.photos.domain_name
   })
@@ -93,11 +93,8 @@ resource "aws_instance" "redis" {
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
   user_data = templatefile("${path.module}/user_data/redis.sh.tftpl", {
-    region         = var.region
-    redis_host     = var.redis_private_ip
     redis_username = var.redis_app_username
     redis_password = var.redis_app_password
-    backup_bucket  = aws_s3_bucket.backup.bucket
   })
 
   root_block_device {
