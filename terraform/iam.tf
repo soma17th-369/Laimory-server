@@ -47,6 +47,14 @@ data "aws_iam_policy_document" "ec2_inline" {
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.backup.arn}/*"]
   }
+
+  # MySQL 박스가 부팅 시 bootstrap/schema.sql 을 내려받아 적용(ddl-auto=validate 선적용).
+  statement {
+    sid       = "LaimoryBootstrapRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.backup.arn}/bootstrap/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ec2_inline" {

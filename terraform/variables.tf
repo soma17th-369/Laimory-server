@@ -125,6 +125,11 @@ variable "db_app_password" {
   description = "앱 MySQL 유저 비밀번호"
   type        = string
   sensitive   = true
+  # user_data 의 SQL(IDENTIFIED BY '...') 파싱을 깨지 않도록 안전 문자셋만 허용.
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.db_app_password))
+    error_message = "db_app_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
 }
 # MySQL root 는 Ubuntu 기본 auth_socket(로컬 소켓 인증)을 유지한다.
 # 앱은 root 를 쓰지 않고 db_app_username 으로 네트워크 접속하므로 root 비밀번호는 두지 않는다.
@@ -139,4 +144,9 @@ variable "redis_app_password" {
   description = "Redis 앱 유저 비밀번호(AUTH)"
   type        = string
   sensitive   = true
+  # user_data 의 Redis ACL(user ... >password) 파싱을 깨지 않도록 안전 문자셋만 허용.
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.redis_app_password))
+    error_message = "redis_app_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
 }

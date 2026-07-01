@@ -1,8 +1,8 @@
 # ============================================================================
 # EC2 5대 — 최신 Ubuntu 24.04 base + user_data 스크립트 (커스텀 AMI 미사용)
-#   was(dev/prod): 퍼블릭 서브넷 + EIP, docker
+#   was(dev/prod): 퍼블릭 서브넷 + EIP, docker + nginx(80→8080 프록시)
 #   mysql:         프라이빗, 고정 IP, mysql8 + schema + binlog→S3 백업
-#   redis:         프라이빗, 고정 IP, redis7 + TLS + ACL
+#   redis:         프라이빗, 고정 IP, redis7 + ACL
 #   ai:            프라이빗 (박스만; 앱 배포는 Laimory-AI 소관)
 # ============================================================================
 
