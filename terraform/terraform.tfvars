@@ -11,7 +11,7 @@ public_subnet_cidrs  = ["10.0.0.0/20", "10.0.16.0/20"]
 private_subnet_cidrs = ["10.0.32.0/20", "10.0.48.0/20"]
 
 was_instance_types = {
-  dev  = "t3.small"
+  dev  = "t3.micro" # dev-mysql 분리 후 강등 (#60). JVM 힙은 -Xmx로 1GB에 맞춰 튜닝 필요.
   prod = "t3.micro"
 }
 mysql_instance_type = "t3.micro"
