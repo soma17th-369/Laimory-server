@@ -50,6 +50,8 @@ class DailyTimelineServiceTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
+    private TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
+    @Mock
     private TimelineEventSuggestionValidator timelineEventSuggestionValidator;
     @Mock
     private TimelineItemResponseMapper timelineItemResponseMapper;
@@ -108,8 +110,9 @@ class DailyTimelineServiceTest {
         assertThat(saved.getStartAt()).isEqualTo(t);
         assertThat(saved.getPayload().get("filename").asText()).isEqualTo("uri10");
 
-        // 소비한 draft 행을 taskId로 삭제한다(같은 트랜잭션).
+        // 소비한 staging 행을 taskId로 삭제한다(같은 트랜잭션): source item + event suggestion 둘 다.
         verify(timelineDraftSourceItemService).deleteByTaskId(TASK_ID);
+        verify(timelineDraftEventSuggestionService).deleteByTaskId(TASK_ID);
     }
 
     @Test
@@ -161,9 +164,10 @@ class DailyTimelineServiceTest {
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events))
                 .isInstanceOf(IllegalStateException.class);
-        // SAVED record면 이벤트를 하나도 저장하지 않고 draft도 삭제하지 않는다(롤백 대상).
+        // SAVED record면 이벤트를 하나도 저장하지 않고 staging도 삭제하지 않는다(롤백 대상).
         verify(timelineEventService, never()).save(any());
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+        verify(timelineDraftEventSuggestionService, never()).deleteByTaskId(anyString());
     }
 
     @Test
@@ -182,6 +186,7 @@ class DailyTimelineServiceTest {
         verify(dailyRecordService, never()).findOrCreateDraft(any(), any(), any(), any());
         verify(timelineEventService, never()).save(any());
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+        verify(timelineDraftEventSuggestionService, never()).deleteByTaskId(anyString());
     }
 
     // --- getDailyTimeline (읽기) ---

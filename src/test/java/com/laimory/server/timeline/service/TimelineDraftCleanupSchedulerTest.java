@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -40,6 +41,8 @@ class TimelineDraftCleanupSchedulerTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
+    private TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
+    @Mock
     private S3PhotoStorageService s3PhotoStorageService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -51,7 +54,7 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {
         TimelineDraftCleanupScheduler scheduler = new TimelineDraftCleanupScheduler(
-                timelineDraftSourceItemService, s3PhotoStorageService, MAPPER, FIXED);
+                timelineDraftSourceItemService, timelineDraftEventSuggestionService, s3PhotoStorageService, MAPPER, FIXED);
         ReflectionTestUtils.setField(scheduler, "retentionDays", retentionDays);
         return scheduler;
     }
@@ -67,6 +70,13 @@ class TimelineDraftCleanupSchedulerTest {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, DATE.atTime(9, 0), null,
                 MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
+        return row;
+    }
+
+    private TimelineDraftEventSuggestion eventSuggestionRow(long id) {
+        TimelineDraftEventSuggestion row = TimelineDraftEventSuggestion.of(
+                "task-" + id, USER_ID, DATE.atTime(9, 0), null, "title", null);
+        ReflectionTestUtils.setField(row, "timelineDraftEventSuggestionId", id);
         return row;
     }
 
@@ -155,6 +165,20 @@ class TimelineDraftCleanupSchedulerTest {
 
         verify(s3PhotoStorageService, never()).delete(any());
         verify(timelineDraftSourceItemService, never()).deleteById(anyLong());
+    }
+
+    // --- event suggestion 정리(S3 없음 → 단순 삭제) ---
+
+    @Test
+    void cleanup_deletesExpiredEventSuggestions() {
+        when(timelineDraftEventSuggestionService.findCreatedBefore(any()))
+                .thenReturn(List.of(eventSuggestionRow(40L), eventSuggestionRow(41L)));
+
+        scheduler(7L).cleanupExpiredDrafts();
+
+        verify(timelineDraftEventSuggestionService).deleteById(40L);
+        verify(timelineDraftEventSuggestionService).deleteById(41L);
+        verify(s3PhotoStorageService, never()).delete(any());  // event suggestion엔 S3 객체 없음
     }
 
     // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 1h) ---

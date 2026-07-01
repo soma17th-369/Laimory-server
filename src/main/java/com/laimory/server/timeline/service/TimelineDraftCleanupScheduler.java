@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -18,8 +19,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 보관기간을 초과한 draft source 행을 주기적으로 정리하는 스케줄러. 행마다 PHOTO 사진의 S3 객체를 먼저 지운 뒤
- * 행을 삭제한다(S3 삭제 실패 시 행을 남겨 다음 실행에서 재시도).
+ * 보관기간을 초과한 draft staging 행(source item + event suggestion)을 주기적으로 정리하는 스케줄러.
+ * source item은 행마다 PHOTO 사진의 S3 객체를 먼저 지운 뒤 행을 삭제한다(S3 삭제 실패 시 행을 남겨 다음 실행에서 재시도).
+ * event suggestion은 S3 객체가 없어 단순 삭제한다.
  *
  * <p>불변식: 보관기간(retentionDays, 기본 7일)은 PROCESSING_TTL(1시간)보다 훨씬 커야 한다(retention ≫ PROCESSING_TTL 1h).
  * 그래야 처리 중(in-flight)인 task의 draft가 cutoff에 걸려 조기 삭제되는 일이 없다.
@@ -39,6 +41,7 @@ public class TimelineDraftCleanupScheduler {
     private static final long MIN_RETENTION_DAYS = 1;
 
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
     private final S3PhotoStorageService s3PhotoStorageService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -86,6 +89,13 @@ public class TimelineDraftCleanupScheduler {
             }
         }
         log.info("draft cleanup 완료: deleted={}, failed={}", deleted, failed);
+
+        // event suggestion staging도 같은 cutoff로 정리한다(S3 객체 없음 → 단순 삭제, 행별 실패 격리 불필요).
+        List<TimelineDraftEventSuggestion> expiredEvents = timelineDraftEventSuggestionService.findCreatedBefore(cutoff);
+        for (TimelineDraftEventSuggestion event : expiredEvents) {
+            timelineDraftEventSuggestionService.deleteById(event.getTimelineDraftEventSuggestionId());
+        }
+        log.info("event suggestion cleanup 완료: deleted={}", expiredEvents.size());
     }
 
     /**

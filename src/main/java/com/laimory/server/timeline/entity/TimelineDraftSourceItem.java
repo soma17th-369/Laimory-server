@@ -52,6 +52,14 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "payload", nullable = false)
     private JsonNode payload;
 
+    /**
+     * 이 source item이 묶이는 이벤트 제안(=이번 task의 {@link TimelineDraftEventSuggestion} PK). soft ref(하드 FK 아님).
+     * POST 시엔 null이고, AI가 콜백 전 그루핑하며 UPDATE로 채운다. finalize의 assembler가 non-null 값을
+     * 이번 task의 eventRows 집합과 대조해 무결성을 검증한다(존재하지 않거나 다른 task id면 실패).
+     */
+    @Column(name = "timeline_draft_event_suggestion_id")
+    private Long timelineDraftEventSuggestionId;
+
     protected TimelineDraftSourceItem() {
     }
 
@@ -68,5 +76,13 @@ public class TimelineDraftSourceItem extends BaseEntity {
     public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
                                              LocalDateTime endAt, JsonNode payload) {
         return new TimelineDraftSourceItem(taskId, userId, itemType, startAt, endAt, payload);
+    }
+
+    /**
+     * 이 source item이 묶이는 이벤트 제안 PK를 설정한다(그루핑 배정). prod에선 AI가 raw UPDATE로 채우므로 API는
+     * 호출하지 않고, 이 메서드는 그 배정을 도메인으로 모델링해 테스트가 finalize 입력을 구성할 때 쓴다.
+     */
+    public void assignEventSuggestion(Long timelineDraftEventSuggestionId) {
+        this.timelineDraftEventSuggestionId = timelineDraftEventSuggestionId;
     }
 }

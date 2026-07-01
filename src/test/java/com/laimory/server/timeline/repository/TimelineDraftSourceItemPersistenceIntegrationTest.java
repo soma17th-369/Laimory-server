@@ -43,14 +43,15 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         String taskId = "11111111-1111-1111-1111-111111111111";
         MovementPayload movement = new MovementPayload("강남역", "성수역", "SUBWAY", "7호선");
 
-        TimelineDraftSourceItem saved = timelineDraftSourceItemRepository.save(
-                TimelineDraftSourceItem.of(
-                        taskId,
-                        0L,
-                        ItemType.MOVEMENT,
-                        LocalDateTime.of(2026, 5, 8, 8, 30),
-                        LocalDateTime.of(2026, 5, 8, 9, 10),
-                        objectMapper.valueToTree(movement)));
+        TimelineDraftSourceItem toSave = TimelineDraftSourceItem.of(
+                taskId,
+                0L,
+                ItemType.MOVEMENT,
+                LocalDateTime.of(2026, 5, 8, 8, 30),
+                LocalDateTime.of(2026, 5, 8, 9, 10),
+                objectMapper.valueToTree(movement));
+        toSave.assignEventSuggestion(555L);   // 신규 soft-ref 컬럼 왕복 검증
+        TimelineDraftSourceItem saved = timelineDraftSourceItemRepository.save(toSave);
 
         em.flush();
         em.clear();
@@ -62,6 +63,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
         assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 9, 10));
+        assertThat(reloaded.getTimelineDraftEventSuggestionId()).isEqualTo(555L);
         assertThat(reloaded.getPayload().get("fromPlace").asText()).isEqualTo("강남역");
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
 
