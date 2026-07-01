@@ -18,7 +18,10 @@ mysql_instance_type = "t3.micro"
 redis_instance_type = "t3.micro"
 ai_instance_type    = "t3.micro"
 
-mysql_private_ip = "10.0.32.10"
+mysql_private_ip = {
+  dev  = "10.0.32.12"
+  prod = "10.0.32.10"
+}
 redis_private_ip = "10.0.32.11"
 
 app_port = 8080

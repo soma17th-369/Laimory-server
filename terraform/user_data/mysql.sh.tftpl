@@ -14,7 +14,8 @@ unzip -q /tmp/awscliv2.zip -d /tmp
 # 원격 접속 허용 (WAS 가 사설망으로 3306 연결)
 sed -ri 's/^\s*bind-address\s*=.*/bind-address = 0.0.0.0/' /etc/mysql/mysql.conf.d/mysqld.cnf
 
-# binlog 활성화 (백업 대상, datadir 에 생성)
+%{ if backup_enabled ~}
+# binlog 활성화 (백업 대상, datadir 에 생성). dev는 백업을 안 하므로 binlog도 끈다.
 cat > /etc/mysql/mysql.conf.d/binlog.cnf <<'CNF'
 [mysqld]
 server-id = 1
@@ -22,6 +23,7 @@ log_bin = mysql-bin
 binlog_format = ROW
 binlog_expire_logs_seconds = 604800
 CNF
+%{ endif ~}
 
 systemctl enable mysql
 systemctl restart mysql
@@ -38,7 +40,8 @@ SQL
 aws s3 cp "${schema_s3_uri}" /tmp/schema.sql --region ${region}
 mysql ${db_name} < /tmp/schema.sql
 
-# binlog → S3 백업 (매시). 기존 soma369-bucket 의 binlog→S3 방식 재현.
+%{ if backup_enabled ~}
+# binlog → S3 백업 (매시). 기존 soma369-bucket 의 binlog→S3 방식 재현. (prod만)
 cat > /usr/local/bin/binlog-backup.sh <<'BK'
 #!/bin/bash
 set -euo pipefail
@@ -50,3 +53,4 @@ done
 BK
 chmod +x /usr/local/bin/binlog-backup.sh
 printf '0 * * * * root /usr/local/bin/binlog-backup.sh >> /var/log/binlog-backup.log 2>&1\n' > /etc/cron.d/binlog-backup
+%{ endif ~}

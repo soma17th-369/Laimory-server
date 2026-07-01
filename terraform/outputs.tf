@@ -20,8 +20,9 @@ output "was_public_ips" {
   value       = { for k, v in aws_eip.was : k => v.public_ip }
 }
 
-output "mysql_private_ip" {
-  value = aws_instance.mysql.private_ip
+output "mysql_private_ips" {
+  description = "환경별 MySQL 사설 IP"
+  value       = { for k, v in aws_instance.mysql : k => v.private_ip }
 }
 
 output "redis_private_ip" {

@@ -1,7 +1,7 @@
 # ============================================================================
 # 보안그룹 — SG는 stateful·inbound 기본 차단이므로 같은 VPC라도 명시적으로 연다.
 #   was:   80/443 ← world, 8080 ← ai (콜백)
-#   db:    3306 ← was
+#   db:    3306 ← was, ai (dev-ai 직접 접근)
 #   redis: 6379 ← was
 #   ai:    inbound 없음 (egress only)
 # ============================================================================
@@ -56,7 +56,7 @@ resource "aws_vpc_security_group_ingress_rule" "was_https" {
 
 resource "aws_vpc_security_group_ingress_rule" "was_callback" {
   security_group_id            = aws_security_group.was.id
-  description                  = "AI -> app callback (server-to-server)"
+  description                  = "AI to app callback (server-to-server)"
   ip_protocol                  = "tcp"
   from_port                    = var.app_port
   to_port                      = var.app_port
@@ -72,6 +72,15 @@ resource "aws_vpc_security_group_ingress_rule" "db_mysql" {
   from_port                    = 3306
   to_port                      = 3306
   referenced_security_group_id = aws_security_group.was.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "db_mysql_ai" {
+  security_group_id            = aws_security_group.db.id
+  description                  = "MySQL from AI (dev-ai direct DB access)"
+  ip_protocol                  = "tcp"
+  from_port                    = 3306
+  to_port                      = 3306
+  referenced_security_group_id = aws_security_group.ai.id
 }
 
 # ---------- Redis inbound ----------
