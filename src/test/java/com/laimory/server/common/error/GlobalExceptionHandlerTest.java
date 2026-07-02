@@ -125,4 +125,17 @@ class GlobalExceptionHandlerTest {
                         .header("Accept-Language", "ko"))
                 .andExpect(jsonPath("$.header.message").value("이미 저장된 하루 기록입니다."));
     }
+
+    /**
+     * Accept-Language가 없으면 한국어(계약상 폴백). spring.web.locale=ko가 없으면 서버 JVM 로캘(EC2=en,
+     * MockMvc 기본=ENGLISH)로 새어 영어가 나가는 회귀를 잡는다.
+     */
+    @Test
+    void withoutAcceptLanguage_fallsBackToKorean() throws Exception {
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
+
+        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(jsonPath("$.header.message").value("이미 저장된 하루 기록입니다."));
+    }
 }
