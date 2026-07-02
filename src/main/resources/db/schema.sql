@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON
+    timeline_draft_event_suggestion_id BIGINT NULL,  -- AI가 그루핑 시 UPDATE로 채우는 소속 이벤트(soft ref, finalize에서 앱-레벨 검증). 하드 FK 아님(두 staging 독립 삭제)
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
@@ -79,6 +80,27 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     PRIMARY KEY (timeline_draft_source_item_id),
     KEY idx_draft_source_task (task_id),
     KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI가 콜백 전 write-then-notify로 저장하는 이벤트 제안(메타만). finalize 시 timeline_events로 옮기고 삭제.
+-- app→AI 입력(timeline_draft_source_items)과 대칭인 AI→API 출력 staging. 각 이벤트에 묶이는 source item은
+-- timeline_draft_source_items.timeline_draft_event_suggestion_id(soft ref)로 가리킨다(1:N, FK는 item 쪽).
+-- 이 테이블은 AI가 raw INSERT(JPA auditing 없음)하고 cleanup이 created_at에 의존하므로 감사 컬럼에 DB default를 준다.
+CREATE TABLE IF NOT EXISTS timeline_draft_event_suggestions (
+    timeline_draft_event_suggestion_id BIGINT NOT NULL AUTO_INCREMENT,
+    task_id VARCHAR(36) NOT NULL,
+    user_id BIGINT NOT NULL,
+    start_at DATETIME NOT NULL,                       -- 이벤트 시작(timeline_events.start_at NOT NULL 대응)
+    end_at DATETIME NULL,
+    title VARCHAR(255) NOT NULL,
+    subtitle VARCHAR(255) NULL,
+    -- 감사 컬럼: 외부 writer(AI)가 raw INSERT하므로 DB default로 자동 채움(기존 도메인 테이블은 API JPA가 채워 default 없음)
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (timeline_draft_event_suggestion_id),
+    KEY idx_draft_event_task (task_id),
+    KEY idx_draft_event_created (created_at)          -- cleanup 보관기간 스캔용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,

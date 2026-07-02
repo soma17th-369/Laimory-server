@@ -16,8 +16,8 @@ import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
-import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -30,12 +30,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
-/** 콜백 오케스트레이터 단위 검증. 404·token-first(401)·멱등·draft 로드·커밋후-Redis·검증실패→FAILED. 인프라 0. */
+/**
+ * 콜백 오케스트레이터 단위 검증. 404·token-first(401)·멱등·source/event DB 로드·커밋후-Redis·
+ * (assemble 무결성/finalize 검증) 실패→FAILED. 인프라 0. events는 바디가 아닌 DB에서 로드·조립된다(assembler는 실제 사용).
+ */
 @ExtendWith(MockitoExtension.class)
 class TimelineCallbackServiceTest {
 
@@ -43,6 +47,10 @@ class TimelineCallbackServiceTest {
     private TimelineTaskService timelineTaskService;
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
+    @Mock
+    private TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
+    @Spy
+    private TimelineEventSuggestionAssembler timelineEventSuggestionAssembler = new TimelineEventSuggestionAssembler();
     @Mock
     private DailyTimelineService dailyTimelineService;
     @Mock
@@ -55,23 +63,32 @@ class TimelineCallbackServiceTest {
     private static final String TOKEN = "raw-callback-token";
     private static final String TOKEN_HASH = CallbackTokens.hash(TOKEN);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final long EVENT_ID = 100L;
 
     private TimelineDraftTask processingTask() {
         return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", TOKEN_HASH);
     }
 
     private DraftTaskCallbackRequest successRequest() {
-        List<TimelineEventSuggestionDto> events = List.of(new TimelineEventSuggestionDto("제목", "부제",
-                LocalDateTime.of(2026, 6, 17, 9, 0), null, List.of(0L)));
-        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, events);
+        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null);
     }
 
+    /** source 행: PK=10, 이번 task의 event 제안(EVENT_ID)에 배정됨. */
     private List<TimelineDraftSourceItem> draftRows() {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
-        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 0L);
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
+        row.assignEventSuggestion(EVENT_ID);
         return List.of(row);
+    }
+
+    /** event 제안 행: PK=EVENT_ID. */
+    private List<TimelineDraftEventSuggestion> eventRows() {
+        TimelineDraftEventSuggestion event = TimelineDraftEventSuggestion.of("t", 0L,
+                LocalDateTime.of(2026, 6, 17, 9, 0), null, "제목", "부제");
+        ReflectionTestUtils.setField(event, "timelineDraftEventSuggestionId", EVENT_ID);
+        return List.of(event);
     }
 
     @Test
@@ -126,13 +143,13 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
+        verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
 
     @Test
     void handleCallback_aiReportedFailure_marksFailed() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
-        DraftTaskCallbackRequest req =
-                new DraftTaskCallbackRequest(TaskStatus.FAILED, "ai gave up", null);
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ai gave up");
 
         service.handleCallback("v1", "t", TOKEN, req);
 
@@ -142,15 +159,16 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_success_loadsDraftsFinalizesThenMarksSuccess() {
+    void handleCallback_success_loadsFromDbAssemblesFinalizesThenMarksSuccess() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
-        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
-        DraftTaskCallbackRequest req = successRequest();
+        List<TimelineDraftSourceItem> rows = draftRows();
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(rows);
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
 
-        service.handleCallback("v1", "t", TOKEN, req);
+        service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        // draft는 바디가 아닌 서비스에서 로드돼 finalize에 전달된다.
-        verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), any(), any(), eq(req.events()));
+        // events는 바디가 아닌 DB(event 제안 + source event_fk)에서 로드·조립돼 finalize에 전달된다.
+        verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), any(), eq(rows), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
 
@@ -161,8 +179,8 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_success_draftAbsent_recordExists_idempotentRecovery_marksSuccess() {
-        // draft 부재 + record 존재 = 이전 finalize가 커밋·삭제한 상태 → 재작성 없이 Redis SUCCESS만 set.
+    void handleCallback_success_sourceAbsent_recordExists_idempotentRecovery_marksSuccess() {
+        // source 부재 + record 존재 = 이전 finalize가 커밋·삭제한 상태 → 재작성 없이 Redis SUCCESS만 set.
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE))
@@ -173,11 +191,13 @@ class TimelineCallbackServiceTest {
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
+        // source 부재면 event 제안은 조회하지 않는다(복구 경로가 앞서 return).
+        verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
 
     @Test
-    void handleCallback_success_draftAbsent_recordMissing_marksFailed() {
-        // draft도 record도 없는 이상 상태 = SUCCESS로 두면 폴링이 500을 낸다 → FAILED로 종결한다.
+    void handleCallback_success_sourceAbsent_recordMissing_marksFailed() {
+        // source도 record도 없는 이상 상태 = SUCCESS로 두면 폴링이 500을 낸다 → FAILED로 종결한다.
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
@@ -189,9 +209,43 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
+    void handleCallback_success_eventSuggestionsMissing_marksFailed() {
+        // ①: source는 있는데 event 제안이 0행 = AI 미기록/조기 콜백 → 빈 finalize로 source를 지우는 사고 방지 위해 FAILED.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(List.of());
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
+        verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
+    }
+
+    @Test
+    void handleCallback_success_sourceReferencesUnknownEvent_assemblerIntegrityViolation_marksFailed() {
+        // source item이 이번 task의 event 제안에 없는 id(999)를 가리킴 → assembler가 IAE → 콜백이 잡아 FAILED(조용한 유실 차단).
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
+                LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
+        row.assignEventSuggestion(999L);
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of(row));
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows()); // event id=100
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
+        verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
+    }
+
+    @Test
     void handleCallback_finalizeFails_marksFailedAndDoesNotMarkSuccess() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
         // finalize 내부 검증/SAVED 실패 → 롤백되고 콜백이 IAE로 잡아 FAILED 기록.
         doThrow(new IllegalArgumentException("event references unknown itemId: 9"))
                 .when(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), any());
@@ -205,8 +259,7 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_invalidStatus_throwsBadRequest() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
-        DraftTaskCallbackRequest req =
-                new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null);
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, req))
                 .isInstanceOf(IllegalArgumentException.class);

@@ -4,6 +4,8 @@ import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
+import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
+import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.LocalDate;
@@ -16,15 +18,22 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * AI 작성 콜백 오케스트레이터. task 로드 + 토큰 검증 + 멱등 + status 분기 + finalize/Redis 전이를 합성한다.
  *
+ * <p>결과물(이벤트 제안)은 콜백 바디로 오지 않는다 — AI가 콜백 전 DB에 write-then-notify로 저장한다:
+ * 이벤트 메타는 {@code timeline_draft_event_suggestions}, 각 이벤트에 묶이는 source item은
+ * {@code timeline_draft_source_items.timeline_draft_event_suggestion_id}(soft ref). 서버는 taskId로 이 둘을 로드해
+ * {@link TimelineEventSuggestionAssembler}로 {@code events}를 조립한다(입력·출력 모두 DB 경유).
+ *
  * <p>순서가 load-bearing이다(spec §Callback 고정):
  * <ol>
  *   <li>task 로드(없음/만료 → 404)</li>
  *   <li><b>토큰 검증(401) 먼저</b> — terminal 멱등 단축보다 앞 (토큰이 유일 보호장치이고, terminal task도 해시를 보존하므로 가능)</li>
  *   <li>terminal이면 idempotent return(200)</li>
  *   <li>FAILED → markFailed</li>
- *   <li>SUCCESS → draft 행을 DB에서 로드. 없으면(이미 finalize돼 삭제됨) Redis SUCCESS만 set(멱등 복구).
- *       있으면 단일 트랜잭션 {@code appendDailyTimeline}(검증+영속+draft 삭제)을 호출하고 <b>커밋 이후에만</b> Redis SUCCESS.
- *       실패 시 롤백 → markFailed.</li>
+ *   <li>SUCCESS → source 행을 DB에서 로드. 없으면(이미 finalize돼 삭제됨) record 존재 시 Redis SUCCESS만 set(멱등 복구),
+ *       record도 없으면 FAILED. 있으면 event 제안 행을 로드 — 0행이면(AI 미기록/조기 콜백) 빈 finalize로 source를
+ *       지우는 사고를 막기 위해 FAILED. 있으면 assemble(soft ref 무결성 검증) 후 단일 트랜잭션
+ *       {@code appendDailyTimeline}(검증+영속+두 staging 삭제)을 호출하고 <b>커밋 이후에만</b> Redis SUCCESS.
+ *       assemble/finalize 실패 시 FAILED.</li>
  *   <li>그 외 status → 400</li>
  * </ol>
  *
@@ -38,6 +47,8 @@ public class TimelineCallbackService {
 
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
+    private final TimelineEventSuggestionAssembler timelineEventSuggestionAssembler;
     private final DailyTimelineService dailyTimelineService;
     private final DailyRecordService dailyRecordService;
 
@@ -69,12 +80,12 @@ public class TimelineCallbackService {
             throw new IllegalArgumentException("invalid callback status: " + request.status());
         }
 
-        // 3. SUCCESS: draft 행을 DB에서 로드.
+        // 3. SUCCESS: source 행을 DB에서 로드.
         List<TimelineDraftSourceItem> draftRows = timelineDraftSourceItemService.findByTaskId(taskId);
         if (draftRows.isEmpty()) {
-            // PROCESSING인데 draft 부재 = 보통 이전 finalize가 record 생성+draft 삭제를 커밋한 상태(멱등 복구).
+            // PROCESSING인데 source 부재 = 보통 이전 finalize가 record 생성+staging 삭제를 커밋한 상태(멱등 복구).
             // 단, record가 실제로 존재할 때만 SUCCESS를 확정한다 — record 없이 SUCCESS로 두면 polling이
-            // 'daily record missing for SUCCESS task' 500을 낸다(draft도 record도 없는 이상 상태). 없으면 FAILED로 종결.
+            // 'daily record missing for SUCCESS task' 500을 낸다(source도 record도 없는 이상 상태). 없으면 FAILED로 종결.
             boolean recordExists = dailyRecordService
                     .findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate).isPresent();
             if (recordExists) {
@@ -86,12 +97,23 @@ public class TimelineCallbackService {
             return;
         }
 
-        // 4. finalize: 단일 트랜잭션(검증→record/events/items 저장→draft 삭제). 커밋 후에만 Redis SUCCESS.
-        //    검증/SAVED 재확인 실패는 롤백되고 여기서 잡아 FAILED로 기록한다(콜백은 200).
+        // 4. 이벤트 제안 행을 DB staging에서 로드. SUCCESS인데 0행 = AI 미기록/조기 콜백 → 빈 finalize로 source를
+        //    지우는 사고를 막기 위해 FAILED로 종결한다(write-then-notify에선 '진짜 0개'와 구분 불가하므로 보수적).
+        List<TimelineDraftEventSuggestion> eventRows = timelineDraftEventSuggestionService.findByTaskId(taskId);
+        if (eventRows.isEmpty()) {
+            timelineTaskService.markFailed(taskId, recordDate,
+                    "event suggestions missing for SUCCESS task", callbackTokenHash);
+            return;
+        }
+
+        // 5. finalize: assemble(soft ref 무결성 검증) → 단일 트랜잭션(검증→record/events/items 저장→두 staging 삭제).
+        //    커밋 후에만 Redis SUCCESS. assemble의 무결성 위반이나 finalize 검증/SAVED 실패는 여기서 잡아 FAILED로 기록한다(콜백은 200).
+        //    assemble은 트랜잭션 밖이라 실패 시 롤백할 것이 없고, finalize 실패는 롤백된다.
         try {
+            List<TimelineEventSuggestionDto> events = timelineEventSuggestionAssembler.assemble(eventRows, draftRows);
             dailyTimelineService.appendDailyTimeline(
                     TimelineDefaults.DEFAULT_USER_ID, recordDate, task.recordAt(), task.recordTimezone(),
-                    draftRows, request.events());
+                    draftRows, events);
             timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
         } catch (IllegalArgumentException | IllegalStateException e) {
             timelineTaskService.markFailed(taskId, recordDate, e.getMessage(), callbackTokenHash);

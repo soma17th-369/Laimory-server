@@ -40,6 +40,8 @@ class TimelineDraftCleanupSchedulerTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
+    private TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
+    @Mock
     private S3PhotoStorageService s3PhotoStorageService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -51,7 +53,7 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {
         TimelineDraftCleanupScheduler scheduler = new TimelineDraftCleanupScheduler(
-                timelineDraftSourceItemService, s3PhotoStorageService, MAPPER, FIXED);
+                timelineDraftSourceItemService, timelineDraftEventSuggestionService, s3PhotoStorageService, MAPPER, FIXED);
         ReflectionTestUtils.setField(scheduler, "retentionDays", retentionDays);
         return scheduler;
     }
@@ -155,6 +157,18 @@ class TimelineDraftCleanupSchedulerTest {
 
         verify(s3PhotoStorageService, never()).delete(any());
         verify(timelineDraftSourceItemService, never()).deleteById(anyLong());
+    }
+
+    // --- event suggestion 정리(S3 없음 → 단일 bulk delete) ---
+
+    @Test
+    void cleanup_deletesExpiredEventSuggestions_viaBulkDeleteWithCutoff() {
+        scheduler(7L).cleanupExpiredDrafts();
+
+        // 행별 select+delete가 아니라 cutoff 기준 단일 bulk delete를 호출한다.
+        ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(timelineDraftEventSuggestionService).deleteCreatedBefore(cutoff.capture());
+        assertThat(cutoff.getValue()).isEqualTo(LocalDateTime.now(FIXED).minusDays(7));
     }
 
     // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 1h) ---

@@ -33,6 +33,7 @@ public class DailyTimelineService {
     private final TimelineEventService timelineEventService;
     private final TimelineItemService timelineItemService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
     private final TimelineEventSuggestionValidator timelineEventSuggestionValidator;
     private final TimelineItemResponseMapper timelineItemResponseMapper;
 
@@ -81,8 +82,10 @@ public class DailyTimelineService {
             }
         }
 
-        // 4. 소비한 draft 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다).
-        timelineDraftSourceItemService.deleteByTaskId(draftRows.get(0).getTaskId());
+        // 4. 소비한 staging 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다). source item + event suggestion 둘 다.
+        String taskId = draftRows.get(0).getTaskId();
+        timelineDraftSourceItemService.deleteByTaskId(taskId);
+        timelineDraftEventSuggestionService.deleteByTaskId(taskId);
 
         return dailyRecordId;
     }
