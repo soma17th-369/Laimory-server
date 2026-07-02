@@ -1,0 +1,28 @@
+#!/bin/bash
+# Redis 부트스트랩: redis7 + ACL 유저. TLS 미사용 — 프라이빗 서브넷 + SG(6379는 WAS만)로 격리.
+# 실사용자 데이터 도입 시엔 관리형 Redis(ElastiCache/MemoryDB) in-transit 암호화로 전환 권장.
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y redis-server
+
+# ACL 유저 (default off, 앱 유저만 허용)
+cat > /etc/redis/users.acl <<'ACL'
+user default off
+user ${redis_username} on >${redis_password} ~* &* +@all
+ACL
+chown redis:redis /etc/redis/users.acl
+chmod 640 /etc/redis/users.acl
+
+# 원격 접속 허용(평문 6379; 인바운드는 SG로 WAS SG만) + ACL
+cat >> /etc/redis/redis.conf <<'CONF'
+
+# --- terraform user_data ---
+bind 0.0.0.0
+protected-mode no
+aclfile /etc/redis/users.acl
+CONF
+
+systemctl enable redis-server
+systemctl restart redis-server

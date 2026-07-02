@@ -102,3 +102,8 @@ CREATE TABLE IF NOT EXISTS timeline_draft_event_suggestions (
     KEY idx_draft_event_task (task_id),
     KEY idx_draft_event_created (created_at)          -- cleanup 보관기간 스캔용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,
+-- 신규 DB(마이그레이션/로컬)에서 없으면 1건 생성한다(멱등 — 이미 있으면 no-op).
+INSERT INTO app_config (min_app_version, recommend_app_version)
+SELECT 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM app_config);

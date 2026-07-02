@@ -17,7 +17,10 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: laimory
-  INSTANCE_ID: i-000edb3c849a6bea3
+  # 새 Sandbox 계정 값은 repo Variables 로 주입(하드코딩 금지). terraform output 후 설정:
+  #   DEV_INSTANCE_ID     = terraform output -json was_instance_ids | jq -r .dev
+  #   AWS_DEPLOY_ROLE_ARN = terraform output -raw gha_deploy_role_arn
+  INSTANCE_ID: ${{ vars.DEV_INSTANCE_ID }}
 
 jobs:
   deploy:
@@ -28,7 +31,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::766037821705:role/github-actions-deploy
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
