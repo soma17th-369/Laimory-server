@@ -34,7 +34,11 @@ public enum ErrorCode {
     // ── ERROR_1xxx: timeline ──
     ERROR_1001(HttpStatus.NOT_FOUND),      // draft task 없음(만료 포함)
     ERROR_1002(HttpStatus.UNAUTHORIZED),   // 콜백 토큰 불일치
-    ERROR_1003(HttpStatus.CONFLICT);       // daily record 이미 SAVED
+    ERROR_1003(HttpStatus.CONFLICT),       // daily record 이미 SAVED
+    ERROR_1004(HttpStatus.BAD_REQUEST),    // 사진 개수 초과 (args: {0}=최대 장수)
+    ERROR_1005(HttpStatus.BAD_REQUEST),    // 사진 장당 크기 초과 (args: {0}=최대 MB)
+    ERROR_1006(HttpStatus.BAD_REQUEST),    // 사진 총합 크기 초과 (args: {0}=최대 MB)
+    ERROR_1007(HttpStatus.BAD_REQUEST);    // 지원하지 않는 사진 포맷 (args 없음 — 사용자 입력 echo 금지)
 
     private final HttpStatus status;
 

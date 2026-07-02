@@ -119,6 +119,20 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createPhotoUploads_mapsLimitExceededToDedicatedCodeWithLimitValue() throws Exception {
+        when(photoUploadService.createUploads(any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1005, 15L));
+
+        String body = """
+                {"photos": [{"contentType": "image/jpeg", "size": 99999999}]}
+                """;
+        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1005"))
+                .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.containsString("15")));
+    }
+
+    @Test
     void createPhotoUploads_mapsIllegalArgumentTo400() throws Exception {
         when(photoUploadService.createUploads(any(), any()))
                 .thenThrow(new IllegalArgumentException("too many photos"));

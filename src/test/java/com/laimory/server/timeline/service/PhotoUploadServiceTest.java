@@ -8,9 +8,12 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,13 +88,23 @@ class PhotoUploadServiceTest {
     }
 
     @Test
-    void createUploads_rejectsTooManyPhotos() {
+    void createUploads_rejectsTooManyPhotos_withDedicatedCode() {
         assertThatThrownBy(() -> service.createUploads("v1", List.of(
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L))))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1004);
+                    assertThat(ex.getArgs()).containsExactly(3); // 메시지 {0} = 한도값
+                });
+    }
+
+    @Test
+    void createUploads_rejectsNullElement() {
+        assertThatThrownBy(() -> service.createUploads("v1",
+                Arrays.asList(new PhotoUploadItem("image/jpeg", 1L), null)))
+                .isInstanceOf(IllegalArgumentException.class); // NPE→500이 아니라 400
     }
 
     @Test
@@ -103,27 +116,46 @@ class PhotoUploadServiceTest {
     }
 
     @Test
-    void createUploads_rejectsPerPhotoOverLimit() {
+    void createUploads_rejectsPerPhotoOverLimit_withDedicatedCode() {
         assertThatThrownBy(() -> service.createUploads("v1",
                 List.of(new PhotoUploadItem("image/jpeg", TEN_MB + 1))))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1005);
+                    assertThat(ex.getArgs()).containsExactly(10L); // MB 표기(바이트 아님)
+                });
     }
 
     @Test
-    void createUploads_rejectsTotalOverLimit() {
-        // 각 사진은 per-photo 한도(10MB) 이하지만 합이 total 한도(20MB) 초과.
+    void createUploads_rejectsTotalOverLimit_withDedicatedCode() {
+        // 각 사진은 per-photo 한도(10MB) 이하지만 합이 total 한도(20MB) 초과 — 의도된 집계 제약.
         assertThatThrownBy(() -> service.createUploads("v1", List.of(
                 new PhotoUploadItem("image/jpeg", TEN_MB),
                 new PhotoUploadItem("image/jpeg", TEN_MB),
                 new PhotoUploadItem("image/jpeg", 1L))))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1006);
+                    assertThat(ex.getArgs()).containsExactly(20L);
+                });
     }
 
     @Test
-    void createUploads_rejectsUnsupportedContentType() {
+    void createUploads_rejectsUnsupportedContentType_withDedicatedCode_withoutEchoingInput() {
+        // HEIC(아이폰 기본)·GIF — 사용자가 유발 가능 → 전용 코드. args 없음(입력 echo 금지).
+        assertThatThrownBy(() -> service.createUploads("v1",
+                List.of(new PhotoUploadItem("image/heic", 1000L))))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1007);
+                    assertThat(ex.getArgs()).isEmpty();
+                });
         assertThatThrownBy(() -> service.createUploads("v1",
                 List.of(new PhotoUploadItem("image/gif", 1000L))))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1007));
+    }
+
+    @Test
+    void createUploads_rejectsBlankContentType_asPlainValidation() {
+        // 형식 불량(누락)은 전용 코드가 아니라 제네릭 400(IAE) — 정상 앱은 보낼 수 없는 요청.
         assertThatThrownBy(() -> service.createUploads("v1",
                 List.of(new PhotoUploadItem("  ", 1000L))))
                 .isInstanceOf(IllegalArgumentException.class);
