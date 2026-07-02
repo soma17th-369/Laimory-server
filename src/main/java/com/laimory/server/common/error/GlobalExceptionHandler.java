@@ -39,7 +39,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     private final MessageSource messageSource;
 
     /** envelope 조립 단일 지점: errorCode attribute + 로캘 메시지. */
-    private ApiResponse<Void> errorBody(ErrorCode code, Object[] args, HttpServletRequest request) {
+    private ApiResponse<Void> errorEnvelope(ErrorCode code, Object[] args, HttpServletRequest request) {
         request.setAttribute(RequestLogAttributes.ERROR_CODE, code.code());
         String message = messageSource.getMessage(code.code(), args, LocaleContextHolder.getLocale());
         return ApiResponse.error(code.code(), message);
@@ -52,7 +52,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         HttpServletRequest servletRequest = ((ServletWebRequest) request).getRequest();
         log.warn("mvc exception: type={} status={}", ex.getClass().getSimpleName(), statusCode.value());
         return ResponseEntity.status(statusCode).headers(headers) // Allow 등 표준 헤더 보존
-                .body(errorBody(ErrorCode.fromStatus(statusCode), null, servletRequest));
+                .body(errorEnvelope(ErrorCode.fromStatus(statusCode), null, servletRequest));
     }
 
     // ── (B) 도메인: 서비스가 던진 의도된 에러 ──
@@ -60,14 +60,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ResponseEntity<ApiResponse<Void>> onBusiness(BusinessException e, HttpServletRequest request) {
         ErrorCode code = e.getErrorCode();
         log.warn("business error: code={}", code.code());
-        return ResponseEntity.status(code.status()).body(errorBody(code, e.getArgs(), request));
+        return ResponseEntity.status(code.status()).body(errorEnvelope(code, e.getArgs(), request));
     }
 
     // ── (C) 프로그램적 검증 실패 → 400 (메시지는 로그만, 클라이언트엔 i18n 제네릭 문구) ──
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<ApiResponse<Void>> onIllegalArgument(IllegalArgumentException e, HttpServletRequest request) {
         log.warn("validation error: {}", e.getMessage());
-        return ResponseEntity.badRequest().body(errorBody(ErrorCode.ERROR_0400, null, request));
+        return ResponseEntity.badRequest().body(errorEnvelope(ErrorCode.ERROR_0400, null, request));
     }
 
     // ── (D) RSE 브리지: 도메인 이관 후 src/main엔 던지는 곳 없음 — 순수 안전망. raw status 보존 ──, 나중에 http status로 직접 에러 던질 때 받아줌
@@ -75,13 +75,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ResponseEntity<ApiResponse<Void>> onResponseStatus(ResponseStatusException e, HttpServletRequest request) {
         log.warn("response status bridge: status={}", e.getStatusCode().value());
         return ResponseEntity.status(e.getStatusCode())
-                .body(errorBody(ErrorCode.fromStatus(e.getStatusCode()), null, request));
+                .body(errorEnvelope(ErrorCode.fromStatus(e.getStatusCode()), null, request));
     }
 
     // ── (E) catch-all: 예상 못한 예외만. 유일하게 stacktrace를 남긴다 ──
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiResponse<Void>> onUnexpected(Exception e, HttpServletRequest request) {
         log.error("unexpected error: type={}", e.getClass().getName(), e);
-        return ResponseEntity.internalServerError().body(errorBody(ErrorCode.ERROR_0500, null, request));
+        return ResponseEntity.internalServerError().body(errorEnvelope(ErrorCode.ERROR_0500, null, request));
     }
 }
