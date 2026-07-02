@@ -1,7 +1,6 @@
 package com.laimory.server.common.redis;
 
 import java.time.Duration;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -17,7 +16,6 @@ import org.springframework.stereotype.Component;
  * <p>호출부는 항상 prefix 없는 <b>논리 키</b>(예: {@code timeline:draft-task:{id}})만 넘긴다 —
  * 환경 prefix 부착은 전적으로 이 facade의 책임이다.
  */
-@Slf4j
 @Component
 public class NamespacedRedis {
 
@@ -28,7 +26,6 @@ public class NamespacedRedis {
                            @Value("${app.redis.key-prefix:}") String prefix) {
         this.template = template;
         this.prefix = prefix;
-        log.info("Redis key prefix = '{}'", prefix.isEmpty() ? "(none)" : prefix);
     }
 
     public void set(String logicalKey, String value, Duration ttl) {
