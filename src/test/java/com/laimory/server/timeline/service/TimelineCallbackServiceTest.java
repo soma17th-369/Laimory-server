@@ -70,7 +70,7 @@ class TimelineCallbackServiceTest {
     }
 
     private DraftTaskCallbackRequest successRequest() {
-        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null);
+        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
     }
 
     /** source 행: PK=10, 이번 task의 event 제안(EVENT_ID)에 배정됨. */
@@ -141,7 +141,7 @@ class TimelineCallbackServiceTest {
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
@@ -149,13 +149,34 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_aiReportedFailure_marksFailed() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
-        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ai gave up");
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, null, "ai gave up");
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", DATE, "ai gave up", TOKEN_HASH);
+        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH); // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
+    }
+
+    @Test
+    void handleCallback_aiReportedFailure_withValidCode_storesIt() {
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_1008", "gpu timeout");
+
+        service.handleCallback("v1", "t", TOKEN, req);
+
+        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
+    }
+
+    @Test
+    void handleCallback_aiReportedFailure_withUnknownCode_fallsBackTo1008() {
+        // 허용 목록 밖 코드(HTTP용 코드 포함)는 저장하지 않고 ERROR_1008로 폴백 — 오분류·유출 차단.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_9999", null);
+
+        service.handleCallback("v1", "t", TOKEN, req);
+
+        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
     }
 
     @Test
@@ -170,7 +191,7 @@ class TimelineCallbackServiceTest {
         // events는 바디가 아닌 DB(event 제안 + source event_fk)에서 로드·조립돼 finalize에 전달된다.
         verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), any(), eq(rows), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
 
         // 불변식: Redis SUCCESS는 finalize(=DB 커밋) 이후에만 set된다.
         InOrder order = inOrder(dailyTimelineService, timelineTaskService);
@@ -190,7 +211,7 @@ class TimelineCallbackServiceTest {
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService).markSuccess("t", DATE, TOKEN_HASH);
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), anyString(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
         // source 부재면 event 제안은 조회하지 않는다(복구 경로가 앞서 return).
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
@@ -204,7 +225,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
     }
 
@@ -217,7 +238,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
     }
@@ -236,7 +257,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), anyString(), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
     }
@@ -252,14 +273,14 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed("t", DATE, "event references unknown itemId: 9", TOKEN_HASH);
+        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1011, TOKEN_HASH); // raw 메시지 대신 분류 코드
         verify(timelineTaskService, never()).markSuccess(anyString(), any(), anyString());
     }
 
     @Test
     void handleCallback_invalidStatus_throwsBadRequest() {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
-        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null);
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, req))
                 .isInstanceOf(IllegalArgumentException.class);

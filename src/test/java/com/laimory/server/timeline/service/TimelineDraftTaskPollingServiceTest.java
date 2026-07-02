@@ -49,14 +49,27 @@ class TimelineDraftTaskPollingServiceTest {
     }
 
     @Test
-    void poll_failed_returnsError() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.failed(DATE, "boom", "h")));
+    void poll_failed_returnsFailureCode() {
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(TimelineDraftTask.failed(DATE, ErrorCode.ERROR_1009.name(), "h")));
 
         DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.FAILED);
-        assertThat(res.error()).isEqualTo("boom");
+        assertThat(res.error()).isEqualTo("ERROR_1009"); // body.error = 실패 분류 코드
         assertThat(res.result()).isNull();
+    }
+
+    @Test
+    void poll_failed_legacyRawError_isReplacedNotLeaked() {
+        // 과거(코드화 이전) 저장분의 raw 메시지는 그대로 내보내지 않고 ERROR_1011로 대체한다(read-side 유출 방어).
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(TimelineDraftTask.failed(DATE, "Connection refused: 10.0.32.99", "h")));
+
+        DraftTaskStatusResponse res = service.poll("v1", "t");
+
+        assertThat(res.error()).isEqualTo(ErrorCode.ERROR_1011.name());
+        assertThat(res.error()).doesNotContain("10.0.32.99");
     }
 
     @Test

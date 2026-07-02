@@ -29,7 +29,9 @@ public class TimelineDraftTaskPollingService {
 
         return switch (task.status()) {
             case PROCESSING -> DraftTaskStatusResponse.processing();
-            case FAILED -> DraftTaskStatusResponse.failed(task.error());
+            // read-side 유출 방어: 알려진 실패 코드가 아니면(과거 raw 잔존 — FAILED TTL 24h 내) ERROR_1011로 대체.
+            case FAILED -> DraftTaskStatusResponse.failed(
+                    ErrorCode.isTaskFailureCode(task.error()) ? task.error() : ErrorCode.ERROR_1011.name());
             case SUCCESS -> {
                 DailyRecord record = dailyRecordService
                         .findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, task.recordDate())

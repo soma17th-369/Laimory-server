@@ -1,5 +1,8 @@
 package com.laimory.server.common.error;
 
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 
@@ -17,7 +20,8 @@ import org.springframework.http.HttpStatusCode;
  * <ul>
  *   <li>{@code ERROR_0xxx} — 교차/폴백 전용. 뒤 세 자리는 HTTP status 힌트(0400=400).
  *       도메인 블록으로 사용 금지.</li>
- *   <li>{@code ERROR_1xxx} — timeline</li>
+ *   <li>{@code ERROR_1xxx} — timeline. 1008~1011은 task 실패 분류 — 주 사용처는 폴링 {@code body.error}
+ *       (200 응답 안)이며, status는 HTTP 에러로 쓰일 경우의 예비값이다.</li>
  *   <li>{@code ERROR_2xxx} — (다음 도메인 예약)</li>
  * </ul>
  * 도메인 블록(1xxx~)의 숫자는 HTTP status와 무관하다 — status는 항상 enum 필드가 결정한다.
@@ -38,12 +42,27 @@ public enum ErrorCode {
     ERROR_1004(HttpStatus.BAD_REQUEST),    // 사진 개수 초과 (args: {0}=최대 장수)
     ERROR_1005(HttpStatus.BAD_REQUEST),    // 사진 장당 크기 초과 (args: {0}=최대 MB)
     ERROR_1006(HttpStatus.BAD_REQUEST),    // 사진 총합 크기 초과 (args: {0}=최대 MB)
-    ERROR_1007(HttpStatus.BAD_REQUEST);    // 지원하지 않는 사진 포맷 (args 없음 — 사용자 입력 echo 금지)
+    ERROR_1007(HttpStatus.BAD_REQUEST),    // 지원하지 않는 사진 포맷 (args 없음 — 사용자 입력 echo 금지)
+
+    // ── ERROR_1xxx: timeline task 실패 분류 — 폴링 body.error 전용(200 안), status는 예비값 ──
+    ERROR_1008(HttpStatus.BAD_GATEWAY),            // AI가 실패 보고(콜백 status=FAILED)
+    ERROR_1009(HttpStatus.BAD_GATEWAY),            // AI 서버 호출 실패(dispatch)
+    ERROR_1010(HttpStatus.INTERNAL_SERVER_ERROR),  // staging 데이터 누락(복구 불가 상태)
+    ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR);  // finalize 검증/조립 실패
+
+    /** task 실패 분류 코드 부분집합. {@code markFailed} 멤버십 가드·폴링 read-side 검증이 참조한다. */
+    public static final Set<ErrorCode> TASK_FAILURE_CODES =
+            Collections.unmodifiableSet(EnumSet.of(ERROR_1008, ERROR_1009, ERROR_1010, ERROR_1011));
 
     private final HttpStatus status;
 
     ErrorCode(HttpStatus status) {
         this.status = status;
+    }
+
+    /** 저장된 문자열이 task 실패 코드명인지 검사한다(폴링 read-side의 과거 raw 값 유출 방어용). */
+    public static boolean isTaskFailureCode(String code) {
+        return TASK_FAILURE_CODES.stream().anyMatch(c -> c.name().equals(code));
     }
 
     /** 클라이언트에 노출되는 코드 문자열이자 메시지 번들 key. */

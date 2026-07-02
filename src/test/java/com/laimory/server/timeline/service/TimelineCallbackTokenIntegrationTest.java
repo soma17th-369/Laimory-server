@@ -185,7 +185,7 @@ class TimelineCallbackTokenIntegrationTest {
     }
 
     private DraftTaskCallbackRequest success() {
-        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null);
+        return new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
     }
 
     private List<SourceItemDto> sources() {

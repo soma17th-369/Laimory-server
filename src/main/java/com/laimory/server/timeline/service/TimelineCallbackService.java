@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.logging.LogSanitizers;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineDefaults;
@@ -12,7 +13,10 @@ import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -45,6 +49,11 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TimelineCallbackService {
 
+    private static final Logger log = LoggerFactory.getLogger(TimelineCallbackService.class);
+
+    /** AI가 콜백으로 보고할 수 있는 실패 코드 허용 목록(당분간 ERROR_1008 하나 — 확장 시 여기에 추가). */
+    private static final Set<String> AI_FAILURE_CODES = Set.of(ErrorCode.ERROR_1008.name());
+
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
@@ -71,9 +80,11 @@ public class TimelineCallbackService {
         LocalDate recordDate = task.recordDate();
         String callbackTokenHash = task.callbackTokenHash();
 
-        // AI가 자신의 실패를 보고한 경우: 그대로 FAILED 기록(draft는 cleanup이 보관기간 후 정리).
+        // AI가 자신의 실패를 보고한 경우: 분류 코드로 FAILED 기록(draft는 cleanup이 보관기간 후 정리).
+        // 자유 텍스트(error)는 저장하지 않고 로그로만 — 폴링 body.error 유출 경로 차단.
         if (request.status() == TaskStatus.FAILED) {
-            timelineTaskService.markFailed(taskId, recordDate, request.error(), callbackTokenHash);
+            timelineTaskService.markFailed(taskId, recordDate,
+                    resolveAiFailureCode(taskId, request), callbackTokenHash);
             return;
         }
         if (request.status() != TaskStatus.SUCCESS) {
@@ -91,8 +102,8 @@ public class TimelineCallbackService {
             if (recordExists) {
                 timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
             } else {
-                timelineTaskService.markFailed(taskId, recordDate,
-                        "draft rows missing but no finalized daily record", callbackTokenHash);
+                log.warn("staging missing on recovery path: taskId={} (draft rows absent, no finalized record)", taskId);
+                timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
             }
             return;
         }
@@ -101,8 +112,8 @@ public class TimelineCallbackService {
         //    지우는 사고를 막기 위해 FAILED로 종결한다(write-then-notify에선 '진짜 0개'와 구분 불가하므로 보수적).
         List<TimelineDraftEventSuggestion> eventRows = timelineDraftEventSuggestionService.findByTaskId(taskId);
         if (eventRows.isEmpty()) {
-            timelineTaskService.markFailed(taskId, recordDate,
-                    "event suggestions missing for SUCCESS task", callbackTokenHash);
+            log.warn("event suggestions missing for SUCCESS task: taskId={}", taskId);
+            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
             return;
         }
 
@@ -116,7 +127,26 @@ public class TimelineCallbackService {
                     draftRows, events);
             timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
         } catch (IllegalArgumentException | IllegalStateException e) {
-            timelineTaskService.markFailed(taskId, recordDate, e.getMessage(), callbackTokenHash);
+            log.warn("finalize failed: taskId={} detail={}", taskId, LogSanitizers.truncate(e.getMessage(), 200));
+            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1011, callbackTokenHash);
         }
+    }
+
+    /**
+     * AI가 보고한 실패 코드를 해석한다. 허용 목록 밖(null 포함)이면 {@link ErrorCode#ERROR_1008} 폴백 —
+     * 코드 불일치로 콜백을 400으로 튕기면 task가 PROCESSING에 갇히므로 관대하게 받는다.
+     * 진단용 자유 텍스트는 여기서 truncate해 로그로만 남긴다.
+     */
+    private ErrorCode resolveAiFailureCode(String taskId, DraftTaskCallbackRequest request) {
+        String requested = request.errorCode();
+        boolean known = requested != null && AI_FAILURE_CODES.contains(requested);
+        if (requested != null && !known) {
+            log.warn("unknown ai failure code, falling back: taskId={} requested={}",
+                    taskId, LogSanitizers.truncate(requested, 50));
+        }
+        ErrorCode code = known ? ErrorCode.valueOf(requested) : ErrorCode.ERROR_1008;
+        log.warn("ai reported failure: taskId={} code={} detail={}",
+                taskId, code, LogSanitizers.truncate(request.error(), 200));
+        return code;
     }
 }

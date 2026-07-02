@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
@@ -33,9 +34,17 @@ public class TimelineTaskService {
                 TimelineDraftTask.success(recordDate, callbackTokenHash), TERMINAL_TTL);
     }
 
-    public void markFailed(String taskId, LocalDate recordDate, String error, String callbackTokenHash) {
+    /**
+     * task를 FAILED로 종결한다. {@code failureCode}는 task 실패 분류({@link ErrorCode#TASK_FAILURE_CODES})만
+     * 허용한다 — raw 문자열을 받지 않아, 내부 예외 메시지가 폴링 {@code body.error}로 유출되는 경로를
+     * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
+     */
+    public void markFailed(String taskId, LocalDate recordDate, ErrorCode failureCode, String callbackTokenHash) {
+        if (!ErrorCode.TASK_FAILURE_CODES.contains(failureCode)) {
+            throw new IllegalStateException("task 실패 분류 코드가 아닙니다: " + failureCode);
+        }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(recordDate, error, callbackTokenHash), TERMINAL_TTL);
+                TimelineDraftTask.failed(recordDate, failureCode.name(), callbackTokenHash), TERMINAL_TTL);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {
