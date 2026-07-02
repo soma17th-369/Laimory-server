@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.laimory.server.common.redis.NamespacedRedis;
+import com.laimory.server.common.redis.PrefixedRedis;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -23,13 +23,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * TimelineTaskStore 직렬화 왕복 단위테스트(인프라 없음).
  * LocalDate가 jsr310 모듈로 정상 왕복하는지(회귀 방지)와 논리 키 전달을 검증한다.
- * 환경 prefix 부착은 NamespacedRedis의 책임이라 여기선 논리 키만 확인한다.
+ * 환경 prefix 부착은 PrefixedRedis의 책임이라 여기선 논리 키만 확인한다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineTaskStoreTest {
 
     @Mock
-    private NamespacedRedis redis;
+    private PrefixedRedis redis;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .registerModule(new JavaTimeModule())
