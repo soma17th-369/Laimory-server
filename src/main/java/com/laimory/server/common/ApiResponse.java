@@ -1,5 +1,7 @@
 package com.laimory.server.common;
 
+import com.laimory.server.common.logging.TransactionIds;
+
 /**
  * 앱-facing 성공 응답 전용 envelope({@code header} + {@code body}).
  *
@@ -11,8 +13,8 @@ package com.laimory.server.common;
  */
 public record ApiResponse<T>(ApiHeader header, T body) {
 
-    /** 성공 응답을 만든다. 헤더는 항상 COMMON_0000/"success". */
+    /** 성공 응답을 만든다. 헤더는 항상 COMMON_0000/"success" + 현재 요청의 transactionId. */
     public static <T> ApiResponse<T> success(T body) {
-        return new ApiResponse<>(new ApiHeader("COMMON_0000", "success"), body);
+        return new ApiResponse<>(new ApiHeader("COMMON_0000", "success", TransactionIds.current()), body);
     }
 }
