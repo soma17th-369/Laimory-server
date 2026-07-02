@@ -27,13 +27,8 @@ public class TimelineDraftEventSuggestionService {
         timelineDraftEventSuggestionRepository.deleteByTaskId(taskId);
     }
 
-    /** 보관기간 초과(created_at < cutoff) 제안 행을 조회한다(cleanup 스케줄러용). */
-    public List<TimelineDraftEventSuggestion> findCreatedBefore(LocalDateTime cutoff) {
-        return timelineDraftEventSuggestionRepository.findByCreatedAtBefore(cutoff);
-    }
-
-    /** 제안 행 하나를 PK로 삭제한다(cleanup이 보관기간 초과 행을 개별 삭제할 때 사용). */
-    public void deleteById(Long id) {
-        timelineDraftEventSuggestionRepository.deleteById(id);
+    /** 보관기간 초과(created_at < cutoff) 제안 행을 단일 bulk DELETE로 정리하고 삭제 건수를 반환한다(cleanup 스케줄러용). */
+    public int deleteCreatedBefore(LocalDateTime cutoff) {
+        return timelineDraftEventSuggestionRepository.deleteCreatedBefore(cutoff);
     }
 }

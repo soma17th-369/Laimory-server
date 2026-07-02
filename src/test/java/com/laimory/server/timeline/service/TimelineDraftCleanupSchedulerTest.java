@@ -12,7 +12,6 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -70,13 +69,6 @@ class TimelineDraftCleanupSchedulerTest {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, DATE.atTime(9, 0), null,
                 MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
-        return row;
-    }
-
-    private TimelineDraftEventSuggestion eventSuggestionRow(long id) {
-        TimelineDraftEventSuggestion row = TimelineDraftEventSuggestion.of(
-                "task-" + id, USER_ID, DATE.atTime(9, 0), null, "title", null);
-        ReflectionTestUtils.setField(row, "timelineDraftEventSuggestionId", id);
         return row;
     }
 
@@ -167,18 +159,16 @@ class TimelineDraftCleanupSchedulerTest {
         verify(timelineDraftSourceItemService, never()).deleteById(anyLong());
     }
 
-    // --- event suggestion 정리(S3 없음 → 단순 삭제) ---
+    // --- event suggestion 정리(S3 없음 → 단일 bulk delete) ---
 
     @Test
-    void cleanup_deletesExpiredEventSuggestions() {
-        when(timelineDraftEventSuggestionService.findCreatedBefore(any()))
-                .thenReturn(List.of(eventSuggestionRow(40L), eventSuggestionRow(41L)));
-
+    void cleanup_deletesExpiredEventSuggestions_viaBulkDeleteWithCutoff() {
         scheduler(7L).cleanupExpiredDrafts();
 
-        verify(timelineDraftEventSuggestionService).deleteById(40L);
-        verify(timelineDraftEventSuggestionService).deleteById(41L);
-        verify(s3PhotoStorageService, never()).delete(any());  // event suggestion엔 S3 객체 없음
+        // 행별 select+delete가 아니라 cutoff 기준 단일 bulk delete를 호출한다.
+        ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(timelineDraftEventSuggestionService).deleteCreatedBefore(cutoff.capture());
+        assertThat(cutoff.getValue()).isEqualTo(LocalDateTime.now(FIXED).minusDays(7));
     }
 
     // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 1h) ---

@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -90,12 +89,9 @@ public class TimelineDraftCleanupScheduler {
         }
         log.info("draft cleanup 완료: deleted={}, failed={}", deleted, failed);
 
-        // event suggestion staging도 같은 cutoff로 정리한다(S3 객체 없음 → 단순 삭제, 행별 실패 격리 불필요).
-        List<TimelineDraftEventSuggestion> expiredEvents = timelineDraftEventSuggestionService.findCreatedBefore(cutoff);
-        for (TimelineDraftEventSuggestion event : expiredEvents) {
-            timelineDraftEventSuggestionService.deleteById(event.getTimelineDraftEventSuggestionId());
-        }
-        log.info("event suggestion cleanup 완료: deleted={}", expiredEvents.size());
+        // event suggestion staging은 S3 객체가 없어 행별 처리가 불필요 → 단일 bulk DELETE로 같은 cutoff 기준 정리(부분 실패 없음).
+        int eventSuggestionsDeleted = timelineDraftEventSuggestionService.deleteCreatedBefore(cutoff);
+        log.info("event suggestion cleanup 완료: deleted={}", eventSuggestionsDeleted);
     }
 
     /**
