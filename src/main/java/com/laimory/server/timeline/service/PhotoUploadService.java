@@ -23,10 +23,12 @@ import org.springframework.util.unit.DataSize;
  *
  * <p>서버는 데이터 경로 밖이라 업로드 바이트를 못 본다. 대신 요청의 {@code size}를 presigned PUT 서명의
  * content-length로 바인딩해 S3가 업로드 시점에 크기를 강제하게 한다(크기 우회 방지). 타입은 허용목록
- * (jpg/png/webp)으로 발급 전에 거르고, 요청 한도(개수·photo당 크기·총합)로 오브젝트 남발/비용 폭주를 막는다.
+ * (jpg/png/webp)으로 발급 전에 거르고, 요청 한도(개수·photo당 크기)로 오브젝트 남발/비용 폭주를 막는다.
+ * 총합 캡은 두지 않는다 — 개수x장당으로 이미 유계이고, 장당 유효한 정상 선택이 집계에서 거절되는
+ * UX 엣지만 만들어서 제거했다(비용 비상시엔 개수/장당 env로 조인다).
  *
- * <p>예외 정책: 정상 사용자가 유발 가능한 한도/포맷 위반(개수·크기·총합·미지원 타입)은
- * {@link BusinessException}(ERROR_1004~1007, 한도값을 메시지에 포함)으로, 형식 불량(누락·비양수·null 요소)은
+ * <p>예외 정책: 정상 사용자가 유발 가능한 한도/포맷 위반(개수·크기·미지원 타입)은
+ * {@link BusinessException}(ERROR_1004/1005/1007, 한도값을 메시지에 포함)으로, 형식 불량(누락·비양수·null 요소)은
  * {@link IllegalArgumentException}(→400 ERROR_0400)으로 던진다.
  */
 @Service
@@ -37,22 +39,17 @@ public class PhotoUploadService {
     private final S3PhotoStorageService s3PhotoStorageService;
     private final int maxCount;
     private final long maxSizePerPhotoBytes;
-    private final long maxTotalSizeBytes;
     // 에러 메시지 {0}용 MB 표기(바이트 원값 노출 방지). 설정은 whole MB 단위 전제(application.properties 참고).
     private final long maxSizePerPhotoMb;
-    private final long maxTotalSizeMb;
 
     public PhotoUploadService(
             S3PhotoStorageService s3PhotoStorageService,
             @Value("${photo.upload.max-count}") int maxCount,
-            @Value("${photo.upload.max-size-per-photo}") DataSize maxSizePerPhoto,
-            @Value("${photo.upload.max-total-size}") DataSize maxTotalSize) {
+            @Value("${photo.upload.max-size-per-photo}") DataSize maxSizePerPhoto) {
         this.s3PhotoStorageService = s3PhotoStorageService;
         this.maxCount = maxCount;
         this.maxSizePerPhotoBytes = maxSizePerPhoto.toBytes();
-        this.maxTotalSizeBytes = maxTotalSize.toBytes();
         this.maxSizePerPhotoMb = maxSizePerPhoto.toMegabytes();
-        this.maxTotalSizeMb = maxTotalSize.toMegabytes();
     }
 
     /**
@@ -67,7 +64,6 @@ public class PhotoUploadService {
             throw new BusinessException(ErrorCode.ERROR_1004, maxCount);
         }
 
-        long totalBytes = 0;
         for (int i = 0; i < photos.size(); i++) {
             PhotoUploadItem photo = photos.get(i);
             if (photo == null) {
@@ -91,10 +87,6 @@ public class PhotoUploadService {
             if (photo.size() > maxSizePerPhotoBytes) {
                 throw new BusinessException(ErrorCode.ERROR_1005, maxSizePerPhotoMb);
             }
-            totalBytes += photo.size();
-        }
-        if (totalBytes > maxTotalSizeBytes) {
-            throw new BusinessException(ErrorCode.ERROR_1006, maxTotalSizeMb);
         }
 
         List<PhotoUploadResponse> uploads = new ArrayList<>(photos.size());

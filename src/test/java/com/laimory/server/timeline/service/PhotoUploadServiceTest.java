@@ -35,8 +35,8 @@ class PhotoUploadServiceTest {
     @BeforeEach
     void setUp() {
         storage = Mockito.mock(S3PhotoStorageService.class);
-        // maxCount=3, per-photo=10MB, total=20MB
-        service = new PhotoUploadService(storage, 3, DataSize.ofBytes(TEN_MB), DataSize.ofBytes(2 * TEN_MB));
+        // maxCount=3, per-photo=10MB (총합 캡 없음 — 개수x장당으로 유계)
+        service = new PhotoUploadService(storage, 3, DataSize.ofBytes(TEN_MB));
     }
 
     @Test
@@ -126,16 +126,17 @@ class PhotoUploadServiceTest {
     }
 
     @Test
-    void createUploads_rejectsTotalOverLimit_withDedicatedCode() {
-        // 각 사진은 per-photo 한도(10MB) 이하지만 합이 total 한도(20MB) 초과 — 의도된 집계 제약.
-        assertThatThrownBy(() -> service.createUploads("v1", List.of(
+    void createUploads_allowsFullSelectionOfMaxSizePhotos() {
+        // 총합 캡 없음: 장당·개수 한도를 지키는 선택은 합계와 무관하게 통과한다(정상 선택 거절 엣지 제거).
+        when(storage.generatePresignedPutUrl(anyString(), anyString(), anyLong()))
+                .thenReturn("https://example/put");
+
+        PhotoUploadCreateResponse response = service.createUploads("v1", List.of(
                 new PhotoUploadItem("image/jpeg", TEN_MB),
                 new PhotoUploadItem("image/jpeg", TEN_MB),
-                new PhotoUploadItem("image/jpeg", 1L))))
-                .isInstanceOfSatisfying(BusinessException.class, ex -> {
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1006);
-                    assertThat(ex.getArgs()).containsExactly(20L);
-                });
+                new PhotoUploadItem("image/jpeg", TEN_MB)));
+
+        assertThat(response.uploads()).hasSize(3);
     }
 
     @Test

@@ -41,7 +41,7 @@ public enum ErrorCode {
     ERROR_1003(HttpStatus.CONFLICT),       // daily record 이미 SAVED
     ERROR_1004(HttpStatus.BAD_REQUEST),    // 사진 개수 초과 (args: {0}=최대 장수)
     ERROR_1005(HttpStatus.BAD_REQUEST),    // 사진 장당 크기 초과 (args: {0}=최대 MB)
-    ERROR_1006(HttpStatus.BAD_REQUEST),    // 사진 총합 크기 초과 (args: {0}=최대 MB)
+    // ERROR_1006: 결번 — 총합 크기 캡을 배포 전 제거(개수x장당으로 유계, 정상 선택 거절 엣지 방지). 재사용 금지.
     ERROR_1007(HttpStatus.BAD_REQUEST),    // 지원하지 않는 사진 포맷 (args 없음 — 사용자 입력 echo 금지)
 
     // ── ERROR_1xxx: timeline task 실패 분류 — 폴링 body.error 전용(200 안), status는 예비값 ──
