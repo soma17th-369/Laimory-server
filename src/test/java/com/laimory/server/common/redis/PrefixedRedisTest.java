@@ -12,10 +12,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 /**
- * NamespacedRedis가 논리 키 앞에 환경 prefix를 올바르게 부착하는지 검증한다(prefix 동작의 단일 검증 지점).
+ * PrefixedRedis가 논리 키 앞에 환경 prefix를 올바르게 부착하는지 검증한다(prefix 동작의 단일 검증 지점).
  */
 @ExtendWith(MockitoExtension.class)
-class NamespacedRedisTest {
+class PrefixedRedisTest {
 
     @Mock
     private StringRedisTemplate template;
@@ -27,7 +27,7 @@ class NamespacedRedisTest {
     @Test
     void emptyPrefix_usesLogicalKeyAsIs() {
         when(template.opsForValue()).thenReturn(valueOps);
-        NamespacedRedis redis = new NamespacedRedis(template, "");
+        PrefixedRedis redis = new PrefixedRedis(template, "");
 
         redis.set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
         redis.get(LOGICAL_KEY);
@@ -41,7 +41,7 @@ class NamespacedRedisTest {
     @Test
     void nonEmptyPrefix_prependsToEveryKey() {
         when(template.opsForValue()).thenReturn(valueOps);
-        NamespacedRedis redis = new NamespacedRedis(template, "dev_");
+        PrefixedRedis redis = new PrefixedRedis(template, "dev_");
 
         redis.set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
         redis.get(LOGICAL_KEY);

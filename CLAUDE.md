@@ -132,9 +132,9 @@ com.laimory.server
 
 ## Redis 키 컨벤션
 
-- **모든 Redis 접근은 `com.laimory.server.common.redis.NamespacedRedis` facade를 통한다.** `StringRedisTemplate`/`RedisTemplate` 등 `org.springframework.data.redis..` 타입의 직접 주입·사용은 금지하며, `RedisAccessArchTest`(ArchUnit)가 빌드에서 강제한다(위반 시 `./gradlew test` 실패).
+- **모든 Redis 접근은 `com.laimory.server.common.redis.PrefixedRedis` facade를 통한다.** `StringRedisTemplate`/`RedisTemplate` 등 `org.springframework.data.redis..` 타입의 직접 주입·사용은 금지하며, `RedisAccessArchTest`(ArchUnit)가 빌드에서 강제한다(위반 시 `./gradlew test` 실패).
 - **논리 키**는 콜론 네임스페이스 `{feature}:{entity}:{id}` 형태로 쓰고(예: `timeline:draft-task:{taskId}`), feature별 `KEY_PREFIX` 상수로 키 조립을 한 곳에 모은다.
-- **환경 prefix**(dev/prod 단일 Redis 공유 시 격리용)는 `app.redis.key-prefix`(env `REDIS_KEY_PREFIX`)로 주입하며 기본값은 빈 문자열(prod·로컬). dev는 [deploy.yml](.github/workflows/deploy.yml)의 `-e REDIS_KEY_PREFIX=dev_`로 고정한다. prefix 부착은 `NamespacedRedis`가 전담하므로 호출부는 항상 **논리 키만** 넘기고, 코드에 prefix 값을 하드코딩하지 않는다.
+- **환경 prefix**(dev/prod 단일 Redis 공유 시 격리용)는 `app.redis.key-prefix`(env `REDIS_KEY_PREFIX`)로 주입하며 기본값은 빈 문자열(prod·로컬). dev는 [deploy.yml](.github/workflows/deploy.yml)의 `-e REDIS_KEY_PREFIX=dev_`로 고정한다. prefix 부착은 `PrefixedRedis`가 전담하므로 호출부는 항상 **논리 키만** 넘기고, 코드에 prefix 값을 하드코딩하지 않는다.
 
 ## Database
 

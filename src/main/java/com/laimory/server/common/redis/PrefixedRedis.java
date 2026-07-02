@@ -17,13 +17,13 @@ import org.springframework.stereotype.Component;
  * 환경 prefix 부착은 전적으로 이 facade의 책임이다.
  */
 @Component
-public class NamespacedRedis {
+public class PrefixedRedis {
 
     private final StringRedisTemplate template;
     private final String prefix;
 
-    public NamespacedRedis(StringRedisTemplate template,
-                           @Value("${app.redis.key-prefix:}") String prefix) {
+    public PrefixedRedis(StringRedisTemplate template,
+                         @Value("${app.redis.key-prefix:}") String prefix) {
         this.template = template;
         this.prefix = prefix;
     }

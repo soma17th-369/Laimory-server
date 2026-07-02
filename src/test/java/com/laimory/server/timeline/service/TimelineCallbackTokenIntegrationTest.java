@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
-import com.laimory.server.common.redis.NamespacedRedis;
+import com.laimory.server.common.redis.PrefixedRedis;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
@@ -66,7 +66,7 @@ class TimelineCallbackTokenIntegrationTest {
     @Autowired
     private TimelineDraftEventSuggestionRepository eventSuggestionRepository;
     @Autowired
-    private NamespacedRedis redis;
+    private PrefixedRedis redis;
 
     @MockitoSpyBean
     private TimelineEventSuggestionDispatcher dispatcher;
@@ -88,7 +88,7 @@ class TimelineCallbackTokenIntegrationTest {
             draftSourceItemService.deleteByTaskId(id);
             eventSuggestionService.deleteByTaskId(id);
             redis.delete("timeline:draft-task:" + id);
-            // redis는 NamespacedRedis facade → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
+            // redis는 PrefixedRedis facade → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
     }
