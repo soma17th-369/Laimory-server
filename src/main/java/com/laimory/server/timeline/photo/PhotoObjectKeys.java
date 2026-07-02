@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.photo;
 
+import com.laimory.server.common.id.UuidV7;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

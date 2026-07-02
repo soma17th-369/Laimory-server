@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.photo;
+package com.laimory.server.common.id;
 
 import java.security.SecureRandom;
 import java.util.UUID;

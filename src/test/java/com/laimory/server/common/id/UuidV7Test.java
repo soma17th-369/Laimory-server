@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.photo;
+package com.laimory.server.common.id;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
