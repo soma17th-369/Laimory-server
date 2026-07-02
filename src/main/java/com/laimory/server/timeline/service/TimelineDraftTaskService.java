@@ -17,6 +17,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -32,6 +34,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TimelineDraftTaskService {
+
+    private static final Logger log = LoggerFactory.getLogger(TimelineDraftTaskService.class);
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
@@ -94,8 +98,9 @@ public class TimelineDraftTaskService {
         try {
             timelineEventSuggestionDispatcher.dispatch(taskId, callbackToken);
         } catch (RuntimeException e) {
-            timelineTaskService.markFailed(taskId, recordDate,
-                    "timeline event suggestion dispatch failed: " + e.getMessage(), callbackTokenHash);
+            // 상세는 로그로만 — task엔 분류 코드만 저장(폴링 body.error 유출 차단).
+            log.warn("timeline event suggestion dispatch failed: taskId={} detail={}", taskId, e.getMessage());
+            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
         }
 
         return taskId;

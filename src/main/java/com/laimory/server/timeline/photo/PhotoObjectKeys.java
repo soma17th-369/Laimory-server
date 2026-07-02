@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Map;
 
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
@@ -16,7 +17,18 @@ import java.util.HexFormat;
  */
 public final class PhotoObjectKeys {
 
+    /** 허용 사진 content-type → 파일 확장자(단일 기준 — isSupported/extOf가 함께 참조). */
+    private static final Map<String, String> EXT_BY_CONTENT_TYPE = Map.of(
+            "image/jpeg", "jpg",
+            "image/png", "png",
+            "image/webp", "webp");
+
     private PhotoObjectKeys() {
+    }
+
+    /** 지원하는 사진 content-type인지 검사한다(서비스 계층의 사전 검증용). */
+    public static boolean isSupported(String contentType) {
+        return contentType != null && EXT_BY_CONTENT_TYPE.containsKey(contentType);
     }
 
     /**
@@ -59,16 +71,15 @@ public final class PhotoObjectKeys {
         }
     }
 
-    /** content-type → 파일 확장자 매핑. null/blank·미지원 타입은 모두 IllegalArgumentException(→400). */
+    /** content-type → 파일 확장자 매핑. 미지원 타입은 IAE — 서비스 계층 사전 검증(isSupported)의 방어선. */
     private static String extOf(String contentType) {
         if (contentType == null || contentType.isBlank()) {
             throw new IllegalArgumentException("content-type은 필수입니다");
         }
-        return switch (contentType) {
-            case "image/jpeg" -> "jpg";
-            case "image/png" -> "png";
-            case "image/webp" -> "webp";
-            default -> throw new IllegalArgumentException("지원하지 않는 content-type: " + contentType);
-        };
+        String ext = EXT_BY_CONTENT_TYPE.get(contentType);
+        if (ext == null) {
+            throw new IllegalArgumentException("지원하지 않는 content-type: " + contentType);
+        }
+        return ext;
     }
 }

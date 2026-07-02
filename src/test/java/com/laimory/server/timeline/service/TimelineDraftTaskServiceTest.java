@@ -184,9 +184,8 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
-        ArgumentCaptor<String> errorCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), errorCaptor.capture(), anyString());
-        assertThat(errorCaptor.getValue()).contains("boom");
+        // raw 메시지("boom")는 저장하지 않는다 — 분류 코드만(상세는 로그로).
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
         // dispatch 실패는 draft를 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
