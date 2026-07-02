@@ -2,6 +2,8 @@ package com.laimory.server.timeline.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -15,9 +17,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 작성 작업 생성(POST) 오케스트레이터. recordDate 계산 + SAVED 거절 + draft 행 저장 + PROCESSING 기록 + AI 디스패치를 합성한다.
@@ -41,7 +41,7 @@ public class TimelineDraftTaskService {
 
     /**
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
-     * 이미 SAVED인 daily record면 409(ResponseStatusException)로 거절한다.
+     * 이미 SAVED인 daily record면 409(BusinessException ERROR_1003)로 거절한다.
      * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
      */
     public String createDraftTask(String applicationVersion, LocalDateTime recordAt, String recordTimeZone,
@@ -64,8 +64,7 @@ public class TimelineDraftTaskService {
         dailyRecordService.findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate)
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "daily record already SAVED: " + record.getDailyRecordId());
+                    throw new BusinessException(ErrorCode.ERROR_1003);
                 });
 
         String taskId = UUID.randomUUID().toString();

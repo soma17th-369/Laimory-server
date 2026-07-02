@@ -28,11 +28,11 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Callback-Token + DB-경유 draft 흐름 end-to-end 검증(실 MySQL+Redis). 수동 curl을 대체한다.
@@ -142,8 +142,8 @@ class TimelineCallbackTokenIntegrationTest {
         createdTaskIds.add(taskId);
 
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", success()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
 
         // task는 여전히 PROCESSING, MySQL daily_records엔 아무것도 안 써짐, source는 보존.
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);

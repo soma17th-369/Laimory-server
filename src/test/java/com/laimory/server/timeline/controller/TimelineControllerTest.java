@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -30,11 +32,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 공개 컨트롤러 슬라이스 테스트(MockMvc). 상태 매핑(202/400/409/404)을 검증한다. 인프라 0.
@@ -86,16 +86,20 @@ class TimelineControllerTest {
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("COMMON_4000"))
+                .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
+                .andExpect(jsonPath("$.body").doesNotExist());
     }
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new ResponseStatusException(HttpStatus.CONFLICT, "daily record already SAVED: 1"));
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
     }
 
     @Test
@@ -123,7 +127,8 @@ class TimelineControllerTest {
                 {"photos": [{"contentType": "image/gif", "size": 1024}]}
                 """;
         mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("COMMON_4000"));
     }
 
     @Test
@@ -157,10 +162,11 @@ class TimelineControllerTest {
     @Test
     void pollDraftTask_mapsNotFoundTo404() throws Exception {
         when(timelineDraftTaskPollingService.poll(any(), eq("missing")))
-                .thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND));
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1001));
 
         mockMvc.perform(get(TASKS + "/missing"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1001"));
     }
 
     /**

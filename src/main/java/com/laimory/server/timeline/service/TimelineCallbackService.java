@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineDefaults;
@@ -11,9 +13,7 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.LocalDate;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * AI 작성 콜백 오케스트레이터. task 로드 + 토큰 검증 + 멱등 + status 분기 + finalize/Redis 전이를 합성한다.
@@ -56,11 +56,11 @@ public class TimelineCallbackService {
                                String callbackToken, DraftTaskCallbackRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found: " + taskId));
+                .orElseThrow(() -> new BusinessException(ErrorCode.ERROR_1001));
 
         // 1. 토큰 검증을 먼저 한다(멱등 단축보다 앞). terminal task도 해시를 보존하므로 재콜백도 토큰으로 막힌다.
         if (!CallbackTokens.matches(callbackToken, task.callbackTokenHash())) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid callback token");
+            throw new BusinessException(ErrorCode.ERROR_1002);
         }
 
         // 2. 멱등: 이미 종결(SUCCESS/FAILED)된 task면 재처리하지 않는다(콜백 재전송 방어).
