@@ -89,6 +89,37 @@ com.laimory.server
 - **DTO 네이밍**: API 경계에서 주고받는 DTO는 방향을 접미사로 드러낸다 — 요청 바디는 `...Request`, 응답으로 나가는 표현 DTO(중첩 포함)는 `...Response`로 끝낸다 (예: `CreateDraftTaskRequest`, `DraftTaskStatusResponse`, `TimelineCardResponse`). 서비스 계층 내부 전용이거나 요청 바디에 중첩되는 입력 요소 DTO는 방향 접미사 대신 도메인 이름을 쓴다 (예: `SourceItemDto`).
 - **Controller 반환 타입**: `ResponseEntity<T>`.
 
+## 에러 처리 / 응답 컨벤션
+
+앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code,message,transactionId}, body}` envelope로 나간다.
+성공은 `COMMON_0000` + body, 에러는 `ERROR_*` + `body=null` — 클라이언트는 **"code가 `ERROR_`로 시작하면 에러"**로 분기한다.
+에러→envelope 변환은 전역 `common.error.GlobalExceptionHandler`(`ResponseEntityExceptionHandler` 상속)가 전담한다.
+
+### 에러 throw 규칙
+
+- **서비스는 try/catch로 응답을 만들지 않는다 — 던지기만 한다.** HTTP status·응답 shape·메시지 로캘은 전부 전역 핸들러가 결정한다.
+- **도메인 에러** → `throw new BusinessException(ErrorCode.ERROR_xxxx)`.
+  판별 기준: **서버 상태가 거부**했고(같은 요청이 다른 시점엔 성공 가능), **클라이언트가 코드를 보고 다르게 행동**해야 하는 에러 (예: task 만료 404, 토큰 불일치 401, 이미 SAVED 409).
+- **입력 검증 실패** → `throw new IllegalArgumentException("설명")`.
+  판별 기준: 요청 자체가 불량이라 **어떤 상태에서도 영원히 실패**하는 경우(필수값 누락, 미지원 값). 전역에서 400 `ERROR_0400`(제네릭 메시지)으로 매핑된다. 예외 메시지는 로그에만 남고 클라이언트엔 노출되지 않는다.
+  - 나중에 클라이언트 분기/사용자 노출이 필요해지면 `BusinessException` + 전용 코드로 승격한다(승격 비용: enum 한 줄 + 번들 세 줄).
+- **`ResponseStatusException` 사용 금지** — 서비스가 HTTP를 직접 알게 되는 레이어 오염. (핸들러의 브리지는 라이브러리 방어용 안전망일 뿐.)
+- **내부 불변식 위반**(`IllegalStateException` 등)은 잡지 말고 전파한다 — catch-all이 500 `ERROR_0500`으로 처리하고 유일하게 stacktrace를 남긴다.
+- `BusinessException`의 args(메시지 `{0}` 파라미터)에는 **서버 생성 값만**(taskId 등) 넣는다. 사용자 입력 금지(응답·로그 유출 방지).
+
+### ErrorCode 규칙
+
+- 에러 코드는 전부 `ERROR_` prefix. `COMMON_0000`은 성공 전용(enum에 없음, `ApiResponse.success` 소유).
+- **블록 레지스트리**(`common.error.ErrorCode` 상단 주석이 SSOT): `ERROR_0xxx`=교차/폴백 전용(뒤 세 자리=HTTP 힌트, 도메인 사용 금지), `ERROR_1xxx`=timeline, 새 도메인은 1000 블록 단위로 할당. 도메인 블록 숫자는 HTTP status와 무관하다(status는 enum 필드가 SSOT).
+- **코드명은 공개 API 계약** — 한번 배포되면 클라이언트가 분기하므로 rename 금지.
+- 새 코드 추가 시 `messages.properties`(기본=한국어)·`messages_ko`·`messages_en` 세 곳에 코드명 key로 메시지를 추가한다(전부 UTF-8). 누락하면 `ErrorCodeMessagesTest`가 빌드에서 실패시킨다.
+
+### transactionId / 로깅
+
+- 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`) — 응답 헤더 `X-Transaction-Id` + envelope `header.transactionId`(같은 MDC 값). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
+- access 로그는 필터가 요청당 1줄 남긴다(5xx ERROR / 4xx WARN / 정상 INFO). **핸들러 밖에서 예외를 또 로깅하지 않는다**(이중 로깅 금지).
+- 민감정보(토큰·presigned URL·query string·본문)는 로그 금지. path는 `getRequestURI()`(query 제외)만.
+
 ## Git / Branch / Commit 전략
 
 `main` / `dev` / 작업 브랜치(`feat`·`refactor`·`fix`) 3단계로 운영한다. 작업 브랜치는 `dev`에서 분기하고, PR을 통해 `dev` → `main` 순으로 머지한다. 상세 규칙은 [.agents/branch.md](.agents/branch.md) 참조.

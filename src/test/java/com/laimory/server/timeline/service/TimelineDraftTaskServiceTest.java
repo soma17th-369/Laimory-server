@@ -32,9 +32,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
 
 /** POST 오케스트레이터 단위 검증. recordDate 도출·SAVED 거절·draft 저장·보상 삭제·디스패치 합성. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
@@ -151,8 +151,8 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());

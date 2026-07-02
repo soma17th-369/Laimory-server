@@ -32,9 +32,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 콜백 오케스트레이터 단위 검증. 404·token-first(401)·멱등·source/event DB 로드·커밋후-Redis·
@@ -96,8 +96,8 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.handleCallback("v1", "missing", TOKEN, successRequest()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
     }
 
     @Test
@@ -105,8 +105,8 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", null, successRequest()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
     }
 
@@ -115,8 +115,8 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
     }
 
@@ -127,8 +127,8 @@ class TimelineCallbackServiceTest {
                 .thenReturn(Optional.of(TimelineDraftTask.success(DATE, TOKEN_HASH)));
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
     }
 
     @Test

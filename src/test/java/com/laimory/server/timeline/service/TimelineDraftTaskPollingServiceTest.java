@@ -17,9 +17,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
 
 /** 폴링 오케스트레이터 단위 검증. PROCESSING/FAILED/SUCCESS 분기 + 404. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
@@ -79,7 +79,7 @@ class TimelineDraftTaskPollingServiceTest {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.poll("v1", "missing"))
-                .isInstanceOfSatisfying(ResponseStatusException.class,
-                        ex -> assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
     }
 }
