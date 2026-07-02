@@ -67,7 +67,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<ApiResponse<Void>> onIllegalArgument(IllegalArgumentException e, HttpServletRequest request) {
         log.warn("validation error: {}", e.getMessage());
-        return ResponseEntity.badRequest().body(body(ErrorCode.COMMON_4000, null, request));
+        return ResponseEntity.badRequest().body(body(ErrorCode.ERROR_0400, null, request));
     }
 
     // ── (D) RSE 브리지: 도메인 이관 후 src/main엔 던지는 곳 없음 — 순수 안전망. raw status 보존 ──
@@ -82,6 +82,6 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiResponse<Void>> onUnexpected(Exception e, HttpServletRequest request) {
         log.error("unexpected error: type={}", e.getClass().getName(), e);
-        return ResponseEntity.internalServerError().body(body(ErrorCode.COMMON_5000, null, request));
+        return ResponseEntity.internalServerError().body(body(ErrorCode.ERROR_0500, null, request));
     }
 }

@@ -87,7 +87,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4000"))
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
                 .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -128,7 +128,7 @@ class TimelineControllerTest {
                 """;
         mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4000"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
     }
 
     @Test

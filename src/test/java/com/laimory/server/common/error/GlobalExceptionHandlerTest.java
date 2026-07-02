@@ -61,23 +61,23 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void illegalArgument_mapsToCommon4000() throws Exception {
+    void illegalArgument_mapsToError0400() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4000"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
     }
 
     @Test
-    void unexpectedException_mapsToCommon5000_withoutLeakingDetail() throws Exception {
+    void unexpectedException_mapsToError0500_withoutLeakingDetail() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("redis serialization failed: secret detail"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.header.code").value("COMMON_5000"))
+                .andExpect(jsonPath("$.header.code").value("ERROR_0500"))
                 .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("secret")))); // 내부 상세 비노출
     }
@@ -86,7 +86,7 @@ class GlobalExceptionHandlerTest {
     void unmappedPath_returns404Envelope() throws Exception {
         mockMvc.perform(get("/no/such/path"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4040"))
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"))
                 .andExpect(jsonPath("$.header.transactionId").isNotEmpty());
     }
 
@@ -95,21 +95,21 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(delete(TASKS))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(header().exists("Allow")) // ResponseEntityExceptionHandler가 보존
-                .andExpect(jsonPath("$.header.code").value("COMMON_4050"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0405"));
     }
 
     @Test
     void missingContentType_returns415Envelope() throws Exception {
         mockMvc.perform(post(TASKS).contentType(MediaType.TEXT_PLAIN).content("not json"))
                 .andExpect(status().isUnsupportedMediaType())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4150"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0415"));
     }
 
     @Test
     void malformedJson_returns400Envelope() throws Exception {
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content("{broken"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("COMMON_4000"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
     }
 
     @Test
