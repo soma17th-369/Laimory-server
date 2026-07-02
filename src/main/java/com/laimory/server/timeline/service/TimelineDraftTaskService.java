@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
-import com.laimory.server.common.logging.LogSanitizers;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -99,9 +98,8 @@ public class TimelineDraftTaskService {
         try {
             timelineEventSuggestionDispatcher.dispatch(taskId, callbackToken);
         } catch (RuntimeException e) {
-            // raw 메시지(내부 호스트/포트 조각 가능)는 로그로만 — task엔 분류 코드만 저장(폴링 유출 차단).
-            log.warn("timeline event suggestion dispatch failed: taskId={} detail={}",
-                    taskId, LogSanitizers.truncate(e.getMessage(), 200));
+            // 상세는 로그로만 — task엔 분류 코드만 저장(폴링 body.error 유출 차단).
+            log.warn("timeline event suggestion dispatch failed: taskId={} detail={}", taskId, e.getMessage());
             timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
         }
 

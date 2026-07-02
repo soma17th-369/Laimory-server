@@ -14,7 +14,7 @@ import com.laimory.server.timeline.TaskStatus;
  * <ul>
  *   <li>{@code errorCode} — 실패 분류 코드(허용: {@code ERROR_1008}, 추후 확장). null/미지 값은 서버가
  *       {@code ERROR_1008}로 폴백하므로 AI는 필드를 생략해도 된다(하위호환).</li>
- *   <li>{@code error} — 진단용 자유 텍스트. 저장·클라이언트 노출되지 않고 서버 로그로만 남는다(truncate).</li>
+ *   <li>{@code error} — 진단용 자유 텍스트. 저장·클라이언트 노출되지 않고 서버 로그로만 남는다.</li>
  * </ul>
  */
 public record DraftTaskCallbackRequest(

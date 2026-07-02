@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
-import com.laimory.server.common.logging.LogSanitizers;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineDefaults;
@@ -127,7 +126,7 @@ public class TimelineCallbackService {
                     draftRows, events);
             timelineTaskService.markSuccess(taskId, recordDate, callbackTokenHash);
         } catch (IllegalArgumentException | IllegalStateException e) {
-            log.warn("finalize failed: taskId={} detail={}", taskId, LogSanitizers.truncate(e.getMessage(), 200));
+            log.warn("finalize failed: taskId={} detail={}", taskId, e.getMessage());
             timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1011, callbackTokenHash);
         }
     }
@@ -135,18 +134,16 @@ public class TimelineCallbackService {
     /**
      * AI가 보고한 실패 코드를 해석한다. 허용 목록 밖(null 포함)이면 {@link ErrorCode#ERROR_1008} 폴백 —
      * 코드 불일치로 콜백을 400으로 튕기면 task가 PROCESSING에 갇히므로 관대하게 받는다.
-     * 진단용 자유 텍스트는 여기서 truncate해 로그로만 남긴다.
+     * 진단용 자유 텍스트({@code error})는 저장하지 않고 로그로만 남긴다(자유 텍스트는 우리 AI 서버가 계약대로 채운다).
      */
     private ErrorCode resolveAiFailureCode(String taskId, DraftTaskCallbackRequest request) {
         String requested = request.errorCode();
         boolean known = requested != null && AI_FAILURE_CODES.contains(requested);
         if (requested != null && !known) {
-            log.warn("unknown ai failure code, falling back: taskId={} requested={}",
-                    taskId, LogSanitizers.truncate(requested, 50));
+            log.warn("unknown ai failure code, falling back: taskId={} requested={}", taskId, requested);
         }
         ErrorCode code = known ? ErrorCode.valueOf(requested) : ErrorCode.ERROR_1008;
-        log.warn("ai reported failure: taskId={} code={} detail={}",
-                taskId, code, LogSanitizers.truncate(request.error(), 200));
+        log.warn("ai reported failure: taskId={} code={} detail={}", taskId, code, request.error());
         return code;
     }
 }

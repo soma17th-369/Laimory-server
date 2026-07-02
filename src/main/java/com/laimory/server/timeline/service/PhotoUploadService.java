@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
-import com.laimory.server.common.logging.LogSanitizers;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
@@ -74,8 +73,7 @@ public class PhotoUploadService {
             }
             if (!PhotoObjectKeys.isSupported(photo.contentType())) {
                 // 사용자 파일 선택으로 유발 가능(HEIC 등) → 전용 코드. 원문 타입은 응답에 echo하지 않고 로그로만.
-                log.warn("unsupported photo content-type: index={} contentType={}",
-                        i, LogSanitizers.truncate(photo.contentType(), 100));
+                log.warn("unsupported photo content-type: index={} contentType={}", i, photo.contentType());
                 throw new BusinessException(ErrorCode.ERROR_1007);
             }
             if (photo.size() == null) {
