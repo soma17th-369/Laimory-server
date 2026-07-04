@@ -116,7 +116,7 @@ com.laimory.server
 
 ### transactionId / 로깅
 
-- 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`) — 응답 헤더 `X-Transaction-Id` + envelope `header.transactionId`(같은 MDC 값). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
+- 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`가 요청마다 새로 발급, 클라이언트 제공 값 재사용 없음). 클라이언트 노출 채널은 envelope `header.transactionId` **하나뿐**(HTTP 헤더 채널 없음). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
 - access 로그는 필터가 요청당 1줄 남긴다(5xx ERROR / 4xx WARN / 정상 INFO). **핸들러 밖에서 예외를 또 로깅하지 않는다**(이중 로깅 금지).
 - 민감정보(토큰·presigned URL·query string·본문)는 로그 금지. path는 `getRequestURI()`(query 제외)만.
 
