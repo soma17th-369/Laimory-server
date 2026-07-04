@@ -21,7 +21,10 @@ import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
-/** TransactionIdFilter 단위 검증(발급/재사용/재발급, 응답 헤더, access 로그 레벨, MDC 정리). 인프라 0. */
+/**
+ * TransactionIdFilter 단위 검증(요청마다 새 v7 발급, access 로그 레벨, MDC 정리). 인프라 0.
+ * tx의 클라이언트 노출은 envelope body가 담당하므로 HTTP 헤더 계약은 없다 — 여기서도 헤더를 단언하지 않는다.
+ */
 class TransactionIdFilterTest {
 
     private final TransactionIdFilter filter = new TransactionIdFilter();
@@ -42,70 +45,46 @@ class TransactionIdFilterTest {
         logger.setLevel(null);
     }
 
-    @Test
-    void withoutHeader_issuesNewV7_andSetsResponseHeader() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-
-        filter.doFilter(request, response, new MockFilterChain());
-
-        String tx = response.getHeader(TransactionIds.HEADER_NAME);
-        assertThat(tx).isNotNull();
-        assertThat(UUID.fromString(tx).version()).isEqualTo(7);
+    /** 체인 안에서 관측한 현재 tx를 돌려주는 헬퍼 — 응답 헤더가 없으므로 MDC로 관측한다. */
+    private String observeTransactionId(MockHttpServletRequest request) throws Exception {
+        String[] seen = new String[1];
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain(new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse res) {
+                seen[0] = TransactionIds.current();
+            }
+        }));
+        return seen[0];
     }
 
     @Test
-    void withValidV7Header_reusesIt() throws Exception {
-        String incoming = TransactionIds.newId();
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
-        request.addHeader(TransactionIds.HEADER_NAME, incoming);
-        MockHttpServletResponse response = new MockHttpServletResponse();
+    void issuesFreshV7PerRequest() throws Exception {
+        String first = observeTransactionId(new MockHttpServletRequest("GET", "/api/v1/intro"));
+        String second = observeTransactionId(new MockHttpServletRequest("GET", "/api/v1/intro"));
 
-        filter.doFilter(request, response, new MockFilterChain());
-
-        assertThat(response.getHeader(TransactionIds.HEADER_NAME)).isEqualTo(incoming);
+        assertThat(UUID.fromString(first).version()).isEqualTo(7);
+        assertThat(UUID.fromString(second).version()).isEqualTo(7);
+        assertThat(first).isNotEqualTo(second); // 요청마다 새로 발급
     }
 
     @Test
-    void withNonV7Header_issuesNewOne() throws Exception {
-        String v4 = UUID.randomUUID().toString(); // version 4 — 재사용 금지 대상
+    void ignoresClientProvidedTransactionIdHeader() throws Exception {
+        // 재사용 계약 없음: 클라가 X-Transaction-Id를 보내도 무시하고 항상 서버가 발급한다.
+        String clientSent = TransactionIds.newId();
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
-        request.addHeader(TransactionIds.HEADER_NAME, v4);
-        MockHttpServletResponse response = new MockHttpServletResponse();
+        request.addHeader("X-Transaction-Id", clientSent);
 
-        filter.doFilter(request, response, new MockFilterChain());
+        String observed = observeTransactionId(request);
 
-        String tx = response.getHeader(TransactionIds.HEADER_NAME);
-        assertThat(tx).isNotEqualTo(v4);
-        assertThat(UUID.fromString(tx).version()).isEqualTo(7);
-    }
-
-    @Test
-    void withGarbageHeader_issuesNewOne() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
-        request.addHeader(TransactionIds.HEADER_NAME, "not-a-uuid-with-injection-attempt");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-
-        filter.doFilter(request, response, new MockFilterChain());
-
-        String tx = response.getHeader(TransactionIds.HEADER_NAME);
-        assertThat(UUID.fromString(tx).version()).isEqualTo(7);
+        assertThat(observed).isNotEqualTo(clientSent);
+        assertThat(UUID.fromString(observed).version()).isEqualTo(7);
     }
 
     @Test
     void mdcIsPopulatedDuringChain_andClearedAfter() throws Exception {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        String[] seenInChain = new String[1];
+        String observed = observeTransactionId(new MockHttpServletRequest("GET", "/api/v1/intro"));
 
-        filter.doFilter(request, response, new MockFilterChain(new HttpServlet() {
-            @Override
-            protected void service(HttpServletRequest req, HttpServletResponse res) {
-                seenInChain[0] = TransactionIds.current();
-            }
-        }));
-
-        assertThat(seenInChain[0]).isEqualTo(response.getHeader(TransactionIds.HEADER_NAME));
+        assertThat(observed).isNotNull(); // 체인 실행 중엔 존재
         assertThat(TransactionIds.current()).isNull(); // finally에서 remove — 스레드 재사용 누수 방지
         assertThat(MDC.get(TransactionIds.MDC_KEY)).isNull();
     }
@@ -162,6 +141,5 @@ class TransactionIdFilterTest {
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.ERROR);
         assertThat(accessLog.list.get(0).getFormattedMessage()).contains("status=500");
         assertThat(MDC.get(TransactionIds.MDC_KEY)).isNull();
-        assertThat(response.getHeader(TransactionIds.HEADER_NAME)).isNotNull(); // 예외여도 헤더는 이미 세팅됨
     }
 }

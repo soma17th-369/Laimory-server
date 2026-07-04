@@ -19,9 +19,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * 모든 요청의 최전방에서 transactionId를 부여하고 요청당 정확히 한 줄의 access 로그를 남기는 필터.
  *
  * <ul>
- *   <li>요청 헤더 {@code X-Transaction-Id}가 유효한 UUIDv7이면 재사용, 아니면 새로 발급한다.</li>
- *   <li>MDC와 응답 헤더에 세팅한다 — {@code doFilter} 전에 세팅하므로 에러 디스패치 응답에도 실린다
- *       ({@code sendError}는 버퍼만 비우고 커스텀 헤더는 보존).</li>
+ *   <li>요청마다 새 UUIDv7을 발급해 MDC에 넣는다. 클라이언트 노출은 envelope
+ *       {@code header.transactionId}가 담당한다(HTTP 헤더 채널 없음 — 외부 문자열이 MDC로 들어올 통로도 없다).</li>
  *   <li>완료 로그 레벨은 status 기반: 5xx ERROR / 4xx WARN / 그 외 INFO. 순수 헬스체크 전용
  *       {@code /status}만 DEBUG로 강등한다(/api/v{n}/intro는 실사용 API라 INFO 유지).</li>
  *   <li>미처리 예외가 필터까지 전파되면 effective status 500으로 기록 후 그대로 rethrow한다.</li>
@@ -42,10 +41,7 @@ public class TransactionIdFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String incoming = request.getHeader(TransactionIds.HEADER_NAME);
-        String transactionId = TransactionIds.isValidV7(incoming) ? incoming : TransactionIds.newId();
-        MDC.put(TransactionIds.MDC_KEY, transactionId);
-        response.setHeader(TransactionIds.HEADER_NAME, transactionId);
+        MDC.put(TransactionIds.MDC_KEY, TransactionIds.newId());
 
         long start = System.nanoTime();
         Throwable caught = null;

@@ -1,14 +1,10 @@
 package com.laimory.server.appconfig;
 
-import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import com.laimory.server.common.logging.TransactionIds;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,7 +33,6 @@ class AppConfigControllerTest {
 
         mockMvc.perform(get(INTRO))
                 .andExpect(status().isOk())
-                .andExpect(header().string(TransactionIds.HEADER_NAME, notNullValue()))
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
                 .andExpect(jsonPath("$.body.minAppVersion").value(1))
