@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -15,7 +16,6 @@ import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.List;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,7 +71,7 @@ public class TimelineDraftTaskService {
                     throw new BusinessException(ErrorCode.ERROR_1003);
                 });
 
-        String taskId = UUID.randomUUID().toString();
+        String taskId = UuidV7.randomUuidV7().toString();
         // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
         String callbackToken = CallbackTokens.generate();
         String callbackTokenHash = CallbackTokens.hash(callbackToken);
