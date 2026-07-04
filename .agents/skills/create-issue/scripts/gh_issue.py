@@ -10,9 +10,9 @@ Claude가 담당하고, 이 스크립트는 결정된 "이름"(예: Feature, Hig
 '이름'으로 매 실행마다 동적으로 해석한다. 이름이 안정적인 인터페이스다.
 
 사용 예:
-  # 단일 이슈 생성 + Type/Priority(+Size) 설정
+  # 단일 이슈 생성 + Type/Priority(+Size, +assignee) 설정
   python gh_issue.py create --title "로그인 구현" --body-file body.md \
-      --type Feature --priority High --size M
+      --type Feature --priority High --size M --assignee suhyun444
 
   # Epic의 하위 이슈로 붙이며 생성
   python gh_issue.py create --title "JWT 토큰 발급" --body-file t.md \
@@ -134,8 +134,11 @@ def issue_node_id(repo, number):
 
 
 # ── 변경 작업 ────────────────────────────────────────────────────────
-def create_issue(repo, title, body_file):
-    url = gh(["issue", "create", "--repo", repo, "--title", title, "--body-file", body_file]).strip().splitlines()[-1]
+def create_issue(repo, title, body_file, assignees):
+    args = ["issue", "create", "--repo", repo, "--title", title, "--body-file", body_file]
+    for assignee in assignees or []:
+        args.extend(["--assignee", assignee])
+    url = gh(args).strip().splitlines()[-1]
     number = url.rstrip("/").rsplit("/", 1)[-1]
     return number, url, issue_node_id(repo, number)
 
@@ -179,7 +182,7 @@ def cmd_create(a):
 
     parent_id = issue_node_id(a.repo, a.parent) if a.parent else None
 
-    number, url, issue_id = create_issue(a.repo, a.title, a.body_file)
+    number, url, issue_id = create_issue(a.repo, a.title, a.body_file, a.assignee)
     set_type(issue_id, type_id)
     set_priority(issue_id, pr_field, pr_opt)
     if project_id:
@@ -191,7 +194,8 @@ def cmd_create(a):
 
     print(json.dumps({"number": int(number), "url": url, "id": issue_id,
                       "type": a.type, "priority": a.priority,
-                      "size": a.size, "project": a.project, "parent": a.parent}, ensure_ascii=False))
+                      "size": a.size, "project": a.project, "parent": a.parent,
+                      "assignees": a.assignee or []}, ensure_ascii=False))
 
 
 def cmd_projects(a):
@@ -219,7 +223,7 @@ def main():
 
     repo_help = "대상 레포. 'owner/name' 또는 org 내 'name'만. 미지정이면 안내 후 중단. 목록은 `repos`."
 
-    c = sub.add_parser("create", help="이슈 생성 + Type/Priority(+Size, +parent) 설정")
+    c = sub.add_parser("create", help="이슈 생성 + Type/Priority(+Size, +parent, +assignee) 설정")
     c.add_argument("--repo", default=None, help=repo_help)
     c.add_argument("--title", required=True)
     c.add_argument("--body-file", required=True, help="이슈 본문 마크다운 파일 경로")
@@ -229,6 +233,8 @@ def main():
     c.add_argument("--project", default=DEFAULT_PROJECT,
                    help="이슈를 추가할 프로젝트(번호 또는 제목). 미지정이면 어떤 프로젝트에도 추가하지 않는다.")
     c.add_argument("--parent", type=int, help="부모 이슈 번호 (sub-issue로 연결)")
+    c.add_argument("--assignee", action="append", default=[],
+                   help="담당자 GitHub 로그인. 여러 명이면 --assignee를 반복해서 넘긴다.")
     c.set_defaults(func=cmd_create)
 
     l = sub.add_parser("link", help="기존 두 이슈를 부모-자식으로 연결")

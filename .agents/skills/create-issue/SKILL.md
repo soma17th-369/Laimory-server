@@ -3,7 +3,7 @@ name: create-issue
 description:
   사용자가 할 일·작업·기능·버그를 말하면 그것을 잘 정리된 GitHub 이슈로 만들어 준다.
   제목/세부 내용을 작성하고, Issue Type(Bug/Epic/Feature/Task)을 정하고, Priority와 Size
-  필드를 설정한다. 작업 규모가 크면 Epic으로 만들고 하위 Feature/Task로 쪼개 sub-issue로 연결한다.
+  필드를 설정하고, 사용자가 지정한 Assignees를 배정한다. 작업 규모가 크면 Epic으로 만들고 하위 Feature/Task로 쪼개 sub-issue로 연결한다.
   "이슈 만들어줘", "작업 등록", "할 일 추가", "이거 이슈로", "GitHub 이슈 생성", "백로그에 넣어줘",
   "버그 등록", "티켓 만들어", "create an issue", "file a ticket", "add this task" 같은 요청은 물론,
   사용자가 명시적으로 '이슈'라는 단어를 쓰지 않더라도 "이거 나중에 해야 하는데", "이 기능 추가하자",
@@ -15,7 +15,7 @@ description:
 
 사용자가 꺼낸 "할 일"을 받아서 **잘 정리된 GitHub 이슈**로 만든다. 단순 생성이 아니라
 (1) 세부 내용을 충실히 작성하고, (2) 알맞은 **Type**을 부여하고, (3) **Priority/Size** 필드를
-채우고, (4) 규모가 크면 **Epic으로 쪼개 sub-issue**까지 연결하는 것이 목표다.
+채우고, (4) 명시된 **Assignees**를 배정하고, (5) 규모가 크면 **Epic으로 쪼개 sub-issue**까지 연결하는 것이 목표다.
 
 이 스킬의 대상 조직은 `soma17th-369`이고, 그 안에 레포가 여러 개다. 이슈를 만들 **레포는 매번
 정한다**(5단계 참고). 다른 조직에서 쓰려면 환경변수 `CREATE_ISSUE_ORG`로 바꾼다.
@@ -25,7 +25,7 @@ description:
 이슈는 한번 만들면 팀원들이 보고 일의 우선순위를 판단하는 근거가 된다. 그래서 **추측으로
 잘못된 Type·Priority·Size를 박는 것보다, 잠깐 멈추고 사람에게 확인받는 편이 훨씬 낫다.**
 
-판단 요소(Type / 분해 여부 / Priority / Size) 중 **조금이라도 애매한 게 있으면 `AskUserQuestion`
+판단 요소(Type / 분해 여부 / Priority / Size / Assignees) 중 **조금이라도 애매한 게 있으면 `AskUserQuestion`
 으로 선택지를 띄워 사람이 고르게 한다.** 절대 애매한 채로 진행하지 않는다. 확실한 것만 자동으로
 정하고, 나머지는 묻는다. 마지막에 **무엇을 만들지 요약해 확인받은 뒤** 실제 생성한다(이슈는
 실제로 만들어지는 부작용이 있으므로).
@@ -104,7 +104,7 @@ description:
 - 규모가 큰지 **애매하면 묻는다**: "이 작업을 하나의 이슈로 둘까요, Epic으로 쪼갤까요?" 그리고
   Epic으로 간다면 **네가 제안하는 분해안(하위 Feature/Task 목록)을 먼저 보여주고 확인받는다.**
   사람이 일을 어떻게 나눌지에 대한 감이 있으므로, 분해는 항상 사람 확인을 거친다.
-- 각 하위 이슈도 자기 Type/Priority/Size를 갖는다(같은 흐름을 재귀적으로 적용).
+- 각 하위 이슈도 자기 Type/Priority/Size/Assignees를 갖는다(같은 흐름을 재귀적으로 적용).
 - 생성 순서: **Epic 먼저 생성 → 각 하위 이슈를 `--parent <epic번호>`로 생성**(자동 연결).
 
 ### 4단계 — Priority 결정
@@ -146,7 +146,17 @@ Size 옵션은 **XS / S / M / L / XL**. 작업량 감이 명확하면 정하고,
 Size는 **프로젝트 필드**라 5단계에서 고른 프로젝트가 있어야 설정된다(`--size`는 반드시 `--project`와
 함께 넘긴다). 프로젝트에 안 넣기로 했거나 Size가 필요 없으면 Size는 생략한다.
 
-### 7단계 — 계획 확인 후 생성
+### 7단계 — Assignees 결정
+
+Assignees는 선택값이다. 사용자가 담당자를 명시했으면 GitHub 로그인 기준으로 `--assignee <login>`을 넘긴다.
+여러 명이면 `--assignee`를 여러 번 반복한다. 담당자를 말하지 않았으면 생략한다.
+
+- 사용자가 `@login` 또는 GitHub 로그인으로 명시했으면 그대로 쓴다.
+- 사용자가 "나"라고 했으면 GitHub CLI가 지원하는 `@me`를 쓸 수 있다.
+- 이름, 역할, 팀명처럼 GitHub 로그인으로 확정할 수 없는 표현이면 추측하지 말고 확인한다.
+- Epic으로 쪼갤 때 담당자가 하위 이슈마다 다를 수 있으면, 생성 전 요약에서 각 이슈별 Assignees를 따로 확인한다.
+
+### 8단계 — 계획 확인 후 생성
 
 만들기 직전에 요약을 보여주고 확인받는다. 예:
 
@@ -154,6 +164,7 @@ Size는 **프로젝트 필드**라 5단계에서 고른 프로젝트가 있어�
 다음으로 만들겠습니다:
 - 제목: 로그인 구현
 - Type: Feature / Priority: High / Size: M
+- Assignees: suhyun444
 - 프로젝트: 시스템 초기 설계 및 구축
 - 본문: (배경·상세·완료조건 요약)
 진행할까요?
@@ -168,15 +179,16 @@ Epic이면 Epic + 하위 목록 전체를 보여준다. 확인되면 스크립�
 python .claude/skills/create-issue/scripts/gh_issue.py repos       # org 레포 이름 목록
 python .claude/skills/create-issue/scripts/gh_issue.py projects    # org 프로젝트 목록
 
-# 단일 이슈 (--repo 필수, --project/--size 선택)
+# 단일 이슈 (--repo 필수, --project/--size/--assignee 선택)
 python .claude/skills/create-issue/scripts/gh_issue.py create \
   --repo Laimory-server --title "로그인 구현" --body-file /tmp/body.md \
-  --type Feature --priority High --size M --project "시스템 초기 설계 및 구축"
+  --type Feature --priority High --size M --project "시스템 초기 설계 및 구축" \
+  --assignee suhyun444
 
 # Epic의 하위 이슈로 붙이며 생성 (Epic을 먼저 만들고 그 번호를 --parent로)
 python .claude/skills/create-issue/scripts/gh_issue.py create \
   --repo Laimory-server --title "JWT 발급/검증" --body-file /tmp/sub1.md \
-  --type Task --priority High --parent 12
+  --type Task --priority High --parent 12 --assignee suhyun444
 
 # 이미 있는 두 이슈 연결
 python .claude/skills/create-issue/scripts/gh_issue.py link --repo Laimory-server --parent 12 --child 13
@@ -184,6 +196,7 @@ python .claude/skills/create-issue/scripts/gh_issue.py link --repo Laimory-serve
 
 - `--repo`는 `owner/name` 또는 org 내 `name`만 줘도 된다(org 자동 결합). 생략하면 안내 후 중단된다.
 - `--size`/`--project`를 생략하면 프로젝트에 추가하지 않고 Type/Priority만 설정한다.
+- `--assignee`는 GitHub 로그인 또는 `@me`를 넘긴다. 여러 명이면 `--assignee`를 반복한다.
 - 출력은 JSON 한 줄(`{"number":..,"url":..}`)이라, Epic 생성 결과의 `number`를 하위 이슈의
   `--parent`로 넘기면 된다.
 - 이름 해석에 실패하면(`[해석 실패] …`) 스크립트가 사용 가능한 값 목록을 알려주니, 그 목록으로
@@ -191,7 +204,7 @@ python .claude/skills/create-issue/scripts/gh_issue.py link --repo Laimory-serve
 
 ## 묻는 방식 (AskUserQuestion)
 
-Priority/Size/Type/분해여부가 모호할 때는 한 번의 `AskUserQuestion` 호출에 필요한 질문들을 모아
+Priority/Size/Type/분해여부/Assignees가 모호할 때는 한 번의 `AskUserQuestion` 호출에 필요한 질문들을 모아
 띄운다(질문 여러 개를 한 번에 가능). 각 선택지에는 **의미 설명을 함께** 달아 빠르게 고르게 한다.
 
 **중요 제약: `AskUserQuestion`의 옵션은 질문당 최대 4개다.** 그런데 Priority(5개)·Size(5개)는
@@ -207,17 +220,18 @@ Other로 직접 넣을 수 있게 한다.
 ## 예시
 
 **Example:**
-입력: "redis ec2 구축 이슈 project 4에 만들어줘"
+입력: "redis ec2 구축 이슈 project 4에 만들어줘. 담당자는 suhyun444"
 
 - 판단: Type=**Task**(인프라/운영이라 명확) · 규모 작아 단일 이슈 · 프로젝트는 사용자가 지정(project 4) ·
-  **레포는 미지정이라 `repos`로 물어 Laimory-server 선택** · Priority·Size도 신호 없어 질문 → Medium/S
+  **레포는 미지정이라 `repos`로 물어 Laimory-server 선택** · 담당자는 사용자가 지정 · Priority·Size도 신호 없어 질문 → Medium/S
 - 실행:
   ```bash
   python .claude/skills/create-issue/scripts/gh_issue.py create \
     --repo Laimory-server --title "Redis EC2 구축" --body-file /tmp/body.md \
-    --type Task --priority Medium --size S --project "시스템 초기 설계 및 구축"
+    --type Task --priority Medium --size S --project "시스템 초기 설계 및 구축" \
+    --assignee suhyun444
   ```
-- 결과: 배경·체크리스트·완료조건을 갖춘 Task 이슈가 Priority=Medium / Size=S로 생성되어 project 4에 추가됨.
+- 결과: 배경·체크리스트·완료조건을 갖춘 Task 이슈가 Priority=Medium / Size=S로 생성되어 project 4에 추가되고, assignee가 지정됨.
 
 ## 주의사항 (Gotchas)
 
@@ -233,7 +247,7 @@ Other로 직접 넣을 수 있게 한다.
   그 목록 그대로 사용자에게 다시 물어 재시도한다.
 - **Size는 프로젝트 필드라 프로젝트마다 없을 수 있다.** 대상 프로젝트에 Size 필드가 없으면
   `[해석 실패]`가 난다. 그땐 Size를 생략하거나 사용자에게 다른 프로젝트를 확인한다.
-- **이슈는 실제로 만들어진다(되돌리기 번거롭다).** 7단계 확인을 건너뛰지 마라. 잘못 만들었으면
+- **이슈는 실제로 만들어진다(되돌리기 번거롭다).** 8단계 확인을 건너뛰지 마라. 잘못 만들었으면
   `deleteIssue` mutation으로 지운다.
 - **Epic 분해는 생성 순서가 중요하다.** Epic을 *먼저* 만들어 번호를 얻은 뒤, 하위 이슈를
   `--parent <번호>`로 만든다. 순서가 바뀌면 넘길 부모 번호가 없다.
