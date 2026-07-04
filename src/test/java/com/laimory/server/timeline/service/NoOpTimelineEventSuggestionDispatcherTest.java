@@ -9,9 +9,9 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 /** no-op 디스패처가 콜백 토큰을 로그에 남기지 않는지 검증(비밀 유출 방지). 인프라 0. */
 @ExtendWith(OutputCaptureExtension.class)
-class TimelineEventSuggestionDispatcherTest {
+class NoOpTimelineEventSuggestionDispatcherTest {
 
-    private final TimelineEventSuggestionDispatcher dispatcher = new TimelineEventSuggestionDispatcher();
+    private final NoOpTimelineEventSuggestionDispatcher dispatcher = new NoOpTimelineEventSuggestionDispatcher();
 
     @Test
     void dispatch_doesNotLogToken(CapturedOutput output) {
