@@ -10,7 +10,8 @@ import org.springframework.stereotype.Service;
 /**
  * timeline_draft_event_suggestions leaf 서비스. 자신과 1:1인 TimelineDraftEventSuggestionRepository에만 접근한다.
  *
- * <p>이 테이블은 AI가 write하고 API는 read(finalize)·delete(finalize/cleanup)만 하므로 저장 메서드는 없다
+ * <p>이 테이블은 AI가 write하고 API는 read(finalize)·delete(finalize/cleanup)를 쓴다. 저장은
+ * fake AI dispatcher(dev)의 staging 경로만 쓴다 — 실 AI는 DB에 직접 write하므로 prod 경로에선 호출되지 않는다
  * (테스트 픽스처는 레포의 save를 직접 쓴다).
  */
 @Service
@@ -21,6 +22,11 @@ public class TimelineDraftEventSuggestionService {
 
     public List<TimelineDraftEventSuggestion> findByTaskId(String taskId) {
         return timelineDraftEventSuggestionRepository.findByTaskId(taskId);
+    }
+
+    /** fake AI dispatcher(dev)의 canned 이벤트 제안 staging 전용. */
+    public TimelineDraftEventSuggestion save(TimelineDraftEventSuggestion suggestion) {
+        return timelineDraftEventSuggestionRepository.save(suggestion);
     }
 
     public void deleteByTaskId(String taskId) {
