@@ -45,6 +45,13 @@ A review based only on the diff hunks misses the most important category — des
 
 Read **every** changed line you're reviewing. Skim only generated code, lockfiles, and large data files. If a block is too hard to understand, that's itself review feedback — ask the author to clarify rather than rubber-stamping it.
 
+Do **not** write findings from the diff alone. Before flagging a possible bug, trace the actual flow that can produce it:
+
+- Follow the producer -> validation boundary -> persistence/state transition -> consumer/read path.
+- Identify invariants the code already establishes upstream. If an upstream boundary guarantees a field, state, ownership, or shape, don't re-flag the downstream code for a case that cannot occur through the real product path.
+- For claims like "this can be null", "this can be unauthenticated", "this can bypass validation", or "this creates an inconsistent state", name the concrete path that makes it happen. If the only path is manual DB corruption, test-only construction, or a future/legacy migration scenario, classify it accordingly or omit the inline comment.
+- When the diff touches a mapper, DTO, helper, or low-level service, read its callers and the write path that feeds it before commenting. Most false positives come from reviewing a downstream line without checking the upstream contract.
+
 ### 2. Review systematically against the checklist
 
 Work through `references/review-checklist.md` rather than reacting ad hoc — it's the structured set of things to look for, ordered by importance (design first, style last), and it includes the backend-specific dimensions (security, transaction boundaries, performance, error handling, concurrency) that don't show up by just reading the diff. As you go, collect findings as a list of `{path, line, severity, note}`.
