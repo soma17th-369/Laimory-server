@@ -267,6 +267,17 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_rejectsNegativeHealthValue() {
+        // value는 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(HealthMetric.STEPS, -1.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
     void createDraftTask_rejectsNotificationWithoutTitleAndText() {
         // title/text 둘 다 blank면 NON_NULL 직렬화로 빈 payload가 저장되므로 입력 경계에서 400으로 막는다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
