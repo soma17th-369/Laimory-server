@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Laimory is the backend **web application server for an Android app**. It exposes a REST API consumed by the mobile client.
 
+## 작업 원칙
+
+- **불확실하면 멈추고 묻는다.** 해석이 여럿이면 임의로 하나 고르지 말고 제시한다. 더 단순한 방법이 있으면 말한다.
+- **YAGNI — 요청한 것만 구현한다.** 투기적 추상화, 단일 사용처를 위한 일반화, 미요청 유연성·설정성, 불가능한 케이스 방어는 넣지 않는다.
+- **수술적 변경.** 요청과 무관한 코드·주석·포맷은 건드리지 않고 기존 스타일을 따른다. 내 변경이 만든 orphan(미사용 import·변수 등)만 정리하고, 기존 dead code는 삭제하지 말고 언급만 한다.
+- **검증 가능한 목표로 바꿔 실행한다.** "버그 수정"→"재현 테스트를 먼저 작성해 통과시킨다", "리팩터"→"변경 전후 테스트 통과 확인".
+
 ## 용어 사전 (Ubiquitous Language)
 
 도메인 용어(엔티티명, 상태명, 필드명, 클래스/변수 네이밍 등)가 필요하면 반드시 [.agents/UbiquitousLanguage.md](.agents/UbiquitousLanguage.md)의 표현을 기준으로 사용한다. 이 문서가 도메인 용어와 **사용 금지 표현**의 단일 기준(single source of truth)이다.
