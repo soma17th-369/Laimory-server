@@ -113,6 +113,7 @@ com.laimory.server
 - **블록 레지스트리**(`common.error.ErrorCode` 상단 주석이 SSOT): `ERROR_0xxx`=교차/폴백 전용(뒤 세 자리=HTTP 힌트, 도메인 사용 금지), `ERROR_1xxx`=timeline, 새 도메인은 1000 블록 단위로 할당. 도메인 블록 숫자는 HTTP status와 무관하다(status는 enum 필드가 SSOT).
 - **코드명은 공개 API 계약** — 한번 배포되면 클라이언트가 분기하므로 rename 금지.
 - 새 코드 추가 시 `messages.properties`(기본=한국어)·`messages_ko`·`messages_en` 세 곳에 코드명 key로 메시지를 추가한다(전부 UTF-8). 누락하면 `ErrorCodeMessagesTest`가 빌드에서 실패시킨다.
+- `messages*.properties` 문구는 envelope `header.message`로 **클라이언트에 그대로 노출되는 사용자-facing 메시지**다 — 짧은 사용자 문구로만 쓰고 내부 진단·운영 지침을 넣지 않는다. 클라이언트 분기는 message가 아니라 code로 한다.
 
 ### transactionId / 로깅
 
