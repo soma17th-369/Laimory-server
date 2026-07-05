@@ -20,6 +20,8 @@ public class TimelineTaskService {
 
     private static final Duration PROCESSING_TTL = Duration.ofHours(1);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
+    // terminal TTL(24h)보다 길게 유지해 카운터가 task보다 먼저 만료되지 않게 한다.
+    private static final Duration TOKEN_USES_TTL = Duration.ofHours(25);
 
     private final TimelineTaskStore timelineTaskStore;
 
@@ -49,5 +51,13 @@ public class TimelineTaskService {
 
     public Optional<TimelineDraftTask> find(String taskId) {
         return timelineTaskStore.find(taskId);
+    }
+
+    /**
+     * 콜백 토큰을 원자적으로 소비한다. 반환 1 = 이 요청이 유일한 승자(처리 계속), 그 외 = 이미 소비됨.
+     * 카운터는 TTL로만 소멸시킨다 — terminal 이후 삭제하면 task 해시가 남아 있는 동안 replay 창이 다시 열린다.
+     */
+    public long consumeCallbackToken(String taskId) {
+        return timelineTaskStore.incrementCallbackTokenUses(taskId, TOKEN_USES_TTL);
     }
 }

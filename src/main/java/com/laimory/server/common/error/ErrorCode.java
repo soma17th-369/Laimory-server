@@ -21,7 +21,8 @@ import org.springframework.http.HttpStatusCode;
  *   <li>{@code ERROR_0xxx} — 교차/폴백 전용. 뒤 세 자리는 HTTP status 힌트(0400=400).
  *       도메인 블록으로 사용 금지.</li>
  *   <li>{@code ERROR_1xxx} — timeline. 1008~1011은 task 실패 분류 — 주 사용처는 폴링 {@code body.error}
- *       (200 응답 안)이며, status는 HTTP 에러로 쓰일 경우의 예비값이다.</li>
+ *       (200 응답 안)이며, status는 HTTP 에러로 쓰일 경우의 예비값이다. 1012는 콜백 인증/소비 실패용
+ *       401(1002와 같은 성격)로 task 실패 분류가 아니다.</li>
  *   <li>{@code ERROR_2xxx} — (다음 도메인 예약)</li>
  * </ul>
  * 도메인 블록(1xxx~)의 숫자는 HTTP status와 무관하다 — status는 항상 enum 필드가 결정한다.
@@ -48,7 +49,10 @@ public enum ErrorCode {
     ERROR_1008(HttpStatus.BAD_GATEWAY),            // AI가 실패 보고(콜백 status=FAILED)
     ERROR_1009(HttpStatus.BAD_GATEWAY),            // AI 서버 호출 실패(dispatch)
     ERROR_1010(HttpStatus.INTERNAL_SERVER_ERROR),  // staging 데이터 누락(복구 불가 상태)
-    ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR);  // finalize 검증/조립 실패
+    ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR),  // finalize 검증/조립 실패
+
+    // ── ERROR_1xxx: timeline 콜백 인증/소비 실패 — 1002와 같은 성격의 401, task 실패 분류 아님 ──
+    ERROR_1012(HttpStatus.UNAUTHORIZED);   // 이미 사용된 콜백 토큰(원자적 소비 게이트 거부 — 같은 토큰 재전송 불가)
 
     /** task 실패 분류 코드 부분집합. {@code markFailed} 멤버십 가드·폴링 read-side 검증이 참조한다. */
     public static final Set<ErrorCode> TASK_FAILURE_CODES =

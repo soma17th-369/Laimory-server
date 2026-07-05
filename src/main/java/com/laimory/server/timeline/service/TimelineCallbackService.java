@@ -29,8 +29,10 @@ import org.springframework.stereotype.Service;
  * <p>순서가 load-bearing이다(spec §Callback 고정):
  * <ol>
  *   <li>task 로드(없음/만료 → 404)</li>
- *   <li><b>토큰 검증(401) 먼저</b> — terminal 멱등 단축보다 앞 (토큰이 유일 보호장치이고, terminal task도 해시를 보존하므로 가능)</li>
- *   <li>terminal이면 idempotent return(200)</li>
+ *   <li><b>토큰 검증(401 ERROR_1002) 먼저</b> — 소비·멱등 단축보다 앞 (토큰이 유일 보호장치이고, terminal task도 해시를 보존하므로 가능)</li>
+ *   <li><b>토큰 소비(원자적, 승자 1)</b> — Redis INCR 결과가 1이 아니면 401 ERROR_1012(이미 소비됨).
+ *       replay와 동시 중복 콜백을 여기서 원자적으로 거부한다</li>
+ *   <li>terminal이면 idempotent return(200) — 중복 finalize 방지 안전망(카운터 유실 시에도 상태 오염 차단)</li>
  *   <li>FAILED → markFailed</li>
  *   <li>SUCCESS → source 행을 DB에서 로드. 없으면(이미 finalize돼 삭제됨) record 존재 시 Redis SUCCESS만 set(멱등 복구),
  *       record도 없으면 FAILED. 있으면 event 제안 행을 로드 — 0행이면(AI 미기록/조기 콜백) 빈 finalize로 source를
@@ -66,12 +68,22 @@ public class TimelineCallbackService {
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ERROR_1001));
 
-        // 1. 토큰 검증을 먼저 한다(멱등 단축보다 앞). terminal task도 해시를 보존하므로 재콜백도 토큰으로 막힌다.
+        // 1. 토큰 검증을 먼저 한다(소비·멱등 단축보다 앞). terminal task도 해시를 보존하므로 재콜백도 토큰으로 막힌다.
         if (!CallbackTokens.matches(callbackToken, task.callbackTokenHash())) {
             throw new BusinessException(ErrorCode.ERROR_1002);
         }
 
-        // 2. 멱등: 이미 종결(SUCCESS/FAILED)된 task면 재처리하지 않는다(콜백 재전송 방어).
+        // 2. 토큰 소비(원자적 test-and-consume): INCR 결과가 정확히 1인 요청만 승자.
+        //    replay·동시 중복 콜백은 여기서 401로 거부된다(1002=불일치와 달리 1012=이미 소비됨).
+        long uses = timelineTaskService.consumeCallbackToken(taskId);
+        if (uses != 1) {
+            log.warn("callback token replay detected: taskId={} uses={}", taskId, uses);
+            throw new BusinessException(ErrorCode.ERROR_1012);
+        }
+
+        // 3. 멱등: 이미 종결(SUCCESS/FAILED)된 task면 재처리하지 않는다.
+        //    replay 거부 안전망이 아니라 중복 finalize 방지 안전망이다 — 카운터 키만 유실된 뒤 terminal task에
+        //    재콜백이 오면 새 카운터 INCR=1로 게이트를 통과하고 여기서 no-op 200으로 흡수된다(상태 오염 없음).
         if (task.status() != TaskStatus.PROCESSING) {
             return;
         }

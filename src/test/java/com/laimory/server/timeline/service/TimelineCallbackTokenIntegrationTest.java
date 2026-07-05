@@ -22,6 +22,13 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -88,6 +95,7 @@ class TimelineCallbackTokenIntegrationTest {
             draftSourceItemService.deleteByTaskId(id);
             eventSuggestionService.deleteByTaskId(id);
             redis.delete("timeline:draft-task:" + id);
+            redis.delete("timeline:callback-token-uses:" + id); // 토큰 소비 카운터(TTL 25h) — 테스트 Redis 잔존 방지
             // redis는 PrefixedRedis facade → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
@@ -129,11 +137,56 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(taskService.find(taskId).orElseThrow().callbackTokenHash())
                 .isEqualTo(stored.callbackTokenHash());
 
-        // 재콜백(같은 토큰) → 멱등(중복 이벤트 없음): source 부재 + record 존재 → 복구 경로로 SUCCESS 유지.
-        callbackService.handleCallback(VERSION, taskId, token, success());
+        // 재콜백(같은 토큰) → 원자적 소비 게이트가 401 ERROR_1012로 거부(1002=불일치와 구분되는 replay 전용 코드).
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, token, success()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+        // 거부된 replay는 상태를 건드리지 않는다: SUCCESS 유지 + 이벤트 중복 없음.
         DraftTaskStatusResponse afterReplay = pollingService.poll(VERSION, taskId);
         assertThat(afterReplay.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(afterReplay.result().events()).hasSameSizeAs(status.result().events());
+    }
+
+    @Test
+    void concurrentCallbacks_exactlyOneWins_otherRejected1012() throws Exception {
+        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
+        createdTaskIds.add(taskId);
+        String token = capturedToken(taskId);
+        simulateAiWrite(taskId);
+
+        // 같은 토큰으로 콜백 2개를 동시에 발사 — INCR 원자성으로 정확히 하나만 승자.
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<BusinessException> callback = () -> {
+            start.await();
+            try {
+                callbackService.handleCallback(VERSION, taskId, token, success());
+                return null; // 성공
+            } catch (BusinessException e) {
+                return e;
+            }
+        };
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<BusinessException> first = pool.submit(callback);
+            Future<BusinessException> second = pool.submit(callback);
+            start.countDown();
+            // 두 future를 모두 join한 뒤에만 단언한다(승자의 finalize 완료가 보장된 시점).
+            List<BusinessException> results = new ArrayList<>(List.of());
+            results.add(first.get(30, TimeUnit.SECONDS));
+            results.add(second.get(30, TimeUnit.SECONDS));
+
+            long successes = results.stream().filter(Objects::isNull).count();
+            assertThat(successes).isEqualTo(1);
+            BusinessException rejected = results.stream().filter(Objects::nonNull).findFirst().orElseThrow();
+            assertThat(rejected.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // 최종 상태는 SUCCESS 하나로 수렴, 이벤트 중복 없음.
+        DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
+        assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
+        assertThat(status.result().events()).hasSize(1);
     }
 
     @Test
