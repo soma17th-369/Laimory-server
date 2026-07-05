@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 public class TimelineTaskStore {
 
     private static final String KEY_PREFIX = "timeline:draft-task:";
+    private static final String TOKEN_USES_KEY_PREFIX = "timeline:callback-token-uses:";
 
     private final PrefixedRedis redis;
     private final ObjectMapper objectMapper;
@@ -30,6 +31,11 @@ public class TimelineTaskStore {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
         }
+    }
+
+    /** 콜백 토큰 사용 카운터를 원자적으로 증가시키고 증가 후 값을 반환한다(1 = 최초 사용). */
+    public long incrementCallbackTokenUses(String taskId, Duration ttl) {
+        return redis.increment(TOKEN_USES_KEY_PREFIX + taskId, ttl);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {

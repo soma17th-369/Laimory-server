@@ -62,6 +62,21 @@ class TimelineCallbackControllerTest {
     }
 
     @Test
+    void callback_consumedToken_returns401WithError1012() throws Exception {
+        // 새 공개 코드 계약 고정: 이미 소비된 토큰은 1002(불일치)가 아닌 1012로 내려간다.
+        doThrow(new BusinessException(ErrorCode.ERROR_1012))
+                .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
+
+        mockMvc.perform(post(CALLBACK)
+                        .header("Callback-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"SUCCESS\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1012"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
     void callback_taskNotFound_returns404WithErrorCode() throws Exception {
         doThrow(new BusinessException(ErrorCode.ERROR_1001))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());

@@ -39,4 +39,22 @@ public class PrefixedRedis {
     public Boolean delete(String logicalKey) {
         return template.delete(prefix + logicalKey);
     }
+
+    /**
+     * 키 값을 원자적으로 1 증가시키고 증가 후 값을 반환한다(키가 없으면 0에서 시작해 1을 반환).
+     * 최초 생성(반환 1)일 때만 TTL을 부여한다.
+     */
+    public long increment(String logicalKey, Duration ttl) {
+        String key = prefix + logicalKey;
+        Long value = template.opsForValue().increment(key);
+        if (value == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis increment가 null을 반환했습니다: " + logicalKey);
+        }
+        if (value == 1) {
+            // 반환값은 의도적으로 무시: 실패해도 카운터가 오래 남는 가용성 문제일 뿐, 보안(replay 허용) 문제가 아니다.
+            template.expire(key, ttl);
+        }
+        return value;
+    }
 }
