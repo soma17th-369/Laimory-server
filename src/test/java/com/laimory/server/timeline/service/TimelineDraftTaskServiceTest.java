@@ -18,7 +18,10 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.payload.HealthPayload;
+import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -68,7 +71,7 @@ class TimelineDraftTaskServiceTest {
 
     private List<SourceItemDto> oneSource() {
         return List.of(new SourceItemDto(ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
     }
 
     @Test
@@ -211,7 +214,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, null, null, new PhotoPayload("u", "content://x", 1.0, 2.0)));
+                new SourceItemDto(null, null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -229,7 +232,7 @@ class TimelineDraftTaskServiceTest {
         // PHOTO filename이 UUIDv7+허용ext 패턴이 아니면 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0)));
+                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -240,9 +243,74 @@ class TimelineDraftTaskServiceTest {
         // clientPhotoUri는 1차 로컬 캐싱용이라 PHOTO엔 필수다(누락/blank → 400, 저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0)));
+                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsHealthMissingMetricOrValue() {
+        // HEALTH는 metric/value 둘 다 필수(누락 → 400, 저장 전).
+        List<SourceItemDto> missingMetric = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(null, 10145.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingMetric))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        List<SourceItemDto> missingValue = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(HealthMetric.STEPS, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingValue))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNegativeHealthValue() {
+        // value는 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(HealthMetric.STEPS, -1.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNotificationWithoutTitleAndText() {
+        // title/text 둘 다 blank면 NON_NULL 직렬화로 빈 payload가 저장되므로 입력 경계에서 400으로 막는다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
+                new NotificationPayload("카카오톡", null, " ")));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_savesHealthAndNotificationRows_omittingNullPayloadFields() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0),
+                        LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, 10145.0)),
+                new SourceItemDto(ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
+                        new NotificationPayload(null, "제목", null)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        List<TimelineDraftSourceItem> rows = rowsCaptor.getValue();
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).getItemType()).isEqualTo(ItemType.HEALTH);
+        assertThat(rows.get(0).getPayload().get("metric").asText()).isEqualTo("STEPS");
+        assertThat(rows.get(0).getPayload().get("value").asDouble()).isEqualTo(10145.0);
+        assertThat(rows.get(1).getItemType()).isEqualTo(ItemType.NOTIFICATION);
+        assertThat(rows.get(1).getPayload().get("title").asText()).isEqualTo("제목");
+        // NON_NULL: null 필드(appName/text)는 저장 JSON에서 생략된다.
+        assertThat(rows.get(1).getPayload().has("appName")).isFalse();
+        assertThat(rows.get(1).getPayload().has("text")).isFalse();
     }
 }

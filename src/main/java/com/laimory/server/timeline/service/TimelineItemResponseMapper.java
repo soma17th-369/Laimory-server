@@ -51,6 +51,6 @@ public class TimelineItemResponseMapper {
         // filename 유효성은 쓰기 경계(createDraftTask)가 단일 지점으로 보장한다(read에서 재검증하지 않음).
         String photoUrl = photoUrlService.buildUrl(photo.filename(), userId);
         return objectMapper.valueToTree(new PhotoPayloadResponse(
-                photoUrl, photo.clientPhotoUri(), photo.latitude(), photo.longitude()));
+                photoUrl, photo.clientPhotoUri(), photo.latitude(), photo.longitude(), photo.description()));
     }
 }

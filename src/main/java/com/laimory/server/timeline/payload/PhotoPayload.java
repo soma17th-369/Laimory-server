@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.payload;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * 사진 아이템 payload(DB 저장).
  *
@@ -10,10 +12,12 @@ package com.laimory.server.timeline.payload;
  * 해석하지 않고 그대로 저장·echo만 한다 — 클라가 타임라인을 받았을 때 다운로드 없이 기기 원본을 즉시 표시(1차
  * 로컬 캐싱)하도록 타임라인 아이템↔로컬 파일 연결고리를 보존하기 위함이다.
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record PhotoPayload(
         String filename,
         String clientPhotoUri,
         Double latitude,
-        Double longitude
+        Double longitude,
+        String description
 ) implements TimelineItemPayload {
 }

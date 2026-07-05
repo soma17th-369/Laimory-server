@@ -11,6 +11,8 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.payload.HealthPayload;
+import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
@@ -131,6 +133,31 @@ public class TimelineDraftTaskService {
                     throw new IllegalArgumentException("PHOTO sourceItem requires clientPhotoUri: index=" + i);
                 }
             }
+            if (src.itemType() == ItemType.HEALTH) {
+                if (!(src.payload() instanceof HealthPayload health)) {
+                    throw new IllegalArgumentException("HEALTH sourceItem must have HealthPayload: index=" + i);
+                }
+                if (health.metric() == null || health.value() == null) {
+                    throw new IllegalArgumentException("HEALTH sourceItem requires metric and value: index=" + i);
+                }
+                // value는 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
+                if (health.value() < 0) {
+                    throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
+                }
+            }
+            if (src.itemType() == ItemType.NOTIFICATION) {
+                if (!(src.payload() instanceof NotificationPayload notification)) {
+                    throw new IllegalArgumentException("NOTIFICATION sourceItem must have NotificationPayload: index=" + i);
+                }
+                // 전부 null이면 NON_NULL 직렬화로 빈 {} payload가 저장되므로 최소 내용은 요구한다.
+                if (isBlank(notification.title()) && isBlank(notification.text())) {
+                    throw new IllegalArgumentException("NOTIFICATION sourceItem requires title or text: index=" + i);
+                }
+            }
         }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }
