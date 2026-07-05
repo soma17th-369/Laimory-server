@@ -28,7 +28,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 타임라인 아이템 | Timeline Item | AI가 이벤트에 포함시킨 source item이 DB에 저장된 것이다. |
-| 아이템 타입 | Item Type | 아이템 종류다. 예: `PHOTO`, `CALENDAR`, `LOCATION`, `MOVEMENT`. |
+| 아이템 타입 | Item Type | 아이템 종류다. 예: `PHOTO`, `CALENDAR`, `LOCATION`, `MOVEMENT`, `HEALTH`, `NOTIFICATION`. |
 | 아이템 시작 시각 | Start At | 아이템이 발생한 시작 시각이다. |
 | 아이템 종료 시각 | End At | 기간형 아이템의 종료 시각이다. 단일 시점 아이템이면 비어 있을 수 있다. |
 | 페이로드 | Payload | 타입별 세부 데이터다. DB에는 JSON으로 저장하되 Java에서는 typed payload로 다룬다. |
@@ -51,6 +51,9 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 일정 페이로드 | Calendar Payload | 일정 제목, 캘린더명, 위치 텍스트 등을 담는다. |
 | 장소 페이로드 | Location Payload | 장소명, 지역명, 위도, 경도 등을 담는다. |
 | 이동 페이로드 | Movement Payload | 출발지, 도착지, 이동수단, 노선명 등을 담는다. |
+| 건강 페이로드 | Health Payload | 건강 지표(metric)와 값(value)을 담는다. 지표당 아이템 하나, 측정 구간은 envelope의 startAt/endAt이 담는다. |
+| 건강 지표 | Health Metric | 건강 아이템의 지표 종류다. `STEPS`(보)/`DISTANCE`(미터)/`SLEEP`(분) — value의 단위는 지표가 결정한다. |
+| 알림 페이로드 | Notification Payload | 알림을 보낸 앱 이름(appName), 제목(title), 내용(text)을 담는다. title/text 중 최소 하나는 있어야 한다. |
 
 ## 사진 업로드/서빙
 

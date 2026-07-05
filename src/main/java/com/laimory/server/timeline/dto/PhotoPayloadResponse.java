@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * 사진 아이템 응답 payload.
  *
@@ -7,10 +9,12 @@ package com.laimory.server.timeline.dto;
  * {@code clientPhotoUri}는 저장된 기기 로컬 URI를 그대로 echo한 값으로, 클라가 다운로드 없이 기기 원본을 즉시
  * 표시(1차 로컬 캐싱)하는 데 쓴다.
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record PhotoPayloadResponse(
         String photoUrl,
         String clientPhotoUri,
         Double latitude,
-        Double longitude
+        Double longitude,
+        String description
 ) {
 }

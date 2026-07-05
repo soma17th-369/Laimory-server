@@ -188,7 +188,7 @@ class TimelineControllerTest {
         TimelineItemResponse item = new TimelineItemResponse(
                 10L, ItemType.PHOTO,
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
+                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));

@@ -86,7 +86,7 @@ class TimelineCallbackServiceTest {
     private List<TimelineDraftSourceItem> draftRows() {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
         row.assignEventSuggestion(EVENT_ID);
         return List.of(row);
@@ -303,7 +303,7 @@ class TimelineCallbackServiceTest {
         givenProcessingTaskWithFreshToken();
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0)));
+                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
         row.assignEventSuggestion(999L);
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of(row));
