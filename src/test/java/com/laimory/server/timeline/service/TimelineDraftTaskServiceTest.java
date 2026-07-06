@@ -263,10 +263,10 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_rejectsHealthMissingMetricOrValue() {
-        // HEALTH는 metric/value 둘 다 필수(누락 → 400, 저장 전). SLEEP도 value로 통일(단위는 metric이 결정).
+        // HEALTH는 metric/value 둘 다 필수(누락 → 400, 저장 전). value는 단위 포함 텍스트라 blank도 누락으로 본다.
         List<SourceItemDto> missingMetric = List.of(new SourceItemDto(
                 ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(null, 10145.0)));
+                new HealthPayload(null, "10145보")));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingMetric))
                 .isInstanceOf(IllegalArgumentException.class);
 
@@ -275,16 +275,11 @@ class TimelineDraftTaskServiceTest {
                 new HealthPayload(HealthMetric.SLEEP, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingValue))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
-    }
 
-    @Test
-    void createDraftTask_rejectsNegativeHealthValue() {
-        // value는 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
-        List<SourceItemDto> sources = List.of(new SourceItemDto(
+        List<SourceItemDto> blankValue = List.of(new SourceItemDto(
                 ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(HealthMetric.STEPS, -1.0)));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                new HealthPayload(HealthMetric.STEPS, " ")));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, blankValue))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
     }
@@ -400,9 +395,9 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0),
-                        LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, 10145.0)),
+                        LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, "10145보")),
                 new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0),
-                        LocalDateTime.of(2026, 6, 17, 7, 30), new HealthPayload(HealthMetric.SLEEP, 210.0)),
+                        LocalDateTime.of(2026, 6, 17, 7, 30), new HealthPayload(HealthMetric.SLEEP, "210분")),
                 new SourceItemDto(ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
                         new NotificationPayload(null, "제목", null)));
 
@@ -415,10 +410,10 @@ class TimelineDraftTaskServiceTest {
         assertThat(rows).hasSize(3);
         assertThat(rows.get(0).getItemType()).isEqualTo(ItemType.HEALTH);
         assertThat(rows.get(0).getPayload().get("metric").asText()).isEqualTo("STEPS");
-        assertThat(rows.get(0).getPayload().get("value").asDouble()).isEqualTo(10145.0);
-        // SLEEP도 value로 통일 — 단위(분)는 metric이 결정한다.
+        assertThat(rows.get(0).getPayload().get("value").asText()).isEqualTo("10145보");
+        // value는 단위 포함 텍스트 — SLEEP도 동일하게 value 하나로 담는다.
         assertThat(rows.get(1).getPayload().get("metric").asText()).isEqualTo("SLEEP");
-        assertThat(rows.get(1).getPayload().get("value").asDouble()).isEqualTo(210.0);
+        assertThat(rows.get(1).getPayload().get("value").asText()).isEqualTo("210분");
         assertThat(rows.get(2).getItemType()).isEqualTo(ItemType.NOTIFICATION);
         assertThat(rows.get(2).getPayload().get("title").asText()).isEqualTo("제목");
         // NON_NULL: null 필드(appName/text)는 저장 JSON에서 생략된다.

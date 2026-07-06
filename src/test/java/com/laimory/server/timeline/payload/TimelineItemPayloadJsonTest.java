@@ -32,13 +32,13 @@ class TimelineItemPayloadJsonTest {
 
     @Test
     void calendarPayload_hasNoTypeInfo() throws Exception {
-        String json = objectMapper.writeValueAsString(new CalendarPayload("주간 회의", "회사", "회의실 A", "설명", false));
+        String json = objectMapper.writeValueAsString(new CalendarPayload("주간 회의", "회의실 A", "설명", false));
         assertThat(json).doesNotContain("itemType");
     }
 
     @Test
     void healthPayload_hasNoTypeInfo() throws Exception {
-        String json = objectMapper.writeValueAsString(new HealthPayload(HealthMetric.STEPS, 10145.0));
+        String json = objectMapper.writeValueAsString(new HealthPayload(HealthMetric.STEPS, "10145보"));
         assertThat(json).doesNotContain("itemType");
     }
 
@@ -74,7 +74,7 @@ class TimelineItemPayloadJsonTest {
         // (@JsonInclude(NON_NULL) — record 하나라도 애노테이션이 빠지면 여기서 잡힌다).
         List<TimelineItemPayload> payloads = List.of(
                 new PhotoPayload("u", "c", null, null, null),
-                new CalendarPayload("주간 회의", null, null, null, null),
+                new CalendarPayload("주간 회의", null, null, null),
                 new LocationPayload(37.5445, 127.0557, null, null, null),
                 new MovementPayload(new MovementEndpoint(37.4979, 127.0276, null, null),
                         null, null, null),
@@ -137,28 +137,28 @@ class TimelineItemPayloadJsonTest {
     void sourceItemDto_externalProperty_roundTrip_health() throws Exception {
         String json = """
                 {"itemType":"HEALTH","startAt":"2026-06-30T00:00:00","endAt":"2026-07-01T00:00:00",\
-                 "payload":{"metric":"STEPS","value":10145}}
+                 "payload":{"metric":"STEPS","value":"10145보"}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.itemType()).isEqualTo(ItemType.HEALTH);
         assertThat(dto.payload()).isInstanceOf(HealthPayload.class)
-                .isEqualTo(new HealthPayload(HealthMetric.STEPS, 10145.0));
+                .isEqualTo(new HealthPayload(HealthMetric.STEPS, "10145보"));
     }
 
     @Test
     void sourceItemDto_externalProperty_roundTrip_healthSleep() throws Exception {
-        // SLEEP도 value로 통일 — 단위(분)는 metric이 결정한다.
+        // SLEEP도 value 하나로 — value는 단위 포함 텍스트다.
         String json = """
                 {"itemType":"HEALTH","startAt":"2026-06-30T04:00:00","endAt":"2026-06-30T07:30:00",\
-                 "payload":{"metric":"SLEEP","value":210}}
+                 "payload":{"metric":"SLEEP","value":"210분"}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.payload()).isInstanceOf(HealthPayload.class)
-                .isEqualTo(new HealthPayload(HealthMetric.SLEEP, 210.0));
+                .isEqualTo(new HealthPayload(HealthMetric.SLEEP, "210분"));
     }
 
     @Test

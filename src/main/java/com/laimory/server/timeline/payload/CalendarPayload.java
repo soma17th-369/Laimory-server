@@ -5,7 +5,6 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CalendarPayload(
         String title,
-        String calendarName,
         String locationText,
         String description,
         Boolean allDay
