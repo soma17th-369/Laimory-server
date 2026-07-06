@@ -38,7 +38,7 @@ class TimelineItemPayloadJsonTest {
 
     @Test
     void healthPayload_hasNoTypeInfo() throws Exception {
-        String json = objectMapper.writeValueAsString(new HealthPayload(HealthMetric.STEPS, 10145.0, null));
+        String json = objectMapper.writeValueAsString(new HealthPayload(HealthMetric.STEPS, 10145.0));
         assertThat(json).doesNotContain("itemType");
     }
 
@@ -78,7 +78,7 @@ class TimelineItemPayloadJsonTest {
                 new LocationPayload(37.5445, 127.0557, null, null, null),
                 new MovementPayload(new MovementEndpoint(37.4979, 127.0276, null, null),
                         null, null, null),
-                new HealthPayload(HealthMetric.STEPS, null, null),
+                new HealthPayload(HealthMetric.STEPS, null),
                 new NotificationPayload(null, "제목", null));
         for (TimelineItemPayload payload : payloads) {
             com.fasterxml.jackson.databind.JsonNode tree = objectMapper.valueToTree(payload);
@@ -144,21 +144,21 @@ class TimelineItemPayloadJsonTest {
 
         assertThat(dto.itemType()).isEqualTo(ItemType.HEALTH);
         assertThat(dto.payload()).isInstanceOf(HealthPayload.class)
-                .isEqualTo(new HealthPayload(HealthMetric.STEPS, 10145.0, null));
+                .isEqualTo(new HealthPayload(HealthMetric.STEPS, 10145.0));
     }
 
     @Test
     void sourceItemDto_externalProperty_roundTrip_healthSleep() throws Exception {
-        // SLEEP은 value가 아니라 durationMinutes(분)를 쓴다(AI input 규격).
+        // SLEEP도 value로 통일 — 단위(분)는 metric이 결정한다.
         String json = """
                 {"itemType":"HEALTH","startAt":"2026-06-30T04:00:00","endAt":"2026-06-30T07:30:00",\
-                 "payload":{"metric":"SLEEP","durationMinutes":210}}
+                 "payload":{"metric":"SLEEP","value":210}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.payload()).isInstanceOf(HealthPayload.class)
-                .isEqualTo(new HealthPayload(HealthMetric.SLEEP, null, 210.0));
+                .isEqualTo(new HealthPayload(HealthMetric.SLEEP, 210.0));
     }
 
     @Test

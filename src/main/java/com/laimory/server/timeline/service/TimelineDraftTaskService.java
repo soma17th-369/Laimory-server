@@ -7,7 +7,6 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
-import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
@@ -165,24 +164,11 @@ public class TimelineDraftTaskService {
                 }
                 case HealthPayload health -> {
                     requireItemType(src.itemType(), ItemType.HEALTH, i);
-                    if (health.metric() == null) {
-                        throw new IllegalArgumentException("HEALTH sourceItem requires metric: index=" + i);
+                    if (health.metric() == null || health.value() == null) {
+                        throw new IllegalArgumentException("HEALTH sourceItem requires metric and value: index=" + i);
                     }
-                    // 값 필드는 지표가 결정한다(AI input 규격): SLEEP=durationMinutes(분), 그 외=value(보/미터).
-                    boolean sleep = health.metric() == HealthMetric.SLEEP;
-                    Double measured = sleep ? health.durationMinutes() : health.value();
-                    if (measured == null) {
-                        throw new IllegalArgumentException("HEALTH sourceItem requires "
-                                + (sleep ? "durationMinutes" : "value") + ": index=" + i);
-                    }
-                    // 반대 필드가 같이 실려 오면 클라 데이터 모순 — 저장이 payload 통짜 직렬화라
-                    // "반대 필드는 키 생략" 계약을 재구성 없이 검증이 보장해야 한다(둘 다 클라 소유 필드라 무시 대상 아님).
-                    Double conflicting = sleep ? health.value() : health.durationMinutes();
-                    if (conflicting != null) {
-                        throw new IllegalArgumentException("HEALTH sourceItem has a value field not matching metric: index=" + i);
-                    }
-                    // 값은 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
-                    if (measured < 0) {
+                    // value는 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
+                    if (health.value() < 0) {
                         throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
                     }
                 }

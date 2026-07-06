@@ -56,8 +56,8 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 주소 | address | 좌표를 서버가 reverse geocoding해 얻은 주소(도로명 우선)다(서버 enrich, nullable — 클라 제공값은 무시). |
 | 주변 장소 목록 | places | 좌표 반경 내 주변 장소명 배열(거리순, 건물명 역할 포함)이다. null=조회 미시도/실패(JSON 키 생략), 빈 배열=주변 장소 없음. 클라 제공값은 무시. |
 | 머문 시간 텍스트 | durationText | 장소에 머문 시간("1시간45분")이다. 서버가 startAt/endAt로 계산하며 클라 제공값은 받지 않는다. |
-| 건강 페이로드 | Health Payload | 건강 지표(metric)와 지표별 값 필드를 담는다 — SLEEP은 `durationMinutes`(분), 그 외는 `value`. 지표당 아이템 하나, 측정 구간은 envelope의 startAt/endAt이 담는다. |
-| 건강 지표 | Health Metric | 건강 아이템의 지표 종류다. `STEPS`(value, 보)/`DISTANCE`(value, 미터)/`SLEEP`(durationMinutes, 분). |
+| 건강 페이로드 | Health Payload | 건강 지표(metric)와 값(value)을 담는다. 지표당 아이템 하나, 측정 구간은 envelope의 startAt/endAt이 담는다. |
+| 건강 지표 | Health Metric | 건강 아이템의 지표 종류다. `STEPS`(보)/`DISTANCE`(미터)/`SLEEP`(분) — value의 단위는 지표가 결정한다. |
 | 알림 페이로드 | Notification Payload | 알림을 보낸 앱 이름(appName), 제목(title), 내용(text)을 담는다. title/text 중 최소 하나는 있어야 한다. |
 
 ## 사진 업로드/서빙
