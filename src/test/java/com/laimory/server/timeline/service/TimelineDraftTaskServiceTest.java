@@ -21,6 +21,9 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.HealthPayload;
+import com.laimory.server.timeline.payload.LocationPayload;
+import com.laimory.server.timeline.payload.MovementEndpoint;
+import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.Instant;
@@ -250,29 +253,59 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_rejectsHealthMissingMetricOrValue() {
-        // HEALTH는 metric/value 둘 다 필수(누락 → 400, 저장 전).
+    void createDraftTask_rejectsHealthMissingMetricOrMeasuredValue() {
+        // HEALTH는 metric 필수 + 지표별 값 필드(SLEEP=durationMinutes, 그 외=value) 필수(누락 → 400, 저장 전).
         List<SourceItemDto> missingMetric = List.of(new SourceItemDto(
                 ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(null, 10145.0)));
+                new HealthPayload(null, 10145.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingMetric))
                 .isInstanceOf(IllegalArgumentException.class);
 
         List<SourceItemDto> missingValue = List.of(new SourceItemDto(
                 ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(HealthMetric.STEPS, null)));
+                new HealthPayload(HealthMetric.STEPS, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingValue))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // SLEEP은 value가 아니라 durationMinutes를 요구한다 — value만 실려 오면 400.
+        List<SourceItemDto> sleepWithValueOnly = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0), null,
+                new HealthPayload(HealthMetric.SLEEP, 210.0, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sleepWithValueOnly))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsHealthValueFieldNotMatchingMetric() {
+        // 지표와 안 맞는 반대 필드가 같이 실려 오면 모순 입력 — "반대 필드는 키 생략" 저장 계약을 검증이 보장한다.
+        List<SourceItemDto> sleepWithBoth = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0), null,
+                new HealthPayload(HealthMetric.SLEEP, 99999.0, 210.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sleepWithBoth))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        List<SourceItemDto> stepsWithDuration = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(HealthMetric.STEPS, 10145.0, 210.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, stepsWithDuration))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
     }
 
     @Test
     void createDraftTask_rejectsNegativeHealthValue() {
-        // value는 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
-        List<SourceItemDto> sources = List.of(new SourceItemDto(
+        // 값은 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
+        List<SourceItemDto> negativeValue = List.of(new SourceItemDto(
                 ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(HealthMetric.STEPS, -1.0)));
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                new HealthPayload(HealthMetric.STEPS, -1.0, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, negativeValue))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        List<SourceItemDto> negativeDuration = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0), null,
+                new HealthPayload(HealthMetric.SLEEP, null, -1.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, negativeDuration))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
     }
@@ -289,11 +322,131 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_rejectsLocationMissingCoordinate() {
+        // LOCATION 좌표는 필수(지오코딩 enrich 전제) — 누락 → 400, 저장 전.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload(null, 127.0557, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNonFiniteCoordinate() {
+        // NaN은 범위 비교(-90~90)를 전부 통과하므로 isFinite 검증이 별도로 막아야 한다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload(Double.NaN, 127.0557, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsOutOfRangeCoordinate() {
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload(37.5445, 180.5, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMovementMissingEndpoint() {
+        // MOVEMENT는 start/end 객체(각 좌표 포함)가 필수다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(null, endpoint(37.5445, 127.0557), "IN_VEHICLE", null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNegativeDistanceMeters() {
+        // 이동 거리는 음수가 무의미(HEALTH value 음수 거절과 같은 입력 경계 정책).
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
+                        "IN_VEHICLE", -1.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMismatchedItemTypeAndPayload() {
+        // HTTP 경로는 Jackson 디스크리미네이터가 일치를 보장하지만, 프로그래밍 방식 생성 경로를 방어한다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
+                        "IN_VEHICLE", null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_reconstructsPayloads_ignoringClientDerivedFields() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        // 클라가 서버 파생 필드(address/places/durationText)를 실어 보낸 요청 — 전부 무시하고 재구성된다.
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0),
+                        LocalDateTime.of(2026, 6, 17, 10, 45),
+                        new LocationPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
+                new SourceItemDto(ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 11, 0), null,
+                        new MovementPayload(
+                                new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of("위조 장소")),
+                                endpoint(37.5340, 126.9668),
+                                "IN_VEHICLE", 5200.0)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        List<TimelineDraftSourceItem> rows = rowsCaptor.getValue();
+        // enrich 필드(address/places)는 클라 값을 무시하고 null 재구성 → NON_NULL로 키 자체가 생략된다.
+        assertThat(rows.get(0).getPayload().has("address")).isFalse();
+        assertThat(rows.get(0).getPayload().has("places")).isFalse();
+        // durationText는 클라 값이 아니라 서버가 startAt/endAt로 계산한 값이 저장된다.
+        assertThat(rows.get(0).getPayload().get("durationText").asText()).isEqualTo("1시간45분");
+        assertThat(rows.get(1).getPayload().get("start").has("address")).isFalse();
+        assertThat(rows.get(1).getPayload().get("start").has("places")).isFalse();
+        assertThat(rows.get(1).getPayload().get("transports").asText()).isEqualTo("IN_VEHICLE");
+        assertThat(rows.get(1).getPayload().get("distanceMeters").asDouble()).isEqualTo(5200.0);
+    }
+
+    @Test
+    void createDraftTask_omitsDurationText_whenEndAtMissing() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload(37.5340, 126.9668, null, null, null)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        // endAt이 없으면 머문 시간을 계산할 수 없어 durationText 키가 생략된다.
+        assertThat(rowsCaptor.getValue().get(0).getPayload().has("durationText")).isFalse();
+    }
+
+    private static MovementEndpoint endpoint(double latitude, double longitude) {
+        return new MovementEndpoint(latitude, longitude, null, null);
+    }
+
+    @Test
     void createDraftTask_savesHealthAndNotificationRows_omittingNullPayloadFields() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0),
-                        LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, 10145.0)),
+                        LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, 10145.0, null)),
+                new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0),
+                        LocalDateTime.of(2026, 6, 17, 7, 30), new HealthPayload(HealthMetric.SLEEP, null, 210.0)),
                 new SourceItemDto(ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
                         new NotificationPayload(null, "제목", null)));
 
@@ -303,14 +456,19 @@ class TimelineDraftTaskServiceTest {
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
         verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
         List<TimelineDraftSourceItem> rows = rowsCaptor.getValue();
-        assertThat(rows).hasSize(2);
+        assertThat(rows).hasSize(3);
         assertThat(rows.get(0).getItemType()).isEqualTo(ItemType.HEALTH);
         assertThat(rows.get(0).getPayload().get("metric").asText()).isEqualTo("STEPS");
         assertThat(rows.get(0).getPayload().get("value").asDouble()).isEqualTo(10145.0);
-        assertThat(rows.get(1).getItemType()).isEqualTo(ItemType.NOTIFICATION);
-        assertThat(rows.get(1).getPayload().get("title").asText()).isEqualTo("제목");
+        assertThat(rows.get(0).getPayload().has("durationMinutes")).isFalse();
+        // SLEEP은 value 대신 durationMinutes(분)로 저장된다(AI input 규격).
+        assertThat(rows.get(1).getPayload().get("metric").asText()).isEqualTo("SLEEP");
+        assertThat(rows.get(1).getPayload().get("durationMinutes").asDouble()).isEqualTo(210.0);
+        assertThat(rows.get(1).getPayload().has("value")).isFalse();
+        assertThat(rows.get(2).getItemType()).isEqualTo(ItemType.NOTIFICATION);
+        assertThat(rows.get(2).getPayload().get("title").asText()).isEqualTo("제목");
         // NON_NULL: null 필드(appName/text)는 저장 JSON에서 생략된다.
-        assertThat(rows.get(1).getPayload().has("appName")).isFalse();
-        assertThat(rows.get(1).getPayload().has("text")).isFalse();
+        assertThat(rows.get(2).getPayload().has("appName")).isFalse();
+        assertThat(rows.get(2).getPayload().has("text")).isFalse();
     }
 }

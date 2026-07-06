@@ -9,6 +9,7 @@ import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
+import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
@@ -16,6 +17,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,7 +63,10 @@ class TimelineItemPersistenceIntegrationTest {
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         "출근길", "강남역 -> 성수역 · 7호선"));
 
-        MovementPayload movement = new MovementPayload("강남역", "성수역", "SUBWAY", "7호선");
+        MovementPayload movement = new MovementPayload(
+                new MovementEndpoint(37.4979, 127.0276, null, null),
+                new MovementEndpoint(37.5445, 127.0557, null, null),
+                "IN_VEHICLE", null);
         TimelineItem saved = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(),
                         ItemType.MOVEMENT,
@@ -74,7 +79,7 @@ class TimelineItemPersistenceIntegrationTest {
 
         TimelineItem reloaded = timelineItemRepository.findById(saved.getTimelineItemId()).orElseThrow();
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
-        assertThat(reloaded.getPayload().get("fromPlace").asText()).isEqualTo("강남역");
+        assertThat(reloaded.getPayload().get("start").get("latitude").asDouble()).isEqualTo(37.4979);
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
         assertThat(reloaded.getTimelineEventId()).isEqualTo(event.getTimelineEventId());
     }
@@ -88,7 +93,8 @@ class TimelineItemPersistenceIntegrationTest {
         PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
                 "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A", "설명", false);
-        LocationPayload location = new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557);
+        LocationPayload location = new LocationPayload(37.5445, 127.0557,
+                "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
 
         Long photoId = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO,

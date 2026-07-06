@@ -77,7 +77,7 @@ class DailyTimelineServiceTest {
     private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.LOCATION,
                 startAt, null,
-                MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
+                MAPPER.valueToTree(new LocationPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
     }
@@ -204,7 +204,7 @@ class DailyTimelineServiceTest {
         ReflectionTestUtils.setField(event, "memo", "내 메모");
         when(timelineEventService.findByDailyRecordId(300L)).thenReturn(List.of(event));
 
-        LocationPayload location = new LocationPayload("카페", "강남", 3.0, 4.0);
+        LocationPayload location = new LocationPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
         TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, t, null,
                 MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null)));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
@@ -251,7 +251,7 @@ class DailyTimelineServiceTest {
         TimelineItemResponse itemResponse1 = eventResponse.items().get(1);
         assertThat(itemResponse1.timelineItemId()).isEqualTo(22L);
         assertThat(itemResponse1.itemType()).isEqualTo(ItemType.LOCATION);
-        assertThat(itemResponse1.payload().get("placeName").asText()).isEqualTo("카페");
+        assertThat(itemResponse1.payload().get("address").asText()).isEqualTo("서울 성동구 왕십리로 83-21");
     }
 
     @Test
