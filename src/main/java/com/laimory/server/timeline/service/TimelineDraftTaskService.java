@@ -165,12 +165,8 @@ public class TimelineDraftTaskService {
                 }
                 case HealthPayload health -> {
                     requireItemType(src.itemType(), ItemType.HEALTH, i);
-                    if (health.metric() == null || health.value() == null) {
+                    if (health.metric() == null || isBlank(health.value())) {
                         throw new IllegalArgumentException("HEALTH sourceItem requires metric and value: index=" + i);
-                    }
-                    // value는 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
-                    if (health.value() < 0) {
-                        throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
                     }
                 }
                 case NotificationPayload notification -> {
