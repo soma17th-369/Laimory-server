@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,6 +54,8 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
+    private SourceItemGeoEnrichmentService sourceItemGeoEnrichmentService;
+    @Mock
     private TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
 
     private TimelineDraftTaskService service;
@@ -69,7 +72,11 @@ class TimelineDraftTaskServiceTest {
     void setUp() {
         service = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftSourceItemService,
-                timelineEventSuggestionDispatcher, new ObjectMapper());
+                sourceItemGeoEnrichmentService, timelineEventSuggestionDispatcher, new ObjectMapper());
+        // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemGeoEnrichmentServiceTest가 검증).
+        // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
+        lenient().when(sourceItemGeoEnrichmentService.enrich(anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     private List<SourceItemDto> oneSource() {
@@ -89,8 +96,10 @@ class TimelineDraftTaskServiceTest {
         // dispatch는 2-arg(taskId, token) — sourceItems·callbackUrl 없음.
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
 
-        // 순서 불변식: draft 저장 → Redis PROCESSING → dispatch.
-        InOrder order = inOrder(timelineDraftSourceItemService, timelineTaskService, timelineEventSuggestionDispatcher);
+        // 순서 불변식: 지오코딩 enrich(저장 전 — AI가 DB에서 직접 읽음) → draft 저장 → Redis PROCESSING → dispatch.
+        InOrder order = inOrder(sourceItemGeoEnrichmentService, timelineDraftSourceItemService,
+                timelineTaskService, timelineEventSuggestionDispatcher);
+        order.verify(sourceItemGeoEnrichmentService).enrich(anyList());
         order.verify(timelineDraftSourceItemService).saveAll(anyList());
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
         order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
@@ -389,50 +398,27 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_reconstructsPayloads_ignoringClientDerivedFields() {
+    void createDraftTask_savesRowsBuiltFromEnrichedItems_notRawInput() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
-        // 클라가 서버 파생 필드(address/places/durationText)를 실어 보낸 요청 — 전부 무시하고 재구성된다.
-        List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0),
-                        LocalDateTime.of(2026, 6, 17, 10, 45),
-                        new LocationPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
-                new SourceItemDto(ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 11, 0), null,
-                        new MovementPayload(
-                                new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of("위조 장소")),
-                                endpoint(37.5340, 126.9668),
-                                "IN_VEHICLE", 5200.0)));
-
-        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
-        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
-        List<TimelineDraftSourceItem> rows = rowsCaptor.getValue();
-        // enrich 필드(address/places)는 클라 값을 무시하고 null 재구성 → NON_NULL로 키 자체가 생략된다.
-        assertThat(rows.get(0).getPayload().has("address")).isFalse();
-        assertThat(rows.get(0).getPayload().has("places")).isFalse();
-        // durationText는 클라 값이 아니라 서버가 startAt/endAt로 계산한 값이 저장된다.
-        assertThat(rows.get(0).getPayload().get("durationText").asText()).isEqualTo("1시간45분");
-        assertThat(rows.get(1).getPayload().get("start").has("address")).isFalse();
-        assertThat(rows.get(1).getPayload().get("start").has("places")).isFalse();
-        assertThat(rows.get(1).getPayload().get("transports").asText()).isEqualTo("IN_VEHICLE");
-        assertThat(rows.get(1).getPayload().get("distanceMeters").asDouble()).isEqualTo(5200.0);
-    }
-
-    @Test
-    void createDraftTask_omitsDurationText_whenEndAtMissing() {
-        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        // enrich(재구성) 결과가 저장본이다 — 원본이 아니라 반환 리스트로 row를 빌드해야 한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(37.5340, 126.9668, null, null, null)));
+        List<SourceItemDto> enriched = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload(37.5340, 126.9668,
+                        "서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"), "1시간45분")));
+        when(sourceItemGeoEnrichmentService.enrich(sources)).thenReturn(enriched);
 
         service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
         verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
-        // endAt이 없으면 머문 시간을 계산할 수 없어 durationText 키가 생략된다.
-        assertThat(rowsCaptor.getValue().get(0).getPayload().has("durationText")).isFalse();
+        assertThat(rowsCaptor.getValue().get(0).getPayload().get("address").asText())
+                .isEqualTo("서울 용산구 청파로20길 95");
+        assertThat(rowsCaptor.getValue().get(0).getPayload().get("places").size()).isEqualTo(2);
+        assertThat(rowsCaptor.getValue().get(0).getPayload().get("durationText").asText()).isEqualTo("1시간45분");
     }
 
     private static MovementEndpoint endpoint(double latitude, double longitude) {

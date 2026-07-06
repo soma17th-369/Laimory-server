@@ -15,13 +15,10 @@ import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
-import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
-import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.List;
@@ -31,8 +28,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 작성 작업 생성(POST) 오케스트레이터. recordDate 계산 + SAVED 거절 + draft 행 저장 + PROCESSING 기록 + AI 디스패치를 합성한다.
- * (leaf가 아닌 합성 오케스트레이터라 여러 leaf 서비스를 주입한다.)
+ * 작성 작업 생성(POST) 오케스트레이터. recordDate 계산 + SAVED 거절 + 지오코딩 enrich + draft 행 저장
+ * + PROCESSING 기록 + AI 디스패치를 합성한다. (leaf가 아닌 합성 오케스트레이터라 여러 leaf 서비스를 주입한다.)
  *
  * <p>요청 스레드는 디스패치를 블로킹하지 않는다(dispatch는 fire-and-forget; v1 no-op).
  * 같은 날짜로 PROCESSING task가 떠 있는 동안 두 번째 POST가 와도 둘 다 통과할 수 있다(plan 모호점 4, MVP 수용).
@@ -49,6 +46,7 @@ public class TimelineDraftTaskService {
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final SourceItemGeoEnrichmentService sourceItemGeoEnrichmentService;
     private final TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
     private final ObjectMapper objectMapper;
 
@@ -80,14 +78,17 @@ public class TimelineDraftTaskService {
                     throw new BusinessException(ErrorCode.ERROR_1003);
                 });
 
+        // 지오코딩 enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — SAVED 409 거절 뒤에 둬서 낭비 방지).
+        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 실패는 내부에서 필드 null로 강등된다.
+        List<SourceItemDto> enrichedItems = sourceItemGeoEnrichmentService.enrich(sourceItems);
+
         String taskId = UuidV7.randomUuidV7().toString();
         // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
         String callbackToken = CallbackTokens.generate();
         String callbackTokenHash = CallbackTokens.hash(callbackToken);
 
         // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
-        List<TimelineDraftSourceItem> rows = sourceItems.stream()
-                .map(TimelineDraftTaskService::normalize)
+        List<TimelineDraftSourceItem> rows = enrichedItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, TimelineDefaults.DEFAULT_USER_ID,
                         src.itemType(), src.startAt(), src.endAt(),
@@ -213,50 +214,6 @@ public class TimelineDraftTaskService {
                 || !Double.isFinite(longitude) || longitude < -180 || longitude > 180) {
             throw new IllegalArgumentException(field + " has out-of-range coordinate: index=" + index);
         }
-    }
-
-    /**
-     * 저장 전 payload 재구성. 서버 파생 필드(address/places/durationText)는 클라가 보내와도
-     * 신뢰하지 않고 서버 값으로 재구성한다(관대 수용 — 거절이 아니라 무시). durationText는
-     * startAt/endAt에서 계산하고, 지오코딩 enrich 필드(address/places)는 이 단계에선 null이다.
-     * 저장은 {@code valueToTree(payload)} 통짜 직렬화라 검증만으로는 저장본이 바뀌지 않는다 —
-     * 반드시 이 재구성본을 저장한다.
-     */
-    private static SourceItemDto normalize(SourceItemDto src) {
-        TimelineItemPayload normalized = switch (src.payload()) {
-            case LocationPayload location -> new LocationPayload(
-                    location.latitude(), location.longitude(),
-                    null, null, durationText(src.startAt(), src.endAt()));
-            case MovementPayload movement -> new MovementPayload(
-                    normalizeEndpoint(movement.start()), normalizeEndpoint(movement.end()),
-                    movement.transports(), movement.distanceMeters());
-            default -> src.payload();
-        };
-        if (normalized == src.payload()) {
-            return src;
-        }
-        return new SourceItemDto(src.itemType(), src.startAt(), src.endAt(), normalized);
-    }
-
-    private static MovementEndpoint normalizeEndpoint(MovementEndpoint endpoint) {
-        return new MovementEndpoint(endpoint.latitude(), endpoint.longitude(), null, null);
-    }
-
-    /** LOCATION 머문 시간 텍스트("1시간45분"). 서버 파생값 — startAt/endAt로 계산하고 계산 불가(endAt 없음 등)면 null. */
-    private static String durationText(LocalDateTime startAt, LocalDateTime endAt) {
-        if (startAt == null || endAt == null || endAt.isBefore(startAt)) {
-            return null;
-        }
-        long totalMinutes = Duration.between(startAt, endAt).toMinutes();
-        long hours = totalMinutes / 60;
-        long minutes = totalMinutes % 60;
-        if (hours > 0 && minutes > 0) {
-            return hours + "시간" + minutes + "분";
-        }
-        if (hours > 0) {
-            return hours + "시간";
-        }
-        return minutes + "분";
     }
 
     private static boolean isBlank(String value) {
