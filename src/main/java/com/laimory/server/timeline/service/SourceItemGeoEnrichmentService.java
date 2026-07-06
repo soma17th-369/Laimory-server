@@ -35,10 +35,18 @@ public class SourceItemGeoEnrichmentService {
     private final GeocodingService geocodingService;
 
     public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems) {
+        long startNanos = System.nanoTime();
         Map<Coordinate, GeoPlace> lookups = new HashMap<>();
-        return sourceItems.stream()
+        List<SourceItemDto> enriched = sourceItems.stream()
                 .map(src -> reconstruct(src, lookups))
                 .toList();
+        if (!lookups.isEmpty()) {
+            // 좌표값은 로그 금지(위치 민감정보) — 유니크 좌표 수·총 소요시간만.
+            // 좌표당 호출 수·개별 소요시간은 GeocodingService가 lookup 단위로 남긴다.
+            log.info("geocoding enrich: items={} coordinates={} totalMs={}",
+                    sourceItems.size(), lookups.size(), (System.nanoTime() - startNanos) / 1_000_000);
+        }
+        return enriched;
     }
 
     private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups) {
