@@ -97,6 +97,18 @@ class GeocodingServiceTest {
     }
 
     @Test
+    void lookup_fallsBackToLotAddress_whenRoadAddressMissing() {
+        // 도로명주소는 건물에만 부여돼 도로 위 좌표(교차로 등)엔 없다 → 지번 주소(address)로 fallback.
+        expectCoord2address("""
+                {"documents":[{"road_address":null,"address":{"address_name":"서울 강남구 역삼동 858"}}]}""");
+        expectAllCategorySearches("{\"documents\":[]}");
+
+        GeoPlace geo = kakaoService().lookup(LATITUDE, LONGITUDE);
+
+        assertThat(geo.address()).isEqualTo("서울 강남구 역삼동 858");
+    }
+
+    @Test
     void lookup_mergesPlacesAcrossCategories_sortsByDistance_dedupesById_andPrependsBuildingName() {
         expectCoord2address(coord2addressBody("서울 용산구 청파로20길 95", "서울드래곤시티"));
         // FD6: 먼 장소 + id 중복 대상 + distance 파싱 불가 장소.

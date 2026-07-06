@@ -92,10 +92,14 @@ public class GeocodingService {
                             .build())
                     .retrieve()
                     .body(JsonNode.class);
-            JsonNode road = body.path("documents").path(0).path("road_address");
+            JsonNode document = body.path("documents").path(0);
+            JsonNode road = document.path("road_address");
             // 카카오는 부재 필드를 null이 아니라 빈 문자열로 주는 경우가 있다 → blank는 null로 정규화.
+            String roadAddress = blankToNull(road.path("address_name").asText(null));
+            // 도로명주소는 건물에만 부여돼 도로 위·공터 좌표엔 없다 → 지번 주소(address)로 fallback.
+            String lotAddress = blankToNull(document.path("address").path("address_name").asText(null));
             return new KakaoAddress(
-                    blankToNull(road.path("address_name").asText(null)),
+                    roadAddress != null ? roadAddress : lotAddress,
                     blankToNull(road.path("building_name").asText(null)));
         } catch (RuntimeException e) {
             log.warn("kakao coord2address failed: {}", e.getClass().getSimpleName());
