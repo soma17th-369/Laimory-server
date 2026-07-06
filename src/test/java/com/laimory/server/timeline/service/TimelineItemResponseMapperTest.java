@@ -58,7 +58,7 @@ class TimelineItemResponseMapperTest {
 
     @Test
     void nonPhoto_passesPayloadThroughUnchanged() {
-        TimelineItem item = item(ItemType.LOCATION, new LocationPayload("카페", "강남", 3.0, 4.0));
+        TimelineItem item = item(ItemType.LOCATION, new LocationPayload("카페", "강남", 3.0, 4.0, null, null, null));
 
         TimelineItemResponse response = mapper.toResponse(item, USER_ID);
 

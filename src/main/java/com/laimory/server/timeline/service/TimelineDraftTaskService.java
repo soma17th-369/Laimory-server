@@ -11,9 +11,14 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
+import com.laimory.server.timeline.payload.LocationPayload;
+import com.laimory.server.timeline.payload.MovementEndpoint;
+import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
@@ -80,6 +85,7 @@ public class TimelineDraftTaskService {
 
         // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
         List<TimelineDraftSourceItem> rows = sourceItems.stream()
+                .map(TimelineDraftTaskService::normalize)
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, TimelineDefaults.DEFAULT_USER_ID,
                         src.itemType(), src.startAt(), src.endAt(),
@@ -111,6 +117,10 @@ public class TimelineDraftTaskService {
     /**
      * row 생성·DB 제약(NOT NULL) 전에 입력 오류를 IAE로 막아 400으로 응답한다(500 방지).
      *
+     * <p>sealed payload 패턴 스위치(default 없음)라 새 payload 타입 추가 시 case 누락이 컴파일 에러로 걸린다.
+     * 각 case는 itemType↔payload 일치도 함께 검증한다(HTTP 경로는 Jackson external 디스크리미네이터가 일치를
+     * 보장하지만, 프로그래밍 방식 생성 경로 방어).
+     *
      * <p>PHOTO는 클라가 보낸 {@code filename}을 서버가 full key에 끼워 넣으므로, 이 입력 경계 한 곳에서
      * 엄격 패턴 검증한다({@link PhotoFilenames}; UUIDv7+허용ext, 슬래시·{@code ..} 불허).
      */
@@ -123,38 +133,109 @@ public class TimelineDraftTaskService {
             if (src.payload() == null) {
                 throw new IllegalArgumentException("sourceItem has null payload: index=" + i);
             }
-            if (src.itemType() == ItemType.PHOTO) {
-                if (!(src.payload() instanceof PhotoPayload photo)) {
-                    throw new IllegalArgumentException("PHOTO sourceItem must have PhotoPayload: index=" + i);
+            switch (src.payload()) {
+                case PhotoPayload photo -> {
+                    requireItemType(src.itemType(), ItemType.PHOTO, i);
+                    PhotoFilenames.requireValid(photo.filename());
+                    // clientPhotoUri는 1차 로컬 캐싱용 기기 URI라 PHOTO엔 필수다(서버는 내용 미해석, echo 전용).
+                    if (isBlank(photo.clientPhotoUri())) {
+                        throw new IllegalArgumentException("PHOTO sourceItem requires clientPhotoUri: index=" + i);
+                    }
                 }
-                PhotoFilenames.requireValid(photo.filename());
-                // clientPhotoUri는 1차 로컬 캐싱용 기기 URI라 PHOTO엔 필수다(서버는 내용 미해석, echo 전용).
-                if (photo.clientPhotoUri() == null || photo.clientPhotoUri().isBlank()) {
-                    throw new IllegalArgumentException("PHOTO sourceItem requires clientPhotoUri: index=" + i);
+                case CalendarPayload calendar -> requireItemType(src.itemType(), ItemType.CALENDAR, i);
+                case LocationPayload location -> {
+                    requireItemType(src.itemType(), ItemType.LOCATION, i);
+                    requireValidCoordinate(location.latitude(), location.longitude(), "LOCATION", i);
                 }
-            }
-            if (src.itemType() == ItemType.HEALTH) {
-                if (!(src.payload() instanceof HealthPayload health)) {
-                    throw new IllegalArgumentException("HEALTH sourceItem must have HealthPayload: index=" + i);
+                case MovementPayload movement -> {
+                    requireItemType(src.itemType(), ItemType.MOVEMENT, i);
+                    if (movement.from() == null || movement.to() == null) {
+                        throw new IllegalArgumentException("MOVEMENT sourceItem requires from and to: index=" + i);
+                    }
+                    requireValidCoordinate(movement.from().latitude(), movement.from().longitude(), "MOVEMENT from", i);
+                    requireValidCoordinate(movement.to().latitude(), movement.to().longitude(), "MOVEMENT to", i);
+                    // 이동 거리는 음수가 무의미(HEALTH value와 같은 이유로 입력 경계에서 차단).
+                    if (movement.distanceMeters() != null
+                            && (!Double.isFinite(movement.distanceMeters()) || movement.distanceMeters() < 0)) {
+                        throw new IllegalArgumentException(
+                                "MOVEMENT sourceItem distanceMeters must be a non-negative finite number: index=" + i);
+                    }
                 }
-                if (health.metric() == null || health.value() == null) {
-                    throw new IllegalArgumentException("HEALTH sourceItem requires metric and value: index=" + i);
+                case HealthPayload health -> {
+                    requireItemType(src.itemType(), ItemType.HEALTH, i);
+                    if (health.metric() == null || health.value() == null) {
+                        throw new IllegalArgumentException("HEALTH sourceItem requires metric and value: index=" + i);
+                    }
+                    // value는 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
+                    if (health.value() < 0) {
+                        throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
+                    }
                 }
-                // value는 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
-                if (health.value() < 0) {
-                    throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
-                }
-            }
-            if (src.itemType() == ItemType.NOTIFICATION) {
-                if (!(src.payload() instanceof NotificationPayload notification)) {
-                    throw new IllegalArgumentException("NOTIFICATION sourceItem must have NotificationPayload: index=" + i);
-                }
-                // 전부 null이면 NON_NULL 직렬화로 빈 {} payload가 저장되므로 최소 내용은 요구한다.
-                if (isBlank(notification.title()) && isBlank(notification.text())) {
-                    throw new IllegalArgumentException("NOTIFICATION sourceItem requires title or text: index=" + i);
+                case NotificationPayload notification -> {
+                    requireItemType(src.itemType(), ItemType.NOTIFICATION, i);
+                    // 전부 null이면 NON_NULL 직렬화로 빈 {} payload가 저장되므로 최소 내용은 요구한다.
+                    if (isBlank(notification.title()) && isBlank(notification.text())) {
+                        throw new IllegalArgumentException("NOTIFICATION sourceItem requires title or text: index=" + i);
+                    }
                 }
             }
         }
+    }
+
+    private static void requireItemType(ItemType actual, ItemType expected, int index) {
+        if (actual != expected) {
+            throw new IllegalArgumentException(
+                    expected + " payload does not match itemType " + actual + ": index=" + index);
+        }
+    }
+
+    /** 좌표는 LOCATION/MOVEMENT 필수. NaN은 범위 비교를 전부 통과하므로 isFinite로 별도 차단한다. */
+    private static void requireValidCoordinate(Double latitude, Double longitude, String field, int index) {
+        if (latitude == null || longitude == null) {
+            throw new IllegalArgumentException(field + " requires latitude and longitude: index=" + index);
+        }
+        if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90
+                || !Double.isFinite(longitude) || longitude < -180 || longitude > 180) {
+            throw new IllegalArgumentException(field + " has out-of-range coordinate: index=" + index);
+        }
+    }
+
+    /**
+     * 저장 전 payload 재구성. 서버 enrich 필드(roadAddress/buildingName/places)는 클라가 보내와도
+     * 신뢰하지 않고 null로 재구성하고(관대 수용 — 거절이 아니라 무시), MOVEMENT transports는
+     * trim·blank 제거 후 비면 null로 정규화한다. 저장은 {@code valueToTree(payload)} 통짜 직렬화라
+     * 검증만으로는 저장본이 바뀌지 않는다 — 반드시 이 재구성본을 저장한다.
+     */
+    private static SourceItemDto normalize(SourceItemDto src) {
+        TimelineItemPayload normalized = switch (src.payload()) {
+            case LocationPayload location -> new LocationPayload(
+                    location.placeName(), location.areaName(), location.latitude(), location.longitude(),
+                    null, null, null);
+            case MovementPayload movement -> new MovementPayload(
+                    normalizeEndpoint(movement.from()), normalizeEndpoint(movement.to()),
+                    normalizeTransports(movement.transports()), movement.lineName(), movement.distanceMeters());
+            default -> src.payload();
+        };
+        if (normalized == src.payload()) {
+            return src;
+        }
+        return new SourceItemDto(src.itemType(), src.startAt(), src.endAt(), normalized);
+    }
+
+    private static MovementEndpoint normalizeEndpoint(MovementEndpoint endpoint) {
+        return new MovementEndpoint(
+                endpoint.placeName(), endpoint.latitude(), endpoint.longitude(), null, null, null);
+    }
+
+    private static List<String> normalizeTransports(List<String> transports) {
+        if (transports == null) {
+            return null;
+        }
+        List<String> cleaned = transports.stream()
+                .filter(transport -> !isBlank(transport))
+                .map(String::trim)
+                .toList();
+        return cleaned.isEmpty() ? null : cleaned;
     }
 
     private static boolean isBlank(String value) {

@@ -21,11 +21,15 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.HealthPayload;
+import com.laimory.server.timeline.payload.LocationPayload;
+import com.laimory.server.timeline.payload.MovementEndpoint;
+import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -286,6 +290,128 @@ class TimelineDraftTaskServiceTest {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsLocationMissingCoordinate() {
+        // LOCATION 좌표는 필수(지오코딩 enrich 전제) — 누락 → 400, 저장 전.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload("카페", "강남", null, 127.0557, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNonFiniteCoordinate() {
+        // NaN은 범위 비교(-90~90)를 전부 통과하므로 isFinite 검증이 별도로 막아야 한다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload("카페", "강남", Double.NaN, 127.0557, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsOutOfRangeCoordinate() {
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new LocationPayload("카페", "강남", 37.5445, 180.5, null, null, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMovementMissingEndpoint() {
+        // MOVEMENT는 from/to 객체(각 좌표 포함)가 필수다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(null, endpoint("성수역", 37.5445, 127.0557),
+                        List.of("SUBWAY"), "7호선", null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsNegativeDistanceMeters() {
+        // 이동 거리는 음수가 무의미(HEALTH value 음수 거절과 같은 입력 경계 정책).
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(endpoint("강남역", 37.4979, 127.0276), endpoint("성수역", 37.5445, 127.0557),
+                        List.of("SUBWAY"), "7호선", -1.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMismatchedItemTypeAndPayload() {
+        // HTTP 경로는 Jackson 디스크리미네이터가 일치를 보장하지만, 프로그래밍 방식 생성 경로를 방어한다.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(endpoint("강남역", 37.4979, 127.0276), endpoint("성수역", 37.5445, 127.0557),
+                        List.of("SUBWAY"), "7호선", null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_normalizesTransports_andIgnoresClientEnrichFields() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        // 클라가 서버 enrich 필드(roadAddress/buildingName/places)를 실어 보내고 transports에 blank가 섞인 요청.
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                        new LocationPayload("카페", "강남", 37.5445, 127.0557,
+                                "위조 주소", "위조 건물", List.of("위조 장소"))),
+                new SourceItemDto(ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 10, 0), null,
+                        new MovementPayload(
+                                new MovementEndpoint("강남역", 37.4979, 127.0276, "위조 주소", null, null),
+                                endpoint("성수역", 37.5445, 127.0557),
+                                Arrays.asList(" SUBWAY ", " ", null), "7호선", 5200.0)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        List<TimelineDraftSourceItem> rows = rowsCaptor.getValue();
+        // enrich 필드는 클라 값을 무시하고 null 재구성 → NON_NULL로 키 자체가 생략된다.
+        assertThat(rows.get(0).getPayload().has("roadAddress")).isFalse();
+        assertThat(rows.get(0).getPayload().has("buildingName")).isFalse();
+        assertThat(rows.get(0).getPayload().has("places")).isFalse();
+        assertThat(rows.get(0).getPayload().get("placeName").asText()).isEqualTo("카페");
+        assertThat(rows.get(1).getPayload().get("from").has("roadAddress")).isFalse();
+        assertThat(rows.get(1).getPayload().get("from").get("placeName").asText()).isEqualTo("강남역");
+        // transports는 trim + blank/null 원소 제거.
+        assertThat(rows.get(1).getPayload().get("transports").size()).isEqualTo(1);
+        assertThat(rows.get(1).getPayload().get("transports").get(0).asText()).isEqualTo("SUBWAY");
+        assertThat(rows.get(1).getPayload().get("distanceMeters").asDouble()).isEqualTo(5200.0);
+    }
+
+    @Test
+    void createDraftTask_omitsTransports_whenAllElementsBlank() {
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                new MovementPayload(endpoint("강남역", 37.4979, 127.0276), endpoint("성수역", 37.5445, 127.0557),
+                        Arrays.asList(" ", ""), "7호선", null)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        // 정규화 후 빈 배열은 null로 떨어져 키가 생략된다(빈 [] 저장 아님).
+        assertThat(rowsCaptor.getValue().get(0).getPayload().has("transports")).isFalse();
+    }
+
+    private static MovementEndpoint endpoint(String placeName, double latitude, double longitude) {
+        return new MovementEndpoint(placeName, latitude, longitude, null, null, null);
     }
 
     @Test

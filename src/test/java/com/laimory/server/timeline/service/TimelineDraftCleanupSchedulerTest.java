@@ -67,7 +67,7 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftSourceItem locationRow(long id) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, DATE.atTime(9, 0), null,
-                MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0)));
+                MAPPER.valueToTree(new LocationPayload("place", "area", 3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }

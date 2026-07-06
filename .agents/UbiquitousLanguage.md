@@ -49,8 +49,12 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 아이템 페이로드 | Timeline Item Payload | 모든 payload 타입의 공통 인터페이스다. Java sealed interface로 표현한다. |
 | 사진 페이로드 | Photo Payload | 사진 파일명(`filename`), 기기 로컬 URI(`clientPhotoUri`), 위치 정보(위도/경도)를 담는다. DB엔 서빙 URL이 아니라 `filename`+`clientPhotoUri`를 저장한다. |
 | 일정 페이로드 | Calendar Payload | 일정 제목, 캘린더명, 위치 텍스트 등을 담는다. |
-| 장소 페이로드 | Location Payload | 장소명, 지역명, 위도, 경도 등을 담는다. |
-| 이동 페이로드 | Movement Payload | 출발지, 도착지, 이동수단, 노선명 등을 담는다. |
+| 장소 페이로드 | Location Payload | 장소명, 지역명, 위도/경도(필수)와 서버 enrich 필드(도로명주소·건물명·주변 장소 목록)를 담는다. |
+| 이동 페이로드 | Movement Payload | 출발/도착 이동 끝점, 이동수단 배열(`transports`), 노선명, 이동 거리(`distanceMeters`)를 담는다. |
+| 이동 끝점 | Movement Endpoint | 이동의 출발/도착 지점. 장소명·위도/경도(클라 제공, 좌표 필수)와 서버 enrich 필드를 담는 중첩 객체다. |
+| 도로명주소 | roadAddress | 좌표를 서버가 reverse geocoding해 얻은 도로명 주소다(서버 enrich, nullable — 클라 제공값은 무시). |
+| 건물명 | buildingName | 좌표 위치의 건물명이다(서버 enrich, nullable — 클라 제공값은 무시). |
+| 주변 장소 목록 | places | 좌표 반경 내 주변 장소명 배열(거리순)이다. null=조회 미시도/실패(JSON 키 생략), 빈 배열=주변 장소 없음. |
 | 건강 페이로드 | Health Payload | 건강 지표(metric)와 값(value)을 담는다. 지표당 아이템 하나, 측정 구간은 envelope의 startAt/endAt이 담는다. |
 | 건강 지표 | Health Metric | 건강 아이템의 지표 종류다. `STEPS`(보)/`DISTANCE`(미터)/`SLEEP`(분) — value의 단위는 지표가 결정한다. |
 | 알림 페이로드 | Notification Payload | 알림을 보낸 앱 이름(appName), 제목(title), 내용(text)을 담는다. title/text 중 최소 하나는 있어야 한다. |
