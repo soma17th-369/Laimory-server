@@ -72,13 +72,19 @@ public class GeocodingService {
         if (!MODE_KAKAO.equals(mode)) {
             return GeoPlace.EMPTY;
         }
-        KakaoAddress address = fetchAddress(latitude, longitude);
-        List<String> places = fetchNearbyPlaceNames(latitude, longitude);
+        long startNanos = System.nanoTime();
+        int[] calls = {0};
+        KakaoAddress address = fetchAddress(latitude, longitude, calls);
+        List<String> places = fetchNearbyPlaceNames(latitude, longitude, calls);
+        // 좌표값은 로그 금지(위치 민감정보) — 좌표당 실제 HTTP 호출 수·소요시간만 남긴다(tx는 MDC 자동).
+        log.info("kakao geocoding lookup: calls={} tookMs={}",
+                calls[0], (System.nanoTime() - startNanos) / 1_000_000);
         return new GeoPlace(address.address(), mergeBuildingName(address.buildingName(), places));
     }
 
-    private KakaoAddress fetchAddress(double latitude, double longitude) {
+    private KakaoAddress fetchAddress(double latitude, double longitude, int[] calls) {
         try {
+            calls[0]++;
             JsonNode body = restClient.get()
                     .uri(uriBuilder -> uriBuilder.path("/v2/local/geo/coord2address.json")
                             .queryParam("x", longitude)
@@ -97,12 +103,13 @@ public class GeocodingService {
         }
     }
 
-    private List<String> fetchNearbyPlaceNames(double latitude, double longitude) {
+    private List<String> fetchNearbyPlaceNames(double latitude, double longitude, int[] calls) {
         record Place(String id, String name, int distance) {
         }
         try {
             List<Place> found = new ArrayList<>();
             for (String categoryGroupCode : PLACE_CATEGORY_GROUP_CODES) {
+                calls[0]++;
                 JsonNode body = restClient.get()
                         .uri(uriBuilder -> uriBuilder.path("/v2/local/search/category.json")
                                 .queryParam("category_group_code", categoryGroupCode)
