@@ -44,9 +44,9 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
     void persistsAndReloadsDraftSourceItemFromJsonColumn() throws Exception {
         String taskId = "11111111-1111-1111-1111-111111111111";
         MovementPayload movement = new MovementPayload(
-                new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null),
-                new MovementEndpoint("성수역", 37.5445, 127.0557, "서울 성동구 뚝섬로 지하 342", null, List.of("성수역 2호선")),
-                List.of("SUBWAY"), "7호선", 5200.0);
+                new MovementEndpoint(37.4979, 127.0276, null, null),
+                new MovementEndpoint(37.5445, 127.0557, "서울 성동구 뚝섬로 지하 342", List.of("성수역 2호선")),
+                "IN_VEHICLE", 5200.0);
 
         TimelineDraftSourceItem toSave = TimelineDraftSourceItem.of(
                 taskId,
@@ -69,7 +69,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
         assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 9, 10));
         assertThat(reloaded.getTimelineDraftEventSuggestionId()).isEqualTo(555L);
-        assertThat(reloaded.getPayload().get("from").get("placeName").asText()).isEqualTo("강남역");
+        assertThat(reloaded.getPayload().get("end").get("address").asText()).isEqualTo("서울 성동구 뚝섬로 지하 342");
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
 
         // audit 컬럼이 채워졌는지 확인

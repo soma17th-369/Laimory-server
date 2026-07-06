@@ -51,7 +51,7 @@ class TimelineItemPayloadJsonTest {
     @Test
     void locationPayload_hasNoTypeInfo() throws Exception {
         String json = objectMapper.writeValueAsString(
-                new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557, null, null, null));
+                new LocationPayload(37.5445, 127.0557, null, null, null));
         assertThat(json).doesNotContain("itemType");
     }
 
@@ -75,9 +75,9 @@ class TimelineItemPayloadJsonTest {
         List<TimelineItemPayload> payloads = List.of(
                 new PhotoPayload("u", "c", null, null, null),
                 new CalendarPayload("주간 회의", null, null, null, null),
-                new LocationPayload(null, null, 37.5445, 127.0557, null, null, null),
-                new MovementPayload(new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null),
-                        null, null, null, null),
+                new LocationPayload(37.5445, 127.0557, null, null, null),
+                new MovementPayload(new MovementEndpoint(37.4979, 127.0276, null, null),
+                        null, null, null),
                 new HealthPayload(HealthMetric.STEPS, null),
                 new NotificationPayload(null, "제목", null));
         for (TimelineItemPayload payload : payloads) {
@@ -93,9 +93,9 @@ class TimelineItemPayloadJsonTest {
     void movementEndpoint_omitsNullFields() {
         // 중첩 MovementEndpoint도 NON_NULL — enrich 전(null) 필드가 저장 JSON에 남지 않는다.
         com.fasterxml.jackson.databind.JsonNode tree =
-                objectMapper.valueToTree(new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null));
+                objectMapper.valueToTree(new MovementEndpoint(37.4979, 127.0276, null, null));
         assertThat(tree.fieldNames()).toIterable()
-                .containsExactlyInAnyOrder("placeName", "latitude", "longitude");
+                .containsExactlyInAnyOrder("latitude", "longitude");
     }
 
     // --- SourceItemDto external-property round-trip (itemType은 payload 형제) ---
@@ -104,9 +104,9 @@ class TimelineItemPayloadJsonTest {
     void sourceItemDto_externalProperty_roundTrip_movement() throws Exception {
         String json = """
                 {"itemType":"MOVEMENT","startAt":"2026-05-08T08:30:00","endAt":null,\
-                 "payload":{"from":{"placeName":"강남역","latitude":37.4979,"longitude":127.0276},\
-                            "to":{"placeName":"성수역","latitude":37.5445,"longitude":127.0557},\
-                            "transports":["SUBWAY"],"lineName":"7호선","distanceMeters":5200.0}}
+                 "payload":{"start":{"latitude":37.4979,"longitude":127.0276},\
+                            "end":{"latitude":37.5445,"longitude":127.0557},\
+                            "transports":"IN_VEHICLE","distanceMeters":5200.0}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
@@ -114,9 +114,9 @@ class TimelineItemPayloadJsonTest {
         assertThat(dto.itemType()).isEqualTo(ItemType.MOVEMENT);
         assertThat(dto.payload()).isInstanceOf(MovementPayload.class)
                 .isEqualTo(new MovementPayload(
-                        new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null),
-                        new MovementEndpoint("성수역", 37.5445, 127.0557, null, null, null),
-                        List.of("SUBWAY"), "7호선", 5200.0));
+                        new MovementEndpoint(37.4979, 127.0276, null, null),
+                        new MovementEndpoint(37.5445, 127.0557, null, null),
+                        "IN_VEHICLE", 5200.0));
         assertThat(dto.startAt()).isEqualTo(java.time.LocalDateTime.of(2026, 5, 8, 8, 30));
     }
 
@@ -183,9 +183,9 @@ class TimelineItemPayloadJsonTest {
         String json = """
                 {"recordAt":"2026-05-08T12:30:00","recordTimeZone":"Asia/Seoul","sourceItems":[
                   {"startAt":null,"endAt":null,\
-                   "payload":{"from":{"placeName":"강남역","latitude":37.4979,"longitude":127.0276},\
-                              "to":{"placeName":"성수역","latitude":37.5445,"longitude":127.0557},\
-                              "transports":["SUBWAY"],"lineName":"7호선"},
+                   "payload":{"start":{"latitude":37.4979,"longitude":127.0276},\
+                              "end":{"latitude":37.5445,"longitude":127.0557},\
+                              "transports":"IN_VEHICLE"},
                    "itemType":"MOVEMENT"}
                 ]}
                 """;
@@ -214,8 +214,8 @@ class TimelineItemPayloadJsonTest {
 
     private static MovementPayload movementFixture() {
         return new MovementPayload(
-                new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null),
-                new MovementEndpoint("성수역", 37.5445, 127.0557, null, null, null),
-                List.of("SUBWAY"), "7호선", null);
+                new MovementEndpoint(37.4979, 127.0276, null, null),
+                new MovementEndpoint(37.5445, 127.0557, null, null),
+                "IN_VEHICLE", null);
     }
 }

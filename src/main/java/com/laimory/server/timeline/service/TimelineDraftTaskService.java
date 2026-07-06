@@ -20,6 +20,7 @@ import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.List;
@@ -149,11 +150,11 @@ public class TimelineDraftTaskService {
                 }
                 case MovementPayload movement -> {
                     requireItemType(src.itemType(), ItemType.MOVEMENT, i);
-                    if (movement.from() == null || movement.to() == null) {
-                        throw new IllegalArgumentException("MOVEMENT sourceItem requires from and to: index=" + i);
+                    if (movement.start() == null || movement.end() == null) {
+                        throw new IllegalArgumentException("MOVEMENT sourceItem requires start and end: index=" + i);
                     }
-                    requireValidCoordinate(movement.from().latitude(), movement.from().longitude(), "MOVEMENT from", i);
-                    requireValidCoordinate(movement.to().latitude(), movement.to().longitude(), "MOVEMENT to", i);
+                    requireValidCoordinate(movement.start().latitude(), movement.start().longitude(), "MOVEMENT start", i);
+                    requireValidCoordinate(movement.end().latitude(), movement.end().longitude(), "MOVEMENT end", i);
                     // 이동 거리는 음수가 무의미(HEALTH value와 같은 이유로 입력 경계에서 차단).
                     if (movement.distanceMeters() != null
                             && (!Double.isFinite(movement.distanceMeters()) || movement.distanceMeters() < 0)) {
@@ -201,19 +202,20 @@ public class TimelineDraftTaskService {
     }
 
     /**
-     * 저장 전 payload 재구성. 서버 enrich 필드(roadAddress/buildingName/places)는 클라가 보내와도
-     * 신뢰하지 않고 null로 재구성하고(관대 수용 — 거절이 아니라 무시), MOVEMENT transports는
-     * trim·blank 제거 후 비면 null로 정규화한다. 저장은 {@code valueToTree(payload)} 통짜 직렬화라
-     * 검증만으로는 저장본이 바뀌지 않는다 — 반드시 이 재구성본을 저장한다.
+     * 저장 전 payload 재구성. 서버 파생 필드(address/places/durationText)는 클라가 보내와도
+     * 신뢰하지 않고 서버 값으로 재구성한다(관대 수용 — 거절이 아니라 무시). durationText는
+     * startAt/endAt에서 계산하고, 지오코딩 enrich 필드(address/places)는 이 단계에선 null이다.
+     * 저장은 {@code valueToTree(payload)} 통짜 직렬화라 검증만으로는 저장본이 바뀌지 않는다 —
+     * 반드시 이 재구성본을 저장한다.
      */
     private static SourceItemDto normalize(SourceItemDto src) {
         TimelineItemPayload normalized = switch (src.payload()) {
             case LocationPayload location -> new LocationPayload(
-                    location.placeName(), location.areaName(), location.latitude(), location.longitude(),
-                    null, null, null);
+                    location.latitude(), location.longitude(),
+                    null, null, durationText(src.startAt(), src.endAt()));
             case MovementPayload movement -> new MovementPayload(
-                    normalizeEndpoint(movement.from()), normalizeEndpoint(movement.to()),
-                    normalizeTransports(movement.transports()), movement.lineName(), movement.distanceMeters());
+                    normalizeEndpoint(movement.start()), normalizeEndpoint(movement.end()),
+                    movement.transports(), movement.distanceMeters());
             default -> src.payload();
         };
         if (normalized == src.payload()) {
@@ -223,19 +225,24 @@ public class TimelineDraftTaskService {
     }
 
     private static MovementEndpoint normalizeEndpoint(MovementEndpoint endpoint) {
-        return new MovementEndpoint(
-                endpoint.placeName(), endpoint.latitude(), endpoint.longitude(), null, null, null);
+        return new MovementEndpoint(endpoint.latitude(), endpoint.longitude(), null, null);
     }
 
-    private static List<String> normalizeTransports(List<String> transports) {
-        if (transports == null) {
+    /** LOCATION 머문 시간 텍스트("1시간45분"). 서버 파생값 — startAt/endAt로 계산하고 계산 불가(endAt 없음 등)면 null. */
+    private static String durationText(LocalDateTime startAt, LocalDateTime endAt) {
+        if (startAt == null || endAt == null || endAt.isBefore(startAt)) {
             return null;
         }
-        List<String> cleaned = transports.stream()
-                .filter(transport -> !isBlank(transport))
-                .map(String::trim)
-                .toList();
-        return cleaned.isEmpty() ? null : cleaned;
+        long totalMinutes = Duration.between(startAt, endAt).toMinutes();
+        long hours = totalMinutes / 60;
+        long minutes = totalMinutes % 60;
+        if (hours > 0 && minutes > 0) {
+            return hours + "시간" + minutes + "분";
+        }
+        if (hours > 0) {
+            return hours + "시간";
+        }
+        return minutes + "분";
     }
 
     private static boolean isBlank(String value) {

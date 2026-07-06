@@ -58,13 +58,14 @@ class TimelineItemResponseMapperTest {
 
     @Test
     void nonPhoto_passesPayloadThroughUnchanged() {
-        TimelineItem item = item(ItemType.LOCATION, new LocationPayload("카페", "강남", 3.0, 4.0, null, null, null));
+        TimelineItem item = item(ItemType.LOCATION,
+                new LocationPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", java.util.List.of("카페"), "1시간45분"));
 
         TimelineItemResponse response = mapper.toResponse(item, USER_ID);
 
         assertThat(response.itemType()).isEqualTo(ItemType.LOCATION);
-        assertThat(response.payload().get("placeName").asText()).isEqualTo("카페");
-        assertThat(response.payload().get("areaName").asText()).isEqualTo("강남");
+        assertThat(response.payload().get("address").asText()).isEqualTo("서울 성동구 왕십리로 83-21");
+        assertThat(response.payload().get("places").get(0).asText()).isEqualTo("카페");
         // photoUrl 같은 변환은 PHOTO 외 타입엔 없다.
         assertThat(response.payload().has("photoUrl")).isFalse();
     }

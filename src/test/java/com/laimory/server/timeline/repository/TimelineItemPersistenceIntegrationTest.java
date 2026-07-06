@@ -64,9 +64,9 @@ class TimelineItemPersistenceIntegrationTest {
                         "출근길", "강남역 -> 성수역 · 7호선"));
 
         MovementPayload movement = new MovementPayload(
-                new MovementEndpoint("강남역", 37.4979, 127.0276, null, null, null),
-                new MovementEndpoint("성수역", 37.5445, 127.0557, null, null, null),
-                List.of("SUBWAY"), "7호선", null);
+                new MovementEndpoint(37.4979, 127.0276, null, null),
+                new MovementEndpoint(37.5445, 127.0557, null, null),
+                "IN_VEHICLE", null);
         TimelineItem saved = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(),
                         ItemType.MOVEMENT,
@@ -79,7 +79,7 @@ class TimelineItemPersistenceIntegrationTest {
 
         TimelineItem reloaded = timelineItemRepository.findById(saved.getTimelineItemId()).orElseThrow();
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
-        assertThat(reloaded.getPayload().get("from").get("placeName").asText()).isEqualTo("강남역");
+        assertThat(reloaded.getPayload().get("start").get("latitude").asDouble()).isEqualTo(37.4979);
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
         assertThat(reloaded.getTimelineEventId()).isEqualTo(event.getTimelineEventId());
     }
@@ -93,8 +93,8 @@ class TimelineItemPersistenceIntegrationTest {
         PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
                 "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회사", "회의실 A", "설명", false);
-        LocationPayload location = new LocationPayload("작은 카페", "성수동", 37.5445, 127.0557,
-                "서울 성동구 왕십리로 83-21", "성수낙낙", List.of("성수낙낙", "작은 카페"));
+        LocationPayload location = new LocationPayload(37.5445, 127.0557,
+                "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
 
         Long photoId = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO,
