@@ -277,6 +277,23 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_rejectsHealthValueFieldNotMatchingMetric() {
+        // 지표와 안 맞는 반대 필드가 같이 실려 오면 모순 입력 — "반대 필드는 키 생략" 저장 계약을 검증이 보장한다.
+        List<SourceItemDto> sleepWithBoth = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0), null,
+                new HealthPayload(HealthMetric.SLEEP, 99999.0, 210.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sleepWithBoth))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        List<SourceItemDto> stepsWithDuration = List.of(new SourceItemDto(
+                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                new HealthPayload(HealthMetric.STEPS, 10145.0, 210.0)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, stepsWithDuration))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
     void createDraftTask_rejectsNegativeHealthValue() {
         // 값은 보/미터/분이라 음수가 무의미 — 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> negativeValue = List.of(new SourceItemDto(

@@ -175,6 +175,12 @@ public class TimelineDraftTaskService {
                         throw new IllegalArgumentException("HEALTH sourceItem requires "
                                 + (sleep ? "durationMinutes" : "value") + ": index=" + i);
                     }
+                    // 반대 필드가 같이 실려 오면 클라 데이터 모순 — 저장이 payload 통짜 직렬화라
+                    // "반대 필드는 키 생략" 계약을 재구성 없이 검증이 보장해야 한다(둘 다 클라 소유 필드라 무시 대상 아님).
+                    Double conflicting = sleep ? health.value() : health.durationMinutes();
+                    if (conflicting != null) {
+                        throw new IllegalArgumentException("HEALTH sourceItem has a value field not matching metric: index=" + i);
+                    }
                     // 값은 보/미터/분이라 음수가 무의미 — 센서/가공 오류가 DB·AI 입력으로 전파되지 않게 여기서 막는다.
                     if (measured < 0) {
                         throw new IllegalArgumentException("HEALTH sourceItem value must not be negative: index=" + i);
