@@ -21,14 +21,23 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker
 usermod -aG docker ubuntu
 
-# nginx 리버스 프록시: 외부 80 -> 앱 8080(--network host). 옛 WAS 구성(AMI에 구워졌던 nginx) 재현.
-# 443(HTTPS)는 고정 도메인+인증서(ACM/ALB 또는 certbot) 도입 시 별도 설정. 현재는 80만 서빙.
+# nginx 리버스 프록시: 외부 80/443 -> 앱 8080(--network host). 443은 아래 certbot이 구성한다.
 apt-get install -y nginx
+
+# access log에서 query string 제거: OAuth 핸드오프(/auth/app?code=)·IdP 콜백(?code=)이 로그에 남지 않게.
+# log_format 은 http 컨텍스트 전용 지시자라 server 블록에 못 두고 conf.d(http 레벨 include)에 둔다.
+cat > /etc/nginx/conf.d/log_format_noquery.conf <<'NGINXLOG'
+log_format noquery '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_user_agent"';
+NGINXLOG
+
+# heredoc 의 'NGINX' quote 는 bash 확장만 막는다 — server_name 의 api_domain 은 그 전에
+# terraform templatefile 이 치환하고, nginx 변수($host 등)는 bare $ 라 templatefile 이 건드리지 않는다.
 cat > /etc/nginx/sites-available/laimory <<'NGINX'
 server {
     listen 80 default_server;
-    server_name _;
+    server_name ${api_domain};
     client_max_body_size 20m;
+    access_log /var/log/nginx/access.log noquery;
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -42,6 +51,13 @@ ln -sf /etc/nginx/sites-available/laimory /etc/nginx/sites-enabled/laimory
 rm -f /etc/nginx/sites-enabled/default
 systemctl enable nginx
 systemctl restart nginx
+
+# TLS: certbot(Let's Encrypt). --nginx 가 443 server 블록 생성+인증서 장착+80→443 리다이렉트까지 구성하고
+# certbot.timer 로 자동 갱신된다. 발급은 DNS(A 레코드)가 이 박스 EIP를 가리켜야 성공하는데, 최초 부팅
+# 시점엔 NS 위임 전일 수 있으므로 실패해도 부트를 막지 않는다(|| true) — 재시도는 README runbook.
+# 80→443 리다이렉트여도 배포 헬스체크·AI 콜백은 localhost:8080 직결이라 무영향.
+apt-get install -y certbot python3-certbot-nginx
+certbot --nginx -d ${api_domain} --non-interactive --agree-tos -m ${certbot_email} --redirect || true
 
 # 앱 .env (deploy.yml 이 --env-file 로 사용). REDIS_KEY_PREFIX 는 배포 시 -e 로 주입.
 mkdir -p /home/ubuntu/app

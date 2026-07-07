@@ -14,7 +14,8 @@ Laimory 백엔드 인프라를 코드로 관리한다. **AWS Innovation Sandbox 
 | `iam.tf` | EC2 인스턴스 role·profile, GitHub OIDC role·provider |
 | `ec2.tf` + `user_data/` | WAS(dev/prod)·MySQL·Redis·AI + 부트스트랩 스크립트 |
 | `storage_cdn.tf` | S3 photos·binlog 백업 버킷·OAC·CloudFront·ECR |
-| `outputs.tf` | 인스턴스ID·CF도메인·버킷명·role ARN 등 |
+| `dns.tf` | Route53 laimory.app 존 + 환경별 API 도메인 A 레코드 |
+| `outputs.tf` | 인스턴스ID·CF도메인·버킷명·role ARN·NS 등 |
 
 state는 **로컬**에 둔다(`*.tfstate` 는 gitignore). 새 계정마다 fresh state로 apply한다.
 
@@ -43,7 +44,47 @@ terraform apply
 apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·버킷명을 확인하고,
 `deploy.yml` 과 앱 `.env` 반영에 사용한다(자세한 절차는 `.claude/plans/splendid-spinning-allen.md`).
 
+## 도메인/TLS 적용 runbook
+
+`dns.tf`는 존/레코드만 만든다. 기존 WAS 박스는 `user_data_replace_on_change=false`라 apply로
+재생성되지 않으므로, **살아있는 박스의 nginx/certbot은 SSM으로 수동 적용**한다(user_data 변경분은
+새 박스 재현용). 도메인: prod=`laimory.app`(apex), dev=`dev.laimory.app`.
+
+1. `terraform apply` → `terraform output route53_name_servers` 로 NS 4개 확인.
+2. 도메인 레지스트라(laimory.app 구입처)에서 네임서버를 위 4개로 위임.
+3. 전파 확인: `dig +short dev.laimory.app` 이 dev WAS EIP를 반환할 때까지 대기(TTL 수 분~수 시간).
+4. 기존 박스에 SSM으로 nginx 설정 + certbot 적용 (dev/prod 각각, `<DOMAIN>`·`<EMAIL>` 치환):
+   ```bash
+   aws ssm start-session --profile sandbox --target <instance-id>
+   # 박스 안에서:
+   sudo tee /etc/nginx/conf.d/log_format_noquery.conf > /dev/null <<'EOF'
+   log_format noquery '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_user_agent"';
+   EOF
+   sudo sed -i 's/server_name _;/server_name <DOMAIN>;/' /etc/nginx/sites-available/laimory
+   sudo sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
+   sudo nginx -t && sudo systemctl reload nginx
+   sudo apt-get install -y certbot python3-certbot-nginx
+   sudo certbot --nginx -d <DOMAIN> --non-interactive --agree-tos -m <EMAIL> --redirect
+   ```
+5. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
+   갱신은 `certbot.timer`가 자동 처리(`systemctl list-timers | grep certbot` 로 확인).
+
+## 앱 `.env` 필수 키 (WAS 박스 `/home/ubuntu/app/.env`)
+
+user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지
+않으므로**(state 노출 방지 + 기존 박스엔 user_data 재실행이 없음) SSM으로 직접 추가·갱신한다.
+배포(deploy.yml)는 pre-flight로 필수 키 존재를 검사하고, 누락 시 구 컨테이너를 살려둔 채 중단한다.
+
+| 키 | 출처 | 비고 |
+|---|---|---|
+| `AWS_REGION` `DB_*` `REDIS_*` `PHOTO_*` | user_data 시드 | 인프라 유래 |
+| `KAKAO_REST_API_KEY` | 수동 | 지오코딩용 (기존) |
+| `JWT_SECRET` | 수동 | 자체 JWT HS256 서명키, **32자 이상 랜덤** |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 수동 | env별 OAuth 클라이언트 분리 |
+| `KAKAO_CLIENT_ID` / `KAKAO_CLIENT_SECRET` | 수동 | 카카오 로그인용 REST API 키 — 지오코딩 키와 별도 선언 |
+
 ## nuke 후 복구
 
 계정이 회수되면 새 계정 프로필로 다시 `terraform apply`. 로컬 state는 새 계정용으로
 비우고(`rm terraform.tfstate*` 또는 새 디렉터리) fresh apply 한다. `.tf` 코드는 git에 남아있다.
+Route53 존은 재생성 시 **NS가 바뀌므로** 레지스트라 위임도 다시 해야 한다(위 runbook 1~2).

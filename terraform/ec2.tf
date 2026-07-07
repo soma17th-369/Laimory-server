@@ -33,6 +33,8 @@ resource "aws_instance" "was" {
     redis_ssl        = "false"
     photo_bucket     = aws_s3_bucket.photos.bucket
     photo_cdn_domain = aws_cloudfront_distribution.photos.domain_name
+    api_domain       = var.api_domains[each.key]
+    certbot_email    = var.certbot_email
   })
 
   root_block_device {
