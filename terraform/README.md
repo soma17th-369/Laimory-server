@@ -61,7 +61,9 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
    log_format noquery '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_user_agent"';
    EOF
    sudo sed -i 's/server_name _;/server_name <DOMAIN>;/' /etc/nginx/sites-available/laimory
-   sudo sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
+   # access_log 삽입은 재실행 시 중복되지 않게 grep 가드(SSM 재시도 대비 idempotent).
+   grep -q 'access_log .*noquery' /etc/nginx/sites-available/laimory \
+     || sudo sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
    sudo nginx -t && sudo systemctl reload nginx
    sudo apt-get install -y certbot python3-certbot-nginx
    sudo certbot --nginx -d <DOMAIN> --non-interactive --agree-tos -m <EMAIL> --redirect
@@ -73,7 +75,9 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
 
 user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지
 않으므로**(state 노출 방지 + 기존 박스엔 user_data 재실행이 없음) SSM으로 직접 추가·갱신한다.
-배포(deploy.yml)는 pre-flight로 필수 키 존재를 검사하고, 누락 시 구 컨테이너를 살려둔 채 중단한다.
+이 키들이 빠지면 앱이 fail-fast로 기동에 실패한다. ⚠️ 현재 `deploy.yml`은 새 컨테이너를 올리기 전에
+기존 컨테이너를 `docker stop`/`rm` 하므로, 키 누락 시 기존 컨테이너도 이미 내려가 **다운타임이 난다** —
+stop 전에 필수 키를 검사하는 pre-flight는 토큰 코어 PR(#111, JWT_SECRET이 필수가 되는 시점)에서 추가한다.
 
 | 키 | 출처 | 비고 |
 |---|---|---|
