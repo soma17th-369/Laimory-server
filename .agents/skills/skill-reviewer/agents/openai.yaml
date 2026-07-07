@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "Skill Reviewer"
+  short_description: "Review and improve Claude/Codex skill folders."
+  default_prompt: "Use $skill-reviewer to review this skill folder and return an actionable report."
