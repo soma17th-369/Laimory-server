@@ -35,6 +35,7 @@ public class TimelineItemResponseMapper {
         return new TimelineItemResponse(
                 item.getTimelineItemId(),
                 item.getItemType(),
+                item.getRawId(),
                 item.getStartAt(),
                 item.getEndAt(),
                 payload);

@@ -66,7 +66,8 @@ public class SourceItemGeoEnrichmentService {
         if (reconstructed == src.payload()) {
             return src;
         }
-        return new SourceItemDto(src.itemType(), src.startAt(), src.endAt(), reconstructed);
+        // rawId 등 envelope 필드는 그대로 보존 — 여기서 떨어지면 검증(이미 통과)이 못 잡고 DB NOT NULL에서 500이 난다.
+        return new SourceItemDto(src.itemType(), src.rawId(), src.startAt(), src.endAt(), reconstructed);
     }
 
     private MovementEndpoint reconstructEndpoint(MovementEndpoint endpoint, Map<Coordinate, GeoPlace> lookups) {

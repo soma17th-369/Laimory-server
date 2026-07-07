@@ -53,7 +53,8 @@ class FakeAiDispatcherEndToEndIntegrationTest {
               "recordAt": "2000-01-02T12:00:00",
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
-                {"itemType": "PHOTO", "startAt": "2000-01-02T09:00:00", "endAt": null,
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000042",
+                 "startAt": "2000-01-02T09:00:00", "endAt": null,
                  "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
                              "latitude": 1.0, "longitude": 2.0}}
               ]
@@ -113,6 +114,9 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         JsonNode events = body.path("result").path("events");
         assertThat(events.size()).isEqualTo(1);
         assertThat(events.get(0).path("title").asText()).startsWith("[FAKE]"); // canned title 식별 표식
+        // rawId는 요청 → draft → finalize → 폴링 응답까지 그대로 echo된다.
+        assertThat(events.get(0).path("items").get(0).path("rawId").asText())
+                .isEqualTo("0197b1c2-0000-7000-8000-000000000042");
         assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();

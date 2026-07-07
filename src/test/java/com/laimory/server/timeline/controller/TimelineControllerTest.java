@@ -46,7 +46,8 @@ class TimelineControllerTest {
               "recordAt": "2026-06-17T12:00:00",
               "recordTimeZone": "Asia/Seoul",
               "sourceItems": [
-                {"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null,
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000031",
+                 "startAt": "2026-06-17T09:00:00", "endAt": null,
                  "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
                              "latitude": 1.0, "longitude": 2.0}}
               ]
@@ -186,7 +187,7 @@ class TimelineControllerTest {
     @Test
     void pollDraftTask_success_serializesEventContract() throws Exception {
         TimelineItemResponse item = new TimelineItemResponse(
-                10L, ItemType.PHOTO,
+                10L, ItemType.PHOTO, "raw-10",
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         TimelineEventResponse event = new TimelineEventResponse(
@@ -204,6 +205,7 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].rawId").value("raw-10"))
                 .andExpect(jsonPath("$.body.result.cards").doesNotExist())
                 .andExpect(jsonPath("$.body.result.events[0].id").doesNotExist())
                 .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist());

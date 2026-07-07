@@ -52,6 +52,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 taskId,
                 0L,
                 ItemType.MOVEMENT,
+                "0197b1c2-0000-7000-8000-000000000001",
                 LocalDateTime.of(2026, 5, 8, 8, 30),
                 LocalDateTime.of(2026, 5, 8, 9, 10),
                 objectMapper.valueToTree(movement));
@@ -66,6 +67,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getTaskId()).isEqualTo(taskId);
         assertThat(reloaded.getUserId()).isEqualTo(0L);
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
+        assertThat(reloaded.getRawId()).isEqualTo("0197b1c2-0000-7000-8000-000000000001");
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
         assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 9, 10));
         assertThat(reloaded.getTimelineDraftEventSuggestionId()).isEqualTo(555L);

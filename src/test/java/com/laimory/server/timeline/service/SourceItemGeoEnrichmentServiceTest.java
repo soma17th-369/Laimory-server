@@ -41,15 +41,19 @@ class SourceItemGeoEnrichmentServiceTest {
         when(geocodingService.lookup(37.4979, 127.0276)).thenReturn(GeoPlace.EMPTY);
         // 클라가 서버 파생 필드(address/places/durationText)를 위조해 보내도 서버 값으로만 재구성된다.
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, T, T.plusMinutes(105),
+                new SourceItemDto(ItemType.LOCATION, "raw-loc", T, T.plusMinutes(105),
                         new LocationPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
-                new SourceItemDto(ItemType.MOVEMENT, T, null,
+                new SourceItemDto(ItemType.MOVEMENT, "raw-mov", T, null,
                         new MovementPayload(
                                 new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of("위조 장소")),
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 "IN_VEHICLE", 5200.0)));
 
         List<SourceItemDto> enriched = service().enrich(sources);
+
+        // 재구성(new SourceItemDto)돼도 envelope 필드(rawId)는 원본 그대로 보존돼야 한다 — 유실 시 DB NOT NULL 500.
+        assertThat(enriched.get(0).rawId()).isEqualTo("raw-loc");
+        assertThat(enriched.get(1).rawId()).isEqualTo("raw-mov");
 
         LocationPayload location = (LocationPayload) enriched.get(0).payload();
         assertThat(location.address()).isEqualTo("서울 용산구 청파로20길 95");
@@ -72,9 +76,9 @@ class SourceItemGeoEnrichmentServiceTest {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
         // LOCATION 좌표 == MOVEMENT 도착 좌표 → 좌표당 6콜이므로 같은 좌표는 1회만 조회해야 한다.
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, T, null,
+                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
                         new LocationPayload(37.5340, 126.9668, null, null, null)),
-                new SourceItemDto(ItemType.MOVEMENT, T, null,
+                new SourceItemDto(ItemType.MOVEMENT, "r2", T, null,
                         new MovementPayload(
                                 new MovementEndpoint(37.4979, 127.0276, null, null),
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
@@ -90,7 +94,7 @@ class SourceItemGeoEnrichmentServiceTest {
     @Test
     void enrich_omitsDurationText_whenEndAtMissing() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
-        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.LOCATION, T, null,
+        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.LOCATION, "r1", T, null,
                 new LocationPayload(37.5340, 126.9668, null, null, null)));
 
         LocationPayload location = (LocationPayload) service().enrich(sources).get(0).payload();
@@ -103,9 +107,9 @@ class SourceItemGeoEnrichmentServiceTest {
     void enrich_formatsDurationText_hoursOnlyAndMinutesOnly() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, T, T.plusHours(2),
+                new SourceItemDto(ItemType.LOCATION, "r1", T, T.plusHours(2),
                         new LocationPayload(37.5340, 126.9668, null, null, null)),
-                new SourceItemDto(ItemType.LOCATION, T, T.plusMinutes(45),
+                new SourceItemDto(ItemType.LOCATION, "r2", T, T.plusMinutes(45),
                         new LocationPayload(37.5445, 127.0557, null, null, null)));
 
         List<SourceItemDto> enriched = service().enrich(sources);
@@ -119,9 +123,9 @@ class SourceItemGeoEnrichmentServiceTest {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
         when(geocodingService.lookup(37.5340, 126.9668)).thenThrow(new RuntimeException("kakao down"));
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, T, null,
+                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
                         new LocationPayload(37.5340, 126.9668, null, null, null)),
-                new SourceItemDto(ItemType.LOCATION, T, null,
+                new SourceItemDto(ItemType.LOCATION, "r2", T, null,
                         new LocationPayload(37.5445, 127.0557, null, null, null)));
 
         // 지오코딩 실패는 draft 생성을 죽이지 않는다 — 해당 좌표만 null 강등, 예외 미전파.
@@ -136,7 +140,7 @@ class SourceItemGeoEnrichmentServiceTest {
 
     @Test
     void enrich_passesThroughNonGeoTypes_unchanged() {
-        SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, T, null,
+        SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
                 new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null));
 
         List<SourceItemDto> enriched = service().enrich(List.of(photo));

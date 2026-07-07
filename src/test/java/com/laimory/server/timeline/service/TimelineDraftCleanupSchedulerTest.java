@@ -59,14 +59,14 @@ class TimelineDraftCleanupSchedulerTest {
     }
 
     private TimelineDraftSourceItem photoRow(long id, String filename) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, DATE.atTime(9, 0), null,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload(filename, "content://x", 1.0, 2.0, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }
 
     private TimelineDraftSourceItem locationRow(long id) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, DATE.atTime(9, 0), null,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, "r" + id, DATE.atTime(9, 0), null,
                 MAPPER.valueToTree(new LocationPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;

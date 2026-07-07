@@ -27,7 +27,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
-| 타임라인 아이템 | Timeline Item | AI가 이벤트에 포함시킨 source item이 DB에 저장된 것이다. |
+| 타임라인 아이템 | Timeline Item | AI가 이벤트에 포함시킨 source item이 DB에 저장된 것이다. rawId(원본 데이터 ID)를 draft 행에서 그대로 복사해 보존한다. |
 | 아이템 타입 | Item Type | 아이템 종류다. 예: `PHOTO`, `CALENDAR`, `LOCATION`, `MOVEMENT`, `HEALTH`, `NOTIFICATION`. |
 | 아이템 시작 시각 | Start At | 아이템이 발생한 시작 시각이다. |
 | 아이템 종료 시각 | End At | 기간형 아이템의 종료 시각이다. 단일 시점 아이템이면 비어 있을 수 있다. |
@@ -39,6 +39,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | --- | --- | --- |
 | 소스 아이템 | Source Item | Android에서 받은 데이터를 서버가 AI 요청 전에 만든 임시 입력 데이터다. DB 엔티티가 아니다. |
 | 소스 아이템 ID | Source Item ID | DB에 저장된 source item 행(`timeline_draft_source_items`)의 PK `timeline_draft_source_item_id`다. AI는 콜백의 `itemIds`에 이 값을 담아 어떤 source item을 이벤트에 넣을지 가리킨다. 클라가 부여하는 별도 요청 인덱스는 없다(POST는 순수 배열). |
+| 원본 데이터 ID | rawId | 클라가 부여하는 기기 원본 데이터 식별자(UUIDv7)다. **payload가 아닌 envelope 필드/컬럼**(`raw_id`)이며, 서버는 해석·정규화 없이 저장·echo만 한다(필수 — blank·길이만 검증, 유일성 보장 없음). Source Item ID(서버 PK)와 별개다. |
 | 채택된 소스 아이템 | Accepted Source Item | AI가 이벤트의 `itemIds`에 포함한 source item이다. 이것만 Timeline Item으로 저장된다. |
 | 누락된 소스 아이템 | Omitted Source Item | AI가 어떤 이벤트에도 포함하지 않은 source item이다. MVP에서는 저장하지 않는다. |
 

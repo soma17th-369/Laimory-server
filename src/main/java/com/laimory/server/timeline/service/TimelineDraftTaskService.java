@@ -90,7 +90,7 @@ public class TimelineDraftTaskService {
         List<TimelineDraftSourceItem> rows = enrichedItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, TimelineDefaults.DEFAULT_USER_ID,
-                        src.itemType(), src.startAt(), src.endAt(),
+                        src.itemType(), src.rawId(), src.startAt(), src.endAt(),
                         objectMapper.valueToTree(src.payload())))
                 .toList();
         timelineDraftSourceItemService.saveAll(rows);
@@ -129,8 +129,18 @@ public class TimelineDraftTaskService {
     private void requireValidSourceItems(List<SourceItemDto> sourceItems) {
         for (int i = 0; i < sourceItems.size(); i++) {
             SourceItemDto src = sourceItems.get(i);
+            if (src == null) {
+                throw new IllegalArgumentException("sourceItem is null: index=" + i);
+            }
             if (src.itemType() == null) {
                 throw new IllegalArgumentException("sourceItem has null itemType: index=" + i);
+            }
+            // rawId는 클라 원본 데이터 ID(UUIDv7) — opaque echo 값이라 형식 검증·trim 없이 존재·길이만 본다(DB 컬럼 36자).
+            if (isBlank(src.rawId())) {
+                throw new IllegalArgumentException("sourceItem requires rawId: index=" + i);
+            }
+            if (src.rawId().length() > 36) {
+                throw new IllegalArgumentException("sourceItem rawId is too long: index=" + i);
             }
             if (src.payload() == null) {
                 throw new IllegalArgumentException("sourceItem has null payload: index=" + i);
