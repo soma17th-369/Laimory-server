@@ -179,8 +179,8 @@ public class TimelineDraftTaskService {
 
     /**
      * 신규 item에서 AI 그룹핑 대상 시간 범위를 만든다. start=min(startAt??endAt), end=max(endAt??startAt)을
-     * recordAt으로 클램프한다(미래 캘린더 일정 방어; recordAt은 클라 벽시계 "지금"이라 item 시각과 같은 좌표계).
-     * 시간이 전혀 없는 item만 있으면 null(범위 없음).
+     * recordAt으로 클램프한다(진행 중 일정 방어; recordAt은 클라 벽시계 "지금"이라 item 시각과 같은 좌표계).
+     * 시간이 전혀 없거나 신규 item이 전부 recordAt 이후면(관측 구간 없음) null이다 — window는 항상 recordAt 이하 구간이다.
      */
     private TimelineDraftTask.TimelineWindow computeTimelineWindow(List<SourceItemDto> items, LocalDateTime recordAt) {
         LocalDateTime startTime = items.stream()
@@ -188,7 +188,9 @@ public class TimelineDraftTaskService {
                 .filter(Objects::nonNull)
                 .min(Comparator.naturalOrder())
                 .orElse(null);
-        if (startTime == null) {
+        // 시간 있는 신규 item이 없거나(둘 다 null) 전부 recordAt 이후(관측 구간 없음)면 window 없음.
+        // 후자를 막지 않으면 미래 item이 recordAt 클램프를 아래 floor로 되밀어 window가 미래 구간으로 남는다(AI 계약 위반).
+        if (startTime == null || startTime.isAfter(recordAt)) {
             return null;
         }
         LocalDateTime maxEnd = items.stream()
@@ -197,6 +199,8 @@ public class TimelineDraftTaskService {
                 .max(Comparator.naturalOrder())
                 .orElse(startTime);
         LocalDateTime endTime = maxEnd.isAfter(recordAt) ? recordAt : maxEnd;
+        // 방어적 floor: startTime <= recordAt이 보장되므로 보통은 endTime >= startTime이지만,
+        // endAt < startAt인 malformed item이면 endTime을 startTime으로 올린다(여전히 recordAt 이하).
         if (endTime.isBefore(startTime)) {
             endTime = startTime;
         }

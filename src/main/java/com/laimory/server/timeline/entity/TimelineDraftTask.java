@@ -20,6 +20,10 @@ import java.time.LocalDateTime;
  * recordAt/recordTimezone·userMemory·timelineWindow는 PROCESSING에서만 채워지고({@link #processing})
  * 종결(SUCCESS/FAILED)에는 {@code null}이다 — finalize·AI는 PROCESSING task에서 읽고, 종결 task의
  * 소비처(폴링·멱등)는 이들을 읽지 않기 때문이다.
+ *
+ * <p><b>저장 키 계약</b>(AI가 Redis를 직접 읽을 때 필요): 논리 키는 {@code timeline:draft-task:{taskId}}이고,
+ * 환경 prefix가 있으면 실제 Redis 키는 {@code {REDIS_KEY_PREFIX}timeline:draft-task:{taskId}}다
+ * (키 조립은 {@code TimelineTaskStore.KEY_PREFIX} + {@code PrefixedRedis} facade가 담당; dev는 prefix {@code dev_}).
  */
 public record TimelineDraftTask(
         TaskStatus status,

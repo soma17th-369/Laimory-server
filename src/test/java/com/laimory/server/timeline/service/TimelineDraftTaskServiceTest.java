@@ -540,4 +540,22 @@ class TimelineDraftTaskServiceTest {
         assertThat(windowCaptor.getValue().startTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
         assertThat(windowCaptor.getValue().endTime()).isEqualTo(RECORD_AT);
     }
+
+    @Test
+    void createDraftTask_futureOnlyItems_yieldsNullTimelineWindow() {
+        // 신규 item이 전부 recordAt(12:00) 이후(21:00~22:00) → 관측 구간 없음 → timelineWindow=null.
+        // (클램프가 floor에 되밀려 미래 구간으로 남지 않는지 회귀 방지.)
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.HEALTH, "h-1", LocalDateTime.of(2026, 6, 17, 21, 0), LocalDateTime.of(2026, 6, 17, 22, 0),
+                new HealthPayload(HealthMetric.STEPS, "100보")));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        ArgumentCaptor<TimelineDraftTask.TimelineWindow> windowCaptor =
+                ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
+        verify(timelineTaskService).createProcessing(anyString(), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                windowCaptor.capture(), anyString());
+        assertThat(windowCaptor.getValue()).isNull();
+    }
 }
