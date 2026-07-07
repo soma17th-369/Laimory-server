@@ -76,7 +76,7 @@ public class DailyTimelineService {
                 TimelineDraftSourceItem src = byItemId.get(itemId);
                 timelineItemService.save(
                         TimelineItem.of(savedEvent.getTimelineEventId(),
-                                src.getItemType(),
+                                src.getItemType(), src.getRawId(),
                                 src.getStartAt(), src.getEndAt(),
                                 src.getPayload()));
             }

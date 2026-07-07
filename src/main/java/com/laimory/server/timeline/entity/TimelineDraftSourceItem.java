@@ -42,6 +42,10 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "item_type", nullable = false, length = 32)
     private ItemType itemType;
 
+    /** 클라 원본 데이터 ID(UUIDv7). payload가 아닌 envelope 필드 — 서버는 해석·정규화 없이 저장·echo만 한다. */
+    @Column(name = "raw_id", nullable = false, length = 36)
+    private String rawId;
+
     @Column(name = "start_at")
     private LocalDateTime startAt;
 
@@ -63,19 +67,20 @@ public class TimelineDraftSourceItem extends BaseEntity {
     protected TimelineDraftSourceItem() {
     }
 
-    private TimelineDraftSourceItem(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
-                                    LocalDateTime endAt, JsonNode payload) {
+    private TimelineDraftSourceItem(String taskId, Long userId, ItemType itemType, String rawId,
+                                    LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
         this.taskId = taskId;
         this.userId = userId;
         this.itemType = itemType;
+        this.rawId = rawId;
         this.startAt = startAt;
         this.endAt = endAt;
         this.payload = payload;
     }
 
-    public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, LocalDateTime startAt,
-                                             LocalDateTime endAt, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, itemType, startAt, endAt, payload);
+    public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, String rawId,
+                                             LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
+        return new TimelineDraftSourceItem(taskId, userId, itemType, rawId, startAt, endAt, payload);
     }
 
     /**

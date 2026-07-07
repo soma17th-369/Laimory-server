@@ -35,7 +35,7 @@ class FakeAiEventSuggestionStagingServiceTest {
     private FakeAiEventSuggestionStagingService service;
 
     private TimelineDraftSourceItem source(LocalDateTime startAt, LocalDateTime endAt) {
-        return TimelineDraftSourceItem.of(TASK_ID, 1L, ItemType.CALENDAR, startAt, endAt, null);
+        return TimelineDraftSourceItem.of(TASK_ID, 1L, ItemType.CALENDAR, "r", startAt, endAt, null);
     }
 
     /** save 결과의 generated id로 FK를 배정하므로, mock 반환 엔티티에 id를 심어 흉내낸다(엔티티는 setter 없음). */

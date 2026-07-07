@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 public record TimelineItemResponse(
         Long timelineItemId,
         ItemType itemType,
+        String rawId,
         LocalDateTime startAt,
         LocalDateTime endAt,
         JsonNode payload

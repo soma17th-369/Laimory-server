@@ -31,7 +31,7 @@ class TimelineItemResponseMapperTest {
 
     private TimelineItem item(ItemType type, Object payload) {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
-        TimelineItem item = TimelineItem.of(11L, type, t, null, objectMapper.valueToTree(payload));
+        TimelineItem item = TimelineItem.of(11L, type, "raw-21", t, null, objectMapper.valueToTree(payload));
         ReflectionTestUtils.setField(item, "timelineItemId", 21L);
         return item;
     }
@@ -77,6 +77,8 @@ class TimelineItemResponseMapperTest {
         TimelineItemResponse response = mapper.toResponse(item, USER_ID);
 
         assertThat(response.timelineItemId()).isEqualTo(21L);
+        // rawId는 identity/envelope 필드 — DB 컬럼 값이 그대로 응답에 echo된다.
+        assertThat(response.rawId()).isEqualTo("raw-21");
         assertThat(response.startAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
         assertThat(response.endAt()).isNull();
         // NON_NULL(PhotoPayloadResponse): null 필드는 응답 payload에 키 자체가 없다.

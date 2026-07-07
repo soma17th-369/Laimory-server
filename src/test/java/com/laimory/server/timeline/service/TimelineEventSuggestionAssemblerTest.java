@@ -30,7 +30,7 @@ class TimelineEventSuggestionAssemblerTest {
     }
 
     private TimelineDraftSourceItem source(long pk, Long eventId) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO, "r" + pk,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u" + pk, "content://" + pk, 1.0, 2.0, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);

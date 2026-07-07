@@ -103,7 +103,8 @@ class TimelineItemPayloadJsonTest {
     @Test
     void sourceItemDto_externalProperty_roundTrip_movement() throws Exception {
         String json = """
-                {"itemType":"MOVEMENT","startAt":"2026-05-08T08:30:00","endAt":null,\
+                {"itemType":"MOVEMENT","rawId":"0197b1c2-0000-7000-8000-000000000009",\
+                 "startAt":"2026-05-08T08:30:00","endAt":null,\
                  "payload":{"start":{"latitude":37.4979,"longitude":127.0276},\
                             "end":{"latitude":37.5445,"longitude":127.0557},\
                             "transports":"IN_VEHICLE","distanceMeters":5200.0}}
@@ -112,6 +113,8 @@ class TimelineItemPayloadJsonTest {
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.itemType()).isEqualTo(ItemType.MOVEMENT);
+        // rawId는 itemType/startAt과 같은 envelope 형제 필드로 바인딩된다.
+        assertThat(dto.rawId()).isEqualTo("0197b1c2-0000-7000-8000-000000000009");
         assertThat(dto.payload()).isInstanceOf(MovementPayload.class)
                 .isEqualTo(new MovementPayload(
                         new MovementEndpoint(37.4979, 127.0276, null, null),
@@ -214,16 +217,18 @@ class TimelineItemPayloadJsonTest {
     @Test
     void sourceItemDto_serializes_itemTypeAsSiblingOfPayload() throws Exception {
         SourceItemDto dto = new SourceItemDto(
-                ItemType.MOVEMENT,
+                ItemType.MOVEMENT, "raw-mov",
                 java.time.LocalDateTime.of(2026, 5, 8, 8, 30), null,
                 movementFixture());
 
         com.fasterxml.jackson.databind.JsonNode tree = objectMapper.valueToTree(dto);
 
-        // itemType은 최상위(payload 형제)에 있고, payload 안엔 없다.
+        // itemType·rawId는 최상위(payload 형제)에 있고, payload 안엔 없다.
         assertThat(tree.has("itemType")).isTrue();
         assertThat(tree.get("itemType").asText()).isEqualTo("MOVEMENT");
         assertThat(tree.get("payload").has("itemType")).isFalse();
+        assertThat(tree.get("rawId").asText()).isEqualTo("raw-mov");
+        assertThat(tree.get("payload").has("rawId")).isFalse();
     }
 
     private static MovementPayload movementFixture() {

@@ -67,7 +67,7 @@ class DailyTimelineServiceTest {
     private static final String TASK_ID = "task-1";
 
     private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.PHOTO,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.PHOTO, "raw-" + pk,
                 startAt, null,
                 MAPPER.valueToTree(new PhotoPayload("uri" + pk, "content://" + pk, 1.0, 2.0, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
@@ -75,7 +75,7 @@ class DailyTimelineServiceTest {
     }
 
     private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.LOCATION,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.LOCATION, "raw-" + pk,
                 startAt, null,
                 MAPPER.valueToTree(new LocationPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
@@ -102,11 +102,12 @@ class DailyTimelineServiceTest {
         verify(timelineEventSuggestionValidator).validate(draftRows, events);
         verify(timelineEventService, times(1)).save(any());
 
-        // 아이템은 draft 행에서 그대로 복사된다(itemType/start/payload).
+        // 아이템은 draft 행에서 그대로 복사된다(itemType/rawId/start/payload).
         ArgumentCaptor<TimelineItem> itemCaptor = ArgumentCaptor.forClass(TimelineItem.class);
         verify(timelineItemService, times(1)).save(itemCaptor.capture());
         TimelineItem saved = itemCaptor.getValue();
         assertThat(saved.getItemType()).isEqualTo(ItemType.PHOTO);
+        assertThat(saved.getRawId()).isEqualTo("raw-10");
         assertThat(saved.getStartAt()).isEqualTo(t);
         assertThat(saved.getPayload().get("filename").asText()).isEqualTo("uri10");
 
@@ -205,19 +206,19 @@ class DailyTimelineServiceTest {
         when(timelineEventService.findByDailyRecordId(300L)).thenReturn(List.of(event));
 
         LocationPayload location = new LocationPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
-        TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, t, null,
+        TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, "raw-21", t, null,
                 MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null)));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
-        TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, t.plusHours(1), t.plusHours(2),
+        TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, "raw-22", t.plusHours(1), t.plusHours(2),
                 MAPPER.valueToTree(location));
         ReflectionTestUtils.setField(item1, "timelineItemId", 22L);
         when(timelineItemService.findByTimelineEventId(11L)).thenReturn(List.of(item0, item1));
 
         // 매퍼가 PHOTO를 photoUrl로 구성해 응답을 만든다(URL 구성 로직은 TimelineItemResponseMapperTest에서 검증).
         // userId는 record의 user_id(7L)로 전달된다.
-        TimelineItemResponse photoResponse = new TimelineItemResponse(21L, ItemType.PHOTO, t, null,
+        TimelineItemResponse photoResponse = new TimelineItemResponse(21L, ItemType.PHOTO, "raw-21", t, null,
                 MAPPER.valueToTree(new PhotoPayloadResponse("https://cdn.example/x", "content://x", 1.0, 2.0, null)));
-        TimelineItemResponse locationResponse = new TimelineItemResponse(22L, ItemType.LOCATION,
+        TimelineItemResponse locationResponse = new TimelineItemResponse(22L, ItemType.LOCATION, "raw-22",
                 t.plusHours(1), t.plusHours(2), MAPPER.valueToTree(location));
         when(timelineItemResponseMapper.toResponse(item0, 7L)).thenReturn(photoResponse);
         when(timelineItemResponseMapper.toResponse(item1, 7L)).thenReturn(locationResponse);

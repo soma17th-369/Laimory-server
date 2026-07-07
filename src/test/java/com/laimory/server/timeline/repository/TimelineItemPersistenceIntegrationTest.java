@@ -70,6 +70,7 @@ class TimelineItemPersistenceIntegrationTest {
         TimelineItem saved = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(),
                         ItemType.MOVEMENT,
+                        "0197b1c2-0000-7000-8000-000000000002",
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         objectMapper.valueToTree(movement)));
@@ -79,6 +80,7 @@ class TimelineItemPersistenceIntegrationTest {
 
         TimelineItem reloaded = timelineItemRepository.findById(saved.getTimelineItemId()).orElseThrow();
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
+        assertThat(reloaded.getRawId()).isEqualTo("0197b1c2-0000-7000-8000-000000000002");
         assertThat(reloaded.getPayload().get("start").get("latitude").asDouble()).isEqualTo(37.4979);
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
         assertThat(reloaded.getTimelineEventId()).isEqualTo(event.getTimelineEventId());
@@ -97,13 +99,13 @@ class TimelineItemPersistenceIntegrationTest {
                 "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
 
         Long photoId = timelineItemRepository.save(
-                TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO,
+                TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO, "raw-photo",
                         LocalDateTime.of(2026, 5, 9, 12, 0), null, objectMapper.valueToTree(photo))).getTimelineItemId();
         Long calendarId = timelineItemRepository.save(
-                TimelineItem.of(event.getTimelineEventId(), ItemType.CALENDAR,
+                TimelineItem.of(event.getTimelineEventId(), ItemType.CALENDAR, "raw-calendar",
                         LocalDateTime.of(2026, 5, 9, 12, 1), null, objectMapper.valueToTree(calendar))).getTimelineItemId();
         Long locationId = timelineItemRepository.save(
-                TimelineItem.of(event.getTimelineEventId(), ItemType.LOCATION,
+                TimelineItem.of(event.getTimelineEventId(), ItemType.LOCATION, "raw-location",
                         LocalDateTime.of(2026, 5, 9, 12, 2), null, objectMapper.valueToTree(location))).getTimelineItemId();
 
         em.flush();

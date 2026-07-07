@@ -38,6 +38,10 @@ public class TimelineItem extends BaseEntity {
     @Column(name = "item_type", nullable = false, length = 32)
     private ItemType itemType;
 
+    /** 클라 원본 데이터 ID(UUIDv7). payload가 아닌 envelope 필드 — draft 행에서 그대로 복사되며 응답에 echo된다. */
+    @Column(name = "raw_id", nullable = false, length = 36)
+    private String rawId;
+
     private LocalDateTime startAt;
 
     private LocalDateTime endAt;
@@ -49,17 +53,18 @@ public class TimelineItem extends BaseEntity {
     protected TimelineItem() {
     }
 
-    private TimelineItem(Long timelineEventId, ItemType itemType, LocalDateTime startAt,
+    private TimelineItem(Long timelineEventId, ItemType itemType, String rawId, LocalDateTime startAt,
                          LocalDateTime endAt, JsonNode payload) {
         this.timelineEventId = timelineEventId;
         this.itemType = itemType;
+        this.rawId = rawId;
         this.startAt = startAt;
         this.endAt = endAt;
         this.payload = payload;
     }
 
-    public static TimelineItem of(Long timelineEventId, ItemType itemType, LocalDateTime startAt,
+    public static TimelineItem of(Long timelineEventId, ItemType itemType, String rawId, LocalDateTime startAt,
                                   LocalDateTime endAt, JsonNode payload) {
-        return new TimelineItem(timelineEventId, itemType, startAt, endAt, payload);
+        return new TimelineItem(timelineEventId, itemType, rawId, startAt, endAt, payload);
     }
 }

@@ -80,7 +80,7 @@ class TimelineDraftTaskServiceTest {
     }
 
     private List<SourceItemDto> oneSource() {
-        return List.of(new SourceItemDto(ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+        return List.of(new SourceItemDto(ItemType.PHOTO, "raw-photo-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
     }
 
@@ -120,6 +120,8 @@ class TimelineDraftTaskServiceTest {
         assertThat(row.getTaskId()).isEqualTo(taskId);
         assertThat(row.getUserId()).isEqualTo(0L);
         assertThat(row.getItemType()).isEqualTo(ItemType.PHOTO);
+        // rawId는 envelope 필드 — 컬럼으로 그대로 저장된다.
+        assertThat(row.getRawId()).isEqualTo("raw-photo-1");
         assertThat(row.getStartAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
         // payload는 discriminator 없는 raw JsonNode.
         assertThat(row.getPayload().get("filename").asText()).isEqualTo(VALID_FILENAME);
@@ -226,15 +228,41 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
+                new SourceItemDto(null, "r", null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
+    void createDraftTask_rejectsNullSourceItemElement() {
+        // sourceItems 배열에 null 원소([null])가 오면 NPE 500이 아니라 400으로 거절한다.
+        List<SourceItemDto> sources = java.util.Collections.singletonList(null);
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
+    void createDraftTask_rejectsMissingOrTooLongRawId() {
+        // rawId는 전 타입 공통 필수(envelope 필드). blank → 400, DB 컬럼(36자) 초과 → 400(저장 전).
+        List<SourceItemDto> blankRawId = List.of(new SourceItemDto(
+                ItemType.PHOTO, " ", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, blankRawId))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        List<SourceItemDto> tooLongRawId = List.of(new SourceItemDto(
+                ItemType.PHOTO, "x".repeat(37), LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, tooLongRawId))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+    }
+
+    @Test
     void createDraftTask_rejectsNullPayload() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.PHOTO, null, null, null));
+                new SourceItemDto(ItemType.PHOTO, "r", null, null, null));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -243,7 +271,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsInvalidPhotoFilename() {
         // PHOTO filename이 UUIDv7+허용ext 패턴이 아니면 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.PHOTO, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -254,7 +282,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsMissingClientPhotoUri() {
         // clientPhotoUri는 1차 로컬 캐싱용이라 PHOTO엔 필수다(누락/blank → 400, 저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.PHOTO, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.PHOTO, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -265,19 +293,19 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsHealthMissingMetricOrValue() {
         // HEALTH는 metric/value 둘 다 필수(누락 → 400, 저장 전). value는 단위 포함 텍스트라 blank도 누락으로 본다.
         List<SourceItemDto> missingMetric = List.of(new SourceItemDto(
-                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                ItemType.HEALTH, "r", LocalDateTime.of(2026, 6, 17, 0, 0), null,
                 new HealthPayload(null, "10145보")));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingMetric))
                 .isInstanceOf(IllegalArgumentException.class);
 
         List<SourceItemDto> missingValue = List.of(new SourceItemDto(
-                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                ItemType.HEALTH, "r", LocalDateTime.of(2026, 6, 17, 0, 0), null,
                 new HealthPayload(HealthMetric.SLEEP, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, missingValue))
                 .isInstanceOf(IllegalArgumentException.class);
 
         List<SourceItemDto> blankValue = List.of(new SourceItemDto(
-                ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0), null,
+                ItemType.HEALTH, "r", LocalDateTime.of(2026, 6, 17, 0, 0), null,
                 new HealthPayload(HealthMetric.STEPS, " ")));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, blankValue))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -288,7 +316,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNotificationWithoutTitleAndText() {
         // title/text 둘 다 blank면 NON_NULL 직렬화로 빈 payload가 저장되므로 입력 경계에서 400으로 막는다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
+                ItemType.NOTIFICATION, "r", LocalDateTime.of(2026, 6, 17, 21, 12), null,
                 new NotificationPayload("카카오톡", null, " ")));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -299,7 +327,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsLocationMissingCoordinate() {
         // LOCATION 좌표는 필수(지오코딩 enrich 전제) — 누락 → 400, 저장 전.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(null, 127.0557, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -310,7 +338,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNonFiniteCoordinate() {
         // NaN은 범위 비교(-90~90)를 전부 통과하므로 isFinite 검증이 별도로 막아야 한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(Double.NaN, 127.0557, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -320,7 +348,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsOutOfRangeCoordinate() {
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(37.5445, 180.5, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -331,7 +359,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsMovementMissingEndpoint() {
         // MOVEMENT는 start/end 객체(각 좌표 포함)가 필수다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                ItemType.MOVEMENT, "r", LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(null, endpoint(37.5445, 127.0557), "IN_VEHICLE", null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -342,7 +370,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNegativeDistanceMeters() {
         // 이동 거리는 음수가 무의미(HEALTH value 음수 거절과 같은 입력 경계 정책).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.MOVEMENT, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                ItemType.MOVEMENT, "r", LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
                         "IN_VEHICLE", -1.0)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
@@ -354,7 +382,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsMismatchedItemTypeAndPayload() {
         // HTTP 경로는 Jackson 디스크리미네이터가 일치를 보장하지만, 프로그래밍 방식 생성 경로를 방어한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
                         "IN_VEHICLE", null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
@@ -367,10 +395,10 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         // enrich(재구성) 결과가 저장본이다 — 원본이 아니라 반환 리스트로 row를 빌드해야 한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.LOCATION, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(37.5340, 126.9668, null, null, null)));
         List<SourceItemDto> enriched = List.of(new SourceItemDto(
-                ItemType.LOCATION, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                ItemType.LOCATION, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(37.5340, 126.9668,
                         "서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"), "1시간45분")));
         when(sourceItemGeoEnrichmentService.enrich(sources)).thenReturn(enriched);
@@ -380,6 +408,8 @@ class TimelineDraftTaskServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
         verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        // enrich 재구성본의 rawId가 그대로 row에 저장된다(envelope 보존).
+        assertThat(rowsCaptor.getValue().get(0).getRawId()).isEqualTo("raw-loc-1");
         assertThat(rowsCaptor.getValue().get(0).getPayload().get("address").asText())
                 .isEqualTo("서울 용산구 청파로20길 95");
         assertThat(rowsCaptor.getValue().get(0).getPayload().get("places").size()).isEqualTo(2);
@@ -394,11 +424,11 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_savesHealthAndNotificationRows_omittingNullPayloadFields() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 0, 0),
+                new SourceItemDto(ItemType.HEALTH, "raw-h1", LocalDateTime.of(2026, 6, 17, 0, 0),
                         LocalDateTime.of(2026, 6, 18, 0, 0), new HealthPayload(HealthMetric.STEPS, "10145보")),
-                new SourceItemDto(ItemType.HEALTH, LocalDateTime.of(2026, 6, 17, 4, 0),
+                new SourceItemDto(ItemType.HEALTH, "raw-h2", LocalDateTime.of(2026, 6, 17, 4, 0),
                         LocalDateTime.of(2026, 6, 17, 7, 30), new HealthPayload(HealthMetric.SLEEP, "210분")),
-                new SourceItemDto(ItemType.NOTIFICATION, LocalDateTime.of(2026, 6, 17, 21, 12), null,
+                new SourceItemDto(ItemType.NOTIFICATION, "raw-n1", LocalDateTime.of(2026, 6, 17, 21, 12), null,
                         new NotificationPayload(null, "제목", null)));
 
         service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);

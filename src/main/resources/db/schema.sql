@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS timeline_items (
     timeline_item_id BIGINT NOT NULL AUTO_INCREMENT,
     timeline_event_id BIGINT NOT NULL,
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). payload JSON엔 타입 정보 없음
+    raw_id VARCHAR(36) NOT NULL,                     -- 클라 원본 데이터 ID(UUIDv7). envelope 필드, 서버는 해석 없이 echo
     start_at DATETIME NULL,                           -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON. 검색 필요 시 generated column 후속 추가
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     task_id VARCHAR(36) NOT NULL,
     user_id BIGINT NOT NULL,
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
+    raw_id VARCHAR(36) NOT NULL,                     -- 클라 원본 데이터 ID(UUIDv7). envelope 필드, 서버는 해석 없이 echo
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON
