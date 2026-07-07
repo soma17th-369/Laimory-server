@@ -15,7 +15,6 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
-import com.laimory.server.timeline.dto.PhotoPayloadResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
@@ -53,8 +52,6 @@ class DailyTimelineServiceTest {
     private TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
     @Mock
     private TimelineEventSuggestionValidator timelineEventSuggestionValidator;
-    @Mock
-    private TimelineItemResponseMapper timelineItemResponseMapper;
 
     @InjectMocks
     private DailyTimelineService dailyTimelineService;
@@ -69,7 +66,7 @@ class DailyTimelineServiceTest {
     private TimelineDraftSourceItem photoRow(long pk, LocalDateTime startAt) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.PHOTO, "raw-" + pk,
                 startAt, null,
-                MAPPER.valueToTree(new PhotoPayload("uri" + pk, "content://" + pk, 1.0, 2.0, null)));
+                MAPPER.valueToTree(new PhotoPayload("uri" + pk, "content://" + pk, 1.0, 2.0, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
     }
@@ -207,21 +204,13 @@ class DailyTimelineServiceTest {
 
         LocationPayload location = new LocationPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
         TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, "raw-21", t, null,
-                MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null)));
+                MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x",
+                        1.0, 2.0, null, "https://cdn.example/x")));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
         TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, "raw-22", t.plusHours(1), t.plusHours(2),
                 MAPPER.valueToTree(location));
         ReflectionTestUtils.setField(item1, "timelineItemId", 22L);
         when(timelineItemService.findByTimelineEventId(11L)).thenReturn(List.of(item0, item1));
-
-        // 매퍼가 PHOTO를 photoUrl로 구성해 응답을 만든다(URL 구성 로직은 TimelineItemResponseMapperTest에서 검증).
-        // userId는 record의 user_id(7L)로 전달된다.
-        TimelineItemResponse photoResponse = new TimelineItemResponse(21L, ItemType.PHOTO, "raw-21", t, null,
-                MAPPER.valueToTree(new PhotoPayloadResponse("https://cdn.example/x", "content://x", 1.0, 2.0, null)));
-        TimelineItemResponse locationResponse = new TimelineItemResponse(22L, ItemType.LOCATION, "raw-22",
-                t.plusHours(1), t.plusHours(2), MAPPER.valueToTree(location));
-        when(timelineItemResponseMapper.toResponse(item0, 7L)).thenReturn(photoResponse);
-        when(timelineItemResponseMapper.toResponse(item1, 7L)).thenReturn(locationResponse);
 
         DailyTimelineResponse result = dailyTimelineService.getDailyTimeline(300L);
 
@@ -238,15 +227,17 @@ class DailyTimelineServiceTest {
         assertThat(eventResponse.memo()).isEqualTo("내 메모");
         assertThat(eventResponse.items()).hasSize(2);
 
-        // 오케스트레이터는 매퍼가 만든 응답을 그대로 이벤트에 담는다(PHOTO는 photoUrl로 구성됨).
+        // payload는 저장본 그대로 통과한다 — PHOTO의 photoUrl도 저장 시 주입된 값(읽기 시점 변환 없음).
         TimelineItemResponse itemResponse0 = eventResponse.items().get(0);
         assertThat(itemResponse0.timelineItemId()).isEqualTo(21L);
         assertThat(itemResponse0.itemType()).isEqualTo(ItemType.PHOTO);
+        assertThat(itemResponse0.rawId()).isEqualTo("raw-21");
         assertThat(itemResponse0.startAt()).isEqualTo(t);
         assertThat(itemResponse0.endAt()).isNull();
         assertThat(itemResponse0.payload().get("photoUrl").asText()).isEqualTo("https://cdn.example/x");
         assertThat(itemResponse0.payload().get("clientPhotoUri").asText()).isEqualTo("content://x");
-        assertThat(itemResponse0.payload().has("filename")).isFalse();
+        assertThat(itemResponse0.payload().get("filename").asText())
+                .isEqualTo("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         assertThat(itemResponse0.payload().has("itemType")).isFalse();
 
         TimelineItemResponse itemResponse1 = eventResponse.items().get(1);

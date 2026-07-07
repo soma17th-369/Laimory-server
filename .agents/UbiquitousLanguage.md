@@ -48,7 +48,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 아이템 페이로드 | Timeline Item Payload | 모든 payload 타입의 공통 인터페이스다. Java sealed interface로 표현한다. |
-| 사진 페이로드 | Photo Payload | 사진 파일명(`filename`), 기기 로컬 URI(`clientPhotoUri`), 위치 정보(위도/경도)를 담는다. DB엔 서빙 URL이 아니라 `filename`+`clientPhotoUri`를 저장한다. |
+| 사진 페이로드 | Photo Payload | 사진 파일명(`filename`), 기기 로컬 URI(`clientPhotoUri`), 위치 정보(위도/경도), 사진 설명(`description`), 서빙 URL(`photoUrl` — 서버 파생, 클라 제공값 무시)을 담는다. |
 | 일정 페이로드 | Calendar Payload | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
 | 장소 페이로드 | Location Payload | 위도/경도(필수)와 서버 파생 필드(주소·주변 장소 목록·머문 시간 텍스트)를 담는다. |
 | 이동 페이로드 | Movement Payload | 출발/도착 이동 끝점(`start`/`end`), 이동수단(`transports`), 이동 거리(`distanceMeters`)를 담는다. |
@@ -63,14 +63,14 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 
 ## 사진 업로드/서빙
 
-사진은 서버가 발급한 presigned PUT URL로 클라가 S3에 직접 올리고, 조회는 무서명 CloudFront URL로 서빙한다. DB엔 `filename`만 저장하고 full key·서빙 URL은 서버가 사용자 id로부터 파생한다.
+사진은 서버가 발급한 presigned PUT URL로 클라가 S3에 직접 올리고, 조회는 무서명 CloudFront URL로 서빙한다. full key는 서버가 사용자 id로부터 파생하며, 서빙 URL(`photoUrl`)은 draft 저장 전 서버가 계산해 payload에 함께 저장한다(AI·응답 공용).
 
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 파일명 | filename | DB에 저장하는 사진의 최소 식별자다. 형식은 `{uuidv7}.{ext}`(ext=jpg/png/webp). full key/서빙 URL이 아니다. |
 | 클라이언트 사진 URI | clientPhotoUri | 클라이언트 기기의 로컬 사진 URI(예: `content://...`)다. 서버는 의미를 해석하지 않고 저장·echo만 한다. 클라가 다운로드 없이 기기 원본을 즉시 표시(1차 로컬 캐싱)하도록 타임라인 아이템↔로컬 파일 연결을 보존한다. photoUrl(원격 서빙 URL)과 별개 레이어다. |
 | 전체 객체 키 | full object key | 실제 S3 객체 키다. 항상 서버가 파생한다: `{sha256hex(userId)}/photos/{filename}`. 날짜 폴더·taskId 없음. DB에 저장하지 않는다. |
-| 사진 URL | photoUrl | 무서명 CloudFront 서빙 URL(`https://{cdnDomain}/{full object key}`)이다. 응답 전용이며 읽을 때 구성한다(DB 미저장). |
+| 사진 URL | photoUrl | 무서명 CloudFront 서빙 URL(`https://{cdnDomain}/{full object key}`)이다. draft 저장 전 서버가 주입해 payload에 저장하고(AI가 HTTP GET으로 소비), 응답은 저장본을 그대로 통과시킨다. 클라 제공값은 무시한다. ⚠️ materialized URL — CDN 도메인·키 규칙 변경 시 저장된 payload backfill 필요. |
 | presigned 업로드 발급 | Presigned Upload | 클라가 올릴 사진 메타(타입·크기)를 받아 photo마다 `filename` + presigned PUT URL을 발급하는 작업이다. 크기는 서명에 바인딩한다. |
 
 ## AI 타임라인 이벤트 생성

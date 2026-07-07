@@ -6,7 +6,9 @@ import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
+import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
+import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -18,9 +20,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 저장 전 LOCATION/MOVEMENT payload 재구성: 서버 파생 필드는 클라 값을 무시하고 서버 값으로만 채운다
- * (mass assignment 방어 — 거절이 아니라 무시). {@code address}/{@code places}는 지오코딩 결과,
- * {@code durationText}는 startAt/endAt 계산값이다. 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
+ * 저장 전 payload 재구성: 서버 파생 필드는 클라 값을 무시하고 서버 값으로만 채운다
+ * (mass assignment 방어 — 거절이 아니라 무시). LOCATION/MOVEMENT의 {@code address}/{@code places}는
+ * 지오코딩 결과, {@code durationText}는 startAt/endAt 계산값, PHOTO의 {@code photoUrl}은 filename+userId로
+ * 파생한 무서명 CloudFront 서빙 URL이다(AI가 DB payload에서 HTTP GET으로 소비).
+ * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
  *
  * <p>지오코딩 실패는 해당 좌표의 enrich 필드만 null로 강등하고 계속한다 — 외부 API가 draft 생성을
  * 죽이지 않는다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라 dedupe 필수).
@@ -28,17 +32,19 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @RequiredArgsConstructor
-public class SourceItemGeoEnrichmentService {
+public class SourceItemEnrichmentService {
 
-    private static final Logger log = LoggerFactory.getLogger(SourceItemGeoEnrichmentService.class);
+    private static final Logger log = LoggerFactory.getLogger(SourceItemEnrichmentService.class);
 
     private final GeocodingService geocodingService;
+    private final PhotoUrlService photoUrlService;
 
-    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems) {
+    /** {@code userId}는 PHOTO photoUrl의 full key 파생에 쓴다 — 저장될 row의 user_id와 같은 사용자여야 한다. */
+    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, long userId) {
         long startNanos = System.nanoTime();
         Map<Coordinate, GeoPlace> lookups = new HashMap<>();
         List<SourceItemDto> enriched = sourceItems.stream()
-                .map(src -> reconstruct(src, lookups))
+                .map(src -> reconstruct(src, lookups, userId))
                 .toList();
         if (!lookups.isEmpty()) {
             // 좌표값은 로그 금지(위치 민감정보) — 유니크 좌표 수·총 소요시간만.
@@ -49,7 +55,7 @@ public class SourceItemGeoEnrichmentService {
         return enriched;
     }
 
-    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups) {
+    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, long userId) {
         TimelineItemPayload reconstructed = switch (src.payload()) {
             case LocationPayload location -> {
                 GeoPlace geo = lookup(location.latitude(), location.longitude(), lookups);
@@ -61,6 +67,10 @@ public class SourceItemGeoEnrichmentService {
                     reconstructEndpoint(movement.start(), lookups),
                     reconstructEndpoint(movement.end(), lookups),
                     movement.transports(), movement.distanceMeters());
+            case PhotoPayload photo -> new PhotoPayload(
+                    photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
+                    photo.description(),
+                    photoUrlService.buildUrl(photo.filename(), userId));
             default -> src.payload();
         };
         if (reconstructed == src.payload()) {

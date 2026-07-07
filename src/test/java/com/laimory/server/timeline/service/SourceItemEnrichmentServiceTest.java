@@ -8,12 +8,15 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
+import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.payload.HealthPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -21,17 +24,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 저장 전 payload 재구성(enrich 주입·클라 파생값 무시·durationText 계산·좌표 dedupe·실패 강등) 검증. */
+/** 저장 전 payload 재구성(지오코딩·photoUrl 주입·클라 파생값 무시·durationText 계산·좌표 dedupe·실패 강등) 검증. */
 @ExtendWith(MockitoExtension.class)
-class SourceItemGeoEnrichmentServiceTest {
+class SourceItemEnrichmentServiceTest {
 
     private static final LocalDateTime T = LocalDateTime.of(2026, 6, 17, 9, 0);
+    private static final long USER_ID = 0L;
 
     @Mock
     private GeocodingService geocodingService;
+    @Mock
+    private PhotoUrlService photoUrlService;
 
-    private SourceItemGeoEnrichmentService service() {
-        return new SourceItemGeoEnrichmentService(geocodingService);
+    private SourceItemEnrichmentService service() {
+        return new SourceItemEnrichmentService(geocodingService, photoUrlService);
     }
 
     @Test
@@ -49,7 +55,7 @@ class SourceItemGeoEnrichmentServiceTest {
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 "IN_VEHICLE", 5200.0)));
 
-        List<SourceItemDto> enriched = service().enrich(sources);
+        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
 
         // 재구성(new SourceItemDto)돼도 envelope 필드(rawId)는 원본 그대로 보존돼야 한다 — 유실 시 DB NOT NULL 500.
         assertThat(enriched.get(0).rawId()).isEqualTo("raw-loc");
@@ -72,6 +78,29 @@ class SourceItemGeoEnrichmentServiceTest {
     }
 
     @Test
+    void enrich_injectsPhotoUrl_ignoringClientValue_preservingOtherFields() {
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
+        when(photoUrlService.buildUrl(filename, USER_ID)).thenReturn("https://cdn.example/abc/photos/" + filename);
+        // 클라가 photoUrl을 위조해 보내도 서버 파생값으로만 덮어쓴다. 나머지 필드·envelope은 보존.
+        SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
+                new PhotoPayload(filename, "content://x", 1.0, 2.0, "설명", "https://evil.example/fake.jpg"));
+
+        List<SourceItemDto> enriched = service().enrich(List.of(photo), USER_ID);
+
+        assertThat(enriched.get(0).itemType()).isEqualTo(ItemType.PHOTO);
+        assertThat(enriched.get(0).rawId()).isEqualTo("raw-photo");
+        assertThat(enriched.get(0).startAt()).isEqualTo(T);
+        assertThat(enriched.get(0).endAt()).isNull();
+        PhotoPayload reconstructed = (PhotoPayload) enriched.get(0).payload();
+        assertThat(reconstructed.photoUrl()).isEqualTo("https://cdn.example/abc/photos/" + filename);
+        assertThat(reconstructed.filename()).isEqualTo(filename);
+        assertThat(reconstructed.clientPhotoUri()).isEqualTo("content://x");
+        assertThat(reconstructed.latitude()).isEqualTo(1.0);
+        assertThat(reconstructed.longitude()).isEqualTo(2.0);
+        assertThat(reconstructed.description()).isEqualTo("설명");
+    }
+
+    @Test
     void enrich_lookupsEachCoordinateOnce_acrossItems() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
         // LOCATION 좌표 == MOVEMENT 도착 좌표 → 좌표당 6콜이므로 같은 좌표는 1회만 조회해야 한다.
@@ -84,7 +113,7 @@ class SourceItemGeoEnrichmentServiceTest {
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 null, null)));
 
-        service().enrich(sources);
+        service().enrich(sources, USER_ID);
 
         verify(geocodingService, times(2)).lookup(anyDouble(), anyDouble());
         verify(geocodingService).lookup(37.5340, 126.9668);
@@ -97,7 +126,7 @@ class SourceItemGeoEnrichmentServiceTest {
         List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.LOCATION, "r1", T, null,
                 new LocationPayload(37.5340, 126.9668, null, null, null)));
 
-        LocationPayload location = (LocationPayload) service().enrich(sources).get(0).payload();
+        LocationPayload location = (LocationPayload) service().enrich(sources, USER_ID).get(0).payload();
 
         // endAt이 없으면 머문 시간을 계산할 수 없어 null(NON_NULL 직렬화로 키 생략).
         assertThat(location.durationText()).isNull();
@@ -112,7 +141,7 @@ class SourceItemGeoEnrichmentServiceTest {
                 new SourceItemDto(ItemType.LOCATION, "r2", T, T.plusMinutes(45),
                         new LocationPayload(37.5445, 127.0557, null, null, null)));
 
-        List<SourceItemDto> enriched = service().enrich(sources);
+        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
 
         assertThat(((LocationPayload) enriched.get(0).payload()).durationText()).isEqualTo("2시간");
         assertThat(((LocationPayload) enriched.get(1).payload()).durationText()).isEqualTo("45분");
@@ -129,7 +158,7 @@ class SourceItemGeoEnrichmentServiceTest {
                         new LocationPayload(37.5445, 127.0557, null, null, null)));
 
         // 지오코딩 실패는 draft 생성을 죽이지 않는다 — 해당 좌표만 null 강등, 예외 미전파.
-        List<SourceItemDto> enriched = service().enrich(sources);
+        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
 
         LocationPayload failed = (LocationPayload) enriched.get(0).payload();
         assertThat(failed.address()).isNull();
@@ -139,13 +168,13 @@ class SourceItemGeoEnrichmentServiceTest {
     }
 
     @Test
-    void enrich_passesThroughNonGeoTypes_unchanged() {
-        SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
-                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null));
+    void enrich_passesThroughNonEnrichedTypes_unchanged() {
+        // 서버 파생 필드가 없는 타입(HEALTH 등)은 재구성 없이 동일 인스턴스로 통과한다.
+        SourceItemDto health = new SourceItemDto(ItemType.HEALTH, "raw-h", T, T.plusHours(1),
+                new HealthPayload(HealthMetric.STEPS, "10145보"));
 
-        List<SourceItemDto> enriched = service().enrich(List.of(photo));
+        List<SourceItemDto> enriched = service().enrich(List.of(health), USER_ID);
 
-        // 지오코딩 대상이 아닌 타입은 좌표가 있어도(PHOTO lat/lng) 건드리지 않는다 — 이번 Epic 범위 밖.
-        assertThat(enriched.get(0)).isSameAs(photo);
+        assertThat(enriched.get(0)).isSameAs(health);
     }
 }

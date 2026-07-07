@@ -189,7 +189,8 @@ class TimelineControllerTest {
         TimelineItemResponse item = new TimelineItemResponse(
                 10L, ItemType.PHOTO, "raw-10",
                 LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
+                objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null,
+                        "https://cdn.example/u")));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));
@@ -206,6 +207,9 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].rawId").value("raw-10"))
+                // payload는 저장본 pass-through — photoUrl(서버 주입)과 filename 둘 다 노출된다.
+                .andExpect(jsonPath("$.body.result.events[0].items[0].payload.photoUrl").value("https://cdn.example/u"))
+                .andExpect(jsonPath("$.body.result.events[0].items[0].payload.filename").value("u"))
                 .andExpect(jsonPath("$.body.result.cards").doesNotExist())
                 .andExpect(jsonPath("$.body.result.events[0].id").doesNotExist())
                 .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist());

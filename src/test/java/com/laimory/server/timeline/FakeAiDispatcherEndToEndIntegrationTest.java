@@ -117,6 +117,9 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         // rawId는 요청 → draft → finalize → 폴링 응답까지 그대로 echo된다.
         assertThat(events.get(0).path("items").get(0).path("rawId").asText())
                 .isEqualTo("0197b1c2-0000-7000-8000-000000000042");
+        // photoUrl은 draft 저장 시 서버가 주입한 값이 finalize 복사를 거쳐 응답까지 유지된다.
+        assertThat(events.get(0).path("items").get(0).path("payload").path("photoUrl").asText())
+                .startsWith("https://");
         assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();

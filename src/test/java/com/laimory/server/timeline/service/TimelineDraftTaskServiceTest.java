@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -54,7 +55,7 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
-    private SourceItemGeoEnrichmentService sourceItemGeoEnrichmentService;
+    private SourceItemEnrichmentService sourceItemEnrichmentService;
     @Mock
     private TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
 
@@ -72,16 +73,16 @@ class TimelineDraftTaskServiceTest {
     void setUp() {
         service = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftSourceItemService,
-                sourceItemGeoEnrichmentService, timelineEventSuggestionDispatcher, new ObjectMapper());
-        // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemGeoEnrichmentServiceTest가 검증).
+                sourceItemEnrichmentService, timelineEventSuggestionDispatcher, new ObjectMapper());
+        // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
-        lenient().when(sourceItemGeoEnrichmentService.enrich(anyList()))
+        lenient().when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     private List<SourceItemDto> oneSource() {
         return List.of(new SourceItemDto(ItemType.PHOTO, "raw-photo-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
     }
 
     @Test
@@ -97,9 +98,9 @@ class TimelineDraftTaskServiceTest {
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
 
         // 순서 불변식: 지오코딩 enrich(저장 전 — AI가 DB에서 직접 읽음) → draft 저장 → Redis PROCESSING → dispatch.
-        InOrder order = inOrder(sourceItemGeoEnrichmentService, timelineDraftSourceItemService,
+        InOrder order = inOrder(sourceItemEnrichmentService, timelineDraftSourceItemService,
                 timelineTaskService, timelineEventSuggestionDispatcher);
-        order.verify(sourceItemGeoEnrichmentService).enrich(anyList());
+        order.verify(sourceItemEnrichmentService).enrich(anyList(), anyLong());
         order.verify(timelineDraftSourceItemService).saveAll(anyList());
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
         order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
@@ -228,7 +229,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, "r", null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null)));
+                new SourceItemDto(null, "r", null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -247,13 +248,13 @@ class TimelineDraftTaskServiceTest {
         // rawId는 전 타입 공통 필수(envelope 필드). blank → 400, DB 컬럼(36자) 초과 → 400(저장 전).
         List<SourceItemDto> blankRawId = List.of(new SourceItemDto(
                 ItemType.PHOTO, " ", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, blankRawId))
                 .isInstanceOf(IllegalArgumentException.class);
 
         List<SourceItemDto> tooLongRawId = List.of(new SourceItemDto(
                 ItemType.PHOTO, "x".repeat(37), LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, tooLongRawId))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -272,7 +273,7 @@ class TimelineDraftTaskServiceTest {
         // PHOTO filename이 UUIDv7+허용ext 패턴이 아니면 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null)));
+                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -283,7 +284,7 @@ class TimelineDraftTaskServiceTest {
         // clientPhotoUri는 1차 로컬 캐싱용이라 PHOTO엔 필수다(누락/blank → 400, 저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null)));
+                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -401,7 +402,7 @@ class TimelineDraftTaskServiceTest {
                 ItemType.LOCATION, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new LocationPayload(37.5340, 126.9668,
                         "서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"), "1시간45분")));
-        when(sourceItemGeoEnrichmentService.enrich(sources)).thenReturn(enriched);
+        when(sourceItemEnrichmentService.enrich(sources, 0L)).thenReturn(enriched);
 
         service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
 

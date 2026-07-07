@@ -93,7 +93,8 @@ class TimelineItemPersistenceIntegrationTest {
                 TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 
         PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
-                "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명");
+                "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명",
+                "https://cdn.example/hash/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회의실 A", "설명", false);
         LocationPayload location = new LocationPayload(37.5445, 127.0557,
                 "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
