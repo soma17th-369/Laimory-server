@@ -108,6 +108,20 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | rawId 중복 제외 | append 시 이미 timeline_items에 저장된 rawId를 가진 source item은 재저장하지 않는다(신규 rawId만 새 이벤트로 append — 중복 이벤트 방지). |
 | start_at 충돌 회피 | 새 이벤트의 start_at이 기존 이벤트의 start_at과 정확히 같으면 +10분씩 밀어 앵커 중복을 피한다(best-effort). |
 
+## 사용자 / 인증
+
+| 한글명 | 영문명 | 설명 |
+| --- | --- | --- |
+| 사용자 | User | 소셜 로그인으로 생성되는 서비스 사용자다. 유일성은 `(provider, provider_user_id)`로만 판별하고 email 병합은 금지한다(계정 탈취 통로). |
+| 로그인 제공자 | Provider | 소셜 로그인 제공자다. `GOOGLE`/`KAKAO`. |
+| 제공자 사용자 ID | Provider User Id | OIDC id_token의 `sub`다. provider 안에서 사용자를 유일하게 식별한다. |
+| 액세스 토큰 | Access Token | 자체 발급 HS256 JWT(~15분)다. 모든 인증 API(`/a/api`) 요청에 `Authorization: Bearer`로 첨부한다. 서버는 저장하지 않고 서명·만료만 검증한다(stateless). 클레임은 iss/sub(userId)/iat/exp만 — PII 금지. |
+| 리프레시 토큰 | Refresh Token | access 재발급 전용 불투명 랜덤 토큰(~30일)이다. DB(`refresh_tokens`)에 SHA-256 hex 해시만 저장한다. JWT가 아니다. |
+| 회전 | Rotation | refresh는 일회용 — 사용할 때마다 새 토큰으로 교체되고 이전 것은 `ROTATED`가 된다. 클라이언트 refresh 호출은 single-flight로 직렬화해야 한다(동시 refresh는 재사용 탐지로 이어질 수 있음). |
+| 재사용 탐지 | Reuse Detection | `ROTATED`/`REVOKED` 토큰의 재제시다. 탐지 시 그 사용자의 refresh **전체**를 폐기한다(멀티 디바이스 전부 로그아웃 — 의도된 보안 동작). |
+| 앱 인증 코드 | App Code | 로그인 성공 → 앱 핸드오프용 60초 일회용 코드다. Redis에 해시 키로만 저장하고 GETDEL로 원자 소비한다. 자체 권한이 없고 토큰 교환에만 쓴다. |
+| 앱 검증값 | App Verifier / App Challenge | 앱이 로그인 시작 전 생성하는 비밀(verifier)과 그 해시(challenge = base64url(sha256(verifier)))다. app_code 교환을 로그인 시작 주체에 바인딩한다(핸드오프 PKCE — 딥링크 탈취 방어). |
+
 ## 사용 금지 표현
 
 | 금지 표현 | 대신 사용할 표현 |
@@ -122,4 +136,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | Metadata Map | Typed Payload |
 | Map<String, Object> payload | TimelineItemPayload |
 | photoUri / 사진 URI (서버 사진 식별자) | filename(DB 저장) 또는 photoUrl(응답). 단, 기기 로컬 URI는 `clientPhotoUri`로 별도 표현. |
+| 세션 토큰 / Session Token | Access Token 또는 Refresh Token (자체 인증은 세션이 아니다) |
+| 소셜 토큰 (자체 토큰 의미로) | Access Token / Refresh Token. provider 발급물은 id_token 등으로 명시 |
+| 인가 코드 / Authorization Code (자체 핸드오프 코드 의미로) | App Code (Authorization Code는 OAuth provider의 code만 가리킨다) |
 

@@ -41,6 +41,14 @@ public class PrefixedRedis {
     }
 
     /**
+     * 값을 원자적으로 읽고 삭제한다(GETDEL, Redis 6.2+). 키가 없으면 null.
+     * 일회용 코드 소비용 — 동시 소비 경합에서 정확히 한 호출만 값을 받는다.
+     */
+    public String getAndDelete(String logicalKey) {
+        return template.opsForValue().getAndDelete(prefix + logicalKey);
+    }
+
+    /**
      * 키 값을 원자적으로 1 증가시키고 증가 후 값을 반환한다(키가 없으면 0에서 시작해 1을 반환).
      * 최초 생성(반환 1)일 때만 TTL을 부여한다.
      */

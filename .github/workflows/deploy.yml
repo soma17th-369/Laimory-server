@@ -57,6 +57,9 @@ jobs:
           # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
           read -r -d '' SCRIPT <<EOF || true
           set -e
+          # pre-flight: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를 내리기 전에 실패시켜
+          # "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다. (JWT_SECRET은 HS256 최소 32자)
+          grep -qE '^JWT_SECRET=.{32,}\$' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env JWT_SECRET missing or shorter than 32 chars"; exit 1; }
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
           docker pull ${IMG}
           docker stop laimory 2>/dev/null || true
