@@ -45,7 +45,7 @@ public class TimelineDraftTaskService {
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
-    private final SourceItemGeoEnrichmentService sourceItemGeoEnrichmentService;
+    private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
     private final ObjectMapper objectMapper;
 
@@ -71,15 +71,19 @@ public class TimelineDraftTaskService {
         RecordDates.requireValidTimeZone(recordTimeZone);
         LocalDate recordDate = RecordDates.resolveRecordDate(recordAt);
 
-        dailyRecordService.findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate)
+        // enrich의 photoUrl 키 파생과 draft row의 user_id는 반드시 같은 사용자여야 한다(불변식) —
+        // 인증 도입 시 이 변수 한 곳만 바꾼다(두 지점이 따로 놀면 남의 키로 URL을 파생하는 버그).
+        long userId = TimelineDefaults.DEFAULT_USER_ID;
+
+        dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
                     throw new BusinessException(ErrorCode.ERROR_1003);
                 });
 
-        // 지오코딩 enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — SAVED 409 거절 뒤에 둬서 낭비 방지).
-        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 실패는 내부에서 필드 null로 강등된다.
-        List<SourceItemDto> enrichedItems = sourceItemGeoEnrichmentService.enrich(sourceItems);
+        // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — SAVED 409 거절 뒤에 둬서 낭비 방지).
+        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩 실패는 내부에서 필드 null로 강등된다.
+        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(sourceItems, userId);
 
         String taskId = UuidV7.randomUuidV7().toString();
         // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
@@ -89,7 +93,7 @@ public class TimelineDraftTaskService {
         // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
         List<TimelineDraftSourceItem> rows = enrichedItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
-                        taskId, TimelineDefaults.DEFAULT_USER_ID,
+                        taskId, userId,
                         src.itemType(), src.rawId(), src.startAt(), src.endAt(),
                         objectMapper.valueToTree(src.payload())))
                 .toList();

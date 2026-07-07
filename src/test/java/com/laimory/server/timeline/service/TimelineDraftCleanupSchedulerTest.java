@@ -60,7 +60,9 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftSourceItem photoRow(long id, String filename) {
         TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
-                MAPPER.valueToTree(new PhotoPayload(filename, "content://x", 1.0, 2.0, null)));
+                // photoUrl이 payload에 있어도 S3 삭제 key는 계속 filename+userId에서 파생된다(URL 파싱 안 함).
+                MAPPER.valueToTree(new PhotoPayload(filename, "content://x", 1.0, 2.0, null,
+                        "https://cdn.example/hash/photos/" + filename)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }

@@ -37,8 +37,11 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>실행: docker compose up -d 후 ./gradlew integrationTest
  */
+// spring.http.client.read-timeout(전역 2s — 지오코딩 외부 호출용)이 TestRestTemplate에도 적용되는데,
+// 컨텍스트 기동 직후 첫 POST는 워밍업(JIT·커넥션 풀)으로 2s를 간헐적으로 넘겨 flaky했다 → 이 컨텍스트만 완화.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT,
-        properties = {"app.ai.mode=fake", "server.port=8080"})
+        properties = {"app.ai.mode=fake", "server.port=8080",
+                "spring.http.client.connect-timeout=10s", "spring.http.client.read-timeout=10s"})
 @ActiveProfiles("docker")
 @Tag("integration")
 class FakeAiDispatcherEndToEndIntegrationTest {
@@ -117,6 +120,9 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         // rawId는 요청 → draft → finalize → 폴링 응답까지 그대로 echo된다.
         assertThat(events.get(0).path("items").get(0).path("rawId").asText())
                 .isEqualTo("0197b1c2-0000-7000-8000-000000000042");
+        // photoUrl은 draft 저장 시 서버가 주입한 값이 finalize 복사를 거쳐 응답까지 유지된다.
+        assertThat(events.get(0).path("items").get(0).path("payload").path("photoUrl").asText())
+                .startsWith("https://");
         assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();

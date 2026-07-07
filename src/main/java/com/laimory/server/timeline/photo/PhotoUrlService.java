@@ -7,8 +7,11 @@ import org.springframework.stereotype.Service;
  * 사진 서빙용 CloudFront URL(비서명, 안정 URL) 구성기.
  *
  * <p>서빙은 서명 없이 {@code https://{cdnDomain}/{fullKey}} 형태의 안정 URL을 그대로 사용한다(만료/서명
- * 쿼리스트링 없음). DB에는 파일명만 저장하고 전체 key는 사용자 id로부터 {@link PhotoObjectKeys#fullKey}로
- * 파생한다. CDN 도메인({@code photo.cdn.domain})만 설정에서 주입한다.
+ * 쿼리스트링 없음). 전체 key는 사용자 id로부터 {@link PhotoObjectKeys#fullKey}로 파생하고,
+ * CDN 도메인({@code photo.cdn.domain})만 설정에서 주입한다.
+ *
+ * <p>PHOTO payload 저장 전 주입용이다 — draft 저장 시 enrich 단계가 이 URL을 payload의 {@code photoUrl}로
+ * 넣어 DB에 저장하고(AI가 HTTP GET으로 소비), 응답은 저장본을 그대로 통과시킨다(읽기 시점 재구성 없음).
  */
 @Service
 public class PhotoUrlService {

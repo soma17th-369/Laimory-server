@@ -26,8 +26,11 @@ class TimelineItemPayloadJsonTest {
 
     @Test
     void photoPayload_hasNoTypeInfo() throws Exception {
-        String json = objectMapper.writeValueAsString(new PhotoPayload("u", "content://x", 1.0, 2.0, "설명"));
+        String json = objectMapper.writeValueAsString(
+                new PhotoPayload("u", "content://x", 1.0, 2.0, "설명", "https://cdn.example/u"));
         assertThat(json).doesNotContain("itemType");
+        // photoUrl은 값이 있으면 직렬화된다(서버 주입 후 저장 JSON에 포함).
+        assertThat(json).contains("\"photoUrl\":\"https://cdn.example/u\"");
     }
 
     @Test
@@ -73,7 +76,7 @@ class TimelineItemPayloadJsonTest {
         // 쓰기 경로(TimelineDraftTaskService의 valueToTree)에서 null 필드는 저장 JSON에 남지 않는다
         // (@JsonInclude(NON_NULL) — record 하나라도 애노테이션이 빠지면 여기서 잡힌다).
         List<TimelineItemPayload> payloads = List.of(
-                new PhotoPayload("u", "c", null, null, null),
+                new PhotoPayload("u", "c", null, null, null, null),
                 new CalendarPayload("주간 회의", null, null, null),
                 new LocationPayload(37.5445, 127.0557, null, null, null),
                 new MovementPayload(new MovementEndpoint(37.4979, 127.0276, null, null),
@@ -126,14 +129,16 @@ class TimelineItemPayloadJsonTest {
     @Test
     void sourceItemDto_externalProperty_roundTrip_photo() throws Exception {
         String json = """
-                {"itemType":"PHOTO","startAt":"2026-06-17T09:00:00","endAt":null,                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0}}
+                {"itemType":"PHOTO","startAt":"2026-06-17T09:00:00","endAt":null,\
+                 "payload":{"filename":"u","clientPhotoUri":"c","latitude":1.0,"longitude":2.0,\
+                            "photoUrl":"https://cdn.example/u"}}
                 """;
 
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.itemType()).isEqualTo(ItemType.PHOTO);
         assertThat(dto.payload()).isInstanceOf(PhotoPayload.class)
-                .isEqualTo(new PhotoPayload("u", "c", 1.0, 2.0, null));
+                .isEqualTo(new PhotoPayload("u", "c", 1.0, 2.0, null, "https://cdn.example/u"));
     }
 
     @Test
@@ -189,7 +194,7 @@ class TimelineItemPayloadJsonTest {
         SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
 
         assertThat(dto.payload()).isInstanceOf(PhotoPayload.class)
-                .isEqualTo(new PhotoPayload("u", "c", 1.0, 2.0, null));
+                .isEqualTo(new PhotoPayload("u", "c", 1.0, 2.0, null, null));
         assertThat(dto.itemType()).isEqualTo(ItemType.PHOTO);
     }
 
