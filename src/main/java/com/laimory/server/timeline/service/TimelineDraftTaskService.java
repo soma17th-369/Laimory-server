@@ -10,7 +10,10 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.entity.TimelineDraftTask;
+import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
@@ -20,7 +23,13 @@ import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +54,8 @@ public class TimelineDraftTaskService {
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineEventService timelineEventService;
+    private final TimelineItemService timelineItemService;
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
     private final ObjectMapper objectMapper;
@@ -75,15 +86,26 @@ public class TimelineDraftTaskService {
         // 인증 도입 시 이 변수 한 곳만 바꾼다(두 지점이 따로 놀면 남의 키로 URL을 파생하는 버그).
         long userId = TimelineDefaults.DEFAULT_USER_ID;
 
-        dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
+        Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
+        existingRecord
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
                     throw new BusinessException(ErrorCode.ERROR_1003);
                 });
 
-        // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — SAVED 409 거절 뒤에 둬서 낭비 방지).
+        // append 중복 방지: 요청 배치 내 중복 rawId를 dedupe하고, 같은 날짜에 이미 저장된 rawId(기존 event의 item)를 제외한다.
+        // 이미 저장된 event는 사용자 소유라 서버가 재그룹핑하지 않는다 — 신규 rawId만 새 event로 append한다.
+        List<SourceItemDto> newItems = excludeAlreadySaved(dedupeByRawId(sourceItems), existingRecord);
+        if (newItems.isEmpty()) {
+            throw new BusinessException(ErrorCode.ERROR_1013);
+        }
+
+        // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
+        TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems, recordAt);
+
+        // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
         // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩 실패는 내부에서 필드 null로 강등된다.
-        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(sourceItems, userId);
+        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
 
         String taskId = UuidV7.randomUuidV7().toString();
         // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
@@ -101,7 +123,7 @@ public class TimelineDraftTaskService {
 
         // 2. Redis PROCESSING 기록. 실패하면 방금 저장한 draft를 보상 삭제하고 전파한다(고아 draft 방지).
         try {
-            timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, callbackTokenHash);
+            timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow, callbackTokenHash);
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
             throw e;
@@ -118,6 +140,67 @@ public class TimelineDraftTaskService {
         }
 
         return taskId;
+    }
+
+    /** 요청 배치 내 중복 rawId를 제거한다(첫 항목 유지). 유출 방지로 로그엔 개수만 남긴다(rawId는 클라 입력값). */
+    private List<SourceItemDto> dedupeByRawId(List<SourceItemDto> sourceItems) {
+        Set<String> seen = new LinkedHashSet<>();
+        List<SourceItemDto> deduped = new ArrayList<>();
+        for (SourceItemDto item : sourceItems) {
+            if (seen.add(item.rawId())) {
+                deduped.add(item);
+            }
+        }
+        if (deduped.size() < sourceItems.size()) {
+            log.warn("dropped duplicate rawId source items in request: dropped={} kept={}",
+                    sourceItems.size() - deduped.size(), deduped.size());
+        }
+        return deduped;
+    }
+
+    /**
+     * 같은 날짜에 이미 저장된 rawId(기존 event의 timeline_items)를 제외한다. record가 없거나(그날 첫 append)
+     * 기존 event가 없으면 그대로 통과한다. leaf 서비스 합성으로 조회한다(TimelineItemRepository 직접 접근 금지).
+     */
+    private List<SourceItemDto> excludeAlreadySaved(List<SourceItemDto> items, Optional<DailyRecord> existingRecord) {
+        if (existingRecord.isEmpty()) {
+            return items;
+        }
+        List<Long> eventIds = timelineEventService.findByDailyRecordId(existingRecord.get().getDailyRecordId()).stream()
+                .map(TimelineEvent::getTimelineEventId)
+                .toList();
+        List<String> rawIds = items.stream().map(SourceItemDto::rawId).toList();
+        Set<String> savedRawIds = timelineItemService.findSavedRawIds(eventIds, rawIds);
+        if (savedRawIds.isEmpty()) {
+            return items;
+        }
+        return items.stream().filter(item -> !savedRawIds.contains(item.rawId())).toList();
+    }
+
+    /**
+     * 신규 item에서 AI 그룹핑 대상 시간 범위를 만든다. start=min(startAt??endAt), end=max(endAt??startAt)을
+     * recordAt으로 클램프한다(미래 캘린더 일정 방어; recordAt은 클라 벽시계 "지금"이라 item 시각과 같은 좌표계).
+     * 시간이 전혀 없는 item만 있으면 null(범위 없음).
+     */
+    private TimelineDraftTask.TimelineWindow computeTimelineWindow(List<SourceItemDto> items, LocalDateTime recordAt) {
+        LocalDateTime startTime = items.stream()
+                .map(item -> item.startAt() != null ? item.startAt() : item.endAt())
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+        if (startTime == null) {
+            return null;
+        }
+        LocalDateTime maxEnd = items.stream()
+                .map(item -> item.endAt() != null ? item.endAt() : item.startAt())
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .orElse(startTime);
+        LocalDateTime endTime = maxEnd.isAfter(recordAt) ? recordAt : maxEnd;
+        if (endTime.isBefore(startTime)) {
+            endTime = startTime;
+        }
+        return new TimelineDraftTask.TimelineWindow(startTime, endTime);
     }
 
     /**

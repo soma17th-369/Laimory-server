@@ -52,7 +52,10 @@ public enum ErrorCode {
     ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR),  // finalize 검증/조립 실패
 
     // ── ERROR_1xxx: timeline 콜백 인증/소비 실패 — 1002와 같은 성격의 401, task 실패 분류 아님 ──
-    ERROR_1012(HttpStatus.UNAUTHORIZED);   // 이미 사용된 콜백 토큰(원자적 소비 게이트 거부 — 같은 토큰 재전송 불가)
+    ERROR_1012(HttpStatus.UNAUTHORIZED),   // 이미 사용된 콜백 토큰(원자적 소비 게이트 거부 — 같은 토큰 재전송 불가)
+
+    // ── ERROR_1xxx: timeline append 도메인 거절 ──
+    ERROR_1013(HttpStatus.CONFLICT);       // append 요청의 모든 item이 이미 타임라인에 저장됨(추가할 신규 item 없음)
 
     /** task 실패 분류 코드 부분집합. {@code markFailed} 멤버십 가드·폴링 read-side 검증이 참조한다. */
     public static final Set<ErrorCode> TASK_FAILURE_CODES =

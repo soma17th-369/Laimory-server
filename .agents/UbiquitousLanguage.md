@@ -91,6 +91,8 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 작업 ID | Task ID | 작성 작업의 식별자(UUID)다. 클라이언트가 이 ID로 결과를 폴링한다. |
 | 작업 상태 | Task Status | 작성 작업의 진행 상태다. `PROCESSING`(진행중), `SUCCESS`(완료), `FAILED`(실패) 중 하나다. |
 | 타임라인 이벤트 제안 콜백 | Timeline Event Suggestion Callback | AI가 타임라인 이벤트 제안 결과를 서버로 되돌려주는 내부 호출이다. source item은 POST 시점에 MySQL(`timeline_draft_source_items`)에 저장되고, 이 콜백 시점에 최종 timeline(daily record·events·items)이 저장된다. |
+| 타임라인 윈도우 | Timeline Window | 이번 작성 작업에서 AI가 이벤트로 묶을 신규 source item의 시간 범위(`startTime`/`endTime`)다. Redis task에 저장되어 AI가 직접 읽는다. 이미 저장된 item을 제외한 신규 item에서 계산하며, `endTime`은 recordAt으로 클램프한다(미래 일정 방어). |
+| 사용자 메모리 | User Memory | AI 개인화 입력(`usersCharacter` 등)이다. Redis task에 저장되어 AI가 직접 읽는다. 현재는 shape만 두고 값은 채우지 않는다(공급원 미정). |
 
 ## 저장 규칙
 
@@ -103,6 +105,8 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 단일 트랜잭션 | Daily Record, Timeline Events, Timeline Items 저장은 하나의 DB 트랜잭션으로 처리한다. |
 | AI 호출 위치 | AI 호출은 DB 트랜잭션 밖에서 수행한다. |
 | 추가 데이터 처리 | 같은 날짜에 새 source item이 들어오면 기존 event, item, title, subtitle, memo는 자동 변경하지 않는다. 새 이벤트로 append한다. |
+| rawId 중복 제외 | append 시 이미 timeline_items에 저장된 rawId를 가진 source item은 재저장하지 않는다(신규 rawId만 새 이벤트로 append — 중복 이벤트 방지). |
+| start_at 충돌 회피 | 새 이벤트의 start_at이 기존 이벤트의 start_at과 정확히 같으면 +10분씩 밀어 앵커 중복을 피한다(best-effort). |
 
 ## 사용 금지 표현
 

@@ -100,6 +100,16 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1013));
+
+        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1013"));
+    }
+
+    @Test
     void createPhotoUploads_returns200WithUploads() throws Exception {
         when(photoUploadService.createUploads(any(), any()))
                 .thenReturn(new PhotoUploadCreateResponse(List.of(

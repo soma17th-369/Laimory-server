@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -60,9 +62,33 @@ class TimelineTaskStoreTest {
     }
 
     @Test
+    void save_serializesAiContractShape_fieldNamesAndWindowFormat() throws Exception {
+        // AI가 이 value JSON을 직접 읽는 계약 — 필드명·날짜 포맷이 고정돼야 한다.
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                new TimelineDraftTask.TimelineWindow(
+                        LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
+                "token-hash");
+
+        store.save("abc", task, Duration.ofHours(1));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        String json = jsonCaptor.getValue();
+        assertThat(json).contains("\"recordDate\":\"2026-05-08\"");
+        assertThat(json).contains("\"recordTimezone\":\"Asia/Seoul\"");
+        assertThat(json).contains("\"userMemory\":{\"usersCharacter\":null}");
+        assertThat(json).contains(
+                "\"timelineWindow\":{\"startTime\":\"20260508T183000\",\"endTime\":\"20260508T224100\"}");
+    }
+
+    @Test
     void find_returnsDeserializedTask() throws Exception {
         TimelineDraftTask task = TimelineDraftTask.processing(
-                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul", "token-hash");
+                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul",
+                new TimelineDraftTask.TimelineWindow(
+                        LocalDate.of(2026, 5, 8).atTime(9, 0), LocalDate.of(2026, 5, 8).atTime(11, 0)),
+                "token-hash");
         when(redis.get("timeline:draft-task:abc")).thenReturn(objectMapper.writeValueAsString(task));
 
         Optional<TimelineDraftTask> found = store.find("abc");
@@ -72,6 +98,11 @@ class TimelineTaskStoreTest {
         assertThat(found.get().recordDate()).isEqualTo(LocalDate.of(2026, 5, 8));
         assertThat(found.get().recordAt()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(12, 0));
         assertThat(found.get().recordTimezone()).isEqualTo("Asia/Seoul");
+        // timelineWindow는 AI 계약 포맷(yyyyMMdd'T'HHmmss)으로 직렬화되고 그대로 왕복돼야 한다.
+        assertThat(found.get().timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(9, 0));
+        assertThat(found.get().timelineWindow().endTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(11, 0));
+        // userMemory는 shape만(usersCharacter=null).
+        assertThat(found.get().userMemory().usersCharacter()).isNull();
         assertThat(found.get().callbackTokenHash()).isEqualTo("token-hash");
         assertThat(found.get()).isEqualTo(task);
     }
