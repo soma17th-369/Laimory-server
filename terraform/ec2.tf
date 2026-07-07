@@ -19,7 +19,10 @@ resource "aws_instance" "was" {
   vpc_security_group_ids = [aws_security_group.was.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
-  # user_data(.env) 변경으로 인스턴스 재생성 방지 — dev repoint는 콘솔에서 .env 수동 편집으로 처리
+  # 기존 dev/prod WAS는 nginx/certbot/.env를 SSM으로 수동 관리한다(user_data는 신규 박스 최초 부팅 재현용).
+  # user_data_replace_on_change=false만으로는 부족하다 — 이건 "교체 대신 stop/start로 user_data를 갱신"하는
+  # 옵션이라, user_data가 바뀌면 apply가 기존 박스를 stop/start(다운타임)한다. 그래서 아래 lifecycle에
+  # user_data를 ignore_changes로 넣어 기존 박스엔 코드의 user_data 변경을 반영하지 않는다.
   user_data_replace_on_change = false
 
   user_data = templatefile("${path.module}/user_data/was.sh.tftpl", {
@@ -33,6 +36,8 @@ resource "aws_instance" "was" {
     redis_ssl        = "false"
     photo_bucket     = aws_s3_bucket.photos.bucket
     photo_cdn_domain = aws_cloudfront_distribution.photos.domain_name
+    api_domain       = var.api_domains[each.key]
+    certbot_email    = var.certbot_email
   })
 
   root_block_device {
@@ -43,7 +48,9 @@ resource "aws_instance" "was" {
   tags = { Name = "${var.project_name}-${each.key}-was-01" }
 
   lifecycle {
-    ignore_changes = [ami]
+    # ami: most_recent 롤로 재생성 방지. user_data: 기존 박스 stop/start·drift 방지(위 주석) —
+    # 신규 박스는 생성 시점 user_data로 부팅되므로 재현성은 유지된다.
+    ignore_changes = [ami, user_data]
   }
 }
 

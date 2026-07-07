@@ -94,6 +94,22 @@ variable "root_volume_gib" {
   default     = 20
 }
 
+# ---------- 도메인 / TLS ----------
+
+variable "api_domains" {
+  description = "환경별 API 도메인 (Route53 A 레코드 + nginx server_name + certbot 발급 대상)"
+  type        = map(string)
+  default = {
+    dev  = "dev.laimory.app"
+    prod = "laimory.app"
+  }
+}
+
+variable "certbot_email" {
+  description = "Let's Encrypt(certbot) 만료 알림 이메일"
+  type        = string
+}
+
 # ---------- 애플리케이션 ----------
 
 variable "app_port" {
