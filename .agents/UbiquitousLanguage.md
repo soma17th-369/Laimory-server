@@ -91,7 +91,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 작업 ID | Task ID | 작성 작업의 식별자(UUID)다. 클라이언트가 이 ID로 결과를 폴링한다. |
 | 작업 상태 | Task Status | 작성 작업의 진행 상태다. `PROCESSING`(진행중), `SUCCESS`(완료), `FAILED`(실패) 중 하나다. |
 | 타임라인 이벤트 제안 콜백 | Timeline Event Suggestion Callback | AI가 타임라인 이벤트 제안 결과를 서버로 되돌려주는 내부 호출이다. source item은 POST 시점에 MySQL(`timeline_draft_source_items`)에 저장되고, 이 콜백 시점에 최종 timeline(daily record·events·items)이 저장된다. |
-| 타임라인 윈도우 | Timeline Window | 이번 작성 작업에서 AI가 이벤트로 묶을 신규 source item의 시간 범위(`startTime`/`endTime`)다. Redis task에 저장되어 AI가 직접 읽는다. 이미 저장된 item을 제외한 신규 item에서 계산하며, `endTime`은 recordAt으로 클램프한다(진행 중 일정 방어) — window는 항상 recordAt 이하 구간이다. 시간이 없거나 신규 item이 전부 recordAt 이후면(관측 구간 없음) null이다. |
+| 타임라인 윈도우 | Timeline Window | 이번 작성 작업에서 AI가 이벤트로 묶을 신규 source item의 시간 범위(`startTime`/`endTime`)다. Redis task에 저장되어 AI가 직접 읽는다. 이미 저장된 item을 제외한 신규 item에서 계산한다(start=min, end=max). `endAt`은 후속 append에 영향을 주지 않으므로 recordAt으로 클램프하지 않는다(미래에 끝나는 캘린더 일정도 실제 구간 그대로). 시간 있는 신규 item이 없으면 null이다. |
 | 사용자 메모리 | User Memory | AI 개인화 입력(`usersCharacter` 등)이다. Redis task에 저장되어 AI가 직접 읽는다. 현재는 shape만 두고 값은 채우지 않는다(공급원 미정). |
 
 ## 저장 규칙

@@ -524,8 +524,8 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_computesTimelineWindow_clampedToRecordAt() {
-        // 신규 item 9:00~21:00(미래 endAt). window=[9:00, recordAt(12:00)로 클램프].
+    void createDraftTask_computesTimelineWindowFromNewItems_noClamp() {
+        // 신규 item 9:00~21:00 → window=[9:00, 21:00]. endAt은 후속 append에 영향 없어 recordAt 클램프하지 않는다.
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.HEALTH, "h-1", LocalDateTime.of(2026, 6, 17, 9, 0), LocalDateTime.of(2026, 6, 17, 21, 0),
@@ -538,13 +538,12 @@ class TimelineDraftTaskServiceTest {
         verify(timelineTaskService).createProcessing(anyString(), eq(DATE), eq(RECORD_AT), eq(ZONE),
                 windowCaptor.capture(), anyString());
         assertThat(windowCaptor.getValue().startTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
-        assertThat(windowCaptor.getValue().endTime()).isEqualTo(RECORD_AT);
+        assertThat(windowCaptor.getValue().endTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 21, 0));
     }
 
     @Test
-    void createDraftTask_futureOnlyItems_yieldsNullTimelineWindow() {
-        // 신규 item이 전부 recordAt(12:00) 이후(21:00~22:00) → 관측 구간 없음 → timelineWindow=null.
-        // (클램프가 floor에 되밀려 미래 구간으로 남지 않는지 회귀 방지.)
+    void createDraftTask_futureOnlyItems_keepRealWindowNotClamped() {
+        // 신규 item이 전부 recordAt(12:00) 이후(21:00~22:00) → window=[21:00, 22:00] 그대로(클램프/잘림 없음).
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.HEALTH, "h-1", LocalDateTime.of(2026, 6, 17, 21, 0), LocalDateTime.of(2026, 6, 17, 22, 0),
@@ -556,6 +555,7 @@ class TimelineDraftTaskServiceTest {
                 ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
         verify(timelineTaskService).createProcessing(anyString(), eq(DATE), eq(RECORD_AT), eq(ZONE),
                 windowCaptor.capture(), anyString());
-        assertThat(windowCaptor.getValue()).isNull();
+        assertThat(windowCaptor.getValue().startTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 21, 0));
+        assertThat(windowCaptor.getValue().endTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 22, 0));
     }
 }

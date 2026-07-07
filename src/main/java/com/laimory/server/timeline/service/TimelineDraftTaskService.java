@@ -101,7 +101,7 @@ public class TimelineDraftTaskService {
         }
 
         // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
-        TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems, recordAt);
+        TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems);
 
         // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
         // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩 실패는 내부에서 필드 null로 강등된다.
@@ -178,29 +178,26 @@ public class TimelineDraftTaskService {
     }
 
     /**
-     * 신규 item에서 AI 그룹핑 대상 시간 범위를 만든다. start=min(startAt??endAt), end=max(endAt??startAt)을
-     * recordAt으로 클램프한다(진행 중 일정 방어; recordAt은 클라 벽시계 "지금"이라 item 시각과 같은 좌표계).
-     * 시간이 전혀 없거나 신규 item이 전부 recordAt 이후면(관측 구간 없음) null이다 — window는 항상 recordAt 이하 구간이다.
+     * 신규 item에서 AI 그룹핑 대상 시간 범위를 만든다. start=min(startAt??endAt), end=max(endAt??startAt).
+     * endAt은 후속 append의 startAt·nudge(둘 다 startAt만 참조)에 전혀 영향을 주지 않으므로 recordAt 클램프를 하지 않는다 —
+     * 캘린더처럼 미래에 끝나는 일정도 실제 구간 그대로 AI에 전달한다(클램프하면 이벤트가 잘려 보여 오히려 해롭다).
+     * 시간이 전혀 없는 item만 있으면 null(범위 없음).
      */
-    private TimelineDraftTask.TimelineWindow computeTimelineWindow(List<SourceItemDto> items, LocalDateTime recordAt) {
+    private TimelineDraftTask.TimelineWindow computeTimelineWindow(List<SourceItemDto> items) {
         LocalDateTime startTime = items.stream()
                 .map(item -> item.startAt() != null ? item.startAt() : item.endAt())
                 .filter(Objects::nonNull)
                 .min(Comparator.naturalOrder())
                 .orElse(null);
-        // 시간 있는 신규 item이 없거나(둘 다 null) 전부 recordAt 이후(관측 구간 없음)면 window 없음.
-        // 후자를 막지 않으면 미래 item이 recordAt 클램프를 아래 floor로 되밀어 window가 미래 구간으로 남는다(AI 계약 위반).
-        if (startTime == null || startTime.isAfter(recordAt)) {
+        if (startTime == null) {
             return null;
         }
-        LocalDateTime maxEnd = items.stream()
+        LocalDateTime endTime = items.stream()
                 .map(item -> item.endAt() != null ? item.endAt() : item.startAt())
                 .filter(Objects::nonNull)
                 .max(Comparator.naturalOrder())
                 .orElse(startTime);
-        LocalDateTime endTime = maxEnd.isAfter(recordAt) ? recordAt : maxEnd;
-        // 방어적 floor: startTime <= recordAt이 보장되므로 보통은 endTime >= startTime이지만,
-        // endAt < startAt인 malformed item이면 endTime을 startTime으로 올린다(여전히 recordAt 이하).
+        // 방어적 floor: endAt < startAt인 malformed item이면 endTime을 startTime으로 올린다(음수 구간 방지).
         if (endTime.isBefore(startTime)) {
             endTime = startTime;
         }
