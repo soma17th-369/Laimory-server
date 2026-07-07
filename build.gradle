@@ -26,6 +26,8 @@ dependencies {
 	implementation 'software.amazon.awssdk:s3'
 	// JSON 구조화 로그(ELK 수집용 stdout). Spring BOM 비관리 → 버전 명시. 8.x = logback 1.5.x 호환.
 	implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
+	// 자체 JWT(access token) HS256 서명/검증. Spring BOM 비관리 → 버전 명시.
+	implementation 'com.nimbusds:nimbus-jose-jwt:10.3'
 	// Swagger UI(OpenAPI 문서 자동 생성). 노출은 SWAGGER_ENABLED로 제어(기본 off — application.properties 참고). Spring BOM 비관리 → 버전 명시.
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
 	compileOnly 'org.projectlombok:lombok'

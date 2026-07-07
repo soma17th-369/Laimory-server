@@ -105,6 +105,38 @@ CREATE TABLE IF NOT EXISTS timeline_draft_event_suggestions (
     KEY idx_draft_event_created (created_at)          -- cleanup 보관기간 스캔용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).
+CREATE TABLE IF NOT EXISTS users (
+    user_id BIGINT NOT NULL AUTO_INCREMENT,
+    provider VARCHAR(32) NOT NULL,                   -- GOOGLE|KAKAO
+    provider_user_id VARCHAR(255) NOT NULL,          -- OIDC id_token의 sub
+    email VARCHAR(255) NULL,                         -- Kakao는 미동의 시 NULL
+    nickname VARCHAR(100) NULL,
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (user_id),
+    UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- refresh token(원문 미저장 — SHA-256 hex 해시만). FK 없음(기존 방침), parent_id는 회전 계보 감사용 soft ref.
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    refresh_token_id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,                 -- sha256 hex(항상 64자 — CHAR가 아닌 VARCHAR인 이유: ddl-auto=validate가 String 매핑에 VARCHAR를 요구)
+    status VARCHAR(32) NOT NULL,                     -- ACTIVE|ROTATED|REVOKED
+    parent_id BIGINT NULL,                           -- 회전 이전 토큰(soft ref, 감사용)
+    expires_at DATETIME(6) NOT NULL,
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (refresh_token_id),
+    UNIQUE KEY uq_refresh_tokens_token_hash (token_hash),
+    KEY idx_refresh_tokens_user (user_id)            -- 재사용 탐지 시 사용자 전체 폐기 스캔용
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,
 -- 신규 DB(마이그레이션/로컬)에서 없으면 1건 생성한다(멱등 — 이미 있으면 no-op).
 INSERT INTO app_config (min_app_version, recommend_app_version)
