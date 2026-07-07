@@ -3,6 +3,7 @@ package com.laimory.server.auth.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /** refresh 발급·회전·폐기·재사용 탐지 계약: 조건부 claim으로 원자 회전, 재사용/만료/무효는 ERROR_2003, 재사용 시 전체 폐기. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
@@ -37,7 +39,9 @@ class RefreshTokenServiceTest {
     private static final long USER_ID = 99L;
 
     private RefreshTokenService newService() {
-        return new RefreshTokenService(refreshTokenRepository, REFRESH_TTL, CLOCK);
+        // no-op tx manager: TransactionTemplate.execute가 콜백을 그대로 실행하고 값을 돌려준다(getTransaction/commit는 no-op).
+        return new RefreshTokenService(
+                refreshTokenRepository, mock(PlatformTransactionManager.class), REFRESH_TTL, CLOCK);
     }
 
     /** refreshTokenId는 @GeneratedValue라 단위 테스트에서 null인 ACTIVE·미만료 엔티티. */

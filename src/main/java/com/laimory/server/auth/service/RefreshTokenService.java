@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * refresh token leaf 서비스(발급·회전·폐기·재사용 탐지). 자신과 1:1인 {@link RefreshTokenRepository}에만 접근한다.
@@ -27,13 +29,16 @@ public class RefreshTokenService {
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
 
     private final RefreshTokenRepository refreshTokenRepository;
+    private final TransactionTemplate transactionTemplate;
     private final Duration refreshTtl;
     private final Clock clock;
 
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
+                               PlatformTransactionManager transactionManager,
                                @Value("${app.auth.refresh-ttl}") Duration refreshTtl,
                                Clock clock) {
         this.refreshTokenRepository = refreshTokenRepository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.refreshTtl = refreshTtl;
         this.clock = clock;
     }
@@ -51,9 +56,13 @@ public class RefreshTokenService {
      * 제시된 refresh를 원자적으로 회전한다. 무효/만료는 {@code ERROR_2003}, 재사용(이미 ROTATED/REVOKED)은
      * 사용자 전체 폐기 후 {@code ERROR_2003}.
      *
-     * <p>의도적으로 메서드 트랜잭션을 두지 않는다: 재사용 탐지의 전체 폐기가 뒤따르는 throw와 함께
-     * 롤백되면 안 되므로, 각 repository 연산(조건부 UPDATE·save)이 자체 트랜잭션으로 즉시 커밋된다.
-     * (claim 커밋 후 신규 발급이 실패하는 극단 케이스는 해당 사용자 재로그인으로 수렴 — fail-safe.)
+     * <p><b>회전 승자의 claim + 새 refresh 저장은 한 트랜잭션</b>으로 묶는다(아래 {@code transactionTemplate}).
+     * 그 트랜잭션은 old row 락을 커밋까지 쥐므로, 같은 토큰으로 동시에 들어온 loser는 <b>승자 커밋 이후에야</b>
+     * {@code claim=0}을 관측한다 — 그 시점엔 승자의 새 ACTIVE refresh까지 커밋돼 있어, loser의
+     * {@code revokeAllByUserId}가 그 새 토큰까지 폐기한다(재사용 탐지 = 사용자 전체 폐기 계약 보장, RFC 9700).
+     *
+     * <p>반면 loser의 전체 폐기와 뒤따르는 throw는 트랜잭션 밖이다 — 폐기가 throw와 함께 롤백되면 안 되므로
+     * 승자 트랜잭션이 커밋된 뒤 별도 커밋된다.
      */
     public Rotation rotate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
@@ -64,13 +73,22 @@ public class RefreshTokenService {
         if (current.isExpired(LocalDateTime.now(clock))) {
             throw new BusinessException(ErrorCode.ERROR_2003);
         }
-        if (refreshTokenRepository.claimRotation(current.getRefreshTokenId()) != 1) {
-            // 이미 ROTATED/REVOKED 토큰의 재제시 = 재사용 탐지(동시 refresh 레이스 패자 포함 — 앱 계약: single-flight).
+
+        // 승자만 새 refresh를 받는다(claim + 저장이 한 트랜잭션). loser는 null을 받는다.
+        String newRefresh = transactionTemplate.execute(status -> {
+            if (refreshTokenRepository.claimRotation(current.getRefreshTokenId()) != 1) {
+                return null; // 이미 ROTATED/REVOKED = 재사용/레이스 loser
+            }
+            return issueChained(current.getUserId(), current.getRefreshTokenId());
+        });
+
+        if (newRefresh == null) {
+            // 재사용 탐지: 사용자 refresh 전체 폐기(승자 커밋 후 관측·별도 커밋). 그 뒤 throw.
             int revoked = refreshTokenRepository.revokeAllByUserId(current.getUserId());
             log.warn("refresh token reuse detected: userId={} revokedCount={}", current.getUserId(), revoked);
             throw new BusinessException(ErrorCode.ERROR_2003);
         }
-        return new Rotation(current.getUserId(), issueChained(current.getUserId(), current.getRefreshTokenId()));
+        return new Rotation(current.getUserId(), newRefresh);
     }
 
     /** 로그아웃: 해당 refresh만 폐기한다. 멱등 — 미존재/이미 폐기여도 조용히 성공(유효성 오라클 차단). */
