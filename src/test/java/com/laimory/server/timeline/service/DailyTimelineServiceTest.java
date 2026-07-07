@@ -187,6 +187,76 @@ class DailyTimelineServiceTest {
         verify(timelineDraftEventSuggestionService, never()).deleteByTaskId(anyString());
     }
 
+    @Test
+    void appendDailyTimeline_nudgesNewEventStartAtWhenCollidesWithExistingEvent() {
+        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(existing);
+        stubEventSaveWithSequentialIds();
+        // 기존(동결) event가 18:30 시작 → 새 event도 18:30이면 +10분 밀린다.
+        LocalDateTime t1830 = LocalDateTime.of(2026, 6, 17, 18, 30);
+        TimelineEvent frozen = TimelineEvent.of(100L, t1830, null, "기존", null);
+        ReflectionTestUtils.setField(frozen, "timelineEventId", 5L);
+        when(timelineEventService.findByDailyRecordId(100L)).thenReturn(List.of(frozen));
+
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t1830));
+        List<TimelineEventSuggestionDto> events = List.of(
+                new TimelineEventSuggestionDto("새", null, t1830, t1830.plusMinutes(5), List.of(10L)));
+
+        dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService).save(eventCaptor.capture());
+        TimelineEvent saved = eventCaptor.getValue();
+        assertThat(saved.getStartAt()).isEqualTo(t1830.plusMinutes(10));
+        // endAt(18:35)이 nudge된 startAt(18:40)보다 앞 → startAt으로 클램프.
+        assertThat(saved.getEndAt()).isEqualTo(t1830.plusMinutes(10));
+    }
+
+    @Test
+    void appendDailyTimeline_noStartAtCollision_keepsOriginalStartAtAndEndAt() {
+        DailyRecord existing = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(existing);
+        stubEventSaveWithSequentialIds();
+        TimelineEvent frozen = TimelineEvent.of(100L, LocalDateTime.of(2026, 6, 17, 18, 0), null, "기존", null);
+        ReflectionTestUtils.setField(frozen, "timelineEventId", 5L);
+        when(timelineEventService.findByDailyRecordId(100L)).thenReturn(List.of(frozen));
+
+        LocalDateTime t9 = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t9));
+        List<TimelineEventSuggestionDto> events = List.of(
+                new TimelineEventSuggestionDto("새", null, t9, t9.plusHours(1), List.of(10L)));
+
+        dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getStartAt()).isEqualTo(t9);
+        assertThat(eventCaptor.getValue().getEndAt()).isEqualTo(t9.plusHours(1));
+    }
+
+    @Test
+    void appendDailyTimeline_nudgesCollidingNewEventsWithinSameBatch() {
+        DailyRecord created = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
+        when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(created);
+        stubEventSaveWithSequentialIds();
+        // 기존 event 없음(그날 첫 append). 같은 12:00 시작 새 event 두 개 → 둘째는 12:10으로 밀린다.
+        LocalDateTime t12 = LocalDateTime.of(2026, 6, 17, 12, 0);
+        List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t12), photoRow(11, t12));
+        List<TimelineEventSuggestionDto> events = List.of(
+                new TimelineEventSuggestionDto("A", null, t12, null, List.of(10L)),
+                new TimelineEventSuggestionDto("B", null, t12, null, List.of(11L)));
+
+        dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService, times(2)).save(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues()).extracting(TimelineEvent::getStartAt)
+                .containsExactly(t12, t12.plusMinutes(10));
+    }
+
     // --- getDailyTimeline (읽기) ---
 
     @Test

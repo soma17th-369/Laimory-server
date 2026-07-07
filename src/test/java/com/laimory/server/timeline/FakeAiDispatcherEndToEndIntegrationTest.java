@@ -64,6 +64,61 @@ class FakeAiDispatcherEndToEndIntegrationTest {
             }
             """;
 
+    // 2회 append 시나리오용 rawId(A/B/C). filename은 식별자가 아니므로 셋이 공유해도 무방(rawId가 정체성).
+    private static final String RAW_A = "0197b1c2-0000-7000-8000-000000000042";
+    private static final String RAW_B = "0197b1c2-0000-7000-8000-000000000043";
+    private static final String RAW_C = "0197b1c2-0000-7000-8000-000000000044";
+
+    // append#1: A(09:00) + B(09:30).
+    private static final String APPEND1_BODY = """
+            {
+              "recordAt": "2000-01-02T12:00:00",
+              "recordTimeZone": "Asia/Seoul",
+              "sourceItems": [
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000042",
+                 "startAt": "2000-01-02T09:00:00", "endAt": null,
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
+                             "latitude": 1.0, "longitude": 2.0}},
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000043",
+                 "startAt": "2000-01-02T09:30:00", "endAt": null,
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://y",
+                             "latitude": 1.0, "longitude": 2.0}}
+              ]
+            }
+            """;
+
+    // append#2: B(이미 저장) + C(신규 10:00) → B는 필터로 제외되고 C만 새 이벤트로 append.
+    private static final String APPEND2_BODY = """
+            {
+              "recordAt": "2000-01-02T13:00:00",
+              "recordTimeZone": "Asia/Seoul",
+              "sourceItems": [
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000043",
+                 "startAt": "2000-01-02T09:30:00", "endAt": null,
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://y",
+                             "latitude": 1.0, "longitude": 2.0}},
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000044",
+                 "startAt": "2000-01-02T10:00:00", "endAt": null,
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://z",
+                             "latitude": 1.0, "longitude": 2.0}}
+              ]
+            }
+            """;
+
+    // append#3: 이미 저장된 B만 → 신규 0 → 409 ERROR_1013.
+    private static final String APPEND3_BODY = """
+            {
+              "recordAt": "2000-01-02T14:00:00",
+              "recordTimeZone": "Asia/Seoul",
+              "sourceItems": [
+                {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000043",
+                 "startAt": "2000-01-02T09:30:00", "endAt": null,
+                 "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://y",
+                             "latitude": 1.0, "longitude": 2.0}}
+              ]
+            }
+            """;
+
     @Autowired
     private TestRestTemplate restTemplate;
     @Autowired
@@ -131,6 +186,53 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         JsonNode again = poll(taskId).path("body");
         assertThat(again.path("status").asText()).isEqualTo("SUCCESS");
         assertThat(again.path("result").path("events").size()).isEqualTo(events.size());
+    }
+
+    @Test
+    void secondAppend_excludesAlreadySavedRawId_andAppendsOnlyNewItem() {
+        // append#1: A(042) + B(043) → fake가 1개 이벤트로 묶어 저장.
+        String task1 = postAndAwaitSuccess(APPEND1_BODY);
+        JsonNode firstEvents = poll(task1).path("body").path("result").path("events");
+        assertThat(firstEvents.size()).isEqualTo(1);
+        assertThat(rawIdsOf(firstEvents.get(0))).containsExactlyInAnyOrder(RAW_A, RAW_B);
+
+        // append#2: B(이미 저장) + C(신규) → B는 rawId 필터로 제외, C만 새 이벤트로 append.
+        String task2 = postAndAwaitSuccess(APPEND2_BODY);
+        JsonNode events = poll(task2).path("body").path("result").path("events");
+        assertThat(events.size()).isEqualTo(2); // 기존 이벤트 + 새 이벤트
+        List<String> allRawIds = new ArrayList<>();
+        events.forEach(ev -> allRawIds.addAll(rawIdsOf(ev)));
+        // 그날 전체에서 B는 딱 한 번(재저장 안 됨), A·C도 각 한 번.
+        assertThat(allRawIds).containsExactlyInAnyOrder(RAW_A, RAW_B, RAW_C);
+
+        // append#3: 이미 저장된 B만 → 신규 0 → 동기 409 ERROR_1013(작업 생성 안 됨).
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<JsonNode> rejected =
+                restTemplate.postForEntity(TASKS, new HttpEntity<>(APPEND3_BODY, headers), JsonNode.class);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(rejected.getBody().path("header").path("code").asText()).isEqualTo("ERROR_1013");
+    }
+
+    /** 작성 작업을 POST하고 SUCCESS까지 폴링 대기 후 taskId를 반환한다(cleanup 대상으로 등록). */
+    private String postAndAwaitSuccess(String body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<JsonNode> created =
+                restTemplate.postForEntity(TASKS, new HttpEntity<>(body, headers), JsonNode.class);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        String taskId = created.getBody().path("body").path("taskId").asText();
+        assertThat(taskId).isNotBlank();
+        createdTaskIds.add(taskId);
+        Awaitility.await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(500))
+                .untilAsserted(() -> assertThat(pollStatus(taskId)).isEqualTo("SUCCESS"));
+        return taskId;
+    }
+
+    private static List<String> rawIdsOf(JsonNode event) {
+        List<String> ids = new ArrayList<>();
+        event.path("items").forEach(item -> ids.add(item.path("rawId").asText()));
+        return ids;
     }
 
     private JsonNode poll(String taskId) {

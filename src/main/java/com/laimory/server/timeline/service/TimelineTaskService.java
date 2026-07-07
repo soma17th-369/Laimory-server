@@ -26,9 +26,10 @@ public class TimelineTaskService {
     private final TimelineTaskStore timelineTaskStore;
 
     public void createProcessing(String taskId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                 String callbackTokenHash) {
+                                 TimelineDraftTask.TimelineWindow timelineWindow, String callbackTokenHash) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, callbackTokenHash), PROCESSING_TTL);
+                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, timelineWindow, callbackTokenHash),
+                PROCESSING_TTL);
     }
 
     public void markSuccess(String taskId, LocalDate recordDate, String callbackTokenHash) {

@@ -127,4 +127,27 @@ class TimelineItemPersistenceIntegrationTest {
         assertThat((TimelineItemPayload) objectMapper.treeToValue(reloadedLocation.getPayload(), LocationPayload.class))
                 .isEqualTo(location);
     }
+
+    @Test
+    void findRawIdsByTimelineEventIdInAndRawIdIn_returnsOnlySavedRawIdsAmongCandidates() {
+        // append rawId 필터가 쓰는 projection 쿼리 — 메서드명/JPQL 정합을 실 DB로 검증(mockito론 못 잡음).
+        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 10),
+                LocalDateTime.of(2026, 5, 10, 12, 0), "Asia/Seoul"));
+        TimelineEvent event = timelineEventRepository.save(
+                TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 10, 9, 0), null, "하루", null));
+        timelineItemRepository.save(TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO, "raw-a",
+                LocalDateTime.of(2026, 5, 10, 9, 0), null, objectMapper.valueToTree(
+                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://a", 1.0, 2.0, null, null))));
+        timelineItemRepository.save(TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO, "raw-b",
+                LocalDateTime.of(2026, 5, 10, 10, 0), null, objectMapper.valueToTree(
+                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://b", 1.0, 2.0, null, null))));
+        em.flush();
+        em.clear();
+
+        // 후보 [raw-a, raw-c] 중 저장된 raw-a만 반환(raw-b는 후보 아님, raw-c는 미저장).
+        List<String> found = timelineItemRepository.findRawIdsByTimelineEventIdInAndRawIdIn(
+                List.of(event.getTimelineEventId()), List.of("raw-a", "raw-c"));
+
+        assertThat(found).containsExactly("raw-a");
+    }
 }

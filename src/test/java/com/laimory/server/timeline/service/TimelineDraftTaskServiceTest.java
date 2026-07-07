@@ -22,6 +22,8 @@ import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.entity.TimelineDraftTask;
+import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.payload.HealthPayload;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
@@ -33,6 +35,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,6 +58,10 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
+    private TimelineEventService timelineEventService;
+    @Mock
+    private TimelineItemService timelineItemService;
+    @Mock
     private SourceItemEnrichmentService sourceItemEnrichmentService;
     @Mock
     private TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
@@ -73,6 +80,7 @@ class TimelineDraftTaskServiceTest {
     void setUp() {
         service = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftSourceItemService,
+                timelineEventService, timelineItemService,
                 sourceItemEnrichmentService, timelineEventSuggestionDispatcher, new ObjectMapper());
         // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
@@ -93,7 +101,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         // recordDate가 recordAt+zone에서 정오 경계로 도출돼 createProcessing에 전달된다.
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
         // dispatch는 2-arg(taskId, token) — sourceItems·callbackUrl 없음.
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
 
@@ -102,7 +110,7 @@ class TimelineDraftTaskServiceTest {
                 timelineTaskService, timelineEventSuggestionDispatcher);
         order.verify(sourceItemEnrichmentService).enrich(anyList(), anyLong());
         order.verify(timelineDraftSourceItemService).saveAll(anyList());
-        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
+        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
         order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
     }
 
@@ -138,7 +146,7 @@ class TimelineDraftTaskServiceTest {
 
         // Redis에 저장되는 값(createProcessing 인자)은 해시, AI에 전달되는 값(dispatch 인자)은 원문이어야 한다.
         ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), hashCaptor.capture());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), hashCaptor.capture());
         ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), tokenCaptor.capture());
 
@@ -158,7 +166,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
     }
 
     @Test
@@ -172,7 +180,7 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
-        verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), anyString());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), any(), anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
     }
 
@@ -180,7 +188,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_whenRedisFails_compensatesByDeletingDraftsAndRethrows() {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("redis down"))
-                .when(timelineTaskService).createProcessing(anyString(), any(), any(), any(), anyString());
+                .when(timelineTaskService).createProcessing(anyString(), any(), any(), any(), any(), anyString());
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
                 .isInstanceOf(RuntimeException.class)
@@ -201,7 +209,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), anyString());
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
         // raw 메시지("boom")는 저장하지 않는다 — 분류 코드만(상세는 로그로).
         verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
         // dispatch 실패는 draft를 보존한다(cleanup이 정리). 보상 삭제 없음.
@@ -450,5 +458,104 @@ class TimelineDraftTaskServiceTest {
         // NON_NULL: null 필드(appName/text)는 저장 JSON에서 생략된다.
         assertThat(rows.get(2).getPayload().has("appName")).isFalse();
         assertThat(rows.get(2).getPayload().has("text")).isFalse();
+    }
+
+    @Test
+    void createDraftTask_excludesAlreadySavedRawIds_savesOnlyNewItems() {
+        // 기존 DRAFT record의 event에 raw-photo-1이 이미 저장됨 → 신규 raw-photo-2만 남아 저장/enrich된다.
+        DailyRecord draft = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
+        TimelineEvent event = TimelineEvent.of(7L, RECORD_AT, null, "t", null);
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
+        when(timelineItemService.findSavedRawIds(anyList(), anyList())).thenReturn(Set.of("raw-photo-1"));
+
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.PHOTO, "raw-photo-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)),
+                new SourceItemDto(ItemType.PHOTO, "raw-photo-2", LocalDateTime.of(2026, 6, 17, 10, 0), null,
+                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<SourceItemDto>> enrichCaptor = ArgumentCaptor.forClass(List.class);
+        verify(sourceItemEnrichmentService).enrich(enrichCaptor.capture(), eq(0L));
+        assertThat(enrichCaptor.getValue()).extracting(SourceItemDto::rawId).containsExactly("raw-photo-2");
+    }
+
+    @Test
+    void createDraftTask_allItemsAlreadySaved_rejectsWith1013() {
+        // 요청의 모든 rawId가 이미 저장됨 → 신규 0 → ERROR_1013, 저장·dispatch 없음.
+        DailyRecord draft = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
+        TimelineEvent event = TimelineEvent.of(7L, RECORD_AT, null, "t", null);
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
+        when(timelineItemService.findSavedRawIds(anyList(), anyList())).thenReturn(Set.of("raw-photo-1"));
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1013));
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), any(), anyString());
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+    }
+
+    @Test
+    void createDraftTask_dedupesDuplicateRawIdInBatch_savesFirstOnly() {
+        // 같은 rawId 2개 → 첫 항목만 유지(9:00), 배치 내 dedupe.
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.PHOTO, "dup", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)),
+                new SourceItemDto(ItemType.PHOTO, "dup", LocalDateTime.of(2026, 6, 17, 10, 0), null,
+                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null)));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftSourceItemService).saveAll(rowsCaptor.capture());
+        assertThat(rowsCaptor.getValue()).hasSize(1);
+        assertThat(rowsCaptor.getValue().get(0).getStartAt()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
+    }
+
+    @Test
+    void createDraftTask_computesTimelineWindowFromNewItems_noClamp() {
+        // 신규 item 9:00~21:00 → window=[9:00, 21:00]. endAt은 후속 append에 영향 없어 recordAt 클램프하지 않는다.
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.HEALTH, "h-1", LocalDateTime.of(2026, 6, 17, 9, 0), LocalDateTime.of(2026, 6, 17, 21, 0),
+                new HealthPayload(HealthMetric.STEPS, "100보")));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        ArgumentCaptor<TimelineDraftTask.TimelineWindow> windowCaptor =
+                ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
+        verify(timelineTaskService).createProcessing(anyString(), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                windowCaptor.capture(), anyString());
+        assertThat(windowCaptor.getValue().startTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 9, 0));
+        assertThat(windowCaptor.getValue().endTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 21, 0));
+    }
+
+    @Test
+    void createDraftTask_futureOnlyItems_keepRealWindowNotClamped() {
+        // 신규 item이 전부 recordAt(12:00) 이후(21:00~22:00) → window=[21:00, 22:00] 그대로(클램프/잘림 없음).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.HEALTH, "h-1", LocalDateTime.of(2026, 6, 17, 21, 0), LocalDateTime.of(2026, 6, 17, 22, 0),
+                new HealthPayload(HealthMetric.STEPS, "100보")));
+
+        service.createDraftTask(VERSION, RECORD_AT, ZONE, sources);
+
+        ArgumentCaptor<TimelineDraftTask.TimelineWindow> windowCaptor =
+                ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
+        verify(timelineTaskService).createProcessing(anyString(), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                windowCaptor.capture(), anyString());
+        assertThat(windowCaptor.getValue().startTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 21, 0));
+        assertThat(windowCaptor.getValue().endTime()).isEqualTo(LocalDateTime.of(2026, 6, 17, 22, 0));
     }
 }

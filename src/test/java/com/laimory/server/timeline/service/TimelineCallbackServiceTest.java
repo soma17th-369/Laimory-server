@@ -69,7 +69,7 @@ class TimelineCallbackServiceTest {
     private static final long EVENT_ID = 100L;
 
     private TimelineDraftTask processingTask() {
-        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", TOKEN_HASH);
+        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, TOKEN_HASH);
     }
 
     /** valid token 경로 공통 셋업: PROCESSING task 로드 + 토큰 소비 승자(INCR=1). */

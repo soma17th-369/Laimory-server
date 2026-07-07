@@ -9,12 +9,16 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class DailyTimelineService {
+
+    private static final Duration START_AT_COLLISION_NUDGE = Duration.ofMinutes(10);
 
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
@@ -66,11 +72,22 @@ public class DailyTimelineService {
         }
         Long dailyRecordId = dailyRecord.getDailyRecordId();
 
-        // 3. 영속(검증 완료된 입력만 도달). 아이템은 draft 행에서 그대로 복사.
-        for (TimelineEventSuggestionDto event : events) {
+        // 3. start_at 충돌 회피 준비: 기존 event(사용자 소유·동결)의 start_at을 모은다.
+        Set<LocalDateTime> occupiedStartAts = new HashSet<>();
+        for (TimelineEvent existing : timelineEventService.findByDailyRecordId(dailyRecordId)) {
+            occupiedStartAts.add(existing.getStartAt());
+        }
+
+        // 4. 영속(검증 완료된 입력만 도달). 아이템은 draft 행에서 그대로 복사.
+        //    새 event의 start_at이 기존/이미 배정된 값과 정확히 겹치면 +10분씩 밀어 앵커 중복을 피한다
+        //    (start_at 오름차순 처리 — 배치 내 새 event끼리의 충돌도 함께 해소, best-effort).
+        for (TimelineEventSuggestionDto event : events.stream()
+                .sorted(Comparator.comparing(TimelineEventSuggestionDto::startAt))
+                .toList()) {
+            LocalDateTime startAt = resolveNonCollidingStartAt(event.startAt(), occupiedStartAts);
+            LocalDateTime endAt = clampEndAt(event.endAt(), startAt);
             TimelineEvent savedEvent = timelineEventService.save(
-                    TimelineEvent.of(dailyRecordId, event.startAt(), event.endAt(),
-                            event.title(), event.subtitle()));
+                    TimelineEvent.of(dailyRecordId, startAt, endAt, event.title(), event.subtitle()));
             for (Long itemId : event.itemIds()) {
                 TimelineDraftSourceItem src = byItemId.get(itemId);
                 timelineItemService.save(
@@ -81,12 +98,32 @@ public class DailyTimelineService {
             }
         }
 
-        // 4. 소비한 staging 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다). source item + event suggestion 둘 다.
+        // 5. 소비한 staging 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다). source item + event suggestion 둘 다.
         String taskId = draftRows.get(0).getTaskId();
         timelineDraftSourceItemService.deleteByTaskId(taskId);
         timelineDraftEventSuggestionService.deleteByTaskId(taskId);
 
         return dailyRecordId;
+    }
+
+    /**
+     * 기존/이미 배정된 start_at과 정확히 겹치면 빈 슬롯까지 +10분씩 민다(cascade). 확정 값을 occupied에 추가한다.
+     * 겹치지 않으면 원본 유지 — start_at 정확도를 지키고 실제 충돌만 해소한다(coarse floor 아님).
+     */
+    private LocalDateTime resolveNonCollidingStartAt(LocalDateTime startAt, Set<LocalDateTime> occupied) {
+        LocalDateTime resolved = startAt;
+        while (!occupied.add(resolved)) {
+            resolved = resolved.plus(START_AT_COLLISION_NUDGE);
+        }
+        return resolved;
+    }
+
+    /** nudge로 start_at이 밀려 end_at보다 뒤가 되면 end_at을 start_at으로 클램프한다(0분 구간). null end_at은 그대로. */
+    private LocalDateTime clampEndAt(LocalDateTime endAt, LocalDateTime startAt) {
+        if (endAt != null && endAt.isBefore(startAt)) {
+            return startAt;
+        }
+        return endAt;
     }
 
     /**

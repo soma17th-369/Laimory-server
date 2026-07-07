@@ -54,7 +54,8 @@ public class TimelineController {
                     description = "`ERROR_0400` — 필수값 누락·불량 입력(recordAt/recordTimeZone/sourceItems 등)",
                     content = @Content(schema = @Schema(implementation = ApiResponse.class))),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 해당 날짜의 하루 기록이 이미 SAVED",
+                    description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
+                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)",
                     content = @Content(schema = @Schema(implementation = ApiResponse.class)))
     })
     @PostMapping
