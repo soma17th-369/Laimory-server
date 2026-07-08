@@ -63,6 +63,22 @@ class OAuth2LoginSuccessHandlerTest {
     }
 
     @Test
+    void success_whenCompleteLoginThrows_redirectsToErrorHandoffInsteadOf500() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AppChallengeFilter.APP_CHALLENGE_SESSION_ATTRIBUTE, "challenge-43");
+        request.setSession(session);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(socialLoginService.completeLogin(any(), any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("db down"));
+
+        new OAuth2LoginSuccessHandler(socialLoginService)
+                .onAuthenticationSuccess(request, response, googleToken(oidcUser()));
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=ERROR_2004");
+    }
+
+    @Test
     void success_withoutChallengeInSession_redirectsToErrorHandoff() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setSession(new MockHttpSession()); // challenge 미보관(비정상 진입)
