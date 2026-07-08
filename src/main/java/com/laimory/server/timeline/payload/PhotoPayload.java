@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.payload;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * 사진 아이템 payload(DB 저장).
@@ -22,6 +23,7 @@ public record PhotoPayload(
         Double latitude,
         Double longitude,
         String description,
+        @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 파생(CloudFront 서빙 URL) — 요청 시 무시됨")
         String photoUrl
 ) implements TimelineItemPayload {
 }

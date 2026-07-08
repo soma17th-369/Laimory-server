@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.payload;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
@@ -16,7 +17,9 @@ import java.util.List;
 public record MovementEndpoint(
         Double latitude,
         Double longitude,
+        @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich — 요청 시 무시됨")
         String address,
+        @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich(주변 장소명, 거리순) — 요청 시 무시됨")
         List<String> places
 ) {
 }

@@ -10,6 +10,7 @@ import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
 
 /**
@@ -22,6 +23,7 @@ import java.time.LocalDateTime;
  * 받아 컬럼으로 저장한다 — 서버는 해석·정규화 없이 echo만 한다(필수, blank·길이만 검증).
  */
 public record SourceItemDto(
+        @Schema(description = "payload 변형을 결정하는 디스크리미네이터(payload 밖 형제 필드)", example = "PHOTO")
         ItemType itemType,
         String rawId,
         LocalDateTime startAt,
