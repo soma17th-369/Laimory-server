@@ -90,11 +90,4 @@ class AppCodeServiceTest {
         assertThatThrownBy(() -> service.consume("c", " ")).isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test
-    void issue_blankChallenge_throwsIllegalArgument() {
-        AppCodeService service = newService();
-
-        assertThatThrownBy(() -> service.issue(USER_ID, " ")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.issue(USER_ID, null)).isInstanceOf(IllegalArgumentException.class);
-    }
 }

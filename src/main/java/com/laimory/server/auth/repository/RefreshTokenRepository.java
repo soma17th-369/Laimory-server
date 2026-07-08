@@ -18,21 +18,15 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
     /**
-     * 상태가 {@code from}일 때만 {@code to}로 전이한다. 반환 1 = 전이 성공(승자), 0 = 이미 다른 상태.
+     * ACTIVE → ROTATED 원자 claim. 반환 1 = 회전 승자, 0 = 이미 ROTATED/REVOKED(재사용 신호).
      * bulk UPDATE는 JPA auditing을 우회하므로 updated_at을 직접 갱신한다.
      */
     @Modifying
     @Transactional
-    @Query("update RefreshToken t set t.status = :to, t.updatedAt = CURRENT_TIMESTAMP "
-            + "where t.refreshTokenId = :id and t.status = :from")
-    int updateStatusIfCurrent(@Param("id") Long id,
-                              @Param("from") RefreshTokenStatus from,
-                              @Param("to") RefreshTokenStatus to);
-
-    /** ACTIVE → ROTATED 원자 claim. 반환 1 = 회전 승자, 0 = 이미 ROTATED/REVOKED(재사용 신호). */
-    default int claimRotation(Long refreshTokenId) {
-        return updateStatusIfCurrent(refreshTokenId, RefreshTokenStatus.ACTIVE, RefreshTokenStatus.ROTATED);
-    }
+    @Query("update RefreshToken t set t.status = com.laimory.server.auth.RefreshTokenStatus.ROTATED, "
+            + "t.updatedAt = CURRENT_TIMESTAMP "
+            + "where t.refreshTokenId = :id and t.status = com.laimory.server.auth.RefreshTokenStatus.ACTIVE")
+    int claimRotation(@Param("id") Long refreshTokenId);
 
     /** 재사용 탐지 시 해당 사용자의 refresh 전체(REVOKED 제외)를 폐기한다. 반환 = 폐기 행 수. */
     @Modifying
