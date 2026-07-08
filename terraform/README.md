@@ -71,6 +71,10 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
 5. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
    갱신은 `certbot.timer`가 자동 처리(`systemctl list-timers | grep certbot` 로 확인).
 
+> nginx no-query 로그 설정(위 log_format/access_log 부분)은 `deploy.yml`이 배포마다 **멱등 가드로 자동
+> 적용**한다 — 로그인 code가 쿼리로 나가는 앱 버전이 로그 설정 없는 박스에 배포되는 일을 구조적으로 막는다.
+> 수동 runbook에서 이 부분을 빠뜨려도 다음 배포에서 자동 보정된다(certbot·server_name은 여전히 수동).
+
 ## 앱 `.env` 필수 키 (WAS 박스 `/home/ubuntu/app/.env`)
 
 user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지

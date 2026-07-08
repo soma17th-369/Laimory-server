@@ -64,6 +64,17 @@ jobs:
           grep -qE '^GOOGLE_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_SECRET missing"; exit 1; }
           grep -qE '^KAKAO_CLIENT_ID=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_ID missing"; exit 1; }
           grep -qE '^KAKAO_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_SECRET missing"; exit 1; }
+          # nginx access log query 제거(멱등 가드) — 이 앱 버전부터 로그인 code(/auth/app?code=, IdP 콜백 ?code=)가
+          # 쿼리로 나가므로, 배포보다 먼저 no-query log_format을 보장한다. 새 박스는 user_data가 구성하지만(PR #110),
+          # 기존 박스에 runbook이 수동 적용되지 않은 채 배포되는 것을 여기서 구조적으로 막는다(누락 시 자동 보정).
+          # \$가 붙은 nginx 변수들은 호스트에서 quoted heredoc('NGINXLOG')으로 쓰이므로 원문 그대로 파일에 들어간다.
+          if [ ! -f /etc/nginx/conf.d/log_format_noquery.conf ]; then
+            tee /etc/nginx/conf.d/log_format_noquery.conf > /dev/null <<'NGINXLOG'
+          log_format noquery '\$remote_addr - \$remote_user [\$time_local] "\$request_method \$uri \$server_protocol" \$status \$body_bytes_sent "\$http_user_agent"';
+          NGINXLOG
+          fi
+          grep -q 'access_log /var/log/nginx/access.log noquery' /etc/nginx/sites-available/laimory || sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
+          nginx -t && systemctl reload nginx
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
           docker pull ${IMG}
           docker stop laimory 2>/dev/null || true
