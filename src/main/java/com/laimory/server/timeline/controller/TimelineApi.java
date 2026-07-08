@@ -39,7 +39,8 @@ public interface TimelineApi {
     /**
      * createDraftTask 요청 바디 예시. payload는 itemType별로 형태가 다른데(oneOf), Swagger의 자동 예시는
      * itemType↔payload를 못 맞춰 엉뚱한 조합을 보여주므로, 6개 itemType의 올바른 payload 짝을 모두 담은
-     * 예시를 명시해 request body에 그대로 노출한다. (서버 파생 read-only 필드는 요청에서 제외.)
+     * 예시를 명시해 request body에 그대로 노출한다. 서버 주입 read-only 필드(photoUrl·address·places·durationText)는
+     * {@code null}로 함께 보여 "요청 시 채우지 않아도 됨(서버가 주입)"을 알린다(스키마엔 read-only로 표시).
      */
     String CREATE_DRAFT_EXAMPLE = """
             {
@@ -56,7 +57,8 @@ public interface TimelineApi {
                     "clientPhotoUri": "content://media/external/images/media/1001",
                     "latitude": 37.5665,
                     "longitude": 126.9780,
-                    "description": "카페에서 찍은 사진"
+                    "description": "카페에서 찍은 사진",
+                    "photoUrl": null
                   }
                 },
                 {
@@ -78,7 +80,10 @@ public interface TimelineApi {
                   "endAt": "2026-07-08T13:00:00",
                   "payload": {
                     "latitude": 37.5013,
-                    "longitude": 127.0396
+                    "longitude": 127.0396,
+                    "address": null,
+                    "places": null,
+                    "durationText": null
                   }
                 },
                 {
@@ -87,8 +92,8 @@ public interface TimelineApi {
                   "startAt": "2026-07-08T13:00:00",
                   "endAt": "2026-07-08T13:30:00",
                   "payload": {
-                    "start": { "latitude": 37.5013, "longitude": 127.0396 },
-                    "end": { "latitude": 37.5172, "longitude": 127.0473 },
+                    "start": { "latitude": 37.5013, "longitude": 127.0396, "address": null, "places": null },
+                    "end": { "latitude": 37.5172, "longitude": 127.0473, "address": null, "places": null },
                     "transports": "WALKING",
                     "distanceMeters": 1200.0
                   }
@@ -120,7 +125,8 @@ public interface TimelineApi {
 
     @Operation(summary = "draft 작업 생성",
             description = "sourceItems(하루 기록 원천: 위치·이동·사진·건강·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
-                    + "202로 반환된 taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다.")
+                    + "202로 반환된 taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
+                    + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "작업 접수 — body.taskId로 폴링", useReturnTypeSchema = true),
