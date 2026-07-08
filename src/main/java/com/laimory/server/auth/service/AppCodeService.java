@@ -33,9 +33,6 @@ public class AppCodeService {
 
     /** 일회용 app_code를 발급한다. Redis엔 해시 키로 {userId, challenge}만 저장하고 원문을 반환한다. */
     public String issue(long userId, String appChallenge) {
-        if (appChallenge == null || appChallenge.isBlank()) {
-            throw new IllegalArgumentException("appChallenge must not be blank");
-        }
         String raw = AuthTokens.generate();
         appCodeStore.save(AuthTokens.sha256Hex(raw), new AppCodeStore.AppCodeEntry(userId, appChallenge), appCodeTtl);
         return raw;

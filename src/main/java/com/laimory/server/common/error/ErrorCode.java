@@ -23,7 +23,7 @@ import org.springframework.http.HttpStatusCode;
  *   <li>{@code ERROR_1xxx} — timeline. 1008~1011은 task 실패 분류 — 주 사용처는 폴링 {@code body.error}
  *       (200 응답 안)이며, status는 HTTP 에러로 쓰일 경우의 예비값이다. 1012는 콜백 인증/소비 실패용
  *       401(1002와 같은 성격)로 task 실패 분류가 아니다.</li>
- *   <li>{@code ERROR_2xxx} — auth(인증·토큰). 2001·2004는 OAuth 로그인 도입 시 사용.</li>
+ *   <li>{@code ERROR_2xxx} — auth(인증·토큰). 2001은 /a/api 인증 강제 도입(#108) 시 EntryPoint용으로 예약.</li>
  *   <li>{@code ERROR_3xxx} — (다음 도메인 예약)</li>
  * </ul>
  * 도메인 블록(1xxx~)의 숫자는 HTTP status와 무관하다 — status는 항상 enum 필드가 결정한다.
@@ -60,7 +60,8 @@ public enum ErrorCode {
 
     // ── ERROR_2xxx: auth(인증·토큰) ──
     ERROR_2002(HttpStatus.UNAUTHORIZED),   // app_code 교환 실패(무효/만료/이미 소비/verifier 불일치) → 재로그인
-    ERROR_2003(HttpStatus.UNAUTHORIZED);   // refresh 실패(무효/만료/철회/재사용 탐지 — 탐지 시 사용자 전체 폐기) → 재로그인
+    ERROR_2003(HttpStatus.UNAUTHORIZED),   // refresh 실패(무효/만료/철회/재사용 탐지 — 탐지 시 사용자 전체 폐기) → 재로그인
+    ERROR_2004(HttpStatus.UNAUTHORIZED);   // 소셜 로그인 핸드셰이크 실패 — HTTP 응답이 아니라 핸드오프 링크 ?error= 파라미터로 전달(status는 예비값)
 
     /** task 실패 분류 코드 부분집합. {@code markFailed} 멤버십 가드·폴링 read-side 검증이 참조한다. */
     public static final Set<ErrorCode> TASK_FAILURE_CODES =

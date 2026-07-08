@@ -26,9 +26,11 @@ import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import com.laimory.server.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -37,6 +39,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 공개 컨트롤러 슬라이스 테스트(MockMvc). 상태 매핑(202/400/409/404)을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineController.class)
+@Import(SecurityConfig.class)
 class TimelineControllerTest {
 
     private static final String TASKS = "/a/api/v1/timeline/drafts";

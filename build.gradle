@@ -28,12 +28,18 @@ dependencies {
 	implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
 	// 자체 JWT(access token) HS256 서명/검증. Spring BOM 비관리 → 버전 명시.
 	implementation 'com.nimbusds:nimbus-jose-jwt:10.3'
+	// OAuth2 로그인(Google·Kakao OIDC) — 핸드셰이크(state/nonce/PKCE/code교환/id_token 검증) 위임
+	implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+	// OAuth 핸드셰이크 세션을 Redis로 외부화(서버 이중화/LB 대비). 버전은 Spring BOM 관리.
+	implementation 'org.springframework.session:spring-session-data-redis'
 	// Swagger UI(OpenAPI 문서 자동 생성). 노출은 SWAGGER_ENABLED로 제어(기본 off — application.properties 참고). Spring BOM 비관리 → 버전 명시.
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Security 필터체인 슬라이스 테스트 지원(SecurityMockMvc 등). 버전은 Spring BOM 관리.
+	testImplementation 'org.springframework.security:spring-security-test'
 	// 비동기 결과 폴링 대기(fake AI dispatcher E2E). 버전은 Spring BOM 관리.
 	testImplementation 'org.awaitility:awaitility'
 	// 아키텍처 가드: Redis 직접 접근 금지(NamespacedRedis facade 강제) 등 규칙을 테스트로 검증. Spring BOM 비관리 → 버전 명시.
