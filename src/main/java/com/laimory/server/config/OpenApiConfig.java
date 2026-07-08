@@ -4,8 +4,11 @@ import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
 
 /**
  * Swagger/OpenAPI 문서 메타 정보(타이틀·공통 규칙 안내).
@@ -19,6 +22,10 @@ public class OpenApiConfig {
     @Bean
     public OpenAPI laimoryOpenApi() {
         return new OpenAPI()
+                // 서버 URL은 상대경로 "/"로 고정 — Swagger UI가 이를 현재 페이지 origin에 상대적으로 해석하므로
+                // dev(https)·로컬(http) 어디서 열든 페이지와 같은 scheme/host로 요청이 나간다. (프록시 뒤 TLS 종단에서
+                // springdoc이 scheme을 http로 유추해 https 페이지가 mixed-content로 차단되던 문제를 원천 차단.)
+                .servers(List.of(new Server().url("/")))
                 // 자체 access token(Bearer) 입력용 스킴 — Swagger UI Authorize 버튼에서 토큰을 넣어 try-out.
                 // (/a/api 강제 전환(#108) 전까지는 무토큰도 동작하지만, 로그인 흐름 검증용으로 미리 노출.)
                 .components(new Components().addSecuritySchemes("bearerAuth", new SecurityScheme()
