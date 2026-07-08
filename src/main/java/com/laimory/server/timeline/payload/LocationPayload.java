@@ -15,7 +15,9 @@ import java.util.List;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record LocationPayload(
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "37.5013", description = "위도(십진도, -90~90). 필수.")
         Double latitude,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "127.0396", description = "경도(십진도, -180~180). 필수.")
         Double longitude,
         @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich — 요청 시 무시됨")
         String address,
