@@ -13,15 +13,18 @@ import com.laimory.server.auth.dto.TokenResponse;
 import com.laimory.server.auth.service.AuthTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** Auth 컨트롤러 슬라이스 테스트(MockMvc). 토큰/refresh/logout 성공 envelope와 ERROR_2002/2003 → 401 매핑을 고정한다. 인프라 0. */
 @WebMvcTest(AuthController.class)
+@Import(SecurityConfig.class)
 class AuthControllerTest {
 
     private static final String TOKEN = "/api/v1/auth/token";

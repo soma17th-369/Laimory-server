@@ -1,0 +1,108 @@
+package com.laimory.server.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.laimory.server.auth.controller.AuthHandoffPageController;
+import com.laimory.server.auth.service.SocialLoginService;
+import com.laimory.server.auth.token.AuthTokens;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+/**
+ * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인 permitAll
+ * (/a/api 무인증 통과 — 강제는 #108), 핸드오프 안내 페이지의 code 비표시.
+ */
+@WebMvcTest(controllers = AuthHandoffPageController.class)
+@Import({SecurityConfig.class, OAuth2LoginSecurityConfig.class})
+class SecurityConfigTest {
+
+    private static final String VALID_CHALLENGE = AuthTokens.challenge("any-verifier");
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
+    private SocialLoginService socialLoginService;
+
+    @TestConfiguration
+    static class DummyClientRegistrations {
+        @Bean
+        ClientRegistrationRepository clientRegistrationRepository() {
+            return new InMemoryClientRegistrationRepository(ClientRegistration.withRegistrationId("google")
+                    .clientId("test-client")
+                    .clientSecret("test-secret")
+                    .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                    .redirectUri("{baseUrl}/login/oauth2/code/google")
+                    .scope("openid", "profile", "email")
+                    .authorizationUri("https://accounts.google.com/o/oauth2/v2/auth")
+                    .tokenUri("https://oauth2.googleapis.com/token")
+                    .jwkSetUri("https://www.googleapis.com/oauth2/v3/certs")
+                    .userNameAttributeName("sub")
+                    .clientName("google")
+                    .build());
+        }
+    }
+
+    @Test
+    void authorizationStart_forcesPkceAndStateAndNonce() throws Exception {
+        MvcResult result = mockMvc.perform(get("/oauth2/authorization/google")
+                        .queryParam("app_challenge", VALID_CHALLENGE))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+
+        String location = result.getResponse().getRedirectedUrl();
+        assertThat(location).contains("code_challenge=");
+        assertThat(location).contains("code_challenge_method=S256");
+        assertThat(location).contains("state=");
+        assertThat(location).contains("nonce=");
+    }
+
+    @Test
+    void authorizationStart_withoutAppChallenge_returns400Envelope() throws Exception {
+        mockMvc.perform(get("/oauth2/authorization/google"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void authorizationStart_withMalformedAppChallenge_returns400Envelope() throws Exception {
+        mockMvc.perform(get("/oauth2/authorization/google").queryParam("app_challenge", "short"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+    }
+
+    @Test
+    void handoffLanding_rendersGuideWithoutEchoingCode() throws Exception {
+        mockMvc.perform(get("/auth/app").queryParam("code", "SECRET123"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", containsString("text/html")))
+                .andExpect(content().string(containsString("로그인")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("SECRET123"))));
+    }
+
+    @Test
+    void authenticatedPrefix_isStillPermitAll_notFoundInsteadOfUnauthorized() throws Exception {
+        // /a/api 강제 전환(#108) 전 — 무인증 요청이 401이 아니라 (이 슬라이스엔 컨트롤러가 없어) 404 envelope.
+        mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+    }
+}

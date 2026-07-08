@@ -1,7 +1,9 @@
 package com.laimory.server.config;
 
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -16,7 +18,15 @@ public class OpenApiConfig {
 
     @Bean
     public OpenAPI laimoryOpenApi() {
-        return new OpenAPI().info(new Info()
+        return new OpenAPI()
+                // 자체 access token(Bearer) 입력용 스킴 — Swagger UI Authorize 버튼에서 토큰을 넣어 try-out.
+                // (/a/api 강제 전환(#108) 전까지는 무토큰도 동작하지만, 로그인 흐름 검증용으로 미리 노출.)
+                .components(new Components().addSecuritySchemes("bearerAuth", new SecurityScheme()
+                        .type(SecurityScheme.Type.HTTP)
+                        .scheme("bearer")
+                        .bearerFormat("JWT")
+                        .description("자체 access token — POST /api/v1/auth/token 으로 발급")))
+                .info(new Info()
                 .title("Laimory API")
                 .version("v1")
                 .description("""

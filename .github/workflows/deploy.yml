@@ -60,6 +60,10 @@ jobs:
           # pre-flight: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를 내리기 전에 실패시켜
           # "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다. (JWT_SECRET은 HS256 최소 32자)
           grep -qE '^JWT_SECRET=.{32,}\$' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env JWT_SECRET missing or shorter than 32 chars"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_ID=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_ID missing"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_SECRET missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_ID=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_ID missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_SECRET missing"; exit 1; }
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
           docker pull ${IMG}
           docker stop laimory 2>/dev/null || true
