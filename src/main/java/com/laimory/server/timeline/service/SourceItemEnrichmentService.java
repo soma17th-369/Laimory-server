@@ -1,7 +1,10 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
+import com.laimory.server.geo.MapPlaceLookupException;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
@@ -26,9 +29,10 @@ import org.springframework.stereotype.Service;
  * 파생한 무서명 CloudFront 서빙 URL이다(AI가 DB payload에서 HTTP GET으로 소비).
  * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
  *
- * <p>지오코딩 실패는 해당 좌표의 enrich 필드만 null로 강등하고 계속한다 — 외부 API가 draft 생성을
- * 죽이지 않는다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라 dedupe 필수).
- * 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
+ * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(ERROR_1014)로 실패시킨다 —
+ * 저품질 타임라인을 굽지 않는다(좌표만 있고 주소·장소가 없으면 AI가 장소를 알 수 없다). 한 좌표가 실패하면
+ * stream이 short-circuit돼 enrich 전체가 throw한다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라
+ * dedupe 필수). 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
  */
 @Service
 @RequiredArgsConstructor
@@ -90,10 +94,11 @@ public class SourceItemEnrichmentService {
         return lookups.computeIfAbsent(new Coordinate(latitude, longitude), coordinate -> {
             try {
                 return geocodingService.lookup(coordinate.latitude(), coordinate.longitude());
-            } catch (RuntimeException e) {
-                // 좌표는 위치 민감정보라 로그에 남기지 않는다 — 실패 사실만(상세 강등은 GeocodingService가 1차 방어).
-                log.warn("geocoding lookup failed: {}", e.getClass().getSimpleName());
-                return GeoPlace.EMPTY;
+            } catch (MapPlaceLookupException e) {
+                // 지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 저품질 타임라인을 굽지 않고 draft 생성을 502로 loud fail한다.
+                // enrich가 taskId 생성·저장 前이라 아무것도 안 만들어져 롤백 불필요. 원인 상세는 provider가 이미 로깅했다(좌표는 로그 금지).
+                // broad RuntimeException은 잡지 않는다 — enrichment 자체 버그(NPE 등)는 catch-all 500이 맞고 502로 가리면 안 된다.
+                throw new BusinessException(ErrorCode.ERROR_1014);
             }
         });
     }

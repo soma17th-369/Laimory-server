@@ -134,7 +134,10 @@ public interface TimelineApi {
                     description = "`ERROR_0400` — 필수값 누락·불량 입력(recordAt/recordTimeZone/sourceItems 등)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
-                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)")
+                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
+                    description = "`ERROR_1014` — 지오코딩(지도 API) 호출 실패로 draft 생성 실패. "
+                            + "재시도 가능한 전이적 실패라 클라이언트가 재시도할 수 있다.")
     })
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(

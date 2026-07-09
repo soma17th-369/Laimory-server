@@ -1,13 +1,18 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
+import com.laimory.server.geo.MapPlaceLookupException;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
@@ -148,23 +153,33 @@ class SourceItemEnrichmentServiceTest {
     }
 
     @Test
-    void enrich_degradesToNullFields_whenLookupThrows() {
-        when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
-        when(geocodingService.lookup(37.5340, 126.9668)).thenThrow(new RuntimeException("kakao down"));
+    void enrich_throwsBusinessException1014_andShortCircuits_whenLookupFails() {
+        // loud fail A: 지오코딩이 끝내 실패하면(MapPlaceLookupException) 저품질 타임라인을 굽지 않고 draft 생성을 502(ERROR_1014)로 실패시킨다.
+        when(geocodingService.lookup(37.5340, 126.9668))
+                .thenThrow(new MapPlaceLookupException("coord2address http 500", true, null));
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.LOCATION, "r1", T, null,
                         new LocationPayload(37.5340, 126.9668, null, null, null)),
                 new SourceItemDto(ItemType.LOCATION, "r2", T, null,
                         new LocationPayload(37.5445, 127.0557, null, null, null)));
 
-        // 지오코딩 실패는 draft 생성을 죽이지 않는다 — 해당 좌표만 null 강등, 예외 미전파.
-        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
+        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1014));
+        // 첫 좌표가 실패하면 stream이 short-circuit돼 이후 좌표는 조회하지 않는다(낭비 호출 방지).
+        verify(geocodingService, never()).lookup(37.5445, 127.0557);
+    }
 
-        LocationPayload failed = (LocationPayload) enriched.get(0).payload();
-        assertThat(failed.address()).isNull();
-        assertThat(failed.places()).isNull();
-        assertThat(failed.latitude()).isEqualTo(37.5340);
-        assertThat(enriched.get(1).payload()).isInstanceOf(LocationPayload.class);
+    @Test
+    void enrich_propagatesNonMapLookupRuntimeException_asIs() {
+        // enrichment 자체 버그(NPE 등)는 502로 가리지 않고 그대로 전파해 catch-all 500이 되게 한다 — broad RuntimeException catch 금지.
+        when(geocodingService.lookup(37.5340, 126.9668)).thenThrow(new IllegalStateException("enrichment bug"));
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
+                        new LocationPayload(37.5340, 126.9668, null, null, null)));
+
+        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

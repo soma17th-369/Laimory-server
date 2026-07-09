@@ -113,6 +113,18 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createDraftTask_mapsGeocodingFailureTo502() throws Exception {
+        // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): enrich 실패로 던진 BusinessException(1014) → 502 + ERROR_1014 envelope, body=null.
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1014));
+
+        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1014"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
     void createPhotoUploads_returns200WithUploads() throws Exception {
         when(photoUploadService.createUploads(any(), any()))
                 .thenReturn(new PhotoUploadCreateResponse(List.of(

@@ -217,6 +217,22 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_whenEnrichFails_propagates1014AndSavesNothing() {
+        // 지오코딩 loud fail: enrich가 BusinessException(1014)을 던지면 그대로 전파(502)되고,
+        // taskId 생성·draft 저장·PROCESSING·dispatch 前이라 아무것도 만들어지지 않는다(롤백 불필요).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
+                .thenThrow(new BusinessException(ErrorCode.ERROR_1014));
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1014));
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), any(), anyString());
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+    }
+
+    @Test
     void createDraftTask_rejectsNullRecordAt() {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, null, ZONE, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
