@@ -75,6 +75,22 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
 > 적용**한다 — 로그인 code가 쿼리로 나가는 앱 버전이 로그 설정 없는 박스에 배포되는 일을 구조적으로 막는다.
 > 수동 runbook에서 이 부분을 빠뜨려도 다음 배포에서 자동 보정된다(certbot·server_name은 여전히 수동).
 
+## dev DB 읽기전용 접근 (bastion) — 기존 박스는 수동 적용
+
+`terraform`이 관리하는 것은 **dev bastion SG(22 ← allowlist CIDR)** 와 **user_data(신규 박스 재현용)** 뿐이다.
+기존 dev WAS/mysql 박스는 `ignore_changes=[user_data]`라 **`terraform apply`(`-target` 포함)로는
+아래 on-host 리소스가 생기지 않는다.** `dbviewer` SSH 유저와 `readonly` DB 계정은 **살아있는 박스에
+SSM으로 한 번 수동 적용**한다(신규/재생성 박스는 user_data가 자동 재현).
+
+- **readonly DB 계정** (dev-mysql): `user_data/mysql.sh.tftpl` 의 `env=="dev"` 블록과 동일한 SQL
+  (`CREATE USER`/`ALTER USER`/`GRANT SELECT ON laimory.*`)을 `sudo mysql` 로 실행.
+- **dbviewer SSH 유저 + sshd** (dev WAS): `user_data/was.sh.tftpl` 의 `env=="dev"` 블록과 동일
+  (`systemctl enable --now ssh`, `dbviewer` nologin, `authorized_keys` 에
+  `restrict,port-forwarding,permitopen="<dev-mysql-ip>:3306" <공개키>`).
+
+두 user_data 블록이 SSM 수동 적용의 **단일 기준(source of truth)** 이다. 값(비밀번호·공개키·IP)은
+`terraform.tfvars`·`secrets.auto.tfvars` 와 동일하게 맞춘다.
+
 ## 앱 `.env` 필수 키 (WAS 박스 `/home/ubuntu/app/.env`)
 
 user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지

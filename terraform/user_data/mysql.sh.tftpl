@@ -40,6 +40,7 @@ SQL
 # dev 전용: 읽기전용 열람 계정(WAS SSH 터널 경유 DataGrip 등). laimory DB 만 SELECT(최소권한).
 mysql <<'ROSQL'
 CREATE USER IF NOT EXISTS 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
+ALTER USER 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
 GRANT SELECT ON ${db_name}.* TO 'readonly'@'%';
 FLUSH PRIVILEGES;
 ROSQL
