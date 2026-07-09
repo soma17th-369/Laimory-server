@@ -197,3 +197,67 @@ variable "db_readonly_password" {
     error_message = "db_readonly_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
   }
 }
+
+# ---------- ELK 로그 수집 (dev) ----------
+# 단일 ELK 박스(사설, stop/start 운용)에 ES+Kibana. Filebeat 는 WAS 박스에서 돈다.
+# dev/prod 는 environment 필드 + 인덱스명(laimory-dev-*)으로 분리(박스는 공유 예정, 지금은 dev만).
+
+variable "elk_instance_type" {
+  type    = string
+  default = "t3.medium"
+}
+
+variable "elk_private_ip" {
+  description = "ELK 박스 고정 사설 IP (private_subnet_cidrs[0] 범위 내 여유 IP)"
+  type        = string
+  default     = "10.0.32.13"
+}
+
+variable "elk_root_volume_gib" {
+  description = "ELK 루트 볼륨 크기(GiB) — ES 데이터용, 공유 root_volume_gib(20) 오버라이드"
+  type        = number
+  default     = 30
+}
+
+variable "elk_stack_version" {
+  description = "Elastic 스택 태그(ES=Kibana=Filebeat 동일). 8.19 라인 고정 — 9.x 는 filebeat container input 미지원. apply 직전 최신 8.19 패치 재확인."
+  type        = string
+  default     = "8.19.18"
+}
+
+variable "elk_es_java_opts" {
+  description = "Elasticsearch 힙(medium=1536m). OOM 시 낮추거나 향후 small=512m."
+  type        = string
+  default     = "-Xms1536m -Xmx1536m"
+}
+
+variable "elk_elastic_password" {
+  description = "Elasticsearch elastic superuser 비밀번호 — 첫 부팅 시 빈 볼륨에 각인(이후 .env 수정 무효, change-password API 또는 볼륨 wipe 로만 변경)"
+  type        = string
+  sensitive   = true
+  # .env/compose 변수전개·URL basic-auth 파싱을 깨지 않도록 안전 문자셋만 허용(db_app_password 와 동일 규칙).
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.elk_elastic_password))
+    error_message = "elk_elastic_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
+}
+
+variable "elk_kibana_password" {
+  description = "Kibana↔ES 연결용 kibana_system 계정 비밀번호(setup 이 매 up 마다 재적용이라 안전)"
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.elk_kibana_password))
+    error_message = "elk_kibana_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
+}
+
+variable "elk_filebeat_password" {
+  description = "Filebeat 전송용 filebeat_writer 계정 비밀번호(WAS Filebeat 컨테이너에 -e 로 주입)"
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.elk_filebeat_password))
+    error_message = "elk_filebeat_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
+}

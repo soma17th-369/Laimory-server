@@ -1,0 +1,47 @@
+#!/bin/bash
+# ELK 박스 부트스트랩: docker + aws cli + ES/Kibana 스택(docker compose).
+# 앱 로그 수집용 Elasticsearch + Kibana 를 올린다. Filebeat 는 로그 생산 박스(WAS)에서 별도로 돈다.
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg unzip
+
+# AWS CLI v2 (S3 부트스트랩 pull 용)
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install
+
+# Docker Engine (공식 apt 저장소)
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+# Elasticsearch mmap 요구치. single-node라 부팅은 안 막히지만 부하 시 필요. 재부팅 생존 위해 영속화.
+echo 'vm.max_map_count=262144' > /etc/sysctl.d/99-elasticsearch.conf
+sysctl -w vm.max_map_count=262144
+
+# 스택 정의를 S3서 pull (compose + ILM + 인덱스 템플릿). filebeat.yml 은 WAS 가 받으므로 여기선 안 받음.
+mkdir -p /home/ubuntu/elk
+aws s3 cp "s3://${backup_bucket}/bootstrap/elk/docker-compose.yml"  /home/ubuntu/elk/docker-compose.yml  --region ${region}
+aws s3 cp "s3://${backup_bucket}/bootstrap/elk/ilm-policy.json"     /home/ubuntu/elk/ilm-policy.json     --region ${region}
+aws s3 cp "s3://${backup_bucket}/bootstrap/elk/index-template.json" /home/ubuntu/elk/index-template.json --region ${region}
+
+# compose 가 읽는 .env (비밀·버전·힙). 'ENVEOF' single-quote 는 bash 확장만 막고, 변수는 TF 가 먼저 치환한다.
+cat > /home/ubuntu/elk/.env <<'ENVEOF'
+STACK_VERSION=${stack_version}
+ES_JAVA_OPTS=${es_java_opts}
+ELASTIC_PASSWORD=${elastic_password}
+KIBANA_PASSWORD=${kibana_password}
+FILEBEAT_PASSWORD=${filebeat_password}
+ENVEOF
+chown -R ubuntu:ubuntu /home/ubuntu/elk
+chmod 600 /home/ubuntu/elk/.env
+
+# 최초 부팅만 명시 기동(이후 EC2 start 는 각 컨테이너 restart:unless-stopped 가 재기동).
+cd /home/ubuntu/elk && docker compose up -d

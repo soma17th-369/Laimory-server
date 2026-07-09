@@ -83,6 +83,36 @@ resource "aws_s3_object" "schema" {
   etag   = filemd5("${path.module}/../src/main/resources/db/schema.sql")
 }
 
+# ELK 로그 수집 부트스트랩. ELK 박스가 compose/ILM/템플릿을, WAS 박스가 filebeat.yml 을 pull 한다.
+# (IAM 인라인 LaimoryBootstrapRead 가 bootstrap/* GetObject 허용 — 별도 IAM 변경 불필요.)
+resource "aws_s3_object" "elk_compose" {
+  bucket = aws_s3_bucket.backup.id
+  key    = "bootstrap/elk/docker-compose.yml"
+  source = "${path.module}/../deploy/elk/docker-compose.yml"
+  etag   = filemd5("${path.module}/../deploy/elk/docker-compose.yml")
+}
+
+resource "aws_s3_object" "elk_ilm" {
+  bucket = aws_s3_bucket.backup.id
+  key    = "bootstrap/elk/ilm-policy.json"
+  source = "${path.module}/../deploy/elk/ilm-policy.json"
+  etag   = filemd5("${path.module}/../deploy/elk/ilm-policy.json")
+}
+
+resource "aws_s3_object" "elk_template" {
+  bucket = aws_s3_bucket.backup.id
+  key    = "bootstrap/elk/index-template.json"
+  source = "${path.module}/../deploy/elk/index-template.json"
+  etag   = filemd5("${path.module}/../deploy/elk/index-template.json")
+}
+
+resource "aws_s3_object" "elk_filebeat" {
+  bucket = aws_s3_bucket.backup.id
+  key    = "bootstrap/elk/filebeat.yml"
+  source = "${path.module}/../deploy/elk/filebeat.yml"
+  etag   = filemd5("${path.module}/../deploy/elk/filebeat.yml")
+}
+
 # ---------- OAC + CloudFront (무서명 서빙) ----------
 
 resource "aws_cloudfront_origin_access_control" "photos" {
