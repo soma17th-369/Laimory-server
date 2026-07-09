@@ -96,9 +96,10 @@ public class SourceItemEnrichmentService {
                 return geocodingService.lookup(coordinate.latitude(), coordinate.longitude());
             } catch (MapPlaceLookupException e) {
                 // 지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 저품질 타임라인을 굽지 않고 draft 생성을 502로 loud fail한다.
+                // 재시도 가능성에 따라 코드를 분리해 클라가 재시도 UX를 분기한다(전이=1014 재시도 가능, 영구=1015 즉시 재시도 무의미).
                 // enrich가 taskId 생성·저장 前이라 아무것도 안 만들어져 롤백 불필요. 원인 상세는 provider가 이미 로깅했다(좌표는 로그 금지).
                 // broad RuntimeException은 잡지 않는다 — enrichment 자체 버그(NPE 등)는 catch-all 500이 맞고 502로 가리면 안 된다.
-                throw new BusinessException(ErrorCode.ERROR_1014);
+                throw new BusinessException(e.isRetryable() ? ErrorCode.ERROR_1014 : ErrorCode.ERROR_1015);
             }
         });
     }

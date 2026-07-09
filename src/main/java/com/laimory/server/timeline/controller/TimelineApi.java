@@ -136,8 +136,9 @@ public interface TimelineApi {
                     description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`ERROR_1014` — 지오코딩(지도 API) 호출 실패로 draft 생성 실패. "
-                            + "재시도 가능한 전이적 실패라 클라이언트가 재시도할 수 있다.")
+                    description = "지오코딩(지도 API) 호출 실패로 draft 생성 실패. 재시도 가능성으로 코드가 나뉜다 — "
+                            + "`ERROR_1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
+                            + "`ERROR_1015`(영구적 실패 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(

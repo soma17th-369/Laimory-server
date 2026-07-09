@@ -58,8 +58,11 @@ public enum ErrorCode {
     // ── ERROR_1xxx: timeline append 도메인 거절 ──
     ERROR_1013(HttpStatus.CONFLICT),       // append 요청의 모든 item이 이미 타임라인에 저장됨(추가할 신규 item 없음)
 
-    // ── ERROR_1xxx: timeline 지오코딩 실패 — 동기 POST 502(폴링 read-side 아님 → TASK_FAILURE_CODES 미포함) ──
-    ERROR_1014(HttpStatus.BAD_GATEWAY),    // 지오코딩(지도 API) 호출 실패(재시도 소진) — draft 생성을 loud fail(재시도 가능한 전이적 실패)
+    // ── ERROR_1xxx: timeline 지오코딩(지도 API) 호출 실패 — 동기 POST 502(폴링 read-side 아님 → TASK_FAILURE_CODES 미포함) ──
+    // 재시도 가능성으로 코드를 분리한다 — 클라가 재시도 UX를 분기(1014=잠시 후 재시도, 1015=지속 시 문의).
+    // provider가 원인을 retryable로 분류하고(전이 5xx·타임아웃=true / 영구 429·401·403·4xx·파싱=false) enrichment이 해당 코드로 매핑한다.
+    ERROR_1014(HttpStatus.BAD_GATEWAY),    // 전이적 실패(5xx·타임아웃, 콜 단위 재시도 소진) — 재시도로 해결될 수 있음
+    ERROR_1015(HttpStatus.BAD_GATEWAY),    // 영구적 실패(429 쿼터·401/403 키·기타 4xx·파싱/shape) — 즉시 재시도는 무의미
 
     // ── ERROR_2xxx: auth(인증·토큰) ──
     ERROR_2002(HttpStatus.UNAUTHORIZED),   // app_code 교환 실패(무효/만료/이미 소비/verifier 불일치) → 재로그인

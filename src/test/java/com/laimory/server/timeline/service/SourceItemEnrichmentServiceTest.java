@@ -153,8 +153,8 @@ class SourceItemEnrichmentServiceTest {
     }
 
     @Test
-    void enrich_throwsBusinessException1014_andShortCircuits_whenLookupFails() {
-        // loud fail A: 지오코딩이 끝내 실패하면(MapPlaceLookupException) 저품질 타임라인을 굽지 않고 draft 생성을 502(ERROR_1014)로 실패시킨다.
+    void enrich_throwsBusinessException1014_whenLookupFailsRetryable_andShortCircuits() {
+        // loud fail A: 전이적 실패(retryable=true — 5xx·타임아웃 재시도 소진)는 ERROR_1014(재시도 가능)로 매핑한다.
         when(geocodingService.lookup(37.5340, 126.9668))
                 .thenThrow(new MapPlaceLookupException("coord2address http 500", true, null));
         List<SourceItemDto> sources = List.of(
@@ -168,6 +168,20 @@ class SourceItemEnrichmentServiceTest {
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1014));
         // 첫 좌표가 실패하면 stream이 short-circuit돼 이후 좌표는 조회하지 않는다(낭비 호출 방지).
         verify(geocodingService, never()).lookup(37.5445, 127.0557);
+    }
+
+    @Test
+    void enrich_throwsBusinessException1015_whenLookupFailsNonRetryable() {
+        // 영구적 실패(retryable=false — 429 쿼터·401/403 키·파싱/shape)는 ERROR_1015로 매핑한다(클라 재시도 UX 분기용).
+        when(geocodingService.lookup(37.5340, 126.9668))
+                .thenThrow(new MapPlaceLookupException("coord2address http 401", false, null));
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
+                        new LocationPayload(37.5340, 126.9668, null, null, null)));
+
+        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1015));
     }
 
     @Test

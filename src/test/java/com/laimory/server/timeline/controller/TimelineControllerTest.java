@@ -28,6 +28,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import com.laimory.server.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -112,15 +114,16 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.header.code").value("ERROR_1013"));
     }
 
-    @Test
-    void createDraftTask_mapsGeocodingFailureTo502() throws Exception {
-        // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): enrich 실패로 던진 BusinessException(1014) → 502 + ERROR_1014 envelope, body=null.
+    @ParameterizedTest
+    @ValueSource(strings = {"ERROR_1014", "ERROR_1015"})
+    void createDraftTask_mapsGeocodingFailureTo502(String code) throws Exception {
+        // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1014));
+                .thenThrow(new BusinessException(ErrorCode.valueOf(code)));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1014"))
+                .andExpect(jsonPath("$.header.code").value(code))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
