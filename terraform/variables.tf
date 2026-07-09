@@ -97,7 +97,7 @@ variable "root_volume_gib" {
 # ---------- 도메인 / TLS ----------
 
 variable "api_domains" {
-  description = "환경별 API 도메인 (Route53 A 레코드 + nginx server_name + certbot 발급 대상)"
+  description = "환경별 API 도메인 (nginx server_name + certbot 발급 대상). DNS(A 레코드)는 외부(가비아)에서 관리."
   type        = map(string)
   default = {
     dev  = "dev.laimory.app"

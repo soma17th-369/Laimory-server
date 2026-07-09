@@ -46,14 +46,15 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
 
 ## 도메인/TLS 적용 runbook
 
-`dns.tf`는 존/레코드만 만든다. 기존 WAS 박스는 `user_data_replace_on_change=false`라 apply로
-재생성되지 않으므로, **살아있는 박스의 nginx/certbot은 SSM으로 수동 적용**한다(user_data 변경분은
-새 박스 재현용). 도메인: prod=`laimory.app`(apex), dev=`dev.laimory.app`.
+**DNS는 현재 가비아(Gabia)에서 관리한다** — route53 코드는 제거됨(향후 route53 이전 시 재도입).
+기존 WAS 박스는 `user_data_replace_on_change=false`라 apply로 재생성되지 않으므로, **살아있는 박스의
+nginx/certbot은 SSM으로 수동 적용**한다(user_data 변경분은 새 박스 재현용). 도메인:
+prod=`laimory.app`(apex), dev=`dev.laimory.app`.
 
-1. `terraform apply` → `terraform output route53_name_servers` 로 NS 4개 확인.
-2. 도메인 레지스트라(laimory.app 구입처)에서 네임서버를 위 4개로 위임.
-3. 전파 확인: `dig +short dev.laimory.app` 이 dev WAS EIP를 반환할 때까지 대기(TTL 수 분~수 시간).
-4. 기존 박스에 SSM으로 nginx 설정 + certbot 적용 (dev/prod 각각, `<DOMAIN>`·`<EMAIL>` 치환):
+1. 가비아 DNS에서 A 레코드 설정: `dev.laimory.app` → dev WAS EIP, `laimory.app` → prod WAS EIP
+   (EIP는 `terraform output was_public_ips`).
+2. 전파 확인: `dig +short dev.laimory.app` 이 dev WAS EIP를 반환할 때까지 대기(TTL 수 분~수 시간).
+3. 기존 박스에 SSM으로 nginx 설정 + certbot 적용 (dev/prod 각각, `<DOMAIN>`·`<EMAIL>` 치환):
    ```bash
    aws ssm start-session --profile sandbox --target <instance-id>
    # 박스 안에서:
@@ -68,7 +69,7 @@ apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·�
    sudo apt-get install -y certbot python3-certbot-nginx
    sudo certbot --nginx -d <DOMAIN> --non-interactive --agree-tos -m <EMAIL> --redirect
    ```
-5. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
+4. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
    갱신은 `certbot.timer`가 자동 처리(`systemctl list-timers | grep certbot` 로 확인).
 
 > nginx no-query 로그 설정(위 log_format/access_log 부분)은 `deploy.yml`이 배포마다 **멱등 가드로 자동
