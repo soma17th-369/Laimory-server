@@ -1,0 +1,32 @@
+{
+  "index_patterns": ["laimory-*"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.lifecycle.name": "laimory-logs"
+    },
+    "mappings": {
+      "dynamic": true,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "message": { "type": "text" },
+        "level": { "type": "keyword" },
+        "level_value": { "type": "integer" },
+        "logger_name": { "type": "keyword" },
+        "thread_name": { "type": "keyword" },
+        "service": { "type": "keyword" },
+        "environment": { "type": "keyword" },
+        "transactionId": { "type": "keyword" },
+        "event": { "type": "keyword" },
+        "method": { "type": "keyword" },
+        "path": { "type": "keyword" },
+        "status": { "type": "integer" },
+        "latencyMs": { "type": "long" },
+        "errorCode": { "type": "keyword" },
+        "stack_trace": { "type": "text" }
+      }
+    }
+  }
+}

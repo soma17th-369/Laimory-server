@@ -148,3 +148,39 @@ resource "aws_vpc_security_group_egress_rule" "dev_bastion_ssh_all" {
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
+
+# ---------- ELK (로그 수집, 사설) ----------
+# 9200(ES)·5601(Kibana) 둘 다 WAS SG 에서만 → ELK 박스 공개 노출 0.
+#   9200 ← WAS(Filebeat 전송), 5601 ← WAS(dev-was nginx /kibana 프록시). 외부 노출은 nginx 443 에서 종단.
+# WAS SG 는 이미 all-egress 라 WAS→ELK 는 별도 규칙 불필요. egress 는 이미지 pull(NAT)용 전체 허용.
+
+resource "aws_security_group" "elk" {
+  name        = "${var.project_name}-elk-sg"
+  description = "ELK: ES 9200 + Kibana 5601 from WAS only (private)"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-elk-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "elk_es" {
+  security_group_id            = aws_security_group.elk.id
+  description                  = "Elasticsearch from WAS (Filebeat)"
+  ip_protocol                  = "tcp"
+  from_port                    = 9200
+  to_port                      = 9200
+  referenced_security_group_id = aws_security_group.was.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "elk_kibana" {
+  security_group_id            = aws_security_group.elk.id
+  description                  = "Kibana from WAS (dev-was nginx reverse proxy)"
+  ip_protocol                  = "tcp"
+  from_port                    = 5601
+  to_port                      = 5601
+  referenced_security_group_id = aws_security_group.was.id
+}
+
+resource "aws_vpc_security_group_egress_rule" "elk_all" {
+  security_group_id = aws_security_group.elk.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}

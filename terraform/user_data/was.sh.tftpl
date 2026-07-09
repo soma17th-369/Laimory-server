@@ -32,6 +32,12 @@ NGINXLOG
 
 # heredoc 의 'NGINX' quote 는 bash 확장만 막는다 — server_name 의 api_domain 은 그 전에
 # terraform templatefile 이 치환하고, nginx 변수($host 등)는 bare $ 라 templatefile 이 건드리지 않는다.
+# 환경별 추가 location 을 include 로 분리한다(현재 dev 의 Kibana /kibana 프록시). prod 은 빈 파일(no-op).
+# certbot --nginx 가 이 server 블록을 443 으로 승격할 때 include 지시자도 그대로 옮겨가므로,
+# 아래 env=="dev" 블록이 스니펫을 채우고 reload 하면 /kibana 가 443(HTTPS)에서 바로 동작한다.
+install -d /etc/nginx/snippets
+touch /etc/nginx/snippets/laimory-extra.conf
+
 cat > /etc/nginx/sites-available/laimory <<'NGINX'
 server {
     listen 80 default_server;
@@ -45,6 +51,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
+    include /etc/nginx/snippets/laimory-extra.conf;
 }
 NGINX
 ln -sf /etc/nginx/sites-available/laimory /etc/nginx/sites-enabled/laimory
@@ -90,4 +97,43 @@ restrict,port-forwarding,permitopen="${db_host}:3306" ${bastion_ssh_public_key}
 AUTHKEYS
 chown dbviewer:dbviewer /home/dbviewer/.ssh/authorized_keys
 chmod 600 /home/dbviewer/.ssh/authorized_keys
+%{ endif ~}
+
+%{ if env == "dev" ~}
+# ---- dev 전용: ELK 로그 수집 (Filebeat 송신 + Kibana 리버스 프록시) ----
+# dev ELK 박스(사설 ${elk_private_ip})가 ES/Kibana 를 호스팅한다. 이 박스는 로그를 생산하므로
+# Filebeat 로 앱 컨테이너 stdout(JSON)을 ES 로 직송하고, Kibana UI 는 기존 nginx TLS 로 프록시한다.
+# prod-was 엔 미주입(dev ELK IP 하드코딩·잘못된 프록시 방지).
+
+# (1) Filebeat 컨테이너: --user root 필수(컨테이너 로그가 root:root 0600). 비번은 -e 로만 주입(파일 X).
+aws s3 cp "s3://${backup_bucket}/bootstrap/elk/filebeat.yml" /home/ubuntu/filebeat.yml --region ${region}
+chown ubuntu:ubuntu /home/ubuntu/filebeat.yml
+docker rm -f filebeat >/dev/null 2>&1 || true
+docker run -d --name filebeat --restart unless-stopped --network host --user root \
+  -e FILEBEAT_PASSWORD='${filebeat_password}' \
+  -v /home/ubuntu/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v filebeat-data:/usr/share/filebeat/data \
+  docker.elastic.co/beats/filebeat:${stack_version} filebeat -e --strict.perms=false
+
+# (2) Kibana 리버스 프록시(/kibana → ELK 5601). 위 include 로 443 server 블록에 로드된다.
+#     Kibana 는 SERVER_BASEPATH=/kibana + rewriteBasePath 라 proxy_pass 에 trailing slash 를 두지 않는다.
+cat > /etc/nginx/snippets/laimory-extra.conf <<'KIBANA'
+location = /kibana { return 302 /kibana/; }
+location /kibana/ {
+    proxy_pass http://${elk_private_ip}:5601;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+%{ if length(kibana_allowed_cidrs) > 0 ~}
+%{ for c in kibana_allowed_cidrs ~}    allow ${c};
+%{ endfor ~}    deny all;
+%{ endif ~}
+}
+KIBANA
+nginx -t && systemctl reload nginx
 %{ endif ~}

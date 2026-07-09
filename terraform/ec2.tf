@@ -42,6 +42,12 @@ resource "aws_instance" "was" {
     api_domain             = var.api_domains[each.key]
     certbot_email          = var.certbot_email
     bastion_ssh_public_key = var.bastion_ssh_public_key
+    # ELK 로그 수집(신규 박스 재현용 — dev-was 만 was.sh.tftpl 이 env=="dev" 게이트로 Filebeat+nginx /kibana 렌더).
+    backup_bucket        = aws_s3_bucket.backup.bucket
+    stack_version        = var.elk_stack_version
+    filebeat_password    = var.elk_filebeat_password
+    elk_private_ip       = var.elk_private_ip
+    kibana_allowed_cidrs = var.bastion_ssh_allowed_cidrs # Kibana IP 허용목록(지금은 DB 터널 CIDR 재사용)
   })
 
   root_block_device {
@@ -179,5 +185,49 @@ resource "aws_instance" "ai" {
   depends_on = [
     aws_nat_gateway.main,
     aws_route_table_association.private,
+  ]
+}
+
+# ---------- ELK (로그 수집, 프라이빗 고정 IP) ----------
+# dev 로그 수집 스택(ES + Kibana). Filebeat 는 WAS 에서 돈다. 평소 stop, 볼 때만 start 운용.
+# 루트 볼륨을 30GiB 로 키움(ES 데이터). 부팅 시 user_data 가 docker + compose up(es/kibana/setup).
+
+resource "aws_instance" "elk" {
+  ami                    = local.ubuntu_ami
+  instance_type          = var.elk_instance_type
+  subnet_id              = aws_subnet.private[0].id
+  private_ip             = var.elk_private_ip
+  vpc_security_group_ids = [aws_security_group.elk.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  user_data = templatefile("${path.module}/user_data/elk.sh.tftpl", {
+    region            = var.region
+    backup_bucket     = aws_s3_bucket.backup.bucket
+    stack_version     = var.elk_stack_version
+    es_java_opts      = var.elk_es_java_opts
+    elastic_password  = var.elk_elastic_password
+    kibana_password   = var.elk_kibana_password
+    filebeat_password = var.elk_filebeat_password
+  })
+
+  root_block_device {
+    volume_size = var.elk_root_volume_gib
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "${var.project_name}-dev-elk-01" }
+
+  lifecycle {
+    # ami/user_data: 기존 박스 stop/start·drift 방지(WAS·MySQL 패턴). on-host 변경은 SSM 으로 적용.
+    ignore_changes = [ami, user_data]
+  }
+
+  depends_on = [
+    aws_nat_gateway.main,
+    aws_route_table_association.private,
+    aws_s3_object.elk_compose,
+    aws_s3_object.elk_ilm,
+    aws_s3_object.elk_template,
+    aws_s3_object.elk_filebeat,
   ]
 }

@@ -33,6 +33,15 @@ output "ai_instance_id" {
   value = aws_instance.ai.id
 }
 
+output "elk_instance_id" {
+  description = "ELK(로그 수집) 인스턴스 ID — stop/start·SSM 포트포워딩 대상"
+  value       = aws_instance.elk.id
+}
+
+output "elk_private_ip" {
+  value = aws_instance.elk.private_ip
+}
+
 output "api_domains" {
   description = "환경별 API 도메인 (nginx server_name·certbot 발급 대상). DNS는 외부(가비아) 관리."
   value       = var.api_domains
