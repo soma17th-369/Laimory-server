@@ -32,7 +32,8 @@ processors:
       ignore_missing: true
       ignore_failure: true
   - drop_fields:
-      fields: ["@version", "agent", "ecs", "input", "stream"]
+      # 인프라/Filebeat 메타(host.name·log.offset·log.file.path 등)는 로그 열람에 불필요 → 제거.
+      fields: ["@version", "agent", "ecs", "input", "stream", "host", "log"]
       ignore_missing: true
 
 output.elasticsearch:
