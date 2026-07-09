@@ -81,6 +81,10 @@ services:
         curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_security/user/filebeat_writer" \
           -H 'Content-Type: application/json' \
           -d "{\"password\":\"$${FILEBEAT_PASSWORD}\",\"roles\":[\"filebeat_writer\"]}" >/dev/null
+        echo "creating suhyun444 superuser (personal login; elastic 예약유저 대신 사용, 비번=elastic과 동일)"
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_security/user/suhyun444" \
+          -H 'Content-Type: application/json' \
+          -d "{\"password\":\"$${ELASTIC_PASSWORD}\",\"roles\":[\"superuser\"],\"full_name\":\"suhyun444\"}" >/dev/null
         echo "setup complete"
 
   kibana:
