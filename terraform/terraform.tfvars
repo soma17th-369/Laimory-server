@@ -31,3 +31,7 @@ github_deploy_branch = "dev"
 
 db_app_username    = "laimory"
 redis_app_username = "laimory_app"
+
+# dev DB 읽기전용 열람 bastion (비밀 아님 — 비밀번호는 secrets.auto.tfvars 의 db_readonly_password)
+bastion_ssh_allowed_cidrs = ["121.162.157.81/32", "14.33.157.163/32"]
+bastion_ssh_public_key    = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGqCVcG5sh8StSOenPjGnMNS9Y5BT18BsiyGB2J4xZyi laimory-dev-dbviewer"

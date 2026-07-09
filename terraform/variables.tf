@@ -169,3 +169,31 @@ variable "redis_app_password" {
     error_message = "redis_app_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
   }
 }
+
+# ---------- dev DB bastion (읽기전용 열람 접근) ----------
+# dev-mysql 을 DataGrip 등으로 읽기전용 열람하려는 사용자(예: 클라 개발자)가 dev WAS 를 SSH
+# 포트포워딩 관문으로 삼아 접근하는 경로. 아래 3개 값으로 SG allowlist·터널 유저 공개키·readonly
+# DB 비밀번호를 주입한다. 앞의 둘은 비밀이 아니라 terraform.tfvars 에, 비밀번호만 secrets 에 둔다.
+
+variable "bastion_ssh_allowed_cidrs" {
+  description = "dev WAS 22번(SSH 터널) 접근 허용 CIDR — dev-mysql 읽기전용 열람자 공인 IP. 비밀 아님."
+  type        = list(string)
+  default     = []
+}
+
+variable "bastion_ssh_public_key" {
+  description = "dev-mysql 읽기전용 터널용 dbviewer 공개키(포워딩 전용·nologin). 공개키라 비밀 아님."
+  type        = string
+  default     = ""
+}
+
+variable "db_readonly_password" {
+  description = "dev-mysql readonly 계정(SELECT ON laimory.*) 비밀번호"
+  type        = string
+  sensitive   = true
+  # user_data 의 SQL(IDENTIFIED BY '...') 파싱을 깨지 않도록 안전 문자셋만 허용(db_app_password 와 동일 규칙).
+  validation {
+    condition     = can(regex("^[A-Za-z0-9!#%^*_+=:.,~@-]{8,128}$", var.db_readonly_password))
+    error_message = "db_readonly_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
+  }
+}

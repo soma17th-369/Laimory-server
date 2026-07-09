@@ -119,3 +119,32 @@ resource "aws_vpc_security_group_egress_rule" "ai_all" {
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
+
+# ---------- dev bastion SSH (읽기전용 DB 터널 전용) ----------
+# dev WAS 에만 부착하는 별도 SG. dev-mysql 을 읽기전용 열람하려는 사용자가 SSH 포트포워딩으로
+# 접근하도록 22번을 allowlist IP 에만 연다. WAS SG(aws_security_group.was)는 dev·prod 공유라
+# 거기에 22를 열면 prod 까지 노출되므로, dev 전용 SG 로 분리해 dev WAS 에만 붙인다(ec2.tf).
+
+resource "aws_security_group" "dev_bastion_ssh" {
+  name        = "${var.project_name}-dev-bastion-ssh-sg"
+  description = "dev WAS SSH for read-only DB tunnel (allowlisted IPs)"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-dev-bastion-ssh-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "dev_bastion_ssh" {
+  for_each = toset(var.bastion_ssh_allowed_cidrs)
+
+  security_group_id = aws_security_group.dev_bastion_ssh.id
+  description       = "SSH tunnel for dev read-only DB viewer"
+  ip_protocol       = "tcp"
+  from_port         = 22
+  to_port           = 22
+  cidr_ipv4         = each.value
+}
+
+resource "aws_vpc_security_group_egress_rule" "dev_bastion_ssh_all" {
+  security_group_id = aws_security_group.dev_bastion_ssh.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
