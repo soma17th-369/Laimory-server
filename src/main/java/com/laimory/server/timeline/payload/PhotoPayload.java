@@ -18,10 +18,17 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record PhotoPayload(
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "0190a1b2.jpg",
+                description = "사진 업로드 URL 발급 API가 반환한 파일명({uuidv7}.{jpg|png|webp}). 형식이 어긋나면 거절.")
         String filename,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "content://media/external/images/media/1001",
+                description = "클라 기기 로컬 사진 URI. 서버는 해석 없이 저장·echo만 한다.")
         String clientPhotoUri,
+        @Schema(example = "37.5665", description = "위도(십진도). 선택 — PHOTO는 좌표가 없어도 된다.")
         Double latitude,
+        @Schema(example = "126.9780", description = "경도(십진도). 선택.")
         Double longitude,
+        @Schema(description = "사진 설명(자유 텍스트). 선택.")
         String description,
         @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 파생(CloudFront 서빙 URL) — 요청 시 무시됨")
         String photoUrl
