@@ -55,7 +55,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 이동 끝점 | Movement Endpoint | 이동의 출발/도착 지점. 위도/경도(클라 제공, 필수)와 서버 enrich 필드(주소·주변 장소 목록)를 담는 중첩 객체다. |
 | 이동수단 | transports | 이동수단 분류 값(단일 문자열, 예: `IN_VEHICLE`, `WALKING`)이다. |
 | 주소 | address | 좌표를 서버가 reverse geocoding해 얻은 주소다 — 도로명 우선, 없으면 지번(서버 enrich, nullable — 클라 제공값은 무시). |
-| 주변 장소 목록 | places | 좌표 반경 내 주변 장소명 배열(거리순, 건물명 역할 포함)이다. null=조회 미시도/실패(JSON 키 생략), 빈 배열=주변 장소 없음. 클라 제공값은 무시. |
+| 주변 장소 목록 | places | 좌표 반경 내 주변 장소명 배열(거리순, 건물명 역할 포함)이다. null=지오코딩 미연동(noop, JSON 키 생략), 빈 배열=주변 장소 없음. 클라 제공값은 무시. (지오코딩 실패는 draft 생성을 502로 실패시키므로 저장된 payload엔 남지 않는다.) |
 | 머문 시간 텍스트 | durationText | 장소에 머문 시간("1시간45분")이다. 서버가 startAt/endAt로 계산하며 클라 제공값은 받지 않는다. |
 | 건강 페이로드 | Health Payload | 건강 지표(metric)와 값(value)을 담는다. 지표당 아이템 하나, 측정 구간은 envelope의 startAt/endAt이 담는다. value는 단위 포함 텍스트(예: "100보", "140분")로, 서버는 파싱하지 않는다. |
 | 건강 지표 | Health Metric | 건강 아이템의 지표 종류다. `STEPS`(걸음 수)/`DISTANCE`(이동 거리)/`SLEEP`(수면 시간). 단위는 value 텍스트에 포함된다. |

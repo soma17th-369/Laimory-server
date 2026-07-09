@@ -104,7 +104,8 @@ public class TimelineDraftTaskService {
         TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems);
 
         // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
-        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩 실패는 내부에서 필드 null로 강등된다.
+        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
+        // BusinessException(ERROR_1014 전이 / ERROR_1015 영구)를 던져 draft 생성이 502로 실패한다 — taskId·저장 前이라 아무것도 안 만들어짐(롤백 불필요).
         List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
 
         String taskId = UuidV7.randomUuidV7().toString();
