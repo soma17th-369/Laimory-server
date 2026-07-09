@@ -76,3 +76,18 @@ PHOTO_CDN_DOMAIN=${photo_cdn_domain}
 ENVEOF
 chown -R ubuntu:ubuntu /home/ubuntu/app
 chmod 600 /home/ubuntu/app/.env
+
+%{ if env == "dev" ~}
+# ---- dev DB 읽기전용 터널 bastion 설정 ----
+# 이 박스를 SSH 포트포워딩 전용 관문으로 쓴다. dbviewer(nologin) 유저가 dev-mysql:3306 으로만
+# 터널하도록 authorized_keys 옵션(restrict + permitopen)으로 잠근다. WAS 는 평소 SSM 전용이라
+# sshd 가 꺼져 있으므로 켠다. 22번 개방은 terraform 이 dev WAS 에만 붙인 별도 bastion SG 로 제한.
+systemctl enable --now ssh
+id dbviewer >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin dbviewer
+install -d -m 700 -o dbviewer -g dbviewer /home/dbviewer/.ssh
+cat > /home/dbviewer/.ssh/authorized_keys <<'AUTHKEYS'
+restrict,port-forwarding,permitopen="${db_host}:3306" ${bastion_ssh_public_key}
+AUTHKEYS
+chown dbviewer:dbviewer /home/dbviewer/.ssh/authorized_keys
+chmod 600 /home/dbviewer/.ssh/authorized_keys
+%{ endif ~}

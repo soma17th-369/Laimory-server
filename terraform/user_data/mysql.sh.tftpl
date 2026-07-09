@@ -36,6 +36,16 @@ GRANT ALL PRIVILEGES ON ${db_name}.* TO '${app_user}'@'%';
 FLUSH PRIVILEGES;
 SQL
 
+%{ if env == "dev" ~}
+# dev 전용: 읽기전용 열람 계정(WAS SSH 터널 경유 DataGrip 등). laimory DB 만 SELECT(최소권한).
+mysql <<'ROSQL'
+CREATE USER IF NOT EXISTS 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
+ALTER USER 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
+GRANT SELECT ON ${db_name}.* TO 'readonly'@'%';
+FLUSH PRIVILEGES;
+ROSQL
+%{ endif ~}
+
 # 스키마 적용 (ddl-auto=validate 이므로 앱 기동 전 선적용 필수)
 aws s3 cp "${schema_s3_uri}" /tmp/schema.sql --region ${region}
 mysql ${db_name} < /tmp/schema.sql

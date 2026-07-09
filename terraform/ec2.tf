@@ -13,11 +13,13 @@
 resource "aws_instance" "was" {
   for_each = toset(var.environments)
 
-  ami                    = local.ubuntu_ami
-  instance_type          = var.was_instance_types[each.key]
-  subnet_id              = aws_subnet.public[index(var.environments, each.key) % length(aws_subnet.public)].id
-  vpc_security_group_ids = [aws_security_group.was.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+  ami                  = local.ubuntu_ami
+  instance_type        = var.was_instance_types[each.key]
+  subnet_id            = aws_subnet.public[index(var.environments, each.key) % length(aws_subnet.public)].id
+  iam_instance_profile = aws_iam_instance_profile.ec2.name
+
+  # dev WAS 에만 bastion SG 추가 부착(읽기전용 DB 터널용 22번). prod 엔 붙이지 않는다.
+  vpc_security_group_ids = each.key == "dev" ? [aws_security_group.was.id, aws_security_group.dev_bastion_ssh.id] : [aws_security_group.was.id]
 
   # 기존 dev/prod WAS는 nginx/certbot/.env를 SSM으로 수동 관리한다(user_data는 신규 박스 최초 부팅 재현용).
   # user_data_replace_on_change=false만으로는 부족하다 — 이건 "교체 대신 stop/start로 user_data를 갱신"하는
@@ -26,18 +28,20 @@ resource "aws_instance" "was" {
   user_data_replace_on_change = false
 
   user_data = templatefile("${path.module}/user_data/was.sh.tftpl", {
-    region           = var.region
-    db_host          = var.mysql_private_ip[each.key]
-    db_username      = var.db_app_username
-    db_password      = var.db_app_password
-    redis_host       = var.redis_private_ip
-    redis_username   = var.redis_app_username
-    redis_password   = var.redis_app_password
-    redis_ssl        = "false"
-    photo_bucket     = aws_s3_bucket.photos.bucket
-    photo_cdn_domain = aws_cloudfront_distribution.photos.domain_name
-    api_domain       = var.api_domains[each.key]
-    certbot_email    = var.certbot_email
+    env                    = each.key
+    region                 = var.region
+    db_host                = var.mysql_private_ip[each.key]
+    db_username            = var.db_app_username
+    db_password            = var.db_app_password
+    redis_host             = var.redis_private_ip
+    redis_username         = var.redis_app_username
+    redis_password         = var.redis_app_password
+    redis_ssl              = "false"
+    photo_bucket           = aws_s3_bucket.photos.bucket
+    photo_cdn_domain       = aws_cloudfront_distribution.photos.domain_name
+    api_domain             = var.api_domains[each.key]
+    certbot_email          = var.certbot_email
+    bastion_ssh_public_key = var.bastion_ssh_public_key
   })
 
   root_block_device {
@@ -80,13 +84,15 @@ resource "aws_instance" "mysql" {
   user_data_replace_on_change = false
 
   user_data = templatefile("${path.module}/user_data/mysql.sh.tftpl", {
-    region         = var.region
-    db_name        = "laimory"
-    app_user       = var.db_app_username
-    app_password   = var.db_app_password
-    backup_bucket  = aws_s3_bucket.backup.bucket
-    schema_s3_uri  = "s3://${aws_s3_bucket.backup.bucket}/bootstrap/schema.sql"
-    backup_enabled = each.key == "prod" # dev는 binlog→S3 백업 스킵(스키마는 부팅 시 S3서 재적용)
+    env               = each.key
+    region            = var.region
+    db_name           = "laimory"
+    app_user          = var.db_app_username
+    app_password      = var.db_app_password
+    backup_bucket     = aws_s3_bucket.backup.bucket
+    schema_s3_uri     = "s3://${aws_s3_bucket.backup.bucket}/bootstrap/schema.sql"
+    backup_enabled    = each.key == "prod" # dev는 binlog→S3 백업 스킵(스키마는 부팅 시 S3서 재적용)
+    readonly_password = var.db_readonly_password
   })
 
   root_block_device {
@@ -97,7 +103,8 @@ resource "aws_instance" "mysql" {
   tags = { Name = "${var.project_name}-${each.key}-mysql-01" }
 
   lifecycle {
-    ignore_changes = [ami]
+    # user_data: WAS 와 동일하게 기존 박스 drift 방지(신규 박스만 생성 시점 user_data로 재현).
+    ignore_changes = [ami, user_data]
   }
 
   # NAT(apt)·프라이빗 라우팅·schema 업로드가 준비된 뒤 부팅되도록
