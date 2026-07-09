@@ -2,7 +2,7 @@ package com.laimory.server.geo;
 
 /**
  * {@link MapPlaceProvider} 조회 실패. provider가 외부 호출·응답 해석 실패를 <b>전부</b> 이 예외로 감싼다
- * (raw {@code RuntimeException}이 새면 catch-all 500이 되므로). 도메인 계층은 이 예외를 502(ERROR_1014)로 매핑한다.
+ * (raw {@code RuntimeException}이 새면 catch-all 500이 되므로). 도메인 계층은 재시도 가능성({@link #isRetryable()})에 따라 이 예외를 502로 매핑한다.
  *
  * <p>{@code retryable}은 provider가 원인으로 분류한다 — 전이적(5xx·타임아웃)이면 {@code true},
  * 영구적(429·401·403·기타 4xx·파싱/shape 오류)이면 {@code false}. provider 내부 재시도가 이미 소진된

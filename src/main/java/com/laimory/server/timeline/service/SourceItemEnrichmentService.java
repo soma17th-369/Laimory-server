@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
  * 파생한 무서명 CloudFront 서빙 URL이다(AI가 DB payload에서 HTTP GET으로 소비).
  * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
  *
- * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(ERROR_1014)로 실패시킨다 —
+ * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(전이=ERROR_1014 / 영구=ERROR_1015)로 실패시킨다 —
  * 저품질 타임라인을 굽지 않는다(좌표만 있고 주소·장소가 없으면 AI가 장소를 알 수 없다). 한 좌표가 실패하면
  * stream이 short-circuit돼 enrich 전체가 throw한다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라
  * dedupe 필수). 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
