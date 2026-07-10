@@ -3,6 +3,7 @@ package com.laimory.server.geo;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.web.client.RestClient;
 
@@ -51,15 +52,23 @@ class GeoWiringTest {
 
     @Test
     void kakaoModeWithBlankKey_failsContext() {
-        // kakao provider 생성자의 키 자기검증이 기동을 막는다(fail-fast).
+        // fail-fast 경로 고정: kakao provider 생성자의 키 자기검증(IllegalStateException)이 root cause여야 한다
+        // — hasFailed()만 보면 무관한 컨텍스트 오류도 통과하므로 원인 타입·메시지까지 단언.
         runner.withPropertyValues("app.geo.mode=kakao", "app.geo.kakao-rest-api-key=")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("KAKAO_REST_API_KEY"));
     }
 
     @Test
     void unknownMode_failsContext() {
-        // 오타 → noop/kakao 어느 조건도 매칭 안 됨 → MapPlaceProvider 빈 없음 → GeocodingService 주입 실패.
+        // fail-fast 경로 고정: 오타 → noop/kakao 어느 조건도 매칭 안 됨 → MapPlaceProvider 빈 부재로
+        // GeocodingService 주입 실패가 root cause여야 한다(무관한 오류가 아니라 이 경로임을 못박음).
         runner.withPropertyValues("app.geo.mode=kakoo")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(NoSuchBeanDefinitionException.class)
+                        .hasMessageContaining("MapPlaceProvider"));
     }
 }

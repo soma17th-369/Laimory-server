@@ -35,9 +35,10 @@ import org.springframework.web.util.UriBuilder;
  * <p>외부 호출·응답 해석 실패는 <b>전부</b> {@link MapPlaceLookupException}으로 감싼다 — HTTP 에러뿐 아니라
  * JSON 파싱 실패·null body·예상 밖 응답 shape(4xx 포함)까지. 안 그러면 raw RuntimeException이 새서 catch-all 500이 된다.
  *
- * <p>{@code app.geo.mode=kakao}일 때만 빈으로 등록된다({@code @ConditionalOnProperty}). 그 밖의 모드에선
- * {@link NoOpMapPlaceProvider}가 선택되므로 이 클래스는 생성되지 않는다 — 따라서 생성자에서 키를 자기검증한다
- * (kakao 모드인데 키가 비면 기동 실패, fail-fast).
+ * <p>{@code app.geo.mode=kakao}일 때만 빈으로 등록된다({@code @ConditionalOnProperty}). {@code noop}이거나
+ * 미설정이면 {@link NoOpMapPlaceProvider}가 대신 선택되고, 그 외 값(오타)이면 어느 provider도 매칭되지 않아
+ * 컨텍스트가 기동 실패한다(암시적 fail-fast). 이 클래스가 kakao 모드에서만 생성되므로 생성자에서 키를 자기검증한다
+ * (키가 비면 기동 실패, fail-fast).
  *
  * <p>⚠️ 좌표는 위치 민감정보다 — 로그엔 endpoint 종류·status·retryable·attempts만 남기고 좌표·요청 URL·응답 본문은 금지한다.
  */
