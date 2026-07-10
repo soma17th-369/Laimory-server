@@ -74,7 +74,7 @@ public interface TimelineApi {
                   }
                 },
                 {
-                  "itemType": "LOCATION",
+                  "itemType": "STAY",
                   "rawId": "0190a1b2-0003-7000-8000-000000000003",
                   "startAt": "2026-07-08T12:00:00",
                   "endAt": "2026-07-08T13:00:00",
@@ -124,7 +124,7 @@ public interface TimelineApi {
             """;
 
     @Operation(summary = "draft 작업 생성",
-            description = "sourceItems(하루 기록 원천: 위치·이동·사진·건강·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
+            description = "sourceItems(하루 기록 원천: 머문 곳·이동·사진·건강·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
                     + "202로 반환된 taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
                     + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시).")
     @ApiResponses({

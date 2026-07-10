@@ -16,10 +16,10 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
@@ -244,9 +244,9 @@ public class TimelineDraftTaskService {
                     }
                 }
                 case CalendarPayload calendar -> requireItemType(src.itemType(), ItemType.CALENDAR, i);
-                case LocationPayload location -> {
-                    requireItemType(src.itemType(), ItemType.LOCATION, i);
-                    requireValidCoordinate(location.latitude(), location.longitude(), "LOCATION", i);
+                case StayPayload stay -> {
+                    requireItemType(src.itemType(), ItemType.STAY, i);
+                    requireValidCoordinate(stay.latitude(), stay.longitude(), "STAY", i);
                 }
                 case MovementPayload movement -> {
                     requireItemType(src.itemType(), ItemType.MOVEMENT, i);
@@ -286,7 +286,7 @@ public class TimelineDraftTaskService {
         }
     }
 
-    /** 좌표는 LOCATION/MOVEMENT 필수. NaN은 범위 비교를 전부 통과하므로 isFinite로 별도 차단한다. */
+    /** 좌표는 STAY/MOVEMENT 필수. NaN은 범위 비교를 전부 통과하므로 isFinite로 별도 차단한다. */
     private static void requireValidCoordinate(Double latitude, Double longitude, String field, int index) {
         if (latitude == null || longitude == null) {
             throw new IllegalArgumentException(field + " requires latitude and longitude: index=" + index);

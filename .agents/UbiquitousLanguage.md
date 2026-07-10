@@ -28,7 +28,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 한글명 | 영문명 | 설명 |
 | --- | --- | --- |
 | 타임라인 아이템 | Timeline Item | AI가 이벤트에 포함시킨 source item이 DB에 저장된 것이다. rawId(원본 데이터 ID)를 draft 행에서 그대로 복사해 보존한다. |
-| 아이템 타입 | Item Type | 아이템 종류다. 예: `PHOTO`, `CALENDAR`, `LOCATION`, `MOVEMENT`, `HEALTH`, `NOTIFICATION`. |
+| 아이템 타입 | Item Type | 아이템 종류다. 예: `PHOTO`, `CALENDAR`, `STAY`, `MOVEMENT`, `HEALTH`, `NOTIFICATION`. |
 | 아이템 시작 시각 | Start At | 아이템이 발생한 시작 시각이다. |
 | 아이템 종료 시각 | End At | 기간형 아이템의 종료 시각이다. 단일 시점 아이템이면 비어 있을 수 있다. |
 | 페이로드 | Payload | 타입별 세부 데이터다. DB에는 JSON으로 저장하되 Java에서는 typed payload로 다룬다. |
@@ -50,7 +50,7 @@ Laimory 도메인 용어는 아래 표현을 기준으로 사용한다.
 | 아이템 페이로드 | Timeline Item Payload | 모든 payload 타입의 공통 인터페이스다. Java sealed interface로 표현한다. |
 | 사진 페이로드 | Photo Payload | 사진 파일명(`filename`), 기기 로컬 URI(`clientPhotoUri`), 위치 정보(위도/경도), 사진 설명(`description`), 서빙 URL(`photoUrl` — 서버 파생, 클라 제공값 무시)을 담는다. |
 | 일정 페이로드 | Calendar Payload | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
-| 장소 페이로드 | Location Payload | 위도/경도(필수)와 서버 파생 필드(주소·주변 장소 목록·머문 시간 텍스트)를 담는다. |
+| 머문 곳 페이로드 | Stay Payload | 위도/경도(필수)와 서버 파생 필드(주소·주변 장소 목록·머문 시간 텍스트)를 담는다. |
 | 이동 페이로드 | Movement Payload | 출발/도착 이동 끝점(`start`/`end`), 이동수단(`transports`), 이동 거리(`distanceMeters`)를 담는다. |
 | 이동 끝점 | Movement Endpoint | 이동의 출발/도착 지점. 위도/경도(클라 제공, 필수)와 서버 enrich 필드(주소·주변 장소 목록)를 담는 중첩 객체다. |
 | 이동수단 | transports | 이동수단 분류 값(단일 문자열, 예: `IN_VEHICLE`, `WALKING`)이다. |

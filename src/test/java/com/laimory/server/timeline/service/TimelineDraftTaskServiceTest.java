@@ -25,11 +25,11 @@ import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.payload.HealthPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -349,11 +349,11 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_rejectsLocationMissingCoordinate() {
-        // LOCATION 좌표는 필수(지오코딩 enrich 전제) — 누락 → 400, 저장 전.
+    void createDraftTask_rejectsStayMissingCoordinate() {
+        // STAY 좌표는 필수(지오코딩 enrich 전제) — 누락 → 400, 저장 전.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new LocationPayload(null, 127.0557, null, null, null)));
+                ItemType.STAY, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new StayPayload(null, 127.0557, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -363,8 +363,8 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNonFiniteCoordinate() {
         // NaN은 범위 비교(-90~90)를 전부 통과하므로 isFinite 검증이 별도로 막아야 한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new LocationPayload(Double.NaN, 127.0557, null, null, null)));
+                ItemType.STAY, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new StayPayload(Double.NaN, 127.0557, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -373,8 +373,8 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsOutOfRangeCoordinate() {
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new LocationPayload(37.5445, 180.5, null, null, null)));
+                ItemType.STAY, "r", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new StayPayload(37.5445, 180.5, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
@@ -407,7 +407,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsMismatchedItemTypeAndPayload() {
         // HTTP 경로는 Jackson 디스크리미네이터가 일치를 보장하지만, 프로그래밍 방식 생성 경로를 방어한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, "r", LocalDateTime.of(2026, 6, 17, 8, 30), null,
+                ItemType.STAY, "r", LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
                         "IN_VEHICLE", null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, sources))
@@ -420,11 +420,11 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         // enrich(재구성) 결과가 저장본이다 — 원본이 아니라 반환 리스트로 row를 빌드해야 한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
-                ItemType.LOCATION, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new LocationPayload(37.5340, 126.9668, null, null, null)));
+                ItemType.STAY, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new StayPayload(37.5340, 126.9668, null, null, null)));
         List<SourceItemDto> enriched = List.of(new SourceItemDto(
-                ItemType.LOCATION, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new LocationPayload(37.5340, 126.9668,
+                ItemType.STAY, "raw-loc-1", LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new StayPayload(37.5340, 126.9668,
                         "서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"), "1시간45분")));
         when(sourceItemEnrichmentService.enrich(sources, 0L)).thenReturn(enriched);
 

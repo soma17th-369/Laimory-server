@@ -5,7 +5,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
 /**
- * 장소(머문 곳) 아이템 payload. 좌표는 필수(지오코딩 enrich 전제).
+ * 머문 곳(STAY) 아이템 payload. 좌표는 필수(지오코딩 enrich 전제).
  *
  * <p>{@code address}/{@code places}는 서버 지오코딩 enrich 필드, {@code durationText}("1시간45분")는
  * 서버가 startAt/endAt로 계산하는 파생 필드다 — 셋 다 요청에 실려와도 무시하고 서버가 재구성 시 채운다(nullable).
@@ -14,7 +14,7 @@ import java.util.List;
  * 빈 배열=정상 조회했으나 주변 장소 없음으로 구분한다 — 지오코딩 실패는 draft 생성을 502로 실패시키므로 저장된 payload엔 남지 않는다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record LocationPayload(
+public record StayPayload(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "37.5013", description = "위도(십진도, -90~90). 필수.")
         Double latitude,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "127.0396", description = "경도(십진도, -180~180). 필수.")

@@ -6,10 +6,10 @@ import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
 import com.laimory.server.geo.MapPlaceLookupException;
 import com.laimory.server.timeline.dto.SourceItemDto;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.Duration;
@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * 저장 전 payload 재구성: 서버 파생 필드는 클라 값을 무시하고 서버 값으로만 채운다
- * (mass assignment 방어 — 거절이 아니라 무시). LOCATION/MOVEMENT의 {@code address}/{@code places}는
+ * (mass assignment 방어 — 거절이 아니라 무시). STAY/MOVEMENT의 {@code address}/{@code places}는
  * 지오코딩 결과, {@code durationText}는 startAt/endAt 계산값, PHOTO의 {@code photoUrl}은 filename+userId로
  * 파생한 무서명 CloudFront 서빙 URL이다(AI가 DB payload에서 HTTP GET으로 소비).
  * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
@@ -61,10 +61,10 @@ public class SourceItemEnrichmentService {
 
     private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, long userId) {
         TimelineItemPayload reconstructed = switch (src.payload()) {
-            case LocationPayload location -> {
-                GeoPlace geo = lookup(location.latitude(), location.longitude(), lookups);
-                yield new LocationPayload(
-                        location.latitude(), location.longitude(),
+            case StayPayload stay -> {
+                GeoPlace geo = lookup(stay.latitude(), stay.longitude(), lookups);
+                yield new StayPayload(
+                        stay.latitude(), stay.longitude(),
                         geo.address(), geo.places(), durationText(src.startAt(), src.endAt()));
             }
             case MovementPayload movement -> new MovementPayload(
@@ -104,7 +104,7 @@ public class SourceItemEnrichmentService {
         });
     }
 
-    /** LOCATION 머문 시간 텍스트("1시간45분"). 서버 파생값 — startAt/endAt로 계산하고 계산 불가(endAt 없음 등)면 null. */
+    /** STAY 머문 시간 텍스트("1시간45분"). 서버 파생값 — startAt/endAt로 계산하고 계산 불가(endAt 없음 등)면 null. */
     private static String durationText(LocalDateTime startAt, LocalDateTime endAt) {
         if (startAt == null || endAt == null || endAt.isBefore(startAt)) {
             return null;

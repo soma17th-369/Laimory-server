@@ -5,10 +5,10 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,7 +28,7 @@ class TimelineApiExampleTest {
         assertThat(req.sourceItems()).hasSize(6);
         assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(PhotoPayload.class));
         assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(CalendarPayload.class));
-        assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(LocationPayload.class));
+        assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(StayPayload.class));
         assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(MovementPayload.class));
         assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(HealthPayload.class));
         assertThat(req.sourceItems()).anySatisfy(i -> assertThat(i.payload()).isInstanceOf(NotificationPayload.class));
