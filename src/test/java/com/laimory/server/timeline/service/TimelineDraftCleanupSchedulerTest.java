@@ -13,8 +13,8 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.time.Clock;
@@ -67,9 +67,9 @@ class TimelineDraftCleanupSchedulerTest {
         return row;
     }
 
-    private TimelineDraftSourceItem locationRow(long id) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.LOCATION, "r" + id, DATE.atTime(9, 0), null,
-                MAPPER.valueToTree(new LocationPayload(3.0, 4.0, null, null, null)));
+    private TimelineDraftSourceItem stayRow(long id) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.STAY, "r" + id, DATE.atTime(9, 0), null,
+                MAPPER.valueToTree(new StayPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }
@@ -115,7 +115,7 @@ class TimelineDraftCleanupSchedulerTest {
     @Test
     void cleanup_nonPhoto_deletesRowWithoutS3() {
         when(timelineDraftSourceItemService.findCreatedBefore(any()))
-                .thenReturn(List.of(locationRow(11L)));
+                .thenReturn(List.of(stayRow(11L)));
 
         scheduler(7L).cleanupExpiredDrafts();
 
@@ -126,7 +126,7 @@ class TimelineDraftCleanupSchedulerTest {
     @Test
     void cleanup_s3DeleteFails_keepsRowAndContinuesOthers() {
         TimelineDraftSourceItem failing = photoRow(20L, FILENAME);
-        TimelineDraftSourceItem ok = locationRow(21L);
+        TimelineDraftSourceItem ok = stayRow(21L);
         when(timelineDraftSourceItemService.findCreatedBefore(any()))
                 .thenReturn(List.of(failing, ok));
         doThrow(new RuntimeException("s3 down"))

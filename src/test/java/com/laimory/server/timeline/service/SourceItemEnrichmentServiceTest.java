@@ -17,10 +17,10 @@ import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.payload.HealthPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,14 +46,14 @@ class SourceItemEnrichmentServiceTest {
     }
 
     @Test
-    void enrich_fillsLocationAndMovementEndpoints_ignoringClientDerivedFields() {
+    void enrich_fillsStayAndMovementEndpoints_ignoringClientDerivedFields() {
         when(geocodingService.lookup(37.5340, 126.9668))
                 .thenReturn(new GeoPlace("서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘")));
         when(geocodingService.lookup(37.4979, 127.0276)).thenReturn(GeoPlace.EMPTY);
         // 클라가 서버 파생 필드(address/places/durationText)를 위조해 보내도 서버 값으로만 재구성된다.
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "raw-loc", T, T.plusMinutes(105),
-                        new LocationPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
+                new SourceItemDto(ItemType.STAY, "raw-loc", T, T.plusMinutes(105),
+                        new StayPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
                 new SourceItemDto(ItemType.MOVEMENT, "raw-mov", T, null,
                         new MovementPayload(
                                 new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of("위조 장소")),
@@ -66,11 +66,11 @@ class SourceItemEnrichmentServiceTest {
         assertThat(enriched.get(0).rawId()).isEqualTo("raw-loc");
         assertThat(enriched.get(1).rawId()).isEqualTo("raw-mov");
 
-        LocationPayload location = (LocationPayload) enriched.get(0).payload();
-        assertThat(location.address()).isEqualTo("서울 용산구 청파로20길 95");
-        assertThat(location.places()).containsExactly("서울드래곤시티", "그랑씨엘");
+        StayPayload stay = (StayPayload) enriched.get(0).payload();
+        assertThat(stay.address()).isEqualTo("서울 용산구 청파로20길 95");
+        assertThat(stay.places()).containsExactly("서울드래곤시티", "그랑씨엘");
         // durationText는 클라 위조값이 아니라 startAt/endAt(105분) 계산값.
-        assertThat(location.durationText()).isEqualTo("1시간45분");
+        assertThat(stay.durationText()).isEqualTo("1시간45분");
 
         MovementPayload movement = (MovementPayload) enriched.get(1).payload();
         // 조회 결과가 빈 좌표는 enrich 필드 null(클라 위조값 fallback 없음).
@@ -108,10 +108,10 @@ class SourceItemEnrichmentServiceTest {
     @Test
     void enrich_lookupsEachCoordinateOnce_acrossItems() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
-        // LOCATION 좌표 == MOVEMENT 도착 좌표 → 좌표당 6콜이므로 같은 좌표는 1회만 조회해야 한다.
+        // STAY 좌표 == MOVEMENT 도착 좌표 → 좌표당 6콜이므로 같은 좌표는 1회만 조회해야 한다.
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
-                        new LocationPayload(37.5340, 126.9668, null, null, null)),
+                new SourceItemDto(ItemType.STAY, "r1", T, null,
+                        new StayPayload(37.5340, 126.9668, null, null, null)),
                 new SourceItemDto(ItemType.MOVEMENT, "r2", T, null,
                         new MovementPayload(
                                 new MovementEndpoint(37.4979, 127.0276, null, null),
@@ -128,28 +128,28 @@ class SourceItemEnrichmentServiceTest {
     @Test
     void enrich_omitsDurationText_whenEndAtMissing() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
-        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.LOCATION, "r1", T, null,
-                new LocationPayload(37.5340, 126.9668, null, null, null)));
+        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.STAY, "r1", T, null,
+                new StayPayload(37.5340, 126.9668, null, null, null)));
 
-        LocationPayload location = (LocationPayload) service().enrich(sources, USER_ID).get(0).payload();
+        StayPayload stay = (StayPayload) service().enrich(sources, USER_ID).get(0).payload();
 
         // endAt이 없으면 머문 시간을 계산할 수 없어 null(NON_NULL 직렬화로 키 생략).
-        assertThat(location.durationText()).isNull();
+        assertThat(stay.durationText()).isNull();
     }
 
     @Test
     void enrich_formatsDurationText_hoursOnlyAndMinutesOnly() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "r1", T, T.plusHours(2),
-                        new LocationPayload(37.5340, 126.9668, null, null, null)),
-                new SourceItemDto(ItemType.LOCATION, "r2", T, T.plusMinutes(45),
-                        new LocationPayload(37.5445, 127.0557, null, null, null)));
+                new SourceItemDto(ItemType.STAY, "r1", T, T.plusHours(2),
+                        new StayPayload(37.5340, 126.9668, null, null, null)),
+                new SourceItemDto(ItemType.STAY, "r2", T, T.plusMinutes(45),
+                        new StayPayload(37.5445, 127.0557, null, null, null)));
 
         List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
 
-        assertThat(((LocationPayload) enriched.get(0).payload()).durationText()).isEqualTo("2시간");
-        assertThat(((LocationPayload) enriched.get(1).payload()).durationText()).isEqualTo("45분");
+        assertThat(((StayPayload) enriched.get(0).payload()).durationText()).isEqualTo("2시간");
+        assertThat(((StayPayload) enriched.get(1).payload()).durationText()).isEqualTo("45분");
     }
 
     @Test
@@ -158,10 +158,10 @@ class SourceItemEnrichmentServiceTest {
         when(geocodingService.lookup(37.5340, 126.9668))
                 .thenThrow(new MapPlaceLookupException("coord2address http 500", true, null));
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
-                        new LocationPayload(37.5340, 126.9668, null, null, null)),
-                new SourceItemDto(ItemType.LOCATION, "r2", T, null,
-                        new LocationPayload(37.5445, 127.0557, null, null, null)));
+                new SourceItemDto(ItemType.STAY, "r1", T, null,
+                        new StayPayload(37.5340, 126.9668, null, null, null)),
+                new SourceItemDto(ItemType.STAY, "r2", T, null,
+                        new StayPayload(37.5445, 127.0557, null, null, null)));
 
         assertThatThrownBy(() -> service().enrich(sources, USER_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -176,8 +176,8 @@ class SourceItemEnrichmentServiceTest {
         when(geocodingService.lookup(37.5340, 126.9668))
                 .thenThrow(new MapPlaceLookupException("coord2address http 401", false, null));
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
-                        new LocationPayload(37.5340, 126.9668, null, null, null)));
+                new SourceItemDto(ItemType.STAY, "r1", T, null,
+                        new StayPayload(37.5340, 126.9668, null, null, null)));
 
         assertThatThrownBy(() -> service().enrich(sources, USER_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -189,8 +189,8 @@ class SourceItemEnrichmentServiceTest {
         // enrichment 자체 버그(NPE 등)는 502로 가리지 않고 그대로 전파해 catch-all 500이 되게 한다 — broad RuntimeException catch 금지.
         when(geocodingService.lookup(37.5340, 126.9668)).thenThrow(new IllegalStateException("enrichment bug"));
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(ItemType.LOCATION, "r1", T, null,
-                        new LocationPayload(37.5340, 126.9668, null, null, null)));
+                new SourceItemDto(ItemType.STAY, "r1", T, null,
+                        new StayPayload(37.5340, 126.9668, null, null, null)));
 
         assertThatThrownBy(() -> service().enrich(sources, USER_ID))
                 .isInstanceOf(IllegalStateException.class);

@@ -5,10 +5,10 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
@@ -40,7 +40,7 @@ public record SourceItemDto(
         @JsonSubTypes({
                 @JsonSubTypes.Type(value = PhotoPayload.class, name = "PHOTO"),
                 @JsonSubTypes.Type(value = CalendarPayload.class, name = "CALENDAR"),
-                @JsonSubTypes.Type(value = LocationPayload.class, name = "LOCATION"),
+                @JsonSubTypes.Type(value = StayPayload.class, name = "STAY"),
                 @JsonSubTypes.Type(value = MovementPayload.class, name = "MOVEMENT"),
                 @JsonSubTypes.Type(value = HealthPayload.class, name = "HEALTH"),
                 @JsonSubTypes.Type(value = NotificationPayload.class, name = "NOTIFICATION")

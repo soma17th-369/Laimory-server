@@ -22,8 +22,8 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -71,10 +71,10 @@ class DailyTimelineServiceTest {
         return row;
     }
 
-    private TimelineDraftSourceItem locationRow(long pk, LocalDateTime startAt) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.LOCATION, "raw-" + pk,
+    private TimelineDraftSourceItem stayRow(long pk, LocalDateTime startAt) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.STAY, "raw-" + pk,
                 startAt, null,
-                MAPPER.valueToTree(new LocationPayload(3.0, 4.0, null, null, null)));
+                MAPPER.valueToTree(new StayPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
         return row;
     }
@@ -123,7 +123,7 @@ class DailyTimelineServiceTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 8, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(
                 photoRow(10, t),
-                locationRow(11, t.plusHours(1)),
+                stayRow(11, t.plusHours(1)),
                 photoRow(12, t.plusHours(2)));
         // 이벤트 A: item PK 10,12 / 이벤트 B: item PK 11
         List<TimelineEventSuggestionDto> events = List.of(
@@ -272,13 +272,13 @@ class DailyTimelineServiceTest {
         ReflectionTestUtils.setField(event, "memo", "내 메모");
         when(timelineEventService.findByDailyRecordId(300L)).thenReturn(List.of(event));
 
-        LocationPayload location = new LocationPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
+        StayPayload stay = new StayPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
         TimelineItem item0 = TimelineItem.of(11L, ItemType.PHOTO, "raw-21", t, null,
                 MAPPER.valueToTree(new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x",
                         1.0, 2.0, null, "https://cdn.example/x")));
         ReflectionTestUtils.setField(item0, "timelineItemId", 21L);
-        TimelineItem item1 = TimelineItem.of(11L, ItemType.LOCATION, "raw-22", t.plusHours(1), t.plusHours(2),
-                MAPPER.valueToTree(location));
+        TimelineItem item1 = TimelineItem.of(11L, ItemType.STAY, "raw-22", t.plusHours(1), t.plusHours(2),
+                MAPPER.valueToTree(stay));
         ReflectionTestUtils.setField(item1, "timelineItemId", 22L);
         when(timelineItemService.findByTimelineEventId(11L)).thenReturn(List.of(item0, item1));
 
@@ -312,7 +312,7 @@ class DailyTimelineServiceTest {
 
         TimelineItemResponse itemResponse1 = eventResponse.items().get(1);
         assertThat(itemResponse1.timelineItemId()).isEqualTo(22L);
-        assertThat(itemResponse1.itemType()).isEqualTo(ItemType.LOCATION);
+        assertThat(itemResponse1.itemType()).isEqualTo(ItemType.STAY);
         assertThat(itemResponse1.payload().get("address").asText()).isEqualTo("서울 성동구 왕십리로 83-21");
     }
 

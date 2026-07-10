@@ -10,8 +10,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * 밖 형제 필드({@code itemType})라 OpenAPI inline discriminator를 쓰지 않고 oneOf만 둔다.
  */
 @Schema(description = "itemType에 대응하는 타입별 payload(6종 중 하나)",
-        oneOf = {PhotoPayload.class, CalendarPayload.class, LocationPayload.class,
+        oneOf = {PhotoPayload.class, CalendarPayload.class, StayPayload.class,
                 MovementPayload.class, HealthPayload.class, NotificationPayload.class})
 public sealed interface TimelineItemPayload
-        permits PhotoPayload, CalendarPayload, LocationPayload, MovementPayload, HealthPayload, NotificationPayload {
+        permits PhotoPayload, CalendarPayload, StayPayload, MovementPayload, HealthPayload, NotificationPayload {
 }

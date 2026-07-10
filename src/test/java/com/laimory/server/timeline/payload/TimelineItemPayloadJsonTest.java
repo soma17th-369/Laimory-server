@@ -52,9 +52,9 @@ class TimelineItemPayloadJsonTest {
     }
 
     @Test
-    void locationPayload_hasNoTypeInfo() throws Exception {
+    void stayPayload_hasNoTypeInfo() throws Exception {
         String json = objectMapper.writeValueAsString(
-                new LocationPayload(37.5445, 127.0557, null, null, null));
+                new StayPayload(37.5445, 127.0557, null, null, null));
         assertThat(json).doesNotContain("itemType");
     }
 
@@ -78,7 +78,7 @@ class TimelineItemPayloadJsonTest {
         List<TimelineItemPayload> payloads = List.of(
                 new PhotoPayload("u", "c", null, null, null, null),
                 new CalendarPayload("주간 회의", null, null, null),
-                new LocationPayload(37.5445, 127.0557, null, null, null),
+                new StayPayload(37.5445, 127.0557, null, null, null),
                 new MovementPayload(new MovementEndpoint(37.4979, 127.0276, null, null),
                         null, null, null),
                 new HealthPayload(HealthMetric.STEPS, null),

@@ -8,10 +8,10 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
-import com.laimory.server.timeline.payload.LocationPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.payload.TimelineItemPayload;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -96,7 +96,7 @@ class TimelineItemPersistenceIntegrationTest {
                 "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명",
                 "https://cdn.example/hash/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회의실 A", "설명", false);
-        LocationPayload location = new LocationPayload(37.5445, 127.0557,
+        StayPayload stay = new StayPayload(37.5445, 127.0557,
                 "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
 
         Long photoId = timelineItemRepository.save(
@@ -105,9 +105,9 @@ class TimelineItemPersistenceIntegrationTest {
         Long calendarId = timelineItemRepository.save(
                 TimelineItem.of(event.getTimelineEventId(), ItemType.CALENDAR, "raw-calendar",
                         LocalDateTime.of(2026, 5, 9, 12, 1), null, objectMapper.valueToTree(calendar))).getTimelineItemId();
-        Long locationId = timelineItemRepository.save(
-                TimelineItem.of(event.getTimelineEventId(), ItemType.LOCATION, "raw-location",
-                        LocalDateTime.of(2026, 5, 9, 12, 2), null, objectMapper.valueToTree(location))).getTimelineItemId();
+        Long stayId = timelineItemRepository.save(
+                TimelineItem.of(event.getTimelineEventId(), ItemType.STAY, "raw-stay",
+                        LocalDateTime.of(2026, 5, 9, 12, 2), null, objectMapper.valueToTree(stay))).getTimelineItemId();
 
         em.flush();
         em.clear();
@@ -122,10 +122,10 @@ class TimelineItemPersistenceIntegrationTest {
         assertThat((TimelineItemPayload) objectMapper.treeToValue(reloadedCalendar.getPayload(), CalendarPayload.class))
                 .isEqualTo(calendar);
 
-        TimelineItem reloadedLocation = timelineItemRepository.findById(locationId).orElseThrow();
-        assertThat(reloadedLocation.getItemType()).isEqualTo(ItemType.LOCATION);
-        assertThat((TimelineItemPayload) objectMapper.treeToValue(reloadedLocation.getPayload(), LocationPayload.class))
-                .isEqualTo(location);
+        TimelineItem reloadedStay = timelineItemRepository.findById(stayId).orElseThrow();
+        assertThat(reloadedStay.getItemType()).isEqualTo(ItemType.STAY);
+        assertThat((TimelineItemPayload) objectMapper.treeToValue(reloadedStay.getPayload(), StayPayload.class))
+                .isEqualTo(stay);
     }
 
     @Test
