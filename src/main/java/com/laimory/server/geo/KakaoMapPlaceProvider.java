@@ -28,8 +28,8 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p><b>실패 처리(strict)</b>: 6콜 중 하나라도 최종 실패하면 {@link MapPlaceLookupException}을 던진다
  * (조용한 null degrade 없음 — 저품질 타임라인을 굽지 않는다). 재시도는 <b>단일 HTTP 콜 단위</b>로 건다 —
- * lookup 전체에 걸면 늦은 콜의 실패가 성공한 앞 콜까지 재실행해 좌표당 최대 3×6=18콜이 되므로.
- * 전이적 실패(5xx·타임아웃)만 재시도({@link #MAX_ATTEMPTS}회), 영구적 실패(429·401·403·4xx·파싱)는 즉시 던진다.
+ * lookup 전체에 걸면 늦은 콜의 실패가 성공한 앞 콜까지 재실행해 좌표당 최대 2×6=12콜이 되므로.
+ * 전이적 실패(5xx·타임아웃)는 단일 콜을 최대 {@link #MAX_ATTEMPTS}회 시도하고, 영구적 실패(429·401·403·4xx·파싱)는 즉시 던진다.
  *
  * <p>외부 호출·응답 해석 실패는 <b>전부</b> {@link MapPlaceLookupException}으로 감싼다 — HTTP 에러뿐 아니라
  * JSON 파싱 실패·null body·예상 밖 응답 shape(4xx 포함)까지. 안 그러면 raw RuntimeException이 새서 catch-all 500이 된다.
@@ -54,8 +54,8 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     private static final String ENDPOINT_COORD2ADDRESS = "coord2address";
     private static final String ENDPOINT_CATEGORY = "category";
 
-    /** 전이적 실패 시 단일 콜 최대 시도 횟수(최초 1 + 재시도 2). 영구적 실패는 재시도하지 않는다. */
-    private static final int MAX_ATTEMPTS = 3;
+    /** 전이적 실패 시 단일 콜 최대 시도 횟수(최초 1 + 재시도 1). 영구적 실패는 재시도하지 않는다. */
+    private static final int MAX_ATTEMPTS = 2;
     private static final long BACKOFF_MILLIS = 200;
 
     private final RestClient restClient;
@@ -141,8 +141,8 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     }
 
     /**
-     * 단일 카카오 HTTP 콜 + 응답 shape 검증을 재시도로 감싼다. 전이적 실패(5xx·타임아웃)만 {@link #MAX_ATTEMPTS}회
-     * 재시도하고, 영구적 실패(4xx·파싱·shape)는 즉시 던진다. 외부 호출·해석 실패는 전부 {@link MapPlaceLookupException}으로 감싼다.
+     * 단일 카카오 HTTP 콜 + 응답 shape 검증을 재시도로 감싼다. 전이적 실패(5xx·타임아웃)는 최대 {@link #MAX_ATTEMPTS}회
+     * 시도하고, 영구적 실패(4xx·파싱·shape)는 즉시 던진다. 외부 호출·해석 실패는 전부 {@link MapPlaceLookupException}으로 감싼다.
      */
     private JsonNode fetchDocuments(String endpoint, int[] calls, Function<UriBuilder, URI> uriFunction) {
         int attempt = 0;

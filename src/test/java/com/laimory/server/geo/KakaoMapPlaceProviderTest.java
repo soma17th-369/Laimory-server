@@ -159,9 +159,9 @@ class KakaoMapPlaceProviderTest {
 
     @Test
     void lookup_throwsRetryable_whenCoord2addressPersists5xx_afterRetries() {
-        // 전이적 실패는 콜 단위로 MAX_ATTEMPTS(3)회 재시도한다. 끝내 실패하면 retryable=true로 던진다.
+        // 전이적 실패는 콜 단위로 MAX_ATTEMPTS(2)회 시도한다(최초 1 + 재시도 1). 끝내 실패하면 retryable=true로 던진다.
         // coord2address가 먼저라 카테고리는 호출되지 않는다(strict short-circuit).
-        server.expect(ExpectedCount.times(3),
+        server.expect(ExpectedCount.times(2),
                         requestToUriTemplate("https://dapi.kakao.com/v2/local/geo/coord2address.json?x={x}&y={y}",
                                 LONGITUDE, LATITUDE))
                 .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
