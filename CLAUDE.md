@@ -98,7 +98,7 @@ com.laimory.server
 
 ## 에러 처리 / 응답 컨벤션
 
-앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code,message,transactionId}, body}` envelope로 나간다.
+앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code,message}, body}` envelope로 나간다. 요청 추적 ID는 envelope가 아니라 응답 HTTP 헤더 `Transaction-Id`로 나간다.
 성공은 `COMMON_0000` + body, 에러는 `ERROR_*` + `body=null` — 클라이언트는 **"code가 `ERROR_`로 시작하면 에러"**로 분기한다.
 에러→envelope 변환은 전역 `common.error.GlobalExceptionHandler`(`ResponseEntityExceptionHandler` 상속)가 전담한다.
 
@@ -124,7 +124,7 @@ com.laimory.server
 
 ### transactionId / 로깅
 
-- 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`가 요청마다 새로 발급, 클라이언트 제공 값 재사용 없음). 클라이언트 노출 채널은 envelope `header.transactionId` **하나뿐**(HTTP 헤더 채널 없음). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
+- 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`가 요청마다 새로 발급, 클라이언트 제공 값 재사용 없음). 클라이언트 노출 채널은 응답 HTTP 헤더 `Transaction-Id` **하나뿐**(envelope body에는 넣지 않는다). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
 - access 로그는 필터가 요청당 1줄 남긴다(5xx ERROR / 4xx WARN / 정상 INFO). **핸들러 밖에서 예외를 또 로깅하지 않는다**(이중 로깅 금지).
 - 민감정보(토큰·presigned URL·query string·본문)는 로그 금지. path는 `getRequestURI()`(query 제외)만.
 
