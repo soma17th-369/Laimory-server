@@ -1,7 +1,5 @@
 package com.laimory.server.common;
 
-import com.laimory.server.common.logging.TransactionIds;
-
 /**
  * 앱-facing 응답 공통 envelope({@code header} + {@code body}) — 성공·에러 모두 이 shape로 나간다.
  *
@@ -14,13 +12,13 @@ import com.laimory.server.common.logging.TransactionIds;
  */
 public record ApiResponse<T>(ApiHeader header, T body) {
 
-    /** 성공 응답을 만든다. 헤더는 항상 COMMON_0000/"success" + 현재 요청의 transactionId. */
+    /** 성공 응답을 만든다. 헤더는 항상 COMMON_0000/"success". */
     public static <T> ApiResponse<T> success(T body) {
-        return new ApiResponse<>(new ApiHeader("COMMON_0000", "success", TransactionIds.current()), body);
+        return new ApiResponse<>(new ApiHeader("COMMON_0000", "success"), body);
     }
 
     /** 에러 응답을 만든다. 코드·메시지는 header에, body는 null. */
     public static ApiResponse<Void> error(String code, String message) {
-        return new ApiResponse<>(new ApiHeader(code, message, TransactionIds.current()), null);
+        return new ApiResponse<>(new ApiHeader(code, message), null);
     }
 }

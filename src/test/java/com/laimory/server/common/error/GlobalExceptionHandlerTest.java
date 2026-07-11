@@ -51,7 +51,7 @@ class GlobalExceptionHandlerTest {
     private PhotoUploadService photoUploadService;
 
     @Test
-    void businessException_mapsToEnumStatus_withCodeAndTransactionId() throws Exception {
+    void businessException_mapsToEnumStatus_withCodeAndTransactionIdHeader() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
 
@@ -59,7 +59,8 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"))
                 .andExpect(jsonPath("$.header.message").isNotEmpty())
-                .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.header.transactionId").doesNotExist()) // 노출 채널은 헤더뿐(hard cut 회귀 방지)
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -90,7 +91,7 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/no/such/path"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"))
-                .andExpect(jsonPath("$.header.transactionId").isNotEmpty());
+                .andExpect(header().exists("Transaction-Id"));
     }
 
     @Test

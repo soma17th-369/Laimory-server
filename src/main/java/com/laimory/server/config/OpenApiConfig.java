@@ -40,12 +40,12 @@ public class OpenApiConfig {
                         Laimory 안드로이드 앱 백엔드 API.
 
                         ## 공통 응답 envelope
-                        앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code, message, transactionId}, body}` 형태다.
+                        앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code, message}, body}` 형태다.
                         - **성공**: `header.code = COMMON_0000`, 결과는 `body`에 담긴다.
                         - **에러**: `header.code = ERROR_*`, `body = null`. **code가 `ERROR_`로 시작하면 에러**로 분기한다.
                         - `header.message`는 로캘(Accept-Language, 기본 한국어)이 적용된 사용자 노출 문구다 — \
                         클라이언트 분기는 message가 아니라 code로 한다.
-                        - `header.transactionId`: 요청 추적 ID(UUID). 문의·버그 리포트 시 함께 전달한다.
+                        - 모든 응답에는 요청 추적 ID(UUID)가 **응답 헤더 `Transaction-Id`**로 내려간다. 문의·버그 리포트 시 함께 전달한다.
 
                         ## 경로 prefix
                         - `/api/{applicationVersion}` — 공개(인증 불필요)

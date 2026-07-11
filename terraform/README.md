@@ -194,7 +194,7 @@ sudo docker ps --filter name=filebeat   # Up 확인
 
 `https://dev.laimory.app/kibana` → `suhyun444`(또는 예약유저 `elastic`) / `<elk_elastic_password>` 로그인 →
 Stack Management > Data Views 에서 **`laimory-dev-*`**(time field `@timestamp`) 생성.
-E2E: `curl https://dev.laimory.app/api/v1/intro` 응답의 `header.transactionId` 를 Kibana 에서 검색하면
+E2E: `curl -i https://dev.laimory.app/api/v1/intro` 응답 헤더의 `Transaction-Id` 값을 Kibana 에서 검색하면
 그 요청의 액세스 로그(`event:http_request_completed`, `status`, `latencyMs`, `path`)와 앱 라인이 함께 보인다.
 
 ### 5. stop/start 운용

@@ -3,6 +3,7 @@ package com.laimory.server.appconfig;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -37,7 +38,8 @@ class AppConfigControllerTest {
         mockMvc.perform(get(INTRO))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
-                .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.header.transactionId").doesNotExist()) // 노출 채널은 헤더뿐(hard cut 회귀 방지)
                 .andExpect(jsonPath("$.body.minAppVersion").value(1))
                 .andExpect(jsonPath("$.body.recommendAppVersion").value(2))
                 .andExpect(jsonPath("$.body.debugTestMessage").value("msg"));
