@@ -1,4 +1,4 @@
 interface:
   display_name: "Resolve Plan Review"
   short_description: "Validate plan review comments before applying them."
-  default_prompt: "Use $resolve-codex-plan-review to verify these plan review comments and apply only the valid ones."
+  default_prompt: "Use $resolve-plan-review to verify these plan review comments and apply only the valid ones."
