@@ -1,4 +1,4 @@
-﻿---
+---
 name: plan-review
 description: Review implementation plans before coding by checking them against the actual repository, project conventions, domain language, contracts, tests, data/migration risks, and rollout steps. Use when the user asks to review, sanity-check, approve, improve, or critique a plan from Claude/Codex/another agent, pasted design notes, issue plans, implementation checklists, migration plans, or "can we just do this?" proposals. Also use for Korean requests like "계획 검토", "플랜 리뷰", "개선사항 한 번에 말해줘", "클로드 계획 봐줘", or "그냥 해도 될까?". Do not use for reviewing code already on a PR, resolving PR comments, or merging. Always return all actionable improvements in one consolidated response instead of drip-feeding partial findings.
 ---
