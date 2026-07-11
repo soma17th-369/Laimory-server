@@ -19,8 +19,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * 모든 요청의 최전방에서 transactionId를 부여하고 요청당 정확히 한 줄의 access 로그를 남기는 필터.
  *
  * <ul>
- *   <li>요청마다 새 UUIDv7을 발급해 MDC에 넣는다. 클라이언트 노출은 envelope
- *       {@code header.transactionId}가 담당한다(HTTP 헤더 채널 없음 — 외부 문자열이 MDC로 들어올 통로도 없다).</li>
+ *   <li>요청마다 새 UUIDv7을 발급해 MDC에 넣고, 같은 값을 응답 헤더 {@code Transaction-Id}로
+ *       노출한다(클라이언트 노출 채널은 이 헤더 하나 — 외부 문자열이 MDC로 들어올 통로는 없다).
+ *       헤더는 chain 진입 전에 설정하므로 필터 단계에서 직접 쓰는 에러 응답에도 실리고, 미처리 예외의
+ *       /error 디스패치에서도 유지된다(컨테이너는 body 버퍼만 리셋).</li>
  *   <li>완료 로그 레벨은 status 기반: 5xx ERROR / 4xx WARN / 그 외 INFO. 순수 헬스체크 전용
  *       {@code /status}만 DEBUG로 강등한다(/api/v{n}/intro는 실사용 API라 INFO 유지).</li>
  *   <li>미처리 예외가 필터까지 전파되면 effective status 500으로 기록 후 그대로 rethrow한다.</li>
@@ -41,7 +43,9 @@ public class TransactionIdFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        MDC.put(TransactionIds.MDC_KEY, TransactionIds.newId());
+        String transactionId = TransactionIds.newId();
+        MDC.put(TransactionIds.MDC_KEY, transactionId);
+        response.setHeader(TransactionIds.HEADER_NAME, transactionId);
 
         long start = System.nanoTime();
         Throwable caught = null;

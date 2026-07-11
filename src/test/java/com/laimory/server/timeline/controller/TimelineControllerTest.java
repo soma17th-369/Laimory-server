@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -78,7 +79,7 @@ class TimelineControllerTest {
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
-                .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
+                .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.taskId").value("task-123"));
     }
 
@@ -90,7 +91,7 @@ class TimelineControllerTest {
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
-                .andExpect(jsonPath("$.header.transactionId").isNotEmpty())
+                .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 

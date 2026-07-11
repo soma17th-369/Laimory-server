@@ -79,6 +79,7 @@ class SecurityConfigTest {
         mockMvc.perform(get("/oauth2/authorization/google"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(header().exists("Transaction-Id")) // 필터단 직접 400에도 tx 헤더(TransactionIdFilter가 Security 체인보다 앞)
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
