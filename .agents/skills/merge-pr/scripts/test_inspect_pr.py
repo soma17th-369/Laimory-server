@@ -129,6 +129,28 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual("blocked", result["status"])
         self.assertIn("GitHub reports mergeStateStatus=BLOCKED", result["blockers"])
 
+    def test_behind_merge_state_blocks(self):
+        snapshot = ready_snapshot()
+        snapshot["pr"]["mergeStateStatus"] = "BEHIND"
+        result = inspect_pr.evaluate(snapshot)
+        self.assertEqual("blocked", result["status"])
+        self.assertIn("PR head is behind the base branch", result["blockers"])
+
+    def test_unstable_merge_state_waits_after_reported_checks_pass(self):
+        snapshot = ready_snapshot()
+        snapshot["pr"]["mergeStateStatus"] = "UNSTABLE"
+        result = inspect_pr.evaluate(snapshot)
+        self.assertEqual("waiting", result["status"])
+        self.assertIn(
+            "GitHub reports mergeStateStatus=UNSTABLE", result["waiting"]
+        )
+
+    def test_has_hooks_merge_state_is_ready(self):
+        snapshot = ready_snapshot()
+        snapshot["pr"]["mergeStateStatus"] = "HAS_HOOKS"
+        result = inspect_pr.evaluate(snapshot)
+        self.assertEqual("ready", result["status"])
+
     def test_review_required_blocks(self):
         snapshot = ready_snapshot()
         snapshot["pr"]["reviewDecision"] = "REVIEW_REQUIRED"
@@ -166,6 +188,16 @@ class LocalStateTest(unittest.TestCase):
         state = inspect_pr.local_state(Path(tempfile.gettempdir()))
 
         self.assertEqual([".agents/branch.md", "new-file.txt"], state["dirty_paths"])
+
+
+class SkillSafetyTest(unittest.TestCase):
+    def test_codex_metadata_disables_implicit_invocation(self):
+        skill_root = Path(__file__).resolve().parents[1]
+        openai_config = (skill_root / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("allow_implicit_invocation: false", openai_config)
 
 
 if __name__ == "__main__":

@@ -256,6 +256,10 @@ def evaluate(snapshot: dict[str, Any], expected_head: str | None = None) -> dict
             waiting.append("GitHub reports mergeStateStatus=BLOCKED while gates are pending")
         else:
             blockers.append("GitHub reports mergeStateStatus=BLOCKED")
+    elif merge_state == "BEHIND":
+        blockers.append("PR head is behind the base branch")
+    elif merge_state == "UNSTABLE":
+        waiting.append("GitHub reports mergeStateStatus=UNSTABLE")
 
     if blockers:
         status = "blocked"
