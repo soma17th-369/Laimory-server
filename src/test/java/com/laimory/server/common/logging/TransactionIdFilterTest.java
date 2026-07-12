@@ -122,6 +122,18 @@ class TransactionIdFilterTest {
     }
 
     @Test
+    void completionLog_isSkippedForExcludedPath_butTransactionIdStillIssued() throws Exception {
+        // 제외의 영향 반경은 완료 로그 한 줄뿐 — tx 발급·헤더는 유지된다(제외 경로의 앱 로그에도 tx가 붙도록).
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/favicon.ico");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).isEmpty();
+        assertThat(response.getHeader("Transaction-Id")).isNotNull();
+    }
+
+    @Test
     void completionLog_isDebugForHealthCheckPath() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
 

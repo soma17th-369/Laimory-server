@@ -8,6 +8,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -27,8 +28,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       /error 디스패치에서도 유지된다(컨테이너는 body 버퍼만 리셋).</li>
  *   <li>완료 로그 레벨은 status가 아니라 예외 처리 지점이 attribute로 심은 {@link ExceptionType}의
  *       {@code logLevel()}이 정한다(access 로그 레벨의 SSOT — status는 클라이언트 계약, 레벨은
- *       서버 관점 심각도로 독립 축). 에러 없는 요청은 INFO, 순수 헬스체크 전용 {@code /status}만
+ *       서버 관점 심각도로 독립 축). 에러 없는 요청은 INFO, {@link #QUIET_PATHS}(순수 헬스체크)만
  *       DEBUG로 강등한다(/api/v{n}/intro는 실사용 API라 INFO 유지).</li>
+ *   <li>{@link #EXCLUDED_PATHS}(favicon 등 무의미 트래픽)는 완료 로그를 남기지 않는다 —
+ *       단 tx 발급·MDC·응답 헤더는 유지된다(제외의 영향 반경은 로그 한 줄뿐).</li>
  *   <li>미처리 예외가 필터까지 전파되면 ERROR + effective status 500으로 기록 후 그대로 rethrow한다
  *       — status 매핑이 아니라 "아무도 처리 못 했다"는 사실 기반.</li>
  * </ul>
@@ -42,8 +45,15 @@ public class TransactionIdFilter extends OncePerRequestFilter {
     /** access 로그 전용 로거 — 클래스 로거와 분리해 라우팅/레벨을 독립 제어한다. */
     private static final Logger log = LoggerFactory.getLogger("http.access");
 
-    /** 순수 헬스체크 전용 경로. 정상 응답이면 DEBUG로 강등해 노이즈를 줄인다. */
-    private static final String QUIET_PATH = "/status";
+    /** 순수 헬스체크 전용 경로. 정상 응답이면 DEBUG로 강등해 노이즈를 줄인다(에러면 타입 레벨이 우선). */
+    private static final Set<String> QUIET_PATHS = Set.of("/status");
+
+    /**
+     * access 로그에서 제외하는 경로 — 브라우저·봇이 만드는 무의미 트래픽. 강등(quiet)과 달리
+     * 완료 로그 자체를 남기지 않는다. tx 발급은 유지되므로 이 경로에서 앱 로그가 찍혀도 tx는 붙는다.
+     * (favicon은 브라우저로 /kibana를 열 때 루트로 자동 요청돼 실제로 유입된다.)
+     */
+    private static final Set<String> EXCLUDED_PATHS = Set.of("/favicon.ico");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -66,9 +76,12 @@ public class TransactionIdFilter extends OncePerRequestFilter {
     }
 
     private void logCompletion(HttpServletRequest request, HttpServletResponse response, long start, Throwable caught) {
+        String path = request.getRequestURI();                    // query string 제외(presigned 서명·토큰 유출 방지)
+        if (EXCLUDED_PATHS.contains(path)) {
+            return;
+        }
         long latencyMs = (System.nanoTime() - start) / 1_000_000;
         int status = caught != null ? 500 : response.getStatus(); // 예외 전파 시 아직 200인 status 오기록 방지
-        String path = request.getRequestURI();                    // query string 제외(presigned 서명·토큰 유출 방지)
         ExceptionType type = (ExceptionType) request.getAttribute(RequestLogAttributes.EXCEPTION_TYPE);
         String errorDetail = (String) request.getAttribute(RequestLogAttributes.ERROR_DETAIL);
 
@@ -86,6 +99,6 @@ public class TransactionIdFilter extends OncePerRequestFilter {
         if (type != null) {
             return type.logLevel();
         }
-        return QUIET_PATH.equals(path) ? Level.DEBUG : Level.INFO;
+        return QUIET_PATHS.contains(path) ? Level.DEBUG : Level.INFO;
     }
 }
