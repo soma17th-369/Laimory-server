@@ -15,7 +15,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** 콜백 events ↔ 저장행 정합 검증기 단위 테스트. title/startAt 필수, itemIds 참조·유일 등. 인프라 0. */
+/** staging 조립 events ↔ 저장행 정합 검증기 단위 테스트. title/startAt 필수, itemIds 참조·유일 등. 인프라 0. */
 class TimelineEventSuggestionValidatorTest {
 
     private final TimelineEventSuggestionValidator validator = new TimelineEventSuggestionValidator();

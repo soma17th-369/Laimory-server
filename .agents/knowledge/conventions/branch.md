@@ -14,14 +14,14 @@
 | 접두사 | 용도 |
 |---|---|
 | `feat/<name>` | 기능 추가 |
-| `refactor/<name>` | 리팩터링 (동작 변경 없음) |
+| `refactor/<name>` | 리팩터링(동작 변경 없음) |
 | `fix/<name>` | 버그 수정 |
 
 예: `feat/oauth-login`, `refactor/appconfig-service`, `fix/null-config`
 
 ## 흐름
 
-```
+```text
 작업 브랜치 (feat/refactor/fix)
    │  PR
    ▼
@@ -34,5 +34,5 @@
 ## 규칙
 
 - 작업 브랜치는 항상 최신 `dev`에서 분기한다.
-- `main`, `dev`로는 직접 push하지 않고 **PR을 통해** 머지한다.
+- `main`, `dev`로 직접 push하지 않고 PR을 통해 머지한다.
 - 작업 브랜치는 머지 후 삭제한다.

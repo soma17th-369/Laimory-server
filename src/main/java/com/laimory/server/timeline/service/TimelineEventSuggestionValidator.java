@@ -9,7 +9,8 @@ import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * AI가 콜백으로 보낸 타임라인 이벤트 제안({@code events})이, POST 시점에 MySQL에 저장된 draft source 행과 정합한지 검증한다.
+ * staging 관계에서 조립한 타임라인 이벤트 제안({@code events})이,
+ * POST 시점에 MySQL에 저장된 draft source 행과 정합한지 검증한다.
  *
  * <p>위반 시 {@link IllegalArgumentException}을 던진다(→ 콜백에서 잡아 FAILED 기록·롤백).
  * 클라 원본은 DB의 {@code timeline_draft_source_items}에 보존돼 있으므로, 이벤트가 참조하는 itemId가 저장행의

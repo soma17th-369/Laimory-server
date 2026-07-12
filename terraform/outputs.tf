@@ -66,7 +66,7 @@ output "ecr_repository_url" {
 }
 
 output "gha_deploy_role_arn" {
-  description = "deploy.yml role-to-assume (GitHub repo Variable AWS_ROLE_ARN 로 설정)"
+  description = "deploy.yml role-to-assume (GitHub repo Variable AWS_DEPLOY_ROLE_ARN 로 설정)"
   value       = aws_iam_role.gha_deploy.arn
 }
 
