@@ -8,7 +8,7 @@ description:
   "버그 등록", "티켓 만들어", "create an issue", "file a ticket", "add this task" 같은 요청은 물론,
   사용자가 명시적으로 '이슈'라는 단어를 쓰지 않더라도 "이거 나중에 해야 하는데", "이 기능 추가하자",
   "이 버그 잡아야 함" 처럼 추적해야 할 작업을 꺼내면 적극적으로 이 스킬을 사용한다.
-  단, 단순히 코드를 지금 바로 고치는 작업이면 트리거하지 않는다.
+  단, `AGENTS.md`의 issue 기준보다 작은 단일 파일의 사소한 즉시 수정은 트리거하지 않는다.
 ---
 
 # create-issue
@@ -82,7 +82,7 @@ description:
 
 템플릿을 쓸 때는 주석(`<!-- ... -->`)을 실제 내용으로 바꾸고, 알 수 없는 항목은 빈칸으로 남겨
 작성자가 채우게 둔다(빈 섹션을 통째로 지우지 말 것). 레포 컨벤션이 본문에 영향을 준다면
-`CLAUDE.md` 등을 참고한다. 본문은 임시 `.md` 파일로 저장해 `--body-file`로 넘긴다.
+`AGENTS.md`와 연결된 knowledge 문서를 참고한다. 본문은 임시 `.md` 파일로 저장해 `--body-file`로 넘긴다.
 
 ### 2단계 — Type 결정 (Bug / Epic / Feature / Task)
 
@@ -126,7 +126,7 @@ description:
 
 **레포 (필수)** — `gh issue create`는 대상 레포를 요구하고, org에 레포가 여러 개라 하나로 고정할 수 없다.
 - 사용자가 명시했으면(예: "server 레포에", "Laimory-android에") 그대로 쓴다.
-- **명시 안 했으면 묻는다.** `python .claude/skills/create-issue/scripts/gh_issue.py repos`
+- **명시 안 했으면 묻는다.** `python .agents/skills/create-issue/scripts/gh_issue.py repos`
   로 org 레포 목록을 받아 `AskUserQuestion`으로 고르게 한다. (org는 고정이라 레포 *이름*만 넘기면 됨.)
 - 결정된 레포는 `--repo <name>`으로 넘긴다.
 
@@ -176,22 +176,22 @@ Epic이면 Epic + 하위 목록 전체를 보여준다. 확인되면 스크립�
 
 ```bash
 # 발견용: 어디에 만들지 사용자에게 물을 때 목록 받기
-python .claude/skills/create-issue/scripts/gh_issue.py repos       # org 레포 이름 목록
-python .claude/skills/create-issue/scripts/gh_issue.py projects    # org 프로젝트 목록
+python .agents/skills/create-issue/scripts/gh_issue.py repos       # org 레포 이름 목록
+python .agents/skills/create-issue/scripts/gh_issue.py projects    # org 프로젝트 목록
 
 # 단일 이슈 (--repo 필수, --project/--size/--assignee 선택)
-python .claude/skills/create-issue/scripts/gh_issue.py create \
+python .agents/skills/create-issue/scripts/gh_issue.py create \
   --repo Laimory-server --title "로그인 구현" --body-file /tmp/body.md \
   --type Feature --priority High --size M --project "시스템 초기 설계 및 구축" \
   --assignee suhyun444
 
 # Epic의 하위 이슈로 붙이며 생성 (Epic을 먼저 만들고 그 번호를 --parent로)
-python .claude/skills/create-issue/scripts/gh_issue.py create \
+python .agents/skills/create-issue/scripts/gh_issue.py create \
   --repo Laimory-server --title "JWT 발급/검증" --body-file /tmp/sub1.md \
   --type Task --priority High --parent 12 --assignee suhyun444
 
 # 이미 있는 두 이슈 연결
-python .claude/skills/create-issue/scripts/gh_issue.py link --repo Laimory-server --parent 12 --child 13
+python .agents/skills/create-issue/scripts/gh_issue.py link --repo Laimory-server --parent 12 --child 13
 ```
 
 - `--repo`는 `owner/name` 또는 org 내 `name`만 줘도 된다(org 자동 결합). 생략하면 안내 후 중단된다.
@@ -226,7 +226,7 @@ Other로 직접 넣을 수 있게 한다.
   **레포는 미지정이라 `repos`로 물어 Laimory-server 선택** · 담당자는 사용자가 지정 · Priority·Size도 신호 없어 질문 → Medium/S
 - 실행:
   ```bash
-  python .claude/skills/create-issue/scripts/gh_issue.py create \
+  python .agents/skills/create-issue/scripts/gh_issue.py create \
     --repo Laimory-server --title "Redis EC2 구축" --body-file /tmp/body.md \
     --type Task --priority Medium --size S --project "시스템 초기 설계 및 구축" \
     --assignee suhyun444

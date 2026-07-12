@@ -19,7 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * JPA 감사(BaseEntity) 동작 검증.
  * - ddl-auto=validate이므로 컨텍스트 기동 자체가 audit 컬럼(created_at/updated_at/modified_by)↔DDL 정합을 검증한다.
- * - save 시 created_at/updated_at은 채워지고 modified_by는 NULL(사용자 도입 전, AuditorAware가 비어 있음)인지 확인한다.
+ * - save 시 created_at/updated_at은 채워지고 modified_by는 NULL
+ *   (인증 principal의 auditor 전파 전, AuditorAware가 비어 있음)인지 확인한다.
  * - mutate 시 updated_at은 전진하고 created_at은 불변인지 확인한다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest

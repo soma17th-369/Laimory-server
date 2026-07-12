@@ -7,7 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * AI 카드 생성 콜백(서버간 통신) 구현. HTTP 문서·계약은 {@link TimelineCallbackApi}.
+ * AI 타임라인 이벤트 생성 콜백(서버간 통신) 구현. HTTP 문서·계약은 {@link TimelineCallbackApi}.
  */
 @RestController
 @RequiredArgsConstructor

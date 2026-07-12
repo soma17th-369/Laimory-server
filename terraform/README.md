@@ -41,7 +41,9 @@ terraform apply
 ```
 
 apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·버킷명을 확인하고,
-`deploy.yml` 과 앱 `.env` 반영에 사용한다(자세한 절차는 `.claude/plans/splendid-spinning-allen.md`).
+`deploy.yml` 과 앱 `.env` 반영에 사용한다. 배포의 현재 계약은
+[deployment knowledge](../.agents/knowledge/codebase/operations/deployment.md)를,
+Terraform 운용 원칙은 [infra recipe mode](../.agents/skills/infra-recipe-mode/SKILL.md)를 따른다.
 
 ## 도메인/TLS 적용 runbook
 
@@ -215,9 +217,10 @@ ELK off 동안 WAS Filebeat 는 재시도하다 복귀 시 registry 지점부터
 
 user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지
 않으므로**(state 노출 방지 + 기존 박스엔 user_data 재실행이 없음) SSM으로 직접 추가·갱신한다.
-이 키들이 빠지면 앱이 fail-fast로 기동에 실패한다. ⚠️ 현재 `deploy.yml`은 새 컨테이너를 올리기 전에
-기존 컨테이너를 `docker stop`/`rm` 하므로, 키 누락 시 기존 컨테이너도 이미 내려가 **다운타임이 난다** —
-stop 전에 필수 키를 검사하는 pre-flight는 토큰 코어 PR(#111, JWT_SECRET이 필수가 되는 시점)에서 추가한다.
+이 키들이 빠지면 앱이 fail-fast로 기동에 실패한다. 현재 `deploy.yml`은 기존 컨테이너를 내리기 전에
+`JWT_SECRET` 길이와 Google/Kakao OAuth client key 4개를 preflight한다.
+`DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 아직 preflight 대상이 아니며,
+이 값이 빠지면 기존 컨테이너 제거 후 새 앱 기동이 실패할 수 있다. health 실패 시 자동 rollback도 없다.
 
 | 키 | 출처 | 비고 |
 |---|---|---|

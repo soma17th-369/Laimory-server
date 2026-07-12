@@ -22,7 +22,7 @@ Core behavior: **give the complete review in one pass**. Do not hold back smalle
 3. Inspect local context before judging when the plan references files, APIs, domain language, tests, schemas, build tools, branches, or repo conventions.
 4. Compare the plan against:
    - Existing code paths and ownership boundaries.
-   - Project instructions such as `CLAUDE.md`, `AGENTS.md`, and domain language docs when relevant.
+   - Project instructions in `AGENTS.md` and the knowledge documents it routes to when relevant.
    - Existing tests and integration/E2E coverage.
    - Persistence and compatibility risks, including JSON payload contracts, migrations, legacy data, backfills, cleanup jobs, and rollout order.
    - Public or cross-team API contracts, DTO names, response shape, client/AI assumptions, and documentation.
