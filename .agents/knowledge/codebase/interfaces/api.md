@@ -12,7 +12,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 
 - `com.laimory.server.common.ApiUrls`
 - 각 feature의 `*Api.java`, controller, request/response DTO
-- `ApiResponse`, `ErrorCode`, `GlobalExceptionHandler`
+- `ApiResponse`, `ErrorCode`, `ExceptionType`, `GlobalExceptionHandler`
 - `OpenApiConfig`, API/controller/error contract tests
 - 실행 중 생성되는 OpenAPI 문서
 
@@ -65,16 +65,27 @@ app-facing success/error는 다음 envelope를 사용한다.
 ### Errors
 
 - service는 response를 만들지 않고 exception을 던진다.
-- client가 구분해야 하는 domain rejection은 `BusinessException(ErrorCode)`이다.
-- 모든 상태에서 잘못된 input은 `IllegalArgumentException`이며 400 `ERROR_0400`으로 매핑한다.
+- client가 구분해야 하는 domain rejection은 `BusinessException(ExceptionType)`이다.
+  `ExceptionType`은 내부 실패 사유(access log level 소유)이고, client 노출 code·HTTP status는
+  타입이 참조하는 `ErrorCode`가 결정한다 — **N:1 매핑**이라 같은 code라도 내부 사유·심각도가
+  다를 수 있다(예: `REFRESH_TOKEN_INVALID`/`REFRESH_TOKEN_REUSED` → 둘 다 `ERROR_2003`).
+- 모든 상태에서 잘못된 input은 `IllegalArgumentException`이며 400 `ERROR_0400`
+  (`VALIDATION_FAILED`)으로 매핑한다.
 - `ResponseStatusException`을 domain service에서 사용하지 않는다.
-- 내부 invariant failure는 catch-all 500 `ERROR_0500`으로 처리한다.
+- 내부 invariant failure는 catch-all 500 `ERROR_0500`(`UNEXPECTED_ERROR`)으로 처리한다.
+- MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
+  `ExceptionType.fromStatus` 폴백으로 정한다(406이 `ERROR_0400`과 함께 나갈 수 있음 —
+  `ErrorCode.status()`는 `BusinessException` 경로의 SSOT).
 - `ErrorCode` 이름은 배포 후 client contract라 rename하지 않는다.
 - 새 code block을 할당할 때 `ErrorCode` 상단 block registry를 따른다.
   domain block 숫자는 HTTP status와 무관하며 status는 enum field가 결정한다.
-- 새 error code는 기본·ko·en message bundle 모두에 추가한다.
+- 새 error 추가는 세 경우로 나뉜다:
+  ① 새로 throw되는 공개 error = `ErrorCode` + 기본·ko·en message bundle + `ExceptionType` 한 줄
+  ② 기존 공개 응답의 새 내부 원인 = `ExceptionType` 한 줄만
+  ③ 폴링 데이터/링크 파라미터 전용 = `ErrorCode`(+bundle)만 — throw되지 않으면 `ExceptionType` 불필요
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.
-  client는 message가 아니라 code로 분기한다.
+  client는 message가 아니라 code로 분기한다. message는 `ErrorCode` 이름이 key라
+  같은 code=같은 message가 구조적으로 보장된다(내부 구분을 응답 문구로 유출하지 않음).
 - 사용자 입력을 message argument에 넣지 않는다.
 
 ### Transaction ID
@@ -86,7 +97,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 
 - API contract 변경은 `*Api`, DTO, controller/handler, OpenAPI와 tests를 함께 확인한다.
 - error message보다 code가 client 분기 기준이다.
-- query string, token, body, presigned URL을 API log에 남기지 않는다.
+- log 정책(무엇을 남기고 무엇을 금지하는지)은 [observability](../operations/observability.md)가 소유한다.
 - `/a/api`를 현재 enforcement만 보고 public API로 재정의하지 않는다.
 
 ## Known Gaps
