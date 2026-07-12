@@ -39,7 +39,6 @@ class TransactionIdFilterTest {
     @BeforeEach
     void attachAccessLogAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger("http.access");
-        logger.setLevel(Level.DEBUG); // quiet(DEBUG) 강등 검증을 위해 수집 레벨을 낮춘다
         accessLog.start();
         logger.addAppender(accessLog);
     }
@@ -48,7 +47,6 @@ class TransactionIdFilterTest {
     void detachAccessLogAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger("http.access");
         logger.detachAppender(accessLog);
-        logger.setLevel(null);
     }
 
     /** 필터를 실행하고 체인 안에서 관측한 MDC의 tx를 돌려준다(응답 헤더는 호출부가 response로 단언). */
@@ -134,13 +132,26 @@ class TransactionIdFilterTest {
     }
 
     @Test
-    void completionLog_isDebugForHealthCheckPath() throws Exception {
+    void completionLog_isSkippedForHealthCheckPath() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
 
         filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
+        assertThat(accessLog.list).isEmpty();
+    }
+
+    @Test
+    void completionLog_excludedPathIsStillLoggedOnError() throws Exception {
+        // 제외는 정상 완료에만 적용 — 제외 경로의 장애가 로그에서 사라지면 안 된다.
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.UNEXPECTED_ERROR);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(500);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
         assertThat(accessLog.list).hasSize(1);
-        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.DEBUG);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.ERROR);
     }
 
     @Test

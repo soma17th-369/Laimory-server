@@ -23,8 +23,8 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - MDC key는 `transactionId`다.
 - client 노출은 response header `Transaction-Id` 하나뿐이고 envelope에는 없다.
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
-  예외는 `EXCLUDED_PATHS`(favicon 등 무의미 트래픽)뿐 — 완료 로그만 생략되고 tx 발급·MDC는 유지된다.
-  `QUIET_PATHS`(순수 헬스체크)는 남기되 정상 응답만 DEBUG로 강등한다.
+  예외는 `ExcludedPaths`(헬스체크·favicon 등 신호 없는 트래픽)뿐 — **정상 완료만** 생략되고,
+  에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
 - fields는 `HttpRequestLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
   `errorCode`(client 계약), `exceptionType`(내부 실패 사유), `errorDetail`(예외 클래스명·검증 메시지).
   field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
