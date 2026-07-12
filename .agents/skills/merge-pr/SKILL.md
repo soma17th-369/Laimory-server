@@ -149,4 +149,20 @@ If the PR merged but branch cleanup failed, report cleanup as incomplete without
 ## Resources
 
 - `scripts/inspect_pr.py`: read-only Git/GitHub inspection and deterministic merge-gate evaluation.
+- `scripts/test_inspect_pr.py`: regression tests for merge gates and explicit-invocation metadata.
 - `assets/digest-template.md`: required PR digest schema and evidence wording.
+- `agents/openai.yaml`: Codex UI metadata and implicit-invocation policy.
+
+## Gotchas
+
+- A sandboxed `gh auth status` may be unable to read credentials that are valid in the host keyring. Treat this as
+  an execution-context error first; do not tell the user to log in again until authentication has been checked from
+  a context allowed to access the existing credentials.
+- `gh pr merge --delete-branch` can switch or fast-forward the current worktree while deleting the PR branch. When
+  the shared checkout is on another branch or contains unrelated work, use a clean isolated worktree for this
+  workflow and remove only that worktree afterward.
+- The digest commit changes the PR head and starts fresh CI. A successful check for `implementation_head_sha` is
+  not evidence for the digest commit, which is why step 4 always pins and rechecks the new SHA.
+- Keep shared `SKILL.md` frontmatter limited to `name` and `description` for Codex compatibility. Runtime-specific
+  implicit-invocation policy belongs in `agents/openai.yaml`; destructive authorization remains enforced in the
+  workflow body and inspector.
