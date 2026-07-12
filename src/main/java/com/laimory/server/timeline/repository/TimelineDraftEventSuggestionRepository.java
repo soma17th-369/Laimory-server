@@ -12,8 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * timeline_draft_event_suggestions 레포. task_id 단위 조회/삭제, 보관기간 초과 행 bulk 삭제(cleanup용).
  *
- * <p>로드 정렬은 두지 않는다 — 하루 타임라인은 선형 시퀀스라 이벤트 start_at이 유일(도메인 불변식)이고,
- * 최종 읽기의 start_at 정렬만으로 순서가 결정적이라 eventRows 로드 순서는 결과에 영향이 없다.
+ * <p>로드 정렬은 두지 않는다 — assembler는 PK로 source association을 조립하고,
+ * 최종 읽기는 start_at으로 정렬한다. start_at은 unique가 아니며 finalize가 정확한 충돌을 best-effort로 조정한다.
  */
 public interface TimelineDraftEventSuggestionRepository extends JpaRepository<TimelineDraftEventSuggestion, Long> {
 

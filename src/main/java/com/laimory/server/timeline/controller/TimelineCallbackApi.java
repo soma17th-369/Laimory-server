@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
- * AI 카드 생성 콜백(서버간 통신)의 문서·계약(구현은 {@link TimelineCallbackController}). task별 one-time Callback-Token 헤더로 검증한다.
+ * AI 타임라인 이벤트 생성 콜백(서버간 통신)의 문서·계약(구현은 {@link TimelineCallbackController}).
+ * task별 one-time Callback-Token 헤더로 검증한다.
  *
  * <p>공개 API와 prefix가 다르므로(/s/api vs /api) 별도 컨트롤러로 두고 클래스 레벨 {@code @RequestMapping}을 쓴다.
  */
@@ -25,7 +26,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface TimelineCallbackApi {
 
     @Operation(summary = "AI draft 생성 결과 콜백",
-            description = "AI 서버가 draft 생성 결과(SUCCESS의 events 또는 FAILED의 실패 코드)를 전달한다. "
+            description = "AI 서버가 staging commit 뒤 결과 상태(status/errorCode/error)를 알린다. "
+                    + "SUCCESS의 events와 itemIds는 body로 보내지 않고 서버가 staging 관계에서 조립한다. "
                     + "Callback-Token은 작업 dispatch 시 AI에 전달된 one-time 토큰으로, 한 번 소비되면 재사용할 수 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
