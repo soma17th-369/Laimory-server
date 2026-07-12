@@ -74,11 +74,7 @@ public class TransactionIdFilter extends OncePerRequestFilter {
 
         // fields(): JSON encoder에선 record 프로퍼티가 top-level 필드로 전개되고(타입 보존),
         // 텍스트 패턴에선 record toString으로 찍힌다. 필드 추가는 HttpRequestLog 한 곳이면 된다.
-        HttpRequestLog entry = new HttpRequestLog("http_request_completed", request.getMethod(), path,
-                status, latencyMs,
-                type != null ? type.errorCode().code() : null,
-                type != null ? type.name() : null,
-                errorDetail);
+        HttpRequestLog entry = HttpRequestLog.of(request.getMethod(), path, status, latencyMs, type, errorDetail);
         log.atLevel(resolveLevel(caught, type, path)).setCause(caught).log("{}", fields(entry));
     }
 
