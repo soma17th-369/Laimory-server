@@ -87,6 +87,13 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual("blocked", result["status"])
         self.assertGreaterEqual(len(result["blockers"]), 6)
 
+    def test_draft_blocks_if_promotion_did_not_happen(self):
+        snapshot = ready_snapshot()
+        snapshot["pr"]["isDraft"] = True
+        result = inspect_pr.evaluate(snapshot)
+        self.assertEqual("blocked", result["status"])
+        self.assertIn("PR is a draft", result["blockers"])
+
     def test_local_and_remote_head_mismatch_blocks(self):
         snapshot = ready_snapshot()
         snapshot["local"]["head_sha"] = "local456"
