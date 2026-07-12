@@ -11,8 +11,11 @@ import java.util.Set;
  */
 final class ExcludedPaths {
 
-    /** 제외 대상 — 헬스체크(/status)와 브라우저 자동 요청(favicon: /kibana를 브라우저로 열면 실제 유입). */
-    private static final Set<String> PATHS = Set.of("/status", "/favicon.ico");
+    /** 제외 대상 — 한 줄에 하나씩 나열한다(정확 일치만, 패턴 불가). */
+    private static final Set<String> PATHS = Set.of(
+            "/status",       // 순수 헬스체크 프로브
+            "/favicon.ico"   // 브라우저 자동 요청(/kibana를 브라우저로 열면 실제 유입)
+    );
 
     static boolean contains(String path) {
         return PATHS.contains(path);
