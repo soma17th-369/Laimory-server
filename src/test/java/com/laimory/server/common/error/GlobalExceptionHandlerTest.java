@@ -1,5 +1,6 @@
 package com.laimory.server.common.error;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.laimory.server.common.logging.RequestLogAttributes;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.service.PhotoUploadService;
@@ -53,7 +55,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void businessException_mapsToEnumStatus_withCodeAndTransactionIdHeader() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isConflict())
@@ -65,13 +67,20 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void illegalArgument_mapsToError0400() throws Exception {
+    void illegalArgument_mapsToError0400_andForwardsDetailToAccessLog() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andReturn();
+
+        // access 로그 합류 계약: 내부 타입·검증 메시지가 attribute로 전달된다(레벨·필드 조립은 필터 몫)
+        assertThat(result.getRequest().getAttribute(RequestLogAttributes.EXCEPTION_TYPE))
+                .isEqualTo(ExceptionType.VALIDATION_FAILED);
+        assertThat(result.getRequest().getAttribute(RequestLogAttributes.ERROR_DETAIL))
+                .isEqualTo("recordAt is required");
     }
 
     @Test
@@ -119,7 +128,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void acceptLanguage_switchesErrorMessageLocale() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
                         .header("Accept-Language", "en"))
@@ -137,7 +146,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void withoutAcceptLanguage_fallsBackToKorean() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(jsonPath("$.header.message").value("이미 저장된 하루 기록입니다."));

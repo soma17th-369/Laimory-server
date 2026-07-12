@@ -5,13 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.error.ExceptionType;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.UUID;
+import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,14 +132,57 @@ class TransactionIdFilterTest {
     }
 
     @Test
-    void completionLog_isWarnFor4xx() throws Exception {
+    void completionLog_levelComesFromExceptionTypeAttribute() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/s/api/v1/timeline/callback");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.CALLBACK_TOKEN_ALREADY_USED);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(401);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).hasSize(1);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN); // 401이라서가 아니라 타입 레벨이 WARN이라서
+        assertThat(accessLog.list.get(0).getFormattedMessage())
+                .contains("errorCode=ERROR_1012")
+                .contains("exceptionType=CALLBACK_TOKEN_ALREADY_USED");
+    }
+
+    @Test
+    void completionLog_statusAloneDoesNotChangeLevel() throws Exception {
+        // 레벨의 SSOT는 ExceptionType — attribute 없는 4xx(봇 스캔 등 예외 경로 밖 응답)는 INFO로 남는다.
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setStatus(404);
 
         filter.doFilter(request, response, new MockFilterChain());
 
-        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO);
+    }
+
+    @Test
+    void completionLog_jsonEncoderExpandsRecordToTopLevelFields() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.GEOCODING_PERMANENT_FAILURE);
+        request.setAttribute(RequestLogAttributes.ERROR_DETAIL, "MapPlaceLookupException");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(502);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        LogstashEncoder encoder = new LogstashEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.start();
+        JsonNode json = new ObjectMapper().readTree(encoder.encode(accessLog.list.get(0)));
+
+        // record 프로퍼티가 escape된 문자열이 아니라 top-level 필드로, 숫자는 숫자 타입 그대로 전개된다
+        assertThat(json.get("event").asText()).isEqualTo("http_request_completed");
+        assertThat(json.get("level").asText()).isEqualTo("ERROR"); // 타입 레벨
+        assertThat(json.get("status").isInt()).isTrue();
+        assertThat(json.get("status").asInt()).isEqualTo(502);
+        assertThat(json.get("latencyMs").isNumber()).isTrue();
+        assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1015");
+        assertThat(json.get("exceptionType").asText()).isEqualTo("GEOCODING_PERMANENT_FAILURE");
+        assertThat(json.get("errorDetail").asText()).isEqualTo("MapPlaceLookupException");
     }
 
     @Test

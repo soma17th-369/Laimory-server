@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineDefaults;
@@ -66,11 +67,11 @@ public class TimelineCallbackService {
                                String callbackToken, DraftTaskCallbackRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ERROR_1001));
+                .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
         // 1. 토큰 검증을 먼저 한다(소비·멱등 단축보다 앞). terminal task도 해시를 보존하므로 재콜백도 토큰으로 막힌다.
         if (!CallbackTokens.matches(callbackToken, task.callbackTokenHash())) {
-            throw new BusinessException(ErrorCode.ERROR_1002);
+            throw new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH);
         }
 
         // 2. 토큰 소비(원자적 test-and-consume): INCR 결과가 정확히 1인 요청만 승자.
@@ -78,7 +79,7 @@ public class TimelineCallbackService {
         long uses = timelineTaskService.consumeCallbackToken(taskId);
         if (uses != 1) {
             log.warn("callback token replay detected: taskId={} uses={}", taskId, uses);
-            throw new BusinessException(ErrorCode.ERROR_1012);
+            throw new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_USED);
         }
 
         // 3. 멱등: 이미 종결(SUCCESS/FAILED)된 task면 재처리하지 않는다.

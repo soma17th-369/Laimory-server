@@ -105,7 +105,7 @@ com.laimory.server
 ### 에러 throw 규칙
 
 - **서비스는 try/catch로 응답을 만들지 않는다 — 던지기만 한다.** HTTP status·응답 shape·메시지 로캘은 전부 전역 핸들러가 결정한다.
-- **도메인 에러** → `throw new BusinessException(ErrorCode.ERROR_xxxx)`.
+- **도메인 에러** → `throw new BusinessException(ExceptionType.XXX)`. `ExceptionType`은 내부 실패 사유(로그 레벨 소유)이고 클라이언트 노출 코드는 그 타입이 참조하는 `ErrorCode`가 결정한다(N:1 — 같은 코드라도 내부 사유·심각도가 다를 수 있음).
   판별 기준: **서버 상태가 거부**했고(같은 요청이 다른 시점엔 성공 가능), **클라이언트가 코드를 보고 다르게 행동**해야 하는 에러 (예: task 만료 404, 토큰 불일치 401, 이미 SAVED 409).
 - **입력 검증 실패** → `throw new IllegalArgumentException("설명")`.
   판별 기준: 요청 자체가 불량이라 **어떤 상태에서도 영원히 실패**하는 경우(필수값 누락, 미지원 값). 전역에서 400 `ERROR_0400`(제네릭 메시지)으로 매핑된다. 예외 메시지는 로그에만 남고 클라이언트엔 노출되지 않는다.
@@ -119,14 +119,14 @@ com.laimory.server
 - 에러 코드는 전부 `ERROR_` prefix. `COMMON_0000`은 성공 전용(enum에 없음, `ApiResponse.success` 소유).
 - **블록 레지스트리**(`common.error.ErrorCode` 상단 주석이 SSOT): `ERROR_0xxx`=교차/폴백 전용(뒤 세 자리=HTTP 힌트, 도메인 사용 금지), `ERROR_1xxx`=timeline, 새 도메인은 1000 블록 단위로 할당. 도메인 블록 숫자는 HTTP status와 무관하다(status는 enum 필드가 SSOT).
 - **코드명은 공개 API 계약** — 한번 배포되면 클라이언트가 분기하므로 rename 금지.
-- 새 코드 추가 시 `messages.properties`(기본=한국어)·`messages_ko`·`messages_en` 세 곳에 코드명 key로 메시지를 추가한다(전부 UTF-8). 누락하면 `ErrorCodeMessagesTest`가 빌드에서 실패시킨다.
+- 새 에러 추가는 세 경우로 나뉜다: ① 새로 throw되는 공개 에러 = `ErrorCode` + 메시지 번들 3곳(`messages.properties` 기본=한국어·`messages_ko`·`messages_en`, 전부 UTF-8; 누락 시 `ErrorCodeMessagesTest`가 빌드 실패) + `ExceptionType` 한 줄 ② 기존 공개 응답의 새 내부 원인 = `ExceptionType` 한 줄만 ③ 폴링 데이터/링크 파라미터 전용 = `ErrorCode`(+번들)만.
 - `messages*.properties` 문구는 envelope `header.message`로 **클라이언트에 그대로 노출되는 사용자-facing 메시지**다 — 짧은 사용자 문구로만 쓰고 내부 진단·운영 지침을 넣지 않는다. 클라이언트 분기는 message가 아니라 code로 한다.
 
 ### transactionId / 로깅
 
 - 모든 요청에 UUIDv7 transactionId가 부여된다(`common.logging.TransactionIdFilter`가 요청마다 새로 발급, 클라이언트 제공 값 재사용 없음). 클라이언트 노출 채널은 응답 HTTP 헤더 `Transaction-Id` **하나뿐**(envelope body에는 넣지 않는다). 로그엔 MDC로 자동 포함되므로 **코드에서 tx를 수동으로 로그에 넣지 않는다**.
-- access 로그는 필터가 요청당 1줄 남긴다(5xx ERROR / 4xx WARN / 정상 INFO). **핸들러 밖에서 예외를 또 로깅하지 않는다**(이중 로깅 금지).
-- 민감정보(토큰·presigned URL·query string·본문)는 로그 금지. path는 `getRequestURI()`(query 제외)만.
+- access 로그는 필터가 요청당 1줄 남긴다. **레벨은 HTTP status가 아니라 `ExceptionType.logLevel()`이 정한다**(서버 관점 심각도 — status와 독립. 에러 없음=INFO, `/status`만 DEBUG, 필터까지 전파된 미처리 예외=ERROR). stacktrace는 catch-all과 MVC가 직접 처리하는 5xx만 남긴다. 보안 감사·외부 호출 진단용 서비스 로그는 독립 이벤트로 자기 레벨을 소유한다 — 같은 예외를 중복 로깅하지 않는 원칙은 유지.
+- 로깅은 적극적으로 한다 — **진짜 비밀만 금지: 토큰·비밀번호·presigned URL·세션 값**(요청·응답 값 로깅 허용). query string은 서명·토큰 채널이라 제외 유지 — path는 `getRequestURI()`(query 제외)만.
 
 ## Git / Branch / Commit 전략
 

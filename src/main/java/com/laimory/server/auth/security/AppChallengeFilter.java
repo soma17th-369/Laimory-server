@@ -3,6 +3,7 @@ package com.laimory.server.auth.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -64,7 +65,7 @@ public class AppChallengeFilter extends OncePerRequestFilter {
 
     /** 입력 검증 실패라 제네릭 400(ERROR_0400) envelope — 필터 단계라 직접 작성한다. */
     private void writeBadRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        request.setAttribute(RequestLogAttributes.ERROR_CODE, ErrorCode.ERROR_0400.code());
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.APP_CHALLENGE_REJECTED);
         // 필터 단계는 MVC LocaleResolver(spring.web.locale=ko) 미적용 — 헤더 없으면 한국어로 직접 폴백.
         Locale locale = request.getHeader("Accept-Language") == null ? Locale.KOREAN : request.getLocale();
         String message = messageSource.getMessage(ErrorCode.ERROR_0400.code(), null, locale);

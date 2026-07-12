@@ -45,6 +45,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** POST 오케스트레이터 단위 검증. recordDate 도출·SAVED 거절·draft 저장·보상 삭제·디스패치 합성. 인프라 0. */
@@ -222,7 +223,7 @@ class TimelineDraftTaskServiceTest {
         // taskId 생성·draft 저장·PROCESSING·dispatch 前이라 아무것도 만들어지지 않는다(롤백 불필요).
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1014));
+                .thenThrow(new BusinessException(ExceptionType.GEOCODING_TRANSIENT_FAILURE));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,

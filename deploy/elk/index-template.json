@@ -25,6 +25,8 @@
         "status": { "type": "integer" },
         "latencyMs": { "type": "long" },
         "errorCode": { "type": "keyword" },
+        "exceptionType": { "type": "keyword" },
+        "errorDetail": { "type": "keyword" },
         "stack_trace": { "type": "text" }
       }
     }

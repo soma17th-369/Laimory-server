@@ -3,7 +3,7 @@ package com.laimory.server.auth.service;
 import com.laimory.server.auth.repository.AppCodeStore;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,7 +40,8 @@ public class AppCodeService {
 
     /**
      * app_code를 원자 소비(GETDEL)하고 verifier를 검증해 userId를 반환한다.
-     * 무효/만료/이미 소비/verifier 불일치는 전부 {@code ERROR_2002} — 사유 구분은 공격자에게만 유용하다.
+     * 무효/만료/이미 소비는 {@code APP_CODE_INVALID}, verifier 불일치는 {@code APP_CODE_VERIFIER_MISMATCH} —
+     * 클라이언트엔 전부 {@code ERROR_2002}로 나간다(사유 구분은 공격자에게만 유용). 내부 구분은 access 로그에 남는다.
      */
     public long consume(String appCode, String appVerifier) {
         if (appCode == null || appCode.isBlank() || appVerifier == null || appVerifier.isBlank()) {
@@ -48,12 +49,12 @@ public class AppCodeService {
         }
         AppCodeStore.AppCodeEntry entry = appCodeStore.consume(AuthTokens.sha256Hex(appCode));
         if (entry == null) {
-            throw new BusinessException(ErrorCode.ERROR_2002);
+            throw new BusinessException(ExceptionType.APP_CODE_INVALID);
         }
         if (!AuthTokens.matchesChallenge(appVerifier, entry.appChallenge())) {
             // 코드는 유효했는데 verifier가 틀림 = 딥링크 탈취 시도 가능성. 코드는 이미 소비돼 재시도 불가.
             log.warn("app_code verifier mismatch: userId={}", entry.userId());
-            throw new BusinessException(ErrorCode.ERROR_2002);
+            throw new BusinessException(ExceptionType.APP_CODE_VERIFIER_MISMATCH);
         }
         return entry.userId();
     }

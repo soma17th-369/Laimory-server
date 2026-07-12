@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.laimory.server.auth.dto.TokenResponse;
 import com.laimory.server.auth.service.AuthTokenService;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,7 +53,7 @@ class AuthControllerTest {
     @Test
     void issueTokens_businessError2002_returns401Envelope() throws Exception {
         when(authTokenService.issueTokens(any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_2002));
+                .thenThrow(new BusinessException(ExceptionType.APP_CODE_INVALID));
 
         mockMvc.perform(post(TOKEN).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"appCode\":\"c\",\"appVerifier\":\"v\"}"))
@@ -78,7 +78,7 @@ class AuthControllerTest {
     @Test
     void refresh_businessError2003_returns401Envelope() throws Exception {
         when(authTokenService.refresh(any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_2003));
+                .thenThrow(new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID));
 
         mockMvc.perform(post(REFRESH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"refresh-old\"}"))

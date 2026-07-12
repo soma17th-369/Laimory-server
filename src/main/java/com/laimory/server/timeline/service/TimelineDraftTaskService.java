@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
@@ -90,14 +91,14 @@ public class TimelineDraftTaskService {
         existingRecord
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
-                    throw new BusinessException(ErrorCode.ERROR_1003);
+                    throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                 });
 
         // append 중복 방지: 요청 배치 내 중복 rawId를 dedupe하고, 같은 날짜에 이미 저장된 rawId(기존 event의 item)를 제외한다.
         // 이미 저장된 event는 사용자 소유라 서버가 재그룹핑하지 않는다 — 신규 rawId만 새 event로 append한다.
         List<SourceItemDto> newItems = excludeAlreadySaved(dedupeByRawId(sourceItems), existingRecord);
         if (newItems.isEmpty()) {
-            throw new BusinessException(ErrorCode.ERROR_1013);
+            throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
         }
 
         // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).

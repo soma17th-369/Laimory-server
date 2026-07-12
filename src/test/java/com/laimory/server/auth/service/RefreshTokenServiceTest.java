@@ -13,6 +13,7 @@ import com.laimory.server.auth.repository.RefreshTokenRepository;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -109,8 +110,11 @@ class RefreshTokenServiceTest {
         when(refreshTokenRepository.claimRotation(any())).thenReturn(0); // 이미 ROTATED/REVOKED = 재사용 신호
 
         assertThatThrownBy(() -> newService().rotate("reused-raw"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003));
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    // N:1 계약: 내부 타입은 재사용 탐지(WARN 대상)로 구분되지만 클라이언트 코드는 동일하다
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_REUSED);
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003);
+                });
         verify(refreshTokenRepository).revokeAllByUserId(USER_ID);
         verify(refreshTokenRepository, never()).save(any());
     }
