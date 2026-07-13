@@ -15,8 +15,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -47,11 +46,10 @@ import org.springframework.stereotype.Service;
  * 이 클래스가 그 빈을 통해(Spring 프록시 경유) 호출하므로 트랜잭션이 실제로 활성화된다(self-invocation 아님).
  * Redis SUCCESS는 appendDailyTimeline이 반환(=DB 커밋)한 뒤에만 set돼, polling이 'SUCCESS인데 record 없음'을 보지 않는다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TimelineCallbackService {
-
-    private static final Logger log = LoggerFactory.getLogger(TimelineCallbackService.class);
 
     /** AI가 콜백으로 보고할 수 있는 실패 코드 허용 목록(당분간 ERROR_1008 하나 — 확장 시 여기에 추가). */
     private static final Set<String> AI_FAILURE_CODES = Set.of(ErrorCode.ERROR_1008.name());

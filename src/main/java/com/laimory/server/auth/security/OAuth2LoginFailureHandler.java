@@ -5,8 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 
@@ -14,9 +13,8 @@ import org.springframework.security.web.authentication.AuthenticationFailureHand
  * OIDC 로그인 실패 훅(사용자 거부·state 불일치·id_token 검증 실패 등). 실패 사유는 서버 로그에만 남기고,
  * 앱에는 핸드오프 링크의 {@code ?error=ERROR_2004} 파라미터로만 알린다(사유 구분은 클라 행동을 바꾸지 않음 — 전부 재시도).
  */
+@Slf4j
 public class OAuth2LoginFailureHandler implements AuthenticationFailureHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(OAuth2LoginFailureHandler.class);
 
     @Override
     public void onAuthenticationFailure(HttpServletRequest request, HttpServletResponse response,

@@ -8,8 +8,7 @@ import com.laimory.server.common.error.ExceptionType;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -23,10 +22,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * refresh <b>전체</b>를 폐기해 도둑과 정상 사용자 모두 재로그인시킨다. 정상 앱의 동시 refresh도
  * 같은 경로로 빠질 수 있으므로 <b>클라이언트는 refresh를 single-flight로 직렬화해야 한다</b>(앱 계약).
  */
+@Slf4j
 @Service
 public class RefreshTokenService {
-
-    private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final TransactionTemplate transactionTemplate;

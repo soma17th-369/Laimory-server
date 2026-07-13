@@ -8,8 +8,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.slf4j.event.Level;
 import org.springframework.core.Ordered;
@@ -37,12 +36,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *
  * <p>{@code OncePerRequestFilter}는 ERROR/ASYNC 디스패치를 기본 skip하므로 중복 로그가 없다.
  */
+@Slf4j(topic = "http.access") // access 로그 전용 로거 — 클래스 로거와 분리해 라우팅/레벨을 독립 제어한다.
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class TransactionIdFilter extends OncePerRequestFilter {
-
-    /** access 로그 전용 로거 — 클래스 로거와 분리해 라우팅/레벨을 독립 제어한다. */
-    private static final Logger log = LoggerFactory.getLogger("http.access");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)

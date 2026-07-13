@@ -8,8 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -42,11 +41,10 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p>⚠️ 좌표는 위치 민감정보다 — 로그엔 endpoint 종류·status·retryable·attempts만 남기고 좌표·요청 URL·응답 본문은 금지한다.
  */
+@Slf4j
 @Component
 @ConditionalOnProperty(name = "app.geo.mode", havingValue = "kakao")
 public class KakaoMapPlaceProvider implements MapPlaceProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(KakaoMapPlaceProvider.class);
 
     private static final String KAKAO_BASE_URL = "https://dapi.kakao.com";
     /** 목적이 "주변 추천"이 아니라 동일·인접 건물 내 장소 보강이라 반경을 좁게 고정한다. */
