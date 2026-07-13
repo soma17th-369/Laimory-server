@@ -88,8 +88,10 @@ class RefreshTokenServiceTest {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.empty());
 
         assertThatThrownBy(() -> newService().rotate("unknown-raw"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003));
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003);
+                });
         verify(refreshTokenRepository, never()).revokeAllByUserId(any());
     }
 
@@ -99,8 +101,10 @@ class RefreshTokenServiceTest {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(expired));
 
         assertThatThrownBy(() -> newService().rotate("expired-raw"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003));
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003);
+                });
         verify(refreshTokenRepository, never()).claimRotation(any());
     }
 

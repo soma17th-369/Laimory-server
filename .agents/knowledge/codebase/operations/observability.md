@@ -43,6 +43,12 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 세션 값.** query string은 서명·token 채널이라 계속 제외한다. 금지 대상을 예외 메시지에도 넣지 않는다.
 (요청/응답 body 캡처 구현은 미구현 — Known Gaps 참고.)
 
+외부에서 유입된 자유 문자열(요청 필드·예외 메시지·외부 시스템 출력)을 log에 넣을 때는
+`LogSanitizer`를 통과시킨다 — CR/LF 제거(텍스트 로그 라인 위조 방지) + 길이 상한(keyword 색인 값이
+Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거부됨). `errorDetail`은
+`GlobalExceptionHandler`의 조립 지점에서 일괄 정화(200자)되고 매핑 `ignore_above: 256`이 이중 방어다.
+서버 생성 값(id·count·enum)은 유계라 대상이 아니다.
+
 ## Output by Environment
 
 - `docker` profile은 사람이 읽는 text console log를 사용한다.
@@ -92,8 +98,9 @@ curl -sf -u "elastic:$PW" -X PUT "$ES/_index_template/laimory" \
   -H 'Content-Type: application/json' --data-binary @/home/ubuntu/elk/index-template.json
 
 # 3) 현재 열린 index에도 _mapping PUT(template은 기존 index에 소급되지 않음) — 추가한 field만 명시
+#    ignore_above는 기존 field에도 갱신 가능한 파라미터다
 curl -sf -u "elastic:$PW" -X PUT "$ES/laimory-dev-*/_mapping" -H 'Content-Type: application/json' \
-  -d '{"properties":{"exceptionType":{"type":"keyword"},"errorDetail":{"type":"keyword"}}}'
+  -d '{"properties":{"exceptionType":{"type":"keyword"},"errorDetail":{"type":"keyword","ignore_above":256}}}'
 
 # 4) 확인: 새 field가 keyword 단일 타입인지 (text+keyword 멀티필드면 앱이 먼저 배포된 것)
 curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping" | grep -o '"exceptionType":{"type":"keyword"}'

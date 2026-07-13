@@ -1,6 +1,7 @@
 package com.laimory.server.common.error;
 
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -41,12 +42,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private final MessageSource messageSource;
 
-    /** envelope 조립 단일 지점: access 로그용 attribute(타입·상세) + 로캘 메시지. */
+    /**
+     * errorDetail 길이 상한. 예외 메시지에 요청값이 echo되는 지점이 있어(filename·timezone·AI title 등)
+     * 무제한이면 keyword 색인의 Lucene term 한도(32,766B) 초과로 access 로그 문서 전체가 ES에서
+     * 거부될 수 있다 — 매핑의 {@code ignore_above: 256}과 이중 방어(문자 200 < 256, 4B UTF-8이어도 안전).
+     */
+    private static final int MAX_DETAIL_LENGTH = 200;
+
+    /** envelope 조립 단일 지점: access 로그용 attribute(타입·상세) + 로캘 메시지. detail은 여기서 일괄 정화한다. */
     private ApiResponse<Void> errorEnvelope(
             ExceptionType type, Object[] args, HttpServletRequest request, String logDetail) {
         request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, type);
         if (logDetail != null) {
-            request.setAttribute(RequestLogAttributes.ERROR_DETAIL, logDetail);
+            request.setAttribute(RequestLogAttributes.ERROR_DETAIL,
+                    LogSanitizer.sanitize(logDetail, MAX_DETAIL_LENGTH));
         }
         String code = type.errorCode().code();
         String message = messageSource.getMessage(code, args, LocaleContextHolder.getLocale());

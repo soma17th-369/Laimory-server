@@ -84,6 +84,23 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void illegalArgument_detailIsSanitized_noCrlfAndBounded() throws Exception {
+        // 요청값이 echo된 긴 메시지 — CR/LF 제거(텍스트 로그 위조 방지) + 200자 상한(keyword term 한도로
+        // 인한 ES 문서 거부 방지, ignore_above 256과 이중 방어)이 단일 조립 지점에서 적용돼야 한다.
+        String hostile = "invalid photo filename: line1\r\nFAKE LOG LINE\n" + "x".repeat(500);
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException(hostile));
+
+        var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isBadRequest())
+                .andReturn();
+
+        String detail = (String) result.getRequest().getAttribute(RequestLogAttributes.ERROR_DETAIL);
+        assertThat(detail).doesNotContain("\r").doesNotContain("\n");
+        assertThat(detail.length()).isLessThanOrEqualTo(200);
+    }
+
+    @Test
     void unexpectedException_mapsToError0500_withoutLeakingDetail() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("redis serialization failed: secret detail"));
