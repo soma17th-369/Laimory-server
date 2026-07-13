@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -25,7 +26,7 @@ public class TimelineDraftTaskPollingService {
     public DraftTaskStatusResponse poll(String applicationVersion, String taskId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ERROR_1001));
+                .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
         return switch (task.status()) {
             case PROCESSING -> DraftTaskStatusResponse.processing();

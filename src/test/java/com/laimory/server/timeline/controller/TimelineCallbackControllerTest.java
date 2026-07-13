@@ -11,7 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.timeline.service.TimelineCallbackService;
 import org.junit.jupiter.api.Test;
@@ -53,7 +53,7 @@ class TimelineCallbackControllerTest {
 
     @Test
     void callback_serviceUnauthorized_returns401WithErrorCode() throws Exception {
-        doThrow(new BusinessException(ErrorCode.ERROR_1002))
+        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
@@ -68,7 +68,7 @@ class TimelineCallbackControllerTest {
     @Test
     void callback_consumedToken_returns401WithError1012() throws Exception {
         // 새 공개 코드 계약 고정: 이미 소비된 토큰은 1002(불일치)가 아닌 1012로 내려간다.
-        doThrow(new BusinessException(ErrorCode.ERROR_1012))
+        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_USED))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
@@ -82,7 +82,7 @@ class TimelineCallbackControllerTest {
 
     @Test
     void callback_taskNotFound_returns404WithErrorCode() throws Exception {
-        doThrow(new BusinessException(ErrorCode.ERROR_1001))
+        doThrow(new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)

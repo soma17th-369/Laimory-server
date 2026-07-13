@@ -1,7 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
 import com.laimory.server.geo.MapPlaceLookupException;
@@ -99,7 +99,8 @@ public class SourceItemEnrichmentService {
                 // 재시도 가능성에 따라 코드를 분리해 클라가 재시도 UX를 분기한다(전이=1014 재시도 가능, 영구=1015 즉시 재시도 무의미).
                 // enrich가 taskId 생성·저장 前이라 아무것도 안 만들어져 롤백 불필요. 원인 상세는 provider가 이미 로깅했다(좌표는 로그 금지).
                 // broad RuntimeException은 잡지 않는다 — enrichment 자체 버그(NPE 등)는 catch-all 500이 맞고 502로 가리면 안 된다.
-                throw new BusinessException(e.isRetryable() ? ErrorCode.ERROR_1014 : ErrorCode.ERROR_1015);
+                throw new BusinessException(e.isRetryable()
+                        ? ExceptionType.GEOCODING_TRANSIENT_FAILURE : ExceptionType.GEOCODING_PERMANENT_FAILURE);
             }
         });
     }

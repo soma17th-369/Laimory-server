@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -30,7 +31,7 @@ import java.util.List;
 import com.laimory.server.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -98,7 +99,7 @@ class TimelineControllerTest {
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1003));
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
@@ -108,7 +109,7 @@ class TimelineControllerTest {
     @Test
     void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1013));
+                .thenThrow(new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
@@ -116,11 +117,11 @@ class TimelineControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"ERROR_1014", "ERROR_1015"})
-    void createDraftTask_mapsGeocodingFailureTo502(String code) throws Exception {
+    @CsvSource({"GEOCODING_TRANSIENT_FAILURE, ERROR_1014", "GEOCODING_PERMANENT_FAILURE, ERROR_1015"})
+    void createDraftTask_mapsGeocodingFailureTo502(String type, String code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.valueOf(code)));
+                .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadGateway())
@@ -147,7 +148,7 @@ class TimelineControllerTest {
     @Test
     void createPhotoUploads_mapsLimitExceededToDedicatedCodeWithLimitValue() throws Exception {
         when(photoUploadService.createUploads(any(), any()))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1005, 15L));
+                .thenThrow(new BusinessException(ExceptionType.PHOTO_SIZE_EXCEEDED, 15L));
 
         String body = """
                 {"photos": [{"contentType": "image/jpeg", "size": 99999999}]}
@@ -202,7 +203,7 @@ class TimelineControllerTest {
     @Test
     void pollDraftTask_mapsNotFoundTo404() throws Exception {
         when(timelineDraftTaskPollingService.poll(any(), eq("missing")))
-                .thenThrow(new BusinessException(ErrorCode.ERROR_1001));
+                .thenThrow(new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
         mockMvc.perform(get(TASKS + "/missing"))
                 .andExpect(status().isNotFound())

@@ -4,10 +4,13 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 
 /**
- * API 에러 코드 카탈로그 — 코드명과 HTTP status의 단일 기준(SSOT).
+ * API 에러 코드 카탈로그 — 클라이언트에게 보여주는 값(코드명·HTTP status)의 단일 기준(SSOT).
+ *
+ * <p>서버 내부에서 예외를 던질 때는 이 enum이 아니라 {@link ExceptionType}을 고른다 — 내부 실패
+ * 사유와 로그 레벨은 그쪽 소유이고, 여기와 N:1로 매핑된다. 이 enum은 응답 계약과 데이터 어휘
+ * (폴링 {@code body.error}·핸드오프 링크 파라미터)의 기준으로만 쓴다.
  *
  * <p>클라이언트 노출 메시지는 여기 두지 않고 {@code messages*.properties} 번들에서
  * 코드명(key)으로 로캘별 조회한다(i18n). 코드명은 한번 배포되면 클라이언트가 분기하는
@@ -91,22 +94,5 @@ public enum ErrorCode {
 
     public HttpStatus status() {
         return status;
-    }
-
-    /**
-     * 프레임워크가 status만 정해주는 예외(MVC 표준 예외·RSE 브리지)를 폴백 0xxx 코드로 매핑한다.
-     * 열거에 없는 status는 4xx→{@link #ERROR_0400}, 그 외→{@link #ERROR_0500}.
-     */
-    public static ErrorCode fromStatus(HttpStatusCode statusCode) {
-        if (statusCode.equals(HttpStatus.NOT_FOUND)) {
-            return ERROR_0404;
-        }
-        if (statusCode.equals(HttpStatus.METHOD_NOT_ALLOWED)) {
-            return ERROR_0405;
-        }
-        if (statusCode.equals(HttpStatus.UNSUPPORTED_MEDIA_TYPE)) {
-            return ERROR_0415;
-        }
-        return statusCode.is4xxClientError() ? ERROR_0400 : ERROR_0500;
     }
 }

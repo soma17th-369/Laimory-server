@@ -4,7 +4,7 @@ import com.laimory.server.auth.entity.RefreshToken;
 import com.laimory.server.auth.repository.RefreshTokenRepository;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -53,8 +53,9 @@ public class RefreshTokenService {
     }
 
     /**
-     * 제시된 refresh를 원자적으로 회전한다. 무효/만료는 {@code ERROR_2003}, 재사용(이미 ROTATED/REVOKED)은
-     * 사용자 전체 폐기 후 {@code ERROR_2003}.
+     * 제시된 refresh를 원자적으로 회전한다. 무효/만료는 {@code REFRESH_TOKEN_INVALID}, 재사용(이미
+     * ROTATED/REVOKED)은 사용자 전체 폐기 후 {@code REFRESH_TOKEN_REUSED} — 클라이언트엔 둘 다
+     * {@code ERROR_2003}(재로그인)으로 나가고, 내부 구분은 access 로그의 exceptionType에 남는다.
      *
      * <p><b>회전 승자의 claim + 새 refresh 저장은 한 트랜잭션</b>으로 묶는다(아래 {@code transactionTemplate}).
      * 그 트랜잭션은 old row 락을 커밋까지 쥐므로, 같은 토큰으로 동시에 들어온 loser는 <b>승자 커밋 이후에야</b>
@@ -69,9 +70,9 @@ public class RefreshTokenService {
             throw new IllegalArgumentException("refreshToken must not be blank");
         }
         RefreshToken current = refreshTokenRepository.findByTokenHash(AuthTokens.sha256Hex(rawToken))
-                .orElseThrow(() -> new BusinessException(ErrorCode.ERROR_2003));
+                .orElseThrow(() -> new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID));
         if (current.isExpired(LocalDateTime.now(clock))) {
-            throw new BusinessException(ErrorCode.ERROR_2003);
+            throw new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID);
         }
 
         // 승자만 새 refresh를 받는다(claim + 저장이 한 트랜잭션). loser는 null을 받는다.
@@ -86,7 +87,7 @@ public class RefreshTokenService {
             // 재사용 탐지: 사용자 refresh 전체 폐기(승자 커밋 후 관측·별도 커밋). 그 뒤 throw.
             int revoked = refreshTokenRepository.revokeAllByUserId(current.getUserId());
             log.warn("refresh token reuse detected: userId={} revokedCount={}", current.getUserId(), revoked);
-            throw new BusinessException(ErrorCode.ERROR_2003);
+            throw new BusinessException(ExceptionType.REFRESH_TOKEN_REUSED);
         }
         return new Rotation(current.getUserId(), newRefresh);
     }

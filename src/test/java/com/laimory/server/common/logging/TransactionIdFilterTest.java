@@ -5,13 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.error.ExceptionType;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.UUID;
+import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +39,6 @@ class TransactionIdFilterTest {
     @BeforeEach
     void attachAccessLogAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger("http.access");
-        logger.setLevel(Level.DEBUG); // quiet(DEBUG) 강등 검증을 위해 수집 레벨을 낮춘다
         accessLog.start();
         logger.addAppender(accessLog);
     }
@@ -43,7 +47,6 @@ class TransactionIdFilterTest {
     void detachAccessLogAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger("http.access");
         logger.detachAppender(accessLog);
-        logger.setLevel(null);
     }
 
     /** 필터를 실행하고 체인 안에서 관측한 MDC의 tx를 돌려준다(응답 헤더는 호출부가 response로 단언). */
@@ -117,24 +120,92 @@ class TransactionIdFilterTest {
     }
 
     @Test
-    void completionLog_isDebugForHealthCheckPath() throws Exception {
+    void completionLog_isSkippedForExcludedPath_butTransactionIdStillIssued() throws Exception {
+        // 제외의 영향 반경은 완료 로그 한 줄뿐 — tx 발급·헤더는 유지된다(제외 경로의 앱 로그에도 tx가 붙도록).
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/favicon.ico");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).isEmpty();
+        assertThat(response.getHeader("Transaction-Id")).isNotNull();
+    }
+
+    @Test
+    void completionLog_isSkippedForHealthCheckPath() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
 
         filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
-        assertThat(accessLog.list).hasSize(1);
-        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.DEBUG);
+        assertThat(accessLog.list).isEmpty();
     }
 
     @Test
-    void completionLog_isWarnFor4xx() throws Exception {
+    void completionLog_excludedPathIsStillLoggedOnError() throws Exception {
+        // 제외는 정상 완료에만 적용 — 제외 경로의 장애가 로그에서 사라지면 안 된다.
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.UNEXPECTED_ERROR);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(500);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).hasSize(1);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.ERROR);
+    }
+
+    @Test
+    void completionLog_levelComesFromExceptionTypeAttribute() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/s/api/v1/timeline/callback");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.CALLBACK_TOKEN_ALREADY_USED);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(401);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).hasSize(1);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN); // 401이라서가 아니라 타입 레벨이 WARN이라서
+        assertThat(accessLog.list.get(0).getFormattedMessage())
+                .contains("errorCode=ERROR_1012")
+                .contains("exceptionType=CALLBACK_TOKEN_ALREADY_USED");
+    }
+
+    @Test
+    void completionLog_statusAloneDoesNotChangeLevel() throws Exception {
+        // 레벨의 SSOT는 ExceptionType — attribute 없는 4xx(봇 스캔 등 예외 경로 밖 응답)는 INFO로 남는다.
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setStatus(404);
 
         filter.doFilter(request, response, new MockFilterChain());
 
-        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO);
+    }
+
+    @Test
+    void completionLog_jsonEncoderExpandsRecordToTopLevelFields() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.GEOCODING_PERMANENT_FAILURE);
+        request.setAttribute(RequestLogAttributes.ERROR_DETAIL, "MapPlaceLookupException");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(502);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        LogstashEncoder encoder = new LogstashEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.start();
+        JsonNode json = new ObjectMapper().readTree(encoder.encode(accessLog.list.get(0)));
+
+        // record 프로퍼티가 escape된 문자열이 아니라 top-level 필드로, 숫자는 숫자 타입 그대로 전개된다
+        assertThat(json.get("event").asText()).isEqualTo("http_request_completed");
+        assertThat(json.get("level").asText()).isEqualTo("ERROR"); // 타입 레벨
+        assertThat(json.get("status").isInt()).isTrue();
+        assertThat(json.get("status").asInt()).isEqualTo(502);
+        assertThat(json.get("latencyMs").isNumber()).isTrue();
+        assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1015");
+        assertThat(json.get("exceptionType").asText()).isEqualTo("GEOCODING_PERMANENT_FAILURE");
+        assertThat(json.get("errorDetail").asText()).isEqualTo("MapPlaceLookupException");
     }
 
     @Test

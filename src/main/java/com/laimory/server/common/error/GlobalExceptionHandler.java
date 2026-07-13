@@ -1,6 +1,7 @@
 package com.laimory.server.common.error;
 
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -26,9 +27,12 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * 베이스 클래스가 status/headers를 정해 {@link #handleExceptionInternal}로 모이고,
  * 여기서 envelope body만 만든다 — 예외 타입 열거 누락으로 4xx가 500으로 강등되는 문제를 구조적으로 방지한다.
  *
- * <p>로깅 정책: 4xx WARN / 예상 못한 예외만 ERROR+stacktrace. 에러 코드는
- * {@link RequestLogAttributes#ERROR_CODE}로 심어 access 로그({@code TransactionIdFilter})에 합류시킨다.
- * 5xx의 원인 상세는 로그에만 남기고 클라이언트 메시지는 제네릭 문구로 제한한다(내부 정보 비노출).
+ * <p>로깅 정책: 여기서는 로그를 남기지 않고 {@link ExceptionType}(+로그 전용 상세)을
+ * {@link RequestLogAttributes} attribute로 심어 access 로그({@code TransactionIdFilter}) 1줄에
+ * 합류시킨다 — 레벨은 {@code ExceptionType.logLevel()}이 정한다. 직접 로깅하는 예외는 둘뿐이다:
+ * catch-all과 MVC가 직접 처리하는 5xx — 필터는 핸들러가 삼킨 예외 객체를 못 보므로 stacktrace를
+ * 남길 곳이 여기밖에 없다. 5xx의 원인 상세는 로그에만 남기고 클라이언트 메시지는 제네릭 문구로
+ * 제한한다(내부 정보 비노출).
  */
 @RestControllerAdvice
 @RequiredArgsConstructor
@@ -38,50 +42,69 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private final MessageSource messageSource;
 
-    /** envelope 조립 단일 지점: errorCode attribute + 로캘 메시지. */
-    private ApiResponse<Void> errorEnvelope(ErrorCode code, Object[] args, HttpServletRequest request) {
-        request.setAttribute(RequestLogAttributes.ERROR_CODE, code.code());
-        String message = messageSource.getMessage(code.code(), args, LocaleContextHolder.getLocale());
-        return ApiResponse.error(code.code(), message);
+    /**
+     * errorDetail 길이 상한. 예외 메시지에 요청값이 echo되는 지점이 있어(filename·timezone·AI title 등)
+     * 무제한이면 keyword 색인의 Lucene term 한도(32,766B) 초과로 access 로그 문서 전체가 ES에서
+     * 거부될 수 있다 — 매핑의 {@code ignore_above: 256}과 이중 방어(문자 200 < 256, 4B UTF-8이어도 안전).
+     */
+    private static final int MAX_DETAIL_LENGTH = 200;
+
+    /** envelope 조립 단일 지점: access 로그용 attribute(타입·상세) + 로캘 메시지. detail은 여기서 일괄 정화한다. */
+    private ApiResponse<Void> errorEnvelope(
+            ExceptionType type, Object[] args, HttpServletRequest request, String logDetail) {
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, type);
+        if (logDetail != null) {
+            request.setAttribute(RequestLogAttributes.ERROR_DETAIL,
+                    LogSanitizer.sanitize(logDetail, MAX_DETAIL_LENGTH));
+        }
+        String code = type.errorCode().code();
+        String message = messageSource.getMessage(code, args, LocaleContextHolder.getLocale());
+        return ApiResponse.error(code, message);
     }
 
-    // ── (A) Spring MVC 표준 예외 전부: 베이스가 status/headers를 정해 여기로 모인다 ──
+    // ── (A) Spring MVC 표준 예외 전부: 베이스가 status/headers를 정해 여기로 모인다. raw status 보존 ──
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(
             Exception ex, Object ignoredBody, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
         HttpServletRequest servletRequest = ((ServletWebRequest) request).getRequest();
-        log.warn("mvc exception: type={} status={}", ex.getClass().getSimpleName(), statusCode.value());
+        if (statusCode.is5xxServerError()) {
+            // MVC가 직접 처리하는 5xx(ConversionNotSupported·HttpMessageNotWritable·AsyncRequestTimeout 등)는
+            // catch-all을 거치지 않으므로 stacktrace를 남길 곳이 여기뿐이다.
+            log.error("mvc-handled server error: type={}", ex.getClass().getSimpleName(), ex);
+        }
         return ResponseEntity.status(statusCode).headers(headers) // Allow 등 표준 헤더 보존
-                .body(errorEnvelope(ErrorCode.fromStatus(statusCode), null, servletRequest));
+                .body(errorEnvelope(ExceptionType.fromStatus(statusCode), null, servletRequest,
+                        ex.getClass().getSimpleName()));
     }
 
     // ── (B) 도메인: 서비스가 던진 의도된 에러 ──
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiResponse<Void>> onBusiness(BusinessException e, HttpServletRequest request) {
-        ErrorCode code = e.getErrorCode();
-        log.warn("business error: code={}", code.code());
-        return ResponseEntity.status(code.status()).body(errorEnvelope(code, e.getArgs(), request));
+        ExceptionType type = e.getExceptionType();
+        return ResponseEntity.status(type.errorCode().status())
+                .body(errorEnvelope(type, e.getArgs(), request, null));
     }
 
     // ── (C) 프로그램적 검증 실패 → 400 (메시지는 로그만, 클라이언트엔 i18n 제네릭 문구) ──
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<ApiResponse<Void>> onIllegalArgument(IllegalArgumentException e, HttpServletRequest request) {
-        log.warn("validation error: {}", e.getMessage());
-        return ResponseEntity.badRequest().body(errorEnvelope(ErrorCode.ERROR_0400, null, request));
+        return ResponseEntity.badRequest()
+                .body(errorEnvelope(ExceptionType.VALIDATION_FAILED, null, request, e.getMessage()));
     }
 
-    // ── (D) RSE 브리지: 도메인 이관 후 src/main엔 던지는 곳 없음 — 순수 안전망. raw status 보존 ──, 나중에 http status로 직접 에러 던질 때 받아줌
+    // ── (D) RSE 브리지: 도메인 이관 후 src/main엔 던지는 곳 없음 — 순수 안전망. raw status 보존 ──
     @ExceptionHandler(ResponseStatusException.class)
     ResponseEntity<ApiResponse<Void>> onResponseStatus(ResponseStatusException e, HttpServletRequest request) {
-        log.warn("response status bridge: status={}", e.getStatusCode().value());
         return ResponseEntity.status(e.getStatusCode())
-                .body(errorEnvelope(ErrorCode.fromStatus(e.getStatusCode()), null, request));
+                .body(errorEnvelope(ExceptionType.fromStatus(e.getStatusCode()), null, request,
+                        e.getClass().getSimpleName()));
     }
 
-    // ── (E) catch-all: 예상 못한 예외만. 유일하게 stacktrace를 남긴다 ──
+    // ── (E) catch-all: 예상 못한 예외만. 유일하게 항상 stacktrace를 남긴다 ──
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiResponse<Void>> onUnexpected(Exception e, HttpServletRequest request) {
         log.error("unexpected error: type={}", e.getClass().getName(), e);
-        return ResponseEntity.internalServerError().body(errorEnvelope(ErrorCode.ERROR_0500, null, request));
+        return ResponseEntity.internalServerError()
+                .body(errorEnvelope(ExceptionType.UNEXPECTED_ERROR, null, request, e.getClass().getName()));
     }
 }

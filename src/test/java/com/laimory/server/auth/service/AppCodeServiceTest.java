@@ -9,6 +9,7 @@ import com.laimory.server.auth.repository.AppCodeStore;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,8 +64,11 @@ class AppCodeServiceTest {
         when(appCodeStore.consume(AuthTokens.sha256Hex("app-code-raw"))).thenReturn(null);
 
         assertThatThrownBy(() -> newService().consume("app-code-raw", AuthTokens.generate()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2002));
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    // N:1 계약: 내부 타입이 뒤바뀌어도 code 단언만으론 통과하므로 타입까지 고정한다
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.APP_CODE_INVALID);
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2002);
+                });
     }
 
     @Test
@@ -76,8 +80,11 @@ class AppCodeServiceTest {
                 .thenReturn(new AppCodeStore.AppCodeEntry(USER_ID, challenge));
 
         assertThatThrownBy(() -> newService().consume(code, wrongVerifier))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2002));
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    // 탈취 시도 시그널(WARN 대상)이 일상 실패(INFO)로 강등되는 회귀를 잡는다
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.APP_CODE_VERIFIER_MISMATCH);
+                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2002);
+                });
     }
 
     @Test
