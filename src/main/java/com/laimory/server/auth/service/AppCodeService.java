@@ -5,8 +5,7 @@ import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import java.time.Duration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,10 +16,9 @@ import org.springframework.stereotype.Service;
  * 교환은 발급 시 바인딩된 challenge와 앱이 제시한 verifier의 대조(핸드오프 PKCE)까지 통과해야 한다 —
  * 코드가 탈취돼도 verifier 없인 교환 불가.
  */
+@Slf4j
 @Service
 public class AppCodeService {
-
-    private static final Logger log = LoggerFactory.getLogger(AppCodeService.class);
 
     private final AppCodeStore appCodeStore;
     private final Duration appCodeTtl;

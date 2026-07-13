@@ -32,8 +32,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -46,11 +45,10 @@ import org.springframework.stereotype.Service;
  * <p>⚠️ 단계 순서가 load-bearing이다: draft 행을 <b>먼저 저장·커밋</b>한 뒤 Redis에 PROCESSING을 기록한다 —
  * 그래야 "PROCESSING인데 draft 없음" 오판(콜백의 idempotent-recovery 판정을 깨뜨림)이 안 생긴다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TimelineDraftTaskService {
-
-    private static final Logger log = LoggerFactory.getLogger(TimelineDraftTaskService.class);
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;

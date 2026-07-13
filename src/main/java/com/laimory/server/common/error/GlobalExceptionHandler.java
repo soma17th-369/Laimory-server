@@ -5,8 +5,7 @@ import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.http.HttpHeaders;
@@ -34,11 +33,10 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * 남길 곳이 여기밖에 없다. 5xx의 원인 상세는 로그에만 남기고 클라이언트 메시지는 제네릭 문구로
  * 제한한다(내부 정보 비노출).
  */
+@Slf4j
 @RestControllerAdvice
 @RequiredArgsConstructor
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final MessageSource messageSource;
 

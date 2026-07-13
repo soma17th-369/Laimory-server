@@ -11,8 +11,7 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.unit.DataSize;
@@ -31,10 +30,9 @@ import org.springframework.util.unit.DataSize;
  * {@link BusinessException}(ERROR_1004/1005/1007, 한도값을 메시지에 포함)으로, 형식 불량(누락·비양수·null 요소)은
  * {@link IllegalArgumentException}(→400 ERROR_0400)으로 던진다.
  */
+@Slf4j
 @Service
 public class PhotoUploadService {
-
-    private static final Logger log = LoggerFactory.getLogger(PhotoUploadService.class);
 
     private final S3PhotoStorageService s3PhotoStorageService;
     private final int maxCount;

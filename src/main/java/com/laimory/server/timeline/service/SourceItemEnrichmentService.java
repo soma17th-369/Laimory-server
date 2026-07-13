@@ -18,8 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -34,11 +33,10 @@ import org.springframework.stereotype.Service;
  * stream이 short-circuit돼 enrich 전체가 throw한다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라
  * dedupe 필수). 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SourceItemEnrichmentService {
-
-    private static final Logger log = LoggerFactory.getLogger(SourceItemEnrichmentService.class);
 
     private final GeocodingService geocodingService;
     private final PhotoUrlService photoUrlService;

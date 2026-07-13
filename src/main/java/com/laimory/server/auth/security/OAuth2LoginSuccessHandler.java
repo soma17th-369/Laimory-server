@@ -7,8 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -21,9 +20,8 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
  * <p>세션은 여기서 소멸시킨다 — 서버측 로그인 상태(OAuth 인증 결과)를 세션에 남기지 않는다.
  * 이후 인증은 앱이 app_code를 교환해 받는 자체 토큰으로만 이뤄진다(stateless).
  */
+@Slf4j
 public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(OAuth2LoginSuccessHandler.class);
 
     private final SocialLoginService socialLoginService;
 
