@@ -28,8 +28,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *   <li>완료 로그 레벨은 status가 아니라 예외 처리 지점이 attribute로 심은 {@link ExceptionType}의
  *       {@code logLevel()}이 정한다(access 로그 레벨의 SSOT — status는 클라이언트 계약, 레벨은
  *       서버 관점 심각도로 독립 축). 에러 없는 요청은 INFO.</li>
- *   <li>{@link ExcludedPaths}(헬스체크·favicon 등 신호 없는 트래픽)는 정상 완료 시 로그를 남기지
- *       않는다. 에러·미처리 예외는 경로와 무관하게 남고, tx 발급·MDC·응답 헤더도 항상 유지된다.</li>
+ *   <li>{@link ExcludedPaths}(정상 완료가 아무 정보도 담지 않는 트래픽 — 헬스체크·favicon)는
+ *       정상 완료 시 로그를 남기지 않는다. 에러·미처리 예외는 경로와 무관하게 남고,
+ *       tx 발급·MDC·응답 헤더도 항상 유지된다.</li>
  *   <li>미처리 예외가 필터까지 전파되면 ERROR + effective status 500으로 기록 후 그대로 rethrow한다
  *       — status 매핑이 아니라 "아무도 처리 못 했다"는 사실 기반.</li>
  * </ul>
