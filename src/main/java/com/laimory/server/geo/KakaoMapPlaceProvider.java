@@ -17,13 +17,15 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriBuilder;
 
 /**
- * 카카오 로컬 API {@link MapPlaceProvider} 구현 — 좌표당 최대 2콜(coord2address 1 + 주소 keyword 검색 1)로
- * 주소·주변 장소를 조회한다. 주소가 없는 좌표(도로 위·공터 등)는 keyword 질의어가 없으므로 1콜로 끝난다.
+ * 카카오 로컬 API {@link MapPlaceProvider} 구현 — 좌표당 정상 2콜(coord2address 1 + 주소 keyword 검색 1,
+ * 전이 재시도 포함 시 최대 4회 요청)로 주소·주변 장소를 조회한다. 주소가 없는 좌표(도로 위·공터 등)는
+ * keyword 질의어가 없으므로 1콜로 끝난다.
  *
- * <p>장소 검색은 좌표 반경 category 검색이 아니라 <b>주소를 질의어로 한 keyword 검색</b>이다 — 같은 주소(건물)에
- * 등록된 입주 장소를 카테고리 제한 없이 가져온다(카카오는 무필터 좌표 반경 검색을 제공하지 않고, category
- * 그룹 코드 순회는 코드 밖 업종을 놓친다). 광역 지번 질의에서 원거리 POI(테마거리 등)가 섞이는 것은
- * {@code radius}가 걸러낸다.
+ * <p>장소 검색은 좌표 반경 category 검색이 아니라 <b>주소를 질의어로 한 keyword 검색</b>이다 — 주소 keyword와
+ * 좌표 반경({@code radius})에 매칭된 장소를 카테고리 제한 없이 가져온다. "같은 주소(건물)의 입주 장소"는
+ * 카카오가 보장하는 계약이 아니라 실측 관찰 기반 휴리스틱이다(공식 문서는 질의어 매칭·반경 제한까지만 설명).
+ * 카카오는 무필터 좌표 반경 검색을 제공하지 않고 category 그룹 코드 순회는 코드 밖 업종을 놓치므로 이 방식을
+ * 쓰며, 광역 지번 질의에서 원거리 POI(테마거리 등)가 섞이는 것은 {@code radius}가 걸러낸다.
  *
  * <p>카카오 요청 파라미터는 {@code x}=경도, {@code y}=위도로 순서가 뒤집힌다.
  * 타임아웃은 {@code spring.http.client.*} 프로퍼티가 담당한다 — 코드에서 requestFactory를 지정하면
@@ -31,7 +33,7 @@ import org.springframework.web.util.UriBuilder;
  *
  * <p><b>실패 처리(strict)</b>: 2콜 중 하나라도 최종 실패하면 {@link MapPlaceLookupException}을 던진다
  * (조용한 null degrade 없음 — 저품질 타임라인을 굽지 않는다). 재시도는 <b>단일 HTTP 콜 단위</b>로 건다 —
- * lookup 전체에 걸면 늦은 콜의 실패가 성공한 앞 콜까지 재실행해 좌표당 최대 2×2=4콜이 되므로.
+ * lookup 전체에 걸면 늦은 콜(keyword)의 실패가 성공한 앞 콜(coord2address)까지 재실행하므로.
  * 전이적 실패(5xx·타임아웃)는 단일 콜을 최대 {@link #MAX_ATTEMPTS}회 시도하고, 영구적 실패(429·401·403·4xx·파싱)는 즉시 던진다.
  *
  * <p>외부 호출·응답 해석 실패는 <b>전부</b> {@link MapPlaceLookupException}으로 감싼다 — HTTP 에러뿐 아니라
@@ -116,7 +118,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     }
 
     /**
-     * 주소를 질의어로 keyword 검색 1콜 — 같은 주소(건물)에 등록된 장소를 좌표 기준 거리순으로 가져온다.
+     * 주소를 질의어로 keyword 검색 1콜 — 주소 keyword와 반경에 매칭된 장소를 좌표 기준 거리순으로 가져온다.
      * 단일 콜이라 응답의 {@code sort=distance} 순서를 그대로 신뢰한다(전역 병합 정렬·id dedupe 불필요).
      */
     private List<String> fetchNearbyPlaceNames(String query, double latitude, double longitude, int[] calls) {
