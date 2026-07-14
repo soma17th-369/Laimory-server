@@ -38,10 +38,11 @@ OAuth provider, Kakao Maps, S3/CloudFront와 외부 AI mode의 현재 adapter �
 - transient failure만 콜당 최대 2회 시도하고(좌표당 최대 4회 요청), 최종 실패는 draft 생성을 실패시킨다.
 - transport는 WebClient(reactive)이고 타임아웃은 `spring.http.reactiveclient.*`가 SSOT다
   (`spring.http.client.*`는 블로킹 클라이언트용으로 별개).
-- 좌표 간 병렬 fan-out: unique coordinate들을 동시 최대 `APP_GEO_LOOKUP_CONCURRENCY`(기본 5)개까지
+- 좌표 간 병렬 fan-out: unique coordinate들을 동시 최대 `APP_GEO_LOOKUP_CONCURRENCY`(기본 20)개까지
   병렬 조회한다. 카카오 일 쿼터는 엔드포인트당 100,000건이지만 초당 한도는 존재하되 수치 비공개라
-  보수적 기본값을 쓴다. 병렬화로 실패 코드(1014/1015)는 배치 종합이 아니라 "가장 먼저 관측된 실패"의
-  분류다 — 전이·영구가 경쟁하면 비결정(둘 다 502, 수용된 트레이드오프).
+  무제한 대신 상한을 둔다(429 관측 시 값을 낮추는 것이 즉시 완화책). 병렬화로 실패 코드(1014/1015)는
+  배치 종합이 아니라 "가장 먼저 관측된 실패"의 분류다 — 전이·영구가 경쟁하면 비결정(둘 다 502, 수용된
+  트레이드오프).
 - `app.geo.kakao-base-url`은 운영 endpoint 변경용이 아니라 MockWebServer용 test seam이다.
 - 좌표, request URL/query, response body를 log하지 않는다.
 - `address`, `places`, `durationText`는 server-derived이며 client 값을 무시한다.

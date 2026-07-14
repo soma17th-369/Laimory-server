@@ -39,7 +39,7 @@ public class GeocodingService {
 
     public GeocodingService(
             MapPlaceProvider mapPlaceProvider,
-            @Value("${app.geo.lookup-concurrency:5}") int lookupConcurrency) {
+            @Value("${app.geo.lookup-concurrency:20}") int lookupConcurrency) {
         if (lookupConcurrency < 1) {
             // flatMap은 concurrency<1이면 요청 처리 중에야 IllegalArgumentException으로 터져 catch-all 500이
             // 되므로 기동 시 자기검증한다(fail-fast — kakao provider의 키 자기검증과 같은 패턴).
