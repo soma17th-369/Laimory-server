@@ -37,6 +37,8 @@ Core behavior: **give the complete review in one pass**. Do not hold back smalle
 - Mark uncertainty clearly. If a risk depends on an assumption, name the assumption and how to verify it.
 - Do not reject a plan for hypothetical edge cases that are outside the stated scope unless they create real operational or contract risk.
 - Distinguish "must fix before implementation" from "nice cleanup".
+- Every **Must Fix** finding must state the concrete failure that occurs if the plan remains unchanged and cite the governing repository evidence or primary external source. If no concrete failure exists, downgrade or omit the finding.
+- Respect existing automation and ownership boundaries. When a plan delegates an outcome to an existing workflow, verify that workflow instead of requiring the plan to restate its internal commands.
 - Include missing tests, docs, rollout checks, and communication items. These are first-class plan quality issues.
 - For data-shape changes without DDL, still check compatibility. JSON contracts and stored payloads can require backfill or release gates.
 - For pass-through simplifications, verify every old transformation responsibility either moved somewhere else or is intentionally removed.
@@ -70,6 +72,7 @@ Avoid a drip-feed style such as "first issue..." followed by later additions. Th
 - Do not drip-feed. If you notice a small issue while explaining a bigger one, include it in the same response under the right severity.
 - Avoid generic best-practice objections without repo evidence. A plan can be acceptable when it matches local conventions even if another architecture would also work.
 - When a plan deletes or simplifies a layer, identify the responsibility that layer used to own and verify where that responsibility now lives.
+- On revised-plan reviews, close addressed findings without replacing them with progressively lower-level versions of the same concern. New findings require new evidence or a materially changed plan.
 - If the user asks for both review and improvement, keep the review complete first, then make the requested plan edits. Do not silently switch into implementation.
 
 ## Examples
