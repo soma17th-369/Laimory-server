@@ -2,6 +2,7 @@ package com.laimory.server.geo;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
 
 /**
  * no-op {@link MapPlaceProvider}(기본 구현) — 지오코딩 미연동 상태에서 항상 {@link GeoPlace#EMPTY}를 반환한다.
@@ -18,7 +19,7 @@ import org.springframework.stereotype.Component;
 class NoOpMapPlaceProvider implements MapPlaceProvider {
 
     @Override
-    public GeoPlace lookup(double latitude, double longitude) {
-        return GeoPlace.EMPTY;
+    public Mono<GeoPlace> lookup(double latitude, double longitude) {
+        return Mono.just(GeoPlace.EMPTY);
     }
 }

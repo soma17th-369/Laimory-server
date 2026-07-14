@@ -12,7 +12,7 @@ class NoOpMapPlaceProviderTest {
 
     @Test
     void lookup_returnsEmpty() {
-        GeoPlace geo = new NoOpMapPlaceProvider().lookup(37.5340, 126.9668);
+        GeoPlace geo = new NoOpMapPlaceProvider().lookup(37.5340, 126.9668).block();
 
         assertThat(geo).isEqualTo(GeoPlace.EMPTY);
         assertThat(geo.address()).isNull();
