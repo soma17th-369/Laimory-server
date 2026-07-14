@@ -30,8 +30,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(전이=ERROR_1014 / 영구=ERROR_1015)로 실패시킨다 —
  * 저품질 타임라인을 굽지 않는다(좌표만 있고 주소·장소가 없으면 AI가 장소를 알 수 없다). 한 좌표가 실패하면
- * stream이 short-circuit돼 enrich 전체가 throw한다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 6콜이라
- * dedupe 필수). 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
+ * stream이 short-circuit돼 enrich 전체가 throw한다. 같은 좌표는 요청 내 1회만 조회한다(좌표당 카카오 최대 2콜인
+ * 외부 호출이라 dedupe 필수). 좌표는 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
  */
 @Slf4j
 @Service

@@ -108,7 +108,7 @@ class SourceItemEnrichmentServiceTest {
     @Test
     void enrich_lookupsEachCoordinateOnce_acrossItems() {
         when(geocodingService.lookup(anyDouble(), anyDouble())).thenReturn(GeoPlace.EMPTY);
-        // STAY 좌표 == MOVEMENT 도착 좌표 → 좌표당 6콜이므로 같은 좌표는 1회만 조회해야 한다.
+        // STAY 좌표 == MOVEMENT 도착 좌표 → 좌표당 최대 2콜인 외부 호출이므로 같은 좌표는 1회만 조회해야 한다.
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.STAY, "r1", T, null,
                         new StayPayload(37.5340, 126.9668, null, null, null)),
