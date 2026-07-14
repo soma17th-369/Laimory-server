@@ -33,7 +33,7 @@ production workflow는 아직 없다.
 
 - DB/Redis connection and `REDIS_KEY_PREFIX`
 - `JWT_SECRET`, Google/Kakao OAuth client names
-- `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`
+- `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`
 - `SWAGGER_ENABLED`
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `APP_ENV`

@@ -21,6 +21,9 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - 서버가 모든 request에 새 UUIDv7 transaction ID를 만든다.
 - request header의 client-provided ID는 사용하지 않는다.
 - MDC key는 `transactionId`다.
+- reactive 경계(지오코딩 WebClient)는 MDC가 이벤트루프 스레드로 전파되지 않으므로, blocking 경계
+  (`GeocodingService`)가 구독 시 transactionId만 Reactor Context에 싣고 signal 로그 실행 순간에만
+  MDC를 복원·원복한다(`TxContextLogging` — worker 스레드 잔류 금지).
 - client 노출은 response header `Transaction-Id` 하나뿐이고 envelope에는 없다.
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
