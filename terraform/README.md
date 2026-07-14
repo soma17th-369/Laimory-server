@@ -47,15 +47,20 @@ Terraform 운용 원칙은 [infra recipe mode](../.agents/skills/infra-recipe-mo
 
 ## 도메인/TLS 적용 runbook
 
-**DNS는 현재 가비아(Gabia)에서 관리한다** — route53 코드는 제거됨(향후 route53 이전 시 재도입).
+**DNS는 Route53에서 관리한다**(2026-07-14 가비아→Route53 NS 위임 완료, #112). 도메인 등록(소유)은
+가비아에 그대로 있고 네임서버(DNS 권한)만 Route53로 위임했다. `dns.tf`는 존/레코드만 만든다.
 기존 WAS 박스는 `user_data_replace_on_change=false`라 apply로 재생성되지 않으므로, **살아있는 박스의
 nginx/certbot은 SSM으로 수동 적용**한다(user_data 변경분은 새 박스 재현용). 도메인:
 prod=`laimory.app`(apex), dev=`dev.laimory.app`.
 
-1. 가비아 DNS에서 A 레코드 설정: `dev.laimory.app` → dev WAS EIP, `laimory.app` → prod WAS EIP
-   (EIP는 `terraform output was_public_ips`).
-2. 전파 확인: `dig +short dev.laimory.app` 이 dev WAS EIP를 반환할 때까지 대기(TTL 수 분~수 시간).
-3. 기존 박스에 SSM으로 nginx 설정 + certbot 적용 (dev/prod 각각, `<DOMAIN>`·`<EMAIL>` 치환):
+> 라이브 존에는 dev A 레코드만 손으로 만들어져 있다(prod 미가동 — 레시피 모드라 코드와의 드리프트는
+> 정상). 코드(`dns.tf`)는 재구축 시 dev/prod 둘 다 만든다.
+
+1. `terraform apply` → `terraform output route53_name_servers` 로 NS 4개 확인.
+2. 가비아(도메인 레지스트라)에서 laimory.app 네임서버를 위 4개로 위임. **존을 재생성하면 NS 4개가
+   바뀌므로**(nuke 복구 포함) 재위임도 매번 다시 필요하다.
+3. 전파 확인: `dig +short dev.laimory.app` 이 dev WAS EIP를 반환할 때까지 대기(TTL 수 분~수 시간).
+4. 기존 박스에 SSM으로 nginx 설정 + certbot 적용 (dev/prod 각각, `<DOMAIN>`·`<EMAIL>` 치환):
    ```bash
    aws ssm start-session --profile sandbox --target <instance-id>
    # 박스 안에서:
@@ -70,7 +75,7 @@ prod=`laimory.app`(apex), dev=`dev.laimory.app`.
    sudo apt-get install -y certbot python3-certbot-nginx
    sudo certbot --nginx -d <DOMAIN> --non-interactive --agree-tos -m <EMAIL> --redirect
    ```
-4. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
+5. 확인: `curl -I https://dev.laimory.app/status` → 200(유효 인증서), `curl -I http://dev.laimory.app/status` → 301.
    갱신은 `certbot.timer`가 자동 처리(`systemctl list-timers | grep certbot` 로 확인).
 
 > nginx no-query 로그 설정(위 log_format/access_log 부분)은 `deploy.yml`이 배포마다 **멱등 가드로 자동
@@ -234,5 +239,6 @@ user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 �
 
 계정이 회수되면 새 계정 프로필로 다시 `terraform apply`. 로컬 state는 새 계정용으로
 비우고(`rm terraform.tfstate*` 또는 새 디렉터리) fresh apply 한다. `.tf` 코드는 git에 남아있다.
-DNS는 가비아(Gabia) A 레코드로 관리하므로, nuke 후 새 WAS EIP를 확인해(`terraform output was_public_ips`)
-가비아 A 레코드를 갱신하고 도메인/TLS runbook(certbot)을 재적용한다(위 "도메인/TLS 적용 runbook" 1~4).
+DNS는 Route53(`dns.tf`)로 관리하므로 A 레코드는 apply가 새 EIP로 만들어 주지만, **새 존의 NS 4개는
+이전과 다르므로 가비아에서 네임서버 재위임을 다시 해야 한다**. 이후 도메인/TLS runbook(certbot)을
+재적용한다(위 "도메인/TLS 적용 runbook" 1~5).
