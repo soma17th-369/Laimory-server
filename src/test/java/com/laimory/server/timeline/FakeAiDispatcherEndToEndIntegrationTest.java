@@ -37,7 +37,8 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>실행: docker compose up -d 후 ./gradlew integrationTest
  */
-// spring.http.client.read-timeout(전역 2s — 지오코딩 외부 호출용)이 TestRestTemplate에도 적용되는데,
+// spring.http.client.read-timeout(전역 2s — fake AI dispatcher 등 블로킹 클라이언트용. 지오코딩은
+// WebClient라 spring.http.reactiveclient.* 담당)이 TestRestTemplate에도 적용되는데,
 // 컨텍스트 기동 직후 첫 POST는 워밍업(JIT·커넥션 풀)으로 2s를 간헐적으로 넘겨 flaky했다 → 이 컨텍스트만 완화.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT,
         properties = {"app.ai.mode=fake", "server.port=8080",
