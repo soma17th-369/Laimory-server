@@ -188,8 +188,8 @@ resource "aws_instance" "ai" {
   ]
 }
 
-# ---------- ELK (로그 수집, 프라이빗 고정 IP) ----------
-# dev 로그 수집 스택(ES + Kibana). Filebeat 는 WAS 에서 돈다. 평소 stop, 볼 때만 start 운용.
+# ---------- ELK (로그 수집, 프라이빗 고정 IP, 스팟) ----------
+# dev 로그 수집 스택(ES + Kibana). Filebeat 는 WAS 에서 돈다. 스팟 상시 가동(#149).
 # 루트 볼륨을 30GiB 로 키움(ES 데이터). 부팅 시 user_data 가 docker + compose up(es/kibana/setup).
 
 resource "aws_instance" "elk" {
@@ -199,6 +199,18 @@ resource "aws_instance" "elk" {
   private_ip             = var.elk_private_ip
   vpc_security_group_ids = [aws_security_group.elk.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
+
+  # 스팟 상시 가동(온디맨드 24/7 대비 ~60-70% 절감). persistent+stop: 용량 회수 시 terminate 대신
+  # stop(루트 EBS·고정 IP 보존), 용량 복귀 시 자동 재시작. ⚠️ 스팟은 수동 stop 불가(UnsupportedOperation)
+  # — 종전 "평소 stop, 볼 때만 start" 운용은 폐기. destroy 시 persistent 스팟 요청 취소는 provider
+  # >= 5.86 에서만 자동(미만이면 요청이 살아남아 좀비 재기동 — README 운용 노트 참고).
+  instance_market_options {
+    market_type = "spot"
+    spot_options {
+      spot_instance_type             = "persistent"
+      instance_interruption_behavior = "stop"
+    }
+  }
 
   user_data = templatefile("${path.module}/user_data/elk.sh.tftpl", {
     region            = var.region
