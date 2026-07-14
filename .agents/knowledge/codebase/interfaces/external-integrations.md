@@ -31,7 +31,8 @@ OAuth provider, Kakao Maps, S3/CloudFront와 외부 AI mode의 현재 adapter �
 ### Kakao Maps
 
 - mode는 `noop|kakao`다. dev workflow는 Kakao mode를 켜고 기본값은 noop이다.
-- unique coordinate마다 reverse geocoding과 category별 place search를 합쳐 최대 6회 외부 호출한다.
+- unique coordinate마다 reverse geocoding 1회 + 주소(도로명 우선, 지번 fallback)를 질의어로 한
+  keyword place search 1회, 최대 2회 외부 호출한다. 주소가 없는 좌표는 keyword search를 생략한다.
 - transient failure만 최대 2회 시도하고, 최종 실패는 draft 생성을 실패시킨다.
 - 좌표, request URL/query, response body를 log하지 않는다.
 - `address`, `places`, `durationText`는 server-derived이며 client 값을 무시한다.
