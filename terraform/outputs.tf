@@ -42,8 +42,13 @@ output "elk_private_ip" {
   value = aws_instance.elk.private_ip
 }
 
+output "route53_name_servers" {
+  description = "laimory.app 존 NS — 가비아(도메인 레지스트라)에 이 4개로 위임해야 레코드가 동작한다"
+  value       = aws_route53_zone.main.name_servers
+}
+
 output "api_domains" {
-  description = "환경별 API 도메인 (nginx server_name·certbot 발급 대상). DNS는 외부(가비아) 관리."
+  description = "환경별 API 도메인 (A 레코드 → WAS EIP)"
   value       = var.api_domains
 }
 
