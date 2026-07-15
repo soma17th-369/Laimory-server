@@ -101,8 +101,8 @@ SSM으로 한 번 수동 적용**한다(신규/재생성 박스는 user_data가 
 ## ELK 로그 수집 (dev) — 박스 birth + 기존 dev-was 는 수동 적용
 
 dev 로그 수집 스택 = **Filebeat(WAS) + Elasticsearch + Kibana(신규 ELK 박스 `laimory-dev-elk-01`,
-사설 `10.0.32.13`)**. 앱은 이미 JSON 로그를 stdout 으로 뱉으므로 Logstash 는 없다. 평소 EC2 **stop**,
-볼 때만 **start** 운용(데이터는 named volume `esdata` 로 생존). Kibana 는 dev-was nginx 서브패스
+사설 `10.0.32.13`)**. 앱은 이미 JSON 로그를 stdout 으로 뱉으므로 Logstash 는 없다. **스팟 인스턴스
+상시 가동**(persistent+stop, #149 — 운용 제약은 아래 5번). Kibana 는 dev-was nginx 서브패스
 리버스 프록시로 `https://dev.laimory.app/kibana` 에서 연다(ELK 박스 공개 노출 0 — 9200·5601 은 WAS SG 만).
 
 `terraform` 이 관리하는 것은 **ELK 박스·SG·S3 부트스트랩(compose/ILM/템플릿/filebeat.yml)** 과
@@ -206,17 +206,35 @@ E2E: `curl -i https://dev.laimory.app/api/v1/intro` 응답 헤더의 `Transactio
 에러 요청은 `errorCode`(클라이언트 계약)·`exceptionType`(내부 실패 사유)·`errorDetail` 필드까지 keyword로
 검색돼야 한다 — text+keyword 멀티필드로 보이면 template보다 앱이 먼저 배포돼 dynamic mapping으로 굳은 것.
 
-### 5. stop/start 운용
+### 5. 스팟 운용 (persistent+stop, 상시 가동)
+
+ELK 박스는 스팟이라(온디맨드 24/7 대비 ~60-70% 절감) 운용 제약이 다르다:
+
+- **수동 stop 불가** — `aws ec2 stop-instances` 는 `UnsupportedOperation`. 종전 "평소 stop, 볼 때만
+  start" 운용은 폐기하고 상시 가동한다. 내리려면 terminate(=재생성) 뿐.
+- **용량 회수(interruption) 시** persistent+stop 이라 terminate 가 아니라 **stop** 되고(루트 EBS·고정
+  IP `10.0.32.13` 보존), 용량이 돌아오면 스팟 서비스가 **자동 재시작**한다. 재시작 후 dockerd 가
+  es/kibana 를 `restart:unless-stopped` 로 자동 복구(setup 은 재실행 안 함, green 까지 ~2~3분).
+- ELK 가 내려간 동안 `/kibana` 는 502. WAS Filebeat 는 재시도하다 복귀 시 registry 지점부터
+  backfill(단 WAS json-file 버퍼 30MB/컨테이너 내에서만).
+- **destroy/재생성 시 스팟 요청 확인** — persistent 요청은 인스턴스만 terminate 하면 요청이 살아남아
+  좀비 인스턴스를 재기동한다. provider >= 5.86(현 lock 5.100.0)은 `terraform destroy` 가 요청까지
+  취소하지만, 콘솔에서 terminate 했다면 스팟 요청(EC2 > Spot Requests)을 직접 cancel 한다.
+- 비상 접근용 SSM 포트포워딩은 그대로:
+  `aws ssm start-session --profile sandbox --target <elk_instance_id> --document-name AWS-StartPortForwardingSession --parameters portNumber=5601,localPortNumber=5601`.
+
+기존 온디맨드 박스에서 스팟으로 교체할 때(스팟 여부는 launch 시점 속성이라 in-place 전환 불가):
 
 ```bash
-aws ec2 stop-instances  --profile sandbox --instance-ids "$(terraform -chdir=terraform output -raw elk_instance_id)"
-aws ec2 start-instances --profile sandbox --instance-ids "$(terraform -chdir=terraform output -raw elk_instance_id)"
+cd terraform
+terraform plan  -destroy -target=aws_instance.elk   # elk 1대만 destroy 인지 확인
+terraform apply -destroy -target=aws_instance.elk   # ES 로그 데이터 소실 허용(dev 로그뿐)
+terraform plan  -target=aws_instance.elk            # elk 1대만 create(spot) 인지 확인
+terraform apply -target=aws_instance.elk
 ```
 
-start 시 dockerd 가 es/kibana 를 `restart:unless-stopped` 로 자동 복구(setup 은 재실행 안 함, green 까지 ~2~3분).
-꺼져 있으면 `/kibana` 는 502 → start 후 접속. 비상용으로 SSM 포트포워딩도 가능:
-`aws ssm start-session --profile sandbox --target <elk_instance_id> --document-name AWS-StartPortForwardingSession --parameters portNumber=5601,localPortNumber=5601`.
-ELK off 동안 WAS Filebeat 는 재시도하다 복귀 시 registry 지점부터 backfill(단 WAS json-file 버퍼 30MB/컨테이너 내에서만).
+재생성 후 Filebeat(WAS) 는 IP 불변이라 무변경으로 재접속하고, Kibana Data View 는 ES 볼륨이 새로
+비었으므로 4번 절차로 다시 만든다.
 
 ## 앱 `.env` 필수 키 (WAS 박스 `/home/ubuntu/app/.env`)
 
