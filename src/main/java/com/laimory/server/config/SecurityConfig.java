@@ -17,7 +17,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * #108(Backlog)로 지연했다. 이 체인의 역할은 starter-oauth2-client가 켜는 Boot 기본 보안(전 경로 401)을
  * 대체해 기존 동작을 보존하는 것 — #108에서 이 체인에 게이트만 켠다.
  *
- * <p>OAuth 핸드셰이크 체인(@Order(1), 세션 사용)은 {@link OAuth2LoginSecurityConfig}에 분리 —
+ * <p>OAuth 핸드셰이크 체인(@Order(100), 세션 사용)은 {@link OAuth2LoginSecurityConfig}에 분리 —
  * 슬라이스 테스트가 이 설정만 {@code @Import} 해도 ClientRegistration 의존 없이 뜨게 하기 위함.
  */
 @Configuration
@@ -25,7 +25,7 @@ import org.springframework.security.web.SecurityFilterChain;
 public class SecurityConfig {
 
     @Bean
-    @Order(2)
+    @Order(200)
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

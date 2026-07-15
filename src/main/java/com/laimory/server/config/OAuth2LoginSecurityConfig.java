@@ -35,7 +35,7 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
 public class OAuth2LoginSecurityConfig {
 
     @Bean
-    @Order(1)
+    @Order(100)
     public SecurityFilterChain oauth2LoginFilterChain(HttpSecurity http,
                                                       ClientRegistrationRepository clientRegistrationRepository,
                                                       AppChallengeFilter appChallengeFilter,
