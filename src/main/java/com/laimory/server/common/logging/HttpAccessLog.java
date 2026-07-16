@@ -11,18 +11,18 @@ import com.laimory.server.common.error.ExceptionType;
  * (왜 실패했는지 — N:1 매핑의 N쪽)이다. null 필드도 명시적으로 출력한다(현행 스키마 연속성 —
  * ES는 null을 미색인 처리하므로 동작 차이 없음).
  */
-record HttpRequestLog(String event, String method, String path, int status, long latencyMs,
-                      String errorCode, String exceptionType, String errorDetail,
-                      String clientIp, String requestBody, String responseBody) {
+record HttpAccessLog(String event, String method, String path, int status, long latencyMs,
+                     String errorCode, String exceptionType, String errorDetail,
+                     String clientIp, String requestBody, String responseBody) {
 
     /**
      * 필터가 수집한 원재료로 완료 로그 한 줄을 조립한다. 타입→코드/이름 파생 규칙(없으면 null)은
      * 호출부가 아니라 스키마 곁인 여기가 소유한다.
      */
-    static HttpRequestLog of(String method, String path, int status, long latencyMs,
-                             ExceptionType type, String errorDetail, String clientIp,
-                             String requestBody, String responseBody) {
-        return new HttpRequestLog("http_request_completed", method, path, status, latencyMs,
+    static HttpAccessLog of(String method, String path, int status, long latencyMs,
+                            ExceptionType type, String errorDetail, String clientIp,
+                            String requestBody, String responseBody) {
+        return new HttpAccessLog("http_request_completed", method, path, status, latencyMs,
                 type != null ? type.errorCode().code() : null,
                 type != null ? type.name() : null,
                 errorDetail, clientIp, requestBody, responseBody);

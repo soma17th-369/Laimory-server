@@ -105,7 +105,7 @@ public class TransactionIdFilter extends OncePerRequestFilter {
                 ? AccessLogBodyMasker.UNHANDLED_EXCEPTION_BODY
                 : bodyMasker.maskResponse(response, response.getCapturedBytes(), response.isOverflowed());
 
-        HttpRequestLog entry = HttpRequestLog.of(request.getMethod(), path, status, latencyMs, type, errorDetail,
+        HttpAccessLog entry = HttpAccessLog.of(request.getMethod(), path, status, latencyMs, type, errorDetail,
                 request.getRemoteAddr(), requestBody, responseBody);
         log.atLevel(resolveLevel(caught, type))
                 .addMarker(Markers.appendFields(entry))
