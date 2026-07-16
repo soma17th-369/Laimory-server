@@ -2,6 +2,10 @@ package com.laimory.server.common.logging;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -15,6 +19,11 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
@@ -33,7 +42,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
  */
 class TransactionIdFilterTest {
 
-    private final TransactionIdFilter filter = new TransactionIdFilter();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TransactionIdFilter filter = new TransactionIdFilter(objectMapper);
     private final ListAppender<ILoggingEvent> accessLog = new ListAppender<>();
 
     @BeforeEach
@@ -114,9 +124,10 @@ class TransactionIdFilterTest {
 
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO);
-        assertThat(accessLog.list.get(0).getFormattedMessage())
-                .contains("event=http_request_completed")
-                .contains("path=/api/v1/intro");
+        assertThat(accessLog.list.get(0).getFormattedMessage()).isEqualTo("http_request_completed");
+        JsonNode json = encoded(accessLog.list.get(0));
+        assertThat(json.get("event").asText()).isEqualTo("http_request_completed");
+        assertThat(json.get("path").asText()).isEqualTo("/api/v1/intro");
     }
 
     @Test
@@ -165,9 +176,9 @@ class TransactionIdFilterTest {
 
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN); // 401이라서가 아니라 타입 레벨이 WARN이라서
-        assertThat(accessLog.list.get(0).getFormattedMessage())
-                .contains("errorCode=ERROR_1012")
-                .contains("exceptionType=CALLBACK_TOKEN_ALREADY_USED");
+        JsonNode json = encoded(accessLog.list.get(0));
+        assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1012");
+        assertThat(json.get("exceptionType").asText()).isEqualTo("CALLBACK_TOKEN_ALREADY_USED");
     }
 
     @Test
@@ -192,12 +203,10 @@ class TransactionIdFilterTest {
 
         filter.doFilter(request, response, new MockFilterChain());
 
-        LogstashEncoder encoder = new LogstashEncoder();
-        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
-        encoder.start();
-        JsonNode json = new ObjectMapper().readTree(encoder.encode(accessLog.list.get(0)));
+        JsonNode json = encoded(accessLog.list.get(0));
 
-        // record 프로퍼티가 escape된 문자열이 아니라 top-level 필드로, 숫자는 숫자 타입 그대로 전개된다
+        // marker의 record 프로퍼티가 top-level field로, 숫자는 숫자 타입 그대로 전개된다
+        assertThat(json.get("message").asText()).isEqualTo("http_request_completed");
         assertThat(json.get("event").asText()).isEqualTo("http_request_completed");
         assertThat(json.get("level").asText()).isEqualTo("ERROR"); // 타입 레벨
         assertThat(json.get("status").isInt()).isTrue();
@@ -206,6 +215,144 @@ class TransactionIdFilterTest {
         assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1015");
         assertThat(json.get("exceptionType").asText()).isEqualTo("GEOCODING_PERMANENT_FAILURE");
         assertThat(json.get("errorDetail").asText()).isEqualTo("MapPlaceLookupException");
+        assertThat(json.get("clientIp").asText()).isEqualTo("127.0.0.1");
+        assertThat(json.get("requestBody").isNull()).isTrue();
+        assertThat(json.get("responseBody").isNull()).isTrue();
+    }
+
+    @Test
+    void completionLog_capturesAndMasksJsonBodies_withoutChangingClientResponse() throws Exception {
+        String requestSecret = "RAW_REFRESH_TOKEN_152_NEVER_LOG";
+        String responseSecret = "RAW_ACCESS_TOKEN_152_NEVER_LOG";
+        String requestJson = "{\"safe\":\"request\",\"refreshToken\":\"" + requestSecret + "\"}";
+        String responseJson = "{\"safe\":\"response\",\"accessToken\":\"" + responseSecret + "\"}";
+        MockHttpServletRequest request = jsonRequest("POST", "/api/v1/test", requestJson);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, new MockFilterChain(new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                req.getInputStream().readAllBytes();
+                res.setContentType("application/json");
+                res.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                res.getWriter().write(responseJson);
+            }
+        }));
+
+        assertThat(response.getContentAsString()).isEqualTo(responseJson);
+        ILoggingEvent event = accessLog.list.get(0);
+        JsonNode json = encoded(event);
+        assertThat(objectMapper.readTree(json.get("requestBody").asText()).get("refreshToken").asText())
+                .isEqualTo("***");
+        assertThat(objectMapper.readTree(json.get("responseBody").asText()).get("accessToken").asText())
+                .isEqualTo("***");
+        assertThat(event.getFormattedMessage()).doesNotContain(requestSecret, responseSecret);
+        assertThat(event.getMarkerList().toString()).doesNotContain(requestSecret, responseSecret);
+        assertThat(new String(encode(event), StandardCharsets.UTF_8)).doesNotContain(requestSecret, responseSecret);
+    }
+
+    @Test
+    void requestBody_isNullWhenChainDoesNotReadRequestStream() throws Exception {
+        MockHttpServletRequest request = jsonRequest("POST", "/api/v1/test", "{\"safe\":true}");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(encoded(accessLog.list.get(0)).get("requestBody").isNull()).isTrue();
+    }
+
+    @Test
+    void responseLogPreviewIsTruncated_butClientReceivesFullBody() throws Exception {
+        String responseJson = "{\"safe\":\"" + "가".repeat(9000) + "\"}";
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/v1/test"), response,
+                new MockFilterChain(new HttpServlet() {
+                    @Override
+                    protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                        res.setContentType("application/json");
+                        res.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                        res.getWriter().write(responseJson);
+                    }
+                }));
+
+        assertThat(response.getContentAsString()).isEqualTo(responseJson);
+        assertThat(encoded(accessLog.list.get(0)).get("responseBody").asText())
+                .hasSize(8192)
+                .endsWith("…");
+    }
+
+    @Test
+    void encodedPollingAndWorstCasePreviewStayWellBelowDockerSingleLineLimit() throws Exception {
+        String processing = """
+                {"header":{"code":"COMMON_0000","message":"성공"},
+                 "body":{"status":"PROCESSING","result":null,"error":null}}
+                """;
+        String success = representativeSuccessPollingBody();
+        String escapeHeavy = objectMapper.writeValueAsString(Map.of(
+                "preview", "가\"\\\t".repeat(2500)));
+
+        int processingBytes = encodedSizeForJsonResponse(processing);
+        int successBytes = encodedSizeForJsonResponse(success);
+        int escapeHeavyBytes = encodedSizeForJsonResponse(escapeHeavy);
+
+        // 2026-07-16 실측: PROCESSING 652B, 12 events × 4 items SUCCESS 10,387B,
+        // escape-heavy 8,192자 preview 16,899B(서비스/환경 공통 field 포함).
+        assertThat(processingBytes).isLessThan(2 * 1024);
+        assertThat(successBytes).isLessThan(32 * 1024);
+        assertThat(escapeHeavyBytes).isLessThan(64 * 1024);
+        assertThat(30 * 1024 * 1024 / successBytes).isGreaterThan(2500);
+    }
+
+    @Test
+    void completionLog_recordsRemoteAddressAsClientIp() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
+        request.setRemoteAddr("203.0.113.7");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(encoded(accessLog.list.get(0)).get("clientIp").asText()).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void unexpectedMaskerFailure_doesNotFailSuccessfulResponse() throws Exception {
+        ObjectMapper failingMapper = mock(ObjectMapper.class);
+        when(failingMapper.readTree(any(byte[].class))).thenThrow(new IllegalStateException("masker failure"));
+        TransactionIdFilter failingFilter = new TransactionIdFilter(failingMapper);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        failingFilter.doFilter(new MockHttpServletRequest("GET", "/api/v1/test"), response,
+                new MockFilterChain(new HttpServlet() {
+                    @Override
+                    protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                        res.setContentType("application/json");
+                        res.getWriter().write("{\"safe\":true}");
+                    }
+                }));
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(response.getContentAsString()).isEqualTo("{\"safe\":true}");
+        assertThat(accessLog.list).isEmpty();
+    }
+
+    @Test
+    void maskerFailureNeverReplacesOriginalChainException() throws Exception {
+        ObjectMapper failingMapper = mock(ObjectMapper.class);
+        when(failingMapper.readTree(any(byte[].class))).thenThrow(new IllegalStateException("masker failure"));
+        TransactionIdFilter failingFilter = new TransactionIdFilter(failingMapper);
+        MockHttpServletRequest request = jsonRequest("POST", "/api/v1/test", "{\"safe\":true}");
+        ServletException original = new ServletException("original");
+        MockFilterChain chain = new MockFilterChain(new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse res)
+                    throws ServletException, java.io.IOException {
+                req.getInputStream().readAllBytes();
+                throw original;
+            }
+        });
+
+        Throwable thrown = catchThrowable(() -> failingFilter.doFilter(request, new MockHttpServletResponse(), chain));
+
+        assertThat(thrown).isSameAs(original);
     }
 
     @Test
@@ -214,7 +361,10 @@ class TransactionIdFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain throwingChain = new MockFilterChain(new HttpServlet() {
             @Override
-            protected void service(HttpServletRequest req, HttpServletResponse res) throws ServletException {
+            protected void service(HttpServletRequest req, HttpServletResponse res)
+                    throws ServletException, java.io.IOException {
+                res.setContentType("application/json");
+                res.getWriter().write("{\"partial\":\"DISCARDED_RESPONSE_152\"");
                 throw new ServletException("boom");
             }
         });
@@ -224,8 +374,97 @@ class TransactionIdFilterTest {
 
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.ERROR);
-        assertThat(accessLog.list.get(0).getFormattedMessage()).contains("status=500");
+        JsonNode json;
+        try {
+            json = encoded(accessLog.list.get(0));
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        assertThat(json.get("status").asInt()).isEqualTo(500);
+        assertThat(json.get("responseBody").asText())
+                .isEqualTo(AccessLogBodyMasker.UNHANDLED_EXCEPTION_BODY)
+                .doesNotContain("DISCARDED_RESPONSE_152");
         assertThat(response.getHeader("Transaction-Id")).isNotNull(); // 예외 경로에도 헤더는 chain 진입 전 설정돼 있음
         assertThat(MDC.get(TransactionIds.MDC_KEY)).isNull();
+    }
+
+    private JsonNode encoded(ILoggingEvent event) throws Exception {
+        return objectMapper.readTree(encode(event));
+    }
+
+    private int encodedSizeForJsonResponse(String responseBody) throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts/task-152"), response,
+                new MockFilterChain(new HttpServlet() {
+                    @Override
+                    protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                        res.setContentType("application/json");
+                        res.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                        res.getWriter().write(responseBody);
+                    }
+                }));
+        return encode(accessLog.list.get(accessLog.list.size() - 1)).length;
+    }
+
+    private String representativeSuccessPollingBody() throws Exception {
+        List<Map<String, Object>> events = new ArrayList<>();
+        for (int eventIndex = 0; eventIndex < 12; eventIndex++) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (int itemIndex = 0; itemIndex < 4; itemIndex++) {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
+                payload.put("clientPhotoUri", "content://media/external/images/media/152");
+                payload.put("latitude", 37.5665);
+                payload.put("longitude", 126.9780);
+                payload.put("address", "서울특별시 중구 세종대로");
+                payload.put("photoUrl", "https://cdn.example/photos/sample.jpg");
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("timelineItemId", eventIndex * 10L + itemIndex);
+                item.put("itemType", "PHOTO");
+                item.put("rawId", "raw-" + eventIndex + "-" + itemIndex);
+                item.put("startAt", "2026-07-15T09:00:00");
+                item.put("endAt", null);
+                item.put("payload", payload);
+                items.add(item);
+            }
+            events.add(Map.of(
+                    "timelineEventId", (long) eventIndex,
+                    "startAt", "2026-07-15T09:00:00",
+                    "endAt", "2026-07-15T10:00:00",
+                    "title", "대표 일정 " + eventIndex,
+                    "subtitle", "하루치 타임라인 크기 측정",
+                    "memo", "응답 body 로그의 bounded preview를 검증한다.",
+                    "items", items));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "SUCCESS");
+        body.put("result", Map.of(
+                "recordDate", "2026-07-15",
+                "emotionType", "HAPPY",
+                "events", events));
+        body.put("error", null);
+        return objectMapper.writeValueAsString(Map.of(
+                "header", Map.of("code", "COMMON_0000", "message", "성공"),
+                "body", body));
+    }
+
+    private static byte[] encode(ILoggingEvent event) {
+        LogstashEncoder encoder = new LogstashEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.setCustomFields("{\"service\":\"laimory\",\"environment\":\"dev\"}");
+        encoder.start();
+        try {
+            return encoder.encode(event);
+        } finally {
+            encoder.stop();
+        }
+    }
+
+    private static MockHttpServletRequest jsonRequest(String method, String path, String body) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
+        request.setContentType("application/json");
+        request.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        request.setContent(body.getBytes(StandardCharsets.UTF_8));
+        return request;
     }
 }

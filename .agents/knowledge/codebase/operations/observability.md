@@ -10,7 +10,7 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 
 ## Authoritative Sources
 
-- `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpRequestLog`
+- `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpAccessLog`
 - `GlobalExceptionHandler`, `ExceptionType`, `logback-spring.xml`
 - `.github/workflows/deploy.yml`
 - `deploy/elk/*`
@@ -28,9 +28,9 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
   **정상 완료만** 생략된다. 에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
-- fields는 `HttpRequestLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
-  `errorCode`(client 계약), `exceptionType`(내부 실패 사유), `errorDetail`(예외 클래스명·검증 메시지).
-  field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
+- fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
+  `errorCode`(client 계약), `exceptionType`(내부 실패 사유), `errorDetail`(예외 클래스명·검증 메시지),
+  `clientIp`, `requestBody`, `responseBody`. field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
 - query string은 포함하지 않는다.
 - **log level은 HTTP status가 아니라 `ExceptionType.logLevel()`이 정한다**(access log level의 SSOT —
   status는 client 계약, level은 서버 관점 심각도로 독립 축. 같은 status라도 내부 사유에 따라
@@ -43,8 +43,47 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
   같은 exception을 중복 logging하지 않는 원칙은 유지.
 
 **요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀만: token, password, credential, presigned URL,
-세션 값.** query string은 서명·token 채널이라 계속 제외한다. 금지 대상을 예외 메시지에도 넣지 않는다.
-(요청/응답 body 캡처 구현은 미구현 — Known Gaps 참고.)
+세션 값.** query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302
+`Location`의 `app_code`도 기록하지 않는다. 향후 header 로깅은 별도 마스킹·보안 검토 없이는 추가하지 않는다.
+금지 대상을 예외 메시지에도 넣지 않는다.
+
+JSON request와 정상 반환한 JSON response는 body마다 앞 64 KiB까지만 캡처하고 access log의
+`requestBody`/`responseBody`에 최대 8,192자 text preview로 남긴다. 두 필드는 compact JSON,
+`…`로 끝나는 절단 preview 또는 고정 placeholder를 담는 Elasticsearch `text`이며 object/nested field가
+아니다. body 내부 key별 구조화 검색이나 JSON 재파싱을 계약하지 않는다. 이 경계는 임의 client key로 인한
+dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
+
+- 객체와 배열을 재귀 순회해 token/password/secret/credential/authorization 계열 필드,
+  `appCode`/`appVerifier`/`uploadUrl` alias를 값 타입과 무관하게 마스킹한다.
+- 문자열 값의 대소문자 무관 `X-Amz-` 검사는 필드명 마스킹이 놓친 presigned S3 URL을 위한 denylist
+  백스톱이다. 현재 사진 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
+  파라미터도 별도 보안 검토한다.
+- `/api/v\d+/auth/(token|refresh|logout)`의 non-empty JSON request는 파싱하지 않고
+  `[masked auth body]`로 전체 마스킹한다. 비정상 auth body의 형태·누락/미지 필드·원문·fingerprint는
+  access logging 범위가 아니며 status/errorCode/transactionId/clientIp로 조사한다.
+- request cache는 MVC가 실제로 읽은 bytes만 가진다. 404/405/415처럼 body를 읽기 전에 거절하면
+  client가 bytes를 보냈어도 `requestBody`가 null일 수 있고, malformed JSON은 소비된 부분 또는 전체가
+  남을 수 있다. 로깅을 위해 request stream을 선행 소비하지 않는다.
+- 필터까지 전파된 미처리 예외는 최초 capture가 최종 client 응답이 아닐 수 있어 `responseBody`를
+  `[unavailable: unhandled exception]`로 남긴다. 이후 container `/error` body는 현재 한 줄 access log에서
+  관찰하지 않는다.
+
+body에는 위치·건강·알림 본문·기기 사진 URI 등 개인정보가 들어갈 수 있고 `clientIp`와 결합된다.
+현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
+활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
+개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
+
+polling GET도 response body를 기록한다. `FAILED`도 HTTP 200 envelope일 수 있으므로 비-2xx만 기록하는
+정책은 동등한 진단 대안이 아니다. 2026-07-17 dev rollout에서는 Android polling 설정을 확보하지 못했지만,
+직전 7일 live access log의 polling GET이 2건이고 아래 대표 SUCCESS 기준 30 MB에 약 3,028건이 들어가며
+dev 전용·실사용자 미도입 상태라 전체 response body 기록을 유지하기로 결정했다. 실사용자 도입 전이나
+polling 트래픽이 유의미하게 증가하면 client interval·terminal 중단·동시 task 수를 다시 확보해 제외 여부를
+재검토한다.
+
+2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함)는 `PROCESSING` 652 B,
+12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy 8,192자 preview 16,899 B였다.
+다른 로그를 무시한 상한 계산으로 30 MiB에는 대표 SUCCESS 약 3,028건이 들어간다. 이 수치는 단일 line
+크기 여유를 확인하는 dev rollout 판단 근거이며, 실사용자 규모의 장기 보존 용량을 보장하지는 않는다.
 
 외부에서 유입된 자유 문자열(요청 필드·예외 메시지·외부 시스템 출력)을 log에 넣을 때는
 `LogSanitizer`를 통과시킨다 — CR/LF 제거(텍스트 로그 라인 위조 방지) + 길이 상한(keyword 색인 값이
@@ -74,7 +113,7 @@ Spring JSON stdout
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다.
 - ILM retention은 7일이다.
 - Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 nginx `/kibana`로 proxy한다.
-- ELK instance는 평소 stop하고 필요할 때 start한다.
+- ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
 ## Runbook: access log field 추가 롤아웃
@@ -90,8 +129,7 @@ aws s3 cp deploy/elk/index-template.json \
   "s3://$(terraform -chdir=terraform output -raw backup_bucket)/bootstrap/elk/index-template.json" \
   --profile sandbox
 
-# 1) ELK 박스 start(평소 stop 운용) + SSM 접속
-aws ec2 start-instances --profile sandbox --instance-ids "$(terraform -chdir=terraform output -raw elk_instance_id)"
+# 1) 상시 가동 중인 ELK 박스에 SSM 접속(Spot interruption 중이면 자동 재시작을 기다린다)
 aws ssm start-session --profile sandbox --target "$(terraform -chdir=terraform output -raw elk_instance_id)"
 
 # 2) 박스 안에서: template PUT(이후 생성되는 index용). 비번은 secrets.auto.tfvars의 elk_elastic_password
@@ -103,14 +141,19 @@ curl -sf -u "elastic:$PW" -X PUT "$ES/_index_template/laimory" \
 # 3) 현재 열린 index에도 _mapping PUT(template은 기존 index에 소급되지 않음) — 추가한 field만 명시
 #    ignore_above는 기존 field에도 갱신 가능한 파라미터다
 curl -sf -u "elastic:$PW" -X PUT "$ES/laimory-dev-*/_mapping" -H 'Content-Type: application/json' \
-  -d '{"properties":{"exceptionType":{"type":"keyword"},"errorDetail":{"type":"keyword","ignore_above":256}}}'
+  -d '{"properties":{"clientIp":{"type":"ip","ignore_malformed":true},"requestBody":{"type":"text"},"responseBody":{"type":"text"}}}'
 
-# 4) 확인: 새 field가 keyword 단일 타입인지 (text+keyword 멀티필드면 앱이 먼저 배포된 것)
-curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping" | grep -o '"exceptionType":{"type":"keyword"}'
+# 4) 확인: body에 keyword subfield가 없고 clientIp가 ip인지
+curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 ```
 
-머지 전 Kibana saved query/alert가 `message` 문자열 파싱에 의존하지 않는지 확인한다
-(access log의 `message`는 record toString 형태 — field 쿼리를 쓰는 것이 계약).
+머지 전 Kibana saved query/alert가 `message` 문자열 파싱에 의존하지 않는지 확인한다. access log의
+`message`는 고정값 `http_request_completed`이며 `event` 등 top-level field 쿼리가 계약이다.
+
+forwarded header는 Tomcat `RemoteIpValve`가 socket peer가 internal proxy일 때만 XFF/XFP를 신뢰한다.
+dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, AI 서버 등 사설망에서 애플리케이션
+8080으로 직접 접근하는 peer의 forwarded header는 신뢰하지 않는다. `clientIp`는 valve 처리 후
+`request.getRemoteAddr()`다.
 
 ## Health Signals
 
@@ -128,7 +171,6 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping" | grep -o '"exceptionType
 ## Known Gaps
 
 - metrics, distributed tracing, alerting과 dependency-complete readiness endpoint는 없다.
-- 요청/응답 body 캡처(로깅 정책상 허용)는 미구현 — 래퍼·크기 상한·비밀값 마스킹과 함께 별도 작업.
 
 ## Update When
 
@@ -138,11 +180,8 @@ health signal이 바뀔 때 갱신한다.
 ## Validation
 
 ```bash
-./gradlew test \
-  --tests 'com.laimory.server.common.logging.TransactionIdFilterTest' \
-  --tests 'com.laimory.server.common.error.GlobalExceptionHandlerTest' \
-  --tests 'com.laimory.server.common.error.ExceptionTypeTest' \
-  --tests 'com.laimory.server.auth.security.AppChallengeFilterTest' \
-  --tests 'com.laimory.server.config.OpenApiConfigTest'
+./gradlew test
+docker compose up -d
+./gradlew integrationTest
 jq empty deploy/elk/ilm-policy.json deploy/elk/index-template.json
 ```
