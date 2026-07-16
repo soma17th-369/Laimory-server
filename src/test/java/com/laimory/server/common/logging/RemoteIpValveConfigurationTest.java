@@ -14,7 +14,7 @@ class RemoteIpValveConfigurationTest {
     private static final String INTERNAL_PROXIES = "server.tomcat.remoteip.internal-proxies";
 
     @Test
-    void internalProxyTrust_isLimitedToLoopback() throws IOException {
+    void internalProxyTrust_isLimitedToNginxLoopback() throws IOException {
         Properties properties = new Properties();
         try (InputStream input = getClass().getResourceAsStream("/application.properties")) {
             assertThat(input).isNotNull();
@@ -25,8 +25,7 @@ class RemoteIpValveConfigurationTest {
         assertThat(configured).isNotBlank();
         Pattern trusted = Pattern.compile(configured);
         assertThat(trusted.matcher("127.0.0.1").matches()).isTrue();
-        assertThat(trusted.matcher("0:0:0:0:0:0:0:1").matches()).isTrue();
-        assertThat(trusted.matcher("::1").matches()).isTrue();
+        assertThat(trusted.matcher("::1").matches()).isFalse();
         assertThat(trusted.matcher("10.0.0.10").matches()).isFalse();
         assertThat(trusted.matcher("172.16.0.10").matches()).isFalse();
         assertThat(trusted.matcher("192.168.0.10").matches()).isFalse();
