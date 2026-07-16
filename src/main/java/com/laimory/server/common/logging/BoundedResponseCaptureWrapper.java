@@ -162,7 +162,7 @@ final class BoundedResponseCaptureWrapper extends HttpServletResponseWrapper {
                 throw new IllegalArgumentException("capture limit must not be negative");
             }
             this.limit = limit;
-            this.captured = new ByteArrayOutputStream(limit);
+            this.captured = new ByteArrayOutputStream();
         }
 
         private void write(int value) {

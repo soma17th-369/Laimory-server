@@ -10,7 +10,7 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 
 ## Authoritative Sources
 
-- `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpRequestLog`
+- `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpAccessLog`
 - `GlobalExceptionHandler`, `ExceptionType`, `logback-spring.xml`
 - `.github/workflows/deploy.yml`
 - `deploy/elk/*`
@@ -28,7 +28,7 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
   **정상 완료만** 생략된다. 에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
-- fields는 `HttpRequestLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
+- fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
   `errorCode`(client 계약), `exceptionType`(내부 실패 사유), `errorDetail`(예외 클래스명·검증 메시지),
   `clientIp`, `requestBody`, `responseBody`. field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
 - query string은 포함하지 않는다.
@@ -150,8 +150,9 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 `message`는 고정값 `http_request_completed`이며 `event` 등 top-level field 쿼리가 계약이다.
 
 forwarded header는 Tomcat `RemoteIpValve`가 socket peer가 internal proxy일 때만 XFF/XFP를 신뢰한다.
-dev nginx loopback과 prod 내부 proxy 대역이 이 경계 안에 있고 애플리케이션 8080 직접 접근은 SG로 제한한다.
-`clientIp`는 valve 처리 후 `request.getRemoteAddr()`다.
+dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, AI 서버 등 사설망에서 애플리케이션
+8080으로 직접 접근하는 peer의 forwarded header는 신뢰하지 않는다. `clientIp`는 valve 처리 후
+`request.getRemoteAddr()`다.
 
 ## Health Signals
 
