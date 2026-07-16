@@ -3,7 +3,7 @@ package com.laimory.server.common.logging;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -316,7 +316,7 @@ class TransactionIdFilterTest {
     @Test
     void unexpectedMaskerFailure_doesNotFailSuccessfulResponse() throws Exception {
         ObjectMapper failingMapper = mock(ObjectMapper.class);
-        when(failingMapper.readTree(anyString())).thenThrow(new IllegalStateException("masker failure"));
+        when(failingMapper.readTree(any(byte[].class))).thenThrow(new IllegalStateException("masker failure"));
         TransactionIdFilter failingFilter = new TransactionIdFilter(failingMapper);
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -337,7 +337,7 @@ class TransactionIdFilterTest {
     @Test
     void maskerFailureNeverReplacesOriginalChainException() throws Exception {
         ObjectMapper failingMapper = mock(ObjectMapper.class);
-        when(failingMapper.readTree(anyString())).thenThrow(new IllegalStateException("masker failure"));
+        when(failingMapper.readTree(any(byte[].class))).thenThrow(new IllegalStateException("masker failure"));
         TransactionIdFilter failingFilter = new TransactionIdFilter(failingMapper);
         MockHttpServletRequest request = jsonRequest("POST", "/api/v1/test", "{\"safe\":true}");
         ServletException original = new ServletException("original");

@@ -1,6 +1,5 @@
 package com.laimory.server.common.logging;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -8,8 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -28,8 +26,7 @@ final class AccessLogBodyMasker {
     private static final int MAX_LOGGED_CHARS = 8192;
     private static final String MASK = "***";
     private static final String TOO_LARGE = "[too large: body exceeds 65536 bytes]";
-    private static final String MALFORMED_JSON = "[unavailable: malformed JSON]";
-    private static final String MASKING_FAILED = "[unavailable: body masking failed]";
+    private static final String UNAVAILABLE_JSON = "[unavailable: invalid or unmaskable JSON]";
 
     private static final Pattern AUTH_BODY_PATH =
             Pattern.compile("^/api/v\\d+/auth/(token|refresh|logout)$");
@@ -51,41 +48,29 @@ final class AccessLogBodyMasker {
         if (AUTH_BODY_PATH.matcher(request.getRequestURI()).matches()) {
             return MASKED_AUTH_BODY;
         }
-        return maskJson(body, request.getContentLengthLong(), body.length, overflowed,
-                resolveCharset(request.getContentType(), request.getCharacterEncoding()));
+        return maskJson(body, request.getContentLengthLong(), overflowed);
     }
 
-    String maskResponse(HttpServletResponse response, byte[] body, long observedByteCount, boolean overflowed) {
+    String maskResponse(HttpServletResponse response, byte[] body, boolean overflowed) {
         if (body.length == 0 || !isJson(response.getContentType())) {
             return null;
         }
-        return maskJson(body, contentLength(response), observedByteCount, overflowed,
-                resolveCharset(response.getContentType(), response.getCharacterEncoding()));
+        return maskJson(body, contentLength(response), overflowed);
     }
 
-    private String maskJson(byte[] body, long declaredLength, long observedLength,
-                            boolean overflowed, Charset charset) {
-        if (declaredLength > CAPTURE_LIMIT_BYTES
-                || observedLength > CAPTURE_LIMIT_BYTES
-                || overflowed) {
+    private String maskJson(byte[] body, long declaredLength, boolean overflowed) {
+        if (declaredLength > CAPTURE_LIMIT_BYTES || overflowed) {
             return TOO_LARGE;
         }
-        JsonNode root;
         try {
-            root = objectMapper.readTree(new String(body, charset));
-        } catch (JsonProcessingException e) {
-            return MALFORMED_JSON;
-        }
-        if (root == null) {
-            return MALFORMED_JSON;
-        }
-        try {
+            JsonNode root = objectMapper.readTree(body);
+            if (root == null) {
+                return UNAVAILABLE_JSON;
+            }
             String compactJson = objectMapper.writeValueAsString(maskNode(root));
             return LogSanitizer.sanitize(compactJson, MAX_LOGGED_CHARS);
-        } catch (JsonProcessingException e) {
-            return MASKING_FAILED;
-        } catch (IllegalArgumentException e) {
-            return MASKING_FAILED;
+        } catch (IOException | IllegalArgumentException e) {
+            return UNAVAILABLE_JSON;
         }
     }
 
@@ -132,20 +117,6 @@ final class AccessLogBodyMasker {
                     || mediaType.getSubtype().toLowerCase(Locale.ROOT).endsWith("+json");
         } catch (InvalidMediaTypeException e) {
             return false;
-        }
-    }
-
-    private static Charset resolveCharset(String contentType, String fallbackEncoding) {
-        try {
-            if (contentType != null) {
-                Charset charset = MediaType.parseMediaType(contentType).getCharset();
-                if (charset != null) {
-                    return charset;
-                }
-            }
-            return fallbackEncoding != null ? Charset.forName(fallbackEncoding) : StandardCharsets.UTF_8;
-        } catch (IllegalArgumentException e) {
-            return StandardCharsets.UTF_8;
         }
     }
 

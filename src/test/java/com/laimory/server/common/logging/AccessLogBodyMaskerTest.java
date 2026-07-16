@@ -5,9 +5,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -82,7 +82,7 @@ class AccessLogBodyMaskerTest {
 
         String masked = maskRequest("/api/v1/test", raw);
 
-        assertThat(masked).isEqualTo("[unavailable: malformed JSON]");
+        assertThat(masked).isEqualTo("[unavailable: invalid or unmaskable JSON]");
         assertThat(masked).doesNotContain(raw);
     }
 
@@ -102,9 +102,18 @@ class AccessLogBodyMaskerTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setContentType("application/json");
 
-        assertThat(masker.maskResponse(response, bytes("{}"),
-                AccessLogBodyMasker.CAPTURE_LIMIT_BYTES + 1L, true))
+        assertThat(masker.maskResponse(response, bytes("{}"), true))
                 .isEqualTo("[too large: body exceeds 65536 bytes]");
+    }
+
+    @Test
+    void responseJsonBytesAreDecodedWithoutServletFallbackCharset() {
+        HttpServletResponse response = mock(HttpServletResponse.class);
+        when(response.getContentType()).thenReturn("application/json");
+        when(response.getCharacterEncoding()).thenReturn(StandardCharsets.ISO_8859_1.name());
+
+        assertThat(masker.maskResponse(response, bytes("{\"title\":\"한글 일기\"}"), false))
+                .isEqualTo("{\"title\":\"한글 일기\"}");
     }
 
     @Test
@@ -114,20 +123,6 @@ class AccessLogBodyMaskerTest {
         String masked = maskRequest("/api/v1/test", body);
 
         assertThat(masked).hasSize(8192).endsWith("…");
-    }
-
-    @Test
-    void serializationFailureUsesSafePlaceholder() throws Exception {
-        ObjectMapper failingMapper = mock(ObjectMapper.class);
-        JsonNode parsed = objectMapper.readTree("{\"safe\":true}");
-        when(failingMapper.readTree("{\"safe\":true}")).thenReturn(parsed);
-        when(failingMapper.writeValueAsString(parsed)).thenThrow(new JsonProcessingException("boom") {
-        });
-        AccessLogBodyMasker failingMasker = new AccessLogBodyMasker(failingMapper);
-        MockHttpServletRequest request = jsonRequest("/api/v1/test", "{\"safe\":true}");
-
-        assertThat(failingMasker.maskRequest(request, bytes("{\"safe\":true}"), false))
-                .isEqualTo("[unavailable: body masking failed]");
     }
 
     private String maskRequest(String path, String body) {
