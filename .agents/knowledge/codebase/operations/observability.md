@@ -73,16 +73,17 @@ body에는 위치·건강·알림 본문·기기 사진 URI 등 개인정보가 
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
 개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
 
-polling GET도 response body를 기록한다. 배포 전 대표 `PROCESSING`/`SUCCESS` 로그의 실인코딩 크기와
-client polling 빈도를 30 MB Docker backfill 창 및 7일 ILM 예산에 대조한다. 실트래픽이 없으면 Android
-client 설정/소유자에게 interval·terminal 상태 중단·동시 task 가정을 확인한다. 입력을 확보하지 못하거나
-침식 위험을 수용하지 않으면 polling response body 제외를 별도 결정한다. `FAILED`도 HTTP 200 envelope일
-수 있으므로 비-2xx만 기록하는 정책은 동등한 진단 대안이 아니다.
+polling GET도 response body를 기록한다. `FAILED`도 HTTP 200 envelope일 수 있으므로 비-2xx만 기록하는
+정책은 동등한 진단 대안이 아니다. 2026-07-17 dev rollout에서는 Android polling 설정을 확보하지 못했지만,
+직전 7일 live access log의 polling GET이 2건이고 아래 대표 SUCCESS 기준 30 MB에 약 3,028건이 들어가며
+dev 전용·실사용자 미도입 상태라 전체 response body 기록을 유지하기로 결정했다. 실사용자 도입 전이나
+polling 트래픽이 유의미하게 증가하면 client interval·terminal 중단·동시 task 수를 다시 확보해 제외 여부를
+재검토한다.
 
 2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함)는 `PROCESSING` 652 B,
 12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy 8,192자 preview 16,899 B였다.
 다른 로그를 무시한 상한 계산으로 30 MiB에는 대표 SUCCESS 약 3,028건이 들어간다. 이 수치는 단일 line
-크기 여유를 확인하지만 보존 시간은 polling 빈도 입력 없이는 확정하지 못하므로 위 배포 전 결정은 남는다.
+크기 여유를 확인하는 dev rollout 판단 근거이며, 실사용자 규모의 장기 보존 용량을 보장하지는 않는다.
 
 외부에서 유입된 자유 문자열(요청 필드·예외 메시지·외부 시스템 출력)을 log에 넣을 때는
 `LogSanitizer`를 통과시킨다 — CR/LF 제거(텍스트 로그 라인 위조 방지) + 길이 상한(keyword 색인 값이
