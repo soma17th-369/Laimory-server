@@ -4,14 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import com.laimory.server.common.logging.TransactionIdFilter;
 import jakarta.servlet.http.HttpServlet;
 import java.util.Locale;
+import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +31,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
  */
 class AppChallengeFilterTest {
 
-    private final TransactionIdFilter transactionIdFilter = new TransactionIdFilter();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TransactionIdFilter transactionIdFilter = new TransactionIdFilter(objectMapper);
     private final ListAppender<ILoggingEvent> accessLog = new ListAppender<>();
 
     private AppChallengeFilter appChallengeFilter;
@@ -37,7 +41,7 @@ class AppChallengeFilterTest {
     void setUp() {
         StaticMessageSource messageSource = new StaticMessageSource();
         messageSource.addMessage("ERROR_0400", Locale.KOREAN, "잘못된 요청입니다.");
-        appChallengeFilter = new AppChallengeFilter(messageSource, new ObjectMapper());
+        appChallengeFilter = new AppChallengeFilter(messageSource, objectMapper);
 
         Logger logger = (Logger) LoggerFactory.getLogger("http.access");
         accessLog.start();
@@ -59,12 +63,28 @@ class AppChallengeFilterTest {
         }, appChallengeFilter));
 
         assertThat(response.getStatus()).isEqualTo(400);
+        JsonNode clientBody = objectMapper.readTree(response.getContentAsByteArray());
+        assertThat(clientBody.at("/header/code").asText()).isEqualTo("ERROR_0400");
+        assertThat(clientBody.at("/header/message").asText()).isEqualTo("잘못된 요청입니다.");
+        assertThat(clientBody.get("body").isNull()).isTrue();
         assertThat(request.getAttribute(RequestLogAttributes.EXCEPTION_TYPE))
                 .isEqualTo(ExceptionType.APP_CHALLENGE_REJECTED);
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO); // 400이어도 레벨은 타입(INFO)이 정한다
-        assertThat(accessLog.list.get(0).getFormattedMessage())
-                .contains("errorCode=ERROR_0400")
-                .contains("exceptionType=APP_CHALLENGE_REJECTED");
+        JsonNode log = encoded(accessLog.list.get(0));
+        assertThat(log.get("errorCode").asText()).isEqualTo("ERROR_0400");
+        assertThat(log.get("exceptionType").asText()).isEqualTo("APP_CHALLENGE_REJECTED");
+        assertThat(objectMapper.readTree(log.get("responseBody").asText())).isEqualTo(clientBody);
+    }
+
+    private JsonNode encoded(ILoggingEvent event) throws Exception {
+        LogstashEncoder encoder = new LogstashEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.start();
+        try {
+            return objectMapper.readTree(encoder.encode(event));
+        } finally {
+            encoder.stop();
+        }
     }
 }

@@ -4,8 +4,9 @@
 # 비밀(ELASTIC/KIBANA/FILEBEAT_PASSWORD)·버전·힙은 전부 같은 디렉터리의 .env 에서 온다
 # (user_data 가 시드, chmod 600). 이 파일 자체엔 비밀이 없다.
 #
-# 운용: 평소 EC2 stop, 볼 때만 start. es/kibana 는 restart:unless-stopped 라 start 시 자동 복구,
-# setup 은 restart:"no" 라 최초 up 1회만 실행된다(ILM/템플릿/비번은 esdata 볼륨에 이미 있음).
+# 운용: persistent Spot EC2 상시 가동. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작되며,
+# es/kibana 는 restart:unless-stopped 라 함께 복구된다. setup 은 restart:"no" 라 최초 up 1회만
+# 실행된다(ILM/템플릿/비번은 esdata 볼륨에 이미 있음).
 #
 # 인증 ON + 내부 HTTP(TLS off): 프라이빗 서브넷 + SG(9200·5601 ← WAS SG만)가 기밀 경계.
 # 외부 노출은 dev-was nginx TLS(443)에서 종단한다.

@@ -25,7 +25,7 @@
     <springProfile name="docker">
         <appender name="TEXT_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{transactionId:-no-tx}] [%thread] %logger{36} - %msg%n</pattern>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{transactionId:-no-tx}] [%thread] %logger{36} - %msg %marker%n</pattern>
             </encoder>
         </appender>
         <root level="INFO">

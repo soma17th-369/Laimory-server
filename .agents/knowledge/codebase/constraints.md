@@ -30,7 +30,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 - Swagger는 기본 off이고 dev/local에서만 켠다.
 - AI mode는 현재 `noop|fake`뿐이며 production dispatcher가 없다.
 - 기본 profile은 JSON stdout, local docker profile은 text log를 사용한다.
-- query string, token, request body, presigned URL은 log에 남기지 않는다.
+- 허용된 JSON request/response body만 64 KiB 제한 캡처 후 text preview로 log에 남긴다.
+  query string, 민감 header, token·credential·presigned URL 원문은 남기지 않는다.
 - Docker image build는 test를 제외하며 PR CI가 `./gradlew build`를 담당한다.
 - 자동 애플리케이션 배포는 dev만 있고 health failure 자동 rollback은 없다.
 - 기존 WAS/MySQL/ELK EC2의 `user_data` 변경은 lifecycle ignore 때문에 live 반영되지 않는다.
