@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -11,8 +12,12 @@ import java.time.LocalDateTime;
  * <p>error는 FAILED일 때만 채워진다. callbackTokenHash는 종결(SUCCESS/FAILED) 후에도 보존된다 —
  * terminal 재콜백을 token-first로 검증하려면 해시가 남아 있어야 하기 때문이다(idempotent replay 방어).
  * callbackTokenHash는 콜백 토큰의 SHA-256 해시이며, 원문 토큰은 저장하지 않는다(발급 시 AI에만 전달).
- * recordDate는 콜백 persist·결과 조회의 다리값이다.
- * (SUCCESS 결과 record는 (userId, recordDate)로 찾으므로 dailyRecordId는 저장하지 않는다.)
+ * recordDate는 콜백 persist·SAVED 검사의 다리값이다.
+ *
+ * <p>dailyRecordId는 SUCCESS에서만 채워지는 결과 식별자다 — 폴링이 이 ID로만 결과를 조회해, record 삭제 후
+ * 같은 날짜가 재생성돼도 과거 task가 새 기록을 반환하지 않는다. 필드에 {@code NON_NULL}을 명시해
+ * PROCESSING/FAILED JSON에 {@code "dailyRecordId":null}이 노출되지 않게 한다 — 기본 직렬화 inclusion이
+ * ALWAYS인 데다, 이 JSON은 아래처럼 AI가 직접 읽는 계약이라 shape 변화를 최소화해야 한다.
  *
  * <p>{@code recordAt}(벽시계 시각) / {@code recordTimezone}은 finalize 때 daily_records에 쓸 메타데이터다.
  * {@code userMemory}(AI 개인화 입력, 현재 shape만 — 공급원 미정) / {@code timelineWindow}(이번 append에서
@@ -28,6 +33,7 @@ import java.time.LocalDateTime;
 public record TimelineDraftTask(
         TaskStatus status,
         LocalDate recordDate,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long dailyRecordId,
         LocalDateTime recordAt,
         String recordTimezone,
         UserMemory userMemory,
@@ -49,15 +55,17 @@ public record TimelineDraftTask(
 
     public static TimelineDraftTask processing(LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                                                TimelineWindow timelineWindow, String callbackTokenHash) {
-        return new TimelineDraftTask(TaskStatus.PROCESSING, recordDate, recordAt, recordTimezone,
+        return new TimelineDraftTask(TaskStatus.PROCESSING, recordDate, null, recordAt, recordTimezone,
                 new UserMemory(null), timelineWindow, null, callbackTokenHash);
     }
 
-    public static TimelineDraftTask success(LocalDate recordDate, String callbackTokenHash) {
-        return new TimelineDraftTask(TaskStatus.SUCCESS, recordDate, null, null, null, null, null, callbackTokenHash);
+    public static TimelineDraftTask success(LocalDate recordDate, Long dailyRecordId, String callbackTokenHash) {
+        return new TimelineDraftTask(TaskStatus.SUCCESS, recordDate, dailyRecordId,
+                null, null, null, null, null, callbackTokenHash);
     }
 
     public static TimelineDraftTask failed(LocalDate recordDate, String error, String callbackTokenHash) {
-        return new TimelineDraftTask(TaskStatus.FAILED, recordDate, null, null, null, null, error, callbackTokenHash);
+        return new TimelineDraftTask(TaskStatus.FAILED, recordDate, null,
+                null, null, null, null, error, callbackTokenHash);
     }
 }

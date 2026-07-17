@@ -48,12 +48,16 @@ application-owned access는 `PrefixedRedis`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state/result | PROCESSING 1h, terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함 — 필드 NON_NULL) | PROCESSING 1h, terminal 24h |
 | `timeline:callback-token-uses:{taskId}` | callback token use state | 25h |
+| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(`task:{taskId}`, 삭제는 `delete:{operationId}` 예정) | 1h (PROCESSING 저장 성공 시 재갱신) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `PrefixedRedis`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
+단순 get/set/delete 외에 원자 연산을 제공한다: `setIfAbsent`(SET NX + TTL),
+`expireIfValueMatches`/`deleteIfValueMatches`(Lua — 값 비교와 PEXPIRE/DEL을 원자화해
+만료→재선점 경합에서 남의 lease를 갱신·삭제하지 않는다).
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
 dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.

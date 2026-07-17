@@ -46,7 +46,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_serializesWithKeyAndTtl() throws Exception {
-        TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), "token-hash");
+        TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "token-hash");
 
         store.save("abc", task, Duration.ofHours(24));
 
@@ -80,6 +80,56 @@ class TimelineTaskStoreTest {
         assertThat(json).contains("\"userMemory\":{\"usersCharacter\":null}");
         assertThat(json).contains(
                 "\"timelineWindow\":{\"startTime\":\"20260508T183000\",\"endTime\":\"20260508T224100\"}");
+        // NON_NULL 명시 필드: PROCESSING JSON(AI가 직접 읽는 계약)에 dailyRecordId가 null로 노출되지 않는다.
+        assertThat(json).doesNotContain("dailyRecordId");
+    }
+
+    @Test
+    void save_successTask_includesDailyRecordId() throws Exception {
+        // SUCCESS에만 결과 식별자가 실린다 — 폴링이 이 ID로만 결과를 조회한다.
+        store.save("abc", TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        assertThat(jsonCaptor.getValue()).contains("\"dailyRecordId\":42");
+    }
+
+    @Test
+    void save_failedTask_omitsDailyRecordId() throws Exception {
+        store.save("f", TimelineDraftTask.failed(LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        assertThat(jsonCaptor.getValue()).doesNotContain("dailyRecordId");
+    }
+
+    @Test
+    void find_legacySuccessJsonWithoutDailyRecordId_deserializesToNull() {
+        // 배포 전 저장된 SUCCESS JSON(필드 자체가 없음) → 에러 없이 null로 역직렬화돼 legacy(0404) 판정이 가능하다.
+        when(redis.get("timeline:draft-task:legacy")).thenReturn(
+                "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"recordAt\":null,\"recordTimezone\":null,"
+                        + "\"userMemory\":null,\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
+
+        Optional<TimelineDraftTask> found = store.find("legacy");
+
+        assertThat(found).isPresent();
+        assertThat(found.get().status()).isEqualTo(TaskStatus.SUCCESS);
+        assertThat(found.get().dailyRecordId()).isNull();
+    }
+
+    @Test
+    void dateGuard_claimRefreshRelease_delegateWithLogicalKey() {
+        // 논리 키 {userId}:{recordDate}(ISO) 조립과 PrefixedRedis 원자 연산 위임을 고정한다.
+        LocalDate date = LocalDate.of(2026, 5, 8);
+        when(redis.setIfAbsent("timeline:date-guard:7:2026-05-08", "task:abc", Duration.ofHours(1)))
+                .thenReturn(true);
+        when(redis.expireIfValueMatches("timeline:date-guard:7:2026-05-08", "task:abc", Duration.ofHours(1)))
+                .thenReturn(true);
+        when(redis.deleteIfValueMatches("timeline:date-guard:7:2026-05-08", "task:abc")).thenReturn(true);
+
+        assertThat(store.claimDateGuard(7L, date, "task:abc", Duration.ofHours(1))).isTrue();
+        assertThat(store.refreshDateGuard(7L, date, "task:abc", Duration.ofHours(1))).isTrue();
+        assertThat(store.releaseDateGuard(7L, date, "task:abc")).isTrue();
     }
 
     @Test

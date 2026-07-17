@@ -144,6 +144,7 @@ public class DailyTimelineService {
             eventResponses.add(TimelineEventResponse.from(event, itemResponses));
         }
 
-        return new DailyTimelineResponse(record.getRecordDate(), record.getEmotionType(), eventResponses);
+        return new DailyTimelineResponse(record.getDailyRecordId(), record.getRecordDate(),
+                record.getEmotionType(), eventResponses);
     }
 }

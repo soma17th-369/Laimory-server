@@ -1,8 +1,11 @@
 package com.laimory.server.common.redis;
 
 import java.time.Duration;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,6 +21,20 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class PrefixedRedis {
+
+    // GET-비교와 PEXPIRE/DEL을 Lua로 원자화한다 — 두 명령으로 나누면 비교와 실행 사이에 내 lease가
+    // 만료되고 다른 holder가 선점한 경우 남의 lease를 갱신/삭제하는 경합이 생긴다(Redis 공식 lock 패턴).
+    private static final RedisScript<Long> EXPIRE_IF_VALUE_MATCHES = new DefaultRedisScript<>("""
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('pexpire', KEYS[1], ARGV[2])
+            end
+            return 0""", Long.class);
+
+    private static final RedisScript<Long> DELETE_IF_VALUE_MATCHES = new DefaultRedisScript<>("""
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0""", Long.class);
 
     private final StringRedisTemplate template;
     private final String prefix;
@@ -64,5 +81,39 @@ public class PrefixedRedis {
             template.expire(key, ttl);
         }
         return value;
+    }
+
+    /**
+     * 키가 없을 때만 값을 원자적으로 저장한다(SET NX + TTL). 저장했으면 true, 이미 있으면 false.
+     * 분산 lease 선점용 — 동시 선점 경합에서 정확히 한 호출만 true를 받는다.
+     */
+    public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
+        Boolean acquired = template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl);
+        if (acquired == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis setIfAbsent가 null을 반환했습니다: " + logicalKey);
+        }
+        return acquired;
+    }
+
+    /** 저장된 값이 기대값과 일치할 때만 TTL을 갱신한다(Lua 원자). 갱신했으면 true. */
+    public boolean expireIfValueMatches(String logicalKey, String expectedValue, Duration ttl) {
+        Long result = template.execute(EXPIRE_IF_VALUE_MATCHES, List.of(prefix + logicalKey),
+                expectedValue, String.valueOf(ttl.toMillis()));
+        return requireScriptResult(result, logicalKey) == 1L;
+    }
+
+    /** 저장된 값이 기대값과 일치할 때만 삭제한다(Lua 원자, compare-and-delete). 삭제했으면 true. */
+    public boolean deleteIfValueMatches(String logicalKey, String expectedValue) {
+        Long result = template.execute(DELETE_IF_VALUE_MATCHES, List.of(prefix + logicalKey), expectedValue);
+        return requireScriptResult(result, logicalKey) == 1L;
+    }
+
+    private static long requireScriptResult(Long result, String logicalKey) {
+        if (result == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis script가 null을 반환했습니다: " + logicalKey);
+        }
+        return result;
     }
 }

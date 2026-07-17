@@ -40,7 +40,10 @@ import org.springframework.stereotype.Service;
  * + PROCESSING 기록 + AI 디스패치를 합성한다. (leaf가 아닌 합성 오케스트레이터라 여러 leaf 서비스를 주입한다.)
  *
  * <p>요청 스레드는 디스패치를 블로킹하지 않는다(dispatch는 fire-and-forget; v1 no-op).
- * 같은 날짜로 PROCESSING task가 떠 있는 동안 두 번째 POST가 와도 둘 다 통과할 수 있다(plan 모호점 4, MVP 수용).
+ * 같은 (userId, recordDate)에는 날짜 guard(Redis SET NX lease)로 AI 작업 하나만 허용한다 — 두 번째 POST는
+ * guard 선점 실패로 409(ERROR_1016) 거절된다(과거 "동시 same-date POST 둘 다 통과(MVP 수용)"를 대체).
+ * guard는 terminal 전이 시 compare-and-release로 해제되고, 서버 크래시 등 이상 시에도 TTL 1시간으로
+ * 자연 해제된다(해제 경계 규칙은 {@link TimelineTaskService} 참고).
  *
  * <p>⚠️ 단계 순서가 load-bearing이다: draft 행을 <b>먼저 저장·커밋</b>한 뒤 Redis에 PROCESSING을 기록한다 —
  * 그래야 "PROCESSING인데 draft 없음" 오판(콜백의 idempotent-recovery 판정을 깨뜨림)이 안 생긴다.
@@ -61,7 +64,8 @@ public class TimelineDraftTaskService {
 
     /**
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
-     * 이미 SAVED인 daily record면 409(BusinessException ERROR_1003)로 거절한다.
+     * 같은 날짜에 진행 중인 작업(guard 선점 실패)이면 409(ERROR_1016), 이미 SAVED인 daily record면
+     * 409(ERROR_1003)로 거절한다.
      * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
      */
     public String createDraftTask(String applicationVersion, LocalDateTime recordAt, String recordTimeZone,
@@ -85,49 +89,66 @@ public class TimelineDraftTaskService {
         // 인증 도입 시 이 변수 한 곳만 바꾼다(두 지점이 따로 놀면 남의 키로 URL을 파생하는 버그).
         long userId = TimelineDefaults.DEFAULT_USER_ID;
 
-        Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
-        existingRecord
-                .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
-                .ifPresent(record -> {
-                    throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                });
-
-        // append 중복 방지: 요청 배치 내 중복 rawId를 dedupe하고, 같은 날짜에 이미 저장된 rawId(기존 event의 item)를 제외한다.
-        // 이미 저장된 event는 사용자 소유라 서버가 재그룹핑하지 않는다 — 신규 rawId만 새 event로 append한다.
-        List<SourceItemDto> newItems = excludeAlreadySaved(dedupeByRawId(sourceItems), existingRecord);
-        if (newItems.isEmpty()) {
-            throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
+        // 같은 날짜 동시 작업 차단: taskId를 holder로 새겨 날짜 guard를 선점한다(SET NX).
+        // 실패 = 같은 날짜의 draft/삭제가 진행 중 → 409(ERROR_1016).
+        String taskId = UuidV7.randomUuidV7().toString();
+        String guardHolder = TimelineTaskService.taskGuardHolder(taskId);
+        if (!timelineTaskService.claimDateGuard(userId, recordDate, guardHolder)) {
+            throw new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS);
         }
 
-        // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
-        TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems);
-
-        // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
-        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
-        // BusinessException(ERROR_1014 전이 / ERROR_1015 영구)를 던져 draft 생성이 502로 실패한다 — taskId·저장 前이라 아무것도 안 만들어짐(롤백 불필요).
-        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
-
-        String taskId = UuidV7.randomUuidV7().toString();
         // one-time 콜백 토큰: 원문은 AI에만 전달하고 서버는 해시만 보관한다.
         String callbackToken = CallbackTokens.generate();
         String callbackTokenHash = CallbackTokens.hash(callbackToken);
 
-        // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
-        List<TimelineDraftSourceItem> rows = enrichedItems.stream()
-                .map(src -> TimelineDraftSourceItem.of(
-                        taskId, userId,
-                        src.itemType(), src.rawId(), src.startAt(), src.endAt(),
-                        objectMapper.valueToTree(src.payload())))
-                .toList();
-        timelineDraftSourceItemService.saveAll(rows);
-
-        // 2. Redis PROCESSING 기록. 실패하면 방금 저장한 draft를 보상 삭제하고 전파한다(고아 draft 방지).
+        // guard 선점 후 PROCESSING 저장 전의 모든 선처리 실패는 자신의 guard만 즉시 해제한다(해제 경계 규칙 ①).
         try {
-            timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow, callbackTokenHash);
+            Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
+            existingRecord
+                    .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
+                    .ifPresent(record -> {
+                        throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
+                    });
+
+            // append 중복 방지: 요청 배치 내 중복 rawId를 dedupe하고, 같은 날짜에 이미 저장된 rawId(기존 event의 item)를 제외한다.
+            // 이미 저장된 event는 사용자 소유라 서버가 재그룹핑하지 않는다 — 신규 rawId만 새 event로 append한다.
+            List<SourceItemDto> newItems = excludeAlreadySaved(dedupeByRawId(sourceItems), existingRecord);
+            if (newItems.isEmpty()) {
+                throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
+            }
+
+            // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
+            TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems);
+
+            // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
+            // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
+            // BusinessException(ERROR_1014 전이 / ERROR_1015 영구)를 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
+            List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
+
+            // 1. draft 행을 먼저 저장·커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 미커밋 상태로 전파(500).
+            List<TimelineDraftSourceItem> rows = enrichedItems.stream()
+                    .map(src -> TimelineDraftSourceItem.of(
+                            taskId, userId,
+                            src.itemType(), src.rawId(), src.startAt(), src.endAt(),
+                            objectMapper.valueToTree(src.payload())))
+                    .toList();
+            timelineDraftSourceItemService.saveAll(rows);
+
+            // 2. Redis PROCESSING 기록. 실패하면 방금 저장한 draft를 보상 삭제하고 전파한다(고아 draft 방지).
+            try {
+                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow, callbackTokenHash);
+            } catch (RuntimeException e) {
+                timelineDraftSourceItemService.deleteByTaskId(taskId);
+                throw e;
+            }
         } catch (RuntimeException e) {
-            timelineDraftSourceItemService.deleteByTaskId(taskId);
+            releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
             throw e;
         }
+
+        // PROCESSING 저장 성공 → guard TTL을 1시간으로 재갱신해 task TTL과 정렬한다(best-effort —
+        // 실패해도 최초 선점 TTL이 남아 있고, 이후는 TTL 자연 해제가 안전망이다).
+        refreshDateGuardQuietly(userId, recordDate, guardHolder, taskId);
 
         // 3. AI dispatch. 동기 예외(RuntimeException)면 task를 FAILED로 고정하고 draft는 보존(cleanup이 나중에 정리).
         //    taskId는 정상 반환해 클라가 폴링으로 실패를 확인하게 한다.
@@ -136,10 +157,32 @@ public class TimelineDraftTaskService {
         } catch (RuntimeException e) {
             // 상세는 로그로만 — task엔 분류 코드만 저장(폴링 body.error 유출 차단).
             log.warn("timeline event suggestion dispatch failed: taskId={} detail={}", taskId, e.getMessage());
+            // terminal(FAILED) 저장 성공 시에만 guard 해제(규칙 ③) — markFailed가 던지면 여기 못 와 TTL에 맡겨진다(규칙 ②).
             timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
+            releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
         }
 
         return taskId;
+    }
+
+    /** guard 해제는 best-effort — 실패해도 TTL(1h)이 자연 해제하는 안전망이 있어 원래 예외/흐름을 막지 않는다. */
+    private void releaseDateGuardQuietly(long userId, LocalDate recordDate, String holder, String taskId) {
+        try {
+            timelineTaskService.releaseDateGuard(userId, recordDate, holder);
+        } catch (RuntimeException e) {
+            log.warn("date guard release failed (TTL로 자연 해제 예정): taskId={} detail={}", taskId, e.getMessage());
+        }
+    }
+
+    /** guard TTL 재갱신도 best-effort — no-op(holder 불일치/만료)과 실패는 로그만 남긴다. */
+    private void refreshDateGuardQuietly(long userId, LocalDate recordDate, String holder, String taskId) {
+        try {
+            if (!timelineTaskService.refreshDateGuard(userId, recordDate, holder)) {
+                log.warn("date guard refresh no-op (holder 불일치/만료): taskId={}", taskId);
+            }
+        } catch (RuntimeException e) {
+            log.warn("date guard refresh failed: taskId={} detail={}", taskId, e.getMessage());
+        }
     }
 
     /** 요청 배치 내 중복 rawId를 제거한다(첫 항목 유지). 유출 방지로 로그엔 개수만 남긴다(rawId는 클라 입력값). */

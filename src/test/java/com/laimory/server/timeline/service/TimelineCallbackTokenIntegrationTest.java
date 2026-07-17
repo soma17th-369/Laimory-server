@@ -99,6 +99,9 @@ class TimelineCallbackTokenIntegrationTest {
             // redis는 PrefixedRedis facade → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
+        // 날짜 guard: terminal에 못 간 테스트(wrongToken 등)의 task는 guard를 쥔 채 남는다(운영에선 TTL 1h 해제).
+        // 이 클래스는 같은 고정 날짜를 공유하므로 다음 테스트의 draft 생성이 1016으로 막히지 않게 지운다.
+        redis.delete("timeline:date-guard:0:" + DATE);
     }
 
     @Test

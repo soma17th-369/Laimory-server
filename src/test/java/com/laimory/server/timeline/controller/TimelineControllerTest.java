@@ -225,7 +225,7 @@ class TimelineControllerTest {
                 1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
-                LocalDate.parse("2026-06-17"), null, List.of(event));
+                42L, LocalDate.parse("2026-06-17"), null, List.of(event));
         when(timelineDraftTaskPollingService.poll(any(), eq("t-ok")))
                 .thenReturn(DraftTaskStatusResponse.success(result));
 
@@ -233,6 +233,8 @@ class TimelineControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("SUCCESS"))
+                // dailyRecordId는 삭제 API 타깃팅용 결과 식별자 — 응답 직렬화 계약에 포함된다.
+                .andExpect(jsonPath("$.body.result.dailyRecordId").value(42))
                 .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
