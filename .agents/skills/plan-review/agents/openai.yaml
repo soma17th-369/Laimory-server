@@ -1,4 +1,4 @@
 interface:
   display_name: "Plan Review"
-  short_description: "Review plans against repo evidence."
-  default_prompt: "Use $plan-review to review this implementation plan against the repo and return all actionable improvements at once."
+  short_description: "Review plans for evidence-backed blockers."
+  default_prompt: "Use $plan-review to decide whether this plan is safe enough to implement and report only evidence-backed plan-level blockers."
