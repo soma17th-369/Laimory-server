@@ -2,7 +2,7 @@ package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -27,7 +27,7 @@ class TimelineTaskStoreIntegrationTest {
     private TimelineTaskStore timelineTaskStore;
 
     @Autowired
-    private PrefixedRedis prefixedRedis;
+    private RedisGateway redisGateway;
 
     @Test
     void savesAndFindsTaskFromRealRedis() {
@@ -41,7 +41,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(found).isPresent();
             assertThat(found.get()).isEqualTo(task);
         } finally {
-            prefixedRedis.delete("timeline:draft-task:" + taskId);
+            redisGateway.delete("timeline:draft-task:" + taskId);
         }
     }
 
@@ -66,15 +66,15 @@ class TimelineTaskStoreIntegrationTest {
             // holder 불일치 refresh/release는 no-op(false) — 남의 guard를 건드리지 않는다.
             assertThat(timelineTaskStore.refreshDateGuard(userId, date, "task:b", Duration.ofMinutes(1))).isFalse();
             assertThat(timelineTaskStore.releaseDateGuard(userId, date, "task:b")).isFalse();
-            assertThat(prefixedRedis.get(logicalKey)).isEqualTo("task:a");
+            assertThat(redisGateway.get(logicalKey)).isEqualTo("task:a");
 
             // holder 일치 refresh/release는 성공하고, 해제 후에는 새 holder가 선점할 수 있다.
             assertThat(timelineTaskStore.refreshDateGuard(userId, date, "task:a", Duration.ofMinutes(1))).isTrue();
             assertThat(timelineTaskStore.releaseDateGuard(userId, date, "task:a")).isTrue();
-            assertThat(prefixedRedis.get(logicalKey)).isNull();
+            assertThat(redisGateway.get(logicalKey)).isNull();
             assertThat(timelineTaskStore.claimDateGuard(userId, date, "task:b", Duration.ofMinutes(1))).isTrue();
         } finally {
-            prefixedRedis.delete(logicalKey);
+            redisGateway.delete(logicalKey);
         }
     }
 }

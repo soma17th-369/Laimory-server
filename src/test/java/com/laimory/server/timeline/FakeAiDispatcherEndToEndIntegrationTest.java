@@ -3,7 +3,7 @@ package com.laimory.server.timeline;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.service.DailyRecordService;
 import com.laimory.server.timeline.service.TimelineDraftEventSuggestionService;
@@ -131,7 +131,7 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     @Autowired
     private TimelineDraftEventSuggestionService eventSuggestionService;
     @Autowired
-    private PrefixedRedis redis;
+    private RedisGateway redis;
 
     private final List<String> createdTaskIds = new ArrayList<>();
 

@@ -28,7 +28,7 @@ import java.time.LocalDateTime;
  *
  * <p><b>저장 키 계약</b>(AI가 Redis를 직접 읽을 때 필요): 논리 키는 {@code timeline:draft-task:{taskId}}이고,
  * 환경 prefix가 있으면 실제 Redis 키는 {@code {REDIS_KEY_PREFIX}timeline:draft-task:{taskId}}다
- * (키 조립은 {@code TimelineTaskStore.KEY_PREFIX} + {@code PrefixedRedis} facade가 담당; dev는 prefix {@code dev_}).
+ * (키 조립은 {@code TimelineTaskStore.KEY_PREFIX} + {@code RedisGateway}가 담당; dev는 prefix {@code dev_}).
  */
 public record TimelineDraftTask(
         TaskStatus status,

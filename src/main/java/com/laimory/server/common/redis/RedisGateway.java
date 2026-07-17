@@ -9,18 +9,18 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 /**
- * 모든 Redis 접근의 단일 진입점(facade). 논리 키 앞에 환경 prefix(예: {@code dev_})를 붙여,
+ * 모든 Redis 접근의 단일 진입점(gateway). 논리 키 앞에 환경 prefix(예: {@code dev_})를 붙여,
  * dev/prod가 하나의 Redis 인스턴스를 공유해도 키 네임스페이스가 충돌·오염되지 않게 한다.
  *
  * <p>prefix는 {@code app.redis.key-prefix}(env {@code REDIS_KEY_PREFIX})에서 온다. prod·로컬은
  * 빈 문자열이라 논리 키를 그대로 쓴다(기존 동작 유지). 이 클래스만 {@link StringRedisTemplate}을
  * 보유하며, 다른 코드의 Redis 직접 접근은 ArchUnit(RedisAccessArchTest)으로 빌드에서 금지한다.
  *
- * <p>호출부는 항상 prefix 없는 <b>논리 키</b>(예: {@code timeline:draft-task:{id}})만 넘긴다 —
- * 환경 prefix 부착은 전적으로 이 facade의 책임이다.
+ * <p><b>불변식:</b> 호출부는 항상 prefix 없는 <b>논리 키</b>(예: {@code timeline:draft-task:{id}})만
+ * 넘긴다 — 환경 prefix 부착은 전적으로 이 클래스의 책임이다.
  */
 @Component
-public class PrefixedRedis {
+public class RedisGateway {
 
     // GET-비교와 PEXPIRE/DEL을 Lua로 원자화한다 — 두 명령으로 나누면 비교와 실행 사이에 내 lease가
     // 만료되고 다른 holder가 선점한 경우 남의 lease를 갱신/삭제하는 경합이 생긴다(Redis 공식 lock 패턴).
@@ -41,7 +41,7 @@ public class PrefixedRedis {
     private final StringRedisTemplate template;
     private final String prefix;
 
-    public PrefixedRedis(StringRedisTemplate template,
+    public RedisGateway(StringRedisTemplate template,
                          @Value("${app.redis.key-prefix:}") String prefix) {
         this.template = template;
         this.prefix = prefix;
@@ -75,7 +75,7 @@ public class PrefixedRedis {
         String key = prefix + logicalKey;
         Long value = template.opsForValue().increment(key);
         if (value == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis increment가 null을 반환했습니다: " + logicalKey);
         }
         if (value == 1) {
@@ -92,7 +92,7 @@ public class PrefixedRedis {
     public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
         Boolean acquired = template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl);
         if (acquired == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis setIfAbsent가 null을 반환했습니다: " + logicalKey);
         }
         return acquired;
@@ -113,7 +113,7 @@ public class PrefixedRedis {
 
     private static long requireScriptResult(Long result, String logicalKey) {
         if (result == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 facade는 그 맥락을 지원하지 않으므로 불변식 위반.
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis script가 null을 반환했습니다: " + logicalKey);
         }
         return result;

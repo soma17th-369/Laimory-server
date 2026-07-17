@@ -2,7 +2,7 @@ package com.laimory.server.auth.repository;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -18,7 +18,7 @@ public class AppCodeStore {
 
     private static final String KEY_PREFIX = "auth:app-code:";
 
-    private final PrefixedRedis redis;
+    private final RedisGateway redis;
     private final ObjectMapper objectMapper;
 
     /** app_code 소유자(userId)와 핸드오프 PKCE challenge. */

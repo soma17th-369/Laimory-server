@@ -2,7 +2,7 @@ package com.laimory.server.timeline.repository;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  * timeline draft 작업 상태의 Redis 데이터 접근 계층.
  * 논리 키: {@code timeline:draft-task:{taskId}}, 값: TimelineDraftTask JSON.
  * 날짜 guard 논리 키: {@code timeline:date-guard:{userId}:{recordDate}}, 값: holder 문자열.
- * 환경 prefix(dev_ 등) 부착은 {@link PrefixedRedis} facade가 담당한다.
+ * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -24,7 +24,7 @@ public class TimelineTaskStore {
     private static final String TOKEN_USES_KEY_PREFIX = "timeline:callback-token-uses:";
     private static final String DATE_GUARD_KEY_PREFIX = "timeline:date-guard:";
 
-    private final PrefixedRedis redis;
+    private final RedisGateway redis;
     private final ObjectMapper objectMapper;
 
     public void save(String taskId, TimelineDraftTask task, Duration ttl) {
