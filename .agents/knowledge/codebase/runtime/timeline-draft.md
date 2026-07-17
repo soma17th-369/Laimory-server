@@ -89,7 +89,7 @@ terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 �
 - production AI dispatcher는 없다.
 - 예상 밖 DB·인프라 exception은 callback token 소비 뒤 전파될 수 있고 task가 PROCESSING TTL까지
   남을 수 있다. 이를 자동 재시도·복구하는 경로는 없다.
-- DRAFT→SAVED, emotion 설정, memo 편집 API가 없다.
+- DRAFT→SAVED, emotion 설정 API가 없다.
 - 요청 timezone은 검증·저장하지만 recordDate 경계 계산에는 아직 사용하지 않는다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.
 
