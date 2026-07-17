@@ -3,6 +3,14 @@
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
+# 스왑 2GB: 스왑 없는 1~2GB 박스는 메모리 스파이크(apt-daily 등) 때 OOM 킬 대신 페이지 회수
+# 라이브락으로 박스 전체(SSM 포함)가 동결된다. 기존 박스는 SSM 수동 적용(README runbook).
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg unzip
 

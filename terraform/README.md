@@ -82,6 +82,20 @@ prod=`laimory.app`(apex), dev=`dev.laimory.app`.
 > 적용**한다 — 로그인 code가 쿼리로 나가는 앱 버전이 로그 설정 없는 박스에 배포되는 일을 구조적으로 막는다.
 > 수동 runbook에서 이 부분을 빠뜨려도 다음 배포에서 자동 보정된다(certbot·server_name은 여전히 수동).
 
+## WAS 스왑 2GB — 기존 박스는 수동 적용
+
+스왑 없는 1~2GB WAS 박스는 메모리 스파이크(apt-daily 등) 때 OOM 킬 대신 페이지 회수 라이브락으로
+박스 전체(SSM 포함)가 동결된다. 신규/재생성 박스는 `user_data/was.sh.tftpl`의 스왑 블록이 자동
+재현하고, **기존 박스는 SSM으로 한 번 수동 적용**한다(dev-was는 2026-07-17 적용 완료, prod-was 미적용):
+
+```bash
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+```
+
 ## dev DB 읽기전용 접근 (bastion) — 기존 박스는 수동 적용
 
 `terraform`이 관리하는 것은 **dev bastion SG(22 ← allowlist CIDR)** 와 **user_data(신규 박스 재현용)** 뿐이다.
