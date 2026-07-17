@@ -56,4 +56,20 @@ public class TimelineEvent extends BaseEntity {
                                   String title, String subtitle) {
         return new TimelineEvent(dailyRecordId, startAt, endAt, title, subtitle);
     }
+
+    /**
+     * 사용자 편집으로 title/subtitle/startAt/endAt 4개 필드를 절대값으로 교체한다(memo·하위 Item 불변).
+     * 검증(필수·길이·시간 순서)은 서비스 계층({@code TimelineEventEditService}) 책임이고 엔티티는 대입만 한다.
+     */
+    public void updateDetails(String title, String subtitle, LocalDateTime startAt, LocalDateTime endAt) {
+        this.title = title;
+        this.subtitle = subtitle;
+        this.startAt = startAt;
+        this.endAt = endAt;
+    }
+
+    /** 사용자 메모를 교체한다. {@code null}은 메모 제거다. 길이 검증은 서비스 계층 책임이다. */
+    public void updateMemo(String memo) {
+        this.memo = memo;
+    }
 }
