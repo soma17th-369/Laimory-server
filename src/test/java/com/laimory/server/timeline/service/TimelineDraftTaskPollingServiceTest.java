@@ -2,6 +2,10 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.TaskStatus;
@@ -73,18 +77,55 @@ class TimelineDraftTaskPollingServiceTest {
     }
 
     @Test
-    void poll_success_assemblesTimeline() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, "h")));
+    void poll_success_assemblesTimelineByStoredDailyRecordId() {
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
         DailyRecord record = DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
-        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(record));
-        DailyTimelineResponse timeline = new DailyTimelineResponse(DATE, null, List.of());
+        when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
+        DailyTimelineResponse timeline = new DailyTimelineResponse(42L, DATE, null, List.of());
         when(dailyTimelineService.getDailyTimeline(42L)).thenReturn(timeline);
 
         DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(res.result()).isSameAs(timeline);
+        // (userId, recordDate) 재조회로 돌아가지 않는다 — 삭제 후 같은 날짜 재생성 시 오조회 방지.
+        verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
+    }
+
+    @Test
+    void poll_success_legacyTaskWithoutRecordId_throws0404() {
+        // 배포 전 legacy SUCCESS task(dailyRecordId 부재, terminal TTL 최대 24h 잔존) → 0404(결과 소멸).
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, null, "h")));
+
+        assertThatThrownBy(() -> service.poll("v1", "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+        verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
+    }
+
+    @Test
+    void poll_success_resultRecordDeleted_throws0404() {
+        // 결과 record가 삭제된 SUCCESS task → "task 없음"(1001)과 구분되는 0404(결과 소멸).
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
+        when(dailyRecordService.findById(42L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.poll("v1", "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+    }
+
+    @Test
+    void poll_success_foreignUsersRecord_hiddenAs0404() {
+        // 소유권 은닉: task가 남의 record ID를 담고 있어도 존재를 드러내지 않고 0404.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
+        DailyRecord foreign = DailyRecord.createDraft(999L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
+        ReflectionTestUtils.setField(foreign, "dailyRecordId", 42L);
+        when(dailyRecordService.findById(42L)).thenReturn(Optional.of(foreign));
+
+        assertThatThrownBy(() -> service.poll("v1", "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
     }
 
     @Test

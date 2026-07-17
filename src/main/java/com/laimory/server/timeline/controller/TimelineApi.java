@@ -134,7 +134,8 @@ public interface TimelineApi {
                     description = "`ERROR_0400` — 필수값 누락·불량 입력(recordAt/recordTimeZone/sourceItems 등)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
-                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
+                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "
+                            + "`ERROR_1016`(같은 날짜의 타임라인 작업이 진행 중 — 잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "지오코딩(지도 API) 호출 실패로 draft 생성 실패. 재시도 가능성으로 코드가 나뉜다 — "
                             + "`ERROR_1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
@@ -172,7 +173,9 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "폴링 성공(작업 상태는 body.status)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_1001` — 작업 없음(만료 포함)")
+                    description = "`ERROR_1001`(작업 없음 — 만료 포함) · "
+                            + "`ERROR_0404`(SUCCESS 작업의 결과 기록이 삭제됐거나 결과 ID가 없는 구버전 작업 — "
+                            + "클라이언트는 1001=작업 소멸, 0404=결과 소멸로 구분)")
     })
     @GetMapping("/{taskId}")
     ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(

@@ -35,6 +35,7 @@ public enum ExceptionType {
 
     // ── timeline ──
     DRAFT_TASK_NOT_FOUND(ErrorCode.ERROR_1001, Level.INFO),         // 만료 포함 — 정상 수명주기
+    DRAFT_RESULT_NOT_FOUND(ErrorCode.ERROR_0404, Level.INFO),       // SUCCESS task의 결과 record 없음 — 삭제됨 또는 legacy task(dailyRecordId 부재)
     CALLBACK_TOKEN_MISMATCH(ErrorCode.ERROR_1002, Level.WARN),      // 보안/버그 신호
     DAILY_RECORD_ALREADY_SAVED(ErrorCode.ERROR_1003, Level.INFO),   // 클라 재시도 시나리오
     PHOTO_COUNT_EXCEEDED(ErrorCode.ERROR_1004, Level.INFO),
@@ -44,6 +45,7 @@ public enum ExceptionType {
     APPEND_NO_NEW_ITEMS(ErrorCode.ERROR_1013, Level.INFO),
     GEOCODING_TRANSIENT_FAILURE(ErrorCode.ERROR_1014, Level.WARN),  // 재시도로 해결 가능
     GEOCODING_PERMANENT_FAILURE(ErrorCode.ERROR_1015, Level.ERROR), // 쿼터·키 — 운영 조치 필요
+    RECORD_DATE_IN_PROGRESS(ErrorCode.ERROR_1016, Level.INFO),      // 같은 날짜 AI 작업/삭제 진행 중 — 클라 재시도 시나리오
 
     // ── auth: N:1의 실사용례 — 클라이언트엔 "재로그인" 하나, 내부는 일상 vs 공격 신호 ──
     APP_CODE_INVALID(ErrorCode.ERROR_2002, Level.INFO),             // 무효/만료/이미 소비

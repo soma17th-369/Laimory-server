@@ -37,7 +37,7 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 저장 경계:
 
 - MySQL은 JPA와 `ddl-auto=validate`를 사용한다. schema 변경은 애플리케이션이 수행하지 않는다.
-- application-owned Redis 접근은 `PrefixedRedis`를 거친다.
+- application-owned Redis 접근은 `RedisGateway`를 거친다.
 - OAuth handshake chain만 Redis-backed HTTP session을 사용하고 일반 API chain은 stateless다.
 
 timeline draft의 큰 흐름은 다음과 같다.

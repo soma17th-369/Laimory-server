@@ -3,7 +3,7 @@ package com.laimory.server.auth.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.auth.token.AuthTokens;
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.Tag;
@@ -27,7 +27,7 @@ class AppCodeStoreIntegrationTest {
     private AppCodeStore appCodeStore;
 
     @Autowired
-    private PrefixedRedis prefixedRedis;
+    private RedisGateway redisGateway;
 
     @Test
     void save_thenConsume_returnsEntry_andSecondConsumeReturnsNull() {
@@ -42,7 +42,7 @@ class AppCodeStoreIntegrationTest {
             // GETDEL 일회성: 같은 해시로 두 번째 소비는 null.
             assertThat(appCodeStore.consume(hash)).isNull();
         } finally {
-            prefixedRedis.delete(KEY_PREFIX + hash); // consume이 이미 지웠어도 무해
+            redisGateway.delete(KEY_PREFIX + hash); // consume이 이미 지웠어도 무해
         }
     }
 

@@ -18,7 +18,7 @@
 |---|---|---|
 | Entity, column, index, FK | Entity, `schema.sql`, repository, running DB rollout, persistence knowledge | unit + integration |
 | `schema.sql` | Compose first-init, Terraform S3 bootstrap, MySQL user data, manual DDL | fresh-volume integration when needed |
-| Redis key, value, TTL | store/service, `PrefixedRedis`, live compatibility, session namespace | Redis unit + integration |
+| Redis key, value, TTL | store/service, `RedisGateway`, live compatibility, session namespace | Redis unit + integration |
 | property or env name | both properties, deploy env/preflight/`-e`, Terraform user data, environments knowledge | context boot + targeted tests |
 | auth secret name | properties, deploy preflight, WAS `.env` docs, Terraform docs | build + workflow review |
 | AI staging contract | staging entities/schema, dispatcher, assembler, validator, cleanup, glossary | callback integration/E2E |

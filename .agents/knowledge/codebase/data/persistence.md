@@ -13,7 +13,7 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 - `src/main/resources/db/schema.sql`
 - `src/main/resources/application*.properties`
 - `src/main/java/com/laimory/server/**/entity/*.java`, repositories
-- `BaseEntity`, `JpaAuditingConfig`, `PrefixedRedis`
+- `BaseEntity`, `JpaAuditingConfig`, `RedisGateway`
 - timeline task/photo cleanup services and stores
 - `docker-compose.yml`, `terraform/storage_cdn.tf`, `terraform/ec2.tf`,
   `terraform/user_data/mysql.sh.tftpl`
@@ -44,16 +44,20 @@ AI가 raw INSERT하는 suggestion staging은 DB default audit time을 사용한�
 
 ### Redis
 
-application-owned access는 `PrefixedRedis`를 거친다.
+application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state/result | PROCESSING 1h, terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함 — 필드 NON_NULL) | PROCESSING 1h, terminal 24h |
 | `timeline:callback-token-uses:{taskId}` | callback token use state | 25h |
+| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(`task:{taskId}`, 삭제는 `delete:{operationId}` 예정) | 1h (PROCESSING 저장 성공 시 재갱신) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
-`PrefixedRedis`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
+`RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
+단순 get/set/delete 외에 원자 연산을 제공한다: `setIfAbsent`(SET NX + TTL),
+`expireIfValueMatches`/`deleteIfValueMatches`(Lua — 값 비교와 PEXPIRE/DEL을 원자화해
+만료→재선점 경합에서 남의 lease를 갱신·삭제하지 않는다).
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
 dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.
@@ -69,7 +73,7 @@ full key는 `{sha256hex(userId)}/photos/{filename}`이며 DB column으로 저장
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
 - staging source→suggestion은 hard FK가 아닌 soft reference이며 assembler가 같은 task인지 검증한다.
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
-- application Redis 접근은 `PrefixedRedis`를 우회하지 않는다.
+- application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
 

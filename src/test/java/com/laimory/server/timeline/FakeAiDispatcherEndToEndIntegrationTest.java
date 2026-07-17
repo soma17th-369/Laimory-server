@@ -3,7 +3,7 @@ package com.laimory.server.timeline;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.laimory.server.common.redis.PrefixedRedis;
+import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.service.DailyRecordService;
 import com.laimory.server.timeline.service.TimelineDraftEventSuggestionService;
@@ -131,7 +131,7 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     @Autowired
     private TimelineDraftEventSuggestionService eventSuggestionService;
     @Autowired
-    private PrefixedRedis redis;
+    private RedisGateway redis;
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
@@ -146,6 +146,8 @@ class FakeAiDispatcherEndToEndIntegrationTest {
             redis.delete("timeline:draft-task:" + id);
         });
         createdTaskIds.clear();
+        // 날짜 guard: 테스트가 terminal 전 실패하면 guard가 남아(운영 TTL 1h) 같은 고정 날짜의 후속 draft가 1016에 막힌다.
+        redis.delete("timeline:date-guard:0:" + DATE);
     }
 
     @Test

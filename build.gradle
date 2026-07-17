@@ -44,7 +44,7 @@ dependencies {
 	testImplementation 'org.springframework.security:spring-security-test'
 	// 비동기 결과 폴링 대기(fake AI dispatcher E2E). 버전은 Spring BOM 관리.
 	testImplementation 'org.awaitility:awaitility'
-	// 아키텍처 가드: Redis 직접 접근 금지(NamespacedRedis facade 강제) 등 규칙을 테스트로 검증. Spring BOM 비관리 → 버전 명시.
+	// 아키텍처 가드: Redis 직접 접근 금지(RedisGateway 강제) 등 규칙을 테스트로 검증. Spring BOM 비관리 → 버전 명시.
 	testImplementation 'com.tngtech.archunit:archunit-junit5:1.3.0'
 	// Reactor 테스트 유틸(PublisherProbe — 병렬 조회 취소 검증). 버전은 Spring BOM(reactor-bom) 관리.
 	testImplementation 'io.projectreactor:reactor-test'

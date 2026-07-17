@@ -10,9 +10,9 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 
 ## Authoritative Sources
 
-- `TimelineDraftService`, `TimelineDraftInputService`, `TimelineAiDispatcher`
+- `TimelineDraftTaskService`, `TimelineDraftTaskPollingService`, `TimelineEventSuggestionDispatcher`
 - `TimelineCallbackService`, `TimelineEventSuggestionAssembler`,
-  `TimelineEventSuggestionValidator`, `DailyTimelineService`
+  `TimelineEventSuggestionValidator`, `DailyTimelineService`, `TimelineTaskService`
 - timeline entities, repositories, Redis stores and integration tests
 - `src/main/resources/db/schema.sql`, `application*.properties`
 
@@ -22,13 +22,24 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 
 1. `POST /a/api/{version}/timeline/drafts`가 요청을 받는다.
 2. JWT user propagation이 없어 현재 `DEFAULT_USER_ID=0`을 쓴다.
-3. 정오 경계로 `recordDate`를 정하고 SAVED record를 거부한다.
-4. 기존 final `rawId`와 request 안 중복을 제외한다.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다.
-6. UUIDv7 `taskId`와 callback token을 만든다.
+3. 정오 경계로 `recordDate`를 정한다.
+4. UUIDv7 `taskId`를 만들고 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)를
+   holder `task:{taskId}`로 선점한다(SET NX). 실패 = 같은 날짜 작업 진행 중 → 409 `ERROR_1016`.
+5. SAVED record를 거부하고, 기존 final `rawId`와 request 안 중복을 제외한다.
+6. geo/photo enrich를 DB transaction 밖에서 수행한다. callback token을 만든다.
 7. `timeline_draft_source_items` staging을 먼저 저장한다.
 8. Redis task를 `PROCESSING`으로 저장한다. 실패하면 source staging을 보상 삭제한다.
+   성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
+   **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다**
+   (lease 만료 후 다른 작업이 날짜를 선점했을 수 있어, 날짜당 작업 하나 불변식을 지키는 dispatch 게이트다.
+   이때 guard는 내 것이 아니므로 해제하지 않는다).
 9. AI dispatcher를 fire-and-forget으로 호출하고 POST는 task를 즉시 반환한다.
+   dispatch 동기 실패는 FAILED 고정 후 guard를 해제한다.
+
+guard 해제 경계: PROCESSING 저장 전 실패는 보상 후 자신의 guard만 즉시 해제(compare-and-release),
+PROCESSING 저장 후 terminal 저장 실패는 해제하지 않고 TTL(1h) 만료에 맡기며,
+terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 최종 안전망이지만,
+재갱신(refresh)은 best-effort가 아니라 dispatch 허용 게이트다.
 
 `app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
 `fake`는 in-process로 staging을 기록한 뒤 실제 HTTP callback 경로를 호출하며 retry하지 않는다.
@@ -46,9 +57,13 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 ### Finalize and polling
 
 - finalize는 검증, Daily Record 생성/조회, Event·Item 저장과 두 staging table 삭제를 한 DB transaction으로 처리한다.
-- commit 뒤 Redis task를 `SUCCESS`로 바꾼다. AI 보고 실패와 처리한 assembly/validation 실패는
-  `FAILED`와 공개 가능한 error code로 기록한다.
-- polling은 Redis state를 읽어 PROCESSING/SUCCESS/FAILED를 반환한다.
+- commit 뒤 Redis task를 `SUCCESS`로 바꾸며, finalize가 반환한 `dailyRecordId`를 task에 저장한다
+  (staging 부재 멱등 복구 경로도 조회한 record의 ID를 저장). AI 보고 실패와 처리한 assembly/validation
+  실패는 `FAILED`와 공개 가능한 error code로 기록한다. 모든 terminal 전이 성공 직후 날짜 guard를 해제한다.
+- polling은 Redis state를 읽어 PROCESSING/SUCCESS/FAILED를 반환한다. SUCCESS 결과는 task의
+  `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 record 삭제 후 같은 날짜 재생성 시
+  오조회를 만들므로 쓰지 않는다. ID가 없거나(legacy task) record가 삭제됐으면 404 `ERROR_0404`
+  (task 자체 없음 `ERROR_1001`과 구분).
 - 같은 날짜 append는 기존 event/item을 재그룹하지 않고 새 event만 붙인다.
 - 정확히 같은 event start anchor는 +10분씩 미는 best-effort이며 DB unique constraint는 없다.
 - 조정 후 end가 start보다 이르면 end를 start로 clamp한다.

@@ -87,6 +87,9 @@ class TimelineDraftTaskServiceTest {
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
         lenient().when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        // 날짜 guard 기본 스텁: 선점·재갱신 성공. guard 거절/해제 경계는 전용 테스트가 검증한다.
+        lenient().when(timelineTaskService.claimDateGuard(anyLong(), any(), anyString())).thenReturn(true);
+        lenient().when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString())).thenReturn(true);
     }
 
     private List<SourceItemDto> oneSource() {
@@ -183,6 +186,11 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), any(), anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        // 해제 경계 규칙 ①: PROCESSING 저장 전 실패(SAVED 거절)는 자신이 선점한 guard(동일 holder)를 즉시 해제한다.
+        ArgumentCaptor<String> holderCaptor = ArgumentCaptor.forClass(String.class);
+        verify(timelineTaskService).claimDateGuard(eq(0L), eq(DATE), holderCaptor.capture());
+        assertThat(holderCaptor.getValue()).startsWith("task:");
+        verify(timelineTaskService).releaseDateGuard(0L, DATE, holderCaptor.getValue());
     }
 
     @Test
@@ -198,6 +206,8 @@ class TimelineDraftTaskServiceTest {
         // 보상 삭제: 방금 저장한 draft 행을 taskId로 지운다(고아 draft 방지). dispatch는 호출되지 않는다.
         verify(timelineDraftSourceItemService).deleteByTaskId(anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        // 규칙 ①: PROCESSING 저장 실패도 보상 후 자신의 guard를 해제해 즉시 재시도가 가능해야 한다.
+        verify(timelineTaskService).releaseDateGuard(eq(0L), eq(DATE), anyString());
     }
 
     @Test
@@ -215,12 +225,16 @@ class TimelineDraftTaskServiceTest {
         verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
         // dispatch 실패는 draft를 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+        // 규칙 ③: FAILED terminal 저장 성공 후 guard를 해제한다(순서: markFailed → release).
+        InOrder order = inOrder(timelineTaskService);
+        order.verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
+        order.verify(timelineTaskService).releaseDateGuard(0L, DATE, "task:" + taskId);
     }
 
     @Test
     void createDraftTask_whenEnrichFails_propagates1014AndSavesNothing() {
         // 지오코딩 loud fail: enrich가 BusinessException(1014)을 던지면 그대로 전파(502)되고,
-        // taskId 생성·draft 저장·PROCESSING·dispatch 前이라 아무것도 만들어지지 않는다(롤백 불필요).
+        // draft 저장·PROCESSING·dispatch 前이라 저장물이 없다(롤백 불필요) — 선점한 guard만 해제한다.
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
         when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
                 .thenThrow(new BusinessException(ExceptionType.GEOCODING_TRANSIENT_FAILURE));
@@ -231,6 +245,86 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftSourceItemService, never()).saveAll(anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), any(), any(), any(), anyString());
         verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        // 규칙 ①: 선처리(enrich) 실패도 자신의 guard를 즉시 해제한다.
+        verify(timelineTaskService).releaseDateGuard(eq(0L), eq(DATE), anyString());
+    }
+
+    @Test
+    void createDraftTask_guardClaimFails_rejectsWith1016_beforeAnyProcessing() {
+        // 같은 날짜에 진행 중인 draft/삭제가 있으면(SET NX 실패) 409(ERROR_1016)로 즉시 거절한다.
+        when(timelineTaskService.claimDateGuard(eq(0L), eq(DATE), anyString())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+        // 선점 실패 = 남의 guard다 — 해제하면 안 되고, 어떤 처리(조회·enrich·저장·dispatch)도 시작하지 않는다.
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
+        verify(sourceItemEnrichmentService, never()).enrich(anyList(), anyLong());
+        verify(timelineDraftSourceItemService, never()).saveAll(anyList());
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+    }
+
+    @Test
+    void createDraftTask_happyPath_refreshConfirmsOwnershipBeforeDispatch_andKeepsGuardHeld() {
+        // refresh(소유 재확인+TTL 정렬)가 반드시 dispatch보다 앞선다 — 소유 확인 없이 AI 작업이 나가지 않는다.
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
+
+        InOrder order = inOrder(timelineTaskService, timelineEventSuggestionDispatcher);
+        order.verify(timelineTaskService).claimDateGuard(0L, DATE, "task:" + taskId);
+        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
+        order.verify(timelineTaskService).refreshDateGuard(0L, DATE, "task:" + taskId);
+        order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void createDraftTask_guardOwnershipLostBeforeDispatch_marksFailedWithoutDispatch() {
+        // refresh=false = 내 lease 만료 후 다른 작업(draft/삭제)이 같은 날짜를 선점했을 수 있음.
+        // 날짜당 작업 하나 불변식을 지키기 위해 dispatch하지 않고 FAILED(1009)로 종결한다(클라는 폴링 후 재시도).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString())).thenReturn(false);
+
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
+
+        assertThat(taskId).isNotBlank();
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
+        // 내 lease가 아님이 확정된 상태 — 해제(남의 guard 훼손 가능 경로)도 하지 않는다.
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        // draft 행은 dispatch 동기 실패와 동일하게 보존한다(cleanup이 정리).
+        verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+    }
+
+    @Test
+    void createDraftTask_guardRefreshThrows_ownershipUnconfirmed_noDispatch() {
+        // refresh 예외 = 소유 미확인 — 이중 dispatch 위험을 감수하지 않고 FAILED로 종결한다(보수적).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString()))
+                .thenThrow(new RuntimeException("redis down"));
+
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
+
+        assertThat(taskId).isNotBlank();
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void createDraftTask_guardReleaseFails_originalRejectionStillPropagates() {
+        // 해제는 best-effort: release가 던져도 원래 거절(1003)이 그대로 전파된다(TTL이 안전망).
+        DailyRecord saved = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(saved));
+        doThrow(new RuntimeException("redis down"))
+                .when(timelineTaskService).releaseDateGuard(anyLong(), any(), anyString());
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
     }
 
     @Test
