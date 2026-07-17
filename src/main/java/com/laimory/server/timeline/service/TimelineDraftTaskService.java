@@ -66,7 +66,9 @@ public class TimelineDraftTaskService {
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
      * 같은 날짜에 진행 중인 작업(guard 선점 실패)이면 409(ERROR_1016), 이미 SAVED인 daily record면
      * 409(ERROR_1003)로 거절한다.
-     * dispatch가 동기 예외를 던지면 task를 FAILED로 고정하고 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
+     * PROCESSING 저장 후 dispatch 전에 guard 소유를 재확인(refresh)하며, 소유 미확인이면 dispatch 없이
+     * FAILED로 종결한다. dispatch가 동기 예외를 던져도 task를 FAILED로 고정한다 — 두 경우 모두 taskId는
+     * 정상 반환한다(클라가 폴링으로 결과 확인).
      */
     public String createDraftTask(String applicationVersion, LocalDateTime recordAt, String recordTimeZone,
                                   List<SourceItemDto> sourceItems) {
@@ -146,9 +148,16 @@ public class TimelineDraftTaskService {
             throw e;
         }
 
-        // PROCESSING 저장 성공 → guard TTL을 1시간으로 재갱신해 task TTL과 정렬한다(best-effort —
-        // 실패해도 최초 선점 TTL이 남아 있고, 이후는 TTL 자연 해제가 안전망이다).
-        refreshDateGuardQuietly(userId, recordDate, guardHolder, taskId);
+        // PROCESSING 저장 성공 → dispatch 전에 guard 소유를 재확인하며 TTL을 1시간으로 재갱신한다(task TTL 정렬).
+        // false = 내 lease가 만료됐고 다른 작업(draft/삭제)이 같은 날짜를 선점했을 수 있다 — 날짜당 작업 하나
+        // 불변식을 지키기 위해 dispatch하지 않고 FAILED로 종결한다(예외도 소유 미확인이라 동일 취급).
+        // 클라는 폴링으로 FAILED(1009)를 확인하고 재시도한다. draft 행은 dispatch 동기 실패와 동일하게
+        // 보존한다(cleanup이 정리). 내 lease가 아니므로 guard는 건드리지 않는다(해제 금지).
+        if (!refreshDateGuardConfirmingOwnership(userId, recordDate, guardHolder, taskId)) {
+            log.warn("date guard ownership not confirmed before dispatch, aborting: taskId={}", taskId);
+            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
+            return taskId;
+        }
 
         // 3. AI dispatch. 동기 예외(RuntimeException)면 task를 FAILED로 고정하고 draft는 보존(cleanup이 나중에 정리).
         //    taskId는 정상 반환해 클라가 폴링으로 실패를 확인하게 한다.
@@ -174,14 +183,17 @@ public class TimelineDraftTaskService {
         }
     }
 
-    /** guard TTL 재갱신도 best-effort — no-op(holder 불일치/만료)과 실패는 로그만 남긴다. */
-    private void refreshDateGuardQuietly(long userId, LocalDate recordDate, String holder, String taskId) {
+    /**
+     * dispatch 직전 guard 소유 재확인 겸 TTL 재갱신. true일 때만 dispatch가 허용된다.
+     * 예외는 소유 미확인으로 간주해 false를 반환한다(보수적 — 이중 dispatch보다 FAILED 종결이 낫다).
+     */
+    private boolean refreshDateGuardConfirmingOwnership(long userId, LocalDate recordDate, String holder,
+                                                        String taskId) {
         try {
-            if (!timelineTaskService.refreshDateGuard(userId, recordDate, holder)) {
-                log.warn("date guard refresh no-op (holder 불일치/만료): taskId={}", taskId);
-            }
+            return timelineTaskService.refreshDateGuard(userId, recordDate, holder);
         } catch (RuntimeException e) {
             log.warn("date guard refresh failed: taskId={} detail={}", taskId, e.getMessage());
+            return false;
         }
     }
 

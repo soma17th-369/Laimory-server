@@ -29,13 +29,17 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 6. geo/photo enrich를 DB transaction 밖에서 수행한다. callback token을 만든다.
 7. `timeline_draft_source_items` staging을 먼저 저장한다.
 8. Redis task를 `PROCESSING`으로 저장한다. 실패하면 source staging을 보상 삭제한다.
-   성공하면 guard TTL을 1시간으로 재갱신해 task TTL과 정렬한다.
+   성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
+   **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다**
+   (lease 만료 후 다른 작업이 날짜를 선점했을 수 있어, 날짜당 작업 하나 불변식을 지키는 dispatch 게이트다.
+   이때 guard는 내 것이 아니므로 해제하지 않는다).
 9. AI dispatcher를 fire-and-forget으로 호출하고 POST는 task를 즉시 반환한다.
    dispatch 동기 실패는 FAILED 고정 후 guard를 해제한다.
 
 guard 해제 경계: PROCESSING 저장 전 실패는 보상 후 자신의 guard만 즉시 해제(compare-and-release),
 PROCESSING 저장 후 terminal 저장 실패는 해제하지 않고 TTL(1h) 만료에 맡기며,
-terminal 저장 성공 시에만 해제한다. 해제·재갱신은 best-effort고 TTL이 최종 안전망이다.
+terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 최종 안전망이지만,
+재갱신(refresh)은 best-effort가 아니라 dispatch 허용 게이트다.
 
 `app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
 `fake`는 in-process로 staging을 기록한 뒤 실제 HTTP callback 경로를 호출하며 retry하지 않는다.

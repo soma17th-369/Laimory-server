@@ -266,16 +266,50 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_happyPath_refreshesGuardTtl_andKeepsGuardHeld() {
-        // PROCESSING 저장 성공 후 guard TTL을 task TTL(1h)과 정렬 재갱신하고, guard는 callback terminal까지 유지한다.
+    void createDraftTask_happyPath_refreshConfirmsOwnershipBeforeDispatch_andKeepsGuardHeld() {
+        // refresh(소유 재확인+TTL 정렬)가 반드시 dispatch보다 앞선다 — 소유 확인 없이 AI 작업이 나가지 않는다.
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
 
         String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
 
-        InOrder order = inOrder(timelineTaskService);
+        InOrder order = inOrder(timelineTaskService, timelineEventSuggestionDispatcher);
         order.verify(timelineTaskService).claimDateGuard(0L, DATE, "task:" + taskId);
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(DATE), eq(RECORD_AT), eq(ZONE), any(), anyString());
         order.verify(timelineTaskService).refreshDateGuard(0L, DATE, "task:" + taskId);
+        order.verify(timelineEventSuggestionDispatcher).dispatch(eq(taskId), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void createDraftTask_guardOwnershipLostBeforeDispatch_marksFailedWithoutDispatch() {
+        // refresh=false = 내 lease 만료 후 다른 작업(draft/삭제)이 같은 날짜를 선점했을 수 있음.
+        // 날짜당 작업 하나 불변식을 지키기 위해 dispatch하지 않고 FAILED(1009)로 종결한다(클라는 폴링 후 재시도).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString())).thenReturn(false);
+
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
+
+        assertThat(taskId).isNotBlank();
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
+        // 내 lease가 아님이 확정된 상태 — 해제(남의 guard 훼손 가능 경로)도 하지 않는다.
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        // draft 행은 dispatch 동기 실패와 동일하게 보존한다(cleanup이 정리).
+        verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+    }
+
+    @Test
+    void createDraftTask_guardRefreshThrows_ownershipUnconfirmed_noDispatch() {
+        // refresh 예외 = 소유 미확인 — 이중 dispatch 위험을 감수하지 않고 FAILED로 종결한다(보수적).
+        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString()))
+                .thenThrow(new RuntimeException("redis down"));
+
+        String taskId = service.createDraftTask(VERSION, RECORD_AT, ZONE, oneSource());
+
+        assertThat(taskId).isNotBlank();
+        verify(timelineEventSuggestionDispatcher, never()).dispatch(anyString(), anyString());
+        verify(timelineTaskService).markFailed(eq(taskId), eq(DATE), eq(ErrorCode.ERROR_1009), anyString());
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
     }
 

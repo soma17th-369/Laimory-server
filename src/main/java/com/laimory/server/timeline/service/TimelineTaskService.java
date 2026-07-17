@@ -81,7 +81,10 @@ public class TimelineTaskService {
         return timelineTaskStore.claimDateGuard(userId, recordDate, holder, DATE_GUARD_TTL);
     }
 
-    /** 내 holder일 때만 guard TTL을 1시간으로 재갱신한다(PROCESSING 저장 성공 직후 task TTL과 정렬용). */
+    /**
+     * 내 holder일 때만 guard TTL을 1시간으로 재갱신한다(PROCESSING 저장 성공 직후 task TTL과 정렬).
+     * 반환값은 소유 재확인 결과다 — draft 생성은 true일 때만 AI dispatch를 진행한다(이중 dispatch 게이트).
+     */
     public boolean refreshDateGuard(long userId, LocalDate recordDate, String holder) {
         return timelineTaskStore.refreshDateGuard(userId, recordDate, holder, DATE_GUARD_TTL);
     }
