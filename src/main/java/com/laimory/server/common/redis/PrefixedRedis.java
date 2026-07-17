@@ -28,13 +28,15 @@ public class PrefixedRedis {
             if redis.call('get', KEYS[1]) == ARGV[1] then
                 return redis.call('pexpire', KEYS[1], ARGV[2])
             end
-            return 0""", Long.class);
+            return 0
+            """, Long.class);
 
     private static final RedisScript<Long> DELETE_IF_VALUE_MATCHES = new DefaultRedisScript<>("""
             if redis.call('get', KEYS[1]) == ARGV[1] then
                 return redis.call('del', KEYS[1])
             end
-            return 0""", Long.class);
+            return 0
+            """, Long.class);
 
     private final StringRedisTemplate template;
     private final String prefix;
