@@ -60,7 +60,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ## Known Gaps
 
-- DRAFT→SAVED 사용자 전이, emotion·memo 입력 API가 없다.
+- DRAFT→SAVED 사용자 전이, emotion 입력 API가 없다.
 - production AI dispatcher, JWT request filter와 authenticated principal propagation이 없다.
 - photo orphan cleanup과 automatic deployment rollback이 없다.
 
