@@ -4,9 +4,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -22,6 +24,7 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -36,8 +39,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 기록 편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(PATCH/PUT)·envelope·상태 매핑(400/404/409)과
- * "userId는 컨트롤러가 결정해 서비스에 전달"(현재 DEFAULT_USER_ID=0) 계약을 검증한다. 인프라 0.
+ * 기록 편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(PATCH/PUT/DELETE)·envelope·상태 매핑
+ * (400/404/409/502)과 "userId는 컨트롤러가 결정해 서비스에 전달"(현재 DEFAULT_USER_ID=0) 계약을
+ * 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineRecordController.class)
 @Import(SecurityConfig.class)
@@ -45,6 +49,7 @@ class TimelineRecordControllerTest {
 
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
+    private static final String DAILY_RECORD_PATH = "/a/api/v1/timeline/daily-records/77";
 
     private static final String PATCH_BODY = """
             {
@@ -62,6 +67,9 @@ class TimelineRecordControllerTest {
 
     @MockitoBean
     private TimelineEventEditService timelineEventEditService;
+
+    @MockitoBean
+    private TimelineDeletionService timelineDeletionService;
 
     private TimelineEventResponse updatedEvent() {
         TimelineItemResponse item = new TimelineItemResponse(
@@ -232,5 +240,103 @@ class TimelineRecordControllerTest {
         mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+    }
+
+    // --- deleteTimelineEvent ---
+
+    @Test
+    void deleteTimelineEvent_returns200WithEmptyBody() throws Exception {
+        mockMvc.perform(delete(EVENT_PATH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        // userId는 클라 입력이 아니라 컨트롤러가 결정(DEFAULT_USER_ID=0)한다.
+        verify(timelineDeletionService).deleteEvent(eq("v1"), eq(0L), eq(11L));
+    }
+
+    @Test
+    void deleteTimelineEvent_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
+                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+
+        mockMvc.perform(delete(EVENT_PATH))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+    }
+
+    @Test
+    void deleteTimelineEvent_mapsSavedConflictTo409() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+
+        mockMvc.perform(delete(EVENT_PATH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+    }
+
+    @Test
+    void deleteTimelineEvent_mapsDateGuardConflictTo409With1016() throws Exception {
+        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
+                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+
+        mockMvc.perform(delete(EVENT_PATH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+    }
+
+    @Test
+    void deleteTimelineEvent_mapsPhotoBatchDeleteFailureTo502With1017() throws Exception {
+        doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
+                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+
+        mockMvc.perform(delete(EVENT_PATH))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1017"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    // --- deleteDailyRecord ---
+
+    @Test
+    void deleteDailyRecord_returns200WithEmptyBody() throws Exception {
+        mockMvc.perform(delete(DAILY_RECORD_PATH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(0L), eq(77L));
+    }
+
+    @Test
+    void deleteDailyRecord_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
+                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
+
+        mockMvc.perform(delete(DAILY_RECORD_PATH))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+    }
+
+    @Test
+    void deleteDailyRecord_mapsDateGuardConflictTo409With1016() throws Exception {
+        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
+                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
+
+        mockMvc.perform(delete(DAILY_RECORD_PATH))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+    }
+
+    @Test
+    void deleteDailyRecord_mapsPhotoBatchDeleteFailureTo502With1017() throws Exception {
+        doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
+                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
+
+        mockMvc.perform(delete(DAILY_RECORD_PATH))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1017"));
     }
 }

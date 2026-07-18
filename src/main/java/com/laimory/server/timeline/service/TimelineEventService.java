@@ -26,4 +26,9 @@ public class TimelineEventService {
     public List<TimelineEvent> findByDailyRecordId(Long dailyRecordId) {
         return timelineEventRepository.findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(dailyRecordId);
     }
+
+    /** 이벤트 행을 삭제한다. 하위 timeline_items는 DB FK {@code ON DELETE CASCADE}가 지운다(JPA cascade 없음). */
+    public void deleteById(Long timelineEventId) {
+        timelineEventRepository.deleteById(timelineEventId);
+    }
 }

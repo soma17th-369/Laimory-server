@@ -26,7 +26,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 기록 날짜 | Record Date | 현재 구현 | 정오를 날짜 경계로 계산한 일일 기록의 대상 날짜다. 요청 timezone은 검증·저장하지만 현재 경계 계산에는 사용하지 않는다. |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | AI finalize 후 생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. |
-| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
+| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다(도입 시 같은 날짜 guard를 취득해야 한다). |
 
 ## 타임라인 이벤트
 
@@ -113,7 +113,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(user_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Timeline Item은 정확히 하나의 Timeline Event에 속한다. |
 | 이벤트 FK | 현재 구현 | `timeline_items.timeline_event_id`는 `NOT NULL`이다. |
-| Cascade 삭제 | 현재 구현 | Timeline Event를 삭제하면 하위 Timeline Items도 삭제한다. |
+| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event를 삭제하면 하위 행(Events·Items)이 DB FK `ON DELETE CASCADE`로 함께 삭제된다. 삭제 API는 대상 PHOTO의 S3 배치 삭제 성공 후에만 DB 삭제를 시작한다. |
 | finalize 단일 트랜잭션 | 현재 구현 | validate 후 Daily Record, Events, Items 저장과 두 staging table 삭제가 하나의 DB transaction이다. |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖 fire-and-forget이다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다. |
