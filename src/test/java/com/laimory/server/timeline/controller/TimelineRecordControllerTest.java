@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -13,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
@@ -24,6 +26,8 @@ import com.laimory.server.timeline.service.TimelineEventEditService;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -89,6 +93,44 @@ class TimelineRecordControllerTest {
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
                 eq("카페에서 휴식"), eq("성수동"),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"title", "subtitle", "startAt", "endAt"})
+    void updateTimelineEvent_missingKeyRejected400(String missingKey) throws Exception {
+        // 4개 키 모두 필수 계약: 키 누락은 역직렬화 단계에서 400(ERROR_0400) — 서비스에 도달하지 않는다.
+        // (누락을 null로 완화하면 title·startAt만 보낸 요청이 subtitle/endAt을 조용히 지운다.)
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.remove(missingKey);
+
+        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+
+        verifyNoInteractions(timelineEventEditService);
+    }
+
+    @Test
+    void updateTimelineEvent_explicitNullClearsSubtitleAndEndAt() throws Exception {
+        // 명시적 null은 누락(400)과 달리 "비움"이다 — subtitle/endAt에 null이 그대로 서비스로 전달된다.
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(updatedEvent());
+
+        String body = """
+                {
+                  "title": "카페에서 휴식",
+                  "subtitle": null,
+                  "startAt": "2026-07-08T14:00:00",
+                  "endAt": null
+                }
+                """;
+        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
+
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
+                eq("카페에서 휴식"), isNull(),
+                eq(LocalDateTime.parse("2026-07-08T14:00:00")), isNull());
     }
 
     @Test

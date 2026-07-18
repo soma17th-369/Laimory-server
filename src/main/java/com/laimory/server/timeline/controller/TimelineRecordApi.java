@@ -36,15 +36,16 @@ public interface TimelineRecordApi {
 
     @Operation(summary = "타임라인 Event 수정",
             description = "title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체한다(절대값 대입 — memo·items는 바뀌지 않는다). "
-                    + "4개 필드를 모두 보내는 계약이다: title/startAt의 null은 400, subtitle/endAt의 null은 '비움'이다"
-                    + "(필드 생략과 null을 구분하지 않으므로 유지할 값도 현재 값을 그대로 보낸다). "
+                    + "4개 키를 모두 보내는 계약이다: 키가 하나라도 없으면 400이다. "
+                    + "title/startAt의 null은 400, subtitle/endAt은 명시적 null만 '비움'이다"
+                    + "(유지할 값은 현재 값을 그대로 보낸다). "
                     + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정이나 하위 Item 시간 변경은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — title 누락/공백·255자 초과 · subtitle 255자 초과 · "
-                            + "startAt 누락 · endAt이 startAt보다 이전"),
+                    description = "`ERROR_0400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
+                            + "startAt null · endAt이 startAt보다 이전"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
