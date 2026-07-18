@@ -26,6 +26,13 @@ Laimory는 Android 앱이 사용하는 Spring Boot REST 백엔드다.
 5. 의미가 달라진 knowledge 문서만 같은 변경에서 갱신한다. 단순 포맷 변경 때문에 문서를 억지로 수정하지 않는다.
 6. 세션 기록, 작업 일지, raw note를 knowledge에 저장하지 않는다. 재사용 가능한 현재 상태와 불변식만 남긴다.
 
+## Plan Workflow
+
+- 구현 전 계획은 `.agents/plans/`의 작업별 Markdown 문서 하나에 작성·갱신한다.
+- 계획 단계에서는 조사와 계획 문서 수정만 하며 저장소 파일은 변경하지 않는다.
+- 계획 승인만으로 구현하지 않는다. 사용자가 명시적으로 구현을 지시한 뒤 `Git and Issues` 규칙에 따라 작업한다.
+- 계획 문서는 로컬 메모로만 두며 Git·knowledge에 포함하지 않는다.
+
 ## Local Skills
 
 작업에 맞는 `.agents/skills/<skill-name>/SKILL.md`가 있으면 전체를 읽고 그 절차를 따른다.
