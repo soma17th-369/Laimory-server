@@ -66,3 +66,6 @@ application-secret.yml
 application-secret.properties
 .env
 .env.*
+
+### Agent Local Plans ###
+/.agents/plans/
