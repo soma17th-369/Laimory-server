@@ -41,6 +41,12 @@ PROCESSING 저장 후 terminal 저장 실패는 해제하지 않고 TTL(1h) 만�
 terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 최종 안전망이지만,
 재갱신(refresh)은 best-effort가 아니라 dispatch 허용 게이트다.
 
+같은 guard를 삭제 API(`TimelineDeletionService`)도 holder `delete:{operationId}`로 선점한다 —
+PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 차단하고, draft 생성도
+삭제 진행 중이면 같은 코드로 거절된다(날짜당 작업 하나 직렬화). 삭제는 draft와 달리
+성공·실패(1017/500) 모든 종료 경로에서 finally로 compare-and-release한다 — 실패 시 미해제면
+클라 재시도가 TTL(1h) 동안 막혀 "재시도로 수렴" 설계가 깨진다.
+
 `app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
 `fake`는 in-process로 staging을 기록한 뒤 실제 HTTP callback 경로를 호출하며 retry하지 않는다.
 

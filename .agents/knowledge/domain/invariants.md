@@ -31,6 +31,24 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다. DB unique invariant는 아니다.
 - event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
 
+### Deletion
+
+- Event·DailyRecord 삭제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에 거절하고
+  없음·비소유는 404로 은닉한다.
+- 삭제는 대상 PHOTO의 S3 배치 삭제가 **전부 성공한 후에만** DB cascade 삭제를 시작한다.
+  S3 실패(`ERROR_1017`)면 DB를 보존하고, S3 성공 후 DB 실패(500)는 재시도로 수렴한다
+  (이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
+- 삭제 대상 PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고 행 삭제는 진행한다
+  (orphan 허용 — draft cleanup과 동일 규칙).
+- 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)가 같은 날짜의 draft(AI 작업)와 삭제를
+  직렬화한다 — draft는 `task:{taskId}`, 삭제는 `delete:{operationId}` holder로 선점하며,
+  삭제는 성공·1017·500 모든 종료 경로에서 compare-and-release한다(해제는 best-effort, TTL 1h가 안전망).
+- **향후 DRAFT→SAVED 전환(save) API도 같은 날짜 guard를 취득해야 한다** — 삭제·AI 작업과
+  상태 전이가 경합하지 않게 하는 직렬화 지점이다.
+- 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
+- 하위 행(events/items) 삭제는 JPA cascade가 아니라 DB FK `ON DELETE CASCADE`가 담당한다 —
+  서버는 부모 행만 `deleteById`로 지운다.
+
 ### AI callback
 
 - AI는 event suggestion INSERT와 source association UPDATE를 하나의 staging transaction으로 commit한 뒤 알린다.

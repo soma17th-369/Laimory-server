@@ -50,7 +50,7 @@ application-owned access는 `RedisGateway`를 거친다.
 |---|---|---|
 | `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함 — 필드 NON_NULL) | PROCESSING 1h, terminal 24h |
 | `timeline:callback-token-uses:{taskId}` | callback token use state | 25h |
-| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(`task:{taskId}`, 삭제는 `delete:{operationId}` 예정) | 1h (PROCESSING 저장 성공 시 재갱신) |
+| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제는 모든 종료 경로에서 해제) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
@@ -68,6 +68,13 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
 full key는 `{sha256hex(userId)}/photos/{filename}`이며 DB column으로 저장하지 않는다.
 
+삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로),
+Event/DailyRecord 삭제는 `DeleteObjects` 배치(최대 1,000 key/batch 순차, 요청 단위
+override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 SDK 예외 또는
+객체별 error 1건이라도 있으면 `ERROR_1017`로 실패하고 DB 삭제를 시작하지 않는다
+(DB 보존 → 재시도 수렴). PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고
+행 삭제는 진행한다(orphan 허용 — cleanup과 동일 규칙).
+
 ## Invariants
 
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
@@ -76,6 +83,8 @@ full key는 `{sha256hex(userId)}/photos/{filename}`이며 DB column으로 저장
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
+- Event/DailyRecord 삭제는 S3 배치 삭제가 전부 성공한 뒤에만 DB row를 삭제한다
+  (하위 행은 DB FK `ON DELETE CASCADE` — JPA cascade 없음).
 
 ## Known Gaps
 
