@@ -26,7 +26,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 기록 날짜 | Record Date | 현재 구현 | 정오를 날짜 경계로 계산한 일일 기록의 대상 날짜다. 요청 timezone은 검증·저장하지만 현재 경계 계산에는 사용하지 않는다. |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | AI finalize 후 생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. |
-| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
+| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
 
 ## 타임라인 이벤트
 
@@ -35,7 +35,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. suggestion staging에서 만들어질 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
-| 메모 | Memo | 부분 구현 | DB와 response에는 있지만 사용자가 작성·수정하는 API는 없다. |
+| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. PUT 단일 endpoint로 작성·수정·제거한다 — null·blank·필드 부재는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
 | 이벤트 종료 시각 | End At | 현재 구현 | 이벤트 시간 범위의 끝이다. 단일 시점이면 nullable이다. |
 
