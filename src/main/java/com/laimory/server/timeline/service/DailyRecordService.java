@@ -28,6 +28,11 @@ public class DailyRecordService {
         return dailyRecordRepository.save(dailyRecord);
     }
 
+    /** 하루 기록 행을 삭제한다. 하위 timeline_events/timeline_items는 DB FK {@code ON DELETE CASCADE}가 지운다. */
+    public void deleteById(Long dailyRecordId) {
+        dailyRecordRepository.deleteById(dailyRecordId);
+    }
+
     /**
      * (userId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. finalize(콜백) 트랜잭션에 합류({@code REQUIRED})하므로
      * record 생성이 event/item 저장·draft 삭제와 all-or-nothing으로 묶인다 — 후속 단계가 실패하면 record도 롤백돼

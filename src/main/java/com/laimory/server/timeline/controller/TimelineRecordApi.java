@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -29,7 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Record", description = "확정 타임라인 기록 편집 — Event 수정·메모")
+@Tag(name = "Timeline Record", description = "확정 타임라인 기록 편집 — Event 수정·메모·삭제, DailyRecord 삭제")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline")
 public interface TimelineRecordApi {
@@ -75,4 +76,45 @@ public interface TimelineRecordApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(description = "메모를 바꿀 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventMemoRequest request);
+
+    @Operation(summary = "타임라인 Event 삭제",
+            description = "Event와 하위 Item(사진 S3 객체 포함)을 삭제한다. 마지막 Event를 지워도 하루 기록"
+                    + "(DailyRecord)은 유지된다 — 하루 전체 제거는 DailyRecord 삭제 API가 담당한다. "
+                    + "사진 S3 객체 삭제가 전부 성공한 뒤에만 DB 삭제를 시작하므로 실패(409/502) 시 데이터가 "
+                    + "보존된다 — 같은 요청을 잠시 후 재시도하면 된다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
+                            + "`ERROR_1016` — 같은 날짜의 AI 작업/삭제가 진행 중(잠시 후 재시도)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
+                    description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+    })
+    @DeleteMapping("/events/{timelineEventId}")
+    ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(description = "삭제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
+
+    @Operation(summary = "하루 기록(DailyRecord) 삭제",
+            description = "하루 전체(Record·Events·Items, 사진 S3 객체 포함)를 삭제한다. "
+                    + "사진 S3 객체 삭제가 전부 성공한 뒤에만 DB 삭제를 시작하므로 실패(409/502) 시 데이터가 "
+                    + "보존된다 — 같은 요청을 잠시 후 재시도하면 된다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`ERROR_0404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`ERROR_1003` — 하루 기록이 이미 SAVED(작성완료) · "
+                            + "`ERROR_1016` — 같은 날짜의 AI 작업/삭제가 진행 중(잠시 후 재시도)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
+                    description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+    })
+    @DeleteMapping("/daily-records/{dailyRecordId}")
+    ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(description = "삭제할 하루 기록 ID") @PathVariable Long dailyRecordId);
 }

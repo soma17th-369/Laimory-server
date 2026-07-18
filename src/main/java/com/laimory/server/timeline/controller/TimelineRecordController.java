@@ -5,6 +5,7 @@ import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
+import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class TimelineRecordController implements TimelineRecordApi {
 
     private final TimelineEventEditService timelineEventEditService;
+    private final TimelineDeletionService timelineDeletionService;
 
     @Override
     public ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEvent(
@@ -35,5 +37,17 @@ public class TimelineRecordController implements TimelineRecordApi {
             String applicationVersion, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
         return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateMemo(
                 applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId, request.memo())));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(String applicationVersion, Long timelineEventId) {
+        timelineDeletionService.deleteEvent(applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(String applicationVersion, Long dailyRecordId) {
+        timelineDeletionService.deleteDailyRecord(applicationVersion, TimelineDefaults.DEFAULT_USER_ID, dailyRecordId);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

@@ -38,6 +38,11 @@ public class TimelineTaskService {
         return "task:" + taskId;
     }
 
+    /** 삭제 작업이 날짜 guard에 새기는 holder 값({@code delete:{operationId}}). */
+    public static String deleteGuardHolder(String operationId) {
+        return "delete:" + operationId;
+    }
+
     public void createProcessing(String taskId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                                  TimelineDraftTask.TimelineWindow timelineWindow, String callbackTokenHash) {
         timelineTaskStore.save(taskId,

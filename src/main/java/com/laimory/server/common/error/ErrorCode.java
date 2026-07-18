@@ -70,6 +70,9 @@ public enum ErrorCode {
     // ── ERROR_1xxx: timeline 날짜 동시성 guard — 동기 409 전용(task 실패 분류 아님 → TASK_FAILURE_CODES 미포함) ──
     ERROR_1016(HttpStatus.CONFLICT),       // 같은 날짜의 AI 작업/삭제가 진행 중(date guard 선점 실패) — 잠시 후 재시도
 
+    // ── ERROR_1xxx: timeline 사진 배치 삭제 실패 — 동기 502 전용(task 실패 분류 아님 → TASK_FAILURE_CODES 미포함) ──
+    ERROR_1017(HttpStatus.BAD_GATEWAY),    // 삭제의 S3 배치 삭제 실패(SDK 예외·객체별 error) — DB 미삭제 보존, 클라 재시도로 수렴
+
     // ── ERROR_2xxx: auth(인증·토큰) ──
     ERROR_2002(HttpStatus.UNAUTHORIZED),   // app_code 교환 실패(무효/만료/이미 소비/verifier 불일치) → 재로그인
     ERROR_2003(HttpStatus.UNAUTHORIZED),   // refresh 실패(무효/만료/철회/재사용 탐지 — 탐지 시 사용자 전체 폐기) → 재로그인
