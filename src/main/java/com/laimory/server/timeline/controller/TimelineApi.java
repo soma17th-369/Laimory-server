@@ -165,7 +165,7 @@ public interface TimelineApi {
             @RequestBody PhotoUploadCreateRequest request);
 
     @Operation(summary = "draft 작업 상태 폴링",
-            description = "PROCESSING이면 status만, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
+            description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
                     + "(FAILED도 HTTP 200 + COMMON_0000). body.error 코드: `ERROR_1008`(AI가 실패 보고) · "
                     + "`ERROR_1009`(AI 요청 전달 실패) · `ERROR_1010`/`ERROR_1011`(서버 처리 실패). "
                     + "미지의 코드는 제네릭 실패로 처리한다(전방 호환). "
