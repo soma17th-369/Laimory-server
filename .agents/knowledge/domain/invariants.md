@@ -69,6 +69,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Authentication
 
 - 사용자는 `(provider, provider_user_id)`로만 결합하며 email로 provider account를 merge하지 않는다.
+- Kakao 재로그인은 non-null 닉네임만 갱신한다. 누락 claim은 동의 철회인지 provider 응답 누락인지
+  구분할 수 없으므로 기존 값을 지우지 않는다.
 - access JWT에는 `iss/sub/iat/exp`만 두고 PII를 넣지 않는다.
 - refresh token raw value는 저장하지 않고 hash만 저장한다.
 - refresh rotation과 reuse detection은 transactionally 처리하고 reuse 때 그 사용자의 refresh를 모두 revoke한다.

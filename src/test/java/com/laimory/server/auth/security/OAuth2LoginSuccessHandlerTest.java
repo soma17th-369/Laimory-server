@@ -36,6 +36,11 @@ class OAuth2LoginSuccessHandlerTest {
                 oidcUser, List.of(new SimpleGrantedAuthority("OIDC_USER")), "google");
     }
 
+    private OAuth2AuthenticationToken kakaoToken(OidcUser oidcUser) {
+        return new OAuth2AuthenticationToken(
+                oidcUser, List.of(new SimpleGrantedAuthority("OIDC_USER")), "kakao");
+    }
+
     private OidcUser oidcUser() {
         OidcIdToken idToken = OidcIdToken.withTokenValue("t")
                 .claim("sub", "google-sub")
@@ -43,6 +48,22 @@ class OAuth2LoginSuccessHandlerTest {
                 .claim("name", "이름")
                 .build();
         return new DefaultOidcUser(List.of(new SimpleGrantedAuthority("OIDC_USER")), idToken);
+    }
+
+    private OidcUser kakaoOidcUser(Object nicknameClaim) {
+        OidcIdToken.Builder idToken = OidcIdToken.withTokenValue("t").claim("sub", "kakao-sub");
+        if (nicknameClaim != null) {
+            idToken.claim("nickname", nicknameClaim);
+        }
+        return new DefaultOidcUser(List.of(new SimpleGrantedAuthority("OIDC_USER")), idToken.build());
+    }
+
+    private MockHttpServletRequest requestWithChallenge() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute(AppChallengeFilter.APP_CHALLENGE_SESSION_ATTRIBUTE, "challenge-43");
+        request.setSession(session);
+        return request;
     }
 
     @Test
@@ -60,6 +81,44 @@ class OAuth2LoginSuccessHandlerTest {
 
         assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?code=raw-app-code");
         assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void success_kakao_passesIdTokenNicknameAndNullEmail() throws Exception {
+        MockHttpServletRequest request = requestWithChallenge();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        // 예상 밖 email claim이 있어도 Kakao email 인자는 null이어야 한다(이메일 미수집 계약).
+        OidcIdToken idToken = OidcIdToken.withTokenValue("t")
+                .claim("sub", "kakao-sub")
+                .claim("nickname", "라이머")
+                .claim("email", "unexpected@x.com")
+                .build();
+        OidcUser oidcUser = new DefaultOidcUser(List.of(new SimpleGrantedAuthority("OIDC_USER")), idToken);
+        when(socialLoginService.completeLogin(Provider.KAKAO, "kakao-sub", null, "라이머", "challenge-43"))
+                .thenReturn("raw-app-code");
+
+        new OAuth2LoginSuccessHandler(socialLoginService)
+                .onAuthenticationSuccess(request, response, kakaoToken(oidcUser));
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?code=raw-app-code");
+    }
+
+    @Test
+    void success_kakao_missingOrBlankOrNonStringNickname_passesNull() throws Exception {
+        when(socialLoginService.completeLogin(Provider.KAKAO, "kakao-sub", null, null, "challenge-43"))
+                .thenReturn("raw-app-code");
+
+        for (Object claim : new Object[] {null, " ", 42}) {
+            MockHttpServletRequest request = requestWithChallenge();
+            MockHttpServletResponse response = new MockHttpServletResponse();
+
+            new OAuth2LoginSuccessHandler(socialLoginService)
+                    .onAuthenticationSuccess(request, response, kakaoToken(kakaoOidcUser(claim)));
+
+            assertThat(response.getRedirectedUrl())
+                    .as("nickname claim=%s", claim)
+                    .isEqualTo("http://localhost/auth/app?code=raw-app-code");
+        }
     }
 
     @Test

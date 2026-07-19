@@ -53,4 +53,9 @@ public class User extends BaseEntity {
     public static User of(Provider provider, String providerUserId, String email, String nickname) {
         return new User(provider, providerUserId, email, nickname);
     }
+
+    /** 재로그인 시 provider 최신 닉네임 반영. 누락 claim으로 기존 값을 지우지 않는 판단은 호출자 몫이다. */
+    public void updateNickname(String nickname) {
+        this.nickname = nickname;
+    }
 }

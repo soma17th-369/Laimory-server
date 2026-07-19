@@ -54,9 +54,13 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         String appCode;
         try {
             Provider provider = Provider.fromRegistrationId(oauthToken.getAuthorizedClientRegistrationId());
-            // email/nickname은 null 허용(Kakao는 scope=openid만이라 보통 null) — 유일성은 (provider, sub)가 담당.
+            // email/nickname은 null 허용 — 유일성은 (provider, sub)가 담당.
+            // Kakao는 email 미수집(콘솔 권한 없음), 닉네임은 id_token nickname claim만 사용. Google은 기존 그대로.
+            boolean kakao = provider == Provider.KAKAO;
+            String email = kakao ? null : oidcUser.getEmail();
+            String nickname = kakao ? kakaoNickname(oidcUser) : oidcUser.getFullName();
             appCode = socialLoginService.completeLogin(
-                    provider, oidcUser.getSubject(), oidcUser.getEmail(), oidcUser.getFullName(), appChallenge);
+                    provider, oidcUser.getSubject(), email, nickname, appChallenge);
         } catch (RuntimeException e) {
             // 로그인 마무리 실패(DB 순단 등)도 raw 500 대신 다른 실패 경로와 같은 error 핸드오프로 수렴.
             // 필터 단계라 GlobalExceptionHandler 미도달 — 예상 못한 실패이므로 여기서만 stacktrace를 남긴다.
@@ -66,5 +70,10 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             return;
         }
         response.sendRedirect(HandoffRedirects.uri(request, "code", appCode));
+    }
+
+    /** Kakao id_token의 선택 claim {@code nickname} — 미동의·미제공이거나 문자열이 아니거나 blank면 null. */
+    private static String kakaoNickname(OidcUser oidcUser) {
+        return oidcUser.getClaims().get("nickname") instanceof String s && !s.isBlank() ? s : null;
     }
 }
