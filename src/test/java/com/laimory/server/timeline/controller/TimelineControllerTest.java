@@ -175,12 +175,26 @@ class TimelineControllerTest {
     @Test
     void pollDraftTask_returns200WithStatus() throws Exception {
         when(timelineDraftTaskPollingService.poll(any(), eq("t-1")))
-                .thenReturn(DraftTaskStatusResponse.processing());
+                .thenReturn(DraftTaskStatusResponse.processing(12L));
 
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
-                .andExpect(jsonPath("$.body.status").value("PROCESSING"));
+                .andExpect(jsonPath("$.body.status").value("PROCESSING"))
+                // PROCESSING 전용: AI 작업 대기 경과 시간(완료된 초)이 숫자로 실린다.
+                .andExpect(jsonPath("$.body.elapsedSeconds").value(12));
+    }
+
+    @Test
+    void pollDraftTask_legacyProcessing_omitsElapsedSecondsKey() throws Exception {
+        // 기준 시각이 없는 legacy PROCESSING → 0으로 위조하지 않고 key 자체를 생략한다(NON_NULL).
+        when(timelineDraftTaskPollingService.poll(any(), eq("t-legacy")))
+                .thenReturn(DraftTaskStatusResponse.processing(null));
+
+        mockMvc.perform(get(TASKS + "/t-legacy"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.status").value("PROCESSING"))
+                .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
     }
 
     /**
@@ -197,7 +211,9 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("FAILED"))
                 .andExpect(jsonPath("$.body.error").value("ERROR_1008"))
-                .andExpect(jsonPath("$.body.result").value(nullValue()));
+                .andExpect(jsonPath("$.body.result").value(nullValue()))
+                // 경과 시간은 PROCESSING 전용 — terminal 응답 shape는 바뀌지 않는다(key 생략).
+                .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
     }
 
     @Test
@@ -244,6 +260,8 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.result.events[0].items[0].payload.filename").value("u"))
                 .andExpect(jsonPath("$.body.result.cards").doesNotExist())
                 .andExpect(jsonPath("$.body.result.events[0].id").doesNotExist())
-                .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist());
+                .andExpect(jsonPath("$.body.result.events[0].items[0].id").doesNotExist())
+                // 경과 시간은 PROCESSING 전용 — SUCCESS 응답 shape는 바뀌지 않는다(key 생략).
+                .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
     }
 }

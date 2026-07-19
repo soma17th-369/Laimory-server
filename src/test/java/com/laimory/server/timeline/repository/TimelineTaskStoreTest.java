@@ -3,6 +3,7 @@ package com.laimory.server.timeline.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,6 +14,7 @@ import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,7 +70,7 @@ class TimelineTaskStoreTest {
                 LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
                 new TimelineDraftTask.TimelineWindow(
                         LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
-                "token-hash");
+                "token-hash", Instant.parse("2026-05-08T13:41:07Z"));
 
         store.save("abc", task, Duration.ofHours(1));
 
@@ -80,8 +82,52 @@ class TimelineTaskStoreTest {
         assertThat(json).contains("\"userMemory\":{\"usersCharacter\":null}");
         assertThat(json).contains(
                 "\"timelineWindow\":{\"startTime\":\"20260508T183000\",\"endTime\":\"20260508T224100\"}");
+        // PROCESSING 시작 시각은 UTC ISO-8601 문자열로 고정된다(숫자 timestamp 설정 무관 — @JsonFormat STRING).
+        assertThat(json).contains("\"processingStartedAt\":\"2026-05-08T13:41:07Z\"");
         // NON_NULL 명시 필드: PROCESSING JSON(AI가 직접 읽는 계약)에 dailyRecordId가 null로 노출되지 않는다.
         assertThat(json).doesNotContain("dailyRecordId");
+    }
+
+    @Test
+    void save_processingStartedAt_roundTripsAsInstant() throws Exception {
+        Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                null, "token-hash", startedAt);
+
+        store.save("abc", task, Duration.ofHours(1));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        TimelineDraftTask roundTripped = objectMapper.readValue(jsonCaptor.getValue(), TimelineDraftTask.class);
+        assertThat(roundTripped.processingStartedAt()).isEqualTo(startedAt);
+    }
+
+    @Test
+    void save_terminalTasks_omitProcessingStartedAt() throws Exception {
+        // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
+        store.save("s", TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis, times(2)).set(anyString(), jsonCaptor.capture(), any());
+        assertThat(jsonCaptor.getAllValues()).allSatisfy(json ->
+                assertThat(json).doesNotContain("processingStartedAt"));
+    }
+
+    @Test
+    void find_legacyProcessingJsonWithoutStartedAt_deserializesToNull() {
+        // 배포 전 저장된 PROCESSING JSON(필드 자체가 없음) → 예외 없이 null — 폴링은 elapsedSeconds를 생략한다.
+        when(redis.get("timeline:draft-task:legacy-p")).thenReturn(
+                "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
+                        + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
+                        + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
+
+        Optional<TimelineDraftTask> found = store.find("legacy-p");
+
+        assertThat(found).isPresent();
+        assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
+        assertThat(found.get().processingStartedAt()).isNull();
     }
 
     @Test
@@ -138,7 +184,7 @@ class TimelineTaskStoreTest {
                 LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul",
                 new TimelineDraftTask.TimelineWindow(
                         LocalDate.of(2026, 5, 8).atTime(9, 0), LocalDate.of(2026, 5, 8).atTime(11, 0)),
-                "token-hash");
+                "token-hash", Instant.parse("2026-05-08T02:59:30Z"));
         when(redis.get("timeline:draft-task:abc")).thenReturn(objectMapper.writeValueAsString(task));
 
         Optional<TimelineDraftTask> found = store.find("abc");

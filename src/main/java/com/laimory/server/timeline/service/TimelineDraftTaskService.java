@@ -22,6 +22,8 @@ import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -61,6 +63,7 @@ public class TimelineDraftTaskService {
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineEventSuggestionDispatcher timelineEventSuggestionDispatcher;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
     /**
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
@@ -137,8 +140,12 @@ public class TimelineDraftTaskService {
             timelineDraftSourceItemService.saveAll(rows);
 
             // 2. Redis PROCESSING 기록. 실패하면 방금 저장한 draft를 보상 삭제하고 전파한다(고아 draft 방지).
+            //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다 — 전처리(검증·enrich·
+            //    staging)를 제외한 "AI 작업 대기 시작" 경계라 POST 진입 시각을 쓰지 않는다.
+            Instant processingStartedAt = clock.instant();
             try {
-                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow, callbackTokenHash);
+                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow,
+                        callbackTokenHash, processingStartedAt);
             } catch (RuntimeException e) {
                 timelineDraftSourceItemService.deleteByTaskId(taskId);
                 throw e;

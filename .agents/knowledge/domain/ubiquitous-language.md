@@ -105,6 +105,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 타임라인 이벤트 제안 콜백 | Timeline Event Suggestion Callback | 현재 구현 | AI의 staging commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버가 staging을 읽어 finalize한다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 신규 source item의 `startTime/endTime` 범위다. Redis task에 저장하며 시간 있는 신규 item이 없으면 NULL이다. |
 | 사용자 메모리 | User Memory | 부분 구현 | Redis task shape(`usersCharacter` 등)는 있지만 값을 공급하는 source는 없다. |
+| 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·staging 저장)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
+| 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED와 시각 없는 legacy task에서는 필드를 생략한다. |
 
 ## 저장 규칙
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +41,43 @@ class TimelineTaskStoreIntegrationTest {
 
             assertThat(found).isPresent();
             assertThat(found.get()).isEqualTo(task);
+        } finally {
+            redisGateway.delete("timeline:draft-task:" + taskId);
+        }
+    }
+
+    @Test
+    void savesAndFindsProcessingStartedAtFromRealRedis() {
+        // 실제 Spring 관리 ObjectMapper 경유로 Instant가 왕복하는지 검증(단위 테스트의 수제 mapper와 별개 고정).
+        String taskId = "it-" + UUID.randomUUID();
+        try {
+            Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
+            TimelineDraftTask task = TimelineDraftTask.processing(
+                    LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                    null, "token-hash", startedAt);
+            timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
+
+            Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
+
+            assertThat(found).isPresent();
+            assertThat(found.get().processingStartedAt()).isEqualTo(startedAt);
+        } finally {
+            redisGateway.delete("timeline:draft-task:" + taskId);
+        }
+    }
+
+    @Test
+    void terminalTask_hasNoProcessingStartedAt() {
+        // terminal(SUCCESS) task는 PROCESSING 시각을 보존하지 않는다(위 savesAndFinds의 success fixture로 확인).
+        String taskId = "it-" + UUID.randomUUID();
+        try {
+            timelineTaskStore.save(taskId,
+                    TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "token-hash"), Duration.ofMinutes(1));
+
+            Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
+
+            assertThat(found).isPresent();
+            assertThat(found.get().processingStartedAt()).isNull();
         } finally {
             redisGateway.delete("timeline:draft-task:" + taskId);
         }

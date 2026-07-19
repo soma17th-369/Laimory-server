@@ -28,7 +28,9 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 5. SAVED record를 거부하고, 기존 final `rawId`와 request 안 중복을 제외한다.
 6. geo/photo enrich를 DB transaction 밖에서 수행한다. callback token을 만든다.
 7. `timeline_draft_source_items` staging을 먼저 저장한다.
-8. Redis task를 `PROCESSING`으로 저장한다. 실패하면 source staging을 보상 삭제한다.
+8. Redis task를 `PROCESSING`으로 저장한다. 저장 직전에 `clock.instant()`로 `processingStartedAt`을
+   한 번 캡처해 task에 싣는다 — 전처리(검증·enrich·staging)를 제외한 "AI 작업 대기 시작" 경계이며
+   polling `elapsedSeconds`의 기준이다. 저장 실패하면 source staging을 보상 삭제한다.
    성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
    **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다**
    (lease 만료 후 다른 작업이 날짜를 선점했을 수 있어, 날짜당 작업 하나 불변식을 지키는 dispatch 게이트다.
@@ -70,6 +72,9 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
   `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 record 삭제 후 같은 날짜 재생성 시
   오조회를 만들므로 쓰지 않는다. ID가 없거나(legacy task) record가 삭제됐으면 404 `ERROR_0404`
   (task 자체 없음 `ERROR_1001`과 구분).
+- PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 함께 반환한다
+  (음수는 0 clamp). terminal 전이는 이 시각을 보존하지 않고 폐기하므로 SUCCESS/FAILED 응답에는
+  필드가 없고, 배포 전 legacy PROCESSING task(시각 부재, TTL 1h 내 최대 그만큼 혼재)도 필드를 생략한다.
 - 같은 날짜 append는 기존 event/item을 재그룹하지 않고 새 event만 붙인다.
 - 정확히 같은 event start anchor는 +10분씩 미는 best-effort이며 DB unique constraint는 없다.
 - 조정 후 end가 start보다 이르면 end를 start로 clamp한다.

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.TaskStatus;
@@ -13,6 +14,8 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +28,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** 폴링 오케스트레이터 단위 검증. PROCESSING/FAILED/SUCCESS 분기 + 404. 인프라 0. */
+/** 폴링 오케스트레이터 단위 검증. PROCESSING/FAILED/SUCCESS 분기 + elapsedSeconds 계산 + 404. 인프라 0. */
 @ExtendWith(MockitoExtension.class)
 class TimelineDraftTaskPollingServiceTest {
 
@@ -35,21 +38,77 @@ class TimelineDraftTaskPollingServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private DailyTimelineService dailyTimelineService;
+    @Mock
+    private Clock clock;
 
     @InjectMocks
     private TimelineDraftTaskPollingService service;
 
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
+    // 폴링 관측 시각(mock Clock) — PROCESSING 경과 시간의 "현재".
+    private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");
+
+    private static TimelineDraftTask processingTask(Instant processingStartedAt) {
+        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, "hash",
+                processingStartedAt);
+    }
 
     @Test
-    void poll_processing_returnsProcessing() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, "hash")));
+    void poll_processing_returnsElapsedWholeSeconds() {
+        when(clock.instant()).thenReturn(NOW);
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(processingTask(NOW.minusSeconds(12))));
 
         DraftTaskStatusResponse res = service.poll("v1", "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
+        assertThat(res.elapsedSeconds()).isEqualTo(12L);
         assertThat(res.result()).isNull();
         assertThat(res.error()).isNull();
+    }
+
+    @Test
+    void poll_processing_truncatesFractionalSeconds() {
+        // 완료된 초만: 12.9초 경과 → 12, 1초 미만 → 0.
+        when(clock.instant()).thenReturn(NOW);
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(processingTask(NOW.minusMillis(12_900))));
+        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(12L);
+
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(processingTask(NOW.minusMillis(500))));
+        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(0L);
+    }
+
+    @Test
+    void poll_processing_futureTimestampClampsToZero() {
+        // 시계 역행·future timestamp → 음수를 노출하지 않고 0으로 clamp.
+        when(clock.instant()).thenReturn(NOW);
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(processingTask(NOW.plusSeconds(60))));
+
+        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(0L);
+    }
+
+    @Test
+    void poll_processing_largeRange_returnsLongWithoutOverflow() {
+        // int 범위를 훨씬 넘는 경과도 long seconds로 그대로 반환된다(int cast/millis 곱셈 회귀 방지).
+        when(clock.instant()).thenReturn(NOW);
+        Instant farPast = NOW.minusSeconds(10_000_000_000L); // ≈317년 > Integer.MAX_VALUE초
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask(farPast)));
+
+        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(10_000_000_000L);
+    }
+
+    @Test
+    void poll_processing_legacyWithoutStartedAt_omitsElapsed() {
+        // 배포 전 legacy PROCESSING(시각 부재) → 값을 추측·위조하지 않고 null(응답 key 생략).
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask(null)));
+
+        DraftTaskStatusResponse res = service.poll("v1", "t");
+
+        assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
+        assertThat(res.elapsedSeconds()).isNull();
     }
 
     @Test
@@ -62,6 +121,9 @@ class TimelineDraftTaskPollingServiceTest {
         assertThat(res.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(res.error()).isEqualTo("ERROR_1009"); // body.error = 실패 분류 코드
         assertThat(res.result()).isNull();
+        // 경과 시간은 PROCESSING 전용 — terminal은 null(응답 key 생략)이고 Clock도 읽지 않는다.
+        assertThat(res.elapsedSeconds()).isNull();
+        verifyNoInteractions(clock);
     }
 
     @Test
@@ -91,6 +153,9 @@ class TimelineDraftTaskPollingServiceTest {
         assertThat(res.result()).isSameAs(timeline);
         // (userId, recordDate) 재조회로 돌아가지 않는다 — 삭제 후 같은 날짜 재생성 시 오조회 방지.
         verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
+        // 경과 시간은 PROCESSING 전용 — SUCCESS는 null(응답 key 생략)이고 Clock도 읽지 않는다.
+        assertThat(res.elapsedSeconds()).isNull();
+        verifyNoInteractions(clock);
     }
 
     @Test

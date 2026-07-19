@@ -12,6 +12,7 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +32,32 @@ class TimelineTaskServiceTest {
     private TimelineTaskService service;
 
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
+    private static final Instant STARTED_AT = Instant.parse("2026-06-17T03:05:00Z");
+
+    @Test
+    void createProcessing_storesStartedAtWithProcessingTtl() {
+        // 전달받은 processingStartedAt이 PROCESSING 저장 객체에 실리고 TTL 1시간이 유지된다.
+        service.createProcessing("t", DATE, DATE.atTime(12, 0), "Asia/Seoul", null, "hash", STARTED_AT);
+
+        ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
+        verify(timelineTaskStore).save(eq("t"), task.capture(), ttl.capture());
+        assertThat(task.getValue().status()).isEqualTo(TaskStatus.PROCESSING);
+        assertThat(task.getValue().processingStartedAt()).isEqualTo(STARTED_AT);
+        assertThat(ttl.getValue()).isEqualTo(Duration.ofHours(1));
+    }
+
+    @Test
+    void markSuccess_discardsProcessingStartedAt_withTerminalTtl() {
+        // PROCESSING 전용 lifecycle: terminal에는 시각을 보존하지 않는다(의도적 폐기) + terminal TTL 24시간.
+        service.markSuccess("t", DATE, 42L, "hash");
+
+        ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
+        verify(timelineTaskStore).save(eq("t"), task.capture(), ttl.capture());
+        assertThat(task.getValue().processingStartedAt()).isNull();
+        assertThat(ttl.getValue()).isEqualTo(Duration.ofHours(24));
+    }
 
     @Test
     void markFailed_storesFailureCodeName() {
@@ -40,6 +67,8 @@ class TimelineTaskServiceTest {
         verify(timelineTaskStore).save(eq("t"), task.capture(), any(Duration.class));
         assertThat(task.getValue().status()).isEqualTo(TaskStatus.FAILED);
         assertThat(task.getValue().error()).isEqualTo("ERROR_1009");
+        // FAILED도 PROCESSING 시각을 보존하지 않는다.
+        assertThat(task.getValue().processingStartedAt()).isNull();
     }
 
     @Test
