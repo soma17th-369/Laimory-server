@@ -31,6 +31,10 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 구현된 로그인·token 기능:
 
 1. Google/Kakao OIDC login에서 provider `sub`로 user를 찾거나 만든다.
+   - Kakao scope는 `openid,profile_nickname`이다. 닉네임은 검증된 id_token의 `nickname` claim에서
+     읽고(blank·비문자열은 null) UserInfo endpoint는 호출하지 않는다. email은 수집하지 않는다(콘솔 권한 없음).
+   - 기존 Kakao 사용자는 재로그인 시 non-null 닉네임으로 갱신하고 누락 claim은 기존 값을 보존한다.
+     Google 기존 사용자는 갱신 없이 반환한다.
 2. 앱이 verifier에서 만든 challenge로 login 시작 주체를 바인딩한다.
 3. login 성공 뒤 60초 App Code를 Redis hash key로 저장하고 GETDEL로 소비한다.
 4. 교환 성공 시 자체 access JWT와 opaque refresh token을 발급한다.

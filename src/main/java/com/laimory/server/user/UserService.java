@@ -12,7 +12,9 @@ public class UserService {
     private final UserRepository userRepository;
 
     /**
-     * (provider, providerUserId)로 사용자를 찾고 없으면 생성한다.
+     * (provider, providerUserId)로 사용자를 찾고 없으면 생성한다. Kakao 기존 사용자는 이번 로그인의
+     * 닉네임으로 갱신한다 — 단 누락 claim(null)은 동의 철회인지 provider 응답 누락인지 구분할 수 없어
+     * 기존 값을 지우지 않는다. Google 기존 사용자는 갱신 없이 반환한다(기존 동작 유지).
      *
      * <p>의도적으로 <b>무트랜잭션</b>이다: 동시 최초 로그인 레이스에서 한쪽 insert가 UNIQUE 위반으로 지는데,
      * 합류 트랜잭션 안에서 catch하면 트랜잭션이 rollback-only로 오염돼 같은 트랜잭션의 재조회가 무의미해진다
@@ -22,14 +24,24 @@ public class UserService {
      */
     public User findOrCreate(Provider provider, String providerUserId, String email, String nickname) {
         return userRepository.findByProviderAndProviderUserId(provider, providerUserId)
+                .map(existing -> refreshKakaoNickname(existing, provider, nickname))
                 .orElseGet(() -> {
                     try {
                         return userRepository.saveAndFlush(User.of(provider, providerUserId, email, nickname));
                     } catch (DataIntegrityViolationException e) {
-                        // 동시 최초 로그인: 상대가 먼저 insert — 그 행으로 수렴한다.
+                        // 동시 최초 로그인: 상대가 먼저 insert — 그 행으로 수렴하고 이번 닉네임을 적용한다.
                         return userRepository.findByProviderAndProviderUserId(provider, providerUserId)
+                                .map(winner -> refreshKakaoNickname(winner, provider, nickname))
                                 .orElseThrow(() -> e);
                     }
                 });
+    }
+
+    private User refreshKakaoNickname(User user, Provider provider, String nickname) {
+        if (provider != Provider.KAKAO || nickname == null) {
+            return user;
+        }
+        user.updateNickname(nickname);
+        return userRepository.saveAndFlush(user);
     }
 }
