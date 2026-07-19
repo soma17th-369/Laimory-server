@@ -4,6 +4,7 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -43,10 +44,13 @@ public class TimelineTaskService {
         return "delete:" + operationId;
     }
 
+    /** processingStartedAt은 폴링의 AI 작업 대기 경과 시간 기준(PROCESSING 전용 — terminal은 보존하지 않음). */
     public void createProcessing(String taskId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                 TimelineDraftTask.TimelineWindow timelineWindow, String callbackTokenHash) {
+                                 TimelineDraftTask.TimelineWindow timelineWindow, String callbackTokenHash,
+                                 Instant processingStartedAt) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, timelineWindow, callbackTokenHash),
+                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, timelineWindow, callbackTokenHash,
+                        processingStartedAt),
                 PROCESSING_TTL);
     }
 

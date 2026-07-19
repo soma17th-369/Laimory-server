@@ -22,6 +22,7 @@ import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -70,7 +71,9 @@ class TimelineCallbackServiceTest {
     private static final long EVENT_ID = 100L;
 
     private TimelineDraftTask processingTask() {
-        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, TOKEN_HASH);
+        // processingStartedAt은 콜백 처리와 무관하다(PROCESSING 전용 — terminal 전이 시 폐기).
+        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, TOKEN_HASH,
+                Instant.parse("2026-06-17T03:05:00Z"));
     }
 
     /** valid token 경로 공통 셋업: PROCESSING task 로드 + 토큰 소비 승자(INCR=1). */

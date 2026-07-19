@@ -57,6 +57,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - raw callback token은 dispatch 때 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
 - callback token은 constant-time 비교 후 허용 횟수를 atomic하게 소비한다.
 - `PROCESSING` TTL은 1시간, terminal task TTL은 24시간이며 staging retention은 7일이다.
+- `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
+  전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
+- 신규 PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
+  timestamp는 0 clamp). 시각이 없는 legacy PROCESSING task는 값을 위조하지 않고 필드를 생략한다(unknown).
 
 ### Photos
 

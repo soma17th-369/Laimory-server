@@ -3,6 +3,7 @@ package com.laimory.server.timeline.entity;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.laimory.server.timeline.TaskStatus;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
@@ -26,6 +27,13 @@ import java.time.LocalDateTime;
  * 종결(SUCCESS/FAILED)에는 {@code null}이다 — finalize·AI는 PROCESSING task에서 읽고, 종결 task의
  * 소비처(폴링·멱등)는 이들을 읽지 않기 때문이다.
  *
+ * <p>{@code processingStartedAt}은 전처리(검증·dedupe·enrich·staging 저장)를 마치고 이 PROCESSING task를
+ * 저장하기 직전에 캡처한 Server 절대 시각(UTC ISO-8601)이다 — 폴링이 "AI 작업 대기 경과 시간"
+ * ({@code elapsedSeconds})을 계산하는 기준이다. {@code recordAt}(클라 기록 벽시계 시각)과 무관하고, 외부 AI가
+ * 실제 수신한 시각의 증명도 아니다. 다른 PROCESSING 전용 필드와 같은 lifecycle로 종결 시 보존하지 않고
+ * 폐기하며({@code null}), 배포 전 생성된 legacy PROCESSING JSON에는 필드가 없어 {@code null}로 역직렬화된다
+ * (폴링은 이때 경과 시간을 생략). {@code NON_NULL}이라 종결·legacy JSON에 key가 노출되지 않는다.
+ *
  * <p><b>저장 키 계약</b>(AI가 Redis를 직접 읽을 때 필요): 논리 키는 {@code timeline:draft-task:{taskId}}이고,
  * 환경 prefix가 있으면 실제 Redis 키는 {@code {REDIS_KEY_PREFIX}timeline:draft-task:{taskId}}다
  * (키 조립은 {@code TimelineTaskStore.KEY_PREFIX} + {@code RedisGateway}가 담당; dev는 prefix {@code dev_}).
@@ -39,7 +47,9 @@ public record TimelineDraftTask(
         UserMemory userMemory,
         TimelineWindow timelineWindow,
         String error,
-        String callbackTokenHash
+        String callbackTokenHash,
+        @JsonFormat(shape = JsonFormat.Shape.STRING)
+        @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt
 ) {
 
     /** AI 개인화 입력. 현재는 shape만 두고 값은 채우지 않는다(공급원 미정). */
@@ -54,18 +64,19 @@ public record TimelineDraftTask(
     }
 
     public static TimelineDraftTask processing(LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                               TimelineWindow timelineWindow, String callbackTokenHash) {
+                                               TimelineWindow timelineWindow, String callbackTokenHash,
+                                               Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, recordDate, null, recordAt, recordTimezone,
-                new UserMemory(null), timelineWindow, null, callbackTokenHash);
+                new UserMemory(null), timelineWindow, null, callbackTokenHash, processingStartedAt);
     }
 
     public static TimelineDraftTask success(LocalDate recordDate, Long dailyRecordId, String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.SUCCESS, recordDate, dailyRecordId,
-                null, null, null, null, null, callbackTokenHash);
+                null, null, null, null, null, callbackTokenHash, null);
     }
 
     public static TimelineDraftTask failed(LocalDate recordDate, String error, String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, recordDate, null,
-                null, null, null, null, error, callbackTokenHash);
+                null, null, null, null, error, callbackTokenHash, null);
     }
 }

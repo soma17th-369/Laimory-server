@@ -8,6 +8,9 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +30,7 @@ public class TimelineDraftTaskPollingService {
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
     private final DailyTimelineService dailyTimelineService;
+    private final Clock clock;
 
     public DraftTaskStatusResponse poll(String applicationVersion, String taskId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
@@ -34,7 +38,7 @@ public class TimelineDraftTaskPollingService {
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
         return switch (task.status()) {
-            case PROCESSING -> DraftTaskStatusResponse.processing();
+            case PROCESSING -> DraftTaskStatusResponse.processing(elapsedSeconds(task.processingStartedAt()));
             // read-side 유출 방어: 알려진 실패 코드가 아니면(과거 raw 잔존 — FAILED TTL 24h 내) ERROR_1011로 대체.
             case FAILED -> DraftTaskStatusResponse.failed(
                     ErrorCode.isTaskFailureCode(task.error()) ? task.error() : ErrorCode.ERROR_1011.name());
@@ -44,6 +48,19 @@ public class TimelineDraftTaskPollingService {
                 yield DraftTaskStatusResponse.success(result);
             }
         };
+    }
+
+    /**
+     * PROCESSING의 AI 작업 대기 경과 시간(완료된 초). 시각이 없는 legacy task는 값을 추측하지 않고 null
+     * (응답에서 key 생략), 시계 역행·future timestamp는 0으로 clamp한다(음수 비노출 — 완전한 단조 증가는
+     * 계약하지 않음). millis 변환·int cast 없이 long seconds로만 계산해 overflow를 만들지 않는다.
+     */
+    private Long elapsedSeconds(Instant processingStartedAt) {
+        if (processingStartedAt == null) {
+            return null;
+        }
+        Duration elapsed = Duration.between(processingStartedAt, clock.instant());
+        return elapsed.isNegative() ? 0L : elapsed.getSeconds();
     }
 
     /** SUCCESS task의 결과 record를 ID로만 찾는다. legacy(ID 부재)·삭제됨·비소유는 전부 0404로 은닉한다. */

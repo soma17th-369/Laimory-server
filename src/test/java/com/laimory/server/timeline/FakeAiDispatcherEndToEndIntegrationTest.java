@@ -164,7 +164,12 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         createdTaskIds.add(taskId);
 
         // 2. fake의 콜백 delay(기본 2s) 동안은 PROCESSING — 앱이 로딩 상태를 관찰할 수 있다.
-        assertThat(pollStatus(taskId)).isEqualTo("PROCESSING");
+        //    PROCESSING에는 elapsedSeconds(AI 작업 대기 경과 시간)가 non-negative 숫자로 실린다.
+        //    exact 초·폴링 간 대소는 검증하지 않는다(flaky 방지 — 정확 계산은 fixed Clock 단위 테스트 소유).
+        JsonNode processingBody = poll(taskId).path("body");
+        assertThat(processingBody.path("status").asText()).isEqualTo("PROCESSING");
+        assertThat(processingBody.path("elapsedSeconds").isIntegralNumber()).isTrue();
+        assertThat(processingBody.path("elapsedSeconds").asLong()).isGreaterThanOrEqualTo(0L);
 
         // 3. fake가 async로 staging 커밋 + 실 HTTP 콜백(토큰 검증→finalize) → SUCCESS 전이를 폴링으로 대기.
         Awaitility.await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(500))
@@ -185,10 +190,11 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();
 
-        // 5. 재폴링도 같은 결과(read-side 멱등).
+        // 5. 재폴링도 같은 결과(read-side 멱등). 경과 시간은 PROCESSING 전용 — SUCCESS 응답에는 key가 없다.
         JsonNode again = poll(taskId).path("body");
         assertThat(again.path("status").asText()).isEqualTo("SUCCESS");
         assertThat(again.path("result").path("events").size()).isEqualTo(events.size());
+        assertThat(again.has("elapsedSeconds")).isFalse();
     }
 
     @Test
