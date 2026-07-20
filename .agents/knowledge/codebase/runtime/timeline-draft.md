@@ -61,7 +61,11 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 2. staging commit 뒤 callback path의 `taskId`, `Callback-Token` header,
    body `{status,errorCode,error}`로 알린다. body에 event나 `itemIds`는 없다.
 3. 서버가 staging relation을 읽고 `TimelineEventSuggestionDto.itemIds`를 내부 조립한다.
-4. validator가 같은 task의 source 참조, title/time range, non-empty·non-duplicate item 배정을 검증한다.
+   staging의 raw `event_type` 문자열은 이 assembler에서 `TimelineEventType`으로 변환한다 —
+   null/blank/미지원 literal은 IAE로 callback `ERROR_1011` FAILED가 된다(staging entity는 외부
+   writer 소유라 JPA enum 매핑을 쓰지 않는다 — 미지원 DB 문자열의 hydration 예외가 FAILED
+   변환 경계를 우회하는 것을 막는 D1-A 설계).
+4. validator가 같은 task의 source 참조, eventType/title/time range, non-empty·non-duplicate item 배정을 검증한다.
 
 ### Finalize and polling
 
@@ -76,6 +80,9 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 함께 반환한다
   (음수는 0 clamp). terminal 전이는 이 시각을 보존하지 않고 폐기하므로 SUCCESS/FAILED 응답에는
   필드가 없고, 배포 전 legacy PROCESSING task(시각 부재, TTL 1h 내 최대 그만큼 혼재)도 필드를 생략한다.
+- suggestion의 `eventType`은 재추론 없이 final Event로 복사되고, SUCCESS polling·Event 수정·memo
+  응답의 공용 `TimelineEventResponse.eventType`으로 노출된다. Event 상세 PATCH는 optional
+  `eventType` 키로 분류를 바꿀 수 있다(누락=유지, 명시적 null·미지원 literal=400).
 - 같은 날짜 append는 기존 event/item을 재그룹하지 않고 새 event만 붙인다.
 - 정확히 같은 event start anchor는 +10분씩 미는 best-effort이며 DB unique constraint는 없다.
 - 조정 후 end가 start보다 이르면 end를 start로 clamp한다.

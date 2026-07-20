@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -69,7 +70,7 @@ class TimelineDeletionCascadeIntegrationTest {
 
     private Long saveEventWithItem(String title, int hour, String rawId) {
         TimelineEvent event = timelineEventRepository.save(
-                TimelineEvent.of(recordId, DATE.atTime(hour, 0), null, title, null));
+                TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(hour, 0), null, title, null));
         timelineItemRepository.save(TimelineItem.of(event.getTimelineEventId(), ItemType.CALENDAR, rawId,
                 DATE.atTime(hour, 0), null, objectMapper.valueToTree(new CalendarPayload(title, null, null, false))));
         return event.getTimelineEventId();

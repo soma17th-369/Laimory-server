@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -58,7 +59,7 @@ class TimelineItemPersistenceIntegrationTest {
     void persistsAndReloadsTypedPayloadFromJsonColumn() throws Exception {
         DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), LocalDateTime.of(2026, 5, 8, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
-                TimelineEvent.of(record.getDailyRecordId(),
+                TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
                         "출근길", "강남역 -> 성수역 · 7호선"));
@@ -84,13 +85,18 @@ class TimelineItemPersistenceIntegrationTest {
         assertThat(reloaded.getPayload().get("start").get("latitude").asDouble()).isEqualTo(37.4979);
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
         assertThat(reloaded.getTimelineEventId()).isEqualTo(event.getTimelineEventId());
+
+        // 대표 non-default eventType이 @Enumerated(STRING)으로 왕복된다.
+        TimelineEvent reloadedEvent = timelineEventRepository.findById(event.getTimelineEventId()).orElseThrow();
+        assertThat(reloadedEvent.getEventType()).isEqualTo(TimelineEventType.MOVEMENT);
     }
 
     @Test
     void persistsAndReloadsAllPayloadSubtypes() throws Exception {
         DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 9), LocalDateTime.of(2026, 5, 9, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
-                TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
+                TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,
+                        LocalDateTime.of(2026, 5, 9, 12, 0), null, "하루", null));
 
         PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
                 "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명",
@@ -111,6 +117,10 @@ class TimelineItemPersistenceIntegrationTest {
 
         em.flush();
         em.clear();
+
+        // UNKNOWN(fallback sentinel)도 그대로 왕복된다.
+        assertThat(timelineEventRepository.findById(event.getTimelineEventId()).orElseThrow().getEventType())
+                .isEqualTo(TimelineEventType.UNKNOWN);
 
         TimelineItem reloadedPhoto = timelineItemRepository.findById(photoId).orElseThrow();
         assertThat(reloadedPhoto.getItemType()).isEqualTo(ItemType.PHOTO);
@@ -134,7 +144,8 @@ class TimelineItemPersistenceIntegrationTest {
         DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 10),
                 LocalDateTime.of(2026, 5, 10, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
-                TimelineEvent.of(record.getDailyRecordId(), LocalDateTime.of(2026, 5, 10, 9, 0), null, "하루", null));
+                TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,
+                        LocalDateTime.of(2026, 5, 10, 9, 0), null, "하루", null));
         timelineItemRepository.save(TimelineItem.of(event.getTimelineEventId(), ItemType.PHOTO, "raw-a",
                 LocalDateTime.of(2026, 5, 10, 9, 0), null, objectMapper.valueToTree(
                         new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://a", 1.0, 2.0, null, null))));

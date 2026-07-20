@@ -21,6 +21,7 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -78,7 +79,7 @@ class TimelineDeletionServiceTest {
     }
 
     private TimelineEvent event(Long eventId, Long recordId) {
-        TimelineEvent event = TimelineEvent.of(recordId, RECORD_DATE.atTime(9, 0), null, "제목", null);
+        TimelineEvent event = TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "제목", null);
         ReflectionTestUtils.setField(event, "timelineEventId", eventId);
         return event;
     }

@@ -1,8 +1,11 @@
 package com.laimory.server.timeline.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.timeline.TimelineEventType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -35,6 +38,10 @@ public class TimelineEvent extends BaseEntity {
     @Column(nullable = false)
     private Long dailyRecordId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_type", nullable = false, length = 32)
+    private TimelineEventType eventType;
+
     @Column(nullable = false)
     private LocalDateTime startAt;
 
@@ -51,25 +58,29 @@ public class TimelineEvent extends BaseEntity {
     protected TimelineEvent() {
     }
 
-    private TimelineEvent(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
-                         String title, String subtitle) {
+    private TimelineEvent(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
+                         LocalDateTime endAt, String title, String subtitle) {
         this.dailyRecordId = dailyRecordId;
+        this.eventType = eventType;
         this.startAt = startAt;
         this.endAt = endAt;
         this.title = title;
         this.subtitle = subtitle;
     }
 
-    public static TimelineEvent of(Long dailyRecordId, LocalDateTime startAt, LocalDateTime endAt,
-                                  String title, String subtitle) {
-        return new TimelineEvent(dailyRecordId, startAt, endAt, title, subtitle);
+    public static TimelineEvent of(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
+                                  LocalDateTime endAt, String title, String subtitle) {
+        return new TimelineEvent(dailyRecordId, eventType, startAt, endAt, title, subtitle);
     }
 
     /**
-     * 사용자 편집으로 title/subtitle/startAt/endAt 4개 필드를 절대값으로 교체한다(memo·하위 Item 불변).
+     * 사용자 편집으로 eventType/title/subtitle/startAt/endAt 필드를 절대값으로 교체한다(memo·하위 Item 불변).
+     * eventType은 요청 누락 시 서비스가 현재 값을 병합해 non-null 목표값으로 전달한다.
      * 검증(필수·길이·시간 순서)은 서비스 계층({@code TimelineEventEditService}) 책임이고 엔티티는 대입만 한다.
      */
-    public void updateDetails(String title, String subtitle, LocalDateTime startAt, LocalDateTime endAt) {
+    public void updateDetails(TimelineEventType eventType, String title, String subtitle,
+                              LocalDateTime startAt, LocalDateTime endAt) {
+        this.eventType = eventType;
         this.title = title;
         this.subtitle = subtitle;
         this.startAt = startAt;

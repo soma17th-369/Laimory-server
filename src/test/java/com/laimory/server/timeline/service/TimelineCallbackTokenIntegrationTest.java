@@ -13,6 +13,7 @@ import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -218,7 +219,7 @@ class TimelineCallbackTokenIntegrationTest {
 
         // AI 시뮬: 이벤트 제안은 저장하되 source item을 하나도 배정하지 않는다(event_fk 미설정).
         eventSuggestionRepository.save(
-                TimelineDraftEventSuggestion.of(taskId, 0L, DATE.atTime(9, 0), null, "빈 이벤트", null));
+                TimelineDraftEventSuggestion.of(taskId, 0L, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "빈 이벤트", null));
 
         callbackService.handleCallback(VERSION, taskId, token, success());
 
@@ -231,7 +232,7 @@ class TimelineCallbackTokenIntegrationTest {
     /** AI write-then-notify 시뮬: 이벤트 제안 1건을 저장하고 task의 모든 source item을 그 이벤트에 배정한다. */
     private void simulateAiWrite(String taskId) {
         TimelineDraftEventSuggestion event = eventSuggestionRepository.save(
-                TimelineDraftEventSuggestion.of(taskId, 0L, DATE.atTime(9, 0), null, "아침", null));
+                TimelineDraftEventSuggestion.of(taskId, 0L, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "아침", null));
         List<TimelineDraftSourceItem> rows = draftSourceItemService.findByTaskId(taskId);
         rows.forEach(r -> r.assignEventSuggestion(event.getTimelineDraftEventSuggestionId()));
         draftSourceItemService.saveAll(rows);

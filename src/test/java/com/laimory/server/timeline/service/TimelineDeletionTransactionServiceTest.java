@@ -11,6 +11,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.time.LocalDate;
@@ -43,7 +44,7 @@ class TimelineDeletionTransactionServiceTest {
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 7, 8);
 
     private TimelineEvent event() {
-        TimelineEvent event = TimelineEvent.of(RECORD_ID, RECORD_DATE.atTime(9, 0), null, "제목", null);
+        TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "제목", null);
         ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
         return event;
     }

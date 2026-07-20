@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS daily_records (
 CREATE TABLE IF NOT EXISTS timeline_events (
     timeline_event_id BIGINT NOT NULL AUTO_INCREMENT,
     daily_record_id BIGINT NOT NULL,
+    event_type VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN', -- TimelineEventType literal. default는 기존 행 backfill·구버전 writer 컬럼 생략 호환용(live DDL과 동일 계약)
     start_at DATETIME NOT NULL,
     end_at DATETIME NULL,
     title VARCHAR(255) NOT NULL,                     -- 검증에서 title 필수
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_event_suggestions (
     timeline_draft_event_suggestion_id BIGINT NOT NULL AUTO_INCREMENT,
     task_id VARCHAR(36) NOT NULL,
     user_id BIGINT NOT NULL,
+    event_type VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN', -- AI가 기록하는 Event 분류 literal(권위 필드). 서버는 enum 매핑 없이 raw로 읽는다. default는 구버전 writer 컬럼 생략 호환용
     start_at DATETIME NOT NULL,                       -- 이벤트 시작(timeline_events.start_at NOT NULL 대응)
     end_at DATETIME NULL,
     title VARCHAR(255) NOT NULL,

@@ -32,6 +32,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - DB commit 이후 Redis를 `SUCCESS`로 바꾼다.
 - event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다. DB unique invariant는 아니다.
 - event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
+- final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
+- staging `event_type`은 AI가 기록한 값을 서버가 재추론 없이 final event로 그대로 전달한다 —
+  변환은 assembler의 `TimelineEventType.valueOf` 한 곳이며, null/blank/미지원 literal은 IAE로
+  callback `ERROR_1011` FAILED 경계에 들어간다(finalize 미실행).
 
 ### Deletion
 

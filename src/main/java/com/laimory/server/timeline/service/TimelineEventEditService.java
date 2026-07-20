@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -46,18 +47,21 @@ public class TimelineEventEditService {
 
     /**
      * title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체한다(절대값 대입 — memo·하위 items 불변).
+     * eventType은 optional이다 — {@code null}(키 누락)이면 현재 값을 유지하고, 값이 있으면 교체한다
+     * (명시적 null·미지원 literal은 역직렬화에서 이미 400으로 거부돼 여기 도달하지 않는다).
      * 시간은 사용자 입력 그대로 저장한다 — AI finalize의 +10분 충돌 보정·Item 시간 변경을 적용하지 않는다.
      */
     @Transactional
     public TimelineEventResponse updateEvent(String applicationVersion, long userId, Long timelineEventId,
-                                             String title, String subtitle,
+                                             TimelineEventType eventType, String title, String subtitle,
                                              LocalDateTime startAt, LocalDateTime endAt) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEditableEvent(userId, timelineEventId);
+        TimelineEventType targetEventType = eventType != null ? eventType : event.getEventType();
         String validTitle = requireValidTitle(title);
         String normalizedSubtitle = normalizeSubtitle(subtitle);
         requireValidTimeRange(startAt, endAt);
-        event.updateDetails(validTitle, normalizedSubtitle, startAt, endAt);
+        event.updateDetails(targetEventType, validTitle, normalizedSubtitle, startAt, endAt);
         return toResponse(event);
     }
 

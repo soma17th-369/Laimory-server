@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
@@ -58,7 +59,7 @@ class TimelineEventEditConcurrencyIntegrationTest {
         DailyRecord record = dailyRecordRepository.save(
                 DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), ZONE));
         eventId = timelineEventRepository.save(
-                        TimelineEvent.of(record.getDailyRecordId(), DATE.atTime(9, 0), null, "원래 제목", "원래 부제"))
+                        TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "원래 제목", "원래 부제"))
                 .getTimelineEventId();
     }
 
@@ -96,7 +97,7 @@ class TimelineEventEditConcurrencyIntegrationTest {
                     TimelineEvent event = timelineEventRepository.findById(eventId).orElseThrow();
                     bothLoaded.countDown();
                     await(memoCommitted); // A의 커밋 이후에 자신의 변경을 커밋한다
-                    event.updateDetails("B의 제목", "B의 부제", DATE.atTime(10, 0), DATE.atTime(11, 0));
+                    event.updateDetails(TimelineEventType.UNKNOWN, "B의 제목", "B의 부제", DATE.atTime(10, 0), DATE.atTime(11, 0));
                 });
             });
             memoEditor.get(30, TimeUnit.SECONDS);

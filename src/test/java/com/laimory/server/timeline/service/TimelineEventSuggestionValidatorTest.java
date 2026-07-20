@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -15,7 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** staging 조립 events ↔ 저장행 정합 검증기 단위 테스트. title/startAt 필수, itemIds 참조·유일 등. 인프라 0. */
+/** staging 조립 events ↔ 저장행 정합 검증기 단위 테스트. eventType/title/startAt 필수, itemIds 참조·유일 등. 인프라 0. */
 class TimelineEventSuggestionValidatorTest {
 
     private final TimelineEventSuggestionValidator validator = new TimelineEventSuggestionValidator();
@@ -33,7 +34,7 @@ class TimelineEventSuggestionValidatorTest {
     }
 
     private TimelineEventSuggestionDto event(String title, List<Long> itemIds) {
-        return new TimelineEventSuggestionDto(title, "subtitle", T, T.plusHours(2), itemIds);
+        return new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, title, "subtitle", T, T.plusHours(2), itemIds);
     }
 
     @Test
@@ -124,13 +125,27 @@ class TimelineEventSuggestionValidatorTest {
                 .hasMessageContaining("title is required");
     }
 
+    // --- eventType 필수 ---
+
+    /** assembler 변환을 거친 정상 경로는 non-null이지만, DTO를 직접 만드는 경로의 안전망 검증이다. */
+    @Test
+    void validate_rejectsNullEventType() {
+        List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
+        List<TimelineEventSuggestionDto> events = List.of(
+                new TimelineEventSuggestionDto(null, "아침", "sub", T, T.plusHours(1), List.of(0L)));
+
+        assertThatThrownBy(() -> validator.validate(draftRows, events))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("eventType is required");
+    }
+
     // --- event startAt 필수 (NEW) ---
 
     @Test
     void validate_rejectsNullEventStartAt() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", null, T.plusHours(1), List.of(0L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "아침", "sub", null, T.plusHours(1), List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -143,7 +158,7 @@ class TimelineEventSuggestionValidatorTest {
     void validate_rejectsEventEndBeforeStart() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", T, T.minusHours(1), List.of(0L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "아침", "sub", T, T.minusHours(1), List.of(0L)));
 
         assertThatThrownBy(() -> validator.validate(draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -154,7 +169,7 @@ class TimelineEventSuggestionValidatorTest {
     void validate_allowsNullEndAt() {
         List<TimelineDraftSourceItem> draftRows = List.of(draftRow(0));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "sub", T, null, List.of(0L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "아침", "sub", T, null, List.of(0L)));
 
         assertThatCode(() -> validator.validate(draftRows, events)).doesNotThrowAnyException();
     }

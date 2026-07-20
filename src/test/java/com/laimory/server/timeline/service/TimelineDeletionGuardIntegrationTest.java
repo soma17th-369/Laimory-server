@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
@@ -57,7 +58,7 @@ class TimelineDeletionGuardIntegrationTest {
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(
-                        TimelineEvent.of(recordId, DATE.atTime(9, 0), null, "이벤트", null))
+                        TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "이벤트", null))
                 .getTimelineEventId();
     }
 

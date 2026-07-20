@@ -40,13 +40,15 @@ public interface TimelineRecordApi {
                     + "4개 키를 모두 보내는 계약이다: 키가 하나라도 없으면 400이다. "
                     + "title/startAt의 null은 400, subtitle/endAt은 명시적 null만 '비움'이다"
                     + "(유지할 값은 현재 값을 그대로 보낸다). "
+                    + "eventType 키만 예외적으로 optional이다 — 누락이면 현재 분류를 유지하고, "
+                    + "보내면 허용 literal로 교체한다(명시적 null·미지원 값은 400). "
                     + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정이나 하위 Item 시간 변경은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
-                            + "startAt null · endAt이 startAt보다 이전"),
+                            + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",

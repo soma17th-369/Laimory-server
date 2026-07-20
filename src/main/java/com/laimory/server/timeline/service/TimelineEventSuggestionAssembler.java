@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
@@ -52,8 +53,28 @@ public class TimelineEventSuggestionAssembler {
             // 아이템 0개 이벤트는 itemIds=[]로 조립돼 validator의 'event has no itemIds'로 걸러진다(→ FAILED).
             List<Long> itemIds = itemIdsByEvent.getOrDefault(event.getTimelineDraftEventSuggestionId(), List.of());
             events.add(new TimelineEventSuggestionDto(
-                    event.getTitle(), event.getSubtitle(), event.getStartAt(), event.getEndAt(), itemIds));
+                    convertEventType(event), event.getTitle(), event.getSubtitle(),
+                    event.getStartAt(), event.getEndAt(), itemIds));
         }
         return events;
+    }
+
+    /**
+     * AI가 기록한 raw literal을 {@link TimelineEventType}으로 변환하는 첫 Server 경계.
+     * null/blank/미지원 literal은 {@link IllegalArgumentException}으로 실패시킨다(콜백이 잡아 FAILED 기록).
+     * 예외 메시지에 raw 값은 echo하지 않는다 — 외부 writer가 쓴 임의 문자열이 로그로 새는 경로 차단.
+     */
+    private TimelineEventType convertEventType(TimelineDraftEventSuggestion event) {
+        String raw = event.getEventType();
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("event suggestion eventType is required: suggestionId="
+                    + event.getTimelineDraftEventSuggestionId());
+        }
+        try {
+            return TimelineEventType.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("event suggestion eventType is not supported: suggestionId="
+                    + event.getTimelineDraftEventSuggestionId());
+        }
     }
 }
