@@ -1,50 +1,16 @@
 package com.laimory.server.timeline;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.common.RecordDates;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 
 /**
- * record_date 정오 경계 계산 + timezone 유효성 검증 단위. 인프라 0.
- * recordAt(벽시계 시각)은 클라 zone의 벽시계 LocalDateTime이라 날짜 계산엔 zone이 필요 없다.
+ * timezone 유효성 검증 단위. 인프라 0.
+ * record_date는 서버가 계산하지 않는다 — 클라 명시 수신(#164)으로 정오 경계 파생과 그 테스트는 삭제됐다.
  */
 class RecordDatesTest {
-
-    @Test
-    void resolveRecordDate_beforeNoon_isPreviousDay() {
-        assertThat(RecordDates.resolveRecordDate(LocalDateTime.of(2026, 5, 8, 11, 59)))
-                .isEqualTo(LocalDate.of(2026, 5, 7));
-    }
-
-    @Test
-    void resolveRecordDate_atNoon_isSameDay() {
-        assertThat(RecordDates.resolveRecordDate(LocalDateTime.of(2026, 5, 8, 12, 0)))
-                .isEqualTo(LocalDate.of(2026, 5, 8));
-    }
-
-    @Test
-    void resolveRecordDate_lateNight_isSameDay() {
-        assertThat(RecordDates.resolveRecordDate(LocalDateTime.of(2026, 5, 8, 23, 30)))
-                .isEqualTo(LocalDate.of(2026, 5, 8));
-    }
-
-    @Test
-    void resolveRecordDate_justAfterMidnight_isPreviousDay() {
-        // 자정 직후(00:00)는 정오 이전 → 전날.
-        assertThat(RecordDates.resolveRecordDate(LocalDateTime.of(2026, 5, 9, 0, 0)))
-                .isEqualTo(LocalDate.of(2026, 5, 8));
-    }
-
-    @Test
-    void resolveRecordDate_nullRecordAt_throws() {
-        assertThatThrownBy(() -> RecordDates.resolveRecordDate(null))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
 
     @Test
     void requireValidTimeZone_validZone_doesNotThrow() {

@@ -12,6 +12,7 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -80,9 +81,11 @@ class TimelineCallbackTokenIntegrationTest {
 
     private static final String VERSION = "v1";
     private static final String ZONE = "Asia/Seoul";
-    // 다른 데이터와 충돌하지 않을 고정 날짜. recordAt은 local 12:00(정오 경계상 당일=2000-01-01).
+    // 다른 데이터와 충돌하지 않을 고정 날짜 — 클라 선택 날짜로 요청에 명시 전송한다(서버 파생 없음).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
-    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2000, 1, 1, 12, 0); // 정오 → 당일(2000-01-01)
+    private static final LocalDateTime RECORD_AT = LocalDateTime.of(2000, 1, 1, 12, 0); // 실제 작성 시각 메타데이터
+    private static final TimelineWindowDto WINDOW = new TimelineWindowDto(
+            LocalDateTime.of(2000, 1, 1, 0, 0), LocalDateTime.of(2000, 1, 2, 0, 0));
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
@@ -106,7 +109,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void validToken_persistsFinalizesAndDeletesStaging_storesOnlyHash() {
-        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
 
         // POST 시점에 source 행이 MySQL에 저장돼 있다(아직 daily_records 없음).
@@ -152,7 +155,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void concurrentCallbacks_exactlyOneWins_otherRejected1012() throws Exception {
-        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
         String token = capturedToken(taskId);
         simulateAiWrite(taskId);
@@ -194,7 +197,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void wrongToken_rejected401_andNothingPersisted() {
-        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
 
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", success()))
@@ -209,7 +212,7 @@ class TimelineCallbackTokenIntegrationTest {
 
     @Test
     void successCallback_eventWithNoLinkedSourceItems_marksFailed() {
-        String taskId = draftTaskService.createDraftTask(VERSION, RECORD_AT, ZONE, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
         String token = capturedToken(taskId);
 

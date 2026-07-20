@@ -3,6 +3,7 @@ package com.laimory.server.timeline.controller;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -19,6 +20,7 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -48,10 +50,13 @@ class TimelineControllerTest {
 
     private static final String TASKS = "/a/api/v1/timeline/drafts";
 
+    // recordDate(선택 날짜)와 recordAt(실제 작성 시각)의 날짜가 다른 "다음날 아침 일기" 시나리오 — 정합성 미검증 계약.
     private static final String CREATE_BODY = """
             {
-              "recordAt": "2026-06-17T12:00:00",
+              "recordDate": "2026-06-17",
+              "recordAt": "2026-06-18T09:30:00",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {"startTime": "2026-06-17T00:00", "endTime": "2026-06-18T00:00"},
               "sourceItems": [
                 {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000031",
                  "startAt": "2026-06-17T09:00:00", "endAt": null,
@@ -75,7 +80,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -85,8 +90,23 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createDraftTask_passesParsedRecordDateAndWindowToService() throws Exception {
+        // HTTP 파싱 계약 고정: recordDate는 ISO LocalDate, window는 offset 없는 ISO local datetime으로 파싱돼
+        // 값 그대로 서비스에 전달된다(recordAt과 recordDate의 날짜가 달라도 그대로 — 정합성 미검증).
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+
+        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isAccepted());
+
+        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(LocalDate.parse("2026-06-17")),
+                eq(LocalDateTime.parse("2026-06-18T09:30:00")), eq("Asia/Seoul"),
+                eq(new TimelineWindowDto(LocalDateTime.parse("2026-06-17T00:00"),
+                        LocalDateTime.parse("2026-06-18T00:00"))), any());
+    }
+
+    @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -98,7 +118,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -108,7 +128,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -120,7 +140,7 @@ class TimelineControllerTest {
     @CsvSource({"GEOCODING_TRANSIENT_FAILURE, ERROR_1014", "GEOCODING_PERMANENT_FAILURE, ERROR_1015"})
     void createDraftTask_mapsGeocodingFailureTo502(String type, String code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))

@@ -48,14 +48,16 @@ import org.springframework.test.context.ActiveProfiles;
 class FakeAiDispatcherEndToEndIntegrationTest {
 
     private static final String TASKS = "/a/api/v1/timeline/drafts";
-    // 다른 통합 테스트(2000-01-01)와 다른 고정 날짜로 격리. recordAt 정오 → 당일(2000-01-02).
+    // 다른 통합 테스트(2000-01-01)와 다른 고정 날짜로 격리. recordDate는 클라 선택 날짜로 명시 전송한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 2);
 
     // TimelineControllerTest.CREATE_BODY 형태의 복제(SourceItemDto는 itemType 기반 polymorphic payload).
     private static final String CREATE_BODY = """
             {
+              "recordDate": "2000-01-02",
               "recordAt": "2000-01-02T12:00:00",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {"startTime": "2000-01-02T00:00", "endTime": "2000-01-03T00:00"},
               "sourceItems": [
                 {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000042",
                  "startAt": "2000-01-02T09:00:00", "endAt": null,
@@ -73,8 +75,10 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     // append#1: A(09:00) + B(09:30).
     private static final String APPEND1_BODY = """
             {
+              "recordDate": "2000-01-02",
               "recordAt": "2000-01-02T12:00:00",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {"startTime": "2000-01-02T00:00", "endTime": "2000-01-03T00:00"},
               "sourceItems": [
                 {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000042",
                  "startAt": "2000-01-02T09:00:00", "endAt": null,
@@ -91,8 +95,10 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     // append#2: B(이미 저장) + C(신규 10:00) → B는 필터로 제외되고 C만 새 이벤트로 append.
     private static final String APPEND2_BODY = """
             {
+              "recordDate": "2000-01-02",
               "recordAt": "2000-01-02T13:00:00",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {"startTime": "2000-01-02T00:00", "endTime": "2000-01-03T00:00"},
               "sourceItems": [
                 {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000043",
                  "startAt": "2000-01-02T09:30:00", "endAt": null,
@@ -109,8 +115,10 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     // append#3: 이미 저장된 B만 → 신규 0 → 409 ERROR_1013.
     private static final String APPEND3_BODY = """
             {
+              "recordDate": "2000-01-02",
               "recordAt": "2000-01-02T14:00:00",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {"startTime": "2000-01-02T00:00", "endTime": "2000-01-03T00:00"},
               "sourceItems": [
                 {"itemType": "PHOTO", "rawId": "0197b1c2-0000-7000-8000-000000000043",
                  "startAt": "2000-01-02T09:30:00", "endAt": null,

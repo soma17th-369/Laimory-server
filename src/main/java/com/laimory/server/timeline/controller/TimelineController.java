@@ -28,7 +28,8 @@ public class TimelineController implements TimelineApi {
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             String applicationVersion, CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
-                applicationVersion, request.recordAt(), request.recordTimeZone(), request.sourceItems());
+                applicationVersion, request.recordDate(), request.recordAt(), request.recordTimeZone(),
+                request.timelineWindow(), request.sourceItems());
         return ResponseEntity.accepted().body(ApiResponse.success(new CreateDraftTaskResponse(taskId)));
     }
 
