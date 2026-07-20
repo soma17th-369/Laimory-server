@@ -48,7 +48,6 @@ AI와 geo는 별도 override가 없으면 noop이다.
 - local Redis는 authentication/TLS를 사용하지 않는다.
 - AWS client는 credential 없이 생성될 수 있지만 실제 presign/delete에는 유효한 AWS 설정이 필요하다.
 - CDN domain이 비어 있으면 생성한 photo URL은 실제 serving URL이 아니다.
-- fake AI E2E는 callback server port 8080을 사용하므로 별도 `bootRun`과 동시에 실행하지 않는다.
 - 실제 OAuth round trip에는 환경별 provider credential과 redirect URI 설정이 필요하다.
 
 ## Known Gaps

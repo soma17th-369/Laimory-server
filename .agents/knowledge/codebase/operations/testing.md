@@ -14,7 +14,6 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - `.github/workflows/ci.yml`
 - `Dockerfile`
 - tests의 `@Tag("integration")`, `@ActiveProfiles("docker")`
-- `FakeAiDispatcherEndToEndIntegrationTest`
 
 ## Current Test Layers
 
@@ -22,12 +21,13 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 |---|---|---|
 | unit, slice, ArchUnit | `./gradlew test` | 없음 |
 | compile + unit verification | `./gradlew build` | 없음 |
-| integration/E2E | `./gradlew integrationTest` | local MySQL·Redis |
+| integration | `./gradlew integrationTest` | local MySQL·Redis |
 
 - `test`는 `integration` tag를 제외한다.
 - `integrationTest`는 `integration` tag만 실행한다.
 - integration tests는 `docker` profile로 실제 local MySQL·Redis에 연결한다.
-- `FakeAiDispatcherEndToEndIntegrationTest`는 HTTP callback 때문에 port 8080을 점유한다.
+- AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, callback의 실제
+  MySQL·Redis 계약은 `TimelineCallbackTokenIntegrationTest`(integration)가 검증한다.
 - `dev`, `main` 대상 PR CI는 `./gradlew build`만 실행한다.
 - integration test는 CI에 포함되지 않는다.
 - Docker image build는 `-x test`라 test 결과는 CI/local verification에 의존한다.
@@ -45,13 +45,12 @@ focused 예:
 
 ```bash
 ./gradlew test --tests 'com.laimory.server.common.logging.TransactionIdFilterTest'
-./gradlew integrationTest --tests 'com.laimory.server.timeline.FakeAiDispatcherEndToEndIntegrationTest'
+./gradlew integrationTest --tests 'com.laimory.server.timeline.service.TimelineCallbackTokenIntegrationTest'
 ```
 
 ## Invariants
 
 - `./gradlew build`가 integration test까지 실행한다고 설명하지 않는다.
-- port 8080 E2E와 `bootRun`을 동시에 실행하지 않는다.
 - 새 test category는 Gradle task, CI scope와 이 문서를 함께 검토한다.
 
 ## Known Gaps
