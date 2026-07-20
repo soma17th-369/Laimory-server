@@ -5,7 +5,6 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
-import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -35,6 +34,9 @@ import org.springframework.stereotype.Service;
  *   <li><b>토큰 소비(원자적, 승자 1)</b> — Redis INCR 결과가 1이 아니면 401 ERROR_1012(이미 소비됨).
  *       replay와 동시 중복 콜백을 여기서 원자적으로 거부한다</li>
  *   <li>terminal이면 idempotent return(200) — 중복 finalize 방지 안전망(카운터 유실 시에도 상태 오염 차단)</li>
+ *   <li><b>task owner 확인</b> — 콜백은 {@code /s/api}라 request principal이 없으므로 이후 모든 recovery
+ *       조회·finalize·guard 해제는 task에 저장된 owner userId를 쓴다. owner가 없는 legacy task는 0으로
+ *       추정하지 않고 404로 fail-closed(finalize 없이 TTL 만료에 맡김)</li>
  *   <li>FAILED → markFailed</li>
  *   <li>SUCCESS → source 행을 DB에서 로드. 없으면(이미 finalize돼 삭제됨) record 존재 시 Redis SUCCESS만 set(멱등 복구),
  *       record도 없으면 FAILED. 있으면 event 제안 행을 로드 — 0행이면(AI 미기록/조기 콜백) 빈 finalize로 source를
@@ -93,20 +95,29 @@ public class TimelineCallbackService {
             return;
         }
 
+        // 4. task owner 해소 — 콜백엔 request principal이 없으므로 이후 모든 조회·finalize·guard 해제 기준이다.
+        //    owner 없는 legacy task는 fallback 0으로 추정하지 않는다: finalize하지 않고 404로 fail-closed,
+        //    task·staging은 TTL/cleanup이 자연 정리한다(토큰은 이미 소비돼 재시도도 막힌다).
+        if (task.userId() == null) {
+            log.warn("legacy task without owner, refusing callback: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
+        }
+        long userId = task.userId();
+
         LocalDate recordDate = task.recordDate();
         String callbackTokenHash = task.callbackTokenHash();
 
         // AI가 자신의 실패를 보고한 경우: 분류 코드로 FAILED 기록(draft는 cleanup이 보관기간 후 정리).
         // 자유 텍스트(error)는 저장하지 않고 로그로만 — 폴링 body.error 유출 경로 차단.
         if (request.status() == TaskStatus.FAILED) {
-            finishFailed(taskId, recordDate, resolveAiFailureCode(taskId, request), callbackTokenHash);
+            finishFailed(taskId, userId, recordDate, resolveAiFailureCode(taskId, request), callbackTokenHash);
             return;
         }
         if (request.status() != TaskStatus.SUCCESS) {
             throw new IllegalArgumentException("invalid callback status: " + request.status());
         }
 
-        // 3. SUCCESS: source 행을 DB에서 로드.
+        // 5. SUCCESS: source 행을 DB에서 로드.
         List<TimelineDraftSourceItem> draftRows = timelineDraftSourceItemService.findByTaskId(taskId);
         if (draftRows.isEmpty()) {
             // PROCESSING인데 source 부재 = 보통 이전 finalize가 record 생성+staging 삭제를 커밋한 상태(멱등 복구).
@@ -114,58 +125,61 @@ public class TimelineCallbackService {
             // 결과 없는 SUCCESS를 본다(source도 record도 없는 이상 상태). 없으면 FAILED로 종결.
             // 복구 경로에서도 dailyRecordId를 기록한다 — 폴링은 이 ID로만 결과를 조회한다.
             Optional<DailyRecord> finalizedRecord = dailyRecordService
-                    .findByUserIdAndRecordDate(TimelineDefaults.DEFAULT_USER_ID, recordDate);
+                    .findByUserIdAndRecordDate(userId, recordDate);
             if (finalizedRecord.isPresent()) {
-                finishSuccess(taskId, recordDate, finalizedRecord.get().getDailyRecordId(), callbackTokenHash);
+                finishSuccess(taskId, userId, recordDate, finalizedRecord.get().getDailyRecordId(),
+                        callbackTokenHash);
             } else {
                 log.warn("staging missing on recovery path: taskId={} (draft rows absent, no finalized record)", taskId);
-                finishFailed(taskId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
+                finishFailed(taskId, userId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
             }
             return;
         }
 
-        // 4. 이벤트 제안 행을 DB staging에서 로드. SUCCESS인데 0행 = AI 미기록/조기 콜백 → 빈 finalize로 source를
+        // 6. 이벤트 제안 행을 DB staging에서 로드. SUCCESS인데 0행 = AI 미기록/조기 콜백 → 빈 finalize로 source를
         //    지우는 사고를 막기 위해 FAILED로 종결한다(write-then-notify에선 '진짜 0개'와 구분 불가하므로 보수적).
         List<TimelineDraftEventSuggestion> eventRows = timelineDraftEventSuggestionService.findByTaskId(taskId);
         if (eventRows.isEmpty()) {
             log.warn("event suggestions missing for SUCCESS task: taskId={}", taskId);
-            finishFailed(taskId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
+            finishFailed(taskId, userId, recordDate, ErrorCode.ERROR_1010, callbackTokenHash);
             return;
         }
 
-        // 5. finalize: assemble(soft ref 무결성 검증) → 단일 트랜잭션(검증→record/events/items 저장→두 staging 삭제).
+        // 7. finalize: assemble(owner·soft ref 무결성 검증) → 단일 트랜잭션(검증→record/events/items 저장→두 staging 삭제).
         //    커밋 후에만 Redis SUCCESS. assemble의 무결성 위반이나 finalize 검증/SAVED 실패는 여기서 잡아 FAILED로 기록한다(콜백은 200).
         //    assemble은 트랜잭션 밖이라 실패 시 롤백할 것이 없고, finalize 실패는 롤백된다.
         try {
-            List<TimelineEventSuggestionDto> events = timelineEventSuggestionAssembler.assemble(eventRows, draftRows);
+            List<TimelineEventSuggestionDto> events =
+                    timelineEventSuggestionAssembler.assemble(userId, eventRows, draftRows);
             Long dailyRecordId = dailyTimelineService.appendDailyTimeline(
-                    TimelineDefaults.DEFAULT_USER_ID, recordDate, task.recordAt(), task.recordTimezone(),
-                    draftRows, events);
-            finishSuccess(taskId, recordDate, dailyRecordId, callbackTokenHash);
+                    userId, recordDate, task.recordAt(), task.recordTimezone(), draftRows, events);
+            finishSuccess(taskId, userId, recordDate, dailyRecordId, callbackTokenHash);
         } catch (IllegalArgumentException | IllegalStateException e) {
             log.warn("finalize failed: taskId={} detail={}", taskId, e.getMessage());
-            finishFailed(taskId, recordDate, ErrorCode.ERROR_1011, callbackTokenHash);
+            finishFailed(taskId, userId, recordDate, ErrorCode.ERROR_1011, callbackTokenHash);
         }
     }
 
     /** terminal 저장 성공 직후에만 guard를 해제한다(규칙 ③) — markSuccess가 던지면 여기 못 와 규칙 ②가 자동 준수된다. */
-    private void finishSuccess(String taskId, LocalDate recordDate, Long dailyRecordId, String callbackTokenHash) {
-        timelineTaskService.markSuccess(taskId, recordDate, dailyRecordId, callbackTokenHash);
-        releaseDateGuardQuietly(taskId, recordDate);
+    private void finishSuccess(String taskId, long userId, LocalDate recordDate, Long dailyRecordId,
+                               String callbackTokenHash) {
+        timelineTaskService.markSuccess(taskId, userId, recordDate, dailyRecordId, callbackTokenHash);
+        releaseDateGuardQuietly(taskId, userId, recordDate);
     }
 
-    private void finishFailed(String taskId, LocalDate recordDate, ErrorCode failureCode, String callbackTokenHash) {
-        timelineTaskService.markFailed(taskId, recordDate, failureCode, callbackTokenHash);
-        releaseDateGuardQuietly(taskId, recordDate);
+    private void finishFailed(String taskId, long userId, LocalDate recordDate, ErrorCode failureCode,
+                              String callbackTokenHash) {
+        timelineTaskService.markFailed(taskId, userId, recordDate, failureCode, callbackTokenHash);
+        releaseDateGuardQuietly(taskId, userId, recordDate);
     }
 
     /**
      * guard 해제는 best-effort다 — terminal 상태는 이미 확정됐고 실패해도 TTL(1h)이 자연 해제하는 안전망이
      * 있으므로, 해제 실패로 콜백을 500으로 만들지 않는다(AI 재콜백은 토큰 소비 게이트가 흡수).
      */
-    private void releaseDateGuardQuietly(String taskId, LocalDate recordDate) {
+    private void releaseDateGuardQuietly(String taskId, long userId, LocalDate recordDate) {
         try {
-            timelineTaskService.releaseDateGuard(TimelineDefaults.DEFAULT_USER_ID, recordDate,
+            timelineTaskService.releaseDateGuard(userId, recordDate,
                     TimelineTaskService.taskGuardHolder(taskId));
         } catch (RuntimeException e) {
             log.warn("date guard release failed (TTL로 자연 해제 예정): taskId={} detail={}", taskId, e.getMessage());

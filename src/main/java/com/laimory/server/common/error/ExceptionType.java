@@ -51,6 +51,7 @@ public enum ExceptionType {
     PHOTO_BATCH_DELETE_FAILED(ErrorCode.ERROR_1017, Level.ERROR),   // S3 배치 삭제 실패 — 저장소 장애는 운영 신호(DB 보존, 클라 재시도로 수렴)
 
     // ── auth: N:1의 실사용례 — 클라이언트엔 "재로그인" 하나, 내부는 일상 vs 공격 신호 ──
+    API_AUTHENTICATION_REQUIRED(ErrorCode.ERROR_2001, Level.INFO),  // /a/api Bearer 부재/무효/만료 — 정상 재인증 수명주기(EntryPoint 직접 응답 경로)
     APP_CODE_INVALID(ErrorCode.ERROR_2002, Level.INFO),             // 무효/만료/이미 소비
     APP_CODE_VERIFIER_MISMATCH(ErrorCode.ERROR_2002, Level.WARN),   // 딥링크 탈취 시도 가능성
     REFRESH_TOKEN_INVALID(ErrorCode.ERROR_2003, Level.INFO),        // 무효/만료 — 일상

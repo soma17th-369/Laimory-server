@@ -53,8 +53,12 @@ public class JwtTokens {
         this.clock = clock;
     }
 
-    /** userId를 sub에 담은 access token을 발급한다. */
+    /** 양수 userId를 sub에 담은 access token을 발급한다. 0·음수는 내부 invariant 위반이라 발급을 거절한다. */
     public String issueAccessToken(long userId) {
+        if (userId <= 0) {
+            // MySQL AUTO_INCREMENT user ID 계약(양수)과 어긋나는 발급은 버그 — 과거 fallback 0 계열 접근을 원천 차단.
+            throw new IllegalStateException("access token userId는 양수여야 합니다: " + userId);
+        }
         Instant now = clock.instant();
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .issuer(ISSUER)
@@ -72,8 +76,9 @@ public class JwtTokens {
     }
 
     /**
-     * 서명·alg·iss·exp(leeway 60s)를 검증하고 sub(userId)를 반환한다.
+     * 서명·alg·iss·exp(leeway 60s)를 검증하고 sub(양수 userId)를 반환한다.
      * 무효/만료/변조는 사유 구분 없이 empty — 사유는 클라이언트 행동을 바꾸지 않는다(전부 재인증 경로).
+     * 0·음수 subject는 유효한 서명이 있어도 empty다(과거 user 0 데이터 접근 차단).
      */
     public Optional<Long> parseUserId(String token) {
         try {
@@ -90,7 +95,11 @@ public class JwtTokens {
                     || expiration.toInstant().plusSeconds(LEEWAY_SECONDS).isBefore(clock.instant())) {
                 return Optional.empty();
             }
-            return Optional.of(Long.parseLong(claims.getSubject()));
+            long userId = Long.parseLong(claims.getSubject());
+            if (userId <= 0) {
+                return Optional.empty();
+            }
+            return Optional.of(userId);
         } catch (ParseException | JOSEException | NumberFormatException e) {
             return Optional.empty();
         }

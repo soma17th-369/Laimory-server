@@ -21,12 +21,31 @@ import org.springframework.stereotype.Component;
  * 반드시 이번 task의 eventRows에 존재해야 한다 — 존재하지 않거나 다른 task의 id면 그 item이 어떤 이벤트에도
  * 안 묶여 조용히 유실되므로 {@link IllegalArgumentException}으로 실패시킨다(콜백이 잡아 FAILED 기록).
  * null event id는 "어떤 이벤트에도 안 묶기로 한 item"으로 허용(드롭 — 현행 '미참조 itemId' 동작과 동일).
+ *
+ * <p>조립 전에 모든 staging row의 {@code userId}가 기대 owner(task owner)와 같은지 먼저 검증한다 —
+ * 불일치는 남의 데이터를 finalize할 수 있는 무결성 위반이라 {@link IllegalStateException}으로 실패시킨다
+ * (콜백이 잡아 finalize 없이 FAILED 기록). row PK 외의 값은 예외 메시지에 echo하지 않는다.
  */
 @Component
 public class TimelineEventSuggestionAssembler {
 
-    public List<TimelineEventSuggestionDto> assemble(List<TimelineDraftEventSuggestion> eventRows,
+    public List<TimelineEventSuggestionDto> assemble(long expectedUserId,
+                                                     List<TimelineDraftEventSuggestion> eventRows,
                                                      List<TimelineDraftSourceItem> sourceRows) {
+        // owner 검증이 association·type 변환보다 먼저다 — 남의 row는 형태가 유효해도 조립을 시작하지 않는다.
+        for (TimelineDraftEventSuggestion event : eventRows) {
+            if (event.getUserId() == null || event.getUserId() != expectedUserId) {
+                throw new IllegalStateException("event suggestion owner mismatch: suggestionId="
+                        + event.getTimelineDraftEventSuggestionId());
+            }
+        }
+        for (TimelineDraftSourceItem source : sourceRows) {
+            if (source.getUserId() == null || source.getUserId() != expectedUserId) {
+                throw new IllegalStateException("source item owner mismatch: sourceItemId="
+                        + source.getTimelineDraftSourceItemId());
+            }
+        }
+
         Set<Long> eventIds = new HashSet<>();
         for (TimelineDraftEventSuggestion event : eventRows) {
             eventIds.add(event.getTimelineDraftEventSuggestionId());

@@ -81,4 +81,37 @@ class JwtTokensTest {
         assertThatThrownBy(() -> new JwtTokens(shortSecret, ACCESS_TTL, Clock.fixed(NOW, ZoneOffset.UTC)))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void issue_zeroOrNegativeUserId_throwsIllegalState() {
+        // MySQL AUTO_INCREMENT 계약(양수)에 어긋나는 발급은 내부 invariant 위반 — 과거 fallback 0 계열 접근 차단.
+        JwtTokens tokens = tokensAt(NOW);
+
+        assertThatThrownBy(() -> tokens.issueAccessToken(0L)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> tokens.issueAccessToken(-1L)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void parse_zeroOrNegativeSubject_returnsEmpty_evenWithValidSignature() throws Exception {
+        // 발급 경로가 막혀 있으므로 서명만 유효한 0·음수 sub 토큰을 직접 만들어 검증한다.
+        JwtTokens tokens = tokensAt(NOW);
+
+        assertThat(tokens.parseUserId(signedTokenWithSubject("0"))).isEmpty();
+        assertThat(tokens.parseUserId(signedTokenWithSubject("-42"))).isEmpty();
+    }
+
+    /** 검증 대상과 같은 시크릿·클레임으로 서명하되 subject만 임의 지정한 토큰(우회 시나리오 재현용). */
+    private String signedTokenWithSubject(String subject) throws Exception {
+        com.nimbusds.jwt.JWTClaimsSet claims = new com.nimbusds.jwt.JWTClaimsSet.Builder()
+                .issuer("laimory")
+                .subject(subject)
+                .issueTime(java.util.Date.from(NOW))
+                .expirationTime(java.util.Date.from(NOW.plus(ACCESS_TTL)))
+                .build();
+        com.nimbusds.jwt.SignedJWT jwt = new com.nimbusds.jwt.SignedJWT(
+                new com.nimbusds.jose.JWSHeader(com.nimbusds.jose.JWSAlgorithm.HS256), claims);
+        jwt.sign(new com.nimbusds.jose.crypto.MACSigner(
+                SECRET.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        return jwt.serialize();
+    }
 }

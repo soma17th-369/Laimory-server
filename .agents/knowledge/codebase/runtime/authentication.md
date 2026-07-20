@@ -15,18 +15,35 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 - auth/user entities, repositories, Redis stores and tests
 - `application*.properties`
 
-## Intended Contract
+## Current Contract
 
 - `/a/api/{version}`은 사용자가 `Authorization: Bearer <access-token>`으로 접근하는 인증 영역이다.
-- OpenAPI의 `bearerAuth`와 timeline API `@SecurityRequirement`는 이 공개 계약을 유지한다.
-- 인증된 principal의 userId가 service로 전달돼 고정 fallback을 대체해야 한다.
+  유효한 자체 access JWT 없이는 401 `ERROR_2001` envelope로 거절된다(`WWW-Authenticate: Bearer`).
+- OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
+- 인증된 principal(`Long` userId)이 controller `@AuthenticationPrincipal`로 주입돼 service까지 전달된다.
 
 ## Current Implementation
 
 두 security chain이 있다.
 
 - OAuth handshake 경로(`/oauth2/**`, `/login/**`)는 Redis-backed HTTP session을 쓴다.
-- 그 외 API chain은 stateless지만 현재 `anyRequest().permitAll()`이다.
+- 그 외 API chain은 stateless다. `/a/api`(정확한 prefix와 하위 경로만 — `/a/apiary` 미매칭)는
+  `authenticated()`, 나머지는 `permitAll()`이다(denyAll로 잠그지 않는다 — 미매핑 404 계약 보존).
+
+`/a/api` 인증 흐름:
+
+1. `JwtAuthenticationFilter`(security chain 내부, `AuthorizationFilter` 앞)가 Bearer token을
+   `JwtTokens.parseUserId`로 검증해 성공 시 `Long` userId principal 인증을 SecurityContext에 넣는다.
+   부재/형식 불량/무효/만료는 사유 구분 없이 context 없이 통과시킨다(token 원문은 어디에도 보존 안 함).
+2. 인가 단계에서 무인증이면 `ApiAuthenticationEntryPoint`가 401 `ERROR_2001` envelope를 직접 쓴다
+   (Security filter 단계는 `GlobalExceptionHandler` 미도달 — `AppChallengeFilter` 400 작성과 같은 선례).
+   `ExceptionType.API_AUTHENTICATION_REQUIRED`(INFO)를 request attribute에 심어 access log와 합류하고,
+   `Transaction-Id` 헤더는 전역 `TransactionIdFilter`가 이미 보장한다.
+3. filter/EntryPoint는 `SecurityConfig`에 빈으로 선언하고 Boot 전역 servlet filter 자동 등록은
+   `FilterRegistrationBean#setEnabled(false)`로 끈다.
+
+`JwtTokens`는 양수 userId만 발급·인증한다 — 0·음수 subject는 유효한 서명이 있어도 실패 처리해
+과거 user 0 데이터 접근을 차단한다. 매 요청 user row 조회는 없다(stateless access token 계약 유지).
 
 구현된 로그인·token 기능:
 
@@ -44,30 +61,26 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 8. logout은 전달된 refresh token을 revoke한다.
 9. `JwtTokens.parseUserId`로 서명·만료를 검증하고 subject userId를 읽는 기능은 있다.
 
-## Current Enforcement
+## userId Propagation
 
-`SecurityConfig`가 `/a/api`를 포함한 모든 일반 API를 `permitAll`한다.
-JWT request filter, SecurityContext authentication과 controller/service userId propagation은 없다.
-
-## Current Fallback
-
-timeline draft·photo·callback/finalize/polling은 `TimelineDefaults.DEFAULT_USER_ID=0`을 사용한다.
-이는 인증 계약이 구현됐다는 뜻이 아니라 enforcement 전 임시 호환 동작이다.
+- 7개 보호 API(`draft 생성/photo presign/polling` + `Event 수정/메모/삭제/DailyRecord 삭제`)의
+  controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/날짜 guard/S3 key/
+  polling 결과가 전부 같은 userId에 귀속된다.
+- Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
+  polling은 상태 분기 전에 owner를 대조하고, 타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다.
+- AI callback(`/s/api`)은 Bearer 대상이 아니다 — request principal 없이 task 저장 owner로
+  recovery/finalize/guard 해제를 수행하고, owner 없는 legacy task는 finalize 없이 404로 fail-closed한다.
+- 고정 fallback(`TimelineDefaults.DEFAULT_USER_ID=0`)은 제거됐다. 기존 user 0 데이터는 인증 API에서
+  조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
 
 ## Invariants
 
-- Swagger bearer contract를 현재 `permitAll` 때문에 제거하지 않는다.
 - provider account는 email이 아니라 `(provider, provider_user_id)`로 식별한다.
 - access token에 PII를 넣거나 raw refresh/App Code를 저장하지 않는다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
-
-## Known Gaps
-
-- JWT request filter와 `/a/api` authorization enforcement
-- SecurityContext에서 request userId를 service로 전달하는 경로
-- `DEFAULT_USER_ID=0` 제거
-
-이 gap은 별도 인증 enforcement 작업으로 다룬다. 문서 개편에서 API를 공개 영역으로 재정의하지 않는다.
+- 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
+- principal은 별도 래퍼 없는 `Long` userId다 — `@AuthenticationPrincipal(errorOnInvalidType = true) Long`과
+  1:1이어야 한다(String principal을 만드는 테스트 헬퍼 `user()` 사용 금지, `AuthTestSupport` 사용).
 
 ## Update When
 

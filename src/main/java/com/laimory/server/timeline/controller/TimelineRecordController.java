@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -14,8 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 확정 타임라인 기록 편집 API 구현. HTTP 문서·계약은 {@link TimelineRecordApi}.
  *
- * <p>userId는 클라이언트가 보내는 값이 아니라 <b>컨트롤러가 현재 사용자 식별자를 결정해 서비스에 전달</b>한다 —
- * 현재는 {@code TimelineDefaults.DEFAULT_USER_ID}, #108 인증 강제 후엔 인증 주체에서 추출한다(이 지점만 교체).
+ * <p>userId는 클라이언트가 보내는 값이 아니라 <b>인증된 JWT principal({@code Long})을 컨트롤러가 서비스에
+ * 전달</b>한다 — 소유권 검사·S3 key 유도는 전부 이 값 기준이다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -26,28 +25,30 @@ public class TimelineRecordController implements TimelineRecordApi {
 
     @Override
     public ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEvent(
-            String applicationVersion, Long timelineEventId, UpdateTimelineEventRequest request) {
+            String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventRequest request) {
         return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateEvent(
-                applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId,
+                applicationVersion, userId, timelineEventId,
                 request.eventType(), request.title(), request.subtitle(), request.startAt(), request.endAt())));
     }
 
     @Override
     public ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEventMemo(
-            String applicationVersion, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
+            String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
         return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateMemo(
-                applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId, request.memo())));
+                applicationVersion, userId, timelineEventId, request.memo())));
     }
 
     @Override
-    public ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(String applicationVersion, Long timelineEventId) {
-        timelineDeletionService.deleteEvent(applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId);
+    public ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
+            String applicationVersion, Long userId, Long timelineEventId) {
+        timelineDeletionService.deleteEvent(applicationVersion, userId, timelineEventId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
-    public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(String applicationVersion, Long dailyRecordId) {
-        timelineDeletionService.deleteDailyRecord(applicationVersion, TimelineDefaults.DEFAULT_USER_ID, dailyRecordId);
+    public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
+            String applicationVersion, Long userId, Long dailyRecordId) {
+        timelineDeletionService.deleteDailyRecord(applicationVersion, userId, dailyRecordId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

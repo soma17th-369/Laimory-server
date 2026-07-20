@@ -67,6 +67,7 @@ class TimelineCallbackServiceTest {
     @InjectMocks
     private TimelineCallbackService service;
 
+    private static final long USER_ID = 7L;
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final String TOKEN = "raw-callback-token";
     private static final String TOKEN_HASH = CallbackTokens.hash(TOKEN);
@@ -75,7 +76,7 @@ class TimelineCallbackServiceTest {
 
     private TimelineDraftTask processingTask() {
         // processingStartedAt은 콜백 처리와 무관하다(PROCESSING 전용 — terminal 전이 시 폐기).
-        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, TOKEN_HASH,
+        return TimelineDraftTask.processing(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul", null, TOKEN_HASH,
                 Instant.parse("2026-06-17T03:05:00Z"));
     }
 
@@ -91,7 +92,7 @@ class TimelineCallbackServiceTest {
 
     /** source 행: PK=10, 이번 task의 event 제안(EVENT_ID)에 배정됨. */
     private List<TimelineDraftSourceItem> draftRows() {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO, "r10",
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", USER_ID, ItemType.PHOTO, "r10",
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
@@ -106,7 +107,7 @@ class TimelineCallbackServiceTest {
 
     /** event 제안 행: PK=EVENT_ID, staging raw eventType 지정. */
     private List<TimelineDraftEventSuggestion> eventRows(String rawEventType) {
-        TimelineDraftEventSuggestion event = TimelineDraftEventSuggestion.of("t", 0L, rawEventType,
+        TimelineDraftEventSuggestion event = TimelineDraftEventSuggestion.of("t", USER_ID, rawEventType,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "제목", "부제");
         ReflectionTestUtils.setField(event, "timelineDraftEventSuggestionId", EVENT_ID);
         return List.of(event);
@@ -188,7 +189,7 @@ class TimelineCallbackServiceTest {
     void handleCallback_tokenCheckedBeforeIdempotentReturn_wrongTokenOnTerminalTask_throws401() {
         // token-first: 이미 SUCCESS(terminal)여도 토큰이 틀리면 멱등 단축 전에 401로 막힌다(해시 보존 덕분).
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, TOKEN_HASH)));
+                .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, 42L, TOKEN_HASH)));
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -200,16 +201,55 @@ class TimelineCallbackServiceTest {
         // 카운터 유실 후 terminal task 재콜백 시나리오(INCR=1로 게이트 통과): 멱등 안전망이 no-op으로 흡수해
         // 중복 finalize(재저장)를 막는다. 정상 replay는 이 앞의 소비 게이트에서 1012로 거부된다.
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, TOKEN_HASH)));
+                .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, 42L, TOKEN_HASH)));
         when(timelineTaskService.consumeCallbackToken("t")).thenReturn(1L);
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
+    }
+
+    @Test
+    void handleCallback_legacyTaskWithoutOwner_failsClosedWith404_afterTokenGates() {
+        // owner 없는 legacy PROCESSING task: 토큰 검증·소비(token-first)는 통과시키되, finalize 없이 404로 종결
+        // (fallback 0 추정 금지 — task·staging은 TTL/cleanup이 정리).
+        TimelineDraftTask legacy = new TimelineDraftTask(TaskStatus.PROCESSING, DATE, null,
+                DATE.atTime(12, 0), "Asia/Seoul", null, null, null, TOKEN_HASH, null, null);
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(legacy));
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+        // token-first 순서 유지: 소비 게이트는 이미 통과했다(fail-closed는 그 뒤).
+        verify(timelineTaskService).consumeCallbackToken("t");
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
+    }
+
+    @Test
+    void handleCallback_stagingOwnerMismatch_marksFailed1011_withoutFinalize() {
+        // task owner(USER_ID)와 다른 owner(999)의 staging row → assembler 무결성 실패(ISE) → finalize 없이 1011.
+        givenProcessingTaskWithFreshToken();
+        TimelineDraftSourceItem foreignRow = TimelineDraftSourceItem.of("t", 999L, ItemType.PHOTO, "r10",
+                LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
+        ReflectionTestUtils.setField(foreignRow, "timelineDraftSourceItemId", 10L);
+        foreignRow.assignEventSuggestion(EVENT_ID);
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of(foreignRow));
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1011),
+                eq(TOKEN_HASH));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
     }
 
     @Test
@@ -219,9 +259,9 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH); // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함
+        verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1008, TOKEN_HASH); // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함
         // FAILED terminal 저장 성공 후에도 guard를 해제한다(규칙 ③ — 실패 종결도 날짜를 풀어줘야 재시도 가능).
-        verify(timelineTaskService).releaseDateGuard(0L, DATE, "task:t");
+        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
     }
@@ -233,7 +273,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
+        verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
     }
 
     @Test
@@ -244,7 +284,7 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
+        verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1008, TOKEN_HASH);
     }
 
     @Test
@@ -253,22 +293,22 @@ class TimelineCallbackServiceTest {
         List<TimelineDraftSourceItem> rows = draftRows();
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(rows);
         when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
-        when(dailyTimelineService.appendDailyTimeline(eq(0L), eq(DATE), any(), any(), eq(rows), any()))
+        when(dailyTimelineService.appendDailyTimeline(eq(USER_ID), eq(DATE), any(), any(), eq(rows), any()))
                 .thenReturn(77L);
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
         // events는 바디가 아닌 DB(event 제안 + source event_fk)에서 로드·조립돼 finalize에 전달된다.
-        verify(dailyTimelineService).appendDailyTimeline(eq(0L), eq(DATE), any(), any(), eq(rows), any());
+        verify(dailyTimelineService).appendDailyTimeline(eq(USER_ID), eq(DATE), any(), any(), eq(rows), any());
         // finalize가 반환한 dailyRecordId가 SUCCESS task에 기록된다(폴링은 이 ID로만 결과 조회).
-        verify(timelineTaskService).markSuccess("t", DATE, 77L, TOKEN_HASH);
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
+        verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
 
         // 불변식: Redis SUCCESS는 finalize(=DB 커밋) 이후에만 set되고, guard 해제는 terminal 저장 성공 뒤다(규칙 ③).
         InOrder order = inOrder(dailyTimelineService, timelineTaskService);
         order.verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), any());
-        order.verify(timelineTaskService).markSuccess("t", DATE, 77L, TOKEN_HASH);
-        order.verify(timelineTaskService).releaseDateGuard(0L, DATE, "task:t");
+        order.verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
+        order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
     }
 
     @Test
@@ -276,17 +316,17 @@ class TimelineCallbackServiceTest {
         // source 부재 + record 존재 = 이전 finalize가 커밋·삭제한 상태 → 재작성 없이 Redis SUCCESS만 set.
         givenProcessingTaskWithFreshToken();
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
-        DailyRecord finalized = DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
+        DailyRecord finalized = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(finalized, "dailyRecordId", 42L);
-        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(finalized));
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.of(finalized));
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         // 복구 경로도 조회한 record의 ID를 기록한다 — 폴링 ID 조회가 legacy 0404로 빠지지 않게.
-        verify(timelineTaskService).markSuccess("t", DATE, 42L, TOKEN_HASH);
-        verify(timelineTaskService, never()).markFailed(anyString(), any(), any(), anyString());
-        verify(timelineTaskService).releaseDateGuard(0L, DATE, "task:t");
+        verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 42L, TOKEN_HASH);
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
+        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
         // source 부재면 event 제안은 조회하지 않는다(복구 경로가 앞서 return).
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
@@ -296,13 +336,13 @@ class TimelineCallbackServiceTest {
         // source도 record도 없는 이상 상태 = SUCCESS로 두면 폴링이 500을 낸다 → FAILED로 종결한다.
         givenProcessingTaskWithFreshToken();
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of());
-        when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.empty());
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
-        verify(timelineTaskService).releaseDateGuard(0L, DATE, "task:t");
+        verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
+        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
     }
 
     @Test
@@ -314,16 +354,16 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
     }
 
     @Test
     void handleCallback_success_sourceReferencesUnknownEvent_assemblerIntegrityViolation_marksFailed() {
         // source item이 이번 task의 event 제안에 없는 id(999)를 가리킴 → assembler가 IAE → 콜백이 잡아 FAILED(조용한 유실 차단).
         givenProcessingTaskWithFreshToken();
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO, "r10",
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", USER_ID, ItemType.PHOTO, "r10",
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", 10L);
@@ -333,9 +373,9 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
     }
 
     @Test
@@ -353,7 +393,7 @@ class TimelineCallbackServiceTest {
         verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), eventsCaptor.capture());
         assertThat(eventsCaptor.getValue()).hasSize(1);
         assertThat(eventsCaptor.getValue().get(0).eventType()).isEqualTo(TimelineEventType.MEAL);
-        verify(timelineTaskService).markSuccess("t", DATE, 77L, TOKEN_HASH);
+        verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
     }
 
     @Test
@@ -365,9 +405,9 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
+        verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
     }
 
     @Test
@@ -381,8 +421,8 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markFailed("t", DATE, ErrorCode.ERROR_1011, TOKEN_HASH); // raw 메시지 대신 분류 코드
-        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
+        verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1011, TOKEN_HASH); // raw 메시지 대신 분류 코드
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
     }
 
     @Test
@@ -403,7 +443,7 @@ class TimelineCallbackServiceTest {
         when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
         when(dailyTimelineService.appendDailyTimeline(any(), any(), any(), any(), any(), any())).thenReturn(77L);
         doThrow(new RuntimeException("redis down")).when(timelineTaskService)
-                .markSuccess(anyString(), any(), any(), anyString());
+                .markSuccess(anyString(), anyLong(), any(), any(), anyString());
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOf(RuntimeException.class);
@@ -423,6 +463,6 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
-        verify(timelineTaskService).markSuccess("t", DATE, 77L, TOKEN_HASH);
+        verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
     }
 }

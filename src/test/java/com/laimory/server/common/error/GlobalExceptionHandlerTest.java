@@ -1,7 +1,9 @@
 package com.laimory.server.common.error;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.laimory.server.common.logging.RequestLogAttributes;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
@@ -31,9 +34,10 @@ import org.springframework.test.web.servlet.MockMvc;
  * 상속이 해당 예외를 정말 잡아 envelope로 바꾸는지 고정한다(깨지면 개별 @ExceptionHandler 추가로 보수).
  */
 @WebMvcTest(TimelineController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class GlobalExceptionHandlerTest {
 
+    private static final long USER_ID = 7L;
     private static final String TASKS = "/a/api/v1/timeline/drafts";
     private static final String VALID_BODY = """
             {"recordDate": "2026-06-17", "recordAt": "2026-06-18T09:30:00", "recordTimeZone": "Asia/Seoul",
@@ -55,10 +59,10 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void businessException_mapsToEnumStatus_withCodeAndTransactionIdHeader() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"))
                 .andExpect(jsonPath("$.header.message").isNotEmpty())
@@ -69,10 +73,10 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void illegalArgument_mapsToError0400_andForwardsDetailToAccessLog() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));
 
-        var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        var result = mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
                 .andReturn();
@@ -89,10 +93,10 @@ class GlobalExceptionHandlerTest {
         // 요청값이 echo된 긴 메시지 — CR/LF 제거(텍스트 로그 위조 방지) + 200자 상한(keyword term 한도로
         // 인한 ES 문서 거부 방지, ignore_above 256과 이중 방어)이 단일 조립 지점에서 적용돼야 한다.
         String hostile = "invalid photo filename: line1\r\nFAKE LOG LINE\n" + "x".repeat(500);
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException(hostile));
 
-        var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        var result = mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isBadRequest())
                 .andReturn();
 
@@ -103,10 +107,10 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void unexpectedException_mapsToError0500_withoutLeakingDetail() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("redis serialization failed: secret detail"));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0500"))
                 .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.not(
@@ -123,7 +127,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void wrongMethod_returns405Envelope_withAllowHeader() throws Exception {
-        mockMvc.perform(delete(TASKS))
+        mockMvc.perform(delete(TASKS).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(header().exists("Allow")) // ResponseEntityExceptionHandler가 보존
                 .andExpect(jsonPath("$.header.code").value("ERROR_0405"));
@@ -131,28 +135,28 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void missingContentType_returns415Envelope() throws Exception {
-        mockMvc.perform(post(TASKS).contentType(MediaType.TEXT_PLAIN).content("not json"))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.TEXT_PLAIN).content("not json"))
                 .andExpect(status().isUnsupportedMediaType())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0415"));
     }
 
     @Test
     void malformedJson_returns400Envelope() throws Exception {
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content("{broken"))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{broken"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
     }
 
     @Test
     void acceptLanguage_switchesErrorMessageLocale() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
                         .header("Accept-Language", "en"))
                 .andExpect(jsonPath("$.header.message").value("The daily record has already been saved."));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
                         .header("Accept-Language", "ko"))
                 .andExpect(jsonPath("$.header.message").value("이미 저장된 하루 기록입니다."));
     }
@@ -163,10 +167,10 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void withoutAcceptLanguage_fallsBackToKorean() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(jsonPath("$.header.message").value("이미 저장된 하루 기록입니다."));
     }
 }

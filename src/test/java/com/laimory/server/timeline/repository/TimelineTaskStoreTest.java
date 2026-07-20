@@ -48,7 +48,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_serializesWithKeyAndTtl() throws Exception {
-        TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "token-hash");
+        TimelineDraftTask task = TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash");
 
         store.save("abc", task, Duration.ofHours(24));
 
@@ -67,7 +67,7 @@ class TimelineTaskStoreTest {
     void save_serializesAiContractShape_fieldNamesAndWindowFormat() throws Exception {
         // AI가 이 value JSON을 직접 읽는 계약 — 필드명·날짜 포맷이 고정돼야 한다.
         TimelineDraftTask task = TimelineDraftTask.processing(
-                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
                 new TimelineDraftTask.TimelineWindow(
                         LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
                 "token-hash", Instant.parse("2026-05-08T13:41:07Z"));
@@ -84,6 +84,8 @@ class TimelineTaskStoreTest {
                 "\"timelineWindow\":{\"startTime\":\"20260508T183000\",\"endTime\":\"20260508T224100\"}");
         // PROCESSING 시작 시각은 UTC ISO-8601 문자열로 고정된다(숫자 timestamp 설정 무관 — @JsonFormat STRING).
         assertThat(json).contains("\"processingStartedAt\":\"2026-05-08T13:41:07Z\"");
+        // task owner는 additive 필드로 기존 필드 순서 뒤에 붙는다(AI 계약 shape 최소 변화).
+        assertThat(json).contains("\"userId\":7");
         // NON_NULL 명시 필드: PROCESSING JSON(AI가 직접 읽는 계약)에 dailyRecordId가 null로 노출되지 않는다.
         assertThat(json).doesNotContain("dailyRecordId");
     }
@@ -92,7 +94,7 @@ class TimelineTaskStoreTest {
     void save_processingStartedAt_roundTripsAsInstant() throws Exception {
         Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
         TimelineDraftTask task = TimelineDraftTask.processing(
-                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
                 null, "token-hash", startedAt);
 
         store.save("abc", task, Duration.ofHours(1));
@@ -106,8 +108,8 @@ class TimelineTaskStoreTest {
     @Test
     void save_terminalTasks_omitProcessingStartedAt() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
-        store.save("s", TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("s", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(2)).set(anyString(), jsonCaptor.capture(), any());
@@ -128,12 +130,32 @@ class TimelineTaskStoreTest {
         assertThat(found).isPresent();
         assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(found.get().processingStartedAt()).isNull();
+        // owner 필드도 legacy JSON엔 없다 → 0으로 오인하지 않고 null(fail-closed 판정 재료).
+        assertThat(found.get().userId()).isNull();
+    }
+
+    @Test
+    void save_allStates_preserveOwnerUserId() throws Exception {
+        // 세 상태 전이 모두 owner를 보존한다 — 폴링 소유권 대조·콜백 finalize의 기준값.
+        store.save("p", TimelineDraftTask.processing(7L, LocalDate.of(2026, 5, 8),
+                LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul", null, "h",
+                Instant.parse("2026-05-08T13:41:07Z")), Duration.ofHours(1));
+        store.save("s", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"),
+                Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis, times(3)).set(anyString(), jsonCaptor.capture(), any());
+        for (String json : jsonCaptor.getAllValues()) {
+            TimelineDraftTask roundTripped = objectMapper.readValue(json, TimelineDraftTask.class);
+            assertThat(roundTripped.userId()).isEqualTo(7L);
+        }
     }
 
     @Test
     void save_successTask_includesDailyRecordId() throws Exception {
         // SUCCESS에만 결과 식별자가 실린다 — 폴링이 이 ID로만 결과를 조회한다.
-        store.save("abc", TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
+        store.save("abc", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).set(anyString(), jsonCaptor.capture(), any());
@@ -142,7 +164,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_failedTask_omitsDailyRecordId() throws Exception {
-        store.save("f", TimelineDraftTask.failed(LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).set(anyString(), jsonCaptor.capture(), any());
@@ -181,7 +203,7 @@ class TimelineTaskStoreTest {
     @Test
     void find_returnsDeserializedTask() throws Exception {
         TimelineDraftTask task = TimelineDraftTask.processing(
-                LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul",
+                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul",
                 new TimelineDraftTask.TimelineWindow(
                         LocalDate.of(2026, 5, 8).atTime(9, 0), LocalDate.of(2026, 5, 8).atTime(11, 0)),
                 "token-hash", Instant.parse("2026-05-08T02:59:30Z"));

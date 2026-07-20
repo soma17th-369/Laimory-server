@@ -58,7 +58,7 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함, PROCESSING에만 `processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함 — 두 필드 모두 NON_NULL이라 없는 상태에선 key 미노출; 배포 전 legacy PROCESSING은 필드 부재 → null 역직렬화) | PROCESSING 1h, terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함, PROCESSING에만 `processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함, 세 상태 모두 owner `userId` 보존 — 세 필드 모두 NON_NULL이라 없는 상태에선 key 미노출; 배포 전 legacy JSON은 필드 부재 → null 역직렬화(owner null은 폴링 1001·콜백 fail-closed)) | PROCESSING 1h, terminal 24h |
 | `timeline:callback-token-uses:{taskId}` | callback token use state | 25h |
 | `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제는 모든 종료 경로에서 해제) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |

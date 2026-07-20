@@ -44,20 +44,24 @@ public class TimelineTaskService {
         return "delete:" + operationId;
     }
 
-    /** processingStartedAt은 폴링의 AI 작업 대기 경과 시간 기준(PROCESSING 전용 — terminal은 보존하지 않음). */
-    public void createProcessing(String taskId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                 TimelineDraftTask.TimelineWindow timelineWindow, String callbackTokenHash,
-                                 Instant processingStartedAt) {
+    /**
+     * processingStartedAt은 폴링의 AI 작업 대기 경과 시간 기준(PROCESSING 전용 — terminal은 보존하지 않음).
+     * userId는 task owner다 — 세 상태 전이 모두 필수로 받아 보존한다(폴링 소유권 대조·콜백 finalize 기준).
+     */
+    public void createProcessing(String taskId, long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                 String recordTimezone, TimelineDraftTask.TimelineWindow timelineWindow,
+                                 String callbackTokenHash, Instant processingStartedAt) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.processing(recordDate, recordAt, recordTimezone, timelineWindow, callbackTokenHash,
-                        processingStartedAt),
+                TimelineDraftTask.processing(userId, recordDate, recordAt, recordTimezone, timelineWindow,
+                        callbackTokenHash, processingStartedAt),
                 PROCESSING_TTL);
     }
 
     /** dailyRecordId는 finalize된 결과 record의 ID다 — 폴링이 이 ID로만 결과를 조회한다(날짜 재조회 금지). */
-    public void markSuccess(String taskId, LocalDate recordDate, Long dailyRecordId, String callbackTokenHash) {
+    public void markSuccess(String taskId, long userId, LocalDate recordDate, Long dailyRecordId,
+                            String callbackTokenHash) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.success(recordDate, dailyRecordId, callbackTokenHash), TERMINAL_TTL);
+                TimelineDraftTask.success(userId, recordDate, dailyRecordId, callbackTokenHash), TERMINAL_TTL);
     }
 
     /**
@@ -65,12 +69,13 @@ public class TimelineTaskService {
      * 허용한다 — raw 문자열을 받지 않아, 내부 예외 메시지가 폴링 {@code body.error}로 유출되는 경로를
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */
-    public void markFailed(String taskId, LocalDate recordDate, ErrorCode failureCode, String callbackTokenHash) {
+    public void markFailed(String taskId, long userId, LocalDate recordDate, ErrorCode failureCode,
+                           String callbackTokenHash) {
         if (!ErrorCode.TASK_FAILURE_CODES.contains(failureCode)) {
             throw new IllegalStateException("task 실패 분류 코드가 아닙니다: " + failureCode);
         }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(recordDate, failureCode.name(), callbackTokenHash), TERMINAL_TTL);
+                TimelineDraftTask.failed(userId, recordDate, failureCode.name(), callbackTokenHash), TERMINAL_TTL);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {

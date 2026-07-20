@@ -44,12 +44,13 @@ class TimelineDraftTaskPollingServiceTest {
     @InjectMocks
     private TimelineDraftTaskPollingService service;
 
+    private static final long USER_ID = 7L;
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     // 폴링 관측 시각(mock Clock) — PROCESSING 경과 시간의 "현재".
     private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");
 
     private static TimelineDraftTask processingTask(Instant processingStartedAt) {
-        return TimelineDraftTask.processing(DATE, DATE.atTime(12, 0), "Asia/Seoul", null, "hash",
+        return TimelineDraftTask.processing(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul", null, "hash",
                 processingStartedAt);
     }
 
@@ -59,7 +60,7 @@ class TimelineDraftTaskPollingServiceTest {
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(processingTask(NOW.minusSeconds(12))));
 
-        DraftTaskStatusResponse res = service.poll("v1", "t");
+        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(res.elapsedSeconds()).isEqualTo(12L);
@@ -73,11 +74,11 @@ class TimelineDraftTaskPollingServiceTest {
         when(clock.instant()).thenReturn(NOW);
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(processingTask(NOW.minusMillis(12_900))));
-        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(12L);
+        assertThat(service.poll("v1", USER_ID, "t").elapsedSeconds()).isEqualTo(12L);
 
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(processingTask(NOW.minusMillis(500))));
-        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(0L);
+        assertThat(service.poll("v1", USER_ID, "t").elapsedSeconds()).isEqualTo(0L);
     }
 
     @Test
@@ -87,7 +88,7 @@ class TimelineDraftTaskPollingServiceTest {
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(processingTask(NOW.plusSeconds(60))));
 
-        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(0L);
+        assertThat(service.poll("v1", USER_ID, "t").elapsedSeconds()).isEqualTo(0L);
     }
 
     @Test
@@ -97,7 +98,7 @@ class TimelineDraftTaskPollingServiceTest {
         Instant farPast = NOW.minusSeconds(10_000_000_000L); // ≈317년 > Integer.MAX_VALUE초
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask(farPast)));
 
-        assertThat(service.poll("v1", "t").elapsedSeconds()).isEqualTo(10_000_000_000L);
+        assertThat(service.poll("v1", USER_ID, "t").elapsedSeconds()).isEqualTo(10_000_000_000L);
     }
 
     @Test
@@ -105,7 +106,7 @@ class TimelineDraftTaskPollingServiceTest {
         // 배포 전 legacy PROCESSING(시각 부재) → 값을 추측·위조하지 않고 null(응답 key 생략).
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask(null)));
 
-        DraftTaskStatusResponse res = service.poll("v1", "t");
+        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(res.elapsedSeconds()).isNull();
@@ -114,9 +115,9 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_failed_returnsFailureCode() {
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(DATE, ErrorCode.ERROR_1009.name(), "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, DATE, ErrorCode.ERROR_1009.name(), "h")));
 
-        DraftTaskStatusResponse res = service.poll("v1", "t");
+        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(res.error()).isEqualTo("ERROR_1009"); // body.error = 실패 분류 코드
@@ -130,9 +131,9 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_failed_legacyRawError_isReplacedNotLeaked() {
         // 과거(코드화 이전) 저장분의 raw 메시지는 그대로 내보내지 않고 ERROR_1011로 대체한다(read-side 유출 방어).
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(DATE, "Connection refused: 10.0.32.99", "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, DATE, "Connection refused: 10.0.32.99", "h")));
 
-        DraftTaskStatusResponse res = service.poll("v1", "t");
+        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.error()).isEqualTo(ErrorCode.ERROR_1011.name());
         assertThat(res.error()).doesNotContain("10.0.32.99");
@@ -140,14 +141,14 @@ class TimelineDraftTaskPollingServiceTest {
 
     @Test
     void poll_success_assemblesTimelineByStoredDailyRecordId() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
-        DailyRecord record = DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, 42L, "h")));
+        DailyRecord record = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
         DailyTimelineResponse timeline = new DailyTimelineResponse(42L, DATE, null, List.of());
         when(dailyTimelineService.getDailyTimeline(42L)).thenReturn(timeline);
 
-        DraftTaskStatusResponse res = service.poll("v1", "t");
+        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(res.result()).isSameAs(timeline);
@@ -161,9 +162,9 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_legacyTaskWithoutRecordId_throws0404() {
         // 배포 전 legacy SUCCESS task(dailyRecordId 부재, terminal TTL 최대 24h 잔존) → 0404(결과 소멸).
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, null, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, null, "h")));
 
-        assertThatThrownBy(() -> service.poll("v1", "t"))
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
         verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
@@ -172,10 +173,10 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_resultRecordDeleted_throws0404() {
         // 결과 record가 삭제된 SUCCESS task → "task 없음"(1001)과 구분되는 0404(결과 소멸).
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, 42L, "h")));
         when(dailyRecordService.findById(42L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.poll("v1", "t"))
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
     }
@@ -183,12 +184,12 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_foreignUsersRecord_hiddenAs0404() {
         // 소유권 은닉: task가 남의 record ID를 담고 있어도 존재를 드러내지 않고 0404.
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(DATE, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, DATE, 42L, "h")));
         DailyRecord foreign = DailyRecord.createDraft(999L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(foreign, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(foreign));
 
-        assertThatThrownBy(() -> service.poll("v1", "t"))
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
     }
@@ -197,8 +198,33 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_notFound_throws404() {
         when(timelineTaskService.find("missing")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.poll("v1", "missing"))
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "missing"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+    }
+
+    @Test
+    void poll_foreignUsersTask_hiddenAs1001_beforeAnyDbLookup() {
+        // 타 사용자의 task는 상태(SUCCESS 포함)와 무관하게 1001 — DB 조회 전에 끊는다(존재 여부 비노출).
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(TimelineDraftTask.success(999L, DATE, 42L, "h")));
+
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+        verifyNoInteractions(dailyRecordService, dailyTimelineService);
+    }
+
+    @Test
+    void poll_legacyTaskWithoutOwner_hiddenAs1001() {
+        // owner가 없는 배포 전 legacy task는 0으로 추정하지 않고 fail-closed(1001) — 상태별 분기에 못 들어간다.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(new TimelineDraftTask(
+                TaskStatus.PROCESSING, DATE, null, DATE.atTime(12, 0), "Asia/Seoul",
+                null, null, null, "h", null, null)));
+
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+        verifyNoInteractions(dailyRecordService, dailyTimelineService);
     }
 }

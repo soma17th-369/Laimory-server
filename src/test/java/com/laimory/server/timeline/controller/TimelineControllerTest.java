@@ -1,7 +1,9 @@
 package com.laimory.server.timeline.controller;
 
 import static org.hamcrest.Matchers.nullValue;
+import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,6 +34,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.testsupport.AuthTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -46,9 +49,10 @@ import org.springframework.test.web.servlet.MockMvc;
  * 공개 컨트롤러 슬라이스 테스트(MockMvc). 상태 매핑(202/400/409/404)을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineControllerTest {
 
+    private static final long USER_ID = 7L;
     private static final String TASKS = "/a/api/v1/timeline/drafts";
 
     // recordDate(선택 날짜)와 recordAt(실제 작성 시각)의 날짜가 다른 "다음날 아침 일기" 시나리오 — 정합성 미검증 계약.
@@ -80,10 +84,25 @@ class TimelineControllerTest {
     private PhotoUploadService photoUploadService;
 
     @Test
-    void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any())).thenReturn("task-123");
-
+    void protectedEndpoints_withoutAuthentication_return401Envelope() throws Exception {
+        // 인증 게이트: 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+        mockMvc.perform(get(TASKS + "/t-1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+
+        org.mockito.Mockito.verifyNoInteractions(
+                timelineDraftTaskService, timelineDraftTaskPollingService, photoUploadService);
+    }
+
+    @Test
+    void createDraftTask_returns202WithTaskId() throws Exception {
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any())).thenReturn("task-123");
+
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
@@ -94,12 +113,12 @@ class TimelineControllerTest {
     void createDraftTask_passesParsedRecordDateAndWindowToService() throws Exception {
         // HTTP 파싱 계약 고정: recordDate는 ISO LocalDate, window는 offset 없는 ISO local datetime으로 파싱돼
         // 값 그대로 서비스에 전달된다(recordAt과 recordDate의 날짜가 달라도 그대로 — 정합성 미검증).
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted());
 
-        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(LocalDate.parse("2026-06-17")),
+        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(USER_ID), eq(LocalDate.parse("2026-06-17")),
                 eq(LocalDateTime.parse("2026-06-18T09:30:00")), eq("Asia/Seoul"),
                 eq(new TimelineWindowDto(LocalDateTime.parse("2026-06-17T00:00"),
                         LocalDateTime.parse("2026-06-18T00:00"))), any());
@@ -107,10 +126,10 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
                 .andExpect(header().exists("Transaction-Id"))
@@ -119,20 +138,20 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
     }
 
     @Test
     void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1013"));
     }
@@ -141,10 +160,10 @@ class TimelineControllerTest {
     @CsvSource({"GEOCODING_TRANSIENT_FAILURE, ERROR_1014", "GEOCODING_PERMANENT_FAILURE, ERROR_1015"})
     void createDraftTask_mapsGeocodingFailureTo502(String type, String code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
 
-        mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value(code))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -152,29 +171,32 @@ class TimelineControllerTest {
 
     @Test
     void createPhotoUploads_returns200WithUploads() throws Exception {
-        when(photoUploadService.createUploads(any(), any()))
+        when(photoUploadService.createUploads(any(), anyLong(), any()))
                 .thenReturn(new PhotoUploadCreateResponse(List.of(
                         new PhotoUploadResponse("f.jpg", "https://example/put"))));
 
         String body = """
                 {"photos": [{"contentType": "image/jpeg", "size": 1024}]}
                 """;
-        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.uploads[0].filename").value("f.jpg"))
                 .andExpect(jsonPath("$.body.uploads[0].uploadUrl").value("https://example/put"));
+
+        // principal userId가 service 인자로 전달된다(고정 0 회귀 방지).
+        verify(photoUploadService).createUploads(eq("v1"), eq(USER_ID), any());
     }
 
     @Test
     void createPhotoUploads_mapsLimitExceededToDedicatedCodeWithLimitValue() throws Exception {
-        when(photoUploadService.createUploads(any(), any()))
+        when(photoUploadService.createUploads(any(), anyLong(), any()))
                 .thenThrow(new BusinessException(ExceptionType.PHOTO_SIZE_EXCEEDED, 15L));
 
         String body = """
                 {"photos": [{"contentType": "image/jpeg", "size": 99999999}]}
                 """;
-        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1005"))
                 .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.containsString("15")));
@@ -182,37 +204,40 @@ class TimelineControllerTest {
 
     @Test
     void createPhotoUploads_mapsIllegalArgumentTo400() throws Exception {
-        when(photoUploadService.createUploads(any(), any()))
+        when(photoUploadService.createUploads(any(), anyLong(), any()))
                 .thenThrow(new IllegalArgumentException("too many photos"));
 
         String body = """
                 {"photos": [{"contentType": "image/gif", "size": 1024}]}
                 """;
-        mockMvc.perform(post(TASKS + "/photo-uploads").contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
     }
 
     @Test
     void pollDraftTask_returns200WithStatus() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), eq("t-1")))
+        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-1")))
                 .thenReturn(DraftTaskStatusResponse.processing(12L));
 
-        mockMvc.perform(get(TASKS + "/t-1"))
+        mockMvc.perform(get(TASKS + "/t-1").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("PROCESSING"))
                 // PROCESSING 전용: AI 작업 대기 경과 시간(완료된 초)이 숫자로 실린다.
                 .andExpect(jsonPath("$.body.elapsedSeconds").value(12));
+
+        // principal userId가 service 인자로 전달된다(고정 0 회귀 방지).
+        verify(timelineDraftTaskPollingService).poll(eq("v1"), eq(USER_ID), eq("t-1"));
     }
 
     @Test
     void pollDraftTask_legacyProcessing_omitsElapsedSecondsKey() throws Exception {
         // 기준 시각이 없는 legacy PROCESSING → 0으로 위조하지 않고 key 자체를 생략한다(NON_NULL).
-        when(timelineDraftTaskPollingService.poll(any(), eq("t-legacy")))
+        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-legacy")))
                 .thenReturn(DraftTaskStatusResponse.processing(null));
 
-        mockMvc.perform(get(TASKS + "/t-legacy"))
+        mockMvc.perform(get(TASKS + "/t-legacy").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.status").value("PROCESSING"))
                 .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
@@ -224,10 +249,10 @@ class TimelineControllerTest {
      */
     @Test
     void pollDraftTask_failed_returns200WithEnvelope() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), eq("t-failed")))
+        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-failed")))
                 .thenReturn(DraftTaskStatusResponse.failed(ErrorCode.ERROR_1008.name()));
 
-        mockMvc.perform(get(TASKS + "/t-failed"))
+        mockMvc.perform(get(TASKS + "/t-failed").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("FAILED"))
@@ -239,10 +264,10 @@ class TimelineControllerTest {
 
     @Test
     void pollDraftTask_mapsNotFoundTo404() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), eq("missing")))
+        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("missing")))
                 .thenThrow(new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
-        mockMvc.perform(get(TASKS + "/missing"))
+        mockMvc.perform(get(TASKS + "/missing").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1001"));
     }
@@ -263,10 +288,10 @@ class TimelineControllerTest {
                 "title", "subtitle", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
                 42L, LocalDate.parse("2026-06-17"), null, List.of(event));
-        when(timelineDraftTaskPollingService.poll(any(), eq("t-ok")))
+        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-ok")))
                 .thenReturn(DraftTaskStatusResponse.success(result));
 
-        mockMvc.perform(get(TASKS + "/t-ok"))
+        mockMvc.perform(get(TASKS + "/t-ok").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(jsonPath("$.body.status").value("SUCCESS"))

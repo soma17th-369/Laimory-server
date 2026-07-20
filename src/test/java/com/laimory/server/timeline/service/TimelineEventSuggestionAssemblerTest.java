@@ -27,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class TimelineEventSuggestionAssemblerTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final long USER_ID = 7L;
     private final TimelineEventSuggestionAssembler assembler = new TimelineEventSuggestionAssembler();
 
     private TimelineDraftEventSuggestion event(long id, String title, LocalDateTime startAt) {
@@ -34,13 +35,13 @@ class TimelineEventSuggestionAssemblerTest {
     }
 
     private TimelineDraftEventSuggestion event(long id, String eventType, String title, LocalDateTime startAt) {
-        TimelineDraftEventSuggestion e = TimelineDraftEventSuggestion.of("t", 0L, eventType, startAt, null, title, null);
+        TimelineDraftEventSuggestion e = TimelineDraftEventSuggestion.of("t", USER_ID, eventType, startAt, null, title, null);
         ReflectionTestUtils.setField(e, "timelineDraftEventSuggestionId", id);
         return e;
     }
 
     private TimelineDraftSourceItem source(long pk, Long eventId) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", 0L, ItemType.PHOTO, "r" + pk,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("t", USER_ID, ItemType.PHOTO, "r" + pk,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 MAPPER.valueToTree(new PhotoPayload("u" + pk, "content://" + pk, 1.0, 2.0, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", pk);
@@ -56,7 +57,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, "A", t), event(2L, "B", t.plusHours(1)));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L), source(11L, 1L), source(12L, 2L));
 
-        List<TimelineEventSuggestionDto> result = assembler.assemble(events, sources);
+        List<TimelineEventSuggestionDto> result = assembler.assemble(USER_ID, events, sources);
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).title()).isEqualTo("A");
@@ -71,7 +72,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, "A", t));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L), source(11L, null)); // 11은 미배정
 
-        List<TimelineEventSuggestionDto> result = assembler.assemble(events, sources);
+        List<TimelineEventSuggestionDto> result = assembler.assemble(USER_ID, events, sources);
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).itemIds()).containsExactly(10L); // 11은 어떤 이벤트에도 안 묶여 드롭
@@ -83,7 +84,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, "A", t));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 999L)); // 999는 이번 task에 없는 event
 
-        assertThatThrownBy(() -> assembler.assemble(events, sources))
+        assertThatThrownBy(() -> assembler.assemble(USER_ID, events, sources))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("999");
     }
@@ -94,7 +95,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, "A", t), event(2L, "B", t.plusHours(1)));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L)); // event 2엔 아무 item도 안 묶임
 
-        List<TimelineEventSuggestionDto> result = assembler.assemble(events, sources);
+        List<TimelineEventSuggestionDto> result = assembler.assemble(USER_ID, events, sources);
 
         assertThat(result).hasSize(2);
         assertThat(result.get(1).title()).isEqualTo("B");
@@ -110,7 +111,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, type.name(), "A", t));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L));
 
-        List<TimelineEventSuggestionDto> result = assembler.assemble(events, sources);
+        List<TimelineEventSuggestionDto> result = assembler.assemble(USER_ID, events, sources);
 
         assertThat(result.get(0).eventType()).isEqualTo(type);
     }
@@ -124,7 +125,7 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, raw, "A", t));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L));
 
-        assertThatThrownBy(() -> assembler.assemble(events, sources))
+        assertThatThrownBy(() -> assembler.assemble(USER_ID, events, sources))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("eventType");
     }
@@ -136,7 +137,51 @@ class TimelineEventSuggestionAssemblerTest {
         List<TimelineDraftEventSuggestion> events = List.of(event(1L, "PICNIC", "A", t));
         List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L));
 
-        assertThatThrownBy(() -> assembler.assemble(events, sources))
+        assertThatThrownBy(() -> assembler.assemble(USER_ID, events, sources))
                 .hasMessageNotContaining("PICNIC");
+    }
+
+    // --- task owner ↔ staging row owner 일치 검증 ---
+
+    @Test
+    void assemble_eventRowOwnerMismatch_throwsIllegalState_beforeTypeConversion() {
+        // owner 불일치는 type 변환·association보다 먼저 무결성 실패(ISE)로 끊는다 — 남의 데이터 finalize 차단.
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        TimelineDraftEventSuggestion foreign =
+                TimelineDraftEventSuggestion.of("t", 999L, "PICNIC", t, null, "A", null);
+        ReflectionTestUtils.setField(foreign, "timelineDraftEventSuggestionId", 1L);
+
+        // eventType이 미지원(PICNIC)이어도 owner 검증(ISE)이 먼저다 — IAE(type 변환)에 도달하지 않는다.
+        assertThatThrownBy(() -> assembler.assemble(USER_ID, List.of(foreign), List.of(source(10L, 1L))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("owner mismatch");
+    }
+
+    @Test
+    void assemble_sourceRowOwnerMismatch_throwsIllegalState() {
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<TimelineDraftEventSuggestion> events = List.of(event(1L, "A", t));
+        TimelineDraftSourceItem foreign = TimelineDraftSourceItem.of("t", 999L, ItemType.PHOTO, "r10",
+                t, null, MAPPER.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
+        ReflectionTestUtils.setField(foreign, "timelineDraftSourceItemId", 10L);
+        foreign.assignEventSuggestion(1L);
+
+        assertThatThrownBy(() -> assembler.assemble(USER_ID, events, List.of(foreign)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("owner mismatch");
+    }
+
+    @Test
+    void assemble_matchingOwners_assembleAsBefore() {
+        // owner가 일치하면 기존 association·type 변환·조립 동작이 그대로다(회귀 없음).
+        LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
+        List<TimelineDraftEventSuggestion> events = List.of(event(1L, TimelineEventType.MEAL.name(), "A", t));
+        List<TimelineDraftSourceItem> sources = List.of(source(10L, 1L));
+
+        List<TimelineEventSuggestionDto> result = assembler.assemble(USER_ID, events, sources);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).eventType()).isEqualTo(TimelineEventType.MEAL);
+        assertThat(result.get(0).itemIds()).containsExactly(10L);
     }
 }

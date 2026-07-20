@@ -34,7 +34,7 @@ class TimelineTaskStoreIntegrationTest {
     void savesAndFindsTaskFromRealRedis() {
         String taskId = "it-" + UUID.randomUUID();
         try {
-            TimelineDraftTask task = TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "token-hash");
+            TimelineDraftTask task = TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash");
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
@@ -53,7 +53,7 @@ class TimelineTaskStoreIntegrationTest {
         try {
             Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
             TimelineDraftTask task = TimelineDraftTask.processing(
-                    LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
+                    7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
                     null, "token-hash", startedAt);
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
@@ -72,7 +72,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.success(LocalDate.of(2026, 5, 8), 42L, "token-hash"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash"), Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
 
@@ -80,6 +80,37 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(found.get().processingStartedAt()).isNull();
         } finally {
             redisGateway.delete("timeline:draft-task:" + taskId);
+        }
+    }
+
+    @Test
+    void ownerUserId_roundTripsForAllStates_andLegacyJsonDeserializesToNull() {
+        // 실 Redis/Spring ObjectMapper에서 세 상태의 owner 왕복과, owner 없는 legacy JSON의 null 역직렬화를 고정한다.
+        String pId = "it-" + UUID.randomUUID();
+        String sId = "it-" + UUID.randomUUID();
+        String fId = "it-" + UUID.randomUUID();
+        String legacyId = "it-" + UUID.randomUUID();
+        try {
+            timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, LocalDate.of(2026, 5, 8),
+                    LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul", null, "h",
+                    Instant.parse("2026-05-08T13:41:07Z")), Duration.ofMinutes(1));
+            timelineTaskStore.save(sId, TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"),
+                    Duration.ofMinutes(1));
+            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"),
+                    Duration.ofMinutes(1));
+            redisGateway.set("timeline:draft-task:" + legacyId,
+                    "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"callbackTokenHash\":\"h\"}",
+                    Duration.ofMinutes(1));
+
+            assertThat(timelineTaskStore.find(pId).orElseThrow().userId()).isEqualTo(7L);
+            assertThat(timelineTaskStore.find(sId).orElseThrow().userId()).isEqualTo(7L);
+            assertThat(timelineTaskStore.find(fId).orElseThrow().userId()).isEqualTo(7L);
+            assertThat(timelineTaskStore.find(legacyId).orElseThrow().userId()).isNull();
+        } finally {
+            redisGateway.delete("timeline:draft-task:" + pId);
+            redisGateway.delete("timeline:draft-task:" + sId);
+            redisGateway.delete("timeline:draft-task:" + fId);
+            redisGateway.delete("timeline:draft-task:" + legacyId);
         }
     }
 
