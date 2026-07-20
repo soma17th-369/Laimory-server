@@ -19,7 +19,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ### Timeline
 
-- `recordDate`는 정오 경계로 정하고 `(user_id, record_date)`는 유일하다.
+- `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(user_id, record_date)`는 유일하다.
+- draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증해 값 변형 없이 Redis task에
+  전달한다. `recordDate`·`recordAt`·window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
 - `SAVED` record에는 새 draft source를 append하지 않는다.
 - 기존 final `rawId`와 같은 source는 제외하고 같은 request 안 중복도 한 번만 취급한다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다.

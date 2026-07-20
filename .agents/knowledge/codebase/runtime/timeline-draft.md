@@ -22,7 +22,8 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 
 1. `POST /a/api/{version}/timeline/drafts`가 요청을 받는다.
 2. JWT user propagation이 없어 현재 `DEFAULT_USER_ID=0`을 쓴다.
-3. 정오 경계로 `recordDate`를 정한다.
+3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
+   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through).
 4. UUIDv7 `taskId`를 만들고 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)를
    holder `task:{taskId}`로 선점한다(SET NX). 실패 = 같은 날짜 작업 진행 중 → 409 `ERROR_1016`.
 5. SAVED record를 거부하고, 기존 final `rawId`와 request 안 중복을 제외한다.
@@ -101,7 +102,6 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 - 예상 밖 DB·인프라 exception은 callback token 소비 뒤 전파될 수 있고 task가 PROCESSING TTL까지
   남을 수 있다. 이를 자동 재시도·복구하는 경로는 없다.
 - DRAFT→SAVED, emotion 설정 API가 없다.
-- 요청 timezone은 검증·저장하지만 recordDate 경계 계산에는 아직 사용하지 않는다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.
 
 ## Update When
