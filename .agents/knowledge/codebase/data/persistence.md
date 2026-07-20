@@ -42,6 +42,13 @@ Terraform은 schema를 S3 bootstrap object로 올려 새 MySQL instance의 user 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 AI가 raw INSERT하는 suggestion staging은 DB default audit time을 사용한다.
 
+`timeline_events.event_type`과 `timeline_draft_event_suggestions.event_type`은 둘 다
+`VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행 backfill과 컬럼을 모르는
+구버전 Server/AI writer의 INSERT 생략 호환용이며, 모든 writer 전환 후에도 rollback 호환을 위해
+유지한다. final entity는 `@Enumerated(STRING)` `TimelineEventType`, staging entity는 외부 writer
+소유라 raw `String`으로 매핑한다(미지원 literal의 hydration 예외 방지 — 변환은 assembler 소유).
+live dev/prod 반영은 앱 배포 전에 동일 계약의 수동 `ALTER TABLE ... ADD COLUMN`이 필요하다.
+
 ### Redis
 
 application-owned access는 `RedisGateway`를 거친다.

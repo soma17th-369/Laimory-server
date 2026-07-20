@@ -21,6 +21,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -78,13 +79,14 @@ class TimelineRecordControllerTest {
                 objectMapper.valueToTree(new PhotoPayload("u.jpg", "content://x", 1.0, 2.0, null,
                         "https://cdn.example/u.jpg")));
         return new TimelineEventResponse(
-                11L, LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
+                11L, TimelineEventType.REST,
+                LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
                 "카페에서 휴식", "성수동", "기존 메모", List.of(item));
     }
 
     @Test
     void updateTimelineEvent_returns200WithUpdatedEvent() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(updatedEvent());
 
         mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -92,14 +94,16 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.timelineEventId").value(11))
+                .andExpect(jsonPath("$.body.eventType").value("REST"))
                 .andExpect(jsonPath("$.body.title").value("카페에서 휴식"))
                 .andExpect(jsonPath("$.body.subtitle").value("성수동"))
                 .andExpect(jsonPath("$.body.memo").value("기존 메모"))
                 .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21));
 
         // userId는 클라 입력이 아니라 컨트롤러가 결정(DEFAULT_USER_ID=0)하고, 4개 필드를 그대로 서비스에 넘긴다.
+        // 구버전 4키 요청: eventType 키 누락은 null(=현재 값 유지 의도)로 전달된다.
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
-                eq("카페에서 휴식"), eq("성수동"),
+                isNull(), eq("카페에서 휴식"), eq("성수동"),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
     }
 
@@ -121,7 +125,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_explicitNullClearsSubtitleAndEndAt() throws Exception {
         // 명시적 null은 누락(400)과 달리 "비움"이다 — subtitle/endAt에 null이 그대로 서비스로 전달된다.
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(updatedEvent());
 
         String body = """
@@ -137,13 +141,54 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
-                eq("카페에서 휴식"), isNull(),
+                isNull(), eq("카페에서 휴식"), isNull(),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), isNull());
     }
 
     @Test
+    void updateTimelineEvent_withEventType_passesEnumToService() throws Exception {
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(updatedEvent());
+
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.put("eventType", "MEAL");
+        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
+
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
+                eq(TimelineEventType.MEAL), eq("카페에서 휴식"), eq("성수동"),
+                eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
+    }
+
+    @Test
+    void updateTimelineEvent_explicitNullEventTypeRejected400() throws Exception {
+        // eventType은 optional 키지만 값은 non-null 계약 — 명시적 null은 역직렬화 400(서비스 미도달).
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.putNull("eventType");
+
+        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+
+        verifyNoInteractions(timelineEventEditService);
+    }
+
+    @Test
+    void updateTimelineEvent_unsupportedEventTypeLiteralRejected400() throws Exception {
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.put("eventType", "PICNIC");
+
+        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+
+        verifyNoInteractions(timelineEventEditService);
+    }
+
+    @Test
     void updateTimelineEvent_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("title is required"));
 
         mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -154,7 +199,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsNotFoundTo404() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
         mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -164,7 +209,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsSavedConflictTo409() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))

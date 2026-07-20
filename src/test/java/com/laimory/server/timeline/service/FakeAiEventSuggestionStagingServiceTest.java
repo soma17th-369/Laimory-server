@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
@@ -41,7 +42,7 @@ class FakeAiEventSuggestionStagingServiceTest {
     /** save 결과의 generated id로 FK를 배정하므로, mock 반환 엔티티에 id를 심어 흉내낸다(엔티티는 setter 없음). */
     private TimelineDraftEventSuggestion savedSuggestion() {
         TimelineDraftEventSuggestion saved = TimelineDraftEventSuggestion.of(
-                TASK_ID, 1L, LocalDateTime.of(2000, 1, 2, 9, 0), null, "saved", null);
+                TASK_ID, 1L, TimelineEventType.UNKNOWN.name(), LocalDateTime.of(2000, 1, 2, 9, 0), null, "saved", null);
         ReflectionTestUtils.setField(saved, "timelineDraftEventSuggestionId", SUGGESTION_ID);
         return saved;
     }
@@ -72,6 +73,8 @@ class FakeAiEventSuggestionStagingServiceTest {
         verify(timelineDraftEventSuggestionService).save(captor.capture());
         TimelineDraftEventSuggestion suggestion = captor.getValue();
         assertThat(suggestion.getTaskId()).isEqualTo(TASK_ID);
+        // 실 AI writer 계약 모사: eventType을 명시적으로 기록한다(fake는 분류하지 않으므로 UNKNOWN 고정).
+        assertThat(suggestion.getEventType()).isEqualTo(TimelineEventType.UNKNOWN.name());
         assertThat(suggestion.getStartAt()).isEqualTo(LocalDateTime.of(2000, 1, 2, 9, 0));   // min startAt
         assertThat(suggestion.getEndAt()).isEqualTo(LocalDateTime.of(2000, 1, 2, 13, 0));    // max endAt
         assertThat(suggestion.getTitle()).isEqualTo(FakeAiEventSuggestionStagingService.FAKE_TITLE);

@@ -29,7 +29,7 @@ public class TimelineRecordController implements TimelineRecordApi {
             String applicationVersion, Long timelineEventId, UpdateTimelineEventRequest request) {
         return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateEvent(
                 applicationVersion, TimelineDefaults.DEFAULT_USER_ID, timelineEventId,
-                request.title(), request.subtitle(), request.startAt(), request.endAt())));
+                request.eventType(), request.title(), request.subtitle(), request.startAt(), request.endAt())));
     }
 
     @Override

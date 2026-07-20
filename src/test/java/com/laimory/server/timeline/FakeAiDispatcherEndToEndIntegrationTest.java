@@ -188,6 +188,8 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         JsonNode events = body.path("result").path("events");
         assertThat(events.size()).isEqualTo(1);
         assertThat(events.get(0).path("title").asText()).startsWith("[FAKE]"); // canned title 식별 표식
+        // fake writer가 staging에 명시한 UNKNOWN이 finalize를 거쳐 폴링 응답까지 유지된다(#166).
+        assertThat(events.get(0).path("eventType").asText()).isEqualTo("UNKNOWN");
         // rawId는 요청 → draft → finalize → 폴링 응답까지 그대로 echo된다.
         assertThat(events.get(0).path("items").get(0).path("rawId").asText())
                 .isEqualTo("0197b1c2-0000-7000-8000-000000000042");

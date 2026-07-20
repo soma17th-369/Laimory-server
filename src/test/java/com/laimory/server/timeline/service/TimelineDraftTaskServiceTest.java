@@ -21,6 +21,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
@@ -633,7 +634,7 @@ class TimelineDraftTaskServiceTest {
         DailyRecord draft = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
-        TimelineEvent event = TimelineEvent.of(7L, RECORD_AT, null, "t", null);
+        TimelineEvent event = TimelineEvent.of(7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
         when(timelineItemService.findSavedRawIds(anyList(), anyList())).thenReturn(Set.of("raw-photo-1"));
@@ -658,7 +659,7 @@ class TimelineDraftTaskServiceTest {
         DailyRecord draft = DailyRecord.createDraft(0L, DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
         when(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).thenReturn(Optional.of(draft));
-        TimelineEvent event = TimelineEvent.of(7L, RECORD_AT, null, "t", null);
+        TimelineEvent event = TimelineEvent.of(7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
         when(timelineItemService.findSavedRawIds(anyList(), anyList())).thenReturn(Set.of("raw-photo-1"));

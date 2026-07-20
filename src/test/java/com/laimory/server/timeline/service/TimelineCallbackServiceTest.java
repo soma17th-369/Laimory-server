@@ -16,7 +16,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
+import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -98,7 +101,12 @@ class TimelineCallbackServiceTest {
 
     /** event 제안 행: PK=EVENT_ID. */
     private List<TimelineDraftEventSuggestion> eventRows() {
-        TimelineDraftEventSuggestion event = TimelineDraftEventSuggestion.of("t", 0L,
+        return eventRows(TimelineEventType.UNKNOWN.name());
+    }
+
+    /** event 제안 행: PK=EVENT_ID, staging raw eventType 지정. */
+    private List<TimelineDraftEventSuggestion> eventRows(String rawEventType) {
+        TimelineDraftEventSuggestion event = TimelineDraftEventSuggestion.of("t", 0L, rawEventType,
                 LocalDateTime.of(2026, 6, 17, 9, 0), null, "제목", "부제");
         ReflectionTestUtils.setField(event, "timelineDraftEventSuggestionId", EVENT_ID);
         return List.of(event);
@@ -322,6 +330,38 @@ class TimelineCallbackServiceTest {
         row.assignEventSuggestion(999L);
         when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(List.of(row));
         when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows()); // event id=100
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markFailed(eq("t"), eq(DATE), eq(ErrorCode.ERROR_1011), eq(TOKEN_HASH));
+        verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
+        verify(timelineTaskService, never()).markSuccess(anyString(), any(), any(), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleCallback_success_stagingEventTypePassedToFinalize() {
+        // staging raw literal이 assembler 변환을 거쳐 finalize에 enum으로 전달된다(재추론·유실 없음).
+        givenProcessingTaskWithFreshToken();
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows("MEAL"));
+        when(dailyTimelineService.appendDailyTimeline(any(), any(), any(), any(), any(), any())).thenReturn(77L);
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        ArgumentCaptor<List<TimelineEventSuggestionDto>> eventsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), eventsCaptor.capture());
+        assertThat(eventsCaptor.getValue()).hasSize(1);
+        assertThat(eventsCaptor.getValue().get(0).eventType()).isEqualTo(TimelineEventType.MEAL);
+        verify(timelineTaskService).markSuccess("t", DATE, 77L, TOKEN_HASH);
+    }
+
+    @Test
+    void handleCallback_success_invalidStagingEventType_marksFailedWithoutFinalize() {
+        // 미지원 staging literal은 assembler 변환 IAE → ERROR_1011 FAILED, SUCCESS/finalize 미실행(D1-A 경계).
+        givenProcessingTaskWithFreshToken();
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows("PICNIC"));
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
 

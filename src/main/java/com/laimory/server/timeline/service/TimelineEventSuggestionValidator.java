@@ -41,6 +41,11 @@ public class TimelineEventSuggestionValidator {
             if (event.title() == null || event.title().isBlank()) {
                 throw new IllegalArgumentException("event title is required");
             }
+            // 규칙: eventType 필수(timeline_events.event_type NOT NULL). 허용 literal 목록은 enum이 소유 —
+            // assembler 변환을 거친 정상 경로는 항상 non-null이고, 여기는 DTO를 직접 만드는 경로의 안전망이다.
+            if (event.eventType() == null) {
+                throw new IllegalArgumentException("event eventType is required: " + event.title());
+            }
             // 규칙: event startAt 필수(timeline_events.start_at NOT NULL).
             if (event.startAt() == null) {
                 throw new IllegalArgumentException("event startAt is required: " + event.title());

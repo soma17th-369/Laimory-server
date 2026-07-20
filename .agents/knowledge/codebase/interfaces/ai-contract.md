@@ -31,6 +31,17 @@ AI는 같은 task에 대해 하나의 DB transaction에서:
 
 NULL association은 omitted source다. non-null 값은 같은 task의 suggestion을 가리켜야 한다.
 
+`timeline_draft_event_suggestions.event_type`이 Event 분류의 AI 출력 권위 필드다.
+
+- AI는 `TimelineEventType`의 uppercase literal(`WAKE_UP`, `SLEEP`, `MOVEMENT`, `CALENDAR_EVENT`,
+  `MEAL`, `PHOTO_MOMENT`, `MEETING`, `CLASS`, `WORK`, `EXERCISE`, `SOCIAL`, `REST`, `UNKNOWN`)
+  중 하나를 INSERT한다. 판별 불가면 `UNKNOWN`을 명시한다.
+- 컬럼을 생략하면 DB default `'UNKNOWN'`이 채워진다(구버전 writer 호환). null/blank/미지원
+  literal은 서버 assembler 변환 실패로 그 task가 FAILED가 된다.
+- 새 literal 활성화 순서는 "Server enum 배포 → AI writer 활성화"다 — AI가 먼저 새 값을 쓰면
+  해당 task는 validation FAILED다.
+- 서버는 title·source item 조합으로 타입을 재추론하지 않고 staging 값을 그대로 final에 전달한다.
+
 ### 2. Callback notification
 
 staging commit 뒤 다음 값으로 알린다.

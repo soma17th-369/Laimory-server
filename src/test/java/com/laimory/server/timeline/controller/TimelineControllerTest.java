@@ -16,6 +16,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
@@ -258,7 +259,7 @@ class TimelineControllerTest {
                 objectMapper.valueToTree(new PhotoPayload("u", "content://x", 1.0, 2.0, null,
                         "https://cdn.example/u")));
         TimelineEventResponse event = new TimelineEventResponse(
-                1L, LocalDateTime.parse("2026-06-17T09:00:00"), null,
+                1L, TimelineEventType.UNKNOWN, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
                 42L, LocalDate.parse("2026-06-17"), null, List.of(event));
@@ -272,6 +273,8 @@ class TimelineControllerTest {
                 // dailyRecordId는 삭제 API 타깃팅용 결과 식별자 — 응답 직렬화 계약에 포함된다.
                 .andExpect(jsonPath("$.body.result.dailyRecordId").value(42))
                 .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
+                // eventType은 uppercase literal로 직렬화된다(#166 — UNKNOWN은 분류 미확정 fallback).
+                .andExpect(jsonPath("$.body.result.events[0].eventType").value("UNKNOWN"))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].timelineItemId").value(10))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].itemType").value("PHOTO"))
                 .andExpect(jsonPath("$.body.result.events[0].items[0].rawId").value("raw-10"))

@@ -36,6 +36,14 @@ public class TimelineDraftEventSuggestion extends BaseEntity {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    /**
+     * AI가 기록한 Event 분류 literal. 외부 writer 소유 값이라 enum 매핑 없이 raw String으로 읽는다 —
+     * 미지원 literal이어도 hydration은 성공하고, {@code TimelineEventSuggestionAssembler}의
+     * {@code TimelineEventType.valueOf(...)} 변환 실패(IAE)가 콜백의 ERROR_1011 FAILED 경계로 들어간다.
+     */
+    @Column(name = "event_type", nullable = false, length = 32)
+    private String eventType;
+
     @Column(name = "start_at", nullable = false)
     private LocalDateTime startAt;
 
@@ -50,18 +58,20 @@ public class TimelineDraftEventSuggestion extends BaseEntity {
     protected TimelineDraftEventSuggestion() {
     }
 
-    private TimelineDraftEventSuggestion(String taskId, Long userId, LocalDateTime startAt, LocalDateTime endAt,
-                                         String title, String subtitle) {
+    private TimelineDraftEventSuggestion(String taskId, Long userId, String eventType, LocalDateTime startAt,
+                                         LocalDateTime endAt, String title, String subtitle) {
         this.taskId = taskId;
         this.userId = userId;
+        this.eventType = eventType;
         this.startAt = startAt;
         this.endAt = endAt;
         this.title = title;
         this.subtitle = subtitle;
     }
 
-    public static TimelineDraftEventSuggestion of(String taskId, Long userId, LocalDateTime startAt,
-                                                  LocalDateTime endAt, String title, String subtitle) {
-        return new TimelineDraftEventSuggestion(taskId, userId, startAt, endAt, title, subtitle);
+    public static TimelineDraftEventSuggestion of(String taskId, Long userId, String eventType,
+                                                  LocalDateTime startAt, LocalDateTime endAt,
+                                                  String title, String subtitle) {
+        return new TimelineDraftEventSuggestion(taskId, userId, eventType, startAt, endAt, title, subtitle);
     }
 }

@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.TimelineDraftEventSuggestion;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
@@ -42,8 +43,10 @@ public class FakeAiEventSuggestionStagingService {
             return false;
         }
         LocalDateTime startAt = resolveStartAt(sources);
+        // eventType은 실 AI writer 계약처럼 명시적으로 기록한다 — fake는 분류하지 않으므로 UNKNOWN 고정.
         TimelineDraftEventSuggestion suggestion = timelineDraftEventSuggestionService.save(
-                TimelineDraftEventSuggestion.of(taskId, sources.get(0).getUserId(), startAt,
+                TimelineDraftEventSuggestion.of(taskId, sources.get(0).getUserId(),
+                        TimelineEventType.UNKNOWN.name(), startAt,
                         resolveEndAt(sources, startAt), FAKE_TITLE, null));
         sources.forEach(source ->
                 source.assignEventSuggestion(suggestion.getTimelineDraftEventSuggestionId()));

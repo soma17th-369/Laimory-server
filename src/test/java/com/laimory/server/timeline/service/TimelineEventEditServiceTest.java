@@ -14,6 +14,7 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -61,8 +62,11 @@ class TimelineEventEditServiceTest {
     private static final LocalDateTime NEW_START = LocalDateTime.of(2026, 7, 8, 14, 0);
     private static final LocalDateTime NEW_END = LocalDateTime.of(2026, 7, 8, 15, 30);
 
+    private static final TimelineEventType ORIGINAL_TYPE = TimelineEventType.REST;
+
     private TimelineEvent originalEvent() {
-        TimelineEvent event = TimelineEvent.of(RECORD_ID, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제목");
+        TimelineEvent event = TimelineEvent.of(RECORD_ID, ORIGINAL_TYPE, ORIGINAL_START, ORIGINAL_END,
+                "원래 제목", "원래 부제목");
         ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
         return event;
     }
@@ -99,9 +103,10 @@ class TimelineEventEditServiceTest {
         when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of(photoItem()));
 
         TimelineEventResponse response =
-                service.updateEvent(VERSION, USER_ID, EVENT_ID, "새 제목", "새 부제목", NEW_START, NEW_END);
+                service.updateEvent(VERSION, USER_ID, EVENT_ID, TimelineEventType.MEAL, "새 제목", "새 부제목", NEW_START, NEW_END);
 
-        // 4개 필드 전체 교체(절대값 대입) + 시간은 입력 그대로(+10분 보정 없음).
+        // 4개 필드 전체 교체(절대값 대입) + 시간은 입력 그대로(+10분 보정 없음). eventType은 명시 시 교체.
+        assertThat(event.getEventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(event.getTitle()).isEqualTo("새 제목");
         assertThat(event.getSubtitle()).isEqualTo("새 부제목");
         assertThat(event.getStartAt()).isEqualTo(NEW_START);
@@ -110,6 +115,7 @@ class TimelineEventEditServiceTest {
         assertThat(event.getMemo()).isEqualTo("지켜야 할 메모");
 
         assertThat(response.timelineEventId()).isEqualTo(EVENT_ID);
+        assertThat(response.eventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(response.title()).isEqualTo("새 제목");
         assertThat(response.subtitle()).isEqualTo("새 부제목");
         assertThat(response.startAt()).isEqualTo(NEW_START);
@@ -129,7 +135,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, NEW_START);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, NEW_START);
 
         // endAt == startAt은 허용(0분 구간)이고 nudge·clamp 같은 보정 없이 그대로 저장된다.
         assertThat(event.getStartAt()).isEqualTo(NEW_START);
@@ -141,7 +147,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, null);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, null);
 
         // subtitle/endAt의 null은 "비움"이다(4필드 절대값 대입 계약).
         assertThat(event.getSubtitle()).isNull();
@@ -153,7 +159,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, "  a  ", "  b  ", NEW_START, null);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "  a  ", "  b  ", NEW_START, null);
 
         // 앞뒤 공백 제거 후 저장 — trim 후 1자 title도 유효 하한.
         assertThat(event.getTitle()).isEqualTo("a");
@@ -168,7 +174,7 @@ class TimelineEventEditServiceTest {
         String subtitle255 = "b".repeat(255);
 
         // 길이는 trim 후 기준으로 센다 — 앞뒤 공백을 붙여도 trim 후 255자면 통과.
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, "  " + title255 + "  ", subtitle255, NEW_START, null);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "  " + title255 + "  ", subtitle255, NEW_START, null);
 
         assertThat(event.getTitle()).isEqualTo(title255);
         assertThat(event.getSubtitle()).isEqualTo(subtitle255);
@@ -182,7 +188,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_rejectsMissingOrBlankTitle(String title) {
         TimelineEvent event = stubOwnedDraftEvent();
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, title, "부제목", NEW_START, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, title, "부제목", NEW_START, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(event.getTitle()).isEqualTo("원래 제목");
     }
@@ -192,7 +198,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
 
         assertThatThrownBy(() -> service.updateEvent(
-                VERSION, USER_ID, EVENT_ID, "a".repeat(256), null, NEW_START, null))
+                VERSION, USER_ID, EVENT_ID, null, "a".repeat(256), null, NEW_START, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(event.getTitle()).isEqualTo("원래 제목");
     }
@@ -202,7 +208,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", "   ", NEW_START, null);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", "   ", NEW_START, null);
 
         assertThat(event.getSubtitle()).isNull();
     }
@@ -212,7 +218,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
 
         assertThatThrownBy(() -> service.updateEvent(
-                VERSION, USER_ID, EVENT_ID, "제목", "b".repeat(256), NEW_START, null))
+                VERSION, USER_ID, EVENT_ID, null, "제목", "b".repeat(256), NEW_START, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(event.getSubtitle()).isEqualTo("원래 부제목");
     }
@@ -221,7 +227,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_rejectsMissingStartAt() {
         TimelineEvent event = stubOwnedDraftEvent();
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, null, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
     }
@@ -231,7 +237,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
 
         assertThatThrownBy(() -> service.updateEvent(
-                VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, NEW_START.minusMinutes(1)))
+                VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, NEW_START.minusMinutes(1)))
                 .isInstanceOf(IllegalArgumentException.class);
         // 검증 실패면 아무 필드도 안 바뀐다(대입 전 검증).
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
@@ -245,7 +251,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_hidesUnknownEventAs404() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, null))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
@@ -258,7 +264,7 @@ class TimelineEventEditServiceTest {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(originalEvent()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, null))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
     }
@@ -269,7 +275,7 @@ class TimelineEventEditServiceTest {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(originalEvent()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, "제목", null, NEW_START, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, null))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
@@ -284,7 +290,7 @@ class TimelineEventEditServiceTest {
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, "새 제목", null, NEW_START, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "새 제목", null, NEW_START, null))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
         assertThat(event.getTitle()).isEqualTo("원래 제목");
@@ -299,9 +305,35 @@ class TimelineEventEditServiceTest {
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, null, null, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null, null, null, null, null))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+    }
+
+    // --- updateEvent: eventType(optional) ---
+
+    @Test
+    void updateEvent_keepsCurrentEventTypeWhenOmitted() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+
+        // eventType null = 요청에 키 누락(명시적 null은 역직렬화에서 400) — 현재 값을 유지한다.
+        TimelineEventResponse response =
+                service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "새 제목", null, NEW_START, null);
+
+        assertThat(event.getEventType()).isEqualTo(ORIGINAL_TYPE);
+        assertThat(response.eventType()).isEqualTo(ORIGINAL_TYPE);
+    }
+
+    @Test
+    void updateEvent_validationFailureKeepsEventType() {
+        TimelineEvent event = stubOwnedDraftEvent();
+
+        // 대입 전 검증 실패 시 eventType도 함께 보존된다.
+        assertThatThrownBy(() -> service.updateEvent(
+                VERSION, USER_ID, EVENT_ID, TimelineEventType.MEAL, null, null, NEW_START, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(event.getEventType()).isEqualTo(ORIGINAL_TYPE);
     }
 
     // --- updateMemo ---
@@ -313,8 +345,9 @@ class TimelineEventEditServiceTest {
 
         TimelineEventResponse response = service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
 
-        // 원문 보존 — trim 없이 그대로 저장한다. 다른 필드는 불변.
+        // 원문 보존 — trim 없이 그대로 저장한다. 다른 필드(eventType 포함)는 불변.
         assertThat(event.getMemo()).isEqualTo(" 앞뒤 공백 메모 ");
+        assertThat(event.getEventType()).isEqualTo(ORIGINAL_TYPE);
         assertThat(event.getTitle()).isEqualTo("원래 제목");
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
         assertThat(response.memo()).isEqualTo(" 앞뒤 공백 메모 ");

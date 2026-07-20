@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
@@ -91,13 +92,17 @@ class DailyTimelineServiceTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(10L)));
+                new TimelineEventSuggestionDto(TimelineEventType.MEAL, "아침", "산책", t, t.plusHours(1), List.of(10L)));
 
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
 
         assertThat(result).isEqualTo(100L);
         verify(timelineEventSuggestionValidator).validate(draftRows, events);
-        verify(timelineEventService, times(1)).save(any());
+
+        // suggestion의 eventType이 저장되는 TimelineEvent로 그대로 복사된다(재추론 없음).
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService, times(1)).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getEventType()).isEqualTo(TimelineEventType.MEAL);
 
         // 아이템은 draft 행에서 그대로 복사된다(itemType/rawId/start/payload).
         ArgumentCaptor<TimelineItem> itemCaptor = ArgumentCaptor.forClass(TimelineItem.class);
@@ -127,8 +132,8 @@ class DailyTimelineServiceTest {
                 photoRow(12, t.plusHours(2)));
         // 이벤트 A: item PK 10,12 / 이벤트 B: item PK 11
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("A", "subA", t, t.plusHours(2), List.of(10L, 12L)),
-                new TimelineEventSuggestionDto("B", "subB", t.plusHours(1), null, List.of(11L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "A", "subA", t, t.plusHours(2), List.of(10L, 12L)),
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "B", "subB", t.plusHours(1), null, List.of(11L)));
 
         Long result = dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
 
@@ -158,7 +163,7 @@ class DailyTimelineServiceTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(10L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "아침", "산책", t, t.plusHours(1), List.of(10L)));
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events))
                 .isInstanceOf(IllegalStateException.class);
@@ -177,7 +182,7 @@ class DailyTimelineServiceTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("아침", "산책", t, t.plusHours(1), List.of(99L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "아침", "산책", t, t.plusHours(1), List.of(99L)));
 
         assertThatThrownBy(() -> dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -195,13 +200,13 @@ class DailyTimelineServiceTest {
         stubEventSaveWithSequentialIds();
         // 기존(동결) event가 18:30 시작 → 새 event도 18:30이면 +10분 밀린다.
         LocalDateTime t1830 = LocalDateTime.of(2026, 6, 17, 18, 30);
-        TimelineEvent frozen = TimelineEvent.of(100L, t1830, null, "기존", null);
+        TimelineEvent frozen = TimelineEvent.of(100L, TimelineEventType.UNKNOWN, t1830, null, "기존", null);
         ReflectionTestUtils.setField(frozen, "timelineEventId", 5L);
         when(timelineEventService.findByDailyRecordId(100L)).thenReturn(List.of(frozen));
 
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t1830));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("새", null, t1830, t1830.plusMinutes(5), List.of(10L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "새", null, t1830, t1830.plusMinutes(5), List.of(10L)));
 
         dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
 
@@ -219,14 +224,14 @@ class DailyTimelineServiceTest {
         ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
         when(dailyRecordService.findOrCreateDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE)).thenReturn(existing);
         stubEventSaveWithSequentialIds();
-        TimelineEvent frozen = TimelineEvent.of(100L, LocalDateTime.of(2026, 6, 17, 18, 0), null, "기존", null);
+        TimelineEvent frozen = TimelineEvent.of(100L, TimelineEventType.UNKNOWN, LocalDateTime.of(2026, 6, 17, 18, 0), null, "기존", null);
         ReflectionTestUtils.setField(frozen, "timelineEventId", 5L);
         when(timelineEventService.findByDailyRecordId(100L)).thenReturn(List.of(frozen));
 
         LocalDateTime t9 = LocalDateTime.of(2026, 6, 17, 9, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t9));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("새", null, t9, t9.plusHours(1), List.of(10L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "새", null, t9, t9.plusHours(1), List.of(10L)));
 
         dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
 
@@ -246,8 +251,8 @@ class DailyTimelineServiceTest {
         LocalDateTime t12 = LocalDateTime.of(2026, 6, 17, 12, 0);
         List<TimelineDraftSourceItem> draftRows = List.of(photoRow(10, t12), photoRow(11, t12));
         List<TimelineEventSuggestionDto> events = List.of(
-                new TimelineEventSuggestionDto("A", null, t12, null, List.of(10L)),
-                new TimelineEventSuggestionDto("B", null, t12, null, List.of(11L)));
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "A", null, t12, null, List.of(10L)),
+                new TimelineEventSuggestionDto(TimelineEventType.UNKNOWN, "B", null, t12, null, List.of(11L)));
 
         dailyTimelineService.appendDailyTimeline(USER_ID, RECORD_DATE, RECORD_AT, ZONE, draftRows, events);
 
@@ -267,7 +272,7 @@ class DailyTimelineServiceTest {
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
-        TimelineEvent event = TimelineEvent.of(300L, t, t.plusHours(2), "제목", "부제목");
+        TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.EXERCISE, t, t.plusHours(2), "제목", "부제목");
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         ReflectionTestUtils.setField(event, "memo", "내 메모");
         when(timelineEventService.findByDailyRecordId(300L)).thenReturn(List.of(event));
@@ -290,6 +295,7 @@ class DailyTimelineServiceTest {
 
         TimelineEventResponse eventResponse = result.events().get(0);
         assertThat(eventResponse.timelineEventId()).isEqualTo(11L);
+        assertThat(eventResponse.eventType()).isEqualTo(TimelineEventType.EXERCISE);
         assertThat(eventResponse.startAt()).isEqualTo(t);
         assertThat(eventResponse.endAt()).isEqualTo(t.plusHours(2));
         assertThat(eventResponse.title()).isEqualTo("제목");

@@ -87,7 +87,8 @@ public class DailyTimelineService {
             LocalDateTime startAt = resolveNonCollidingStartAt(event.startAt(), occupiedStartAts);
             LocalDateTime endAt = clampEndAt(event.endAt(), startAt);
             TimelineEvent savedEvent = timelineEventService.save(
-                    TimelineEvent.of(dailyRecordId, startAt, endAt, event.title(), event.subtitle()));
+                    TimelineEvent.of(dailyRecordId, event.eventType(), startAt, endAt,
+                            event.title(), event.subtitle()));
             for (Long itemId : event.itemIds()) {
                 TimelineDraftSourceItem src = byItemId.get(itemId);
                 timelineItemService.save(
