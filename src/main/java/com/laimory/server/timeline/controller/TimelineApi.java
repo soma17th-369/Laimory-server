@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,8 +27,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * 타임라인 draft 작성 작업 API의 문서·계약(구현은 {@link TimelineController}). 콜백은 서버간 통신이라 {@link TimelineCallbackController}에 분리.
  *
  * <p>모든 엔드포인트가 userId에 종속된 작업이라 인증 prefix({@code /a/api})에 둔다(사진 presign은 S3 객체를
- * 만들어내므로 공개 노출 시 남발/비용 위험 — 인증 경계로 보호). 사용자 인증 도입 전까지는 {@code TimelineDefaults}의
- * 고정 userId를 쓰지만 경로는 인증 prefix로 고정한다.
+ * 만들어내므로 공개 노출 시 남발/비용 위험 — 인증 경계로 보호). userId는 인증된 JWT principal에서 받으며
+ * 클라이언트 입력(query/body/path)이 아니다 — OpenAPI parameter로 노출하지 않는다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
@@ -141,6 +142,8 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
                             + "timelineWindow/sourceItems 등, window의 `startTime >= endTime` 포함)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "
@@ -153,6 +156,7 @@ public interface TimelineApi {
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),
                             examples = @ExampleObject(name = "6개 itemType 전체 예시", value = CREATE_DRAFT_EXAMPLE)))
@@ -166,11 +170,14 @@ public interface TimelineApi {
                     description = "발급 성공", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_1004`(최대 장수 초과) · `ERROR_1005`(장당 크기 초과) · "
-                            + "`ERROR_1007`(미지원 포맷 — JPG/PNG/WebP만) · `ERROR_0400`(필수값 누락)")
+                            + "`ERROR_1007`(미지원 포맷 — JPG/PNG/WebP만) · `ERROR_0400`(필수값 누락)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @PostMapping("/photo-uploads")
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @RequestBody PhotoUploadCreateRequest request);
 
     @Operation(summary = "draft 작업 상태 폴링",
@@ -184,13 +191,16 @@ public interface TimelineApi {
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "폴링 성공(작업 상태는 body.status)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_1001`(작업 없음 — 만료 포함) · "
+                    description = "`ERROR_1001`(작업 없음 — 만료·타인 작업 포함, 존재 여부는 구분해 주지 않는다) · "
                             + "`ERROR_0404`(SUCCESS 작업의 결과 기록이 삭제됐거나 결과 ID가 없는 구버전 작업 — "
                             + "클라이언트는 1001=작업 소멸, 0404=결과 소멸로 구분)")
     })
     @GetMapping("/{taskId}")
     ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "draft 작업 ID (생성 응답의 taskId)") @PathVariable String taskId);
 }

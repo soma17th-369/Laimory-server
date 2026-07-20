@@ -27,7 +27,7 @@ public class OpenApiConfig {
                 // springdoc이 scheme을 http로 유추해 https 페이지가 mixed-content로 차단되던 문제를 원천 차단.)
                 .servers(List.of(new Server().url("/")))
                 // 자체 access token(Bearer) 입력용 스킴 — Swagger UI Authorize 버튼에서 토큰을 넣어 try-out.
-                // (/a/api 강제 전환(#108) 전까지는 무토큰도 동작하지만, 로그인 흐름 검증용으로 미리 노출.)
+                // (/a/api는 유효한 토큰 없이는 401 ERROR_2001로 거절된다.)
                 .components(new Components().addSecuritySchemes("bearerAuth", new SecurityScheme()
                         .type(SecurityScheme.Type.HTTP)
                         .scheme("bearer")
@@ -49,7 +49,8 @@ public class OpenApiConfig {
 
                         ## 경로 prefix
                         - `/api/{applicationVersion}` — 공개(인증 불필요)
-                        - `/a/api/{applicationVersion}` — 사용자 인증 필요(인증 도입 전까지는 고정 사용자로 동작)
+                        - `/a/api/{applicationVersion}` — 사용자 인증 필요(`Authorization: Bearer <access-token>`, \
+                        무토큰/무효 토큰은 401 `ERROR_2001`)
                         - `/s/api/{applicationVersion}` — 서버간 통신(AI 콜백 등, 엔드포인트별 자체 인증)
                         """));
     }

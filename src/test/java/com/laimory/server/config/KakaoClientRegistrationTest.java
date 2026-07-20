@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.auth.controller.AuthHandoffPageController;
+import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import java.net.URLDecoder;
@@ -27,7 +28,7 @@ import org.springframework.web.util.UriComponentsBuilder;
  * 오토컨피그가 application.properties를 바인딩하고, 그 결과인 authorization redirect의 scope를 고정한다.
  */
 @WebMvcTest(controllers = AuthHandoffPageController.class)
-@Import({SecurityConfig.class, OAuth2LoginSecurityConfig.class})
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
 @TestPropertySource(properties = {
         // application.properties의 env placeholder만 채운다 — scope 등 나머지는 실 property가 그대로 바인딩된다.
         "GOOGLE_CLIENT_ID=test-google-id",

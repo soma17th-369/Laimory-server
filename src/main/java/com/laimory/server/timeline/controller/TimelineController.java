@@ -26,23 +26,24 @@ public class TimelineController implements TimelineApi {
 
     @Override
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
-            String applicationVersion, CreateDraftTaskRequest request) {
+            String applicationVersion, Long userId, CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
-                applicationVersion, request.recordDate(), request.recordAt(), request.recordTimeZone(),
+                applicationVersion, userId, request.recordDate(), request.recordAt(), request.recordTimeZone(),
                 request.timelineWindow(), request.sourceItems());
         return ResponseEntity.accepted().body(ApiResponse.success(new CreateDraftTaskResponse(taskId)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
-            String applicationVersion, PhotoUploadCreateRequest request) {
+            String applicationVersion, Long userId, PhotoUploadCreateRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
-                photoUploadService.createUploads(applicationVersion, request.photos())));
+                photoUploadService.createUploads(applicationVersion, userId, request.photos())));
     }
 
     @Override
     public ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
-            String applicationVersion, String taskId) {
-        return ResponseEntity.ok(ApiResponse.success(timelineDraftTaskPollingService.poll(applicationVersion, taskId)));
+            String applicationVersion, Long userId, String taskId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                timelineDraftTaskPollingService.poll(applicationVersion, userId, taskId)));
     }
 }

@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.controller;
 
+import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,6 +21,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
@@ -41,13 +43,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 기록 편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(PATCH/PUT/DELETE)·envelope·상태 매핑
- * (400/404/409/502)과 "userId는 컨트롤러가 결정해 서비스에 전달"(현재 DEFAULT_USER_ID=0) 계약을
- * 검증한다. 인프라 0.
+ * (400/404/409/502)과 "userId는 인증 principal에서 서비스로 전달" 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineRecordController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineRecordControllerTest {
 
+    private static final long USER_ID = 7L;
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
     private static final String DAILY_RECORD_PATH = "/a/api/v1/timeline/daily-records/77";
@@ -89,7 +91,7 @@ class TimelineRecordControllerTest {
         when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(updatedEvent());
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
@@ -100,9 +102,9 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.memo").value("기존 메모"))
                 .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21));
 
-        // userId는 클라 입력이 아니라 컨트롤러가 결정(DEFAULT_USER_ID=0)하고, 4개 필드를 그대로 서비스에 넘긴다.
+        // userId는 클라 입력이 아니라 인증 principal이고, 4개 필드를 그대로 서비스에 넘긴다.
         // 구버전 4키 요청: eventType 키 누락은 null(=현재 값 유지 의도)로 전달된다.
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
                 isNull(), eq("카페에서 휴식"), eq("성수동"),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
     }
@@ -115,7 +117,7 @@ class TimelineRecordControllerTest {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.remove(missingKey);
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
 
@@ -136,11 +138,11 @@ class TimelineRecordControllerTest {
                   "endAt": null
                 }
                 """;
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
                 isNull(), eq("카페에서 휴식"), isNull(),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), isNull());
     }
@@ -152,11 +154,11 @@ class TimelineRecordControllerTest {
 
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.put("eventType", "MEAL");
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(0L), eq(11L),
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
                 eq(TimelineEventType.MEAL), eq("카페에서 휴식"), eq("성수동"),
                 eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
     }
@@ -167,7 +169,7 @@ class TimelineRecordControllerTest {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.putNull("eventType");
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
 
@@ -179,7 +181,7 @@ class TimelineRecordControllerTest {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.put("eventType", "PICNIC");
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
 
@@ -191,7 +193,7 @@ class TimelineRecordControllerTest {
         when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("title is required"));
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -202,7 +204,7 @@ class TimelineRecordControllerTest {
         when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
     }
@@ -212,7 +214,7 @@ class TimelineRecordControllerTest {
         when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
-        mockMvc.perform(patch(EVENT_PATH).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
     }
@@ -224,7 +226,7 @@ class TimelineRecordControllerTest {
         String body = """
                 {"memo": " 원문 보존 메모 "}
                 """;
-        mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
@@ -232,7 +234,7 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21));
 
         // memo는 컨트롤러에서 trim 없이 그대로 서비스에 전달된다(제거/보존 판정은 서비스 책임).
-        verify(timelineEventEditService).updateMemo(eq("v1"), eq(0L), eq(11L), eq(" 원문 보존 메모 "));
+        verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), eq(" 원문 보존 메모 "));
     }
 
     @Test
@@ -240,11 +242,11 @@ class TimelineRecordControllerTest {
         // body가 {}(필드 부재)면 memo=null로 서비스에 전달돼 "메모 제거"로 처리된다(계약: absent=null).
         when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any())).thenReturn(updatedEvent());
 
-        mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
-        verify(timelineEventEditService).updateMemo(eq("v1"), eq(0L), eq(11L), isNull());
+        verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), isNull());
     }
 
     @Test
@@ -255,7 +257,7 @@ class TimelineRecordControllerTest {
         String body = """
                 {"memo": "x"}
                 """;
-        mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -269,7 +271,7 @@ class TimelineRecordControllerTest {
         String body = """
                 {"memo": "m"}
                 """;
-        mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
     }
@@ -282,7 +284,7 @@ class TimelineRecordControllerTest {
         String body = """
                 {"memo": "m"}
                 """;
-        mockMvc.perform(put(MEMO_PATH).contentType(MediaType.APPLICATION_JSON).content(body))
+        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
     }
@@ -291,14 +293,14 @@ class TimelineRecordControllerTest {
 
     @Test
     void deleteTimelineEvent_returns200WithEmptyBody() throws Exception {
-        mockMvc.perform(delete(EVENT_PATH))
+        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
 
-        // userId는 클라 입력이 아니라 컨트롤러가 결정(DEFAULT_USER_ID=0)한다.
-        verify(timelineDeletionService).deleteEvent(eq("v1"), eq(0L), eq(11L));
+        // userId는 클라 입력이 아니라 인증 principal이다.
+        verify(timelineDeletionService).deleteEvent(eq("v1"), eq(USER_ID), eq(11L));
     }
 
     @Test
@@ -306,7 +308,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
 
-        mockMvc.perform(delete(EVENT_PATH))
+        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
     }
@@ -316,7 +318,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
 
-        mockMvc.perform(delete(EVENT_PATH))
+        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
     }
@@ -326,7 +328,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
 
-        mockMvc.perform(delete(EVENT_PATH))
+        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
     }
@@ -336,7 +338,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
 
-        mockMvc.perform(delete(EVENT_PATH))
+        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1017"))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -346,13 +348,13 @@ class TimelineRecordControllerTest {
 
     @Test
     void deleteDailyRecord_returns200WithEmptyBody() throws Exception {
-        mockMvc.perform(delete(DAILY_RECORD_PATH))
+        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
 
-        verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(0L), eq(77L));
+        verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(USER_ID), eq(77L));
     }
 
     @Test
@@ -360,7 +362,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
-        mockMvc.perform(delete(DAILY_RECORD_PATH))
+        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
     }
@@ -370,7 +372,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
-        mockMvc.perform(delete(DAILY_RECORD_PATH))
+        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
     }
@@ -380,7 +382,7 @@ class TimelineRecordControllerTest {
         doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
-        mockMvc.perform(delete(DAILY_RECORD_PATH))
+        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1017"));
     }

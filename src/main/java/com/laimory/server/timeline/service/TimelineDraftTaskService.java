@@ -9,7 +9,6 @@ import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -76,8 +75,8 @@ public class TimelineDraftTaskService {
      * FAILED로 종결한다. dispatch가 동기 예외를 던져도 task를 FAILED로 고정한다 — 두 경우 모두 taskId는
      * 정상 반환한다(클라가 폴링으로 결과 확인).
      */
-    public String createDraftTask(String applicationVersion, LocalDate recordDate, LocalDateTime recordAt,
-                                  String recordTimeZone, TimelineWindowDto timelineWindow,
+    public String createDraftTask(String applicationVersion, long userId, LocalDate recordDate,
+                                  LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
                                   List<SourceItemDto> sourceItems) {
         if (recordDate == null) {
             throw new IllegalArgumentException("recordDate is required");
@@ -105,9 +104,9 @@ public class TimelineDraftTaskService {
         // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400).
         RecordDates.requireValidTimeZone(recordTimeZone);
 
-        // enrich의 photoUrl 키 파생과 draft row의 user_id는 반드시 같은 사용자여야 한다(불변식) —
-        // 인증 도입 시 이 변수 한 곳만 바꾼다(두 지점이 따로 놀면 남의 키로 URL을 파생하는 버그).
-        long userId = TimelineDefaults.DEFAULT_USER_ID;
+        // 이 아래의 record 조회·guard·enrich photoUrl 키 파생·draft row user_id·task owner는 전부
+        // 인자로 받은 request userId(인증 principal) 하나만 쓴다 — 지점이 갈리면 남의 키로 URL을 파생하거나
+        // 남의 namespace에 귀속되는 버그다(불변식).
 
         // 같은 날짜 동시 작업 차단: taskId를 holder로 새겨 날짜 guard를 선점한다(SET NX).
         // 실패 = 같은 날짜의 draft/삭제가 진행 중 → 409(ERROR_1016).
@@ -161,8 +160,8 @@ public class TimelineDraftTaskService {
             //    staging)를 제외한 "AI 작업 대기 시작" 경계라 POST 진입 시각을 쓰지 않는다.
             Instant processingStartedAt = clock.instant();
             try {
-                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, taskWindow,
-                        callbackTokenHash, processingStartedAt);
+                timelineTaskService.createProcessing(taskId, userId, recordDate, recordAt, recordTimeZone,
+                        taskWindow, callbackTokenHash, processingStartedAt);
             } catch (RuntimeException e) {
                 timelineDraftSourceItemService.deleteByTaskId(taskId);
                 throw e;
@@ -179,7 +178,7 @@ public class TimelineDraftTaskService {
         // 보존한다(cleanup이 정리). 내 lease가 아니므로 guard는 건드리지 않는다(해제 금지).
         if (!refreshDateGuardConfirmingOwnership(userId, recordDate, guardHolder, taskId)) {
             log.warn("date guard ownership not confirmed before dispatch, aborting: taskId={}", taskId);
-            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
+            timelineTaskService.markFailed(taskId, userId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
             return taskId;
         }
 
@@ -191,7 +190,7 @@ public class TimelineDraftTaskService {
             // 상세는 로그로만 — task엔 분류 코드만 저장(폴링 body.error 유출 차단).
             log.warn("timeline event suggestion dispatch failed: taskId={} detail={}", taskId, e.getMessage());
             // terminal(FAILED) 저장 성공 시에만 guard 해제(규칙 ③) — markFailed가 던지면 여기 못 와 TTL에 맡겨진다(규칙 ②).
-            timelineTaskService.markFailed(taskId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
+            timelineTaskService.markFailed(taskId, userId, recordDate, ErrorCode.ERROR_1009, callbackTokenHash);
             releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
         }
 

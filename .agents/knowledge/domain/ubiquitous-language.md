@@ -132,13 +132,14 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 갱신한다. Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 액세스 토큰 | Access Token | 부분 구현 | HS256 JWT 발급·parse는 구현돼 있다. 의도상 `/a/api` bearer token이지만 request filter와 enforcement/userId 전파는 없다. |
+| 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |
 | 재사용 탐지 | Reuse Detection | 현재 구현 | `ROTATED`/`REVOKED` token 재제시 때 사용자의 refresh token 전체를 폐기한다. |
 | 앱 인증 코드 | App Code | 현재 구현 | 로그인 성공 후 앱 handoff용 60초 one-time code다. Redis에는 hash key로만 저장하고 GETDEL로 소비한다. |
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
-| 인증 사용자 API | Authenticated API | 목표 계약 | `/a/api/{version}`은 bearer 인증 영역이다. 현재 enforcement는 `permitAll`이고 timeline fallback은 userId 0이다. |
+| 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `ERROR_2001`이고 principal userId가 service까지 전파된다. |
+| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 recovery/finalize/guard 해제의 기준이며, 없으면(legacy) fail-closed한다. |
 
 ## 사용 금지 표현
 

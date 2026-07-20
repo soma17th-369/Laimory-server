@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.LogSanitizer;
-import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
 import com.laimory.server.timeline.dto.PhotoUploadResponse;
@@ -53,8 +52,10 @@ public class PhotoUploadService {
     /**
      * 요청 photos를 검증한 뒤 같은 순서로 filename + presigned PUT URL을 발급한다. 버전별 분기는 없으나
      * 컨트롤러가 넘긴 {@code applicationVersion}을 받아 둔다(컨벤션 일관성).
+     * userId(인증 principal)는 S3 full key의 hash namespace를 결정한다 — key 알고리즘 자체는 불변.
      */
-    public PhotoUploadCreateResponse createUploads(String applicationVersion, List<PhotoUploadItem> photos) {
+    public PhotoUploadCreateResponse createUploads(String applicationVersion, long userId,
+                                                   List<PhotoUploadItem> photos) {
         if (photos == null || photos.isEmpty()) {
             throw new IllegalArgumentException("photos is required");
         }
@@ -91,7 +92,7 @@ public class PhotoUploadService {
         for (PhotoUploadItem photo : photos) {
             // newFilename의 허용 타입 검증은 방어선(위 isSupported가 사전 차단).
             String filename = PhotoObjectKeys.newFilename(photo.contentType());
-            String fullKey = PhotoObjectKeys.fullKey(filename, TimelineDefaults.DEFAULT_USER_ID);
+            String fullKey = PhotoObjectKeys.fullKey(filename, userId);
             String uploadUrl = s3PhotoStorageService.generatePresignedPutUrl(
                     fullKey, photo.contentType(), photo.size());
             uploads.add(new PhotoUploadResponse(filename, uploadUrl));

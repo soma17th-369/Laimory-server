@@ -26,13 +26,14 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 |---|---|---|
 | `/api/{version}` | 인증 없는 app-facing public API | public |
 | `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | callback token 등 endpoint가 강제 |
-| `/a/api/{version}` | bearer-authenticated user API | 현재 security chain은 `permitAll` |
+| `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `ERROR_2001` |
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-`/a/api`의 intended bearer contract와 Swagger `bearerAuth`는 유지한다.
-현재 JWT filter/userId propagation 부재는 [authentication runtime](../runtime/authentication.md)의 known gap이다.
+보호 operation 7개는 `bearerAuth` security requirement와 401 응답을 문서화하고, userId principal은
+`@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지 않는다(클라이언트 입력이 아님).
+인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions
 
@@ -102,7 +103,6 @@ app-facing success/error는 다음 envelope를 사용한다.
 
 ## Known Gaps
 
-- `/a/api` request authentication/userId propagation이 구현되지 않았다.
 - exhaustive generated API reference는 없으며 runtime OpenAPI가 field-level source다.
 
 ## Update When

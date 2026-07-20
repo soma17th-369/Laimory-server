@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.auth.controller.AuthHandoffPageController;
+import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import org.junit.jupiter.api.Test;
@@ -26,17 +27,21 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인 permitAll
- * (/a/api 무인증 통과 — 강제는 #108), 핸드오프 안내 페이지의 code 비표시.
+ * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인의
+ * /a/api 인증 강제(무토큰/무효 토큰 → 401 ERROR_2001, 유효 토큰 → 통과), 공개 경로 무인증 유지,
+ * 핸드오프 안내 페이지의 code 비표시.
  */
 @WebMvcTest(controllers = AuthHandoffPageController.class)
-@Import({SecurityConfig.class, OAuth2LoginSecurityConfig.class})
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
 class SecurityConfigTest {
 
     private static final String VALID_CHALLENGE = AuthTokens.challenge("any-verifier");
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private com.laimory.server.auth.token.JwtTokens jwtTokens;
 
     @MockitoBean
     private SocialLoginService socialLoginService;
@@ -100,9 +105,51 @@ class SecurityConfigTest {
     }
 
     @Test
-    void authenticatedPrefix_isStillPermitAll_notFoundInsteadOfUnauthorized() throws Exception {
-        // /a/api 강제 전환(#108) 전 — 무인증 요청이 401이 아니라 (이 슬라이스엔 컨트롤러가 없어) 404 envelope.
+    void authenticatedPrefix_withoutToken_returns401Envelope() throws Exception {
+        // /a/api 인증 강제: 무토큰 요청은 컨트롤러 유무와 무관하게 Security 단계에서 401 ERROR_2001로 거절된다.
         mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.body").doesNotExist())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                // Security 단계 401에도 tx 헤더(TransactionIdFilter가 Security 체인보다 앞).
+                .andExpect(header().exists("Transaction-Id"));
+    }
+
+    @Test
+    void authenticatedPrefix_withInvalidToken_returns401Envelope() throws Exception {
+        mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
+                        .header("Authorization", "Bearer not-a-valid-token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+    }
+
+    @Test
+    void authenticatedPrefix_withValidToken_passesSecurityToHandler404() throws Exception {
+        // 유효 토큰은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
+        String token = jwtTokens.issueAccessToken(42L);
+
+        mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+    }
+
+    @Test
+    void publicPrefixes_remainAccessibleWithoutToken() throws Exception {
+        // 공개(/api)·서버간(/s/api) 경로는 Bearer 없음만으로 거절되지 않는다 — 미매핑이라 404 envelope(401 아님).
+        mockMvc.perform(get("/api/v1/whatever"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+        mockMvc.perform(get("/s/api/v1/whatever"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+    }
+
+    @Test
+    void similarStringPrefix_isNotProtected() throws Exception {
+        // 문자열 prefix가 아니라 경로 세그먼트 매칭 — /a/apiary는 보호 대상이 아니다(404, 401 아님).
+        mockMvc.perform(get("/a/apiary"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
     }

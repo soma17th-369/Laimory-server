@@ -35,6 +35,12 @@ import java.time.LocalDateTime;
  * 폐기하며({@code null}), 배포 전 생성된 legacy PROCESSING JSON에는 필드가 없어 {@code null}로 역직렬화된다
  * (폴링은 이때 경과 시간을 생략). {@code NON_NULL}이라 종결·legacy JSON에 key가 노출되지 않는다.
  *
+ * <p>{@code userId}는 task owner(작성 요청자)다 — PROCESSING/SUCCESS/FAILED 세 상태 모두 보존되며,
+ * 폴링의 소유권 대조와 콜백의 recovery/finalize/guard 해제가 이 값을 쓴다(콜백은 {@code /s/api}라 request
+ * principal이 없다). reference type({@code Long})인 이유는 배포 전 legacy JSON의 field 부재를 0으로
+ * 오인하지 않기 위해서다 — {@code null} owner는 fail-closed(폴링 404, 콜백 finalize 거부) 대상이고
+ * 기존 JSON field 순서 뒤에 additive로 붙는다({@code NON_NULL}이라 legacy 재직렬화 시 key 미노출).
+ *
  * <p><b>저장 키 계약</b>(AI가 Redis를 직접 읽을 때 필요): 논리 키는 {@code timeline:draft-task:{taskId}}이고,
  * 환경 prefix가 있으면 실제 Redis 키는 {@code {REDIS_KEY_PREFIX}timeline:draft-task:{taskId}}다
  * (키 조립은 {@code TimelineTaskStore.KEY_PREFIX} + {@code RedisGateway}가 담당; dev는 prefix {@code dev_}).
@@ -50,7 +56,8 @@ public record TimelineDraftTask(
         String error,
         String callbackTokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
-        @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt
+        @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long userId
 ) {
 
     /** AI 개인화 입력. 현재는 shape만 두고 값은 채우지 않는다(공급원 미정). */
@@ -64,20 +71,22 @@ public record TimelineDraftTask(
     ) {
     }
 
-    public static TimelineDraftTask processing(LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                               TimelineWindow timelineWindow, String callbackTokenHash,
-                                               Instant processingStartedAt) {
+    public static TimelineDraftTask processing(long userId, LocalDate recordDate, LocalDateTime recordAt,
+                                               String recordTimezone, TimelineWindow timelineWindow,
+                                               String callbackTokenHash, Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, recordDate, null, recordAt, recordTimezone,
-                new UserMemory(null), timelineWindow, null, callbackTokenHash, processingStartedAt);
+                new UserMemory(null), timelineWindow, null, callbackTokenHash, processingStartedAt, userId);
     }
 
-    public static TimelineDraftTask success(LocalDate recordDate, Long dailyRecordId, String callbackTokenHash) {
+    public static TimelineDraftTask success(long userId, LocalDate recordDate, Long dailyRecordId,
+                                            String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.SUCCESS, recordDate, dailyRecordId,
-                null, null, null, null, null, callbackTokenHash, null);
+                null, null, null, null, null, callbackTokenHash, null, userId);
     }
 
-    public static TimelineDraftTask failed(LocalDate recordDate, String error, String callbackTokenHash) {
+    public static TimelineDraftTask failed(long userId, LocalDate recordDate, String error,
+                                           String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, recordDate, null,
-                null, null, null, null, error, callbackTokenHash, null);
+                null, null, null, null, error, callbackTokenHash, null, userId);
     }
 }

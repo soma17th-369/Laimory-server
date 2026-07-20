@@ -81,6 +81,7 @@ class TimelineCallbackTokenIntegrationTest {
     private TimelineEventSuggestionDispatcher dispatcher;
 
     private static final String VERSION = "v1";
+    private static final long USER_ID = 7L;
     private static final String ZONE = "Asia/Seoul";
     // 다른 데이터와 충돌하지 않을 고정 날짜 — 클라 선택 날짜로 요청에 명시 전송한다(서버 파생 없음).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
@@ -93,7 +94,7 @@ class TimelineCallbackTokenIntegrationTest {
     @BeforeEach
     @AfterEach
     void cleanUp() {
-        dailyRecordService.findByUserIdAndRecordDate(0L, DATE)
+        dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())); // DB FK cascade로 이벤트/아이템도 삭제
         createdTaskIds.forEach(id -> {
             draftSourceItemService.deleteByTaskId(id);
@@ -105,27 +106,28 @@ class TimelineCallbackTokenIntegrationTest {
         createdTaskIds.clear();
         // 날짜 guard: terminal에 못 간 테스트(wrongToken 등)의 task는 guard를 쥔 채 남는다(운영에선 TTL 1h 해제).
         // 이 클래스는 같은 고정 날짜를 공유하므로 다음 테스트의 draft 생성이 1016으로 막히지 않게 지운다.
-        redis.delete("timeline:date-guard:0:" + DATE);
+        redis.delete("timeline:date-guard:" + USER_ID + ":" + DATE);
     }
 
     @Test
     void validToken_persistsFinalizesAndDeletesStaging_storesOnlyHash() {
-        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
 
         // POST 시점에 source 행이 MySQL에 저장돼 있다(아직 daily_records 없음).
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
-        assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isEmpty();
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isEmpty();
 
         // 디스패처 spy로 발급된 raw 토큰 캡처(2-arg dispatch).
         String token = capturedToken(taskId);
 
-        // Redis에는 원문 토큰이 없고 해시만 보관된다.
+        // Redis에는 원문 토큰이 없고 해시만 보관된다. task owner는 요청자 userId로 저장된다.
         String rawJson = redis.get("timeline:draft-task:" + taskId);
         assertThat(rawJson).doesNotContain(token);
         TimelineDraftTask stored = taskService.find(taskId).orElseThrow();
         assertThat(stored.callbackTokenHash()).isNotNull().isNotEqualTo(token);
         assertThat(CallbackTokens.matches(token, stored.callbackTokenHash())).isTrue();
+        assertThat(stored.userId()).isEqualTo(USER_ID);
 
         // AI 시뮬(write-then-notify): 이벤트 제안을 DB에 저장하고 source item을 그 이벤트에 배정한다.
         simulateAiWrite(taskId);
@@ -133,30 +135,31 @@ class TimelineCallbackTokenIntegrationTest {
         // 유효 토큰으로 콜백(바디엔 status만) → SUCCESS + MySQL 영속 + staging 삭제.
         callbackService.handleCallback(VERSION, taskId, token, success());
 
-        DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
+        DraftTaskStatusResponse status = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(status.result().events()).isNotEmpty();
-        assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isPresent();
         // finalize가 소비한 staging(source item + event 제안)을 둘 다 삭제했다.
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();
-        // 종결 후에도 해시는 보존된다(terminal 재콜백 token-first 검증용).
-        assertThat(taskService.find(taskId).orElseThrow().callbackTokenHash())
-                .isEqualTo(stored.callbackTokenHash());
+        // 종결 후에도 해시와 owner가 보존된다(terminal 재콜백 token-first 검증 + 폴링 소유권 대조용).
+        TimelineDraftTask terminal = taskService.find(taskId).orElseThrow();
+        assertThat(terminal.callbackTokenHash()).isEqualTo(stored.callbackTokenHash());
+        assertThat(terminal.userId()).isEqualTo(USER_ID);
 
         // 재콜백(같은 토큰) → 원자적 소비 게이트가 401 ERROR_1012로 거부(1002=불일치와 구분되는 replay 전용 코드).
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, token, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
         // 거부된 replay는 상태를 건드리지 않는다: SUCCESS 유지 + 이벤트 중복 없음.
-        DraftTaskStatusResponse afterReplay = pollingService.poll(VERSION, taskId);
+        DraftTaskStatusResponse afterReplay = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(afterReplay.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(afterReplay.result().events()).hasSameSizeAs(status.result().events());
     }
 
     @Test
     void concurrentCallbacks_exactlyOneWins_otherRejected1012() throws Exception {
-        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
         String token = capturedToken(taskId);
         simulateAiWrite(taskId);
@@ -191,14 +194,14 @@ class TimelineCallbackTokenIntegrationTest {
         }
 
         // 최종 상태는 SUCCESS 하나로 수렴, 이벤트 중복 없음.
-        DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
+        DraftTaskStatusResponse status = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(status.result().events()).hasSize(1);
     }
 
     @Test
     void wrongToken_rejected401_andNothingPersisted() {
-        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
 
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, "wrong-token", success()))
@@ -207,32 +210,32 @@ class TimelineCallbackTokenIntegrationTest {
 
         // task는 여전히 PROCESSING, MySQL daily_records엔 아무것도 안 써짐, source는 보존.
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isEmpty();
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
     }
 
     @Test
     void successCallback_eventWithNoLinkedSourceItems_marksFailed() {
-        String taskId = draftTaskService.createDraftTask(VERSION, DATE, RECORD_AT, ZONE, WINDOW, sources());
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
         String token = capturedToken(taskId);
 
         // AI 시뮬: 이벤트 제안은 저장하되 source item을 하나도 배정하지 않는다(event_fk 미설정).
         eventSuggestionRepository.save(
-                TimelineDraftEventSuggestion.of(taskId, 0L, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "빈 이벤트", null));
+                TimelineDraftEventSuggestion.of(taskId, USER_ID, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "빈 이벤트", null));
 
         callbackService.handleCallback(VERSION, taskId, token, success());
 
         // 이벤트에 묶인 item 0개 → assembler가 빈 itemIds → validator 'event has no itemIds' → FAILED, record 미생성.
-        DraftTaskStatusResponse status = pollingService.poll(VERSION, taskId);
+        DraftTaskStatusResponse status = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.FAILED);
-        assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isEmpty();
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isEmpty();
     }
 
     /** AI write-then-notify 시뮬: 이벤트 제안 1건을 저장하고 task의 모든 source item을 그 이벤트에 배정한다. */
     private void simulateAiWrite(String taskId) {
         TimelineDraftEventSuggestion event = eventSuggestionRepository.save(
-                TimelineDraftEventSuggestion.of(taskId, 0L, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "아침", null));
+                TimelineDraftEventSuggestion.of(taskId, USER_ID, TimelineEventType.UNKNOWN.name(), DATE.atTime(9, 0), null, "아침", null));
         List<TimelineDraftSourceItem> rows = draftSourceItemService.findByTaskId(taskId);
         rows.forEach(r -> r.assignEventSuggestion(event.getTimelineDraftEventSuggestionId()));
         draftSourceItemService.saveAll(rows);

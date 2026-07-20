@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.timeline.service.TimelineCallbackService;
@@ -27,7 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * (토큰 검증 자체의 정/오답 로직은 TimelineCallbackServiceTest에서 단위 검증.)
  */
 @WebMvcTest(TimelineCallbackController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineCallbackControllerTest {
 
     private static final String CALLBACK =

@@ -48,6 +48,8 @@ import org.springframework.test.context.ActiveProfiles;
 class FakeAiDispatcherEndToEndIntegrationTest {
 
     private static final String TASKS = "/a/api/v1/timeline/drafts";
+    // JWT sub로 쓸 테스트 사용자 — DB row 없이도 stateless 인증이 성립한다(양수 계약만 요구).
+    private static final long USER_ID = 424242L;
     // 다른 통합 테스트(2000-01-01)와 다른 고정 날짜로 격리. recordDate는 클라 선택 날짜로 명시 전송한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 2);
 
@@ -140,13 +142,15 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     private TimelineDraftEventSuggestionService eventSuggestionService;
     @Autowired
     private RedisGateway redis;
+    @Autowired
+    private com.laimory.server.auth.token.JwtTokens jwtTokens;
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
     @BeforeEach
     @AfterEach
     void cleanUp() {
-        dailyRecordService.findByUserIdAndRecordDate(0L, DATE)
+        dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())); // FK cascade
         createdTaskIds.forEach(id -> {
             draftSourceItemService.deleteByTaskId(id);
@@ -155,13 +159,13 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         });
         createdTaskIds.clear();
         // 날짜 guard: 테스트가 terminal 전 실패하면 guard가 남아(운영 TTL 1h) 같은 고정 날짜의 후속 draft가 1016에 막힌다.
-        redis.delete("timeline:date-guard:0:" + DATE);
+        redis.delete("timeline:date-guard:" + USER_ID + ":" + DATE);
     }
 
     @Test
     void draftPostThenPolling_runsFullCallbackLoopOverRealHttp() {
         // 1. 작성 작업 생성(실 HTTP) — 202 + envelope + taskId.
-        HttpHeaders headers = new HttpHeaders();
+        HttpHeaders headers = authHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<JsonNode> created =
                 restTemplate.postForEntity(TASKS, new HttpEntity<>(CREATE_BODY, headers), JsonNode.class);
@@ -194,9 +198,14 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         assertThat(events.get(0).path("items").get(0).path("rawId").asText())
                 .isEqualTo("0197b1c2-0000-7000-8000-000000000042");
         // photoUrl은 draft 저장 시 서버가 주입한 값이 finalize 복사를 거쳐 응답까지 유지된다.
+        // key namespace가 JWT sub 사용자의 hash다 — 고정 0 namespace 회귀를 잡는다.
         assertThat(events.get(0).path("items").get(0).path("payload").path("photoUrl").asText())
-                .startsWith("https://");
-        assertThat(dailyRecordService.findByUserIdAndRecordDate(0L, DATE)).isPresent();
+                .startsWith("https://")
+                .contains(com.laimory.server.timeline.photo.PhotoObjectKeys.sha256hex(USER_ID) + "/photos/");
+        // daily_records.user_id == JWT sub — draft/finalize 전체가 인증 사용자에 귀속됐다.
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isPresent();
+        assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow().getUserId())
+                .isEqualTo(USER_ID);
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
         assertThat(eventSuggestionService.findByTaskId(taskId)).isEmpty();
 
@@ -205,6 +214,21 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         assertThat(again.path("status").asText()).isEqualTo("SUCCESS");
         assertThat(again.path("result").path("events").size()).isEqualTo(events.size());
         assertThat(again.has("elapsedSeconds")).isFalse();
+
+        // 6. 타 사용자 token으로 같은 taskId 폴링 → 상태 비노출 404 ERROR_1001(소유권 은닉).
+        HttpHeaders otherUser = new HttpHeaders();
+        otherUser.setBearerAuth(jwtTokens.issueAccessToken(USER_ID + 1));
+        ResponseEntity<JsonNode> foreign = restTemplate.exchange(TASKS + "/" + taskId,
+                org.springframework.http.HttpMethod.GET, new HttpEntity<>(otherUser), JsonNode.class);
+        assertThat(foreign.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(foreign.getBody().path("header").path("code").asText()).isEqualTo("ERROR_1001");
+
+        // 7. 무토큰 요청은 401 ERROR_2001 — 인증 게이트가 실 HTTP에서도 살아 있다.
+        ResponseEntity<JsonNode> unauthenticated =
+                restTemplate.getForEntity(TASKS + "/" + taskId, JsonNode.class);
+        assertThat(unauthenticated.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(unauthenticated.getBody().path("header").path("code").asText()).isEqualTo("ERROR_2001");
+        // (callback /s/api는 Bearer 없이 기존 Callback-Token만으로 성공했다 — 위 SUCCESS 전이가 그 증거다.)
     }
 
     @Test
@@ -225,7 +249,7 @@ class FakeAiDispatcherEndToEndIntegrationTest {
         assertThat(allRawIds).containsExactlyInAnyOrder(RAW_A, RAW_B, RAW_C);
 
         // append#3: 이미 저장된 B만 → 신규 0 → 동기 409 ERROR_1013(작업 생성 안 됨).
-        HttpHeaders headers = new HttpHeaders();
+        HttpHeaders headers = authHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<JsonNode> rejected =
                 restTemplate.postForEntity(TASKS, new HttpEntity<>(APPEND3_BODY, headers), JsonNode.class);
@@ -235,7 +259,7 @@ class FakeAiDispatcherEndToEndIntegrationTest {
 
     /** 작성 작업을 POST하고 SUCCESS까지 폴링 대기 후 taskId를 반환한다(cleanup 대상으로 등록). */
     private String postAndAwaitSuccess(String body) {
-        HttpHeaders headers = new HttpHeaders();
+        HttpHeaders headers = authHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<JsonNode> created =
                 restTemplate.postForEntity(TASKS, new HttpEntity<>(body, headers), JsonNode.class);
@@ -255,9 +279,17 @@ class FakeAiDispatcherEndToEndIntegrationTest {
     }
 
     private JsonNode poll(String taskId) {
-        ResponseEntity<JsonNode> response = restTemplate.getForEntity(TASKS + "/" + taskId, JsonNode.class);
+        ResponseEntity<JsonNode> response = restTemplate.exchange(TASKS + "/" + taskId,
+                org.springframework.http.HttpMethod.GET, new HttpEntity<>(authHeaders()), JsonNode.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         return response.getBody();
+    }
+
+    /** 모든 /a/api 요청에 붙는 인증 헤더 — JwtTokens로 발급한 실제 access token(sub=USER_ID). */
+    private HttpHeaders authHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(jwtTokens.issueAccessToken(USER_ID));
+        return headers;
     }
 
     private String pollStatus(String taskId) {

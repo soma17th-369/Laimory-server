@@ -46,13 +46,12 @@ Terraform은 AWS 인프라를 재현하는 recipe를 소유한다.
 
 - code/config/schema/workflow가 문서보다 우선한다.
 - 환경 설정 문서에는 변수 이름과 역할만 기록하고 값·credential은 복제하지 않는다.
-- `/a/api`의 의도된 인증 계약과 현재 enforcement 상태를 구분한다.
+- `/a/api`는 JWT Bearer 인증이 강제되는 사용자 영역이다(무토큰/무효 토큰 401 `ERROR_2001`,
+  principal userId가 timeline 흐름 전체에 전파).
 
 ## Known Gaps
 
 - production AI adapter는 없다.
-- `/a/api`는 bearer 인증 영역으로 문서화돼 있지만 현재 API security chain은 `permitAll`이다.
-- request JWT filter와 authenticated userId 전파가 없어 timeline은 임시 `DEFAULT_USER_ID=0`을 쓴다.
 - repository에 prod 애플리케이션 자동 배포 workflow는 없다.
 
 ## Update When

@@ -20,8 +20,9 @@ draft POST·polling·callback·event grouping·append·Redis state·staging clea
 
 ### Create
 
-1. `POST /a/api/{version}/timeline/drafts`가 요청을 받는다.
-2. JWT user propagation이 없어 현재 `DEFAULT_USER_ID=0`을 쓴다.
+1. `POST /a/api/{version}/timeline/drafts`가 요청을 받는다(유효 Bearer 필수 — 401은 security 단계 처리).
+2. 인증 principal userId 하나가 record 조회·guard·enrich photo key·staging row·Redis task owner에
+   동일하게 흐른다. task는 owner를 세 상태 모두 보존한다.
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
    검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through).
 4. UUIDv7 `taskId`를 만들고 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)를
@@ -61,6 +62,8 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 2. staging commit 뒤 callback path의 `taskId`, `Callback-Token` header,
    body `{status,errorCode,error}`로 알린다. body에 event나 `itemIds`는 없다.
 3. 서버가 staging relation을 읽고 `TimelineEventSuggestionDto.itemIds`를 내부 조립한다.
+   조립 전에 모든 staging row의 `userId`가 task owner와 같은지 먼저 검증한다 — 불일치는 ISE로
+   finalize 없이 `ERROR_1011` FAILED다(남의 데이터 finalize 차단).
    staging의 raw `event_type` 문자열은 이 assembler에서 `TimelineEventType`으로 변환한다 —
    null/blank/미지원 literal은 IAE로 callback `ERROR_1011` FAILED가 된다(staging entity는 외부
    writer 소유라 JPA enum 매핑을 쓰지 않는다 — 미지원 DB 문자열의 hydration 예외가 FAILED
@@ -73,9 +76,13 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 - commit 뒤 Redis task를 `SUCCESS`로 바꾸며, finalize가 반환한 `dailyRecordId`를 task에 저장한다
   (staging 부재 멱등 복구 경로도 조회한 record의 ID를 저장). AI 보고 실패와 처리한 assembly/validation
   실패는 `FAILED`와 공개 가능한 error code로 기록한다. 모든 terminal 전이 성공 직후 날짜 guard를 해제한다.
-- polling은 Redis state를 읽어 PROCESSING/SUCCESS/FAILED를 반환한다. SUCCESS 결과는 task의
+- callback은 request principal 없이(`/s/api`) task 저장 owner로 recovery 조회·finalize·guard 해제를
+  수행한다. owner 없는 legacy task는 token 검증·소비 뒤 finalize 없이 404로 fail-closed한다(TTL 만료).
+- polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자·
+  owner 없는 legacy task는 상태와 무관하게 404 `ERROR_1001`로 은닉한다. 그 뒤 Redis state를 읽어
+  PROCESSING/SUCCESS/FAILED를 반환한다. SUCCESS 결과는 task의
   `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 record 삭제 후 같은 날짜 재생성 시
-  오조회를 만들므로 쓰지 않는다. ID가 없거나(legacy task) record가 삭제됐으면 404 `ERROR_0404`
+  오조회를 만들므로 쓰지 않는다. ID가 없거나(legacy task) record가 삭제·비소유면 404 `ERROR_0404`
   (task 자체 없음 `ERROR_1001`과 구분).
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 함께 반환한다
   (음수는 0 clamp). terminal 전이는 이 시각을 보존하지 않고 폐기하므로 SUCCESS/FAILED 응답에는

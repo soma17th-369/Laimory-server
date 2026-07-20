@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.testsupport.AuthTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -19,7 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * /intro 컨트롤러 슬라이스 테스트(MockMvc). 성공 응답 envelope(header.code + body) 계약을 고정한다. 인프라 0.
  */
 @WebMvcTest(AppConfigController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class AppConfigControllerTest {
 
     private static final String INTRO = "/api/v1/intro";

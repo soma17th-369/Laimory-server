@@ -55,8 +55,10 @@ SUCCESS body에도 event, source item, `itemIds`가 없다.
 ### 3. Server assembly and finalize
 
 서버는 staging table을 읽고 association별 source PK를 모아 내부
-`TimelineEventSuggestionDto.itemIds`를 만든다. validator가 참조·중복·필수값·시간 범위를 검증한 후
-Daily Record, Timeline Events와 Timeline Items를 finalize한다.
+`TimelineEventSuggestionDto.itemIds`를 만든다. 조립 전에 모든 staging row의 `user_id`가
+Redis task owner와 같은지 먼저 검증한다(불일치 = finalize 없이 FAILED). validator가
+참조·중복·필수값·시간 범위를 검증한 후 Daily Record, Timeline Events와 Timeline Items를 finalize한다.
+task에 owner가 없으면(배포 전 legacy) token 검증·소비 뒤 finalize 없이 404로 fail-closed한다.
 
 ## Callback Authentication
 
@@ -87,6 +89,9 @@ Daily Record, Timeline Events와 Timeline Items를 finalize한다.
 
 - Redis PROCESSING task의 `timelineWindow`는 클라이언트 요청값 pass-through다 — 서버가 source item
   min/max로 재계산하지 않는다. AI가 읽는 field name과 compact 포맷(`yyyyMMdd'T'HHmmss`)은 유지된다.
+- Redis task JSON에는 owner `userId`(숫자)가 additive field로 기존 필드 뒤에 붙는다 — AI writer는
+  이 필드를 몰라도 되지만(관대 수용), staging INSERT의 `user_id`는 반드시 소비하는 task의 source row와
+  같은 사용자여야 한다(서버가 조립 전 검증해 불일치는 FAILED).
 - callback에 `itemIds`를 다시 추가하지 않는다. 내부 DTO에서는 제거하지 않는다.
 - AI staging transaction과 callback 순서를 뒤집지 않는다.
 - source association을 request index로 해석하지 않는다. 값은 server staging PK다.
