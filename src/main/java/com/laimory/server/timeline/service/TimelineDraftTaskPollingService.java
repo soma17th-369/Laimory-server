@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
  * 결과 record의 owner 불일치, 또는 dailyRecordId가 없는 배포 전 legacy SUCCESS task)는 404(ERROR_0404)로
  * 응답한다 — "task 자체가 없음"(ERROR_1001)과 클라이언트가 구분한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TimelineDraftTaskPollingService {
@@ -41,6 +43,11 @@ public class TimelineDraftTaskPollingService {
 
         // 소유권 대조는 상태 분기보다 먼저 — 타인/legacy task는 상태(PROCESSING/FAILED/SUCCESS)조차 노출하지 않는다.
         if (task.userId() == null || task.userId() != userId) {
+            if (task.userId() != null) {
+                // 인증된 사용자가 남의 taskId를 제시한 상황은 정상 수명주기(만료 재폴링)와 달리 열거/유출 시도
+                // 신호다 — 응답은 동일하게 1001로 은닉하되 관측용 WARN만 남긴다(CALLBACK_TOKEN_MISMATCH 선례).
+                log.warn("foreign task poll rejected: taskId={} requesterUserId={}", taskId, userId);
+            }
             throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
 
