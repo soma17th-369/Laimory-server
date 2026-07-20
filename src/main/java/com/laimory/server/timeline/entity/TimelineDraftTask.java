@@ -21,8 +21,9 @@ import java.time.LocalDateTime;
  * ALWAYS인 데다, 이 JSON은 아래처럼 AI가 직접 읽는 계약이라 shape 변화를 최소화해야 한다.
  *
  * <p>{@code recordAt}(벽시계 시각) / {@code recordTimezone}은 finalize 때 daily_records에 쓸 메타데이터다.
- * {@code userMemory}(AI 개인화 입력, 현재 shape만 — 공급원 미정) / {@code timelineWindow}(이번 append에서
- * AI가 이벤트로 묶을 신규 item의 시간 범위)는 <b>실 AI가 이 값 JSON을 직접 읽는 계약</b>이라 필드명·포맷이 공개 계약이다.
+ * {@code userMemory}(AI 개인화 입력, 현재 shape만 — 공급원 미정) / {@code timelineWindow}(클라이언트가 요청에
+ * 지정한, AI가 이번 요청에서 이벤트를 만들 시간 범위 — 서버는 계산·보정 없이 pass-through)는
+ * <b>실 AI가 이 값 JSON을 직접 읽는 계약</b>이라 필드명·포맷이 공개 계약이다.
  * recordAt/recordTimezone·userMemory·timelineWindow는 PROCESSING에서만 채워지고({@link #processing})
  * 종결(SUCCESS/FAILED)에는 {@code null}이다 — finalize·AI는 PROCESSING task에서 읽고, 종결 task의
  * 소비처(폴링·멱등)는 이들을 읽지 않기 때문이다.
@@ -56,7 +57,7 @@ public record TimelineDraftTask(
     public record UserMemory(String usersCharacter) {
     }
 
-    /** 이번 append에서 AI가 이벤트로 묶을 신규 item의 시간 범위. AI 계약 포맷 {@code YYYYMMDDTHHmmss}. */
+    /** 클라이언트가 요청에 지정한, AI가 이번 요청에서 이벤트를 만들 시간 범위. AI 계약 포맷 {@code YYYYMMDDTHHmmss}. */
     public record TimelineWindow(
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyyMMdd'T'HHmmss") LocalDateTime startTime,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyyMMdd'T'HHmmss") LocalDateTime endTime

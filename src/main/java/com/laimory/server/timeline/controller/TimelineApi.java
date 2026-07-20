@@ -41,11 +41,19 @@ public interface TimelineApi {
      * itemType↔payload를 못 맞춰 엉뚱한 조합을 보여주므로, 6개 itemType의 올바른 payload 짝을 모두 담은
      * 예시를 명시해 request body에 그대로 노출한다. 서버 주입 read-only 필드(photoUrl·address·places·durationText)는
      * {@code null}로 함께 보여 "요청 시 채우지 않아도 됨(서버가 주입)"을 알린다(스키마엔 read-only로 표시).
+     *
+     * <p>예시는 의도적으로 "다음날 아침에 쓰는 어제 일기" 시나리오다 — recordDate(07-08)와 recordAt(07-09 아침)의
+     * 날짜가 다른 것이 정상 계약임을 예시 자체가 보여준다(서버는 정합성을 검증하지 않는다).
      */
     String CREATE_DRAFT_EXAMPLE = """
             {
-              "recordAt": "2026-07-08T09:00:00",
+              "recordDate": "2026-07-08",
+              "recordAt": "2026-07-09T09:12:34",
               "recordTimeZone": "Asia/Seoul",
+              "timelineWindow": {
+                "startTime": "2026-07-08T00:00",
+                "endTime": "2026-07-09T00:00"
+              },
               "sourceItems": [
                 {
                   "itemType": "PHOTO",
@@ -131,7 +139,8 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "작업 접수 — body.taskId로 폴링", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — 필수값 누락·불량 입력(recordAt/recordTimeZone/sourceItems 등)"),
+                    description = "`ERROR_0400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
+                            + "timelineWindow/sourceItems 등, window의 `startTime >= endTime` 포함)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "

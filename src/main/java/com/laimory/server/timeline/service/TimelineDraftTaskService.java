@@ -11,6 +11,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineDefaults;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -27,10 +28,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -38,8 +37,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * 작성 작업 생성(POST) 오케스트레이터. recordDate 계산 + SAVED 거절 + 지오코딩 enrich + draft 행 저장
+ * 작성 작업 생성(POST) 오케스트레이터. 요청 검증 + SAVED 거절 + 지오코딩 enrich + draft 행 저장
  * + PROCESSING 기록 + AI 디스패치를 합성한다. (leaf가 아닌 합성 오케스트레이터라 여러 leaf 서비스를 주입한다.)
+ *
+ * <p>recordDate와 timelineWindow는 클라이언트 요청값이 단일 권위다 — 서버는 계산·보정하지 않고
+ * 필수값(과 window 순서)만 검증해 그대로 쓴다. recordAt은 실제 작성 시각 메타데이터로, 아무것도
+ * 파생하지 않는다. 세 값 사이의 날짜 정합성도 검증하지 않는다(독립 계약).
  *
  * <p>요청 스레드는 디스패치를 블로킹하지 않는다(dispatch는 fire-and-forget; v1 no-op).
  * 같은 (userId, recordDate)에는 날짜 guard(Redis SET NX lease)로 AI 작업 하나만 허용한다 — 두 번째 POST는
@@ -66,29 +69,41 @@ public class TimelineDraftTaskService {
     private final Clock clock;
 
     /**
-     * 작성 작업을 만들고 taskId를 반환한다. recordDate는 recordAt(벽시계 시각)의 정오 경계로 계산한다.
+     * 작성 작업을 만들고 taskId를 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
      * 같은 날짜에 진행 중인 작업(guard 선점 실패)이면 409(ERROR_1016), 이미 SAVED인 daily record면
      * 409(ERROR_1003)로 거절한다.
      * PROCESSING 저장 후 dispatch 전에 guard 소유를 재확인(refresh)하며, 소유 미확인이면 dispatch 없이
      * FAILED로 종결한다. dispatch가 동기 예외를 던져도 task를 FAILED로 고정한다 — 두 경우 모두 taskId는
      * 정상 반환한다(클라가 폴링으로 결과 확인).
      */
-    public String createDraftTask(String applicationVersion, LocalDateTime recordAt, String recordTimeZone,
+    public String createDraftTask(String applicationVersion, LocalDate recordDate, LocalDateTime recordAt,
+                                  String recordTimeZone, TimelineWindowDto timelineWindow,
                                   List<SourceItemDto> sourceItems) {
+        if (recordDate == null) {
+            throw new IllegalArgumentException("recordDate is required");
+        }
         if (recordAt == null) {
             throw new IllegalArgumentException("recordAt is required");
         }
         if (recordTimeZone == null) {
             throw new IllegalArgumentException("recordTimeZone is required");
         }
+        if (timelineWindow == null) {
+            throw new IllegalArgumentException("timelineWindow is required");
+        }
+        if (timelineWindow.startTime() == null || timelineWindow.endTime() == null) {
+            throw new IllegalArgumentException("timelineWindow requires startTime and endTime");
+        }
+        if (!timelineWindow.startTime().isBefore(timelineWindow.endTime())) {
+            throw new IllegalArgumentException("timelineWindow startTime must be before endTime");
+        }
         if (sourceItems == null || sourceItems.isEmpty()) {
             throw new IllegalArgumentException("sourceItems is required");
         }
         requireValidSourceItems(sourceItems);
 
-        // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400). 날짜는 recordAt 벽시계 시각의 정오 경계로 산출(zone 불필요).
+        // recordTimeZone은 저장·역산용이라 유효성만 검증(잘못된 zone → IAE → 400).
         RecordDates.requireValidTimeZone(recordTimeZone);
-        LocalDate recordDate = RecordDates.resolveRecordDate(recordAt);
 
         // enrich의 photoUrl 키 파생과 draft row의 user_id는 반드시 같은 사용자여야 한다(불변식) —
         // 인증 도입 시 이 변수 한 곳만 바꾼다(두 지점이 따로 놀면 남의 키로 URL을 파생하는 버그).
@@ -122,8 +137,10 @@ public class TimelineDraftTaskService {
                 throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
             }
 
-            // AI가 이번 append에서 이벤트로 묶을 신규 item의 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
-            TimelineDraftTask.TimelineWindow timelineWindow = computeTimelineWindow(newItems);
+            // AI가 이번 요청에서 이벤트를 만들 시간 범위(Redis task에 저장 → AI가 직접 읽는 계약).
+            // 클라 요청값을 계산·보정(floor/clamp/min-max) 없이 1:1 매핑한다 — 값의 권위는 클라이언트다.
+            TimelineDraftTask.TimelineWindow taskWindow = new TimelineDraftTask.TimelineWindow(
+                    timelineWindow.startTime(), timelineWindow.endTime());
 
             // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
             // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
@@ -144,7 +161,7 @@ public class TimelineDraftTaskService {
             //    staging)를 제외한 "AI 작업 대기 시작" 경계라 POST 진입 시각을 쓰지 않는다.
             Instant processingStartedAt = clock.instant();
             try {
-                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, timelineWindow,
+                timelineTaskService.createProcessing(taskId, recordDate, recordAt, recordTimeZone, taskWindow,
                         callbackTokenHash, processingStartedAt);
             } catch (RuntimeException e) {
                 timelineDraftSourceItemService.deleteByTaskId(taskId);
@@ -237,33 +254,6 @@ public class TimelineDraftTaskService {
             return items;
         }
         return items.stream().filter(item -> !savedRawIds.contains(item.rawId())).toList();
-    }
-
-    /**
-     * 신규 item에서 AI 그룹핑 대상 시간 범위를 만든다. start=min(startAt??endAt), end=max(endAt??startAt).
-     * endAt은 후속 append의 startAt·nudge(둘 다 startAt만 참조)에 전혀 영향을 주지 않으므로 recordAt 클램프를 하지 않는다 —
-     * 캘린더처럼 미래에 끝나는 일정도 실제 구간 그대로 AI에 전달한다(클램프하면 이벤트가 잘려 보여 오히려 해롭다).
-     * 시간이 전혀 없는 item만 있으면 null(범위 없음).
-     */
-    private TimelineDraftTask.TimelineWindow computeTimelineWindow(List<SourceItemDto> items) {
-        LocalDateTime startTime = items.stream()
-                .map(item -> item.startAt() != null ? item.startAt() : item.endAt())
-                .filter(Objects::nonNull)
-                .min(Comparator.naturalOrder())
-                .orElse(null);
-        if (startTime == null) {
-            return null;
-        }
-        LocalDateTime endTime = items.stream()
-                .map(item -> item.endAt() != null ? item.endAt() : item.startAt())
-                .filter(Objects::nonNull)
-                .max(Comparator.naturalOrder())
-                .orElse(startTime);
-        // 방어적 floor: endAt < startAt인 malformed item이면 endTime을 startTime으로 올린다(음수 구간 방지).
-        if (endTime.isBefore(startTime)) {
-            endTime = startTime;
-        }
-        return new TimelineDraftTask.TimelineWindow(startTime, endTime);
     }
 
     /**

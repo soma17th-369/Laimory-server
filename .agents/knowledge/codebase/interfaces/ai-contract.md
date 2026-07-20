@@ -74,6 +74,8 @@ Daily Record, Timeline Events와 Timeline Items를 finalize한다.
 
 ## Invariants
 
+- Redis PROCESSING task의 `timelineWindow`는 클라이언트 요청값 pass-through다 — 서버가 source item
+  min/max로 재계산하지 않는다. AI가 읽는 field name과 compact 포맷(`yyyyMMdd'T'HHmmss`)은 유지된다.
 - callback에 `itemIds`를 다시 추가하지 않는다. 내부 DTO에서는 제거하지 않는다.
 - AI staging transaction과 callback 순서를 뒤집지 않는다.
 - source association을 request index로 해석하지 않는다. 값은 server staging PK다.

@@ -36,7 +36,8 @@ class GlobalExceptionHandlerTest {
 
     private static final String TASKS = "/a/api/v1/timeline/drafts";
     private static final String VALID_BODY = """
-            {"recordAt": "2026-06-17T12:00:00", "recordTimeZone": "Asia/Seoul",
+            {"recordDate": "2026-06-17", "recordAt": "2026-06-18T09:30:00", "recordTimeZone": "Asia/Seoul",
+             "timelineWindow": {"startTime": "2026-06-17T00:00", "endTime": "2026-06-18T00:00"},
              "sourceItems": [{"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null,
                "payload": {"filename": "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "clientPhotoUri": "content://x",
                            "latitude": 1.0, "longitude": 2.0}}]}
@@ -54,7 +55,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void businessException_mapsToEnumStatus_withCodeAndTransactionIdHeader() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -68,7 +69,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void illegalArgument_mapsToError0400_andForwardsDetailToAccessLog() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));
 
         var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -88,7 +89,7 @@ class GlobalExceptionHandlerTest {
         // 요청값이 echo된 긴 메시지 — CR/LF 제거(텍스트 로그 위조 방지) + 200자 상한(keyword term 한도로
         // 인한 ES 문서 거부 방지, ignore_above 256과 이중 방어)이 단일 조립 지점에서 적용돼야 한다.
         String hostile = "invalid photo filename: line1\r\nFAKE LOG LINE\n" + "x".repeat(500);
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException(hostile));
 
         var result = mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -102,7 +103,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void unexpectedException_mapsToError0500_withoutLeakingDetail() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("redis serialization failed: secret detail"));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -144,7 +145,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void acceptLanguage_switchesErrorMessageLocale() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
@@ -162,7 +163,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void withoutAcceptLanguage_fallsBackToKorean() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))

@@ -23,7 +23,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 일일 기록 | Daily Record | 현재 구현 | 한 사용자의 특정 날짜 기록이다. `user_id + record_date`는 유일하다. |
-| 기록 날짜 | Record Date | 현재 구현 | 정오를 날짜 경계로 계산한 일일 기록의 대상 날짜다. 요청 timezone은 검증·저장하지만 현재 경계 계산에는 사용하지 않는다. |
+| 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 날짜 guard·조회·finalize에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
+| 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | AI finalize 후 생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. |
 | 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다(도입 시 같은 날짜 guard를 취득해야 한다). |
@@ -103,7 +104,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
 | 타임라인 이벤트 제안 콜백 | Timeline Event Suggestion Callback | 현재 구현 | AI의 staging commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버가 staging을 읽어 finalize한다. |
-| 타임라인 윈도우 | Timeline Window | 현재 구현 | 신규 source item의 `startTime/endTime` 범위다. Redis task에 저장하며 시간 있는 신규 item이 없으면 NULL이다. |
+| 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증해 값 변형 없이 Redis PROCESSING task에 pass-through한다(terminal에서는 NULL). 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 사용자 메모리 | User Memory | 부분 구현 | Redis task shape(`usersCharacter` 등)는 있지만 값을 공급하는 source는 없다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·staging 저장)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED와 시각 없는 legacy task에서는 필드를 생략한다. |
