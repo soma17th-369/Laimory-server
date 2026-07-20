@@ -35,6 +35,9 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화와 새 Terraform MySQL bootstrap에 쓰인다.
 `CREATE TABLE IF NOT EXISTS`라 기존 table을 변경하지 않으며 migration framework는 없다.
 기존 dev/prod DB 변경은 애플리케이션 배포 전에 수동 DDL과 검증이 필요하다.
+dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/workflows/deploy.yml` — 구 컨테이너
+중단 후 새 컨테이너 기동), 스키마 변경 PR의 live DDL은 **머지 전에** dev DB에 적용해야 한다.
+미적용 상태로 머지하면 새 앱이 `ddl-auto=validate` 기동 실패로 dev가 다운된다.
 
 Terraform은 schema를 S3 bootstrap object로 올려 새 MySQL instance의 user data에서 적용한다.
 기존 MySQL은 `user_data` 변경을 ignore하므로 Terraform 파일 변경만으로 live schema가 바뀌지 않는다.
