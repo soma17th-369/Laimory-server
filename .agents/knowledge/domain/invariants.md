@@ -68,6 +68,19 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 신규 PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
   timestamp는 0 clamp). 시각이 없는 legacy PROCESSING task는 값을 위조하지 않고 필드를 생략한다(unknown).
 
+### Push
+
+- 완료 푸시는 callback이 처음 확정한 terminal(markSuccess/markFailed 성공) 뒤에만 비동기 best-effort로
+  예약한다 — terminal 저장 실패·멱등 단축·token 거절·owner 없는 legacy 경로에는 알림이 없고,
+  enqueue·발송 실패는 callback 200·Redis 상태·polling 계약을 바꾸지 않는다.
+- 푸시는 조회를 유도하는 신호일 뿐 결과 전달 경로가 아니다 — payload는 일반 문구와
+  `taskId`/`status`뿐이고 polling이 권위 원천이자 유실 안전망이다(durable retry/outbox 없음).
+- FID는 전역 unique 단일 owner다. 등록·계정 전환은 원자 upsert(read-then-insert+예외 복구 금지),
+  해제는 (owner, FID) 동시 일치할 때만 삭제한다(멱등 — 이전 owner의 늦은 해제가 재결합 등록을 못 지움).
+- FCM 영구 무효(`UNREGISTERED`·target-level `INVALID_ARGUMENT`)만 등록을 삭제하고 인증·project
+  mismatch·quota·internal 오류로는 삭제하지 않는다.
+- FID 원문은 URL·application log·예외 메시지에 남기지 않으며 access log body에서 마스킹된다.
+
 ### Photos
 
 - S3 key는 서버가 userId와 filename에서 파생하며 client가 full key를 정하지 않는다.

@@ -17,12 +17,16 @@ local, integration, dev와 prod의 profile, dependency, feature mode, logging과
 
 ## Current Matrix
 
-| Environment | Spring profile | DB/Redis | AI | Geo | Swagger | Logging | Redis prefix | Automation |
-|---|---|---|---|---|---|---|---|---|
-| local | `docker` | Compose | default noop | default noop | on | text | empty | none |
-| integration | `docker` | Compose | default noop; test spy/simulation | default noop | on | text | empty | local task |
-| dev | default | dev MySQL + shared Redis | workflow fake | workflow Kakao | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | Terraform has prod MySQL + shared Redis | default noop | default noop | off | JSON intended | empty | no app deploy workflow |
+| Environment | Spring profile | DB/Redis | AI | Geo | Push | Swagger | Logging | Redis prefix | Automation |
+|---|---|---|---|---|---|---|---|---|---|
+| local | `docker` | Compose | default noop | default noop | default noop | on | text | empty | none |
+| integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | on | text | empty | local task |
+| dev | default | dev MySQL + shared Redis | workflow fake | workflow Kakao | `.env` 전환(기본 noop) | on | JSON, dev environment | `dev_` | `dev` push |
+| prod | default | Terraform has prod MySQL + shared Redis | default noop | default noop | default noop | off | JSON intended | empty | no app deploy workflow |
+
+Push(`APP_PUSH_MODE`)는 workflow `-e` 주입이 아니라 host `.env`로 켠다 — firebase 전환 시 deploy.yml
+pre-flight가 service-account 파일 존재를 검사하고 read-only mount + `GOOGLE_APPLICATION_CREDENTIALS`
+(컨테이너 내부 파일 경로)를 조건부 주입한다(절차는 `terraform/README.md` FCM runbook).
 
 prod 행은 repository에서 확인되는 현재 automation이다. `APP_ENV=prod`는 의도일 뿐 이를 주입하는
 production workflow는 아직 없다.
@@ -34,6 +38,7 @@ production workflow는 아직 없다.
 - DB/Redis connection and `REDIS_KEY_PREFIX`
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`
+- `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
 - `SWAGGER_ENABLED`
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `APP_ENV`

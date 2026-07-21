@@ -40,6 +40,25 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
+    void masksFirebaseInstallationIdAliasesWithoutRawValue() throws Exception {
+        // FID는 민감 opaque 식별자 — push 등록 body(중첩·표기 변형 포함)에서 원문이 남으면 안 된다.
+        String rawFid = "RAW_FID_174_NEVER_LOG";
+        String body = """
+                {"firebaseInstallationId":"%s","nested":{"firebase_installation_id":"%s"},
+                 "list":[{"firebase-installation-id":"%s"}],"safe":"kept"}
+                """.formatted(rawFid, rawFid, rawFid);
+
+        String masked = maskRequest("/a/api/v1/push-registrations", body);
+        JsonNode json = objectMapper.readTree(masked);
+
+        assertThat(json.get("firebaseInstallationId").asText()).isEqualTo("***");
+        assertThat(json.at("/nested/firebase_installation_id").asText()).isEqualTo("***");
+        assertThat(json.at("/list/0/firebase-installation-id").asText()).isEqualTo("***");
+        assertThat(json.get("safe").asText()).isEqualTo("kept");
+        assertThat(masked).doesNotContain(rawFid);
+    }
+
+    @Test
     void supportsRootArrayAndScalarJson() {
         assertThat(maskRequest("/api/v1/test", "[1,true,{\"safe\":\"ok\"}]"))
                 .isEqualTo("[1,true,{\"safe\":\"ok\"}]");

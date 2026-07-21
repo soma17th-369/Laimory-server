@@ -141,6 +141,14 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `ERROR_2001`이고 principal userId가 service까지 전파된다. |
 | 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 recovery/finalize/guard 해제의 기준이며, 없으면(legacy) fail-closed한다. |
 
+## 푸시 알림
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 푸시 등록 | Push Registration | 현재 구현 | 사용자 한 명의 활성 앱 설치(FID) 하나를 나타내는 `push_registrations` 행이다. 행 존재가 활성이고 해제·영구 무효는 행 삭제다. 사용자 1:N이며 FID 하나는 한 시점 단일 owner다(계정 전환 시 현재 인증 사용자로 원자 재결합). |
+| Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
+| 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
+
 ## 사용 금지 표현
 
 이 표는 구현 상태가 아니라 항상 적용되는 naming 규범이다.
@@ -157,6 +165,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Metadata Map | Typed Payload |
 | `Map<String, Object> payload` | `TimelineItemPayload` |
 | photoUri / 사진 URI(서버 사진 식별자) | `filename` 또는 `photoUrl`; 기기 로컬 URI는 `clientPhotoUri` |
+| Push Token / Registration Token / Device Token(FCM 발송 target 의미) | Firebase Installation ID (FID) |
+| `NotificationPayload`(푸시 메시지 의미) | Timeline Completion Push; `NotificationPayload`는 Source Item 알림 페이로드 전용 |
 | 세션 토큰 / Session Token | Access Token 또는 Refresh Token |
 | 소셜 토큰(자체 token 의미) | Access Token / Refresh Token; provider 발급물은 ID token 등으로 명시 |
 | 인가 코드 / Authorization Code(자체 handoff 의미) | App Code; Authorization Code는 OAuth provider code만 의미 |

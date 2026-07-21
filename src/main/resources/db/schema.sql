@@ -139,6 +139,24 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     KEY idx_refresh_tokens_user (user_id)            -- 재사용 탐지 시 사용자 전체 폐기 스캔용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- FCM 푸시 등록(사용자 1:N 앱 설치). Firebase Installation ID(FID)가 발송 target이며 행 존재 = 활성 등록
+-- (해제·영구 무효는 행 삭제). FID는 대소문자 구분 opaque 식별자 → 테이블 기본(_unicode_ci)과 달리
+-- 컬럼 단위 binary collation으로 정확 비교. user_id FK 없음(사용자 보조 데이터 기존 방침).
+-- 쓰기는 native upsert(등록·계정 전환 재결합 원자화 — JPA auditing 미적용, 감사 컬럼은 upsert가 직접 채움).
+CREATE TABLE IF NOT EXISTS push_registrations (
+    push_registration_id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    firebase_installation_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+    last_registered_at DATETIME(6) NOT NULL,         -- Android가 FID를 서버와 마지막으로 동기화한 시각(후속 stale 정리 기준)
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (push_registration_id),
+    UNIQUE KEY uq_push_registrations_fid (firebase_installation_id),
+    KEY idx_push_registrations_user (user_id)        -- 사용자 활성 설치 전체 발송 조회용
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,
 -- 신규 DB(마이그레이션/로컬)에서 없으면 1건 생성한다(멱등 — 이미 있으면 no-op).
 INSERT INTO app_config (min_app_version, recommend_app_version)

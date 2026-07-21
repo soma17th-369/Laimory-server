@@ -40,9 +40,14 @@ workflow는 dev에서 Redis prefix, application environment, AI/geo mode와 Swag
 - `JWT_SECRET` minimum length
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`
+- `.env`가 `APP_PUSH_MODE=firebase`일 때만: `/home/ubuntu/app/secrets/firebase-service-account.json`
+  존재·non-empty(통과 시 read-only bind mount + `GOOGLE_APPLICATION_CREDENTIALS` 조건부 주입 —
+  noop/미설정이면 mount 없이 기동)
 
 `DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 현재 preflight하지 않는다.
 dev는 Kakao geo mode를 켜므로 API key 누락 시 기존 container 제거 후 새 앱 boot가 실패할 수 있다.
+Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env`를 noop으로 되돌린 재배포다
+(FID 등록 API/DB는 유지 — 절차·rollback은 `terraform/README.md` FCM runbook).
 
 ### Container
 

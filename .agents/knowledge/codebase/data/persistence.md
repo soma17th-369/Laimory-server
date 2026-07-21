@@ -31,6 +31,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `daily_records → timeline_events → timeline_items`
 - `timeline_draft_source_items`, `timeline_draft_event_suggestions`
 - `users`, `refresh_tokens`
+- `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화와 새 Terraform MySQL bootstrap에 쓰인다.
 `CREATE TABLE IF NOT EXISTS`라 기존 table을 변경하지 않으며 migration framework는 없다.
@@ -44,6 +45,15 @@ Terraform은 schema를 S3 bootstrap object로 올려 새 MySQL instance의 user 
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 AI가 raw INSERT하는 suggestion staging은 DB default audit time을 사용한다.
+
+`push_registrations`(#174)는 사용자 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
+한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
+쓴다(테이블 기본은 `_unicode_ci` — 저장소 유일한 컬럼 collation). `user_id`는 기존 방침대로 FK 없는
+soft-owner다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭제다. 쓰기는 repository의
+`INSERT ... ON DUPLICATE KEY UPDATE` native upsert(저장소 첫 native query — 등록·계정 전환 재결합을
+한 문장으로 원자화, read-then-insert+unique 예외 복구 금지)와 조건부 delete뿐이라 JPA auditing이
+돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
+entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
 
 `timeline_events.event_type`과 `timeline_draft_event_suggestions.event_type`은 둘 다
 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행 backfill과 컬럼을 모르는

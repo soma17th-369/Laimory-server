@@ -76,6 +76,11 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 - commit 뒤 Redis task를 `SUCCESS`로 바꾸며, finalize가 반환한 `dailyRecordId`를 task에 저장한다
   (staging 부재 멱등 복구 경로도 조회한 record의 ID를 저장). AI 보고 실패와 처리한 assembly/validation
   실패는 `FAILED`와 공개 가능한 error code로 기록한다. 모든 terminal 전이 성공 직후 날짜 guard를 해제한다.
+- callback이 처음 확정한 terminal(SUCCESS/FAILED 모두)은 저장·guard 해제 시도 뒤 task owner의 활성
+  FID 전체로 완료 푸시를 **비동기 best-effort**로 예약한다(`TimelineCompletionPushNotifier` `@Async`).
+  enqueue·발송 실패는 callback 200·Redis 상태·polling 계약에 영향이 없고, 멱등 단축·token 거절·
+  terminal 저장 실패 경로에는 알림이 없다. FCM 계약 상세는
+  [external integrations](../interfaces/external-integrations.md)가 소유한다.
 - callback은 request principal 없이(`/s/api`) task 저장 owner로 recovery 조회·finalize·guard 해제를
   수행한다. owner 없는 legacy task는 token 검증·소비 뒤 finalize 없이 404로 fail-closed한다(TTL 만료).
 - polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자·
@@ -109,6 +114,8 @@ PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 �
 - accepted source는 정확히 한 final event에 속한다.
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다.
 - Redis SUCCESS는 finalize DB commit보다 먼저 기록하지 않는다.
+- 완료 푸시는 결과 전달 경로가 아니다 — terminal 확정 뒤 조회를 유도하는 신호일 뿐이고 polling이
+  권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps
 
