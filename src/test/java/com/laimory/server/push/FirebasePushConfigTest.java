@@ -2,12 +2,19 @@ package com.laimory.server.push;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.google.auth.oauth2.AccessToken;
+import com.google.auth.oauth2.GoogleCredentials;
+import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.laimory.server.config.AsyncConfig;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.Date;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -33,6 +40,7 @@ class FirebasePushConfigTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withBean(FirebaseMessaging.class, () -> Mockito.mock(FirebaseMessaging.class))
             .withBean(PushRegistrationService.class, () -> Mockito.mock(PushRegistrationService.class))
+            .withBean(Clock.class, () -> Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneId.of("Asia/Seoul")))
             .withUserConfiguration(
                     AsyncConfig.class,
                     NoOpPushMessageSender.class,
@@ -79,6 +87,19 @@ class FirebasePushConfigTest {
                         .rootCause()
                         .isInstanceOf(NoSuchBeanDefinitionException.class)
                         .hasMessageContaining("PushMessageSender"));
+    }
+
+    @Test
+    void firebaseOptions_enforceFiniteHttpTimeouts() {
+        // FirebaseOptions 기본 timeout은 0(무한) — FCM hang이 @Async thread를 영구 점유하지 않게 유한값을 고정한다.
+        GoogleCredentials credentials = GoogleCredentials.create(
+                new AccessToken("test-token", new Date(Instant.parse("2026-07-21T01:00:00Z").toEpochMilli())));
+
+        FirebaseOptions options = FirebasePushConfig.firebaseOptions(credentials);
+
+        assertThat(options.getConnectTimeout()).isEqualTo(FirebasePushConfig.CONNECT_TIMEOUT_MILLIS).isPositive();
+        assertThat(options.getReadTimeout()).isEqualTo(FirebasePushConfig.READ_TIMEOUT_MILLIS).isPositive();
+        assertThat(options.getWriteTimeout()).isEqualTo(FirebasePushConfig.WRITE_TIMEOUT_MILLIS).isPositive();
     }
 
     @Test

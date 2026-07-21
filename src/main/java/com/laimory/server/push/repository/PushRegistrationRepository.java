@@ -49,9 +49,15 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
     /**
      * FCM이 영구 무효(UNREGISTERED 등)로 판정한 FID 등록 일괄 삭제. repository 메서드 단위의 짧은 별도
      * transaction이라 한 batch 실패가 callback이나 다른 batch를 되돌리지 않는다.
+     *
+     * <p>{@code registeredAtOrBefore}(발송 대상 조회 snapshot 시각) 조건이 있어야 한다 — FID만으로 지우면
+     * snapshot 이후 같은 FID로 갱신된 정상 재등록(만료 등록의 재활성화·앱 재오픈)을 지연 도착한
+     * UNREGISTERED 응답이 삭제한다. snapshot보다 최신인 행은 남긴다(보수적 — 무효면 다음 발송이 다시 정리).
      */
     @Modifying
     @Transactional
-    @Query("delete from PushRegistration p where p.firebaseInstallationId in :fids")
-    int deleteAllByFirebaseInstallationIdIn(@Param("fids") Collection<String> firebaseInstallationIds);
+    @Query("delete from PushRegistration p where p.firebaseInstallationId in :fids "
+            + "and p.lastRegisteredAt <= :registeredAtOrBefore")
+    int deleteInvalidRegistrations(@Param("fids") Collection<String> firebaseInstallationIds,
+                                   @Param("registeredAtOrBefore") LocalDateTime registeredAtOrBefore);
 }

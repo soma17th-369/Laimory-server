@@ -13,30 +13,39 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushSendResult;
 import com.laimory.server.timeline.TaskStatus;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 완료 푸시 notifier 단위 검증 — owner 전체 FID 발송, 0개 단축, invalid 정리, 예외 최종 격리. 인프라 0.
- * ({@code @Async} 프록시 배선 자체는 {@code FirebasePushConfigTest}·콜백 회귀에서 다룬다 — 여기선 body 계약만.)
+ * 완료 푸시 notifier 단위 검증 — owner 전체 FID 발송, 0개 단축, snapshot 조건부 invalid 정리, 예외 최종 격리.
+ * 인프라 0. ({@code @Async} 프록시 배선 자체는 {@code FirebasePushConfigTest}·콜백 회귀에서 다룬다 — 여기선
+ * body 계약만.)
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineCompletionPushNotifierTest {
 
     private static final long USER_ID = 7L;
     private static final String TASK_ID = "t-1";
+    /** 고정 Clock — invalid 정리에 전달되는 snapshot 시각이 이 값이어야 한다. */
+    private static final Clock FIXED_CLOCK =
+            Clock.fixed(Instant.parse("2026-07-21T01:30:00Z"), ZoneId.of("Asia/Seoul"));
+    private static final LocalDateTime SNAPSHOT_AT = LocalDateTime.now(FIXED_CLOCK);
 
     @Mock
     private PushRegistrationService pushRegistrationService;
     @Mock
     private PushMessageSender pushMessageSender;
 
-    @InjectMocks
-    private TimelineCompletionPushNotifier notifier;
+    private TimelineCompletionPushNotifier notifier() {
+        return new TimelineCompletionPushNotifier(pushRegistrationService, pushMessageSender, FIXED_CLOCK);
+    }
 
     @Test
     void notifyAsync_sendsToAllOwnerFids() {
@@ -45,32 +54,33 @@ class TimelineCompletionPushNotifierTest {
         when(pushMessageSender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2")))
                 .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
-        notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
+        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
 
         verify(pushMessageSender).send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
         // invalid 0건이면 정리 query를 만들지 않는다.
-        verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection());
+        verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
     }
 
     @Test
     void notifyAsync_noRegistrations_skipsSendEntirely() {
         when(pushRegistrationService.findFirebaseInstallationIds(USER_ID)).thenReturn(List.of());
 
-        notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
+        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
 
         verify(pushMessageSender, never()).send(any(), any(), anyList());
     }
 
     @Test
-    void notifyAsync_removesOnlyInvalidFids() {
+    void notifyAsync_removesOnlyInvalidFids_withSendSnapshotGuard() {
         when(pushRegistrationService.findFirebaseInstallationIds(USER_ID))
                 .thenReturn(List.of("fid-1", "fid-2", "fid-3"));
         when(pushMessageSender.send(any(), any(), anyList()))
                 .thenReturn(new PushSendResult(3, 1, 2, List.of("fid-2")));
 
-        notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
+        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
 
-        verify(pushRegistrationService).removeInvalidRegistrations(List.of("fid-2"));
+        // snapshot(조회 시각)이 함께 전달돼 그 이후 재등록된 같은 FID 행은 삭제되지 않는다.
+        verify(pushRegistrationService).removeInvalidRegistrations(List.of("fid-2"), SNAPSHOT_AT);
     }
 
     @Test
@@ -78,7 +88,7 @@ class TimelineCompletionPushNotifierTest {
         when(pushRegistrationService.findFirebaseInstallationIds(anyLong()))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatCode(() -> notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
+        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
         verify(pushMessageSender, never()).send(any(), any(), anyList());
     }
@@ -88,9 +98,9 @@ class TimelineCompletionPushNotifierTest {
         when(pushRegistrationService.findFirebaseInstallationIds(USER_ID)).thenReturn(List.of("fid-1"));
         when(pushMessageSender.send(any(), any(), anyList())).thenThrow(new RuntimeException("fcm down"));
 
-        assertThatCode(() -> notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED))
+        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED))
                 .doesNotThrowAnyException();
-        verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection());
+        verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
     }
 
     @Test
@@ -99,9 +109,9 @@ class TimelineCompletionPushNotifierTest {
         when(pushMessageSender.send(any(), any(), anyList()))
                 .thenReturn(new PushSendResult(1, 0, 1, List.of("fid-1")));
         doThrow(new RuntimeException("db down"))
-                .when(pushRegistrationService).removeInvalidRegistrations(anyCollection());
+                .when(pushRegistrationService).removeInvalidRegistrations(anyCollection(), any());
 
-        assertThatCode(() -> notifier.notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
+        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
     }
 }

@@ -21,18 +21,35 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name = "app.push.mode", havingValue = "firebase")
 public class FirebasePushConfig {
 
+    /**
+     * Admin SDK HTTP timeout. FirebaseOptions 기본값은 0(무한)이라 FCM 연결이 응답하지 않으면 {@code @Async}
+     * 작업이 영구 점유되고 기본 executor thread(8개)가 고갈될 수 있어 유한값을 강제한다.
+     * read/write는 500개 multicast batch 왕복을 감안해 connect보다 길게 둔다.
+     */
+    static final int CONNECT_TIMEOUT_MILLIS = 5_000;
+    static final int READ_TIMEOUT_MILLIS = 15_000;
+    static final int WRITE_TIMEOUT_MILLIS = 15_000;
+
     /** 컨텍스트 종료 시 app을 정리해({@code delete}) 재기동 시 [DEFAULT] app 중복 초기화를 막는다. */
     @Bean(destroyMethod = "delete")
     public FirebaseApp firebaseApp() {
         try {
-            return FirebaseApp.initializeApp(FirebaseOptions.builder()
-                    .setCredentials(GoogleCredentials.getApplicationDefault())
-                    .build());
+            return FirebaseApp.initializeApp(firebaseOptions(GoogleCredentials.getApplicationDefault()));
         } catch (IOException e) {
             throw new IllegalStateException("Application Default Credentials are required when "
                     + "app.push.mode=firebase (set GOOGLE_APPLICATION_CREDENTIALS to the "
                     + "service account JSON file path)", e);
         }
+    }
+
+    /** credential 로드(ADC)와 분리한 options 조립 seam — 유한 timeout 계약을 테스트로 고정한다. */
+    static FirebaseOptions firebaseOptions(GoogleCredentials credentials) {
+        return FirebaseOptions.builder()
+                .setCredentials(credentials)
+                .setConnectTimeout(CONNECT_TIMEOUT_MILLIS)
+                .setReadTimeout(READ_TIMEOUT_MILLIS)
+                .setWriteTimeout(WRITE_TIMEOUT_MILLIS)
+                .build();
     }
 
     @Bean

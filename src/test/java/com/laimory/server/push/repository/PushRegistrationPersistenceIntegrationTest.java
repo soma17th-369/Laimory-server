@@ -122,10 +122,23 @@ class PushRegistrationPersistenceIntegrationTest {
         repository.upsert(USER_A, "fid-gone-1", T1);
         repository.upsert(USER_B, "fid-gone-2", T1);
 
-        int deleted = repository.deleteAllByFirebaseInstallationIdIn(List.of("fid-gone-1", "fid-gone-2"));
+        int deleted = repository.deleteInvalidRegistrations(List.of("fid-gone-1", "fid-gone-2"), T1);
 
         assertThat(deleted).isEqualTo(2);
         assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).containsExactly("fid-keep");
         assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_B)).isEmpty();
+    }
+
+    @Test
+    void invalidFidBatchDelete_sparesRegistrationRefreshedAfterSnapshot() {
+        // 발송 snapshot(T1) 이후 같은 FID가 재등록(T2)됐다면, 지연 도착한 무효 응답의 삭제가 최신 행을
+        // 지우면 안 된다 — snapshot 조건부 삭제가 보호한다.
+        repository.upsert(USER_A, "fid-revived", T1);
+        repository.upsert(USER_A, "fid-revived", T2);
+
+        int deleted = repository.deleteInvalidRegistrations(List.of("fid-revived"), T1);
+
+        assertThat(deleted).isZero();
+        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).containsExactly("fid-revived");
     }
 }

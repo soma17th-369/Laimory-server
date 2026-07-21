@@ -80,9 +80,13 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   매핑한다. `UNREGISTERED`와 target-level `INVALID_ARGUMENT`만 등록 삭제 대상이다(server-built
   payload 정상은 unit test로 고정). 인증·project mismatch·quota·internal 오류는 삭제 근거가 아니며,
   SDK 내부 재시도 후에도 실패한 전이 오류는 로그만 남긴다(durable retry/outbox 없음).
+- 무효 등록 삭제는 발송 대상 조회 snapshot 시각 기준 **조건부**다(`last_registered_at <= snapshot`) —
+  지연 도착한 무효 응답이 snapshot 이후 같은 FID로 갱신된 정상 재등록을 지우지 않는다.
 - credential은 ADC로만 읽는다 — `GOOGLE_APPLICATION_CREDENTIALS`에 컨테이너 내부 read-only
   service-account JSON **파일 경로**만 두고, JSON 원문을 property/Git/이미지/Terraform에 넣지 않는다.
-  firebase 모드에서 ADC/초기화 실패는 기동 실패다(fail-fast).
+  파일은 컨테이너 runtime user(appuser, UID 1001)가 읽을 수 있어야 한다(chown 1001·0400).
+  firebase 모드에서 ADC/초기화 실패는 기동 실패다(fail-fast). Admin SDK HTTP timeout은
+  기본 0(무한)이라 `FirebasePushConfig`가 connect/read/write 유한값을 강제한다.
 - log에는 taskId·status·개수·오류 분류만 남긴다 — FID·Firebase 응답 원문·credential 금지.
 
 ### AI

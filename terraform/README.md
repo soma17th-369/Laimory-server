@@ -288,8 +288,10 @@ FCM HTTP v1 API 활성화, service account에 FCM 발송 권한(`roles/firebasec
    base64 -d <<'B64' | sudo tee /home/ubuntu/app/secrets/firebase-service-account.json > /dev/null
    <붙여넣기>
    B64
-   sudo chown ubuntu:ubuntu /home/ubuntu/app/secrets/firebase-service-account.json
-   sudo chmod 600 /home/ubuntu/app/secrets/firebase-service-account.json
+   # 앱 컨테이너는 Dockerfile의 appuser(UID 1001)로 실행된다 — ubuntu(1000) 소유·0600이면 read-only
+   # mount를 컨테이너가 못 읽어 기동이 실패한다. owner를 UID 1001로 두고 owner-read만 허용한다.
+   sudo chown 1001 /home/ubuntu/app/secrets/firebase-service-account.json
+   sudo chmod 0400 /home/ubuntu/app/secrets/firebase-service-account.json
    ```
 
 2. `.env`에 모드 추가: `echo 'APP_PUSH_MODE=firebase' | sudo tee -a /home/ubuntu/app/.env`

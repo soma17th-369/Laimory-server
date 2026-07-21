@@ -86,6 +86,12 @@ jobs:
           nginx -t && systemctl reload nginx
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
           docker pull ${IMG}
+          # firebase 모드면 runtime user 관점의 읽기 가능성까지 구 컨테이너 중지 전에 검증한다 — 앱 컨테이너는
+          # Dockerfile의 appuser(UID 1001)로 실행되므로 root의 -f/-s 검사만으로는 소유권/권한 문제(예:
+          # ubuntu:0600)를 못 잡는다. 방금 pull한 image를 그대로 사용해 동일 조건(test -r)으로 확인한다.
+          if [ -n "\$PUSH_ARGS" ]; then
+            docker run --rm -v /home/ubuntu/app/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400 (terraform/README.md FCM runbook)"; exit 1; }
+          fi
           docker stop laimory 2>/dev/null || true
           docker rm laimory 2>/dev/null || true
           # REDIS_KEY_PREFIX=dev_ : dev/prod 공유 Redis에서 dev 키 격리. 이 워크플로는 dev 전용이라 여기 고정(누락 불가).

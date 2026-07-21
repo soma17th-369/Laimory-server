@@ -104,15 +104,16 @@ class PushRegistrationServiceTest {
 
     @Test
     void removeInvalidRegistrations_emptyList_isNoOpWithoutQuery() {
-        service().removeInvalidRegistrations(List.of());
+        service().removeInvalidRegistrations(List.of(), FIXED_NOW);
 
         verifyNoInteractions(pushRegistrationRepository);
     }
 
     @Test
-    void removeInvalidRegistrations_deletesGivenFids() {
-        service().removeInvalidRegistrations(List.of("gone-1", "gone-2"));
+    void removeInvalidRegistrations_deletesGivenFidsWithSnapshotGuard() {
+        // snapshot 시각이 함께 전달돼야 한다 — 지연된 무효 응답이 그 이후의 재등록을 지우지 않는 조건부 삭제.
+        service().removeInvalidRegistrations(List.of("gone-1", "gone-2"), FIXED_NOW);
 
-        verify(pushRegistrationRepository).deleteAllByFirebaseInstallationIdIn(List.of("gone-1", "gone-2"));
+        verify(pushRegistrationRepository).deleteInvalidRegistrations(List.of("gone-1", "gone-2"), FIXED_NOW);
     }
 }

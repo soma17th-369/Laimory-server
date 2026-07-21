@@ -39,12 +39,16 @@ public class PushRegistrationService {
         return pushRegistrationRepository.findAllFirebaseInstallationIdsByUserId(userId);
     }
 
-    /** FCM이 영구 무효로 판정한 FID 등록 제거. 빈 목록이면 query 없이 no-op. */
-    public void removeInvalidRegistrations(Collection<String> firebaseInstallationIds) {
+    /**
+     * FCM이 영구 무효로 판정한 FID 등록 제거. 빈 목록이면 query 없이 no-op.
+     * {@code snapshotAt}(발송 대상 조회 시각) 이후 갱신된 재등록은 지우지 않는다 — 지연 도착한 무효 응답이
+     * 최신 등록을 삭제하는 레이스 차단.
+     */
+    public void removeInvalidRegistrations(Collection<String> firebaseInstallationIds, LocalDateTime snapshotAt) {
         if (firebaseInstallationIds.isEmpty()) {
             return;
         }
-        pushRegistrationRepository.deleteAllByFirebaseInstallationIdIn(firebaseInstallationIds);
+        pushRegistrationRepository.deleteInvalidRegistrations(firebaseInstallationIds, snapshotAt);
     }
 
     private static void validate(String firebaseInstallationId) {
