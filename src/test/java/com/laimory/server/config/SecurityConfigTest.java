@@ -29,7 +29,7 @@ import org.springframework.test.web.servlet.MvcResult;
 /**
  * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인의
  * /a/api 인증 강제(무토큰/무효 토큰 → 401 ERROR_2001, 유효 토큰 → 통과), 공개 경로 무인증 유지,
- * 핸드오프 안내 페이지의 code 비표시.
+ * 핸드오프 안내 페이지의 code 비표시, App Link 검증 파일(assetlinks.json)의 무인증 JSON 제공.
  */
 @WebMvcTest(controllers = AuthHandoffPageController.class)
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
@@ -102,6 +102,20 @@ class SecurityConfigTest {
                 .andExpect(header().string("Content-Type", containsString("text/html")))
                 .andExpect(content().string(containsString("로그인")))
                 .andExpect(content().string(org.hamcrest.Matchers.not(containsString("SECRET123"))));
+    }
+
+    @Test
+    void assetLinks_servedWithoutAuthAsExactDebugAppRelation() throws Exception {
+        // Android verifier가 redirect·인증 없이 읽어야 debug 앱 App Link 도메인 검증이 성립한다.
+        mockMvc.perform(get("/.well-known/assetlinks.json"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", containsString("application/json")))
+                .andExpect(jsonPath("$[0].relation[0]").value("delegate_permission/common.handle_all_urls"))
+                .andExpect(jsonPath("$[0].target.namespace").value("android_app"))
+                .andExpect(jsonPath("$[0].target.package_name").value("com.soma369.laimory.debug"))
+                .andExpect(jsonPath("$[0].target.sha256_cert_fingerprints[0]").value(
+                        "95:7C:55:EE:29:A5:D4:71:73:47:FB:6A:D3:60:06:9A:4D:06:82:9F:"
+                                + "B5:48:D3:E7:4C:23:35:38:90:53:95:8B"));
     }
 
     @Test
