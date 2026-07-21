@@ -19,7 +19,7 @@ Laimory 서버의 구조, 런타임 흐름, 외부·내부 계약, 저장소와 
 | [Timeline draft runtime](runtime/timeline-draft.md) | draft 생성·polling·callback·finalize·cleanup을 바꿀 때 | `timeline/**`, schema, Redis | 단계·보상·TTL·상태가 바뀔 때 | services/entities/tests | timeline unit/integration tests |
 | [Authentication runtime](runtime/authentication.md) | OAuth·JWT·Security·userId 전파를 바꿀 때 | `auth/**`, `user/**`, security config | 인증 계약·enforcement·fallback이 바뀔 때 | security/auth code·tests | auth/security tests |
 | [API interface](interfaces/api.md) | endpoint·DTO·envelope·error·OpenAPI를 바꿀 때 | `*Api.java`, controllers, DTOs, error handling | 공개 HTTP 계약이 바뀔 때 | API interfaces·tests·runtime OpenAPI | controller/contract tests |
-| [AI contract](interfaces/ai-contract.md) | AI staging·dispatch·callback 계약을 바꿀 때 | dispatcher, staging, assembler, callback | write-then-notify 계약이나 인증이 바뀔 때 | code/schema/tests | callback integration/E2E tests |
+| [AI contract](interfaces/ai-contract.md) | AI staging·dispatch·callback 계약을 바꿀 때 | dispatcher, staging, assembler, callback | write-then-notify 계약이나 인증이 바뀔 때 | code/schema/tests | fake unit/wiring + callback integration tests |
 | [External integrations](interfaces/external-integrations.md) | OAuth provider·Kakao Maps·S3/CDN을 바꿀 때 | provider/storage code, properties | 외부 요청·retry·보안 계약이 바뀔 때 | adapter/config/tests | provider/storage tests |
 | [Persistence](data/persistence.md) | Entity·schema·repository·Redis key를 바꿀 때 | entities, repositories, `schema.sql`, Redis stores | shape·key·TTL·migration 절차가 바뀔 때 | schema/entities/stores | unit + integration tests |
 | [Local development](operations/local-development.md) | 로컬에서 앱과 의존성을 실행할 때 | Gradle, properties, Compose | 로컬 profile·명령·dependency가 바뀔 때 | config/Compose | `docker compose config --quiet` |

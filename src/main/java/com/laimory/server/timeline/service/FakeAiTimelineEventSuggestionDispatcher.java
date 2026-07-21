@@ -14,9 +14,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 /**
- * dev 전용 fake AI 디스패처. 실 AI 역할을 in-process로 대행해 콜백 API의 E2E 테스트를 가능하게 한다 —
- * delay(추론 시간 흉내) 후 canned 이벤트 제안을 staging 커밋하고, 자기 서버의 콜백 엔드포인트를
- * <b>실제 HTTP</b>로 호출한다(write-then-notify). 토큰이 프로세스 밖으로 나가지 않아 보안 모델이 유지된다.
+ * dev 전용 fake AI 디스패처. 실 AI 역할을 in-process로 대행하는 dev runtime 시뮬레이터다 — 앱이 dev
+ * 서버에서 draft→callback→SUCCESS 흐름을 실제로 태워볼 수 있도록, delay(추론 시간 흉내) 후 canned
+ * 이벤트 제안을 staging 커밋하고, 자기 서버의 콜백 엔드포인트를 <b>실제 HTTP</b>로
+ * 호출한다(write-then-notify). 토큰이 프로세스 밖으로 나가지 않아 보안 모델이 유지된다.
  *
  * <p>실 AI 계약과의 의도적 차이: <b>콜백 재시도 없음</b>(dev 도구). 콜백 HTTP가 실패하면 task는
  * PROCESSING인 채 TTL로 소멸한다. 서버가 8080이 아닌 포트로 떠 있으면 콜백이 유실된다(고정 URL 전제).
@@ -29,7 +30,8 @@ import org.springframework.web.client.RestClient;
 public class FakeAiTimelineEventSuggestionDispatcher implements TimelineEventSuggestionDispatcher {
 
     // 콜백 경로 중 /timeline/drafts/{taskId}/callback은 TimelineCallbackController 매핑의 복제다
-    // (서비스가 컨트롤러 상수를 참조하는 레이어 역류를 피함). 드리프트는 E2E 통합 테스트가 검출한다.
+    // (서비스가 컨트롤러 상수를 참조하는 레이어 역류를 피함). URL 형태는 FakeAiTimelineEventSuggestionDispatcherTest,
+    // 컨트롤러 매핑은 TimelineCallbackControllerTest가 각각 소유하며, 둘의 조합 드리프트를 자동 검출하는 테스트는 없다.
     private static final String CALLBACK_URL_FORMAT =
             "http://localhost:8080" + ApiUrls.SERVER_API_URL.replace(ApiUrls.VERSION, "v1")
                     + "/timeline/drafts/%s/callback";

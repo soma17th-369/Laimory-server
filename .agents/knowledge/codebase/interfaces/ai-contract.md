@@ -15,7 +15,7 @@ AI dispatcher, staging table, callback body/header, assembler, validator 또는 
 - `TimelineEventSuggestionAssembler`, `TimelineEventSuggestionDto`,
   `TimelineEventSuggestionValidator`
 - `TimelineCallbackApi`, `DraftTaskCallbackRequest`, `TimelineCallbackService`
-- fake AI and callback integration/E2E tests
+- fake AI unit/wiring tests and `TimelineCallbackTokenIntegrationTest`
 
 ## Contract
 
@@ -110,7 +110,9 @@ validation 또는 failure semantics가 바뀔 때 갱신한다.
 ## Validation
 
 ```bash
-./gradlew test --tests 'com.laimory.server.timeline.service.TimelineEventSuggestion*'
+./gradlew test --tests 'com.laimory.server.timeline.service.TimelineEventSuggestion*' \
+  --tests 'com.laimory.server.timeline.service.AiDispatcherWiringTest' \
+  --tests 'com.laimory.server.timeline.service.FakeAi*'
 docker compose up -d
-./gradlew integrationTest --tests 'com.laimory.server.timeline.FakeAiDispatcherEndToEndIntegrationTest'
+./gradlew integrationTest --tests 'com.laimory.server.timeline.service.TimelineCallbackTokenIntegrationTest'
 ```

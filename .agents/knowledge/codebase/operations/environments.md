@@ -20,7 +20,7 @@ local, integration, dev와 prod의 profile, dependency, feature mode, logging과
 | Environment | Spring profile | DB/Redis | AI | Geo | Swagger | Logging | Redis prefix | Automation |
 |---|---|---|---|---|---|---|---|---|
 | local | `docker` | Compose | default noop | default noop | on | text | empty | none |
-| integration | `docker` | Compose | test override; E2E fake | default noop | on | text | empty | local task |
+| integration | `docker` | Compose | default noop; test spy/simulation | default noop | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | workflow fake | workflow Kakao | on | JSON, dev environment | `dev_` | `dev` push |
 | prod | default | Terraform has prod MySQL + shared Redis | default noop | default noop | off | JSON intended | empty | no app deploy workflow |
 
