@@ -31,7 +31,7 @@ final class AccessLogBodyMasker {
     private static final Pattern AUTH_BODY_PATH =
             Pattern.compile("^/api/v\\d+/auth/(token|refresh|logout)$");
     private static final Set<String> EXACT_SECRET_NAMES =
-            Set.of("appcode", "appverifier", "uploadurl");
+            Set.of("appcode", "appverifier", "uploadurl", "firebaseinstallationid");
     private static final List<String> CONTAINED_SECRET_NAMES =
             List.of("password", "secret", "token", "credential", "authorization");
 

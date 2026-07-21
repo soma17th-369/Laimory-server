@@ -92,6 +92,11 @@ ENVEOF
 chown -R ubuntu:ubuntu /home/ubuntu/app
 chmod 600 /home/ubuntu/app/.env
 
+# FCM(firebase 모드)용 secrets 디렉터리 골격만 생성 — credential 값은 Terraform 변수/state/user_data에
+# 넣지 않는다. service-account JSON(firebase-service-account.json)은 README runbook의 SSM 절차로 수동
+# 배치하고, deploy.yml pre-flight가 APP_PUSH_MODE=firebase일 때 파일 존재를 검사한다(noop 기본이면 빈 채로 무방).
+install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/app/secrets
+
 %{ if env == "dev" ~}
 # ---- dev DB 읽기전용 터널 bastion 설정 ----
 # 이 박스를 SSH 포트포워딩 전용 관문으로 쓴다. dbviewer(nologin) 유저가 dev-mysql:3306 으로만

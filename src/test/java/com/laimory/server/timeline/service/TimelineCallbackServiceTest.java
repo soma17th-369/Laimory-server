@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TaskStatus;
@@ -63,6 +64,8 @@ class TimelineCallbackServiceTest {
     private DailyTimelineService dailyTimelineService;
     @Mock
     private DailyRecordService dailyRecordService;
+    @Mock
+    private TimelineCompletionPushNotifier timelineCompletionPushNotifier;
 
     @InjectMocks
     private TimelineCallbackService service;
@@ -211,6 +214,8 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
+        // 이미 terminal인 멱등 단축(no-op)에서는 중복 알림을 만들지 않는다.
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 
     @Test
@@ -230,6 +235,8 @@ class TimelineCallbackServiceTest {
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
+        // terminal 전이가 없으므로 알림도 없다(owner 불명 fail-closed).
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 
     @Test
@@ -262,6 +269,8 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1008, TOKEN_HASH); // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함
         // FAILED terminal 저장 성공 후에도 guard를 해제한다(규칙 ③ — 실패 종결도 날짜를 풀어줘야 재시도 가능).
         verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+        // AI가 보고한 FAILED도 완료 푸시를 예약한다(D4 — 실패도 조회 유도 신호).
+        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.FAILED);
         verify(dailyTimelineService, never()).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         verify(timelineDraftSourceItemService, never()).findByTaskId(anyString());
     }
@@ -304,11 +313,13 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
 
-        // 불변식: Redis SUCCESS는 finalize(=DB 커밋) 이후에만 set되고, guard 해제는 terminal 저장 성공 뒤다(규칙 ③).
-        InOrder order = inOrder(dailyTimelineService, timelineTaskService);
+        // 불변식: Redis SUCCESS는 finalize(=DB 커밋) 이후에만 set되고, guard 해제는 terminal 저장 성공 뒤,
+        // 완료 푸시 예약은 그보다도 뒤다(terminal 확정 전 알림 금지).
+        InOrder order = inOrder(dailyTimelineService, timelineTaskService, timelineCompletionPushNotifier);
         order.verify(dailyTimelineService).appendDailyTimeline(any(), any(), any(), any(), any(), any());
         order.verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
         order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+        order.verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.SUCCESS);
     }
 
     @Test
@@ -327,6 +338,8 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 42L, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), any(), any(), anyString());
         verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+        // 복구 SUCCESS도 이번 콜백이 처음 확정한 terminal이므로 완료 푸시를 예약한다.
+        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.SUCCESS);
         // source 부재면 event 제안은 조회하지 않는다(복구 경로가 앞서 return).
         verify(timelineDraftEventSuggestionService, never()).findByTaskId(anyString());
     }
@@ -343,6 +356,7 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markFailed(eq("t"), eq(USER_ID), eq(DATE), eq(ErrorCode.ERROR_1010), eq(TOKEN_HASH));
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
         verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.FAILED);
     }
 
     @Test
@@ -423,6 +437,8 @@ class TimelineCallbackServiceTest {
 
         verify(timelineTaskService).markFailed("t", USER_ID, DATE, ErrorCode.ERROR_1011, TOKEN_HASH); // raw 메시지 대신 분류 코드
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), any(), any(), anyString());
+        // assemble/finalize 검증 실패 FAILED도 완료 푸시를 예약한다(D4).
+        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.FAILED);
     }
 
     @Test
@@ -449,6 +465,8 @@ class TimelineCallbackServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        // terminal이 확정되지 않았으므로 성공 알림도 없다(잘못된 완료 신호 금지).
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 
     @Test
@@ -464,5 +482,35 @@ class TimelineCallbackServiceTest {
         service.handleCallback("v1", "t", TOKEN, successRequest());
 
         verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
+        // guard 해제 실패는 삼켜지고, terminal은 이미 확정됐으므로 알림 예약은 수행한다.
+        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.SUCCESS);
+    }
+
+    @Test
+    void handleCallback_pushEnqueueFails_isSwallowedAndCallbackSucceeds() {
+        // 알림은 best-effort: executor 제출 실패(포화·종료 중)도 콜백 200과 terminal 확정을 바꾸지 않는다.
+        givenProcessingTaskWithFreshToken();
+        when(timelineDraftSourceItemService.findByTaskId("t")).thenReturn(draftRows());
+        when(timelineDraftEventSuggestionService.findByTaskId("t")).thenReturn(eventRows());
+        when(dailyTimelineService.appendDailyTimeline(any(), any(), any(), any(), any(), any())).thenReturn(77L);
+        doThrow(new RuntimeException("executor rejected")).when(timelineCompletionPushNotifier)
+                .notifyAsync(anyLong(), anyString(), any());
+
+        service.handleCallback("v1", "t", TOKEN, successRequest());
+
+        verify(timelineTaskService).markSuccess("t", USER_ID, DATE, 77L, TOKEN_HASH);
+        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+    }
+
+    @Test
+    void handleCallback_invalidStatus_doesNotEnqueuePush() {
+        // 잘못된 callback status(400)는 terminal 전이가 없으므로 알림도 없다.
+        givenProcessingTaskWithFreshToken();
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null);
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, req))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 }

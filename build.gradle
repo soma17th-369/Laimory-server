@@ -36,6 +36,9 @@ dependencies {
 	implementation 'org.springframework.session:spring-session-data-redis'
 	// Swagger UI(OpenAPI 문서 자동 생성). 노출은 SWAGGER_ENABLED로 제어(기본 off — application.properties 참고). Spring BOM 비관리 → 버전 명시.
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
+	// Firebase Admin SDK — AI 타임라인 완료 FCM 푸시(FID target 발송; 9.10.0에서 fid 추가·token target deprecated).
+	// Spring BOM 비관리 → 버전 명시. 새 코드에서 deprecated token API(setToken/addToken/addAllTokens) 금지.
+	implementation 'com.google.firebase:firebase-admin:9.10.0'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	annotationProcessor 'org.projectlombok:lombok'

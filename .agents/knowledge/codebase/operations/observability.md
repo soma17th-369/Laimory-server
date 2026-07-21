@@ -41,6 +41,9 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - 보안 감사·외부 호출 진단용 서비스 로그(재사용 탐지, verifier mismatch, callback replay, 지오코딩 실패,
   미지원 photo 타입)는 access log에 없는 데이터를 가진 **독립 이벤트**로 자기 level을 소유한다 —
   같은 exception을 중복 logging하지 않는 원칙은 유지.
+- FCM 발송 서비스 로그의 허용 필드는 `taskId`·status·target/success/failure/invalid **개수**와
+  오류 분류(`MessagingErrorCode` 집계)뿐이다. FID 원문·Firebase 응답 body·credential은 application
+  log·예외 메시지에 남기지 않는다(sender unit test가 고정).
 
 **요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀만: token, password, credential, presigned URL,
 세션 값.** query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302
@@ -54,7 +57,8 @@ JSON request와 정상 반환한 JSON response는 body마다 앞 64 KiB까지만
 dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
 
 - 객체와 배열을 재귀 순회해 token/password/secret/credential/authorization 계열 필드,
-  `appCode`/`appVerifier`/`uploadUrl` alias를 값 타입과 무관하게 마스킹한다.
+  `appCode`/`appVerifier`/`uploadUrl`/`firebaseInstallationId` alias를 값 타입과 무관하게 마스킹한다
+  (FID는 민감 opaque 발송 식별자 — push 등록 body가 URL 대신 body로 FID를 받는 이유이기도 하다).
 - 문자열 값의 대소문자 무관 `X-Amz-` 검사는 필드명 마스킹이 놓친 presigned S3 URL을 위한 denylist
   백스톱이다. 현재 사진 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
   파라미터도 별도 보안 검토한다.

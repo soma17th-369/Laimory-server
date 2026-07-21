@@ -93,6 +93,9 @@ task에 owner가 없으면(배포 전 legacy) token 검증·소비 뒤 finalize 
   이 필드를 몰라도 되지만(관대 수용), staging INSERT의 `user_id`는 반드시 소비하는 task의 source row와
   같은 사용자여야 한다(서버가 조립 전 검증해 불일치는 FAILED).
 - callback에 `itemIds`를 다시 추가하지 않는다. 내부 DTO에서는 제거하지 않는다.
+- callback HTTP 계약(body 없는 200·error envelope·token 의미)은 FCM 후처리와 무관하다 — 완료 푸시는
+  terminal 확정 뒤 비동기 best-effort고, 발송 실패·지연이 callback 응답이나 AI 재시도 의미를 바꾸지
+  않는다. controller는 FCM/FID payload를 받지 않는다.
 - AI staging transaction과 callback 순서를 뒤집지 않는다.
 - source association을 request index로 해석하지 않는다. 값은 server staging PK다.
 - 실제 credential이나 callback token 값을 문서·log에 기록하지 않는다.

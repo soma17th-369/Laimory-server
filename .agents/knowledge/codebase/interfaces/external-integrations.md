@@ -2,7 +2,7 @@
 
 ## Scope
 
-OAuth provider, Kakao Maps, S3/CloudFront와 외부 AI mode의 현재 adapter 계약을 설명한다.
+OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 adapter 계약을 설명한다.
 
 ## Read When
 
@@ -14,6 +14,7 @@ OAuth provider, Kakao Maps, S3/CloudFront와 외부 AI mode의 현재 adapter �
 - OAuth/security config and provider user services
 - `geo/**` providers and tests
 - `timeline/photo/**`, S3/CDN config and tests
+- `push/**` sender/config and tests
 - `terraform/storage_cdn.tf`, IAM and deploy workflow
 
 ## Current Implementation
@@ -62,6 +63,31 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 
 관련 이름은 `AWS_REGION`, `PHOTO_S3_BUCKET`, `PHOTO_CDN_DOMAIN`과 upload limit property들이다.
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
+
+### Firebase Cloud Messaging (타임라인 완료 푸시)
+
+- mode는 `noop|firebase`(`app.push.mode`, 기본 noop) — noop에서도 FID 등록 API/DB는 동작하고
+  외부 발송만 없다. 알 수 없는 mode는 sender 빈 부재로 기동 실패한다.
+- Firebase Admin Java `9.10.0` 고정. 발송 target은 **FID(Firebase Installation ID)**다 — 9.10.0에서
+  Send API `fid` target이 추가되고 registration token target이 deprecated돼, 새 코드에서
+  `setToken/addToken/addAllTokens`를 쓰지 않는다.
+- Android 선행조건: `firebase-messaging 25.1.1+`, manifest
+  `firebase_messaging_installation_id_enabled=true`, `onRegistered(fid)`가 준 FID를 등록 API로 업로드.
+- 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort 1회다.
+  메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
+  priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
+- multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를
+  매핑한다. `UNREGISTERED`와 target-level `INVALID_ARGUMENT`만 등록 삭제 대상이다(server-built
+  payload 정상은 unit test로 고정). 인증·project mismatch·quota·internal 오류는 삭제 근거가 아니며,
+  SDK 내부 재시도 후에도 실패한 전이 오류는 로그만 남긴다(durable retry/outbox 없음).
+- 무효 등록 삭제는 발송 대상 조회 snapshot 시각 기준 **조건부**다(`last_registered_at <= snapshot`) —
+  지연 도착한 무효 응답이 snapshot 이후 같은 FID로 갱신된 정상 재등록을 지우지 않는다.
+- credential은 ADC로만 읽는다 — `GOOGLE_APPLICATION_CREDENTIALS`에 컨테이너 내부 read-only
+  service-account JSON **파일 경로**만 두고, JSON 원문을 property/Git/이미지/Terraform에 넣지 않는다.
+  파일은 컨테이너 runtime user(appuser, UID 1001)가 읽을 수 있어야 한다(chown 1001·0400).
+  firebase 모드에서 ADC/초기화 실패는 기동 실패다(fail-fast). Admin SDK HTTP timeout은
+  기본 0(무한)이라 `FirebasePushConfig`가 connect/read/write 유한값을 강제한다.
+- log에는 taskId·status·개수·오류 분류만 남긴다 — FID·Firebase 응답 원문·credential 금지.
 
 ### AI
 

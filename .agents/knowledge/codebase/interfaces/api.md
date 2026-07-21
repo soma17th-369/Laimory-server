@@ -31,9 +31,15 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 7개는 `bearerAuth` security requirement와 401 응답을 문서화하고, userId principal은
-`@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지 않는다(클라이언트 입력이 아님).
-인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
+보호 operation 9개(timeline 7 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
+않는다(클라이언트 입력이 아님). 인증 흐름 상세는
+[authentication runtime](../runtime/authentication.md)이 소유한다.
+
+`PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
+request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
+않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
+멱등 upsert, DELETE는 (owner, FID) 동시 일치 시에만 지우는 멱등 해제다(미존재도 200).
 
 ### Boundary conventions
 

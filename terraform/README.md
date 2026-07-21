@@ -255,7 +255,8 @@ terraform apply -target=aws_instance.elk
 user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지
 않으므로**(state 노출 방지 + 기존 박스엔 user_data 재실행이 없음) SSM으로 직접 추가·갱신한다.
 이 키들이 빠지면 앱이 fail-fast로 기동에 실패한다. 현재 `deploy.yml`은 기존 컨테이너를 내리기 전에
-`JWT_SECRET` 길이와 Google/Kakao OAuth client key 4개를 preflight한다.
+`JWT_SECRET` 길이와 Google/Kakao OAuth client key 4개를 preflight하고, `.env`가
+`APP_PUSH_MODE=firebase`면 Firebase service-account 파일 존재도 preflight한다.
 `DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 아직 preflight 대상이 아니며,
 이 값이 빠지면 기존 컨테이너 제거 후 새 앱 기동이 실패할 수 있다. health 실패 시 자동 rollback도 없다.
 
@@ -266,6 +267,42 @@ user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 �
 | `JWT_SECRET` | 수동 | 자체 JWT HS256 서명키, **32자 이상 랜덤** |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 수동 | env별 OAuth 클라이언트 분리 |
 | `KAKAO_CLIENT_ID` / `KAKAO_CLIENT_SECRET` | 수동 | 카카오 로그인용 REST API 키 — 지오코딩 키와 별도 선언 |
+| `APP_PUSH_MODE` | 수동 | FCM 푸시 모드(`noop` 기본/`firebase`) — 아래 FCM runbook으로만 전환 |
+
+## FCM 푸시(firebase 모드) 활성화 runbook — 기존 WAS 수동 적용
+
+앱은 기본 `APP_PUSH_MODE=noop`(외부 발송 없음)으로 기동한다. firebase 모드는 Firebase service-account
+JSON을 **파일로만** 전달한다(ADC) — credential 원문을 `.env` 값·Terraform 변수/state·Git·이미지에 넣지
+않는다. user_data는 `/home/ubuntu/app/secrets` 디렉터리 골격만 만든다(신규 박스 재구축용). **살아있는
+dev/prod에는 terraform apply를 하지 않는다** — 기존 박스는 아래 SSM 절차로만 반영한다.
+
+선행조건: Firebase Console에서 Android 앱 패키지가 등록된 project의 service account 키 발급,
+FCM HTTP v1 API 활성화, service account에 FCM 발송 권한(`roles/firebasecloudmessaging.admin`).
+
+1. credential 파일 배치(SSM 세션에서; JSON은 로컬에서 base64로 복사해 붙인다 — 셸 히스토리에 원문 미노출):
+
+   ```bash
+   aws ssm start-session --profile sandbox --target <instance-id>
+   sudo install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/app/secrets
+   # 로컬에서: base64 < service-account.json | pbcopy  → 아래 heredoc에 붙여넣기
+   base64 -d <<'B64' | sudo tee /home/ubuntu/app/secrets/firebase-service-account.json > /dev/null
+   <붙여넣기>
+   B64
+   # 앱 컨테이너는 Dockerfile의 appuser(UID 1001)로 실행된다 — ubuntu(1000) 소유·0600이면 read-only
+   # mount를 컨테이너가 못 읽어 기동이 실패한다. owner를 UID 1001로 두고 owner-read만 허용한다.
+   sudo chown 1001 /home/ubuntu/app/secrets/firebase-service-account.json
+   sudo chmod 0400 /home/ubuntu/app/secrets/firebase-service-account.json
+   ```
+
+2. `.env`에 모드 추가: `echo 'APP_PUSH_MODE=firebase' | sudo tee -a /home/ubuntu/app/.env`
+3. dev는 다음 `deploy.yml` 배포가 pre-flight(파일 존재) → credential read-only mount
+   (`/run/secrets/firebase-service-account.json`) + `GOOGLE_APPLICATION_CREDENTIALS` 주입까지 수행한다.
+   즉시 반영하려면 배포를 재실행한다(`.env`만 바꿔서는 실행 중 컨테이너에 반영되지 않음).
+4. 확인: 컨테이너 로그에 FirebaseApp 초기화 오류가 없고 `/api/v1/intro` 200. credential이 잘못되면
+   앱이 fail-fast로 기동 실패한다(health check가 배포를 실패시킴 — 자동 rollback 없음).
+5. **rollback**: `.env`의 `APP_PUSH_MODE=firebase` 줄 제거(→ noop) 후 재배포/컨테이너 재기동.
+   FID 등록 API·DB는 유지된다(추후 재활성화 호환). credential 유출 의심 시 Google Cloud에서 키
+   폐기·재발급 후 1번 절차로 파일 교체 — secret 값은 incident 문서·로그에 복제하지 않는다.
 
 ## nuke 후 복구
 

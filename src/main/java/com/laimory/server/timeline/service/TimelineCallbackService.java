@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -53,6 +54,9 @@ import org.springframework.stereotype.Service;
  * <p>모든 terminal 전이(markSuccess/markFailed)는 저장 <b>성공 직후</b> 날짜 guard를 compare-and-release한다
  * (해제 경계 규칙 ③ — {@link TimelineTaskService} 참고). terminal 저장이 실패하면 해제하지 않고
  * TTL(1h) 만료에 맡긴다(규칙 ② — AI 진행 상태 불명인데 풀면 진행 중 삭제가 허용될 수 있음).
+ *
+ * <p>terminal 확정(저장+guard 해제 시도) 뒤에는 완료 푸시를 비동기 best-effort로 예약한다 — FCM 실패·지연은
+ * 콜백 200과 무관하고, 이미 terminal인 멱등 단축·토큰 거절·terminal 저장 실패 경로에서는 예약하지 않는다.
  */
 @Slf4j
 @Service
@@ -68,6 +72,7 @@ public class TimelineCallbackService {
     private final TimelineEventSuggestionAssembler timelineEventSuggestionAssembler;
     private final DailyTimelineService dailyTimelineService;
     private final DailyRecordService dailyRecordService;
+    private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String callbackToken, DraftTaskCallbackRequest request) {
@@ -165,12 +170,28 @@ public class TimelineCallbackService {
                                String callbackTokenHash) {
         timelineTaskService.markSuccess(taskId, userId, recordDate, dailyRecordId, callbackTokenHash);
         releaseDateGuardQuietly(taskId, userId, recordDate);
+        enqueuePushQuietly(taskId, userId, TaskStatus.SUCCESS);
     }
 
     private void finishFailed(String taskId, long userId, LocalDate recordDate, ErrorCode failureCode,
                               String callbackTokenHash) {
         timelineTaskService.markFailed(taskId, userId, recordDate, failureCode, callbackTokenHash);
         releaseDateGuardQuietly(taskId, userId, recordDate);
+        enqueuePushQuietly(taskId, userId, TaskStatus.FAILED);
+    }
+
+    /**
+     * terminal 확정 뒤 완료 푸시를 비동기 best-effort로 예약한다. guard 해제처럼 실패해도 콜백 200을
+     * 보존한다 — executor 제출 예외까지 삼킨다(FCM은 조회를 유도하는 완료 신호일 뿐, polling이 권위·안전망).
+     * finishSuccess/finishFailed 뒤에서만 호출되므로 terminal 저장 실패·멱등 단축 경로엔 알림이 없다.
+     */
+    private void enqueuePushQuietly(String taskId, long userId, TaskStatus status) {
+        try {
+            timelineCompletionPushNotifier.notifyAsync(userId, taskId, status);
+        } catch (RuntimeException e) {
+            log.warn("completion push enqueue failed (polling이 안전망): taskId={} status={} detail={}",
+                    taskId, status, e.getMessage());
+        }
     }
 
     /**
