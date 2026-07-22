@@ -9,6 +9,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -24,8 +27,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** 폴링 오케스트레이터 단위 검증. PROCESSING/FAILED/SUCCESS 분기 + elapsedSeconds 계산 + 404. 인프라 0. */
@@ -179,6 +180,21 @@ class TimelineDraftTaskPollingServiceTest {
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+    }
+
+    @Test
+    void poll_success_resultDeletedAfterOwnershipCheck_stillThrows0404() {
+        // polling 선검증 직후 삭제돼 조립 service의 권위 재조회가 miss여도 catch-all 500이 아니라 결과 없음 0404다.
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, "h")));
+        DailyRecord record = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
+        ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
+        when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
+        when(dailyTimelineService.getDailyTimeline(42L))
+                .thenThrow(new BusinessException(ExceptionType.DRAFT_RESULT_NOT_FOUND));
+
+        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.DRAFT_RESULT_NOT_FOUND));
     }
 
     @Test

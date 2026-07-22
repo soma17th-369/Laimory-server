@@ -2,6 +2,8 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
+import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -13,6 +15,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -20,7 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
- * 확정 타임라인 기록 편집 API의 문서·계약(구현은 {@link TimelineRecordController}).
+ * 확정 타임라인 기록 조회·편집 API의 문서·계약(구현은 {@link TimelineRecordController}).
  * draft 작성 작업(생성·폴링)은 {@link TimelineApi}에 분리 — 여기는 finalize로 만들어진 기록을 다룬다.
  *
  * <p>모든 엔드포인트가 특정 사용자의 기록에 종속되므로 인증 prefix({@code /a/api})에 둔다.
@@ -31,10 +34,42 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Record", description = "확정 타임라인 기록 편집 — Event 수정·메모·삭제, DailyRecord 삭제")
+@Tag(name = "Timeline Record", description = "확정 타임라인 기록 조회·편집 — DailyRecord 조회·삭제, Event 수정·메모·삭제")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline")
 public interface TimelineRecordApi {
+
+    @Operation(summary = "사용자 타임라인 전체 조회",
+            description = "인증 사용자의 모든 DRAFT/SAVED 하루 기록을 최신 날짜부터 반환한다. "
+                    + "Event가 없는 기록도 포함하며, 기록이 없으면 timelines 빈 배열을 반환한다. "
+                    + "각 Event의 연결 Item은 events[].items[]에 포함한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "전체 조회 성공", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+    })
+    @GetMapping("/daily-records")
+    ResponseEntity<ApiResponse<DailyTimelinesResponse>> getDailyTimelines(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
+
+    @Operation(summary = "하루 타임라인 단건 조회",
+            description = "인증 사용자가 소유한 하루 기록과 Event·Item graph를 반환한다. "
+                    + "기록이 없거나 다른 사용자 소유이면 존재 여부를 구분하지 않고 404로 응답한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "단건 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`ERROR_0404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
+    })
+    @GetMapping("/daily-records/{dailyRecordId}")
+    ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimeline(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "조회할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "타임라인 Event 수정",
             description = "title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체한다(절대값 대입 — memo·items는 바뀌지 않는다). "

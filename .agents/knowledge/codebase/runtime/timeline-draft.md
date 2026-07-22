@@ -83,13 +83,20 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ### Polling and read
 
+- `GET /a/api/{version}/timeline/daily-records`는 principal userId의 DRAFT/SAVED DailyRecord 전체를
+  최신 날짜·ID 내림차순으로 반환한다(빈 record 포함, 없으면 200 `timelines=[]`).
+  `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 `(dailyRecordId, userId)`가 일치하는
+  한 건만 반환하며 없음·비소유는 404 `ERROR_0404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
+  한 read-only transaction에서 bulk 조회하고 Event별 `items`까지 조립한다.
 - polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자·
   owner 없는 legacy task는 상태와 무관하게 404 `ERROR_1001`로 은닉한다. SUCCESS 결과는 task의
   `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 쓰지 않는다. ID가 없거나(legacy) record가
-  삭제·비소유면 404 `ERROR_0404`(task 자체 없음 `ERROR_1001`과 구분).
+  삭제·비소유면 404 `ERROR_0404`(task 자체 없음 `ERROR_1001`과 구분). polling 선검증 뒤 조립 서비스의
+  권위 재조회 전에 record가 삭제돼도 `DRAFT_RESULT_NOT_FOUND`로 변환해 catch-all 500을 내지 않는다.
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 반환한다(음수 0 clamp,
   terminal·legacy는 필드 생략). FAILED의 `body.error`는 분류 코드(`ERROR_1008`/`1009`/`1011`)만 나간다.
-- 하루 타임라인 조립(`DailyTimelineService`)은 읽기 전용이다 — Event별 Item을 junction으로 로드해
+- 하루 타임라인 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건 반복 없이
+  record/Event/junction/Item 4단계 bulk SELECT로 읽는다. Event별 Item을 junction으로 로드해
   startAt(null 먼저)·id 순으로 정렬한다. 같은 Item이 여러 Event에 연결되면 같은 `timelineItemId`가 여러
   Event의 `items`에 반복된다(응답 shape 유지 — Android 수용 확인됨).
 - append 진행 중 기존 Event 상세/memo 편집은 허용한다(AI가 기존 graph를 건드리지 않기 때문).

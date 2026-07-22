@@ -63,9 +63,10 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 
 ## userId Propagation
 
-- 7개 보호 API(`draft 생성/photo presign/polling` + `Event 수정/메모/삭제/DailyRecord 삭제`)의
+- 9개 timeline 보호 API(`draft 생성/photo presign/polling` + `DailyRecord 전체/단건 조회` +
+  `Event 수정/메모/삭제/DailyRecord 삭제`)의
   controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/날짜 guard/S3 key/
-  polling 결과가 전부 같은 userId에 귀속된다.
+  polling·직접 조회 결과가 전부 같은 userId에 귀속된다.
 - Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
   polling은 상태 분기 전에 owner를 대조하고, 타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다.
 - AI callback(`/s/api`)은 Bearer 대상이 아니다 — request principal 없이 task 저장 owner로

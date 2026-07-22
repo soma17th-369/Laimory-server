@@ -10,6 +10,7 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +42,29 @@ class DailyRecordServiceTest {
 
         assertThat(result).containsSame(record);
         verify(dailyRecordRepository).findByUserIdAndRecordDate(0L, date);
+    }
+
+    @Test
+    void findByUserIdOrderByRecordDateDescDailyRecordIdDesc_delegatesToRepository() {
+        DailyRecord record = DailyRecord.createDraft(42L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
+        List<DailyRecord> records = List.of(record);
+        when(dailyRecordRepository.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L)).thenReturn(records);
+
+        List<DailyRecord> result = dailyRecordService.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L);
+
+        assertThat(result).isSameAs(records);
+        verify(dailyRecordRepository).findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L);
+    }
+
+    @Test
+    void findByDailyRecordIdAndUserId_delegatesToRepository() {
+        DailyRecord record = DailyRecord.createDraft(42L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
+        when(dailyRecordRepository.findByDailyRecordIdAndUserId(100L, 42L)).thenReturn(Optional.of(record));
+
+        Optional<DailyRecord> result = dailyRecordService.findByDailyRecordIdAndUserId(100L, 42L);
+
+        assertThat(result).containsSame(record);
+        verify(dailyRecordRepository).findByDailyRecordIdAndUserId(100L, 42L);
     }
 
     @Test
