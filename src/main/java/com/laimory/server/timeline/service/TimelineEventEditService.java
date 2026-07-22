@@ -8,7 +8,9 @@ import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
+import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  * PROCESSING(AI 진행) 중에도 편집은 허용한다 — AI finalize는 기존 Event를 건드리지 않고 append만
  * 하므로 날짜 guard는 확인하지 않는다.
  *
- * <p>입력 검증은 프로그래밍 방식(IAE → 400)으로 생성 경로({@link TimelineEventSuggestionValidator})의
+ * <p>입력 검증은 프로그래밍 방식(IAE → 400)으로 생성 경로(AI writer validation 계약)의
  * 규칙(title 필수, startAt 필수, endAt은 있으면 startAt 이상)과 정렬한다. 길이 상한(255자)은 편집 경로의
  * 의도적 추가 규칙이다 — 생성 경로 입력은 AI 산출물이지만 여기는 사용자 자유 입력이라, DB 컬럼
  * (VARCHAR(255)/TEXT) 제약 위반으로 500이 나기 전에 400으로 거절한다.
@@ -43,6 +45,7 @@ public class TimelineEventEditService {
 
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
+    private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
 
     /**
@@ -136,10 +139,15 @@ public class TimelineEventEditService {
         return memo;
     }
 
-    /** 갱신된 이벤트를 하위 아이템 포함 응답으로 조립한다(아이템은 조회만 — 편집 API는 아이템을 바꾸지 않는다). */
+    /** 갱신된 이벤트를 하위 아이템 포함 응답으로 조립한다(아이템은 junction 경유 조회만 — 편집 API는 아이템을 바꾸지 않는다). */
     private TimelineEventResponse toResponse(TimelineEvent event) {
-        List<TimelineItemResponse> items = timelineItemService.findByTimelineEventId(event.getTimelineEventId())
-                .stream()
+        List<Long> itemIds = timelineEventItemService.findByTimelineEventId(event.getTimelineEventId()).stream()
+                .map(link -> link.getTimelineItemId())
+                .toList();
+        List<TimelineItemResponse> items = timelineItemService.findByIds(itemIds).stream()
+                .sorted(Comparator.comparing(TimelineItem::getStartAt,
+                                Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(TimelineItem::getTimelineItemId))
                 .map(TimelineItemResponse::from)
                 .toList();
         return TimelineEventResponse.from(event, items);

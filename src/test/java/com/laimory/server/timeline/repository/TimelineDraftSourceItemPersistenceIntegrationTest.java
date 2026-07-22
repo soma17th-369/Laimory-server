@@ -56,7 +56,6 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 LocalDateTime.of(2026, 5, 8, 8, 30),
                 LocalDateTime.of(2026, 5, 8, 9, 10),
                 objectMapper.valueToTree(movement));
-        toSave.assignEventSuggestion(555L);   // 신규 soft-ref 컬럼 왕복 검증
         TimelineDraftSourceItem saved = timelineDraftSourceItemRepository.save(toSave);
 
         em.flush();
@@ -70,7 +69,6 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getRawId()).isEqualTo("0197b1c2-0000-7000-8000-000000000001");
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
         assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 9, 10));
-        assertThat(reloaded.getTimelineDraftEventSuggestionId()).isEqualTo(555L);
         assertThat(reloaded.getPayload().get("end").get("address").asText()).isEqualTo("서울 성동구 뚝섬로 지하 342");
         assertThat(objectMapper.treeToValue(reloaded.getPayload(), MovementPayload.class)).isEqualTo(movement);
 

@@ -23,7 +23,7 @@ class TimelineItemResponseTest {
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 9, 0);
         PhotoPayload payload = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://local/42",
                 1.0, 2.0, "사진 설명", "https://cdn.example/hash/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
-        TimelineItem item = TimelineItem.of(11L, ItemType.PHOTO, "raw-21", t, null,
+        TimelineItem item = TimelineItem.of(ItemType.PHOTO, "raw-21", t, null,
                 objectMapper.valueToTree(payload));
         ReflectionTestUtils.setField(item, "timelineItemId", 21L);
 

@@ -1,145 +1,68 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
-import com.laimory.server.timeline.dto.TimelineEventSuggestionDto;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
-import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
+import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
-import java.time.Duration;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 하루 타임라인 오케스트레이터. leaf 서비스 + 검증기를 합성한다(레포 직접 접근 금지).
+ * 하루 타임라인 읽기 오케스트레이터. leaf 서비스를 합성한다(레포 직접 접근 금지).
  *
- * <p>쓰기(appendDailyTimeline)와 읽기(getDailyTimeline)는 같은 애그리거트(하루 타임라인)를 다루므로 한 서비스에 둔다.
- * 트랜잭션 경계는 메서드별로 지정한다(쓰기 vs readOnly). 읽기/쓰기가 서로 다른 이유로 갈라지면 그때 분리한다.
+ * <p>final write(Event/Item/junction 저장)는 AI가 direct-write로 소유하므로 서버에는 쓰기 경로가 없다 —
+ * 이 서비스는 junction을 경유해 하루 전체를 조립하는 읽기 전용이다. 같은 Item이 여러 Event에 연결될 수
+ * 있으므로(N:M) 같은 {@code timelineItemId}가 여러 Event의 {@code items}에 반복될 수 있다(응답 shape 유지,
+ * Android 수용 확인됨).
  */
 @Service
 @RequiredArgsConstructor
 public class DailyTimelineService {
 
-    private static final Duration START_AT_COLLISION_NUDGE = Duration.ofMinutes(10);
-
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
+    private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
-    private final TimelineDraftSourceItemService timelineDraftSourceItemService;
-    private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
-    private final TimelineEventSuggestionValidator timelineEventSuggestionValidator;
 
     /**
-     * 콜백 SUCCESS의 단일 finalize 트랜잭션 단위(all-or-nothing): events 검증 → daily record(없으면 DRAFT 생성)
-     * → timeline_events/timeline_items 저장 → 소비한 draft 행 삭제. 어느 단계가 실패해도 전부 롤백된다.
-     *
-     * <p>이 메서드가 {@code @Transactional} 경계다 — 콜백 서비스는 별도 빈인 이 메서드를 Spring 프록시를 통해 호출해야
-     * 트랜잭션이 활성화된다(같은 클래스 self-invocation이면 AOP를 안 거쳐 트랜잭션이 조용히 무효화됨).
-     * {@code findOrCreateDraft}가 {@code REQUIRED}라 record 생성도 이 트랜잭션에 합류 → 롤백 시 record까지 사라진다.
-     *
-     * <p>아이템은 draft 행에서 그대로 복사한다(itemType/start/end/payload). payload는 이미 JsonNode이므로 재변환·ObjectMapper 없음.
-     */
-    @Transactional
-    public Long appendDailyTimeline(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
-                                    List<TimelineDraftSourceItem> draftRows,
-                                    List<TimelineEventSuggestionDto> events) {
-        // 1. 검증을 record 생성 전에 끝낸다(아래 영속 단계 전 DB 쓰기 없음). 위반은 IAE로 던져 트랜잭션 롤백 + 콜백이 FAILED 기록.
-        timelineEventSuggestionValidator.validate(draftRows, events);
-
-        Map<Long, TimelineDraftSourceItem> byItemId = new HashMap<>();
-        for (TimelineDraftSourceItem row : draftRows) {
-            byItemId.put(row.getTimelineDraftSourceItemId(), row);
-        }
-
-        // 2. record 생성/조회 + SAVED 가드. record_at/record_timezone은 클라가 보낸 값으로 PROCESSING task에서 전달된다(draft 행엔 저장 안 함).
-        // 같은 날짜 재요청(append)이면 findOrCreateDraft가 record_at/record_timezone을 이번 finalize 값으로 갱신한다(마지막에 finalize된 값이 남음 — 콜백 순서 기준, POST 순서 아님).
-        DailyRecord dailyRecord = dailyRecordService.findOrCreateDraft(userId, recordDate, recordAt, recordTimezone);
-        if (dailyRecord.getStatus() == DailyRecordStatus.SAVED) {
-            throw new IllegalStateException("daily record already SAVED: " + dailyRecord.getDailyRecordId());
-        }
-        Long dailyRecordId = dailyRecord.getDailyRecordId();
-
-        // 3. start_at 충돌 회피 준비: 기존 event(사용자 소유·동결)의 start_at을 모은다.
-        Set<LocalDateTime> occupiedStartAts = new HashSet<>();
-        for (TimelineEvent existing : timelineEventService.findByDailyRecordId(dailyRecordId)) {
-            occupiedStartAts.add(existing.getStartAt());
-        }
-
-        // 4. 영속(검증 완료된 입력만 도달). 아이템은 draft 행에서 그대로 복사.
-        //    새 event의 start_at이 기존/이미 배정된 값과 정확히 겹치면 +10분씩 밀어 앵커 중복을 피한다
-        //    (start_at 오름차순 처리 — 배치 내 새 event끼리의 충돌도 함께 해소, best-effort).
-        for (TimelineEventSuggestionDto event : events.stream()
-                .sorted(Comparator.comparing(TimelineEventSuggestionDto::startAt))
-                .toList()) {
-            LocalDateTime startAt = resolveNonCollidingStartAt(event.startAt(), occupiedStartAts);
-            LocalDateTime endAt = clampEndAt(event.endAt(), startAt);
-            TimelineEvent savedEvent = timelineEventService.save(
-                    TimelineEvent.of(dailyRecordId, event.eventType(), startAt, endAt,
-                            event.title(), event.subtitle()));
-            for (Long itemId : event.itemIds()) {
-                TimelineDraftSourceItem src = byItemId.get(itemId);
-                timelineItemService.save(
-                        TimelineItem.of(savedEvent.getTimelineEventId(),
-                                src.getItemType(), src.getRawId(),
-                                src.getStartAt(), src.getEndAt(),
-                                src.getPayload()));
-            }
-        }
-
-        // 5. 소비한 staging 행 삭제(같은 트랜잭션 — 롤백 시 함께 살아남는다). source item + event suggestion 둘 다.
-        String taskId = draftRows.get(0).getTaskId();
-        timelineDraftSourceItemService.deleteByTaskId(taskId);
-        timelineDraftEventSuggestionService.deleteByTaskId(taskId);
-
-        return dailyRecordId;
-    }
-
-    /**
-     * 기존/이미 배정된 start_at과 정확히 겹치면 빈 슬롯까지 +10분씩 민다(cascade). 확정 값을 occupied에 추가한다.
-     * 겹치지 않으면 원본 유지 — start_at 정확도를 지키고 실제 충돌만 해소한다(coarse floor 아님).
-     */
-    private LocalDateTime resolveNonCollidingStartAt(LocalDateTime startAt, Set<LocalDateTime> occupied) {
-        LocalDateTime resolved = startAt;
-        while (!occupied.add(resolved)) {
-            resolved = resolved.plus(START_AT_COLLISION_NUDGE);
-        }
-        return resolved;
-    }
-
-    /** nudge로 start_at이 밀려 end_at보다 뒤가 되면 end_at을 start_at으로 클램프한다(0분 구간). null end_at은 그대로. */
-    private LocalDateTime clampEndAt(LocalDateTime endAt, LocalDateTime startAt) {
-        if (endAt != null && endAt.isBefore(startAt)) {
-            return startAt;
-        }
-        return endAt;
-    }
-
-    /**
-     * dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 이벤트/아이템 정렬은 leaf 서비스 쿼리가 보장.
-     * payload는 저장본 그대로 통과한다(PHOTO photoUrl도 draft 저장 시 주입된 값 — 읽기 시점 변환 없음).
+     * dailyRecordId로 그날 전체 타임라인을 조립해 반환한다. 이벤트 정렬은 leaf 쿼리(start_at, id 오름차순),
+     * 아이템 정렬은 junction으로 로드한 뒤 같은 기준으로 메모리 정렬한다(start_at null 먼저 — 기존 SQL
+     * NULLS-FIRST 동작 보존). payload는 저장본 그대로 통과한다(PHOTO photoUrl도 draft 저장 시 주입된 값).
      */
     @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new IllegalStateException("daily record not found: " + dailyRecordId));
 
+        List<TimelineEvent> events = timelineEventService.findByDailyRecordId(dailyRecordId);
+        List<Long> eventIds = events.stream().map(TimelineEvent::getTimelineEventId).toList();
+        List<TimelineEventItem> links = timelineEventItemService.findByTimelineEventIds(eventIds);
+        Map<Long, TimelineItem> itemsById = timelineItemService.findByIds(
+                        links.stream().map(TimelineEventItem::getTimelineItemId).distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(TimelineItem::getTimelineItemId, Function.identity()));
+        Map<Long, List<TimelineEventItem>> linksByEventId = links.stream()
+                .collect(Collectors.groupingBy(TimelineEventItem::getTimelineEventId));
+
         List<TimelineEventResponse> eventResponses = new ArrayList<>();
-        for (TimelineEvent event : timelineEventService.findByDailyRecordId(dailyRecordId)) {
-            List<TimelineItemResponse> itemResponses = timelineItemService.findByTimelineEventId(event.getTimelineEventId())
+        for (TimelineEvent event : events) {
+            List<TimelineItemResponse> itemResponses = linksByEventId
+                    .getOrDefault(event.getTimelineEventId(), List.of())
                     .stream()
+                    .map(link -> itemsById.get(link.getTimelineItemId()))
+                    .sorted(Comparator.comparing(TimelineItem::getStartAt,
+                                    Comparator.nullsFirst(Comparator.naturalOrder()))
+                            .thenComparing(TimelineItem::getTimelineItemId))
                     .map(TimelineItemResponse::from)
                     .toList();
             eventResponses.add(TimelineEventResponse.from(event, itemResponses));

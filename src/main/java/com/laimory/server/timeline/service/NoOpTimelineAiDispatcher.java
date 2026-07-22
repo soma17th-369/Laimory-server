@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -13,11 +14,11 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "app.ai.mode", havingValue = "noop", matchIfMissing = true)
-public class NoOpTimelineEventSuggestionDispatcher implements TimelineEventSuggestionDispatcher {
+public class NoOpTimelineAiDispatcher implements TimelineAiDispatcher {
 
     @Override
-    public void dispatch(String taskId, String callbackToken) {
+    public void dispatch(AiTimelineDispatchRequest request) {
         // callbackToken은 의도적으로 로그에서 제외한다.
-        log.info("no-op timeline event suggestion dispatch: taskId={}", taskId);
+        log.info("no-op timeline ai dispatch: taskId={}", request.taskId());
     }
 }

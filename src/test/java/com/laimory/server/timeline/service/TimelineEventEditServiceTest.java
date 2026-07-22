@@ -18,6 +18,7 @@ import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
+import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import java.time.LocalDate;
@@ -45,6 +46,8 @@ class TimelineEventEditServiceTest {
     private TimelineEventService timelineEventService;
     @Mock
     private DailyRecordService dailyRecordService;
+    @Mock
+    private TimelineEventItemService timelineEventItemService;
     @Mock
     private TimelineItemService timelineItemService;
 
@@ -87,7 +90,7 @@ class TimelineEventEditServiceTest {
     }
 
     private TimelineItem photoItem() {
-        TimelineItem item = TimelineItem.of(EVENT_ID, ItemType.PHOTO, "raw-21", ORIGINAL_START, null,
+        TimelineItem item = TimelineItem.of(ItemType.PHOTO, "raw-21", ORIGINAL_START, null,
                 MAPPER.valueToTree(new PhotoPayload("u.jpg", "content://x", 1.0, 2.0, null,
                         "https://cdn.example/u.jpg")));
         ReflectionTestUtils.setField(item, "timelineItemId", 21L);
@@ -100,7 +103,9 @@ class TimelineEventEditServiceTest {
     void updateEvent_replacesAllFourFieldsAndKeepsMemoAndItems() {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "지켜야 할 메모");
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of(photoItem()));
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID))
+                .thenReturn(List.of(TimelineEventItem.of(EVENT_ID, 21L)));
+        when(timelineItemService.findByIds(List.of(21L))).thenReturn(List.of(photoItem()));
 
         TimelineEventResponse response =
                 service.updateEvent(VERSION, USER_ID, EVENT_ID, TimelineEventType.MEAL, "새 제목", "새 부제목", NEW_START, NEW_END);
@@ -125,7 +130,7 @@ class TimelineEventEditServiceTest {
         assertThat(response.items().get(0).timelineItemId()).isEqualTo(21L);
 
         // Item 불변: item 서비스 호출은 응답 조립용 조회뿐이고, 영속은 dirty checking이라 save 호출도 없다.
-        verify(timelineItemService).findByTimelineEventId(EVENT_ID);
+        verify(timelineEventItemService).findByTimelineEventId(EVENT_ID);
         verify(timelineItemService, never()).save(any());
         verify(timelineEventService, never()).save(any());
     }
@@ -133,7 +138,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_allowsEndAtEqualToStartAt_andStoresTimesVerbatim() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, NEW_START);
 
@@ -145,7 +150,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_nullSubtitleAndEndAtClearBothFields() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", null, NEW_START, null);
 
@@ -157,7 +162,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_trimsTitleAndSubtitle_singleCharTitleAllowed() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "  a  ", "  b  ", NEW_START, null);
 
@@ -169,7 +174,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_acceptsTitleAndSubtitleAtMaxLength255AfterTrim() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
         String title255 = "a".repeat(255);
         String subtitle255 = "b".repeat(255);
 
@@ -206,7 +211,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_subtitleBlankBecomesNull() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         service.updateEvent(VERSION, USER_ID, EVENT_ID, null, "제목", "   ", NEW_START, null);
 
@@ -256,7 +261,7 @@ class TimelineEventEditServiceTest {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
                 });
-        verify(timelineItemService, never()).findByTimelineEventId(anyLong());
+        verify(timelineEventItemService, never()).findByTimelineEventId(anyLong());
     }
 
     @Test
@@ -315,7 +320,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_keepsCurrentEventTypeWhenOmitted() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         // eventType null = 요청에 키 누락(명시적 null은 역직렬화에서 400) — 현재 값을 유지한다.
         TimelineEventResponse response =
@@ -341,7 +346,9 @@ class TimelineEventEditServiceTest {
     @Test
     void updateMemo_storesRawTextWithoutTrim() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of(photoItem()));
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID))
+                .thenReturn(List.of(TimelineEventItem.of(EVENT_ID, 21L)));
+        when(timelineItemService.findByIds(List.of(21L))).thenReturn(List.of(photoItem()));
 
         TimelineEventResponse response = service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
 
@@ -353,7 +360,7 @@ class TimelineEventEditServiceTest {
         assertThat(response.memo()).isEqualTo(" 앞뒤 공백 메모 ");
         assertThat(response.items()).hasSize(1);
 
-        verify(timelineItemService).findByTimelineEventId(EVENT_ID);
+        verify(timelineEventItemService).findByTimelineEventId(EVENT_ID);
         verify(timelineItemService, never()).save(any());
         verify(timelineEventService, never()).save(any());
     }
@@ -365,7 +372,7 @@ class TimelineEventEditServiceTest {
         // null은 body {"memo": null}과 {}(필드 부재) 둘 다를 대표한다 — 컨트롤러가 absent를 null로 전달.
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         TimelineEventResponse response = service.updateMemo(VERSION, USER_ID, EVENT_ID, memo);
 
@@ -378,7 +385,7 @@ class TimelineEventEditServiceTest {
         // 공백뿐이면 길이와 무관하게 "제거"다 — 10,001자 공백도 400이 아니라 제거로 처리된다.
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
 
         service.updateMemo(VERSION, USER_ID, EVENT_ID, " ".repeat(10_001));
 
@@ -388,7 +395,7 @@ class TimelineEventEditServiceTest {
     @Test
     void updateMemo_acceptsExactly10000Chars() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(timelineItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(List.of());
         String memo = "가".repeat(10_000);
 
         service.updateMemo(VERSION, USER_ID, EVENT_ID, memo);

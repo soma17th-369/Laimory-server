@@ -50,13 +50,11 @@ public enum ErrorCode {
     ERROR_1007(HttpStatus.BAD_REQUEST),    // 지원하지 않는 사진 포맷 (args 없음 — 사용자 입력 echo 금지)
 
     // ── ERROR_1xxx: timeline task 실패 분류 — 폴링 body.error 전용(200 안), status는 예비값 ──
+    // ERROR_1010: 결번 — staging 누락 분류를 AI direct-write 전환으로 제거(서버가 staging을 finalize하지 않음). 재사용 금지.
+    // ERROR_1012: 결번 — 콜백 token-use 소비 게이트를 멱등 재콜백 허용으로 제거. 재사용 금지.
     ERROR_1008(HttpStatus.BAD_GATEWAY),            // AI가 실패 보고(콜백 status=FAILED)
     ERROR_1009(HttpStatus.BAD_GATEWAY),            // AI 서버 호출 실패(dispatch)
-    ERROR_1010(HttpStatus.INTERNAL_SERVER_ERROR),  // staging 데이터 누락(복구 불가 상태)
-    ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR),  // finalize 검증/조립 실패
-
-    // ── ERROR_1xxx: timeline 콜백 인증/소비 실패 — 1002와 같은 성격의 401, task 실패 분류 아님 ──
-    ERROR_1012(HttpStatus.UNAUTHORIZED),   // 이미 사용된 콜백 토큰(원자적 소비 게이트 거부 — 같은 토큰 재전송 불가)
+    ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR),  // task 실패 분류 read-side 폴백(과거 raw 값 방어)
 
     // ── ERROR_1xxx: timeline append 도메인 거절 ──
     ERROR_1013(HttpStatus.CONFLICT),       // append 요청의 모든 item이 이미 타임라인에 저장됨(추가할 신규 item 없음)
@@ -81,7 +79,7 @@ public enum ErrorCode {
 
     /** task 실패 분류 코드 부분집합. {@code markFailed} 멤버십 가드·폴링 read-side 검증이 참조한다. */
     public static final Set<ErrorCode> TASK_FAILURE_CODES =
-            Collections.unmodifiableSet(EnumSet.of(ERROR_1008, ERROR_1009, ERROR_1010, ERROR_1011));
+            Collections.unmodifiableSet(EnumSet.of(ERROR_1008, ERROR_1009, ERROR_1011));
 
     private final HttpStatus status;
 

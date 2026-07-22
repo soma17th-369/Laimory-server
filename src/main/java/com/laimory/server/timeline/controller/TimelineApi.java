@@ -183,7 +183,7 @@ public interface TimelineApi {
     @Operation(summary = "draft 작업 상태 폴링",
             description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
                     + "(FAILED도 HTTP 200 + COMMON_0000). body.error 코드: `ERROR_1008`(AI가 실패 보고) · "
-                    + "`ERROR_1009`(AI 요청 전달 실패) · `ERROR_1010`/`ERROR_1011`(서버 처리 실패). "
+                    + "`ERROR_1009`(AI 요청 전달 실패) · `ERROR_1011`(서버 처리 실패). "
                     + "미지의 코드는 제네릭 실패로 처리한다(전방 호환). "
                     + "PROCESSING에는 `body.elapsedSeconds`(AI 작업 대기 경과 시간, 완료된 초·0 이상)가 함께 담긴다 — "
                     + "기준은 서버가 전처리를 마치고 AI dispatch 대기 단계에 들어간 시각이다(POST 접수 시각 아님). "

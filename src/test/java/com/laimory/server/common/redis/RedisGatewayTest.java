@@ -62,41 +62,6 @@ class RedisGatewayTest {
     }
 
     @Test
-    void increment_prependsPrefix_andSetsTtlOnlyOnFirstIncrement() {
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
-        when(valueOps.increment("dev_" + LOGICAL_KEY)).thenReturn(1L);
-
-        long first = redis.increment(LOGICAL_KEY, Duration.ofHours(1));
-
-        assertThat(first).isEqualTo(1L);
-        verify(template).expire("dev_" + LOGICAL_KEY, Duration.ofHours(1));
-    }
-
-    @Test
-    void increment_secondIncrement_doesNotResetTtl() {
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "");
-        when(valueOps.increment(LOGICAL_KEY)).thenReturn(2L);
-
-        long second = redis.increment(LOGICAL_KEY, Duration.ofHours(1));
-
-        assertThat(second).isEqualTo(2L);
-        verify(template, never()).expire(anyString(), any(Duration.class));
-    }
-
-    @Test
-    void increment_nullFromTemplate_throwsIllegalState() {
-        // 파이프라인/트랜잭션 맥락에서만 null — gateway는 그 맥락을 지원하지 않으므로 불변식 위반으로 차단.
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "");
-        when(valueOps.increment(LOGICAL_KEY)).thenReturn(null);
-
-        assertThatThrownBy(() -> redis.increment(LOGICAL_KEY, Duration.ofHours(1)))
-                .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
     void setIfAbsent_prependsPrefix_andReturnsAcquisition() {
         when(template.opsForValue()).thenReturn(valueOps);
         RedisGateway redis = new RedisGateway(template, "dev_");

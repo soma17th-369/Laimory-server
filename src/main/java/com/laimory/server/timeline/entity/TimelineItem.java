@@ -17,9 +17,13 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * 타임라인 아이템(AI가 이벤트에 포함시킨 source item이 저장된 것).
+ * 타임라인 아이템(source item이 final로 저장된 것). Event와는 {@link TimelineEventItem}(junction)으로만
+ * 연결되는 독립 행이다 — 하루 범위는 junction→Event→DailyRecord로 해석하고 직접 FK를 두지 않는다.
  * 타입은 item_type 컬럼이 권위다(payload 밖). payload는 타입 정보 없는 raw JSON({@link JsonNode})으로 보관한다.
- * start_at은 nullable(시간 미상 아이템 허용). timeline_event에 plain Long FK로 연결.
+ * start_at은 nullable(시간 미상 아이템 허용).
+ *
+ * <p>이 테이블은 API JPA와 AI raw INSERT 두 writer가 쓴다 — 감사 timestamp는 DB default가 겸하고,
+ * rawId 중복은 DB가 거부하지 않는다(같은 record 안 중복 방지는 application-level 방어).
  */
 @Entity
 @Table(name = "timeline_items")
@@ -30,9 +34,6 @@ public class TimelineItem extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "timeline_item_id")
     private Long timelineItemId;
-
-    @Column(name = "timeline_event_id", nullable = false)
-    private Long timelineEventId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "item_type", nullable = false, length = 32)
@@ -53,9 +54,8 @@ public class TimelineItem extends BaseEntity {
     protected TimelineItem() {
     }
 
-    private TimelineItem(Long timelineEventId, ItemType itemType, String rawId, LocalDateTime startAt,
+    private TimelineItem(ItemType itemType, String rawId, LocalDateTime startAt,
                          LocalDateTime endAt, JsonNode payload) {
-        this.timelineEventId = timelineEventId;
         this.itemType = itemType;
         this.rawId = rawId;
         this.startAt = startAt;
@@ -63,8 +63,8 @@ public class TimelineItem extends BaseEntity {
         this.payload = payload;
     }
 
-    public static TimelineItem of(Long timelineEventId, ItemType itemType, String rawId, LocalDateTime startAt,
+    public static TimelineItem of(ItemType itemType, String rawId, LocalDateTime startAt,
                                   LocalDateTime endAt, JsonNode payload) {
-        return new TimelineItem(timelineEventId, itemType, rawId, startAt, endAt, payload);
+        return new TimelineItem(itemType, rawId, startAt, endAt, payload);
     }
 }

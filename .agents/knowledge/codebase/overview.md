@@ -22,7 +22,7 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 - Spring MVC, JPA/Hibernate, MySQL 8, Redis 7, Spring Security OAuth2 Client,
   Spring Session Redis와 springdoc-openapi를 사용한다. 외부 API 병렬 호출(지오코딩)에는
   WebClient/Reactor를 쓴다(webflux 의존성 공존, 서블릿 MVC 유지).
-- MySQL은 영속 데이터와 AI staging을, Redis는 draft task·callback token 사용 횟수·app code·
+- MySQL은 영속 데이터와 AI 입력 staging을, Redis는 draft task·app code·
   OAuth session을 저장한다. 사진 본문은 S3, 공개 URL은 CloudFront를 사용한다.
 
 주요 feature package:

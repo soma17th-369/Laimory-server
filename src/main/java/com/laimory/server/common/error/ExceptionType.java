@@ -41,7 +41,6 @@ public enum ExceptionType {
     PHOTO_COUNT_EXCEEDED(ErrorCode.ERROR_1004, Level.INFO),
     PHOTO_SIZE_EXCEEDED(ErrorCode.ERROR_1005, Level.INFO),
     UNSUPPORTED_PHOTO_FORMAT(ErrorCode.ERROR_1007, Level.INFO),     // 사용자 파일 선택으로 유발 — 상세 진단은 서비스의 독립 WARN이 담당
-    CALLBACK_TOKEN_ALREADY_USED(ErrorCode.ERROR_1012, Level.WARN),  // 재전송/재사용 — 보안 신호
     APPEND_NO_NEW_ITEMS(ErrorCode.ERROR_1013, Level.INFO),
     GEOCODING_TRANSIENT_FAILURE(ErrorCode.ERROR_1014, Level.WARN),  // 재시도로 해결 가능
     GEOCODING_PERMANENT_FAILURE(ErrorCode.ERROR_1015, Level.ERROR), // 쿼터·키 — 운영 조치 필요

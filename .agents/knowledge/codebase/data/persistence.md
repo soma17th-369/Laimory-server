@@ -28,8 +28,9 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 주요 저장 영역:
 
 - `app_config`
-- `daily_records → timeline_events → timeline_items`
-- `timeline_draft_source_items`, `timeline_draft_event_suggestions`
+- `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
+  Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
+- `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
 - `users`, `refresh_tokens`
 - `push_registrations`
 
@@ -44,7 +45,10 @@ Terraform은 schema를 S3 bootstrap object로 올려 새 MySQL instance의 user 
 기존 MySQL은 `user_data` 변경을 ignore하므로 Terraform 파일 변경만으로 live schema가 바뀌지 않는다.
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
-AI가 raw INSERT하는 suggestion staging은 DB default audit time을 사용한다.
+final 테이블(`timeline_events`/`timeline_items`)은 API JPA와 AI raw INSERT 두 writer가 쓴다 —
+감사 timestamp는 DB default(`CURRENT_TIMESTAMP(6)`)가 겸하고(AI는 컬럼 생략 가능), AI는 `modified_by`에
+`'AI'`를 명시한다(provenance — 재실행 삭제 조건으로 쓰지 않는다). `timeline_event_items`는 순수 연결
+행이라 감사 컬럼이 없다.
 
 `push_registrations`(#174)는 사용자 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -55,12 +59,10 @@ soft-owner다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
 entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
 
-`timeline_events.event_type`과 `timeline_draft_event_suggestions.event_type`은 둘 다
-`VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행 backfill과 컬럼을 모르는
-구버전 Server/AI writer의 INSERT 생략 호환용이며, 모든 writer 전환 후에도 rollback 호환을 위해
-유지한다. final entity는 `@Enumerated(STRING)` `TimelineEventType`, staging entity는 외부 writer
-소유라 raw `String`으로 매핑한다(미지원 literal의 hydration 예외 방지 — 변환은 assembler 소유).
-live dev/prod 반영은 앱 배포 전에 동일 계약의 수동 `ALTER TABLE ... ADD COLUMN`이 필요하다.
+`timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
+backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
+`TimelineEventType`이며, AI direct-write는 allowlist literal만 INSERT한다(미지원 literal은 AI validation
+FAILED — 새 literal 활성화 순서는 "Server enum 배포 → AI writer 활성화").
 
 ### Redis
 
@@ -68,8 +70,7 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state/result (SUCCESS에만 `dailyRecordId` 포함, PROCESSING에만 `processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함, 세 상태 모두 owner `userId` 보존 — 세 필드 모두 NON_NULL이라 없는 상태에선 key 미노출; 배포 전 legacy JSON은 필드 부재 → null 역직렬화(owner null은 폴링 1001·콜백 fail-closed)) | PROCESSING 1h, terminal 24h |
-| `timeline:callback-token-uses:{taskId}` | callback token use state | 25h |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 보존, PROCESSING에만 `timelineWindow`(local 원본)·`processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함 — record 메타데이터(recordDate/recordAt/recordTimezone/userMemory)는 없다(DailyRecord가 단일 권위); 구 shape 잔존 JSON은 `@JsonIgnoreProperties`로 관용 수용하고 새 필드 부재는 null → 폴링 1001·콜백 fail-closed | PROCESSING 1h, terminal 24h |
 | `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제는 모든 종료 경로에서 해제) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
@@ -98,13 +99,18 @@ override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 S
 ## Invariants
 
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
-- staging source→suggestion은 hard FK가 아닌 soft reference이며 assembler가 같은 task인지 검증한다.
+- Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
+  공유한다는 규칙은 DB 제약이 아니라 writer 계약이다(AI·fake는 새 Item을 현재 task의 새 Event에만 연결).
+- `timeline_items.raw_id`는 DB UNIQUE가 없다 — 같은 record 안 중복 방지는 API 사전 제외 + AI write 직전
+  재검사의 application-level 방어이며, race/legacy 중복 행은 허용한다(조회·삭제는 `timeline_item_id` 기준).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
-- Event/DailyRecord 삭제는 S3 배치 삭제가 전부 성공한 뒤에만 DB row를 삭제한다
-  (하위 행은 DB FK `ON DELETE CASCADE` — JPA cascade 없음).
+- Event/DailyRecord 삭제는 S3 배치 삭제가 전부 성공한 뒤에만 DB row를 삭제한다.
+  Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`로 소멸하고(JPA cascade 없음),
+  Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
+  명시 삭제한다(다른 Event에도 연결된 shared Item·PHOTO는 유지).
 
 ## Known Gaps
 

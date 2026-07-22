@@ -18,14 +18,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 보관기간을 초과한 draft staging 행(source item + event suggestion)을 주기적으로 정리하는 스케줄러.
- * source item은 행마다 PHOTO 사진의 S3 객체를 먼저 지운 뒤 행을 삭제한다(S3 삭제 실패 시 행을 남겨 다음 실행에서 재시도).
- * event suggestion은 S3 객체가 없어 단순 삭제한다.
+ * 보관기간을 초과한 draft source staging 행을 주기적으로 정리하는 스케줄러.
+ * 행마다 PHOTO 사진의 S3 객체를 먼저 지운 뒤 행을 삭제한다(S3 삭제 실패 시 행을 남겨 다음 실행에서 재시도).
  *
  * <p>불변식: 보관기간(retentionDays, 기본 7일)은 PROCESSING_TTL(1시간)보다 훨씬 커야 한다(retention ≫ PROCESSING_TTL 1h).
  * 그래야 처리 중(in-flight)인 task의 draft가 cutoff에 걸려 조기 삭제되는 일이 없다.
  *
- * <p>대상은 만료된 <b>draft 행</b>의 사진뿐이다. finalize로 timeline_items에 복사된 사진은 삭제하지 않으며,
+ * <p>대상은 만료된 <b>draft 행</b>(omitted 또는 FAILED task 잔여)의 사진뿐이다. AI가 채택한 source는 final
+ * transaction에서 이미 삭제돼 여기 남지 않으므로 final Item이 참조하는 S3 객체를 지울 일이 없다.
  * presign만 받고 draft를 안 만든 orphan 객체도 대상이 아니다(MVP 잔여 인정).
  */
 @Slf4j
@@ -40,7 +40,6 @@ public class TimelineDraftCleanupScheduler {
     private static final long MIN_RETENTION_DAYS = 1;
 
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
-    private final TimelineDraftEventSuggestionService timelineDraftEventSuggestionService;
     private final S3PhotoStorageService s3PhotoStorageService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -88,10 +87,6 @@ public class TimelineDraftCleanupScheduler {
             }
         }
         log.info("draft cleanup 완료: deleted={}, failed={}", deleted, failed);
-
-        // event suggestion staging은 S3 객체가 없어 행별 처리가 불필요 → 단일 bulk DELETE로 같은 cutoff 기준 정리(부분 실패 없음).
-        int eventSuggestionsDeleted = timelineDraftEventSuggestionService.deleteCreatedBefore(cutoff);
-        log.info("event suggestion cleanup 완료: deleted={}", eventSuggestionsDeleted);
     }
 
     /**

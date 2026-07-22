@@ -43,11 +43,10 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 timeline draft의 큰 흐름은 다음과 같다.
 
 ```text
-source staging + Redis PROCESSING
-→ AI가 suggestion staging INSERT와 source association UPDATE
-→ status-only callback
-→ 서버 assembler가 staging 관계로 내부 itemIds 조립
-→ validate + finalize
+DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
+→ AI dispatch (POST /v1/timeline — taskId·callbackToken·dailyRecordId·offset window)
+→ AI가 validation + final Event/Item/junction INSERT + accepted source DELETE를 direct-write commit
+→ status-only callback → 서버는 Redis terminal 전이만 기록(멱등)
 ```
 
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
@@ -63,7 +62,7 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 ## Known Gaps
 
 - API chain의 JWT authentication filter와 principal-to-userId 전달이 아직 없다.
-- production AI adapter가 없어 실제 외부 AI 흐름은 구현되지 않았다.
+- 실 AI writer(Laimory-AI)의 direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher는 구현됨).
 - schema migration framework가 없다.
 
 ## Update When
