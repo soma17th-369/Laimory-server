@@ -21,7 +21,7 @@
 | Redis key, value, TTL | store/service, `RedisGateway`, live compatibility, session namespace | Redis unit + integration |
 | property or env name | both properties, deploy env/preflight/`-e`, Terraform user data, environments knowledge | context boot + targeted tests |
 | auth secret name | properties, deploy preflight, WAS `.env` docs, Terraform docs | build + workflow review |
-| AI staging contract | staging entities/schema, dispatcher, assembler, validator, cleanup, glossary | focused contract tests + callback integration |
+| AI dispatch/direct-write contract | source staging entity/schema, dispatcher(+fixture), fake append, cleanup, glossary | focused contract tests + callback integration |
 | photo storage | S3 service, object key, payload, CDN, cleanup, IAM/Terraform | photo + persistence tests |
 | cleanup or retention | scheduler, repositories, S3 delete ordering, properties | scheduler tests |
 | response or transaction ID | filter, envelope, OpenAPI, controller/error tests, API/observability knowledge | focused MockMvc tests |

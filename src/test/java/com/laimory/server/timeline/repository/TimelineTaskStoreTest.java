@@ -26,7 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * TimelineTaskStore 직렬화 왕복 단위테스트(인프라 없음).
- * LocalDate가 jsr310 모듈로 정상 왕복하는지(회귀 방지)와 논리 키 전달을 검증한다.
+ * task shape(내부 계약 — AI는 더 이상 Redis를 읽지 않음)와 논리 키 전달을 검증한다.
  * 환경 prefix 부착은 RedisGateway의 책임이라 여기선 논리 키만 확인한다.
  */
 @ExtendWith(MockitoExtension.class)
@@ -41,14 +41,23 @@ class TimelineTaskStoreTest {
 
     private TimelineTaskStore store;
 
+    private static final Instant STARTED_AT = Instant.parse("2026-05-08T13:41:07Z");
+
     @BeforeEach
     void setUp() {
         store = new TimelineTaskStore(redis, objectMapper);
     }
 
+    private TimelineDraftTask processingTask() {
+        return TimelineDraftTask.processing(7L, 42L,
+                new TimelineDraftTask.TimelineWindow(
+                        LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
+                "token-hash", STARTED_AT);
+    }
+
     @Test
     void save_serializesWithKeyAndTtl() throws Exception {
-        TimelineDraftTask task = TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash");
+        TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, "token-hash");
 
         store.save("abc", task, Duration.ofHours(24));
 
@@ -64,125 +73,82 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void save_serializesAiContractShape_fieldNamesAndWindowFormat() throws Exception {
-        // AI가 이 value JSON을 직접 읽는 계약 — 필드명·날짜 포맷이 고정돼야 한다.
-        TimelineDraftTask task = TimelineDraftTask.processing(
-                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
-                new TimelineDraftTask.TimelineWindow(
-                        LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
-                "token-hash", Instant.parse("2026-05-08T13:41:07Z"));
-
-        store.save("abc", task, Duration.ofHours(1));
+    void save_processingShape_hasRecordIdWindowStartedAtOwner_withoutRecordMetadata() throws Exception {
+        // 축소된 shape: record 메타데이터(recordDate/recordAt/recordTimezone/userMemory)는 더 이상 없다 —
+        // DailyRecord가 선생성되어 DB가 단일 권위다. dailyRecordId는 PROCESSING부터 실린다.
+        store.save("abc", processingTask(), Duration.ofHours(1));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).set(anyString(), jsonCaptor.capture(), any());
         String json = jsonCaptor.getValue();
-        assertThat(json).contains("\"recordDate\":\"2026-05-08\"");
-        assertThat(json).contains("\"recordTimezone\":\"Asia/Seoul\"");
-        assertThat(json).contains("\"userMemory\":{\"usersCharacter\":null}");
-        assertThat(json).contains(
-                "\"timelineWindow\":{\"startTime\":\"20260508T183000\",\"endTime\":\"20260508T224100\"}");
+        assertThat(json).contains("\"dailyRecordId\":42");
+        assertThat(json).contains("\"userId\":7");
         // PROCESSING 시작 시각은 UTC ISO-8601 문자열로 고정된다(숫자 timestamp 설정 무관 — @JsonFormat STRING).
         assertThat(json).contains("\"processingStartedAt\":\"2026-05-08T13:41:07Z\"");
-        // task owner는 additive 필드로 기존 필드 순서 뒤에 붙는다(AI 계약 shape 최소 변화).
-        assertThat(json).contains("\"userId\":7");
-        // NON_NULL 명시 필드: PROCESSING JSON(AI가 직접 읽는 계약)에 dailyRecordId가 null로 노출되지 않는다.
-        assertThat(json).doesNotContain("dailyRecordId");
+        assertThat(json).contains("\"timelineWindow\"");
+        assertThat(json).doesNotContain("recordDate");
+        assertThat(json).doesNotContain("recordAt");
+        assertThat(json).doesNotContain("recordTimezone");
+        assertThat(json).doesNotContain("userMemory");
     }
 
     @Test
     void save_processingStartedAt_roundTripsAsInstant() throws Exception {
-        Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
-        TimelineDraftTask task = TimelineDraftTask.processing(
-                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
-                null, "token-hash", startedAt);
-
-        store.save("abc", task, Duration.ofHours(1));
+        store.save("abc", processingTask(), Duration.ofHours(1));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).set(anyString(), jsonCaptor.capture(), any());
         TimelineDraftTask roundTripped = objectMapper.readValue(jsonCaptor.getValue(), TimelineDraftTask.class);
-        assertThat(roundTripped.processingStartedAt()).isEqualTo(startedAt);
+        assertThat(roundTripped.processingStartedAt()).isEqualTo(STARTED_AT);
+        assertThat(roundTripped.timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(18, 30));
     }
 
     @Test
-    void save_terminalTasks_omitProcessingStartedAt() throws Exception {
+    void save_terminalTasks_omitProcessingStartedAtAndWindow() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
-        store.save("s", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(2)).set(anyString(), jsonCaptor.capture(), any());
-        assertThat(jsonCaptor.getAllValues()).allSatisfy(json ->
-                assertThat(json).doesNotContain("processingStartedAt"));
+        assertThat(jsonCaptor.getAllValues()).allSatisfy(json -> {
+            assertThat(json).doesNotContain("processingStartedAt");
+            assertThat(json).doesNotContain("timelineWindow");
+        });
     }
 
     @Test
-    void find_legacyProcessingJsonWithoutStartedAt_deserializesToNull() {
-        // 배포 전 저장된 PROCESSING JSON(필드 자체가 없음) → 예외 없이 null — 폴링은 elapsedSeconds를 생략한다.
-        when(redis.get("timeline:draft-task:legacy-p")).thenReturn(
-                "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
-                        + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
-                        + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
-
-        Optional<TimelineDraftTask> found = store.find("legacy-p");
-
-        assertThat(found).isPresent();
-        assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(found.get().processingStartedAt()).isNull();
-        // owner 필드도 legacy JSON엔 없다 → 0으로 오인하지 않고 null(fail-closed 판정 재료).
-        assertThat(found.get().userId()).isNull();
-    }
-
-    @Test
-    void save_allStates_preserveOwnerUserId() throws Exception {
-        // 세 상태 전이 모두 owner를 보존한다 — 폴링 소유권 대조·콜백 finalize의 기준값.
-        store.save("p", TimelineDraftTask.processing(7L, LocalDate.of(2026, 5, 8),
-                LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul", null, "h",
-                Instant.parse("2026-05-08T13:41:07Z")), Duration.ofHours(1));
-        store.save("s", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"),
-                Duration.ofHours(24));
+    void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
+        // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회·guard 해제의 기준값.
+        store.save("p", processingTask(), Duration.ofHours(1));
+        store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(3)).set(anyString(), jsonCaptor.capture(), any());
         for (String json : jsonCaptor.getAllValues()) {
             TimelineDraftTask roundTripped = objectMapper.readValue(json, TimelineDraftTask.class);
             assertThat(roundTripped.userId()).isEqualTo(7L);
+            assertThat(roundTripped.dailyRecordId()).isEqualTo(42L);
         }
     }
 
     @Test
-    void save_successTask_includesDailyRecordId() throws Exception {
-        // SUCCESS에만 결과 식별자가 실린다 — 폴링이 이 ID로만 결과를 조회한다.
-        store.save("abc", TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"), Duration.ofHours(24));
-
-        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).set(anyString(), jsonCaptor.capture(), any());
-        assertThat(jsonCaptor.getValue()).contains("\"dailyRecordId\":42");
-    }
-
-    @Test
-    void save_failedTask_omitsDailyRecordId() throws Exception {
-        store.save("f", TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"), Duration.ofHours(24));
-
-        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).set(anyString(), jsonCaptor.capture(), any());
-        assertThat(jsonCaptor.getValue()).doesNotContain("dailyRecordId");
-    }
-
-    @Test
-    void find_legacySuccessJsonWithoutDailyRecordId_deserializesToNull() {
-        // 배포 전 저장된 SUCCESS JSON(필드 자체가 없음) → 에러 없이 null로 역직렬화돼 legacy(0404) 판정이 가능하다.
+    void find_legacyJsonWithOldShape_deserializesWithNullNewFields() {
+        // 배포 전 저장된 구 shape JSON(record 메타데이터 포함, dailyRecordId/userId 없음) → 예외 없이 역직렬화되고
+        // 새 필수 판정 재료(dailyRecordId/userId)는 null — 콜백·폴링이 fail-closed 판정한다.
         when(redis.get("timeline:draft-task:legacy")).thenReturn(
-                "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"recordAt\":null,\"recordTimezone\":null,"
-                        + "\"userMemory\":null,\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
+                "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
+                        + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
+                        + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
 
         Optional<TimelineDraftTask> found = store.find("legacy");
 
         assertThat(found).isPresent();
-        assertThat(found.get().status()).isEqualTo(TaskStatus.SUCCESS);
+        assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(found.get().dailyRecordId()).isNull();
+        assertThat(found.get().userId()).isNull();
+        assertThat(found.get().processingStartedAt()).isNull();
     }
 
     @Test
@@ -202,25 +168,16 @@ class TimelineTaskStoreTest {
 
     @Test
     void find_returnsDeserializedTask() throws Exception {
-        TimelineDraftTask task = TimelineDraftTask.processing(
-                7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(12, 0), "Asia/Seoul",
-                new TimelineDraftTask.TimelineWindow(
-                        LocalDate.of(2026, 5, 8).atTime(9, 0), LocalDate.of(2026, 5, 8).atTime(11, 0)),
-                "token-hash", Instant.parse("2026-05-08T02:59:30Z"));
+        TimelineDraftTask task = processingTask();
         when(redis.get("timeline:draft-task:abc")).thenReturn(objectMapper.writeValueAsString(task));
 
         Optional<TimelineDraftTask> found = store.find("abc");
 
         assertThat(found).isPresent();
         assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(found.get().recordDate()).isEqualTo(LocalDate.of(2026, 5, 8));
-        assertThat(found.get().recordAt()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(12, 0));
-        assertThat(found.get().recordTimezone()).isEqualTo("Asia/Seoul");
-        // timelineWindow는 AI 계약 포맷(yyyyMMdd'T'HHmmss)으로 직렬화되고 그대로 왕복돼야 한다.
-        assertThat(found.get().timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(9, 0));
-        assertThat(found.get().timelineWindow().endTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(11, 0));
-        // userMemory는 shape만(usersCharacter=null).
-        assertThat(found.get().userMemory().usersCharacter()).isNull();
+        assertThat(found.get().dailyRecordId()).isEqualTo(42L);
+        assertThat(found.get().timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(18, 30));
+        assertThat(found.get().timelineWindow().endTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(22, 41));
         assertThat(found.get().callbackTokenHash()).isEqualTo("token-hash");
         assertThat(found.get()).isEqualTo(task);
     }

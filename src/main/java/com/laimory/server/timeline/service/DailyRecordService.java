@@ -34,19 +34,18 @@ public class DailyRecordService {
     }
 
     /**
-     * (userId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. finalize(콜백) 트랜잭션에 합류({@code REQUIRED})하므로
-     * record 생성이 event/item 저장·draft 삭제와 all-or-nothing으로 묶인다 — 후속 단계가 실패하면 record도 롤백돼
-     * 고아 DRAFT가 남지 않는다(이전 {@code REQUIRES_NEW}는 record를 별도 커밋해 고아를 만들었다).
+     * (userId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. draft POST의 선생성 트랜잭션
+     * ({@link TimelineDraftPreparationService})에 합류({@code REQUIRED})하므로 record 생성이 source 저장과
+     * all-or-nothing으로 묶인다 — 후속 단계가 실패하면 신규 record도 롤백된다.
      *
-     * <p>{@code REQUIRED}라 unique 위반을 catch해 재조회하는 옛 upsert는 더 못 쓴다 — 위반이 합류한 트랜잭션을
-     * rollback-only로 오염시켜 같은 트랜잭션 안의 재조회가 무의미해지기 때문이다. 대신 동시 생성 경합은 그대로 전파시켜
-     * finalize를 롤백하고, AI 콜백이 멱등 재시도로 마무리하게 한다(재시도 시 상대가 만든 기존 record를 재사용).
-     * (이 메서드의 유일 caller는 finalize 경로다.)
+     * <p>{@code REQUIRED}라 unique 위반을 catch해 재조회하는 옛 upsert는 못 쓴다 — 위반이 합류한 트랜잭션을
+     * rollback-only로 오염시키기 때문이다. 동시 생성 경합은 날짜 guard가 이 앞에서 직렬화하므로 정상 경로에서
+     * 나지 않고, 발생 시 그대로 전파돼 POST가 실패한다(guard 해제 후 클라 재시도로 수렴).
      *
-     * <p>같은 날짜 재요청(append)이면 기존 record의 record_at/record_timezone을 이번 finalize 값으로 갱신한다.
-     * 같은 날 task가 여럿이면 마지막에 finalize된 값이 남는다(콜백 순서 기준이라 POST 순서와 다를 수 있음). 관리 엔티티라
-     * dirty-checking으로 합류 트랜잭션 커밋 시 flush되며 repo.save는 없다.
-     * SAVED는 따로 거르지 않는다 — 유일 호출부 finalize가 직후 SAVED를 거절(throw)해 롤백하므로, 갱신은 flush 전에 폐기된다.
+     * <p>같은 날짜 재요청(append)이면 기존 DRAFT의 record_at/record_timezone을 이번 요청 값으로 즉시 갱신한다
+     * (AI 성공 시점이 아니라 draft 요청 시점 기준). 관리 엔티티라 dirty-checking으로 합류 트랜잭션 커밋 시
+     * flush되며 repo.save는 없다. SAVED는 따로 거르지 않는다 — 유일 호출부가 직후 SAVED를 거절(throw)해
+     * 롤백하므로, 갱신은 flush 전에 폐기된다.
      */
     @Transactional
     public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,

@@ -20,28 +20,35 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Timeline
 
 - `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(user_id, record_date)`는 유일하다.
-- draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증해 값 변형 없이 Redis task에
-  전달한다. `recordDate`·`recordAt`·window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
+- draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을
+  보존하며 AI transport에는 record timezone 기반 offset ISO로 변환해 전달한다. `recordDate`·`recordAt`·
+  window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
+- draft POST는 DailyRecord 선생성(find-or-create + `recordAt/recordTimezone` 갱신 + SAVED 재확인)과
+  source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. Redis 저장 실패 시 source rows만 보상
+  삭제하고 DailyRecord는 유지한다(empty DRAFT는 같은 날짜 재시도가 재사용, 자동 cleanup 없음).
 - `SAVED` record에는 새 draft source를 append하지 않는다.
-- 기존 final `rawId`와 같은 source는 제외하고 같은 request 안 중복도 한 번만 취급한다.
-- 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다.
-- staging association이 NULL이면 omitted source다. non-null association은 같은 task의 suggestion을 가리켜야 한다.
-- 채택된 source item은 정확히 하나의 final event에 속한다.
-- final `timeline_items.timeline_event_id`는 non-null이고 event 삭제에 cascade된다.
-- finalize는 검증, record/event/item 저장과 두 staging table 삭제를 하나의 DB transaction으로 수행한다.
-- DB commit 이후 Redis를 `SUCCESS`로 바꾼다.
-- event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다. DB unique invariant는 아니다.
-- event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
+- 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 source는 제외하고 같은 request 안
+  중복도 한 번만 취급한다. AI도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
+  race/legacy 중복 행 허용).
+- 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
+- Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
+  Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
+- same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — final junction writer(AI·fake)는
+  새 Item을 현재 task의 새 Event에만 연결한다(향후 writer도 이 규칙을 지켜야 한다).
+- final write(Event/Item/junction 저장 + accepted source 삭제)는 AI가 하나의 DB transaction으로
+  commit한다. 서버에는 final write 경로가 없다.
+- AI final commit 이후에만 callback이 오고, 서버는 그때 Redis를 `SUCCESS`로 바꾼다.
+- event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 AI writer). DB unique
+  invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
 - final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
-- staging `event_type`은 AI가 기록한 값을 서버가 재추론 없이 final event로 그대로 전달한다 —
-  변환은 assembler의 `TimelineEventType.valueOf` 한 곳이며, null/blank/미지원 literal은 IAE로
-  callback `ERROR_1011` FAILED 경계에 들어간다(finalize 미실행).
+  미지원 literal은 AI validation FAILED다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
 
 ### Deletion
 
 - Event·DailyRecord 삭제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에 거절하고
   없음·비소유는 404로 은닉한다.
-- 삭제는 대상 PHOTO의 S3 배치 삭제가 **전부 성공한 후에만** DB cascade 삭제를 시작한다.
+- 삭제는 exclusive Item(삭제 대상 Event에만 연결) PHOTO의 S3 배치 삭제가 **전부 성공한 후에만**
+  DB 삭제를 시작한다. 다른 Event에도 연결된 shared Item/PHOTO는 유지한다.
   S3 실패(`ERROR_1017`)면 DB를 보존하고, S3 성공 후 DB 실패(500)는 재시도로 수렴한다
   (이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고 행 삭제는 진행한다
@@ -52,16 +59,20 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - **향후 DRAFT→SAVED 전환(save) API도 같은 날짜 guard를 취득해야 한다** — 삭제·AI 작업과
   상태 전이가 경합하지 않게 하는 직렬화 지점이다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
-- 하위 행(events/items) 삭제는 JPA cascade가 아니라 DB FK `ON DELETE CASCADE`가 담당한다 —
-  서버는 부모 행만 `deleteById`로 지운다.
+- Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
+  Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
+  명시 삭제한다 — orphan 판정은 삭제 전 junction 스냅샷 기준이다(같은 날짜 쓰기는 guard가 직렬화).
 
 ### AI callback
 
-- AI는 event suggestion INSERT와 source association UPDATE를 하나의 staging transaction으로 commit한 뒤 알린다.
-- callback body는 `status`, `errorCode`, `error`뿐이며 event나 `itemIds`를 전달하지 않는다.
-- 서버가 staging relation을 읽어 내부 `TimelineEventSuggestionDto.itemIds`를 조립하고 검증한다.
-- raw callback token은 dispatch 때 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
-- callback token은 constant-time 비교 후 허용 횟수를 atomic하게 소비한다.
+- AI는 final direct-write commit 이후에만 알린다(commit-then-callback).
+- callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
+- 서버는 callback에서 결과를 조립·검증·저장하지 않고 Redis terminal 전이만 기록한다.
+- raw callback token은 dispatch body로 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
+- callback token은 constant-time 비교한다. 소비 게이트는 없다 — 유효한 재콜백(at-least-once)은
+  terminal no-op 200으로 멱등 흡수된다(재시도를 막는 카운터를 다시 넣지 않는다).
+- commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 final graph는 남는다 —
+  자동 복구(durable receipt·redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
 - `PROCESSING` TTL은 1시간, terminal task TTL은 24시간이며 staging retention은 7일이다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
@@ -105,13 +116,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   Redis task owner·polling·편집/삭제 소유권 검사까지 전부 동일해야 한다(지점 분기 금지).
 - Redis draft task owner는 세 상태 모두 보존된다. polling은 상태 분기 전에 owner를 대조하고
   타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다(fallback 0 추정 금지).
-- callback은 request principal이 아니라 task 저장 owner를 쓴다. owner 없는 legacy task는 finalize 없이
-  fail-closed하고, staging row owner가 task owner와 다르면 finalize 없이 `ERROR_1011` FAILED다.
+- callback은 request principal이 아니라 task 저장 owner를 쓴다. owner·dailyRecordId 없는 legacy task는
+  전이 없이 404로 fail-closed한다. source owner와 record owner의 일치는 AI validation이 검증한다.
 
 ## Known Gaps
 
 - DRAFT→SAVED 사용자 전이, emotion 입력 API가 없다.
-- production AI dispatcher가 없다.
+- 실 AI writer(Laimory-AI)의 direct-write 구현은 별도 저장소 진행분이다.
 - photo orphan cleanup과 automatic deployment rollback이 없다.
 
 ## Update When

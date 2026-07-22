@@ -26,7 +26,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 날짜 guard·조회·finalize에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
-| 작성중 | Draft | 현재 구현 | AI finalize 후 생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. |
+| 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
 | 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다(도입 시 같은 날짜 guard를 취득해야 한다). |
 
 ## 타임라인 이벤트
@@ -35,7 +35,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
-| 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. suggestion staging에서 만들어질 수 있다. |
+| 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI direct-write가 생성하고 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
 | 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. PUT 단일 endpoint로 작성·수정·제거한다 — null·blank·필드 부재는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
@@ -45,7 +45,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 아이템 | Timeline Item | 현재 구현 | 채택된 draft source item을 최종 이벤트 아래 저장한 값이다. `rawId`를 보존한다. |
+| 타임라인 아이템 | Timeline Item | 현재 구현 | 채택된 draft source item을 최종 저장한 독립 행이다. `rawId`를 보존하며 Event와는 junction(`timeline_event_items`)으로만 연결된다 — 한 Item이 여러 Event에 공유될 수 있다(N:M, 같은 Daily Record 안에서만). |
 | 아이템 타입 | Item Type | 현재 구현 | `PHOTO`, `CALENDAR`, `STAY`, `MOVEMENT`, `HEALTH`, `NOTIFICATION` 중 하나다. DB `item_type`이 권위 필드다. |
 | 아이템 시작 시각 | Start At | 현재 구현 | 아이템이 발생한 시작 시각이다. |
 | 아이템 종료 시각 | End At | 현재 구현 | 기간형 아이템의 종료 시각이며 단일 시점이면 nullable이다. |
@@ -56,10 +56,10 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
-| 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. AI는 source association UPDATE에 쓰고 서버 assembler가 내부 `itemIds`를 조립한다. callback body에는 없다. |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. UUIDv7은 client convention이며 서버는 blank와 길이만 검증한다. 유일 constraint는 없다. |
-| 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | 같은 task의 event suggestion과 유효하게 연결된 staging source item이다. finalize 때만 Timeline Item이 된다. |
-| 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | staging association이 NULL인 source item이다. MVP에서는 최종 item으로 저장하지 않는다. |
+| 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. AI가 taskId로 source를 읽을 때의 행 식별자이며 callback body에는 없다. |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. UUIDv7은 client convention이며 서버는 blank와 길이만 검증한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint 없음(같은 record 안 중복 방지는 API 사전 제외 + AI write 직전 재검사의 application-level 방어 — race/legacy 중복 허용). |
+| 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 final Event에 연결하기로 채택한 staging source item이다. AI final transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
+| 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
 ## Payload 타입
 
@@ -93,9 +93,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 제안 | Timeline Event Suggestion | 부분 구현 | AI output staging entity와 fake flow는 있다. 실제 production AI dispatcher는 없다. AI는 staging event를 INSERT하고 source association을 UPDATE한다. |
-| 아이템 ID 목록 | Item IDs | 현재 구현 | 서버 assembler가 staging 관계에서 조립하는 내부 `TimelineEventSuggestionDto.itemIds`다. callback payload도 AI 반환 list도 아니다. |
-| 타임라인 이벤트 제안 검증 | Timeline Event Suggestion Validation | 현재 구현 | 서버가 조립한 `itemIds`, title, 시간 범위, 빈 이벤트와 중복 배정을 검증한다. |
+| AI 직접 저장 | AI Direct-Write | 현재 구현(서버 측 계약) | AI가 생성 결과 validation과 final Event/Item/junction 저장·accepted source 삭제를 자신의 DB transaction으로 소유한다. 서버는 결과를 조립·검증·저장하지 않는다. 실 AI writer 구현은 Laimory-AI 저장소 진행분이다. |
+| AI 접수 요청 | AI Dispatch Request | 현재 구현 | `POST /v1/timeline` body(`taskId`·`callbackToken`·`dailyRecordId`·offset `window`)다. 필드명·포맷은 AI 규격이 명명 권위인 contract fixture다. |
 
 ## 비동기 작성 작업
 
@@ -104,10 +103,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작성 작업 | Draft Task | 현재 구현 | DRAFT daily record를 비동기로 만드는 작업 resource다. POST가 즉시 반환하고 상태는 Redis에 둔다. |
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
-| 타임라인 이벤트 제안 콜백 | Timeline Event Suggestion Callback | 현재 구현 | AI의 staging commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버가 staging을 읽어 finalize한다. |
-| 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증해 값 변형 없이 Redis PROCESSING task에 pass-through한다(terminal에서는 NULL). 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
-| 사용자 메모리 | User Memory | 부분 구현 | Redis task shape(`usersCharacter` 등)는 있지만 값을 공급하는 source는 없다. |
-| 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·staging 저장)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
+| AI 작성 콜백 | AI Draft Callback | 현재 구현 | AI의 final commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버는 Redis terminal 전이만 기록한다. 유효한 재콜백은 terminal no-op 200으로 멱등 흡수된다. |
+| 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI transport에는 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
+| 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED와 시각 없는 legacy task에서는 필드를 생략한다. |
 
 ## 저장 규칙
@@ -115,14 +113,14 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 규칙 | 상태 | 설명 |
 |---|---|---|
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(user_id, record_date)`다. |
-| 이벤트-아이템 관계 | 현재 구현 | Timeline Item은 정확히 하나의 Timeline Event에 속한다. |
-| 이벤트 FK | 현재 구현 | `timeline_items.timeline_event_id`는 `NOT NULL`이다. |
-| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event를 삭제하면 하위 행(Events·Items)이 DB FK `ON DELETE CASCADE`로 함께 삭제된다. 삭제 API는 대상 PHOTO의 S3 배치 삭제 성공 후에만 DB 삭제를 시작한다. |
-| finalize 단일 트랜잭션 | 현재 구현 | validate 후 Daily Record, Events, Items 저장과 두 staging table 삭제가 하나의 DB transaction이다. |
-| AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖 fire-and-forget이다. |
-| 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다. |
-| rawId 중복 제외 | 현재 구현 | 기존 final item과 request 안의 중복 rawId는 신규 finalize 대상에서 제외한다. |
-| startAt 충돌 회피 | 현재 구현 | 정확한 충돌은 +10분씩 미는 best-effort이며 DB unique constraint는 없다. |
+| 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
+| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. Item은 cascade되지 않아 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서 명시 삭제한다(shared Item/PHOTO 유지). 삭제 API는 exclusive PHOTO의 S3 배치 삭제 성공 후에만 DB 삭제를 시작한다. |
+| Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
+| AI final 단일 트랜잭션 | 현재 구현(계약) | AI가 validation 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 서버는 final write 경로가 없다. |
+| AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
+| 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
+| rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, AI가 write 직전 재검사한다. |
+| startAt 충돌 회피 | 현재 구현 | 정확한 충돌은 +10분씩 미는 best-effort이며 DB unique constraint는 없다(적용 주체는 AI writer). |
 
 ## 사용자와 인증
 
@@ -139,7 +137,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 앱 인증 코드 | App Code | 현재 구현 | 로그인 성공 후 앱 handoff용 60초 one-time code다. Redis에는 hash key로만 저장하고 GETDEL로 소비한다. |
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
 | 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `ERROR_2001`이고 principal userId가 service까지 전파된다. |
-| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 recovery/finalize/guard 해제의 기준이며, 없으면(legacy) fail-closed한다. |
+| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 전이·guard 해제의 기준이며, 없으면(legacy) fail-closed한다. |
 
 ## 푸시 알림
 

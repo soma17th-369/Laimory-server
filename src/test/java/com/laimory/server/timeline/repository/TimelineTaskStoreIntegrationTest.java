@@ -34,7 +34,7 @@ class TimelineTaskStoreIntegrationTest {
     void savesAndFindsTaskFromRealRedis() {
         String taskId = "it-" + UUID.randomUUID();
         try {
-            TimelineDraftTask task = TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash");
+            TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, "token-hash");
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
@@ -52,9 +52,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-" + UUID.randomUUID();
         try {
             Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
-            TimelineDraftTask task = TimelineDraftTask.processing(
-                    7L, LocalDate.of(2026, 5, 8), LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul",
-                    null, "token-hash", startedAt);
+            TimelineDraftTask task = TimelineDraftTask.processing(7L, 42L, null, "token-hash", startedAt);
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
@@ -72,7 +70,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "token-hash"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, "token-hash"), Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
 
@@ -91,12 +89,11 @@ class TimelineTaskStoreIntegrationTest {
         String fId = "it-" + UUID.randomUUID();
         String legacyId = "it-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, LocalDate.of(2026, 5, 8),
-                    LocalDate.of(2026, 5, 8).atTime(22, 41), "Asia/Seoul", null, "h",
+            timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, 42L, null, "h",
                     Instant.parse("2026-05-08T13:41:07Z")), Duration.ofMinutes(1));
-            timelineTaskStore.save(sId, TimelineDraftTask.success(7L, LocalDate.of(2026, 5, 8), 42L, "h"),
+            timelineTaskStore.save(sId, TimelineDraftTask.success(7L, 42L, "h"),
                     Duration.ofMinutes(1));
-            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, LocalDate.of(2026, 5, 8), "ERROR_1009", "h"),
+            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
                     Duration.ofMinutes(1));
             redisGateway.set("timeline:draft-task:" + legacyId,
                     "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"callbackTokenHash\":\"h\"}",
