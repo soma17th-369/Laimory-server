@@ -31,10 +31,15 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 9개(timeline 7 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 11개(timeline 9 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
+
+`GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
+`recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`이며,
+`GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 없음·비소유를 같은 404 `ERROR_0404`로
+은닉한다. 두 응답 모두 Event별 연결 Item을 `events[].items[]`에 포함한다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지

@@ -4,6 +4,7 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,16 @@ public class DailyRecordService {
 
     public Optional<DailyRecord> findById(Long id) {
         return dailyRecordRepository.findById(id);
+    }
+
+    /** 사용자의 일일 기록 전체를 record_date, daily_record_id 내림차순으로 반환한다. */
+    public List<DailyRecord> findByUserIdOrderByRecordDateDescDailyRecordIdDesc(Long userId) {
+        return dailyRecordRepository.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(userId);
+    }
+
+    /** 일일 기록 ID와 사용자 ID가 모두 일치하는 소유 record만 반환한다. */
+    public Optional<DailyRecord> findByDailyRecordIdAndUserId(Long dailyRecordId, Long userId) {
+        return dailyRecordRepository.findByDailyRecordIdAndUserId(dailyRecordId, userId);
     }
 
     public DailyRecord save(DailyRecord dailyRecord) {

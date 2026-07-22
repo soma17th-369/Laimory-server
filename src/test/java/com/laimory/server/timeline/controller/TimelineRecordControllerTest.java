@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -22,13 +23,18 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
+import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -42,7 +48,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 기록 편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(PATCH/PUT/DELETE)·envelope·상태 매핑
+ * 기록 조회·편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/PATCH/PUT/DELETE)·envelope·상태 매핑
  * (400/404/409/502)과 "userId는 인증 principal에서 서비스로 전달" 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineRecordController.class)
@@ -52,6 +58,7 @@ class TimelineRecordControllerTest {
     private static final long USER_ID = 7L;
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
+    private static final String DAILY_RECORDS_PATH = "/a/api/v1/timeline/daily-records";
     private static final String DAILY_RECORD_PATH = "/a/api/v1/timeline/daily-records/77";
 
     private static final String PATCH_BODY = """
@@ -69,6 +76,9 @@ class TimelineRecordControllerTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @MockitoBean
+    private DailyTimelineService dailyTimelineService;
+
+    @MockitoBean
     private TimelineEventEditService timelineEventEditService;
 
     @MockitoBean
@@ -84,6 +94,93 @@ class TimelineRecordControllerTest {
                 11L, TimelineEventType.REST,
                 LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
                 "카페에서 휴식", "성수동", "기존 메모", List.of(item));
+    }
+
+    private DailyTimelineResponse dailyTimeline() {
+        return new DailyTimelineResponse(
+                77L, LocalDate.parse("2026-07-08"), EmotionType.HAPPY, List.of(updatedEvent()));
+    }
+
+    // --- getDailyTimelines / getDailyTimeline ---
+
+    @Test
+    void getDailyTimelines_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
+        when(dailyTimelineService.getDailyTimelines(any(), anyLong()))
+                .thenReturn(new DailyTimelinesResponse(List.of(dailyTimeline())));
+
+        mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.timelines[0].dailyRecordId").value(77))
+                .andExpect(jsonPath("$.body.timelines[0].recordDate").value("2026-07-08"))
+                .andExpect(jsonPath("$.body.timelines[0].emotionType").value("HAPPY"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].timelineEventId").value(11))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].timelineItemId").value(21))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].rawId").value("raw-21"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].startAt")
+                        .value("2026-07-08T14:05:00"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].endAt").doesNotExist())
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].payload.filename").value("u.jpg"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].payload.photoUrl")
+                        .value("https://cdn.example/u.jpg"));
+
+        verify(dailyTimelineService).getDailyTimelines("v1", USER_ID);
+    }
+
+    @Test
+    void getDailyTimelines_returnsEmptyArrayWhenUserHasNoRecords() throws Exception {
+        when(dailyTimelineService.getDailyTimelines(any(), anyLong()))
+                .thenReturn(new DailyTimelinesResponse(List.of()));
+
+        mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.body.timelines").isArray())
+                .andExpect(jsonPath("$.body.timelines").isEmpty());
+    }
+
+    @Test
+    void getDailyTimeline_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
+        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
+                .thenReturn(dailyTimeline());
+
+        mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.dailyRecordId").value(77))
+                .andExpect(jsonPath("$.body.events[0].timelineEventId").value(11))
+                .andExpect(jsonPath("$.body.events[0].items[0].timelineItemId").value(21))
+                .andExpect(jsonPath("$.body.events[0].items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.events[0].items[0].payload.filename").value("u.jpg"));
+
+        verify(dailyTimelineService).getDailyTimeline("v1", USER_ID, 77L);
+    }
+
+    @Test
+    void getDailyTimeline_mapsNotFoundTo404() throws Exception {
+        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
+
+        mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0404"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void timelineReads_withoutAuthentication_return401Envelope() throws Exception {
+        mockMvc.perform(get(DAILY_RECORDS_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+        mockMvc.perform(get(DAILY_RECORD_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+
+        verifyNoInteractions(dailyTimelineService);
     }
 
     @Test

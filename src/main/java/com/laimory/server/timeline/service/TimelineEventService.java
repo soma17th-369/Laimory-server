@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,15 @@ public class TimelineEventService {
     /** 해당 일자 이벤트를 start_at, timeline_event_id 오름차순으로 반환(표시 순서 고정). */
     public List<TimelineEvent> findByDailyRecordId(Long dailyRecordId) {
         return timelineEventRepository.findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(dailyRecordId);
+    }
+
+    /** 여러 일일 기록의 이벤트를 record, start_at, event ID 오름차순으로 반환한다. */
+    public List<TimelineEvent> findByDailyRecordIds(Collection<Long> dailyRecordIds) {
+        if (dailyRecordIds.isEmpty()) {
+            return List.of();
+        }
+        return timelineEventRepository
+                .findByDailyRecordIdInOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds);
     }
 
     /** 이벤트 행을 삭제한다. 하위 timeline_items는 DB FK {@code ON DELETE CASCADE}가 지운다(JPA cascade 없음). */

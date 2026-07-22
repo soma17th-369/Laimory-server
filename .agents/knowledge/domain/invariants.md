@@ -113,7 +113,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 요청 하나의 principal userId가 draft record 조회·날짜 guard·enrich photo key·staging row·
-  Redis task owner·polling·편집/삭제 소유권 검사까지 전부 동일해야 한다(지점 분기 금지).
+  Redis task owner·polling·DailyRecord 전체/단건 조회·편집/삭제 소유권 검사까지 전부 동일해야 한다
+  (지점 분기 금지).
 - Redis draft task owner는 세 상태 모두 보존된다. polling은 상태 분기 전에 owner를 대조하고
   타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다(fallback 0 추정 금지).
 - callback은 request principal이 아니라 task 저장 owner를 쓴다. owner·dailyRecordId 없는 legacy task는
