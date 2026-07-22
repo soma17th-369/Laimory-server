@@ -41,8 +41,12 @@ draft POST·polling·callback·append·삭제·Redis state·staging cleanup을 �
    성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
    **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다.**
 9. AI dispatcher를 호출한다 — body는 `taskId`·원문 `callbackToken`·`dailyRecordId`·record timezone 기반
-   offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며
-   실패(비202·shape 불일치·타임아웃)는 FAILED(`ERROR_1009`) 고정 후 guard를 해제한다.
+   offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기다.
+   **실패는 "미접수 확정 vs UNKNOWN"으로 분류한다**: 4xx 응답(미접수 확정, `TimelineAiDispatchRejectedException`)만
+   FAILED(`ERROR_1009`) 종결 + guard 해제한다. read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 —
+   AI가 이미 접수해 final write 중일 수 있으므로 — FAILED로 확정하지 않고 PROCESSING·guard를 유지한다
+   (AI callback이 종결하거나 TTL 1h 만료가 회수). FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가
+   새 draft/삭제와 겹칠 수 있다.
 
 guard 해제 경계: PROCESSING 저장 전 실패는 보상 후 자신의 guard만 즉시 해제(compare-and-release),
 PROCESSING 저장 후 terminal 저장 실패는 해제하지 않고 TTL(1h) 만료에 맡기며,

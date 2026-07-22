@@ -189,17 +189,22 @@ public class TimelineDraftTaskService {
         }
 
         // 3. AI dispatch — 접수 body에 taskId·원문 callbackToken·dailyRecordId·offset 변환 window를 싣는다.
-        //    동기 예외(RuntimeException)면 task를 FAILED로 고정하고 draft는 보존(cleanup이 나중에 정리).
-        //    taskId는 정상 반환해 클라가 폴링으로 실패를 확인하게 한다.
+        //    실패 처리는 dispatcher가 준 "미접수 확정 vs UNKNOWN" 구분을 따른다(taskId는 어느 경우든 정상 반환).
         try {
             timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
                     taskId, callbackToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
-        } catch (RuntimeException e) {
-            // 상세는 로그로만 — task엔 분류 코드만 저장(폴링 body.error 유출 차단).
-            log.warn("timeline ai dispatch failed: taskId={} detail={}", taskId, e.getMessage());
-            // terminal(FAILED) 저장 성공 시에만 guard 해제(규칙 ③) — markFailed가 던지면 여기 못 와 TTL에 맡겨진다(규칙 ②).
+        } catch (TimelineAiDispatchRejectedException e) {
+            // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED 종결 + guard 해제가 안전하다.
+            // 상세는 로그로만(폴링 body.error 유출 차단). terminal 저장 성공 시에만 해제(규칙 ③).
+            log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
             timelineTaskService.markFailed(taskId, userId, dailyRecordId, ErrorCode.ERROR_1009, callbackTokenHash);
             releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
+        } catch (RuntimeException e) {
+            // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
+            // 있다. FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가 새 draft/삭제와 겹칠 수 있으므로,
+            // task를 PROCESSING·guard 유지 상태로 둔다(AI callback이 종결하거나 TTL 1h 만료가 회수). draft도 보존.
+            log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING+guard: taskId={} detail={}",
+                    taskId, e.getMessage());
         }
 
         return taskId;

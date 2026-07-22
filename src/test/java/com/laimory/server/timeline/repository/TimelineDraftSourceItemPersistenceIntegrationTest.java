@@ -5,11 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Tag;
@@ -76,5 +76,27 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
         assertThat(reloaded.getModifiedBy()).isNull();
+    }
+
+    @Test
+    void uniqueTaskRawId_isCaseSensitive_matchingJavaDedupe() {
+        // raw_id가 utf8mb4_bin이라 (task, "abc")와 (task, "ABC")는 서로 다른 rawId로 취급된다 —
+        // 서버 Java dedupe(대소문자 구분)와 규칙이 일치한다. _unicode_ci였다면 여기서 duplicate-key 500이 났다.
+        String taskId = "22222222-2222-2222-2222-222222222222";
+        timelineDraftSourceItemRepository.save(sourceItem(taskId, "abc"));
+        timelineDraftSourceItemRepository.save(sourceItem(taskId, "ABC"));
+
+        em.flush();
+        em.clear();
+
+        assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId))
+                .extracting(TimelineDraftSourceItem::getRawId)
+                .containsExactlyInAnyOrder("abc", "ABC");
+    }
+
+    private TimelineDraftSourceItem sourceItem(String taskId, String rawId) {
+        return TimelineDraftSourceItem.of(taskId, 0L, ItemType.CALENDAR, rawId,
+                LocalDateTime.of(2026, 5, 8, 9, 0), null,
+                objectMapper.valueToTree(new CalendarPayload("회의", null, null, false)));
     }
 }

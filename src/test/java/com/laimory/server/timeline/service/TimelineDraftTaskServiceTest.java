@@ -270,24 +270,42 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenDispatchThrows_marksFailedKeepsDraftsAndReturnsTaskId() {
+    void createDraftTask_whenDispatchRejected_marksFailedKeepsDraftsAndReleasesGuard() {
+        // 미접수 확정(dispatcher가 TimelineAiDispatchRejectedException) — AI가 접수·write하지 않았음이 확실하므로
+        // FAILED 종결 + guard 해제가 안전하다.
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
-        doThrow(new RuntimeException("boom")).when(timelineAiDispatcher).dispatch(any());
+        doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
 
-        // dispatch가 동기 예외를 던져도 taskId는 반환되고 task는 FAILED로 고정된다(고아 PROCESSING 방지).
         String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
         assertThat(taskId).isNotBlank();
-        // raw 메시지("boom")는 저장하지 않는다 — 분류 코드만(상세는 로그로).
+        // raw 메시지는 저장하지 않는다 — 분류 코드만(상세는 로그로).
         verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
                 anyString());
-        // dispatch 실패는 draft를 보존한다(cleanup이 정리). 보상 삭제 없음.
+        // draft는 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
         // 규칙 ③: FAILED terminal 저장 성공 후 guard를 해제한다(순서: markFailed → release).
         InOrder order = inOrder(timelineTaskService);
         order.verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
                 anyString());
         order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:" + taskId);
+    }
+
+    @Test
+    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessingAndGuard() {
+        // UNKNOWN(read timeout·5xx·계약 불일치 — Rejected가 아닌 예외) — AI가 이미 접수해 final write를 진행
+        // 중일 수 있으므로 FAILED로 확정하지 않고 PROCESSING·guard를 유지한다(AI callback 또는 TTL이 종결).
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("read timeout")).when(timelineAiDispatcher).dispatch(any());
+
+        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+
+        // taskId는 정상 반환하고 PROCESSING은 그대로 둔다(위에서 createProcessing 이미 성공). 종결·해제 없음.
+        assertThat(taskId).isNotBlank();
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        // draft·record 모두 보존(보상 삭제 없음).
+        verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
 
     @Test

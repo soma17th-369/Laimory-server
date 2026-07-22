@@ -103,6 +103,10 @@ override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 S
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다(AI·fake는 새 Item을 현재 task의 새 Event에만 연결).
 - `timeline_items.raw_id`는 DB UNIQUE가 없다 — 같은 record 안 중복 방지는 API 사전 제외 + AI write 직전
   재검사의 application-level 방어이며, race/legacy 중복 행은 허용한다(조회·삭제는 `timeline_item_id` 기준).
+- `raw_id`(source·final 둘 다)는 대소문자 구분 opaque 식별자라 **컬럼 단위 `utf8mb4_bin` collation**을 쓴다
+  (FID 선례와 동일; 테이블 기본 `_unicode_ci`와 다름). 서버 dedupe(Java String)·기존 rawId 제외(HashSet/IN)와
+  DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱
+  dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.

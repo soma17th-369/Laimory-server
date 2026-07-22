@@ -115,6 +115,16 @@ class AiDispatcherWiringTest {
     }
 
     @Test
+    void httpMode_withoutBaseUrl_failsContext() {
+        // 빈 base-url(기본값 "")은 기동 시점에 fail-fast여야 한다 — 첫 dispatch에서야 상대 URI 오류가 나는 걸 방지.
+        runner.withPropertyValues("app.ai.mode=http", "app.ai.http.base-url=")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("base-url"));
+    }
+
+    @Test
     void unknownMode_failsContext() {
         // fail-fast 경로 고정: 오타 → noop/fake/http 어느 조건도 매칭 안 됨 → dispatcher 빈 부재로 consumer
         // 주입 실패가 root cause여야 한다(무관한 오류가 아니라 이 경로임을 못박음).
