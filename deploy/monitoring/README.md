@@ -27,9 +27,11 @@ duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 �
 
 ## Secret gate
 
-다음 파일은 Git, Terraform, S3 bootstrap, command argument에 값을 넣지 않는다.
-Grafana는 `restart: on-failure`로 process 장애만 Docker가 복구한다. host boot는 systemd가 시작하고,
-Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 secret을 다시 확인한다.
+다음 파일은 Git, Terraform, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
+Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장애만 Docker가 복구한다.
+비밀이 없는 Prometheus와 blackbox는 `unless-stopped`를 유지한다. host boot는 systemd가 전체 stack을
+시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 여섯 secret을
+다시 확인한다.
 
 | 파일 | 소비 UID:GID | 내용 |
 |---|---:|---|
@@ -115,9 +117,29 @@ sudo /usr/local/sbin/configure-laimory-mysql-exporter-user \
 
 ```bash
 read -rsp 'MySQL exporter password: ' SECRET_VALUE; echo
-printf '[client]\nuser=laimory_exporter\npassword=%s\n' "$SECRET_VALUE" |
+printf '[client]\nuser=laimory_exporter\npassword="%s"\n' "$SECRET_VALUE" |
   sudo /opt/laimory-monitoring/scripts/install-secret.sh mysql_exporter_my.cnf
 unset SECRET_VALUE
+```
+
+`#` 뒤의 문자열도 password로 보존되는지는 실제 secret이 아닌 fixture와 MySQL 8 option-file parser로
+회귀 검증한다. `--show`는 synthetic 값에만 사용하며, 마지막 명령이 전체 `#tail`을 포함한 한 줄을
+출력해야 한다.
+
+```bash
+MYSQL_OPTION_TEST_PASSWORD='abcdefghijklmnop#tail'
+MYSQL_OPTION_TEST_FILE="$(mktemp)"
+trap 'rm -f "$MYSQL_OPTION_TEST_FILE"' EXIT
+printf '[client]\nuser=laimory_exporter\npassword="%s"\n' \
+  "$MYSQL_OPTION_TEST_PASSWORD" > "$MYSQL_OPTION_TEST_FILE"
+docker run --rm --entrypoint my_print_defaults \
+  -v "$MYSQL_OPTION_TEST_FILE:/tmp/mysql-exporter-my.cnf:ro" \
+  mysql:8.0 \
+  --defaults-file=/tmp/mysql-exporter-my.cnf --show client |
+  grep -Fx -- "--password=$MYSQL_OPTION_TEST_PASSWORD"
+rm -f "$MYSQL_OPTION_TEST_FILE"
+trap - EXIT
+unset MYSQL_OPTION_TEST_PASSWORD MYSQL_OPTION_TEST_FILE
 ```
 
 `SHOW GLOBAL STATUS`와 `SHOW GLOBAL VARIABLES`는 성공해야 한다. application table `SELECT`,
@@ -303,5 +325,7 @@ promtool 통과 전 reload하지 않는다. volume은 보존한 채 service만 s
 
 exporter rollback은 Prometheus target/job을 먼저 제거·reload한 뒤 각 host에서 node_exporter를
 disable/remove하고 MySQL/Redis monitoring identity를 lock/off한다. stack rollback은
-`docker compose stop`으로 수행하며 TSDB/Grafana volume은 보존한다. `/grafana/`를 개방했다면 dev WAS에서
-`/usr/local/sbin/laimory-grafana-proxy disable`로 Grafana include만 제거해 Kibana를 보존한다.
+`sudo systemctl stop laimory-monitoring`으로 수행하며 TSDB/Grafana volume은 보존한다. 다시 올릴 때는
+`sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. `/grafana/`를 개방했다면
+dev WAS에서 `/usr/local/sbin/laimory-grafana-proxy disable`로 Grafana include만 제거해 Kibana를
+보존한다.

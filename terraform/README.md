@@ -279,7 +279,8 @@ blanket/target `terraform apply`를 하지 않는다. Console/SSM으로 같은 �
 - monitoring/dev WAS/dev MySQL/Redis/ELK에는 private-IP-bound node_exporter
 - Prometheus metrics dashboard 3개와 Elasticsearch dev log dashboard 1개, Grafana native Discord alert
 - Grafana 3000만 dev WAS identity SG에서 접근; 9090/9104/9115/9121은 host에 publish하지 않음
-- secret을 쓰는 Grafana의 시작은 systemd가 소유하고 process 실패만 Docker `on-failure`로 복구
+- secret을 쓰는 Grafana/MySQL/Redis exporter의 시작은 systemd가 소유하고 process 실패만 Docker
+  `on-failure`로 복구
 - `grafana_allowed_cidrs=[]`이면 dev nginx에 `/grafana/`를 만들지 않고 SSM-only
 
 ### 1. 사전 조회와 비밀 없는 bootstrap 업로드

@@ -76,7 +76,8 @@ services:
       - ./secrets/mysql_exporter_my.cnf:/run/secrets/mysql_exporter_my_cnf:ro
     expose:
       - "9104"
-    restart: unless-stopped
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:9104/metrics"]
       interval: 30s
@@ -110,7 +111,8 @@ services:
       - ./secrets/redis_exporter_password.json:/run/secrets/redis_exporter_password.json:ro
     expose:
       - "9121"
-    restart: unless-stopped
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:9121/metrics"]
       interval: 30s
