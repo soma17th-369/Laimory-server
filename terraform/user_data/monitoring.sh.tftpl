@@ -30,15 +30,35 @@ install -d -m 0755 \
   /opt/laimory-monitoring/grafana/provisioning/alerting
 
 BOOTSTRAP_URI="s3://${backup_bucket}/bootstrap/monitoring"
-aws s3 cp "$BOOTSTRAP_URI/docker-compose.yml" /opt/laimory-monitoring/docker-compose.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/prometheus/prometheus.yml" /opt/laimory-monitoring/prometheus/prometheus.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/application.yml" /opt/laimory-monitoring/prometheus/targets/application.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/node.yml" /opt/laimory-monitoring/prometheus/targets/node.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/probe.yml" /opt/laimory-monitoring/prometheus/targets/probe.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/blackbox/blackbox.yml" /opt/laimory-monitoring/blackbox/blackbox.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/grafana/provisioning/datasources/prometheus.yml" /opt/laimory-monitoring/grafana/provisioning/datasources/prometheus.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/grafana/provisioning/dashboards/provider.yml" /opt/laimory-monitoring/grafana/provisioning/dashboards/provider.yml --region ${region} --only-show-errors
-aws s3 cp "$BOOTSTRAP_URI/systemd/laimory-monitoring.service" /etc/systemd/system/laimory-monitoring.service --region ${region} --only-show-errors
+
+# Terraform ordering waits for the inline policy, while this bounded retry absorbs IAM propagation delay.
+download_bootstrap_asset() {
+  local object_key="$1"
+  local destination="$2"
+  local attempt
+
+  for ((attempt = 1; attempt <= 10; attempt++)); do
+    if aws s3 cp "$BOOTSTRAP_URI/$object_key" "$destination" \
+      --region ${region} --only-show-errors; then
+      return 0
+    fi
+    if [ "$attempt" -eq 10 ]; then
+      echo "S3 bootstrap download failed after $attempt attempts: $object_key" >&2
+      return 1
+    fi
+    sleep $((attempt * 3))
+  done
+}
+
+download_bootstrap_asset docker-compose.yml /opt/laimory-monitoring/docker-compose.yml
+download_bootstrap_asset prometheus/prometheus.yml /opt/laimory-monitoring/prometheus/prometheus.yml
+download_bootstrap_asset prometheus/targets/application.yml /opt/laimory-monitoring/prometheus/targets/application.yml
+download_bootstrap_asset prometheus/targets/node.yml /opt/laimory-monitoring/prometheus/targets/node.yml
+download_bootstrap_asset prometheus/targets/probe.yml /opt/laimory-monitoring/prometheus/targets/probe.yml
+download_bootstrap_asset blackbox/blackbox.yml /opt/laimory-monitoring/blackbox/blackbox.yml
+download_bootstrap_asset grafana/provisioning/datasources/prometheus.yml /opt/laimory-monitoring/grafana/provisioning/datasources/prometheus.yml
+download_bootstrap_asset grafana/provisioning/dashboards/provider.yml /opt/laimory-monitoring/grafana/provisioning/dashboards/provider.yml
+download_bootstrap_asset systemd/laimory-monitoring.service /etc/systemd/system/laimory-monitoring.service
 
 cat > /opt/laimory-monitoring/.env <<'ENVEOF'
 MONITORING_PRIVATE_IP=${monitoring_private_ip}

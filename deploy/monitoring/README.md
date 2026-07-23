@@ -27,6 +27,8 @@ node target은 미리 렌더되지만 각 host에 node_exporter를 설치하기 
 `secrets/grafana_admin_password`와 `secrets/grafana_secret_key`는 Git, Terraform, S3 bootstrap에 넣지
 않는다. host의 `/opt/laimory-monitoring/secrets`에 SSM Session Manager로 주입한 뒤에만 systemd 전체
 stack을 시작한다. 두 파일 중 하나라도 비어 있으면 `ExecCondition`이 Grafana 시작을 막는다.
+Grafana는 `restart: on-failure`로 process 장애만 Docker가 복구한다. host boot는 systemd가 시작하고,
+Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 secret을 다시 확인한다.
 
 host에서는 parent directory를 `0700 root:root`, 파일을 `0400 472:root`로 유지한다. parent directory
 때문에 일반 host 사용자는 읽을 수 없고 Grafana container UID 472는 read-only bind mount를 통해서만
