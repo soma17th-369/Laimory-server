@@ -113,6 +113,69 @@ resource "aws_s3_object" "elk_filebeat" {
   etag   = filemd5("${path.module}/../deploy/elk/filebeat.yml")
 }
 
+# Prometheus/Grafana monitoring 부트스트랩. 이 prefix에는 비밀을 넣지 않는다. monitoring 전용 IAM은
+# 이 prefix의 GetObject만 허용하고 ListBucket, backup write, photos 권한은 갖지 않는다.
+locals {
+  monitoring_bootstrap_assets = {
+    "docker-compose.yml"                              = "docker-compose.yml"
+    "prometheus/prometheus.yml"                       = "prometheus/prometheus.yml"
+    "blackbox/blackbox.yml"                           = "blackbox/blackbox.yml"
+    "grafana/provisioning/datasources/prometheus.yml" = "grafana/provisioning/datasources/prometheus.yml"
+    "grafana/provisioning/dashboards/provider.yml"    = "grafana/provisioning/dashboards/provider.yml"
+    "nginx/manage-grafana-proxy.sh"                   = "nginx/manage-grafana-proxy.sh"
+    "systemd/laimory-monitoring.service"              = "systemd/laimory-monitoring.service"
+  }
+
+  monitoring_application_targets = templatefile("${path.module}/../deploy/monitoring/prometheus/application-targets.yml.tftpl", {
+    dev_was_private_ip = aws_instance.was["dev"].private_ip
+  })
+
+  monitoring_node_targets = templatefile("${path.module}/../deploy/monitoring/prometheus/node-targets.yml.tftpl", {
+    monitoring_private_ip = var.monitoring_private_ip
+    dev_was_private_ip    = aws_instance.was["dev"].private_ip
+    dev_mysql_private_ip  = var.mysql_private_ip["dev"]
+    redis_private_ip      = var.redis_private_ip
+    elk_private_ip        = var.elk_private_ip
+  })
+
+  monitoring_probe_targets = templatefile("${path.module}/../deploy/monitoring/prometheus/probe-targets.yml.tftpl", {
+    dev_api_domain = var.api_domains["dev"]
+  })
+}
+
+resource "aws_s3_object" "monitoring_assets" {
+  for_each = local.monitoring_bootstrap_assets
+
+  bucket = aws_s3_bucket.backup.id
+  key    = "bootstrap/monitoring/${each.key}"
+  source = "${path.module}/../deploy/monitoring/${each.value}"
+  etag   = filemd5("${path.module}/../deploy/monitoring/${each.value}")
+}
+
+resource "aws_s3_object" "monitoring_application_targets" {
+  bucket       = aws_s3_bucket.backup.id
+  key          = "bootstrap/monitoring/prometheus/targets/application.yml"
+  content      = local.monitoring_application_targets
+  content_type = "application/yaml"
+  etag         = md5(local.monitoring_application_targets)
+}
+
+resource "aws_s3_object" "monitoring_node_targets" {
+  bucket       = aws_s3_bucket.backup.id
+  key          = "bootstrap/monitoring/prometheus/targets/node.yml"
+  content      = local.monitoring_node_targets
+  content_type = "application/yaml"
+  etag         = md5(local.monitoring_node_targets)
+}
+
+resource "aws_s3_object" "monitoring_probe_targets" {
+  bucket       = aws_s3_bucket.backup.id
+  key          = "bootstrap/monitoring/prometheus/targets/probe.yml"
+  content      = local.monitoring_probe_targets
+  content_type = "application/yaml"
+  etag         = md5(local.monitoring_probe_targets)
+}
+
 # ---------- OAC + CloudFront (무서명 서빙) ----------
 
 resource "aws_cloudfront_origin_access_control" "photos" {

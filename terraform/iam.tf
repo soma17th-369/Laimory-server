@@ -45,7 +45,7 @@ data "aws_iam_policy_document" "ec2_inline" {
     sid       = "LaimoryDbBinlogBackupWrite"
     effect    = "Allow"
     actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.backup.arn}/*"]
+    resources = ["${aws_s3_bucket.backup.arn}/binlog/*"]
   }
 
   # MySQL 박스가 부팅 시 bootstrap/schema.sql 을 내려받아 적용(ddl-auto=validate 선적용).
@@ -66,6 +66,39 @@ resource "aws_iam_role_policy" "ec2_inline" {
 resource "aws_iam_instance_profile" "ec2" {
   name = "${var.project_name}-ec2-role"
   role = aws_iam_role.ec2.name
+}
+
+# ---------- monitoring 전용 최소 권한 role ----------
+# 공용 EC2 role의 photos write/delete, backup write, ECR read를 상속하지 않는다.
+
+resource "aws_iam_role" "monitoring" {
+  name               = "${var.project_name}-monitoring-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "monitoring_ssm" {
+  role       = aws_iam_role.monitoring.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+data "aws_iam_policy_document" "monitoring_bootstrap_read" {
+  statement {
+    sid       = "MonitoringBootstrapRead"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.backup.arn}/bootstrap/monitoring/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "monitoring_bootstrap_read" {
+  name   = "${var.project_name}-monitoring-bootstrap-read"
+  role   = aws_iam_role.monitoring.id
+  policy = data.aws_iam_policy_document.monitoring_bootstrap_read.json
+}
+
+resource "aws_iam_instance_profile" "monitoring" {
+  name = "${var.project_name}-monitoring-role"
+  role = aws_iam_role.monitoring.name
 }
 
 # ---------- GitHub Actions OIDC ----------

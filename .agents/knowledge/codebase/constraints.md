@@ -39,6 +39,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 - 기존 WAS/MySQL/ELK EC2의 `user_data` 변경은 lifecycle ignore 때문에 live 반영되지 않는다.
 - Terraform state는 local이며 secret을 포함할 수 있어 commit하지 않는다.
 - AWS Sandbox의 Terraform은 재구성 recipe다. live 환경에 blanket apply하지 않고 plan을 사람이 검토한다.
+- monitoring bootstrap S3에는 비밀 없는 자산만 두며 Grafana/exporter/datasource/Discord secret은
+  Session Manager로 host의 보호된 파일에만 주입한다.
 
 ## Invariants
 
@@ -48,8 +50,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 
 ## Known Gaps
 
-- migration framework, production deploy workflow, automatic rollback, metrics 수집 서버·dashboard,
-  distributed tracing과 alerting이 없다.
+- migration framework, production deploy workflow, automatic rollback, distributed tracing과 완성된
+  live monitoring/alerting rollout이 없다.
 
 ## Update When
 

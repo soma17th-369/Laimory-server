@@ -13,6 +13,7 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 - `.github/workflows/deploy.yml`, `.github/workflows/ci.yml`
 - `Dockerfile`
 - `terraform/README.md`, `terraform/*.tf`, `terraform/user_data/*.tftpl`
+- `deploy/monitoring/*`
 - `application.properties`, intro/status API implementation
 
 ## Current Dev Deployment
@@ -74,6 +75,15 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - live environment에 blanket apply하지 않는다. plan 범위를 좁혀 사람이 drift와 영향을 검토한다.
 - 기존 WAS/MySQL/ELK는 `user_data` change를 ignore한다. 수정은 새 instance만 자동 재현하며
   기존 instance에는 SSM/manual 적용이 필요하다.
+- dev monitoring recipe는 private On-Demand t3.medium, encrypted gp3 30GiB, 전용 최소권한
+  SSM/bootstrap-read profile을 사용한다. live host와 SG attachment는 Console/SSM으로 반영하고,
+  수동 생성 리소스가 Terraform state에 없다는 중복 생성 위험을 runbook에서 관리한다.
+- monitoring bootstrap S3 prefix에는 비밀 없는 Compose/config/systemd 자산만 둔다. Grafana admin
+  password와 encryption key는 host의 보호된 파일에 SSM으로 주입되기 전까지 Grafana 시작을 막는다.
+- 공용 EC2 role의 backup write는 `binlog/*`에만 한정해 실행형 monitoring bootstrap object를 기존
+  WAS/DB/ELK가 덮어쓸 수 없게 한다.
+- live `/grafana/` 개방은 전용 관리 script로 별도 nginx include만 추가·제거한다. script는 기존
+  Kibana snippet을 backup하고 `nginx -t`와 reload 실패 시 원복한다.
 - DNS는 Gabia, TLS는 certbot runbook으로 운영한다.
 - Terraform에는 prod topology가 있지만 repository에 production application deploy workflow는 없다.
 - state와 secret tfvars는 credential을 포함할 수 있어 commit하지 않는다.

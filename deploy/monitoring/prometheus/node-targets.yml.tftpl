@@ -1,0 +1,25 @@
+- targets:
+    - "${monitoring_private_ip}:9100"
+  labels:
+    environment: "dev"
+    host: "monitoring"
+- targets:
+    - "${dev_was_private_ip}:9100"
+  labels:
+    environment: "dev"
+    host: "dev-was"
+- targets:
+    - "${dev_mysql_private_ip}:9100"
+  labels:
+    environment: "dev"
+    host: "dev-mysql"
+- targets:
+    - "${redis_private_ip}:9100"
+  labels:
+    environment: "dev"
+    host: "redis"
+- targets:
+    - "${elk_private_ip}:9100"
+  labels:
+    environment: "dev"
+    host: "elk"
