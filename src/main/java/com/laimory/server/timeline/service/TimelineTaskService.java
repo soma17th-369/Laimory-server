@@ -35,6 +35,7 @@ public class TimelineTaskService {
     private static final Duration DATE_GUARD_TTL = Duration.ofHours(1);
 
     private final TimelineTaskStore timelineTaskStore;
+    private final TimelineMetrics timelineMetrics;
 
     /** draft 작업이 날짜 guard에 새기는 holder 값({@code task:{taskId}}). */
     public static String taskGuardHolder(String taskId) {
@@ -63,11 +64,13 @@ public class TimelineTaskService {
                 TimelineDraftTask.processing(userId, dailyRecordId, timelineWindow,
                         callbackTokenHash, processingStartedAt),
                 PROCESSING_TTL);
+        timelineMetrics.recordDraftCreated();
     }
 
     public void markSuccess(String taskId, long userId, long dailyRecordId, String callbackTokenHash) {
         timelineTaskStore.save(taskId,
                 TimelineDraftTask.success(userId, dailyRecordId, callbackTokenHash), TERMINAL_TTL);
+        timelineMetrics.recordTerminalSuccess();
     }
 
     /**
@@ -83,6 +86,7 @@ public class TimelineTaskService {
         timelineTaskStore.save(taskId,
                 TimelineDraftTask.failed(userId, dailyRecordId, failureCode.name(), callbackTokenHash),
                 TERMINAL_TTL);
+        timelineMetrics.recordTerminalFailed();
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {

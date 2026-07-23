@@ -15,8 +15,10 @@ final class ExcludedPaths {
 
     /** 제외 대상 — 한 줄에 하나씩 나열한다(정확 일치만, 패턴 불가). */
     private static final Set<String> PATHS = Set.of(
-            "/status",       // 순수 헬스체크 프로브
-            "/favicon.ico"   // 브라우저 자동 요청(/kibana를 브라우저로 열면 실제 유입)
+            "/status",                // 외부 DB 중심 헬스체크 프로브
+            "/actuator/health",       // 내부 management 헬스체크
+            "/actuator/prometheus",   // Prometheus 주기 scrape
+            "/favicon.ico"            // 브라우저 자동 요청(/kibana를 브라우저로 열면 실제 유입)
     );
 
     static boolean contains(String path) {

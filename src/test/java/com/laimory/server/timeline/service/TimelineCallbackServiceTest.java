@@ -19,9 +19,11 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import io.micrometer.core.instrument.Timer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
@@ -44,6 +46,10 @@ class TimelineCallbackServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private TimelineCompletionPushNotifier timelineCompletionPushNotifier;
+    @Mock
+    private TimelineMetrics timelineMetrics;
+    @Mock
+    private Timer.Sample callbackSample;
 
     @InjectMocks
     private TimelineCallbackService service;
@@ -53,6 +59,11 @@ class TimelineCallbackServiceTest {
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final String TOKEN = "raw-callback-token";
     private static final String TOKEN_HASH = CallbackTokens.hash(TOKEN);
+
+    @BeforeEach
+    void setUpMetrics() {
+        when(timelineMetrics.startCallback()).thenReturn(callbackSample);
+    }
 
     private TimelineDraftTask processingTask() {
         // timelineWindow·processingStartedAt은 콜백 처리와 무관하다(PROCESSING 전용 부가 정보).
@@ -83,6 +94,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "missing", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+        verify(timelineMetrics).recordCallback(callbackSample);
     }
 
     @Test

@@ -55,6 +55,8 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 
 - Java 21 multi-stage image, runtime non-root UID 1001
 - application port 8080, host network
+- management port 9090도 host network에 bind된다. nginx는 Actuator를 proxy하지 않으며, live 접근은
+  monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
 - image build는 `-x test`
 - ECR lifecycle은 최근 15개 image를 보존
@@ -64,6 +66,7 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - deploy gate는 `/api/v1/intro`다. DB 연결과 `app_config` row를 사용한다.
 - `/status`는 DB connection probe지만 deploy gate가 아니다.
 - 두 endpoint 모두 Redis, Kakao, S3 전체 준비 상태를 검증하지 않는다.
+- Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
 - health failure 시 이전 image로 자동 rollback하지 않는다.
 
 ## Terraform and Manual Operations

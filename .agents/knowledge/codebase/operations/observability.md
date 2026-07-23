@@ -122,6 +122,27 @@ Spring JSON stdout
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
+## Application Metrics
+
+- Actuator는 app API 8080과 분리된 management port 9090에서 동작한다.
+- web endpoint는 `/actuator/health`와 `/actuator/prometheus`만 노출하고 discovery links와
+  env/beans/configprops/heapdump/loggers 등은 노출하지 않는다.
+- health 응답은 aggregate `status`만 보여 component/detail을 숨긴다.
+- 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
+- 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server latency에는
+  100ms/250ms/500ms/1s/2s/5s 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
+- custom meter:
+  - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
+  - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
+  - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
+- custom label은 고정 `result` 값만 사용한다. userId/taskId/transactionId/FID/좌표/raw URL·query/
+  자유 입력/exception message는 tag로 쓰지 않는다.
+- Fake AI callback은 URI template을 보존하며, Kakao WebClient의 URI function도 좌표·주소 query를
+  low-cardinality tag로 만들지 않는다.
+- management child context에는 application의 `TransactionIdFilter`가 등록되지 않는다. 방어적으로
+  health/prometheus exact path도 정상 access log 제외 목록에 유지한다.
+- 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
+
 ## Dev Metrics Rebuild Recipe
 
 repository에는 private On-Demand t3.medium 한 대에서 Prometheus, Grafana, blackbox와 central
@@ -213,8 +234,8 @@ dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, A
 
 ## Update When
 
-ID 생성/노출, MDC/access fields·levels, sensitive logging, output format, Docker rotation, Filebeat/index/retention 또는
-health signal이 바뀔 때 갱신한다.
+ID 생성/노출, MDC/access fields·levels, sensitive logging, output format, Docker rotation,
+Filebeat/index/retention, metric endpoint/tag/meter 또는 health signal이 바뀔 때 갱신한다.
 
 ## Validation
 
