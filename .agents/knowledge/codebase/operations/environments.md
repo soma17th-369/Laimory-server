@@ -31,6 +31,10 @@ pre-flight가 service-account 파일 존재를 검사하고 read-only mount + `G
 prod 행은 repository에서 확인되는 현재 automation이다. `APP_ENV=prod`는 의도일 뿐 이를 주입하는
 production workflow는 아직 없다.
 
+모든 profile에서 app port와 분리된 management port 9090을 사용한다. Actuator의 공통
+`environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev workflow는
+`dev`가 된다. management endpoint의 실제 네트워크 접근 허용은 환경별 SG가 소유한다.
+
 ## Configuration Names
 
 값이나 credential은 기록하지 않고 이름과 역할만 다룬다.

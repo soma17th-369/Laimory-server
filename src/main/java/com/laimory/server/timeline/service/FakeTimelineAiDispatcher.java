@@ -35,9 +35,9 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
     // 콜백 경로 중 /timeline/drafts/{taskId}/callback은 TimelineCallbackController 매핑의 복제다
     // (서비스가 컨트롤러 상수를 참조하는 레이어 역류를 피함). URL 형태는 FakeTimelineAiDispatcherTest,
     // 컨트롤러 매핑은 TimelineCallbackControllerTest가 각각 소유하며, 둘의 조합 드리프트를 자동 검출하는 테스트는 없다.
-    private static final String CALLBACK_URL_FORMAT =
+    private static final String CALLBACK_URL_TEMPLATE =
             "http://localhost:8080" + ApiUrls.SERVER_API_URL.replace(ApiUrls.VERSION, "v1")
-                    + "/timeline/drafts/%s/callback";
+                    + "/timeline/drafts/{taskId}/callback";
 
     private final FakeAiTimelineAppendService fakeAiTimelineAppendService;
     private final RestClient restClient;
@@ -90,7 +90,8 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
     private void postCallback(String taskId, String callbackToken, DraftTaskCallbackRequest body) {
         try {
             restClient.post()
-                    .uri(CALLBACK_URL_FORMAT.formatted(taskId))
+                    // URI template을 보존해야 Micrometer의 low-cardinality uri tag에 taskId 원문이 들어가지 않는다.
+                    .uri(CALLBACK_URL_TEMPLATE, taskId)
                     .header("Callback-Token", callbackToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)

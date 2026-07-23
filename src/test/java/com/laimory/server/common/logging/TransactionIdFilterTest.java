@@ -152,6 +152,16 @@ class TransactionIdFilterTest {
     }
 
     @Test
+    void completionLog_isSkippedForSuccessfulManagementScrapes() throws Exception {
+        for (String path : List.of("/actuator/health", "/actuator/prometheus")) {
+            filter.doFilter(new MockHttpServletRequest("GET", path),
+                    new MockHttpServletResponse(), new MockFilterChain());
+        }
+
+        assertThat(accessLog.list).isEmpty();
+    }
+
+    @Test
     void completionLog_excludedPathIsStillLoggedOnError() throws Exception {
         // 제외는 정상 완료에만 적용 — 제외 경로의 장애가 로그에서 사라지면 안 된다.
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");

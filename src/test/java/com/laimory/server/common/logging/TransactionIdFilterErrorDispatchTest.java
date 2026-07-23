@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
@@ -35,7 +36,8 @@ import org.springframework.web.bind.annotation.RestController;
 /** 실제 Tomcat error dispatch가 미커밋 부분 body를 최종 500 응답으로 교체할 수 있는지 검증한다. */
 @SpringBootTest(
         classes = TransactionIdFilterErrorDispatchTest.TestApplication.class,
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "management.server.port=-1"
 )
 class TransactionIdFilterErrorDispatchTest {
 
@@ -102,7 +104,8 @@ class TransactionIdFilterErrorDispatchTest {
             RedisAutoConfiguration.class,
             RedisRepositoriesAutoConfiguration.class,
             SessionAutoConfiguration.class,
-            SecurityAutoConfiguration.class
+            SecurityAutoConfiguration.class,
+            ManagementWebSecurityAutoConfiguration.class
     }, excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({TransactionIdFilter.class, PartialResponseController.class})
     static class TestApplication {

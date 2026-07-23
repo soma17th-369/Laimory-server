@@ -35,7 +35,10 @@ import org.springframework.test.context.ActiveProfiles;
 /** 실제 Tomcat RemoteIpValve와 OAuth redirect/session cookie의 forwarded-header 계약을 검증한다. */
 @Tag("integration")
 @ActiveProfiles("docker")
-@SpringBootTest(classes = ServerApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        classes = ServerApplication.class,
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "management.server.port=0")
 class RemoteIpValveIntegrationTest {
 
     private static final String SPOOFED_LEFTMOST_IP = "198.51.100.9";
