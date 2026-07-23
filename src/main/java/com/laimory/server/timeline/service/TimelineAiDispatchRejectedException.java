@@ -7,7 +7,7 @@ package com.laimory.server.timeline.service;
  *
  * <p>이 타입이 아닌 예외(read timeout·2xx 계약 불일치 등)는 <b>접수 여부 불명(UNKNOWN)</b>이다 —
  * AI가 이미 접수해 final write를 진행 중일 수 있으므로 FAILED 확정·guard 해제를 하면 안 된다
- * (결과 불일치 + AI write와 새 draft/삭제가 겹치는 경로). 호출부는 PROCESSING과 guard를 유지하고
+ * (결과 불일치 + AI write와 새 draft/사진추가/삭제가 겹치는 경로). 호출부는 PROCESSING과 guard를 유지하고
  * AI callback 또는 TTL 만료가 종결하게 한다.
  */
 public class TimelineAiDispatchRejectedException extends RuntimeException {

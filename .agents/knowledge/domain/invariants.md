@@ -27,16 +27,19 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. Redis 저장 실패 시 source rows만 보상
   삭제하고 DailyRecord는 유지한다(empty DRAFT는 같은 날짜 재시도가 재사용, 자동 cleanup 없음).
 - `SAVED` record에는 새 draft source를 append하지 않는다.
-- 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 source는 제외하고 같은 request 안
+- 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
   중복도 한 번만 취급한다. AI도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
-  race/legacy 중복 행 허용).
+  race/legacy 중복 행 허용). Event PATCH의 PHOTO 추가는 request rawId 중복을 첫 항목 우선으로 접고,
+  같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다. 같은 rawId의
+  non-PHOTO Item이 있으면 입력 전체를 거절한다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
-- same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — final junction writer(AI·fake)는
-  새 Item을 현재 task의 새 Event에만 연결한다(향후 writer도 이 규칙을 지켜야 한다).
-- final write(Event/Item/junction 저장 + accepted source 삭제)는 AI가 하나의 DB transaction으로
-  commit한다. 서버에는 final write 경로가 없다.
+- same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
+  Event에만 연결하고, Event PATCH는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
+- draft final write(Event/Item/junction 저장 + accepted source 삭제)는 AI가 하나의 DB transaction으로
+  commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가는 서버가 별도의 하나의 DB
+  transaction으로 commit한다.
 - AI final commit 이후에만 callback이 오고, 서버는 그때 Redis를 `SUCCESS`로 바꾼다.
 - event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 AI writer). DB unique
   invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
@@ -53,9 +56,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   (이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고 행 삭제는 진행한다
   (orphan 허용 — draft cleanup과 동일 규칙).
-- 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)가 같은 날짜의 draft(AI 작업)와 삭제를
-  직렬화한다 — draft는 `task:{taskId}`, 삭제는 `delete:{operationId}` holder로 선점하며,
-  삭제는 성공·1017·500 모든 종료 경로에서 compare-and-release한다(해제는 best-effort, TTL 1h가 안전망).
+- 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)가 같은 날짜의 draft(AI 작업), 삭제와
+  Event PATCH의 수동 PHOTO 추가를 직렬화한다 — draft는 `task:{taskId}`, 삭제는
+  `delete:{operationId}`, PHOTO 추가 PATCH는 `patch-photo-add:{operationId}` holder로 선점한다.
+  삭제와 PHOTO 추가 PATCH는 성공·실패 모든 종료 경로에서 compare-and-release한다(해제는 best-effort,
+  TTL 1h가 안전망). `photosToAdd`가 없거나 빈 Event PATCH는 guard를 취득하지 않는다.
 - **향후 DRAFT→SAVED 전환(save) API도 같은 날짜 guard를 취득해야 한다** — 삭제·AI 작업과
   상태 전이가 경합하지 않게 하는 직렬화 지점이다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
@@ -97,6 +102,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - S3 key는 서버가 userId와 filename에서 파생하며 client가 full key를 정하지 않는다.
 - presigned PUT은 content type과 content length를 서명에 묶는다.
 - `photoUrl`은 save 시 materialize한다. CDN domain이나 key 규칙 변경에는 기존 payload backfill이 필요하다.
+- Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내며 서버는 S3 object 존재 여부를 확인하지
+  않는다. 입력 payload는 `description`·`photoUrl`을 받지 않고, final payload는 `description=null`과
+  서버가 만든 `photoUrl`을 저장한다.
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 

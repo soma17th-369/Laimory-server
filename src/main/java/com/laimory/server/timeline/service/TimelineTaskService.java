@@ -18,8 +18,9 @@ import org.springframework.stereotype.Service;
  * 하지 않으므로 유효한 동일 콜백의 반복은 terminal no-op 200으로 안전하다(카운터가 있으면 terminal
  * 저장 실패 뒤 정당한 재콜백까지 401로 막아 복구가 불가능해진다).
  *
- * <p><b>날짜 guard</b>: 같은 (userId, recordDate)에 AI 작업·삭제가 겹치지 않게 하는 Redis lease다.
- * holder({@code task:{taskId}} 또는 {@code delete:{operationId}})를 값으로 새겨 자기 guard만 갱신·해제한다.
+ * <p><b>날짜 guard</b>: 같은 (userId, recordDate)에 AI 작업·삭제·Event PHOTO 추가가 겹치지 않게 하는 Redis lease다.
+ * holder({@code task:{taskId}}, {@code delete:{operationId}}, {@code patch-photo-add:{operationId}})를 값으로
+ * 새겨 자기 guard만 갱신·해제한다.
  * 해제 경계 규칙 — ① PROCESSING 저장 <b>전</b> 실패: 호출부가 즉시 해제. ② PROCESSING 저장 <b>후</b>
  * terminal 저장 실패: AI 진행 상태 불명이므로 해제하지 않고 TTL 만료에 맡긴다. ③ terminal 저장 <b>성공</b>:
  * 호출부가 compare-and-release. guard TTL은 1시간으로 PROCESSING TTL과 정렬한다(PROCESSING 저장 성공 시 refresh).
@@ -43,6 +44,11 @@ public class TimelineTaskService {
     /** 삭제 작업이 날짜 guard에 새기는 holder 값({@code delete:{operationId}}). */
     public static String deleteGuardHolder(String operationId) {
         return "delete:" + operationId;
+    }
+
+    /** Event PATCH PHOTO 추가가 날짜 guard에 새기는 holder 값. */
+    public static String photoAddGuardHolder(String operationId) {
+        return "patch-photo-add:" + operationId;
     }
 
     /**
