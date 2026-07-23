@@ -161,4 +161,10 @@ chmod 0750 /usr/local/sbin/laimory-grafana-proxy
 %{ if length(grafana_allowed_cidrs) > 0 ~}
 /usr/local/sbin/laimory-grafana-proxy enable '${monitoring_private_ip}'%{ for c in grafana_allowed_cidrs ~} '${c}'%{ endfor ~}
 %{ endif ~}
+
+# node_exporter는 dev host의 private interface:9100에만 bind한다.
+aws s3 cp "s3://${backup_bucket}/bootstrap/monitoring/node-exporter/install.sh" \
+  /usr/local/sbin/install-laimory-node-exporter --region ${region} --only-show-errors
+chmod 0750 /usr/local/sbin/install-laimory-node-exporter
+/usr/local/sbin/install-laimory-node-exporter ${node_exporter_version} ${node_exporter_linux_amd64_sha256}
 %{ endif ~}

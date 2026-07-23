@@ -6,14 +6,16 @@ local, integration, dev와 prod의 profile, dependency, feature mode, logging과
 
 ## Read When
 
-환경별 property, mode, environment variable, logging, Redis isolation 또는 deploy automation을 바꿀 때 읽는다.
+환경별 property, mode, environment variable, logging, Redis isolation, monitoring topology 또는 deploy
+automation을 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
 - `application.properties`, `application-docker.properties`
 - `logback-spring.xml`, `docker-compose.yml`
 - `.github/workflows/deploy.yml`
-- `terraform/ec2.tf`, `terraform/user_data/was.sh.tftpl`
+- `terraform/ec2.tf`, `terraform/security_groups.tf`, `terraform/user_data/*.tftpl`
+- `deploy/monitoring/*`
 
 ## Current Matrix
 
@@ -30,6 +32,11 @@ pre-flight가 service-account 파일 존재를 검사하고 read-only mount + `G
 
 prod 행은 repository에서 확인되는 현재 automation이다. `APP_ENV=prod`는 의도일 뿐 이를 주입하는
 production workflow는 아직 없다.
+
+dev monitoring recipe는 별도 private On-Demand t3.medium에 있고 prod는 수집하지 않는다. monitoring
+host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK
+9200으로 나가는 source-limited 경로만 갖는다. Grafana는 dev WAS nginx/SSM을 통해서만 접근하며,
+monitoring 장애는 application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
 

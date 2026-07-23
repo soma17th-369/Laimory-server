@@ -42,6 +42,10 @@ mysql <<'ROSQL'
 CREATE USER IF NOT EXISTS 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
 ALTER USER 'readonly'@'%' IDENTIFIED BY '${readonly_password}';
 GRANT SELECT ON ${db_name}.* TO 'readonly'@'%';
+
+# Monitoring 계정은 secret 없이 잠긴 USAGE-only 골격만 만든다. SSM runbook이 password를 설정하고 unlock한다.
+CREATE USER IF NOT EXISTS '${mysql_exporter_username}'@'${monitoring_private_ip}'
+  WITH MAX_USER_CONNECTIONS 3 ACCOUNT LOCK;
 FLUSH PRIVILEGES;
 ROSQL
 %{ endif ~}
@@ -63,4 +67,14 @@ done
 BK
 chmod +x /usr/local/bin/binlog-backup.sh
 printf '0 * * * * root /usr/local/bin/binlog-backup.sh >> /var/log/binlog-backup.log 2>&1\n' > /etc/cron.d/binlog-backup
+%{ endif ~}
+
+%{ if env == "dev" ~}
+aws s3 cp "s3://${backup_bucket}/bootstrap/monitoring/node-exporter/install.sh" \
+  /usr/local/sbin/install-laimory-node-exporter --region ${region} --only-show-errors
+aws s3 cp "s3://${backup_bucket}/bootstrap/monitoring/scripts/configure-mysql-exporter-user.sh" \
+  /usr/local/sbin/configure-laimory-mysql-exporter-user --region ${region} --only-show-errors
+chmod 0750 /usr/local/sbin/install-laimory-node-exporter
+chmod 0750 /usr/local/sbin/configure-laimory-mysql-exporter-user
+/usr/local/sbin/install-laimory-node-exporter ${node_exporter_version} ${node_exporter_linux_amd64_sha256}
 %{ endif ~}

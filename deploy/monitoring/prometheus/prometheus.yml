@@ -10,12 +10,19 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["prometheus:9090"]
+        labels:
+          environment: dev
+          host: monitoring
 
   - job_name: blackbox_exporter
     static_configs:
       - targets: ["blackbox-exporter:9115"]
+        labels:
+          environment: dev
+          host: monitoring
 
   - job_name: spring_boot
+    honor_labels: true
     metrics_path: /actuator/prometheus
     file_sd_configs:
       - files:
@@ -27,6 +34,28 @@ scrape_configs:
       - files:
           - /etc/prometheus/targets/node.yml
         refresh_interval: 1m
+
+  - job_name: mysqld
+    static_configs:
+      - targets: ["mysqld-exporter:9104"]
+        labels:
+          environment: dev
+          host: dev-mysql
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          environment: dev
+          host: redis
+
+  - job_name: grafana
+    metrics_path: /grafana/metrics
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          environment: dev
+          host: monitoring
 
   - job_name: blackbox_https
     scrape_interval: 60s

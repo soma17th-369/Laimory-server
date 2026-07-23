@@ -1,0 +1,5 @@
+apiVersion: 1
+
+deleteRules:
+  - orgId: 1
+    uid: laimory_discord_smoke

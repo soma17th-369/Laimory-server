@@ -1,0 +1,41 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-smoke
+    folder: Laimory
+    interval: 10s
+    rules:
+      - uid: laimory_discord_smoke
+        title: Discord notification smoke test
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: 1 == 1
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+              type: math
+            relativeTimeRange:
+              from: 0
+              to: 0
+        noDataState: Alerting
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: Discord provisioning smoke test is firing.
+          description: This synthetic rule validates delivery without disrupting an application or infrastructure target.
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#discord-smoke-test
+        labels:
+          environment: dev
+          instance: monitoring
+          job: grafana
+          service: laimory
+          severity: warning
+          smoke: "true"
+        isPaused: false

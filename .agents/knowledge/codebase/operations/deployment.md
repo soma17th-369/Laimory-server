@@ -75,8 +75,12 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - dev monitoring recipe는 private On-Demand t3.medium, encrypted gp3 30GiB, 전용 최소권한
   SSM/bootstrap-read profile을 사용한다. live host와 SG attachment는 Console/SSM으로 반영하고,
   수동 생성 리소스가 Terraform state에 없다는 중복 생성 위험을 runbook에서 관리한다.
-- monitoring bootstrap S3 prefix에는 비밀 없는 Compose/config/systemd 자산만 둔다. Grafana admin
-  password와 encryption key는 host의 보호된 파일에 SSM으로 주입되기 전까지 Grafana 시작을 막는다.
+- monitoring bootstrap S3 prefix에는 비밀 없는 Compose/config/dashboard/alert/script/systemd 자산만
+  둔다. Grafana admin/encryption key, Elasticsearch/Discord와 MySQL/Redis exporter credential은 host의
+  UID별 보호 파일에 SSM으로 주입한다. 여섯 파일 중 하나라도 없거나 mode가 다르면 systemd가 fail-closed한다.
+- 신규 dev WAS/MySQL/Redis/ELK와 monitoring user data는 같은 pinned node_exporter installer를 exact
+  S3 object로 받아 private interface:9100에만 bind한다. 기존 live host는 user data가 아니라 SSM으로
+  같은 script를 실행하며 prod에는 설치하지 않는다.
 - 공용 EC2 role의 backup write는 `binlog/*`에만 한정해 실행형 monitoring bootstrap object를 기존
   WAS/DB/ELK가 덮어쓸 수 없게 한다.
 - live `/grafana/` 개방은 전용 관리 script로 별도 nginx include만 추가·제거한다. script는 기존

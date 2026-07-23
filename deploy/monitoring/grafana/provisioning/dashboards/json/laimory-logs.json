@@ -1,0 +1,432 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Open Kibana",
+      "tooltip": "Kibana에서 전체 로그를 탐색합니다.",
+      "type": "link",
+      "url": "/kibana/"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "[Kibana에서 상세 로그 열기](/kibana/) · 이 대시보드는 원문 로그를 표시할 수 있습니다. 원문 로그나 개인정보 필드는 알림 메시지에 포함하지 않습니다.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "13.1.1",
+      "title": "Log Explorer",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Spring MVC의 저카디널리티 URI 템플릿과 예외 타입별 5xx 발생률입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (uri, exception) (rate(http_server_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\", status=~\"5..\", uri!~\"/actuator.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{uri}} · {{exception}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 5xx Rate by URI & Exception",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "elasticsearch-dev"
+      },
+      "description": "Elasticsearch의 구조화 로그 level 필드로 집계합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 11
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "ERROR",
+          "bucketAggs": [
+            {
+              "field": "@timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": 0
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "elasticsearch-dev"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "service:laimory AND environment:$environment AND level:ERROR",
+          "refId": "A",
+          "timeField": "@timestamp"
+        },
+        {
+          "alias": "WARN",
+          "bucketAggs": [
+            {
+              "field": "@timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": 0
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "elasticsearch-dev"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "service:laimory AND environment:$environment AND level:WARN",
+          "refId": "B",
+          "timeField": "@timestamp"
+        }
+      ],
+      "title": "ERROR & WARN Logs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "elasticsearch-dev"
+      },
+      "description": "구조화 access log(event=http_request_completed)의 상태 코드별 실패 건수입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 11
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "4xx",
+          "bucketAggs": [
+            {
+              "field": "@timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": 0
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "elasticsearch-dev"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "service:laimory AND environment:$environment AND event:http_request_completed AND status:[400 TO 499]",
+          "refId": "A",
+          "timeField": "@timestamp"
+        },
+        {
+          "alias": "5xx",
+          "bucketAggs": [
+            {
+              "field": "@timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": 0
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "elasticsearch-dev"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "service:laimory AND environment:$environment AND event:http_request_completed AND status:[500 TO 599]",
+          "refId": "B",
+          "timeField": "@timestamp"
+        }
+      ],
+      "title": "HTTP Failure Logs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "elasticsearch-dev"
+      },
+      "description": "최근 Laimory 원문 로그입니다. 상세 필드에는 운영 문맥이 포함될 수 있으므로 접근 통제된 Grafana/Kibana 안에서만 확인합니다.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 5,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "elasticsearch-dev"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "settings": {
+                "size": 500
+              },
+              "type": "logs"
+            }
+          ],
+          "query": "service:laimory AND environment:$environment",
+          "refId": "A",
+          "timeField": "@timestamp"
+        }
+      ],
+      "title": "Recent Application Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "tags": [
+    "laimory",
+    "logs",
+    "elasticsearch"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "dev",
+          "value": "dev"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up{job=\"spring_boot\"}, environment)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Environment",
+        "multi": false,
+        "name": "environment",
+        "options": [],
+        "query": {
+          "query": "label_values(up{job=\"spring_boot\"}, environment)",
+          "refId": "PrometheusVariableQueryEditor-Environment"
+        },
+        "refresh": 2,
+        "regex": "/^dev$/",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "laimory",
+          "value": "laimory"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(http_server_requests_seconds_count{environment=\"$environment\", uri!~\"/actuator.*\"}, application)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Application",
+        "multi": false,
+        "name": "application",
+        "options": [],
+        "query": {
+          "query": "label_values(http_server_requests_seconds_count{environment=\"$environment\", uri!~\"/actuator.*\"}, application)",
+          "refId": "PrometheusVariableQueryEditor-Application"
+        },
+        "refresh": 2,
+        "regex": "/^laimory$/",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Laimory / Logs",
+  "uid": "laimory-logs",
+  "version": 1,
+  "weekStart": ""
+}

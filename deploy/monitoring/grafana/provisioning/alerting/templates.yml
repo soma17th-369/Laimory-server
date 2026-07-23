@@ -1,0 +1,17 @@
+apiVersion: 1
+
+templates:
+  - orgId: 1
+    name: laimory-discord
+    template: |
+      {{ define "laimory.discord.title" -}}
+      [{{ .Status }}] {{ .CommonLabels.alertname }}
+      {{- end }}
+      {{ define "laimory.discord.message" -}}
+      {{ range .Alerts -}}
+      {{ .Annotations.summary }}
+      {{ .Annotations.description }}
+      severity={{ .Labels.severity }} environment={{ .Labels.environment }} job={{ .Labels.job }} instance={{ .Labels.instance }}
+      runbook={{ .Annotations.runbook_url }}
+      {{ end -}}
+      {{- end }}
