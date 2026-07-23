@@ -14,6 +14,7 @@ logging filter/field/level, error handling, logback, Docker logging, Filebeat/El
 - `GlobalExceptionHandler`, `ExceptionType`, `logback-spring.xml`
 - `.github/workflows/deploy.yml`
 - `deploy/elk/*`
+- `deploy/monitoring/*`
 - `terraform/README.md`, `terraform/user_data/was.sh.tftpl`
 
 ## Current Request Tracing
@@ -120,6 +121,23 @@ Spring JSON stdout
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
+## Dev Metrics Rebuild Recipe
+
+repository에는 private On-Demand t3.medium 한 대에서 Prometheus, Grafana, blackbox exporter를 실행하는
+재구축 recipe가 있다. Prometheus는 30초 scrape, 7일 또는 12GB retention과 persistent volume을 쓰고
+public `/status` probe만 60초다. Grafana 3000만 loopback/private IP에 publish하며 Prometheus와
+blackbox port는 Docker network에만 둔다.
+
+Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS user data에서
+활성화된다. 빈 목록은 SSM port forwarding 전용이다. Prometheus target file은 Terraform이 실제 dev
+private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live
+rollout 완료를 의미하지 않는다.
+
+Grafana admin password와 encryption key는 Git/S3/Terraform에 두지 않는다. host secret file이 비어
+있으면 systemd가 Grafana 시작을 막고, 비밀이 필요 없는 Prometheus/blackbox만 먼저 기동할 수 있다.
+live proxy는 Grafana 전용 nginx include로 관리해 기존 Kibana location을 보존하며, allowlist 밖에서는
+slash 유무와 관계없이 `/grafana` 경로를 차단한다.
+
 ## Runbook: access log field 추가 롤아웃
 
 `index-template.json`은 field를 명시 매핑하지만 `dynamic: true`라, template 갱신 전에 앱이 먼저
@@ -174,7 +192,9 @@ dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, A
 
 ## Known Gaps
 
-- metrics, distributed tracing, alerting과 dependency-complete readiness endpoint는 없다.
+- application Actuator 연결, node/MySQL/Redis exporter, dashboard, alerting과 live rollout은 별도 child
+  change가 모두 합쳐져야 완료된다.
+- distributed tracing과 dependency-complete readiness endpoint는 없다.
 
 ## Update When
 

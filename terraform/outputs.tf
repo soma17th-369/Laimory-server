@@ -42,6 +42,16 @@ output "elk_private_ip" {
   value = aws_instance.elk.private_ip
 }
 
+output "monitoring_instance_id" {
+  description = "dev monitoring 인스턴스 ID — SSM Session Manager 대상"
+  value       = aws_instance.monitoring.id
+}
+
+output "monitoring_private_ip" {
+  description = "dev monitoring 고정 사설 IP"
+  value       = aws_instance.monitoring.private_ip
+}
+
 output "route53_name_servers" {
   description = "laimory.app 존 NS — 가비아(도메인 레지스트라)에 이 4개로 위임해야 레코드가 동작한다"
   value       = aws_route53_zone.main.name_servers

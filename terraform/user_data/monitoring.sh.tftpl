@@ -1,0 +1,69 @@
+#!/bin/bash
+# dev monitoring 부트스트랩: 비밀 없는 자산만 S3에서 내려받고 Prometheus/blackbox를 기동한다.
+# Grafana는 SSM으로 두 secret 파일을 채운 뒤 systemd를 시작할 때만 올라온다.
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg unzip
+
+# AWS CLI v2 (정확한 S3 object만 pull; monitoring role에는 ListBucket 권한이 없다).
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install
+
+# Docker Engine + Compose plugin.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+install -d -m 0755 \
+  /opt/laimory-monitoring/prometheus/targets \
+  /opt/laimory-monitoring/blackbox \
+  /opt/laimory-monitoring/grafana/provisioning/datasources \
+  /opt/laimory-monitoring/grafana/provisioning/dashboards/json \
+  /opt/laimory-monitoring/grafana/provisioning/alerting
+
+BOOTSTRAP_URI="s3://${backup_bucket}/bootstrap/monitoring"
+aws s3 cp "$BOOTSTRAP_URI/docker-compose.yml" /opt/laimory-monitoring/docker-compose.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/prometheus/prometheus.yml" /opt/laimory-monitoring/prometheus/prometheus.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/application.yml" /opt/laimory-monitoring/prometheus/targets/application.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/node.yml" /opt/laimory-monitoring/prometheus/targets/node.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/prometheus/targets/probe.yml" /opt/laimory-monitoring/prometheus/targets/probe.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/blackbox/blackbox.yml" /opt/laimory-monitoring/blackbox/blackbox.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/grafana/provisioning/datasources/prometheus.yml" /opt/laimory-monitoring/grafana/provisioning/datasources/prometheus.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/grafana/provisioning/dashboards/provider.yml" /opt/laimory-monitoring/grafana/provisioning/dashboards/provider.yml --region ${region} --only-show-errors
+aws s3 cp "$BOOTSTRAP_URI/systemd/laimory-monitoring.service" /etc/systemd/system/laimory-monitoring.service --region ${region} --only-show-errors
+
+cat > /opt/laimory-monitoring/.env <<'ENVEOF'
+MONITORING_PRIVATE_IP=${monitoring_private_ip}
+PROMETHEUS_VERSION=${prometheus_version}
+GRAFANA_VERSION=${grafana_version}
+BLACKBOX_EXPORTER_VERSION=${blackbox_exporter_version}
+GRAFANA_ROOT_URL=${grafana_root_url}
+GRAFANA_COOKIE_SECURE=${grafana_cookie_secure}
+ENVEOF
+
+chown -R root:root /opt/laimory-monitoring
+find /opt/laimory-monitoring -type d -exec chmod 0755 {} +
+find /opt/laimory-monitoring -type f -exec chmod 0644 {} +
+chmod 0600 /opt/laimory-monitoring/.env
+
+# Host에서는 parent 0700으로 일반 사용자를 차단하고, container UID 472에만 파일 read를 허용한다.
+# 값은 SSM으로 수동 주입한다. 빈 placeholder는 Git/S3/Terraform/user_data에 secret을 남기지 않는다.
+install -d -m 0700 -o root -g root /opt/laimory-monitoring/secrets
+install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/grafana_admin_password
+install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/grafana_secret_key
+
+systemctl daemon-reload
+systemctl enable laimory-monitoring.service
+
+# 비밀이 필요 없는 수집 core만 먼저 올린다. Grafana는 두 secret 주입 후 systemctl start로 합류한다.
+cd /opt/laimory-monitoring
+docker compose pull
+docker compose up -d prometheus blackbox-exporter

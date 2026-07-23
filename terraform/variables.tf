@@ -261,3 +261,57 @@ variable "elk_filebeat_password" {
     error_message = "elk_filebeat_password: 8~128자, 영숫자+안전기호(! # % ^ * _ + = : . , ~ @ -)만 허용(따옴표·공백·$·백슬래시 등 금지)."
   }
 }
+
+# ---------- Prometheus + Grafana 모니터링 (dev) ----------
+
+variable "monitoring_instance_type" {
+  description = "dev Prometheus/Grafana 인스턴스 타입"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "monitoring_private_ip" {
+  description = "모니터링 박스 고정 사설 IP. 기본값은 후보이며 live 생성 직전 ENI 충돌을 다시 확인한다."
+  type        = string
+  default     = "10.0.32.14"
+}
+
+variable "monitoring_root_volume_gib" {
+  description = "모니터링 루트 볼륨 크기(GiB). Prometheus TSDB는 별도 12GB 상한을 적용한다."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.monitoring_root_volume_gib >= 30
+    error_message = "monitoring_root_volume_gib는 30GiB 이상이어야 한다."
+  }
+}
+
+variable "prometheus_version" {
+  description = "공식 Prometheus image tag"
+  type        = string
+  default     = "v3.13.1"
+}
+
+variable "grafana_version" {
+  description = "공식 Grafana OSS image tag"
+  type        = string
+  default     = "13.1.1"
+}
+
+variable "blackbox_exporter_version" {
+  description = "공식 blackbox exporter image tag"
+  type        = string
+  default     = "v0.28.0"
+}
+
+variable "grafana_allowed_cidrs" {
+  description = "dev nginx /grafana/ 접근 허용 IPv4 CIDR. 빈 목록이면 location을 만들지 않고 SSM-only로 유지한다."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.grafana_allowed_cidrs : can(cidrnetmask(cidr))])
+    error_message = "grafana_allowed_cidrs의 각 값은 유효한 IPv4 CIDR이어야 한다."
+  }
+}

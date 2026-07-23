@@ -40,7 +40,8 @@ NGINXLOG
 
 # heredoc 의 'NGINX' quote 는 bash 확장만 막는다 — server_name 의 api_domain 은 그 전에
 # terraform templatefile 이 치환하고, nginx 변수($host 등)는 bare $ 라 templatefile 이 건드리지 않는다.
-# 환경별 추가 location 을 include 로 분리한다(현재 dev 의 Kibana /kibana 프록시). prod 은 빈 파일(no-op).
+# 환경별 추가 location 을 include 로 분리한다(dev의 Kibana /kibana 및 allowlist가 있을 때만 Grafana
+# /grafana 프록시). prod 은 빈 파일(no-op).
 # certbot --nginx 가 이 server 블록을 443 으로 승격할 때 include 지시자도 그대로 옮겨가므로,
 # 아래 env=="dev" 블록이 스니펫을 채우고 reload 하면 /kibana 가 443(HTTPS)에서 바로 동작한다.
 install -d /etc/nginx/snippets
@@ -113,7 +114,7 @@ chmod 600 /home/dbviewer/.ssh/authorized_keys
 %{ endif ~}
 
 %{ if env == "dev" ~}
-# ---- dev 전용: ELK 로그 수집 (Filebeat 송신 + Kibana 리버스 프록시) ----
+# ---- dev 전용: ELK 로그 수집 + 관측 UI 리버스 프록시 ----
 # dev ELK 박스(사설 ${elk_private_ip})가 ES/Kibana 를 호스팅한다. 이 박스는 로그를 생산하므로
 # Filebeat 로 앱 컨테이너 stdout(JSON)을 ES 로 직송하고, Kibana UI 는 기존 nginx TLS 로 프록시한다.
 # prod-was 엔 미주입(dev ELK IP 하드코딩·잘못된 프록시 방지).
@@ -149,4 +150,15 @@ location /kibana/ {
 }
 KIBANA
 nginx -t && systemctl reload nginx
+
+# Grafana proxy는 별도 include로 관리해 기존 Kibana location을 덮어쓰지 않는다. 같은 스크립트를
+# terraform/README.md의 live SSM runbook에서도 사용하므로 enable/disable, backup, nginx -t 계약이 같다.
+cat > /usr/local/sbin/laimory-grafana-proxy <<'GRAFANA_PROXY_SCRIPT'
+${grafana_proxy_script}
+GRAFANA_PROXY_SCRIPT
+chmod 0750 /usr/local/sbin/laimory-grafana-proxy
+
+%{ if length(grafana_allowed_cidrs) > 0 ~}
+/usr/local/sbin/laimory-grafana-proxy enable '${monitoring_private_ip}'%{ for c in grafana_allowed_cidrs ~} '${c}'%{ endfor ~}
+%{ endif ~}
 %{ endif ~}

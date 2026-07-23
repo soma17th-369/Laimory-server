@@ -4,6 +4,7 @@
 #   db:    3306 ← was, ai (dev-ai 직접 접근)
 #   redis: 6379 ← was
 #   ai:    inbound 없음 (egress only)
+#   monitoring: 3000 ← dev WAS identity SG, scrape는 target별 identity SG로 제한
 # ============================================================================
 
 resource "aws_security_group" "was" {
@@ -181,6 +182,98 @@ resource "aws_vpc_security_group_ingress_rule" "elk_kibana" {
 
 resource "aws_vpc_security_group_egress_rule" "elk_all" {
   security_group_id = aws_security_group.elk.id
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+# ---------- Prometheus + Grafana 모니터링 (dev 전용 identity 분리) ----------
+# shared WAS/DB SG를 source/target으로 재사용하면 prod까지 권한이 확장되므로, dev에만 붙이는 SG를
+# 별도로 둔다. exporter container port(9115 등)는 Docker network에만 있고 SG로 열지 않는다.
+
+resource "aws_security_group" "monitoring" {
+  name        = "${var.project_name}-monitoring-sg"
+  description = "Monitoring host: Grafana from dev WAS proxy only"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-monitoring-sg" }
+}
+
+resource "aws_security_group" "monitoring_proxy_source" {
+  name        = "${var.project_name}-monitoring-proxy-source-sg"
+  description = "Identity SG attached only to dev WAS for Grafana proxy"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-monitoring-proxy-source-sg" }
+}
+
+resource "aws_security_group" "monitoring_scrape_target" {
+  name        = "${var.project_name}-monitoring-scrape-target-sg"
+  description = "Dev-only Spring and node exporter scrape targets"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-monitoring-scrape-target-sg" }
+}
+
+resource "aws_security_group" "monitoring_dev_mysql" {
+  name        = "${var.project_name}-monitoring-dev-mysql-sg"
+  description = "Dev MySQL access from monitoring host only"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = "${var.project_name}-monitoring-dev-mysql-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "monitoring_grafana" {
+  security_group_id            = aws_security_group.monitoring.id
+  description                  = "Grafana from dev WAS nginx"
+  ip_protocol                  = "tcp"
+  from_port                    = 3000
+  to_port                      = 3000
+  referenced_security_group_id = aws_security_group.monitoring_proxy_source.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "monitoring_scrape_spring" {
+  security_group_id            = aws_security_group.monitoring_scrape_target.id
+  description                  = "Spring Boot management metrics from monitoring"
+  ip_protocol                  = "tcp"
+  from_port                    = 9090
+  to_port                      = 9090
+  referenced_security_group_id = aws_security_group.monitoring.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "monitoring_scrape_node" {
+  security_group_id            = aws_security_group.monitoring_scrape_target.id
+  description                  = "node_exporter from monitoring"
+  ip_protocol                  = "tcp"
+  from_port                    = 9100
+  to_port                      = 9100
+  referenced_security_group_id = aws_security_group.monitoring.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "monitoring_dev_mysql" {
+  security_group_id            = aws_security_group.monitoring_dev_mysql.id
+  description                  = "mysqld_exporter to dev MySQL"
+  ip_protocol                  = "tcp"
+  from_port                    = 3306
+  to_port                      = 3306
+  referenced_security_group_id = aws_security_group.monitoring.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_monitoring" {
+  security_group_id            = aws_security_group.redis.id
+  description                  = "redis_exporter from monitoring"
+  ip_protocol                  = "tcp"
+  from_port                    = 6379
+  to_port                      = 6379
+  referenced_security_group_id = aws_security_group.monitoring.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "elk_monitoring" {
+  security_group_id            = aws_security_group.elk.id
+  description                  = "Grafana Elasticsearch datasource from monitoring"
+  ip_protocol                  = "tcp"
+  from_port                    = 9200
+  to_port                      = 9200
+  referenced_security_group_id = aws_security_group.monitoring.id
+}
+
+resource "aws_vpc_security_group_egress_rule" "monitoring_all" {
+  security_group_id = aws_security_group.monitoring.id
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
 }
