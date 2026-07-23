@@ -3,6 +3,9 @@ package com.laimory.server.geo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.micrometer.core.instrument.observation.DefaultMeterObservationHandler;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.MockResponse;
@@ -45,11 +48,17 @@ class KakaoMapPlaceProviderTest {
     private static final String KEYWORD_PATH = "/v2/local/search/keyword.json";
 
     private MockWebServer server;
+    private SimpleMeterRegistry meterRegistry;
+    private ObservationRegistry observationRegistry;
 
     @BeforeEach
     void setUp() throws IOException {
         server = new MockWebServer();
         server.start();
+        meterRegistry = new SimpleMeterRegistry();
+        observationRegistry = ObservationRegistry.create();
+        observationRegistry.observationConfig()
+                .observationHandler(new DefaultMeterObservationHandler(meterRegistry));
     }
 
     @AfterEach
@@ -60,7 +69,8 @@ class KakaoMapPlaceProviderTest {
     private KakaoMapPlaceProvider provider() {
         String baseUrl = server.url("/").toString();
         return new KakaoMapPlaceProvider(
-                "test-key", baseUrl.substring(0, baseUrl.length() - 1), WebClient.builder());
+                "test-key", baseUrl.substring(0, baseUrl.length() - 1),
+                WebClient.builder().observationRegistry(observationRegistry));
     }
 
     private GeoPlace lookup() {
@@ -192,6 +202,24 @@ class KakaoMapPlaceProviderTest {
         enqueueJson("{\"documents\":[" + documents + "]}");
 
         assertThat(lookup().places()).hasSize(10);
+    }
+
+    @Test
+    void lookup_httpMetricDoesNotUseCoordinatesOrQueryAsTags() {
+        String address = "좌표와 함께 metric tag에 들어가면 안 되는 주소";
+        enqueueJson(coord2addressBody(address, null));
+        enqueueJson("{\"documents\":[]}");
+
+        lookup();
+
+        assertThat(meterRegistry.getMeters())
+                .filteredOn(meter -> meter.getId().getName().startsWith("http.client.requests"))
+                .isNotEmpty()
+                .flatExtracting(meter -> meter.getId().getTags())
+                .extracting(tag -> tag.getValue())
+                .noneMatch(value -> value.contains(String.valueOf(LATITUDE))
+                        || value.contains(String.valueOf(LONGITUDE))
+                        || value.contains(address));
     }
 
     // ── 실패 계약: 전이적(5xx·IO) → 재시도 후 실패 ──

@@ -12,6 +12,9 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.service.FakeAiTimelineAppendService.AppendResult;
+import io.micrometer.core.instrument.observation.DefaultMeterObservationHandler;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -38,12 +41,17 @@ class FakeTimelineAiDispatcherTest {
 
     private MockRestServiceServer server;
     private FakeTimelineAiDispatcher dispatcher;
+    private SimpleMeterRegistry meterRegistry;
 
     private static final String CALLBACK_URL = "http://localhost:8080/s/api/v1/timeline/drafts/task-1/callback";
 
     @BeforeEach
     void setUp() {
-        RestClient.Builder builder = RestClient.builder();
+        meterRegistry = new SimpleMeterRegistry();
+        ObservationRegistry observationRegistry = ObservationRegistry.create();
+        observationRegistry.observationConfig()
+                .observationHandler(new DefaultMeterObservationHandler(meterRegistry));
+        RestClient.Builder builder = RestClient.builder().observationRegistry(observationRegistry);
         server = MockRestServiceServer.bindTo(builder).build();
         dispatcher = new FakeTimelineAiDispatcher(fakeAiTimelineAppendService, builder, Duration.ZERO);
     }
@@ -106,5 +114,24 @@ class FakeTimelineAiDispatcherTest {
 
         Assertions.assertThatCode(() -> dispatcher.dispatch(request())).doesNotThrowAnyException();
         server.verify();
+    }
+
+    @Test
+    void dispatch_httpMetricDoesNotUseTaskIdAsTag() {
+        when(fakeAiTimelineAppendService.append("task-1", 42L)).thenReturn(AppendResult.SUCCESS);
+        server.expect(requestTo(CALLBACK_URL)).andRespond(withSuccess());
+
+        dispatcher.dispatch(request());
+
+        assertThatHttpMetricTagsDoNotContain("task-1");
+    }
+
+    private void assertThatHttpMetricTagsDoNotContain(String forbiddenValue) {
+        Assertions.assertThat(meterRegistry.getMeters())
+                .filteredOn(meter -> meter.getId().getName().startsWith("http.client.requests"))
+                .isNotEmpty()
+                .flatExtracting(meter -> meter.getId().getTags())
+                .extracting(tag -> tag.getValue())
+                .noneMatch(value -> value.contains(forbiddenValue));
     }
 }

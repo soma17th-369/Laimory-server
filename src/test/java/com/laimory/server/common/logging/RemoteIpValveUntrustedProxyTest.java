@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
@@ -36,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
         classes = RemoteIpValveUntrustedProxyTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
+                "management.server.port=-1",
                 "server.forward-headers-strategy=native",
                 "server.tomcat.remoteip.internal-proxies=10\\.255\\.255\\.255"
         }
@@ -121,7 +123,8 @@ class RemoteIpValveUntrustedProxyTest {
             RedisAutoConfiguration.class,
             RedisRepositoriesAutoConfiguration.class,
             SessionAutoConfiguration.class,
-            SecurityAutoConfiguration.class
+            SecurityAutoConfiguration.class,
+            ManagementWebSecurityAutoConfiguration.class
     }, excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({TransactionIdFilter.class, ProbeController.class})
     static class TestApplication {
