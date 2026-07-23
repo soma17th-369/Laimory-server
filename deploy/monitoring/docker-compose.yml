@@ -164,7 +164,8 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
       - "${MONITORING_PRIVATE_IP:-127.0.0.2}:3000:3000"
-    restart: unless-stopped
+    # Process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd secret gate로 시작한다.
+    restart: on-failure
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health"]
       interval: 30s

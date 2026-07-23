@@ -334,6 +334,7 @@ resource "aws_instance" "monitoring" {
   depends_on = [
     aws_nat_gateway.main,
     aws_route_table_association.private,
+    aws_iam_role_policy.monitoring_bootstrap_read,
     aws_s3_object.monitoring_assets,
     aws_s3_object.monitoring_application_targets,
     aws_s3_object.monitoring_node_targets,

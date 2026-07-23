@@ -28,6 +28,8 @@ duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 �
 ## Secret gate
 
 다음 파일은 Git, Terraform, S3 bootstrap, command argument에 값을 넣지 않는다.
+Grafana는 `restart: on-failure`로 process 장애만 Docker가 복구한다. host boot는 systemd가 시작하고,
+Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 secret을 다시 확인한다.
 
 | 파일 | 소비 UID:GID | 내용 |
 |---|---:|---|

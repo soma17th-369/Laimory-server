@@ -279,6 +279,7 @@ blanket/target `terraform apply`를 하지 않는다. Console/SSM으로 같은 �
 - monitoring/dev WAS/dev MySQL/Redis/ELK에는 private-IP-bound node_exporter
 - Prometheus metrics dashboard 3개와 Elasticsearch dev log dashboard 1개, Grafana native Discord alert
 - Grafana 3000만 dev WAS identity SG에서 접근; 9090/9104/9115/9121은 host에 publish하지 않음
+- secret을 쓰는 Grafana의 시작은 systemd가 소유하고 process 실패만 Docker `on-failure`로 복구
 - `grafana_allowed_cidrs=[]`이면 dev nginx에 `/grafana/`를 만들지 않고 SSM-only
 
 ### 1. 사전 조회와 비밀 없는 bootstrap 업로드
@@ -452,7 +453,7 @@ CIDR이 확정되면 먼저 monitoring host에서 public root URL과 secure cook
 cd /opt/laimory-monitoring
 sudo sed -i 's|^GRAFANA_ROOT_URL=.*|GRAFANA_ROOT_URL=https://dev.laimory.app/grafana/|' .env
 sudo sed -i 's|^GRAFANA_COOKIE_SECURE=.*|GRAFANA_COOKIE_SECURE=true|' .env
-sudo docker compose up -d --force-recreate grafana
+sudo systemctl restart laimory-monitoring
 ```
 
 그다음 dev WAS의 SSM 세션에서 secretless 관리 script를 받고 실행한다. CIDR은 하나 이상 전달해야 하며
@@ -486,12 +487,12 @@ sudo /usr/local/sbin/laimory-grafana-proxy enable 10.0.32.14 \
 ### 6. 중지와 rollback
 
 ```bash
-cd /opt/laimory-monitoring
-sudo docker compose stop
+sudo systemctl stop laimory-monitoring
 ```
 
 `docker compose down -v`는 Prometheus/Grafana volume을 삭제하므로 실행하지 않는다. 설정 실패 시
-stack을 stop해도 앱 API와 ELK는 독립적으로 계속 동작한다.
+stack을 stop해도 앱 API와 ELK는 독립적으로 계속 동작한다. 다시 올릴 때는
+`sudo systemctl start laimory-monitoring`으로 secret gate를 다시 통과시킨다.
 
 `/grafana/`를 이미 개방했다면 dev WAS에서 아래 명령으로 Grafana include만 제거한다. script가 backup,
 `nginx -t`, reload와 실패 시 복원을 수행하며 Kibana는 보존한다.
@@ -501,7 +502,7 @@ sudo /usr/local/sbin/laimory-grafana-proxy disable
 ```
 
 다시 SSM-only로 Grafana를 실행할 때는 monitoring host `.env`의 root URL을
-`http://localhost:3000/grafana/`, secure cookie를 `false`로 되돌리고 Grafana를 recreate한다. live
+`http://localhost:3000/grafana/`, secure cookie를 `false`로 되돌리고 systemd unit을 재시작한다. live
 리소스 제거가 필요하면 attachment와 정확한 instance/SG/IAM target을 Console에서 다시 확인한 뒤 별도
 승인하에 처리한다.
 
