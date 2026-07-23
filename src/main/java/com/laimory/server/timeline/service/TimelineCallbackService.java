@@ -8,6 +8,7 @@ import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import io.micrometer.core.instrument.Timer;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.Set;
@@ -52,9 +53,20 @@ public class TimelineCallbackService {
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
     private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
+    private final TimelineMetrics timelineMetrics;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String callbackToken, DraftTaskCallbackRequest request) {
+        Timer.Sample sample = timelineMetrics.startCallback();
+        try {
+            handleCallbackInternal(applicationVersion, taskId, callbackToken, request);
+        } finally {
+            timelineMetrics.recordCallback(sample);
+        }
+    }
+
+    private void handleCallbackInternal(String applicationVersion, String taskId,
+                                        String callbackToken, DraftTaskCallbackRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));

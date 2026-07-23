@@ -30,6 +30,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 - Swagger는 기본 off이고 dev/local에서만 켠다.
 - AI mode는 현재 `noop|fake`뿐이며 production dispatcher가 없다.
 - 기본 profile은 JSON stdout, local docker profile은 text log를 사용한다.
+- Actuator는 app port와 분리된 9090에서 health·Prometheus endpoint만 노출한다. 애플리케이션 인증이
+  아니라 private network와 source-limited SG가 접근 경계다.
 - 허용된 JSON request/response body만 64 KiB 제한 캡처 후 text preview로 log에 남긴다.
   query string, 민감 header, token·credential·presigned URL 원문은 남기지 않는다.
 - Docker image build는 test를 제외하며 PR CI가 `./gradlew build`를 담당한다.
@@ -46,7 +48,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 
 ## Known Gaps
 
-- migration framework, production deploy workflow, automatic rollback, metrics/tracing/alerting이 없다.
+- migration framework, production deploy workflow, automatic rollback, metrics 수집 서버·dashboard,
+  distributed tracing과 alerting이 없다.
 
 ## Update When
 

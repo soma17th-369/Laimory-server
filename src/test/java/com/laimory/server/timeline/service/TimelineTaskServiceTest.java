@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -26,6 +27,8 @@ class TimelineTaskServiceTest {
 
     @Mock
     private TimelineTaskStore timelineTaskStore;
+    @Mock
+    private TimelineMetrics timelineMetrics;
 
     @InjectMocks
     private TimelineTaskService service;
@@ -47,6 +50,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().processingStartedAt()).isEqualTo(STARTED_AT);
         assertThat(task.getValue().userId()).isEqualTo(USER_ID);
         assertThat(ttl.getValue()).isEqualTo(Duration.ofHours(1));
+        verify(timelineMetrics).recordDraftCreated();
     }
 
     @Test
@@ -63,6 +67,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().userId()).isEqualTo(USER_ID);
         assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
         assertThat(ttl.getValue()).isEqualTo(Duration.ofHours(24));
+        verify(timelineMetrics).recordTerminalSuccess();
     }
 
     @Test
@@ -77,6 +82,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().processingStartedAt()).isNull();
         assertThat(task.getValue().userId()).isEqualTo(USER_ID);
         assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
+        verify(timelineMetrics).recordTerminalFailed();
     }
 
     @Test
@@ -85,5 +91,16 @@ class TimelineTaskServiceTest {
         assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_0400, "hash"))
                 .isInstanceOf(IllegalStateException.class);
         verify(timelineTaskStore, never()).save(any(), any(), any());
+        verify(timelineMetrics, never()).recordTerminalFailed();
+    }
+
+    @Test
+    void terminalMetric_isNotIncrementedWhenStoreFails() {
+        doThrow(new RuntimeException("redis down")).when(timelineTaskStore).save(any(), any(), any());
+
+        assertThatThrownBy(() -> service.markSuccess("t", USER_ID, RECORD_ID, "hash"))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(timelineMetrics, never()).recordTerminalSuccess();
     }
 }
