@@ -66,7 +66,7 @@ public enum ErrorCode {
     ERROR_1015(HttpStatus.BAD_GATEWAY),    // 영구적 실패(429 쿼터·401/403 키·기타 4xx·파싱/shape) — 즉시 재시도는 무의미
 
     // ── ERROR_1xxx: timeline 날짜 동시성 guard — 동기 409 전용(task 실패 분류 아님 → TASK_FAILURE_CODES 미포함) ──
-    ERROR_1016(HttpStatus.CONFLICT),       // 같은 날짜의 AI 작업/삭제가 진행 중(date guard 선점 실패) — 잠시 후 재시도
+    ERROR_1016(HttpStatus.CONFLICT),       // 같은 날짜 AI 작업/삭제/PHOTO 추가 진행 중(date guard 선점 실패) — 잠시 후 재시도
 
     // ── ERROR_1xxx: timeline 사진 배치 삭제 실패 — 동기 502 전용(task 실패 분류 아님 → TASK_FAILURE_CODES 미포함) ──
     ERROR_1017(HttpStatus.BAD_GATEWAY),    // 삭제의 S3 배치 삭제 실패(SDK 예외·객체별 error) — DB 미삭제 보존, 클라 재시도로 수렴

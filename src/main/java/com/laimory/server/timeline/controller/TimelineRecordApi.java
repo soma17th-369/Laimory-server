@@ -29,8 +29,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * <p>모든 엔드포인트가 특정 사용자의 기록에 종속되므로 인증 prefix({@code /a/api})에 둔다.
  * userId는 인증된 JWT principal에서 받으며 클라이언트 입력이 아니다 — OpenAPI parameter로 노출하지 않는다.
  *
- * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING) 중에도
- * 편집은 허용된다 — finalize는 기존 Event를 건드리지 않고 append만 한다.
+ * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING) 중 Event/memo
+ * 필드만 바꾸는 PATCH는 허용하지만, {@code photosToAdd}가 있으면 같은 날짜 graph writer와 충돌하므로 409다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
@@ -72,25 +72,33 @@ public interface TimelineRecordApi {
             @Parameter(description = "조회할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "타임라인 Event 수정",
-            description = "title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체한다(절대값 대입 — memo·items는 바뀌지 않는다). "
+            description = "title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체하고 optional memo와 PHOTO 추가를 함께 처리한다. "
                     + "4개 키를 모두 보내는 계약이다: 키가 하나라도 없으면 400이다. "
                     + "title/startAt의 null은 400, subtitle/endAt은 명시적 null만 '비움'이다"
                     + "(유지할 값은 현재 값을 그대로 보낸다). "
-                    + "eventType 키만 예외적으로 optional이다 — 누락이면 현재 분류를 유지하고, "
+                    + "eventType은 optional이다 — 누락이면 현재 분류를 유지하고, "
                     + "보내면 허용 literal로 교체한다(명시적 null·미지원 값은 400). "
-                    + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정이나 하위 Item 시간 변경은 없다.")
+                    + "memo는 누락 시 유지, null/공백이면 제거, 그 외 원문 저장이다. "
+                    + "photosToAdd는 누락/빈 배열이면 변경 없고 명시적 null이면 400이며, PHOTO만 append한다. "
+                    + "클라이언트가 S3 업로드 성공을 확인한 뒤 호출해야 한다. 서버는 S3 존재 여부를 확인하지 않고, "
+                    + "description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 생성한다. "
+                    + "같은 rawId 재시도는 no-op 또는 같은 record PHOTO 재사용으로 수렴한다. "
+                    + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
-                            + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal"),
+                            + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal · "
+                            + "memo 10,000자 초과 · photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌 · "
+                            + "`ERROR_1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
+                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능 · "
+                            + "`ERROR_1016` — non-empty photosToAdd가 있고 같은 날짜 AI/사진추가/삭제가 진행 중")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEvent(
@@ -99,9 +107,10 @@ public interface TimelineRecordApi {
             @Parameter(description = "수정할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventRequest request);
 
-    @Operation(summary = "타임라인 Event 메모 작성·수정·제거",
+    @Operation(summary = "타임라인 Event 메모 작성·수정·제거", deprecated = true,
             description = "메모를 요청 값으로 교체하는 단일 endpoint다. memo가 null·공백뿐이거나 필드가 없으면(`{}`) "
-                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 10,000자).")
+                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 10,000자). "
+                    + "호환용 deprecated API이며 신규 클라이언트는 Event PATCH의 memo를 사용한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "반영 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
@@ -135,7 +144,7 @@ public interface TimelineRecordApi {
                     description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`ERROR_1016` — 같은 날짜의 AI 작업/삭제가 진행 중(잠시 후 재시도)"),
+                            + "`ERROR_1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
     })
@@ -158,7 +167,7 @@ public interface TimelineRecordApi {
                     description = "`ERROR_0404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`ERROR_1003` — 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`ERROR_1016` — 같은 날짜의 AI 작업/삭제가 진행 중(잠시 후 재시도)"),
+                            + "`ERROR_1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
     })

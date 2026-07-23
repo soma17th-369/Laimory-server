@@ -116,7 +116,7 @@ public class TimelineDraftTaskService {
         // 남의 namespace에 귀속되는 버그다(불변식).
 
         // 같은 날짜 동시 작업 차단: taskId를 holder로 새겨 날짜 guard를 선점한다(SET NX).
-        // 실패 = 같은 날짜의 draft/삭제가 진행 중 → 409(ERROR_1016).
+        // 실패 = 같은 날짜의 draft/사진추가/삭제가 진행 중 → 409(ERROR_1016).
         String taskId = UuidV7.randomUuidV7().toString();
         String guardHolder = TimelineTaskService.taskGuardHolder(taskId);
         if (!timelineTaskService.claimDateGuard(userId, recordDate, guardHolder)) {
@@ -178,7 +178,7 @@ public class TimelineDraftTaskService {
         }
 
         // PROCESSING 저장 성공 → dispatch 전에 guard 소유를 재확인하며 TTL을 1시간으로 재갱신한다(task TTL 정렬).
-        // false = 내 lease가 만료됐고 다른 작업(draft/삭제)이 같은 날짜를 선점했을 수 있다 — 날짜당 작업 하나
+        // false = 내 lease가 만료됐고 다른 작업(draft/사진추가/삭제)이 같은 날짜를 선점했을 수 있다 — 날짜당 작업 하나
         // 불변식을 지키기 위해 dispatch하지 않고 FAILED로 종결한다(예외도 소유 미확인이라 동일 취급).
         // 클라는 폴링으로 FAILED(1009)를 확인하고 재시도한다. draft 행은 dispatch 동기 실패와 동일하게
         // 보존한다(cleanup이 정리). 내 lease가 아니므로 guard는 건드리지 않는다(해제 금지).
@@ -201,7 +201,7 @@ public class TimelineDraftTaskService {
             releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
-            // 있다. FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가 새 draft/삭제와 겹칠 수 있으므로,
+            // 있다. FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가 새 draft/사진추가/삭제와 겹칠 수 있으므로,
             // task를 PROCESSING·guard 유지 상태로 둔다(AI callback이 종결하거나 TTL 1h 만료가 회수). draft도 보존.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING+guard: taskId={} detail={}",
                     taskId, e.getMessage());
@@ -292,7 +292,7 @@ public class TimelineDraftTaskService {
      * 보장하지만, 프로그래밍 방식 생성 경로 방어).
      *
      * <p>PHOTO는 클라가 보낸 {@code filename}을 서버가 full key에 끼워 넣으므로, 이 입력 경계 한 곳에서
-     * 엄격 패턴 검증한다({@link PhotoFilenames}; UUIDv7+허용ext, 슬래시·{@code ..} 불허).
+     * draft 입력 경계에서 엄격 패턴 검증한다({@link PhotoFilenames}; UUIDv7+허용ext, 슬래시·{@code ..} 불허).
      */
     private void requireValidSourceItems(List<SourceItemDto> sourceItems) {
         for (int i = 0; i < sourceItems.size(); i++) {

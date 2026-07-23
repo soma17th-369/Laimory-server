@@ -32,7 +32,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>공통 순서가 load-bearing이다:
  * 조회·소유권/상태 사전 검증(404 은닉·SAVED 409 — 아무 부수효과 전에 거절) → 날짜 guard를
- * {@code delete:{operationId}} holder로 선점(실패 = 같은 날짜 AI 작업/삭제 진행 중 → 409 ERROR_1016) →
+ * {@code delete:{operationId}} holder로 선점(실패 = 같은 날짜 AI 작업/사진추가/삭제 진행 중 → 409 ERROR_1016) →
  * <b>exclusive Item</b>(삭제 대상 Event에만 연결된 Item)의 PHOTO S3 key 수집(guard 안에서 — 동시 AI append가
  * 수집과 삭제 사이에 연결을 바꾸지 못함) → S3 배치 삭제(DB 트랜잭션 밖) → 전 batch 성공 시에만 별도 빈
  * 트랜잭션에서 재확인 후 DB 삭제({@link TimelineDeletionTransactionService} — Event/junction은 DB

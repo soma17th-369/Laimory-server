@@ -58,6 +58,9 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - signature는 content type과 content length를 묶는다.
 - object key는 `{sha256hex(userId)}/photos/{filename}`으로 server가 파생한다.
 - response/AI가 쓰는 `photoUrl`은 unsigned CloudFront URL이며 payload에 materialize한다.
+- Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내는 계약이다. 서버는 object 존재 여부를
+  HEAD하지 않고, 입력에 `description`·`photoUrl`을 받지 않으며 `description=null`과 server-derived
+  `photoUrl`을 final payload에 저장한다.
 - key/CDN domain 변경은 기존 payload backfill을 검토한다.
 - cleanup은 만료 draft photo object를 먼저 지우고 성공 뒤 DB row를 삭제한다.
 

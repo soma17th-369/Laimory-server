@@ -18,8 +18,8 @@ import org.hibernate.annotations.DynamicUpdate;
  * 타임라인 이벤트. daily_record에 plain Long FK로 연결(@OneToMany 미사용 - 서비스=레포 1개 규칙 보존).
  * memo는 사용자가 나중에 작성하므로 생성 시점엔 비어 있다.
  *
- * <p>{@code @DynamicUpdate}: 이 엔티티만 두 API(details PATCH ↔ memo PUT)가 서로 다른 필드 그룹을
- * 갱신한다. Hibernate 기본 UPDATE는 모든 updatable 컬럼을 SET에 포함하므로, 두 요청이 같은 row를 읽고
+ * <p>{@code @DynamicUpdate}: 통합 PATCH에서 memo가 생략된 요청과 legacy memo PUT이 서로 다른 필드 그룹을
+ * 갱신할 수 있다. Hibernate 기본 UPDATE는 모든 updatable 컬럼을 SET에 포함하므로, 두 요청이 같은 row를 읽고
  * 순차 커밋하면 나중 커밋이 상대의 변경을 자신의 로드 시점 스냅샷으로 되돌린다(교차-필드 lost update).
  * dynamic update는 실제 변경된 컬럼만 SET해 이 경로를 제거한다(같은 필드 동시 수정은 여전히
  * last-write-wins — 필드 그룹이 겹치지 않는 현 계약에서는 충분하다). 비용은 flush 시 SQL 동적 생성.
@@ -74,7 +74,7 @@ public class TimelineEvent extends BaseEntity {
     }
 
     /**
-     * 사용자 편집으로 eventType/title/subtitle/startAt/endAt 필드를 절대값으로 교체한다(memo·하위 Item 불변).
+     * 사용자 편집으로 eventType/title/subtitle/startAt/endAt 필드를 절대값으로 교체한다(memo·하위 Item은 별도 처리).
      * eventType은 요청 누락 시 서비스가 현재 값을 병합해 non-null 목표값으로 전달한다.
      * 검증(필수·길이·시간 순서)은 서비스 계층({@code TimelineEventEditService}) 책임이고 엔티티는 대입만 한다.
      */

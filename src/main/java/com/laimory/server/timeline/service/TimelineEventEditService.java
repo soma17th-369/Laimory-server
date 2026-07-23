@@ -2,87 +2,105 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.DailyRecordStatus;
-import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
-import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
-import com.laimory.server.timeline.entity.TimelineItem;
+import com.laimory.server.timeline.photo.PhotoFilenames;
 import java.time.LocalDateTime;
-import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
+import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 사용자 타임라인 Event 편집(수정·메모) 오케스트레이터. leaf 서비스를 합성한다(레포 직접 접근 금지).
+ * 사용자 타임라인 Event 편집 오케스트레이터.
  *
- * <p>공통 순서: 조회 → 소유권/상태 검증 → 입력 검증 → 변경 → 응답 조립. 각 public 메서드가
- * {@code @Transactional} 경계다 — 컨트롤러가 별도 빈인 이 메서드를 Spring 프록시를 통해 호출해야
- * 트랜잭션이 활성화된다(같은 클래스 self-invocation이면 AOP를 안 거쳐 조용히 무효화됨).
- * 조회한 관리 엔티티의 변경은 커밋 시 dirty checking으로 flush된다(repo.save 호출 없음).
+ * <p>통합 PATCH는 소유권·DRAFT 사전 확인과 입력 정규화를 먼저 수행한다. {@code photosToAdd}가 비어 있으면
+ * date guard 없이 transactional writer를 호출해 기존 scalar 편집 동시성 계약을 유지한다. 사진이 있으면
+ * 같은 날짜의 AI append·삭제·다른 사진 추가와 겹치지 않도록 {@code patch-photo-add:{operationId}} guard를
+ * 선점한 뒤 writer를 호출하고, 성공·실패 모두 finally에서 자신의 guard만 best-effort 해제한다.
  *
- * <p>소유권: {@code TimelineEvent}에는 userId가 없어 {@code event.dailyRecordId → DailyRecord.userId}로
- * 검증한다. 이벤트 없음·record 없음·비소유는 전부 404(ERROR_0404)로 은닉한다(존재 여부 비노출).
- * SAVED record는 모든 편집(입력 검증 포함) 전에 409(ERROR_1003)로 거절한다 — DRAFT에서만 수정한다.
- * PROCESSING(AI 진행) 중에도 편집은 허용한다 — AI finalize는 기존 Event를 건드리지 않고 append만
- * 하므로 날짜 guard는 확인하지 않는다.
+ * <p>실제 PATCH DB 변경은 별도 {@link TimelineEventEditTransactionService}가 맡는다. 따라서 guard는
+ * Event·memo·PHOTO Item·junction transaction이 commit된 뒤 해제된다. PROCESSING 중에도 사진 없는 PATCH와
+ * legacy memo PUT은 계속 허용된다.
  *
- * <p>입력 검증은 프로그래밍 방식(IAE → 400)으로 생성 경로(AI writer validation 계약)의
- * 규칙(title 필수, startAt 필수, endAt은 있으면 startAt 이상)과 정렬한다. 길이 상한(255자)은 편집 경로의
- * 의도적 추가 규칙이다 — 생성 경로 입력은 AI 산출물이지만 여기는 사용자 자유 입력이라, DB 컬럼
- * (VARCHAR(255)/TEXT) 제약 위반으로 500이 나기 전에 400으로 거절한다.
+ * <p>이벤트 없음·record 없음·비소유는 모두 404(ERROR_0404)로 은닉하고 SAVED는 입력 검증보다 먼저
+ * 409(ERROR_1003)로 거절한다. 사용자 입력 문자열·사진 식별자는 로그에 남기지 않는다.
  */
+@Slf4j
 @Service
-@RequiredArgsConstructor
 public class TimelineEventEditService {
 
     private static final int MAX_TITLE_LENGTH = 255;
     private static final int MAX_SUBTITLE_LENGTH = 255;
     private static final int MAX_MEMO_LENGTH = 10_000;
+    private static final int MAX_RAW_ID_LENGTH = 36;
 
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
-    private final TimelineEventItemService timelineEventItemService;
-    private final TimelineItemService timelineItemService;
+    private final TimelineTaskService timelineTaskService;
+    private final TimelineEventEditTransactionService timelineEventEditTransactionService;
+    private final TimelineEventResponseAssembler timelineEventResponseAssembler;
+    private final int maxPhotoCount;
 
-    /**
-     * title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체한다(절대값 대입 — memo·하위 items 불변).
-     * eventType은 optional이다 — {@code null}(키 누락)이면 현재 값을 유지하고, 값이 있으면 교체한다
-     * (명시적 null·미지원 literal은 역직렬화에서 이미 400으로 거부돼 여기 도달하지 않는다).
-     * 시간은 사용자 입력 그대로 저장한다 — AI finalize의 +10분 충돌 보정·Item 시간 변경을 적용하지 않는다.
-     */
-    @Transactional
-    public TimelineEventResponse updateEvent(String applicationVersion, long userId, Long timelineEventId,
-                                             TimelineEventType eventType, String title, String subtitle,
-                                             LocalDateTime startAt, LocalDateTime endAt) {
-        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        TimelineEvent event = findOwnedEditableEvent(userId, timelineEventId);
-        TimelineEventType targetEventType = eventType != null ? eventType : event.getEventType();
-        String validTitle = requireValidTitle(title);
-        String normalizedSubtitle = normalizeSubtitle(subtitle);
-        requireValidTimeRange(startAt, endAt);
-        event.updateDetails(targetEventType, validTitle, normalizedSubtitle, startAt, endAt);
-        return toResponse(event);
+    public TimelineEventEditService(
+            TimelineEventService timelineEventService,
+            DailyRecordService dailyRecordService,
+            TimelineTaskService timelineTaskService,
+            TimelineEventEditTransactionService timelineEventEditTransactionService,
+            TimelineEventResponseAssembler timelineEventResponseAssembler,
+            @Value("${photo.upload.max-count}") int maxPhotoCount) {
+        this.timelineEventService = timelineEventService;
+        this.dailyRecordService = dailyRecordService;
+        this.timelineTaskService = timelineTaskService;
+        this.timelineEventEditTransactionService = timelineEventEditTransactionService;
+        this.timelineEventResponseAssembler = timelineEventResponseAssembler;
+        this.maxPhotoCount = maxPhotoCount;
     }
 
-    /** 메모 작성·수정·제거 단일 진입점. null·공백뿐(필드 부재 포함)은 제거, 그 외는 trim 없이 원문 저장. */
+    /** Event 상세·optional memo·optional PHOTO append를 하나의 PATCH 계약으로 처리한다. */
+    public TimelineEventResponse updateEvent(String applicationVersion, long userId, Long timelineEventId,
+                                             UpdateTimelineEventRequest request) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        OwnedEvent ownedEvent = findOwnedEditableEvent(userId, timelineEventId);
+        TimelineEventEditCommand command = requireValidCommand(request);
+        if (command.photosToAdd().isEmpty()) {
+            return timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
+        }
+
+        String operationId = UuidV7.randomUuidV7().toString();
+        String guardHolder = TimelineTaskService.photoAddGuardHolder(operationId);
+        if (!timelineTaskService.claimDateGuard(userId, ownedEvent.record().getRecordDate(), guardHolder)) {
+            throw new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS);
+        }
+        try {
+            return timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
+        } finally {
+            releaseDateGuardQuietly(userId, ownedEvent.record(), guardHolder, operationId);
+        }
+    }
+
+    /** legacy 메모 API. null·공백뿐은 제거, 그 외는 trim 없이 원문 저장한다. */
     @Transactional
     public TimelineEventResponse updateMemo(String applicationVersion, long userId, Long timelineEventId,
                                             String memo) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        TimelineEvent event = findOwnedEditableEvent(userId, timelineEventId);
+        TimelineEvent event = findOwnedEditableEvent(userId, timelineEventId).event();
         event.updateMemo(normalizeMemo(memo));
-        return toResponse(event);
+        return timelineEventResponseAssembler.toResponse(event);
     }
 
-    /**
-     * 편집 대상 이벤트를 조회하고 소유권·상태를 검증한다. 이벤트 없음·record 없음·비소유는 전부
-     * 404(ERROR_0404)로 은닉하고, SAVED record는 409(ERROR_1003)로 거절한다.
-     */
-    private TimelineEvent findOwnedEditableEvent(long userId, Long timelineEventId) {
+    /** owner/DRAFT 검증은 입력 검증·guard·DB mutation보다 먼저 수행한다. */
+    private OwnedEvent findOwnedEditableEvent(long userId, Long timelineEventId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         DailyRecord record = dailyRecordService.findById(event.getDailyRecordId())
@@ -91,10 +109,69 @@ public class TimelineEventEditService {
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
-        return event;
+        return new OwnedEvent(event, record);
     }
 
-    /** title은 앞뒤 공백 제거 후 1~255자 필수. 위반 메시지에 사용자 입력을 echo하지 않는다(길이만). */
+    /** 모든 정적 입력을 검증·정규화하고 request rawId 중복은 첫 항목만 유지한다. */
+    private TimelineEventEditCommand requireValidCommand(UpdateTimelineEventRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request is required");
+        }
+        String title = requireValidTitle(request.title());
+        String subtitle = normalizeSubtitle(request.subtitle());
+        requireValidTimeRange(request.startAt(), request.endAt());
+        String memo = request.memoPresent() ? normalizeMemo(request.memo()) : null;
+        List<TimelineEventEditCommand.PhotoToAdd> photos = requireValidPhotos(request.photosToAdd());
+        return new TimelineEventEditCommand(
+                request.eventType(), title, subtitle, request.startAt(), request.endAt(),
+                request.memoPresent(), memo, photos);
+    }
+
+    private List<TimelineEventEditCommand.PhotoToAdd> requireValidPhotos(
+            List<UpdateTimelineEventPhotoRequest> photosToAdd) {
+        if (photosToAdd == null) {
+            throw new IllegalArgumentException("photosToAdd must not be null");
+        }
+        if (photosToAdd.size() > maxPhotoCount) {
+            throw new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, maxPhotoCount);
+        }
+
+        Set<String> seenRawIds = new LinkedHashSet<>();
+        List<TimelineEventEditCommand.PhotoToAdd> deduped = new ArrayList<>();
+        for (int i = 0; i < photosToAdd.size(); i++) {
+            UpdateTimelineEventPhotoRequest photo = photosToAdd.get(i);
+            if (photo == null) {
+                throw new IllegalArgumentException("photosToAdd element is null: index=" + i);
+            }
+            if (isBlank(photo.rawId())) {
+                throw new IllegalArgumentException("photo requires rawId: index=" + i);
+            }
+            if (photo.rawId().length() > MAX_RAW_ID_LENGTH) {
+                throw new IllegalArgumentException("photo rawId is too long: index=" + i);
+            }
+            UpdateTimelineEventPhotoPayloadRequest payload = photo.payload();
+            if (payload == null) {
+                throw new IllegalArgumentException("photo requires payload: index=" + i);
+            }
+            PhotoFilenames.requireValid(payload.filename());
+            if (isBlank(payload.clientPhotoUri())) {
+                throw new IllegalArgumentException("photo requires clientPhotoUri: index=" + i);
+            }
+
+            TimelineEventEditCommand.PhotoToAdd commandPhoto = new TimelineEventEditCommand.PhotoToAdd(
+                    photo.rawId(), photo.startAt(), photo.endAt(), payload.filename(), payload.clientPhotoUri(),
+                    payload.latitude(), payload.longitude());
+            if (seenRawIds.add(photo.rawId())) {
+                deduped.add(commandPhoto);
+            }
+        }
+        if (deduped.size() < photosToAdd.size()) {
+            log.warn("dropped duplicate rawId photos in Event PATCH: dropped={} kept={}",
+                    photosToAdd.size() - deduped.size(), deduped.size());
+        }
+        return List.copyOf(deduped);
+    }
+
     private String requireValidTitle(String title) {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("title is required");
@@ -106,7 +183,6 @@ public class TimelineEventEditService {
         return stripped;
     }
 
-    /** subtitle은 null·공백뿐이면 비움(null), 그 외 앞뒤 공백 제거 후 최대 255자. */
     private String normalizeSubtitle(String subtitle) {
         if (subtitle == null || subtitle.isBlank()) {
             return null;
@@ -118,7 +194,6 @@ public class TimelineEventEditService {
         return stripped;
     }
 
-    /** startAt 필수, endAt은 있으면 startAt 이상(같음 허용 — 0분 구간). 생성 검증기와 같은 규칙. */
     private void requireValidTimeRange(LocalDateTime startAt, LocalDateTime endAt) {
         if (startAt == null) {
             throw new IllegalArgumentException("startAt is required");
@@ -128,7 +203,6 @@ public class TimelineEventEditService {
         }
     }
 
-    /** memo는 null·공백뿐이면 제거(null), 그 외 trim 없이 원문 보존 + String.length() 기준 최대 10,000자. */
     private String normalizeMemo(String memo) {
         if (memo == null || memo.isBlank()) {
             return null;
@@ -139,17 +213,19 @@ public class TimelineEventEditService {
         return memo;
     }
 
-    /** 갱신된 이벤트를 하위 아이템 포함 응답으로 조립한다(아이템은 junction 경유 조회만 — 편집 API는 아이템을 바꾸지 않는다). */
-    private TimelineEventResponse toResponse(TimelineEvent event) {
-        List<Long> itemIds = timelineEventItemService.findByTimelineEventId(event.getTimelineEventId()).stream()
-                .map(link -> link.getTimelineItemId())
-                .toList();
-        List<TimelineItemResponse> items = timelineItemService.findByIds(itemIds).stream()
-                .sorted(Comparator.comparing(TimelineItem::getStartAt,
-                                Comparator.nullsFirst(Comparator.naturalOrder()))
-                        .thenComparing(TimelineItem::getTimelineItemId))
-                .map(TimelineItemResponse::from)
-                .toList();
-        return TimelineEventResponse.from(event, items);
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private void releaseDateGuardQuietly(long userId, DailyRecord record, String holder, String operationId) {
+        try {
+            timelineTaskService.releaseDateGuard(userId, record.getRecordDate(), holder);
+        } catch (RuntimeException e) {
+            log.warn("date guard release failed (TTL로 자연 해제 예정): operationId={} detail={}",
+                    operationId, e.getMessage());
+        }
+    }
+
+    private record OwnedEvent(TimelineEvent event, DailyRecord record) {
     }
 }

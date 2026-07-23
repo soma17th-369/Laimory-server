@@ -44,7 +44,7 @@ public enum ExceptionType {
     APPEND_NO_NEW_ITEMS(ErrorCode.ERROR_1013, Level.INFO),
     GEOCODING_TRANSIENT_FAILURE(ErrorCode.ERROR_1014, Level.WARN),  // 재시도로 해결 가능
     GEOCODING_PERMANENT_FAILURE(ErrorCode.ERROR_1015, Level.ERROR), // 쿼터·키 — 운영 조치 필요
-    RECORD_DATE_IN_PROGRESS(ErrorCode.ERROR_1016, Level.INFO),      // 같은 날짜 AI 작업/삭제 진행 중 — 클라 재시도 시나리오
+    RECORD_DATE_IN_PROGRESS(ErrorCode.ERROR_1016, Level.INFO),      // 같은 날짜 AI 작업/삭제/PHOTO 추가 진행 중 — 클라 재시도 시나리오
     TIMELINE_EVENT_NOT_FOUND(ErrorCode.ERROR_0404, Level.INFO),     // 편집 대상 event 없음/비소유 — 소유권 은닉(존재 여부 비노출)
     DAILY_RECORD_NOT_FOUND(ErrorCode.ERROR_0404, Level.INFO),       // 조회·삭제 대상 daily record 없음/비소유 — 소유권 은닉(존재 여부 비노출)
     PHOTO_BATCH_DELETE_FAILED(ErrorCode.ERROR_1017, Level.ERROR),   // S3 배치 삭제 실패 — 저장소 장애는 운영 신호(DB 보존, 클라 재시도로 수렴)

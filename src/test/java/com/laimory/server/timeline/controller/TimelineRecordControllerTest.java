@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.controller;
 
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -30,6 +31,7 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
@@ -40,6 +42,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -185,7 +188,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_returns200WithUpdatedEvent() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenReturn(updatedEvent());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -197,13 +200,21 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.title").value("카페에서 휴식"))
                 .andExpect(jsonPath("$.body.subtitle").value("성수동"))
                 .andExpect(jsonPath("$.body.memo").value("기존 메모"))
-                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21));
+                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
+                .andExpect(jsonPath("$.body.items[0].payload.description").doesNotExist())
+                .andExpect(jsonPath("$.body.items[0].payload.photoUrl").value("https://cdn.example/u.jpg"));
 
-        // userId는 클라 입력이 아니라 인증 principal이고, 4개 필드를 그대로 서비스에 넘긴다.
-        // 구버전 4키 요청: eventType 키 누락은 null(=현재 값 유지 의도)로 전달된다.
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
-                isNull(), eq("카페에서 휴식"), eq("성수동"),
-                eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
+        // 구버전 4키 요청은 그대로 호환한다. optional 키 누락은 eventType/memo 유지와 PHOTO no-op으로 전달된다.
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        assertThat(request.getValue().title()).isEqualTo("카페에서 휴식");
+        assertThat(request.getValue().subtitle()).isEqualTo("성수동");
+        assertThat(request.getValue().startAt()).isEqualTo(LocalDateTime.parse("2026-07-08T14:00:00"));
+        assertThat(request.getValue().endAt()).isEqualTo(LocalDateTime.parse("2026-07-08T15:00:00"));
+        assertThat(request.getValue().eventType()).isNull();
+        assertThat(request.getValue().memoPresent()).isFalse();
+        assertThat(request.getValue().memo()).isNull();
+        assertThat(request.getValue().photosToAdd()).isEmpty();
     }
 
     @ParameterizedTest
@@ -224,7 +235,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_explicitNullClearsSubtitleAndEndAt() throws Exception {
         // 명시적 null은 누락(400)과 달리 "비움"이다 — subtitle/endAt에 null이 그대로 서비스로 전달된다.
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenReturn(updatedEvent());
 
         String body = """
@@ -239,14 +250,15 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
-                isNull(), eq("카페에서 휴식"), isNull(),
-                eq(LocalDateTime.parse("2026-07-08T14:00:00")), isNull());
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        assertThat(request.getValue().subtitle()).isNull();
+        assertThat(request.getValue().endAt()).isNull();
     }
 
     @Test
     void updateTimelineEvent_withEventType_passesEnumToService() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenReturn(updatedEvent());
 
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
@@ -255,9 +267,9 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
 
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L),
-                eq(TimelineEventType.MEAL), eq("카페에서 휴식"), eq("성수동"),
-                eq(LocalDateTime.parse("2026-07-08T14:00:00")), eq(LocalDateTime.parse("2026-07-08T15:00:00")));
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        assertThat(request.getValue().eventType()).isEqualTo(TimelineEventType.MEAL);
     }
 
     @Test
@@ -286,8 +298,92 @@ class TimelineRecordControllerTest {
     }
 
     @Test
+    void updateTimelineEvent_explicitNullMemoIsPresentAndRequestsRemoval() throws Exception {
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
+                .thenReturn(updatedEvent());
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.putNull("memo");
+
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        assertThat(request.getValue().memoPresent()).isTrue();
+        assertThat(request.getValue().memo()).isNull();
+    }
+
+    @Test
+    void updateTimelineEvent_parsesManualPhotoAndIgnoresAiAndServerOnlyPayloadFields() throws Exception {
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
+                .thenReturn(updatedEvent());
+        String body = """
+                {
+                  "title": "카페에서 휴식",
+                  "subtitle": "성수동",
+                  "startAt": "2026-07-08T14:00:00",
+                  "endAt": "2026-07-08T15:00:00",
+                  "memo": "사진을 정리했다.",
+                  "photosToAdd": [
+                    {
+                      "rawId": "0190a1b2-0001-7000-8000-000000000001",
+                      "startAt": "2026-07-08T14:05:00",
+                      "endAt": null,
+                      "payload": {
+                        "filename": "0190a1b2-0002-7000-8000-000000000002.jpg",
+                        "clientPhotoUri": "content://media/external/images/media/1001",
+                        "latitude": 37.5665,
+                        "longitude": 126.978,
+                        "description": "클라이언트가 넣을 수 없는 AI 값",
+                        "photoUrl": "https://attacker.example/photo.jpg"
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        UpdateTimelineEventRequest parsed = request.getValue();
+        assertThat(parsed.memoPresent()).isTrue();
+        assertThat(parsed.memo()).isEqualTo("사진을 정리했다.");
+        assertThat(parsed.photosToAdd()).hasSize(1);
+        assertThat(parsed.photosToAdd().get(0).rawId())
+                .isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(parsed.photosToAdd().get(0).startAt())
+                .isEqualTo(LocalDateTime.parse("2026-07-08T14:05:00"));
+        assertThat(parsed.photosToAdd().get(0).endAt()).isNull();
+        assertThat(parsed.photosToAdd().get(0).payload().filename())
+                .isEqualTo("0190a1b2-0002-7000-8000-000000000002.jpg");
+        assertThat(parsed.photosToAdd().get(0).payload().clientPhotoUri())
+                .isEqualTo("content://media/external/images/media/1001");
+        assertThat(parsed.photosToAdd().get(0).payload().latitude()).isEqualTo(37.5665);
+        assertThat(parsed.photosToAdd().get(0).payload().longitude()).isEqualTo(126.978);
+        assertThat(objectMapper.valueToTree(parsed.photosToAdd().get(0).payload()).has("description")).isFalse();
+        assertThat(objectMapper.valueToTree(parsed.photosToAdd().get(0).payload()).has("photoUrl")).isFalse();
+    }
+
+    @Test
+    void updateTimelineEvent_explicitNullPhotosToAddRejected400() throws Exception {
+        ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
+        body.putNull("photosToAdd");
+
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+
+        verifyNoInteractions(timelineEventEditService);
+    }
+
+    @Test
     void updateTimelineEvent_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenThrow(new IllegalArgumentException("title is required"));
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -298,7 +394,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsNotFoundTo404() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -308,12 +404,34 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsSavedConflictTo409() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any(), any(), any(), any(), any()))
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+    }
+
+    @Test
+    void updateTimelineEvent_mapsDateGuardConflictTo409With1016() throws Exception {
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
+                .thenThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS));
+
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+    }
+
+    @Test
+    void updateTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
+        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
+                .thenThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20));
+
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1004"));
     }
 
     @Test

@@ -40,6 +40,14 @@ public class TimelineItemService {
         return new HashSet<>(timelineItemRepository.findRawIdsByTimelineItemIdInAndRawIdIn(itemIds, rawIds));
     }
 
+    /** 후보 Item ID와 rawId가 모두 일치하는 final Item을 반환한다(PHOTO append 분류용). */
+    public List<TimelineItem> findByIdsAndRawIds(Collection<Long> itemIds, Collection<String> rawIds) {
+        if (itemIds.isEmpty() || rawIds.isEmpty()) {
+            return List.of();
+        }
+        return timelineItemRepository.findByTimelineItemIdInAndRawIdIn(itemIds, rawIds);
+    }
+
     /** Item 행들을 삭제한다(association 0 orphan 정리 전용 — 자기 junction 행은 DB FK cascade가 지운다). */
     public void deleteByIds(Collection<Long> timelineItemIds) {
         if (timelineItemIds.isEmpty()) {

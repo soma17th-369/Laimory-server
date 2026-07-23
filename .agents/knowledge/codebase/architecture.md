@@ -49,6 +49,12 @@ DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
 → status-only callback → 서버는 Redis terminal 전이만 기록(멱등)
 ```
 
+Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 guard 없이 Event/memo transaction을
+실행한다. non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고 날짜 guard를 취득한 뒤,
+별도 public transaction service가 소유권·DRAFT를 다시 확인하고 Event/memo + PHOTO Item/junction을 한 번에
+commit한다. orchestrator는 transaction 반환(즉 commit) 뒤 guard를 compare-and-release해 DB transaction과
+Redis lease 경계를 섞지 않는다.
+
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.
 
@@ -62,7 +68,8 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 ## Known Gaps
 
 - API chain의 JWT authentication filter와 principal-to-userId 전달이 아직 없다.
-- 실 AI writer(Laimory-AI)의 direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher는 구현됨).
+- 실 AI writer(Laimory-AI)의 draft direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
+  Event PATCH 수동 PHOTO writer는 구현됨).
 - schema migration framework가 없다.
 
 ## Update When

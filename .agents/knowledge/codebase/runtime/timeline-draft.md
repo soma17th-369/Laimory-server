@@ -2,16 +2,18 @@
 
 ## Scope
 
-timeline draft 생성 요청부터 AI dispatch, direct-write, callback, polling과 cleanup까지의 runtime sequence다.
+timeline draft 생성 요청부터 AI dispatch, direct-write, callback, polling, Event 편집과 cleanup까지의 runtime
+sequence다.
 
 ## Read When
 
-draft POST·polling·callback·append·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
+draft POST·polling·callback·append·Event 편집·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
 - `TimelineDraftTaskService`, `TimelineDraftPreparationService`, `TimelineDraftTaskPollingService`
 - `TimelineAiDispatcher`(+`AiTimelineDispatchRequest`), `TimelineCallbackService`, `TimelineTaskService`
+- `TimelineEventEditService`와 Event 편집 transaction service
 - `DailyTimelineService`(읽기), `TimelineDeletionService`/`TimelineDeletionTransactionService`
 - timeline entities(junction 포함), repositories, Redis stores and integration tests
 - `src/main/resources/db/schema.sql`, `application*.properties`
@@ -46,17 +48,17 @@ draft POST·polling·callback·append·삭제·Redis state·staging cleanup을 �
    FAILED(`ERROR_1009`) 종결 + guard 해제한다. read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 —
    AI가 이미 접수해 final write 중일 수 있으므로 — FAILED로 확정하지 않고 PROCESSING·guard를 유지한다
    (AI callback이 종결하거나 TTL 1h 만료가 회수). FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가
-   새 draft/삭제와 겹칠 수 있다.
+   새 draft/사진추가/삭제와 겹칠 수 있다.
 
 guard 해제 경계: PROCESSING 저장 전 실패는 보상 후 자신의 guard만 즉시 해제(compare-and-release),
 PROCESSING 저장 후 terminal 저장 실패는 해제하지 않고 TTL(1h) 만료에 맡기며,
 terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 최종 안전망이지만,
 재갱신(refresh)은 best-effort가 아니라 dispatch 허용 게이트다.
 
-같은 guard를 삭제 API(`TimelineDeletionService`)도 holder `delete:{operationId}`로 선점한다 —
-PROCESSING draft 진행 중 삭제와 동시 삭제를 409 `ERROR_1016`으로 차단하고, draft 생성도
-삭제 진행 중이면 같은 코드로 거절된다(날짜당 작업 하나 직렬화). 삭제는 draft와 달리
-성공·실패(1017/500) 모든 종료 경로에서 finally로 compare-and-release한다.
+같은 guard를 삭제 API(`TimelineDeletionService`)는 holder `delete:{operationId}`, non-empty
+`photosToAdd` Event PATCH는 `patch-photo-add:{operationId}`로 선점한다. PROCESSING draft 진행 중 삭제·
+PHOTO 추가와 각 작업 사이 경합을 409 `ERROR_1016`으로 차단한다(날짜당 graph 작업 하나 직렬화).
+삭제와 PHOTO 추가는 draft와 달리 성공·실패 모든 종료 경로에서 finally로 compare-and-release한다.
 
 `app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
 `fake`는 in-process로 final direct-write 후 실제 HTTP callback 경로를 호출하며 retry하지 않는다.
@@ -100,6 +102,21 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
   startAt(null 먼저)·id 순으로 정렬한다. 같은 Item이 여러 Event에 연결되면 같은 `timelineItemId`가 여러
   Event의 `items`에 반복된다(응답 shape 유지 — Android 수용 확인됨).
 - append 진행 중 기존 Event 상세/memo 편집은 허용한다(AI가 기존 graph를 건드리지 않기 때문).
+  `photosToAdd`가 없거나 빈 PATCH는 이 경로라 날짜 guard를 취득하지 않는다.
+
+### Event edit
+
+- 기존 Event PATCH는 `title`·`subtitle`·`startAt`·`endAt` 필드 존재를 계속 요구하며 선택적
+  `eventType`, `memo`, `photosToAdd`를 함께 처리한다. `memo` 부재는 변경 없음, null·blank는 제거다.
+- `photosToAdd`가 없거나 빈 배열이면 기존 상세/memo 수정 transaction만 실행한다. non-empty면 입력·소유권·
+  DRAFT 상태를 preflight한 뒤 날짜 guard를 취득하고, 별도 transaction service가 다시 소유권·DRAFT를
+  확인한 뒤 Event/memo 수정 + PHOTO Item/junction 추가를 하나의 transaction으로 commit한다. guard는 commit
+  이후 finally에서 compare-and-release한다.
+- request rawId는 입력 순서의 첫 항목을 사용한다. 같은 record의 같은 rawId가 non-PHOTO면 400, PHOTO면
+  기존 Item을 재사용하고 대상 Event에 이미 연결됐으면 no-op이다. legacy PHOTO 중복은 대상 Event 연결 행을
+  우선하고 없으면 가장 작은 Item ID를 고른다. 신규 후보끼리 filename이 중복되면 400이다.
+- 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며,
+  payload는 `filename`·`clientPhotoUri`·좌표만 받아 `description=null`과 server-derived `photoUrl`로 저장한다.
 
 ### Delete
 
@@ -121,7 +138,8 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
 - Redis SUCCESS는 AI final commit보다 먼저 기록되지 않는다(commit-then-callback + 서버는 상태 전이만).
-- 서버는 final Event/Item/junction을 쓰지 않는다 — final write는 AI(fake 포함)가 소유한다.
+- 서버 callback은 AI 결과 Event/Item/junction을 쓰지 않는다 — draft final write는 AI(fake 포함)가 소유한다.
+  별도로 Event PATCH는 수동 PHOTO Item/junction을 서버 transaction에서 쓴다.
 - 유효한 재콜백은 terminal no-op 200이다(멱등) — 재시도를 막는 소비 게이트를 다시 넣지 않는다.
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 

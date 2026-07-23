@@ -45,7 +45,8 @@ Terraform은 schema를 S3 bootstrap object로 올려 새 MySQL instance의 user 
 기존 MySQL은 `user_data` 변경을 ignore하므로 Terraform 파일 변경만으로 live schema가 바뀌지 않는다.
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
-final 테이블(`timeline_events`/`timeline_items`)은 API JPA와 AI raw INSERT 두 writer가 쓴다 —
+final 테이블(`timeline_events`/`timeline_items`)은 API JPA와 AI raw INSERT 두 writer가 쓴다. API writer는
+Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가를 한 transaction으로 commit한다 —
 감사 timestamp는 DB default(`CURRENT_TIMESTAMP(6)`)가 겸하고(AI는 컬럼 생략 가능), AI는 `modified_by`에
 `'AI'`를 명시한다(provenance — 재실행 삭제 조건으로 쓰지 않는다). `timeline_event_items`는 순수 연결
 행이라 감사 컬럼이 없다.
@@ -71,7 +72,7 @@ application-owned access는 `RedisGateway`를 거친다.
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
 | `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 보존, PROCESSING에만 `timelineWindow`(local 원본)·`processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함 — record 메타데이터(recordDate/recordAt/recordTimezone/userMemory)는 없다(DailyRecord가 단일 권위); 구 shape 잔존 JSON은 `@JsonIgnoreProperties`로 관용 수용하고 새 필드 부재는 null → 폴링 1001·콜백 fail-closed | PROCESSING 1h, terminal 24h |
-| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제는 모든 종료 경로에서 해제) |
+| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`, Event PHOTO 추가 `patch-photo-add:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제·PHOTO 추가는 모든 종료 경로에서 해제) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
@@ -88,6 +89,9 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
 full key는 `{sha256hex(userId)}/photos/{filename}`이며 DB column으로 저장하지 않는다.
+Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를 조회하지 않는다.
+해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
+쓴다.
 
 삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로),
 Event/DailyRecord 삭제는 `DeleteObjects` 배치(최대 1,000 key/batch 순차, 요청 단위
@@ -100,9 +104,13 @@ override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 S
 
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
-  공유한다는 규칙은 DB 제약이 아니라 writer 계약이다(AI·fake는 새 Item을 현재 task의 새 Event에만 연결).
-- `timeline_items.raw_id`는 DB UNIQUE가 없다 — 같은 record 안 중복 방지는 API 사전 제외 + AI write 직전
-  재검사의 application-level 방어이며, race/legacy 중복 행은 허용한다(조회·삭제는 `timeline_item_id` 기준).
+  공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
+  연결하고, Event PATCH는 같은 record의 기존 PHOTO Item을 대상 Event에 재사용할 수 있다.
+- `timeline_items.raw_id`는 DB UNIQUE가 없다 — draft는 API 사전 제외 + AI write 직전 재검사로 방어하고,
+  Event PATCH는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
+  Event에 이미 연결된 PHOTO는 no-op이고 같은 rawId의 non-PHOTO는 400이다. legacy로 같은 rawId의 PHOTO가
+  여러 행이면 대상 Event에 연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복
+  행은 허용하며 조회·삭제는 `timeline_item_id` 기준이다.
 - `raw_id`(source·final 둘 다)는 대소문자 구분 opaque 식별자라 **컬럼 단위 `utf8mb4_bin` collation**을 쓴다
   (FID 선례와 동일; 테이블 기본 `_unicode_ci`와 다름). 서버 dedupe(Java String)·기존 rawId 제외(HashSet/IN)와
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱

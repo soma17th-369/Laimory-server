@@ -37,7 +37,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI direct-write가 생성하고 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
-| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. PUT 단일 endpoint로 작성·수정·제거한다 — null·blank·필드 부재는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). |
+| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재는 변경 없음, null·blank는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). 기존 PUT memo endpoint도 호환을 위해 유지하지만 OpenAPI에서는 deprecated다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
 | 이벤트 종료 시각 | End At | 현재 구현 | 이벤트 시간 범위의 끝이다. 단일 시점이면 nullable이다. |
 
@@ -57,7 +57,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. AI가 taskId로 source를 읽을 때의 행 식별자이며 callback body에는 없다. |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. UUIDv7은 client convention이며 서버는 blank와 길이만 검증한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint 없음(같은 record 안 중복 방지는 API 사전 제외 + AI write 직전 재검사의 application-level 방어 — race/legacy 중복 허용). |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. UUIDv7은 client convention이며 서버는 blank와 길이만 검증한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, Event PATCH의 PHOTO 추가는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 final Event에 연결하기로 채택한 staging source item이다. AI final transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -66,7 +66,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 아이템 페이로드 | Timeline Item Payload | 현재 구현 | HTTP input/enrich에서 쓰는 sealed payload 공통 interface다. |
-| 사진 페이로드 | Photo Payload | 현재 구현 | `filename`, `clientPhotoUri`, 좌표, 설명과 서버가 만든 `photoUrl`을 담는다. client의 `photoUrl`은 무시한다. |
+| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명과 서버가 만든 `photoUrl`을 담는다. AI writer는 설명을 붙일 수 있지만 Event PATCH의 수동 PHOTO 입력은 `filename`·`clientPhotoUri`·좌표만 받고 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 userId와 filename에서 생성한다. |
 | 일정 페이로드 | Calendar Payload | 현재 구현 | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
 | 머문 곳 페이로드 | Stay Payload | 현재 구현 | 필수 좌표와 서버 파생 주소·주변 장소·머문 시간 텍스트를 담는다. |
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
@@ -116,7 +116,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. Item은 cascade되지 않아 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서 명시 삭제한다(shared Item/PHOTO 유지). 삭제 API는 exclusive PHOTO의 S3 배치 삭제 성공 후에만 DB 삭제를 시작한다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
-| AI final 단일 트랜잭션 | 현재 구현(계약) | AI가 validation 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 서버는 final write 경로가 없다. |
+| AI final 단일 트랜잭션 | 현재 구현(계약) | AI가 draft 결과 validation 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 서버 callback은 이 결과를 쓰지 않는다. |
+| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
 | rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, AI가 write 직전 재검사한다. |

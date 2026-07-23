@@ -41,6 +41,16 @@ version별 동작은 service가 결정한다.
 `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 없음·비소유를 같은 404 `ERROR_0404`로
 은닉한다. 두 응답 모두 Event별 연결 Item을 `events[].items[]`에 포함한다.
 
+`PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
+`title`·`subtitle`·`startAt`·`endAt`(네 key 모두 필수), 선택적 `eventType`, 선택적 `memo`와 선택적
+`photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
+배열은 Item 변경 없음이며 날짜 guard도 취득하지 않고, 명시적 null은 400이다. 배열 원소는
+`rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
+`description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+한 DB transaction으로 commit하며 guard 충돌은 409 `ERROR_1016`이다. 응답은 수정된 Event와 연결된 전체
+Item을 반환한다. 별도 PHOTO 추가 endpoint는 없고 기존 `PUT .../events/{timelineEventId}/memo`는 호환용으로
+유지하되 OpenAPI에서 deprecated다. 기존 operation을 확장한 것이므로 보호 operation 수는 11개로 유지된다.
+
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
