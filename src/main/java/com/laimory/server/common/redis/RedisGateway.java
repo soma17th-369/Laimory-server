@@ -38,6 +38,25 @@ public class RedisGateway {
             return 0
             """, Long.class);
 
+    // task JSON과 PROCESSING 관측 인덱스를 한 원자 경계에서 갱신한다. 둘을 별도 명령으로 쓰면
+    // 앱/Redis 장애 사이에 task와 인덱스가 어긋나 stuck gauge가 거짓말할 수 있다.
+    private static final RedisScript<Long> SET_AND_SORTED_SET_ADD = new DefaultRedisScript<>("""
+            redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
+            return redis.call('zadd', KEYS[2], ARGV[3], ARGV[4])
+            """, Long.class);
+
+    private static final RedisScript<Long> SET_AND_SORTED_SET_REMOVE = new DefaultRedisScript<>("""
+            redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
+            return redis.call('zrem', KEYS[2], ARGV[3])
+            """, Long.class);
+
+    // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
+    // member 수를 한 번의 Redis 왕복으로 센다.
+    private static final RedisScript<Long> PRUNE_AND_COUNT_SORTED_SET = new DefaultRedisScript<>("""
+            redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
+            return redis.call('zcount', KEYS[1], '(' .. ARGV[1], ARGV[2])
+            """, Long.class);
+
     private final StringRedisTemplate template;
     private final String prefix;
 
@@ -91,6 +110,40 @@ public class RedisGateway {
     public boolean deleteIfValueMatches(String logicalKey, String expectedValue) {
         Long result = template.execute(DELETE_IF_VALUE_MATCHES, List.of(prefix + logicalKey), expectedValue);
         return requireScriptResult(result, logicalKey) == 1L;
+    }
+
+    /**
+     * TTL 값 저장과 sorted-set member 추가를 원자적으로 수행한다.
+     *
+     * <p>두 키 모두 prefix 없는 논리 키이며, score는 epoch milliseconds처럼 호출부가 정한 단위를 쓴다.
+     */
+    public void setAndAddToSortedSet(String logicalValueKey, String value, Duration ttl,
+                                     String logicalSortedSetKey, String member, long score) {
+        Long result = template.execute(SET_AND_SORTED_SET_ADD,
+                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey),
+                String.valueOf(ttl.toMillis()), value, String.valueOf(score), member);
+        requireScriptResult(result, logicalValueKey);
+    }
+
+    /** TTL 값 저장과 sorted-set member 제거를 원자적으로 수행한다. */
+    public void setAndRemoveFromSortedSet(String logicalValueKey, String value, Duration ttl,
+                                          String logicalSortedSetKey, String member) {
+        Long result = template.execute(SET_AND_SORTED_SET_REMOVE,
+                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey),
+                String.valueOf(ttl.toMillis()), value, member);
+        requireScriptResult(result, logicalValueKey);
+    }
+
+    /**
+     * {@code score <= expiredScore} member를 제거하고
+     * {@code expiredScore < score <= inclusiveUpperScore} member 수를 반환한다.
+     */
+    public long pruneAndCountSortedSet(String logicalSortedSetKey, long expiredScore,
+                                       long inclusiveUpperScore) {
+        Long result = template.execute(PRUNE_AND_COUNT_SORTED_SET,
+                List.of(prefix + logicalSortedSetKey),
+                String.valueOf(expiredScore), String.valueOf(inclusiveUpperScore));
+        return requireScriptResult(result, logicalSortedSetKey);
     }
 
     private static long requireScriptResult(Long result, String logicalKey) {

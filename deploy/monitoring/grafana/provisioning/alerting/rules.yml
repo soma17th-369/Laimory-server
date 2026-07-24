@@ -8,6 +8,8 @@ groups:
     rules:
       - uid: laimory_target_down
         title: Prometheus target down
+        dashboardUid: laimory-overview
+        panelId: 16
         condition: C
         data:
           - refId: A
@@ -70,6 +72,8 @@ groups:
 
       - uid: laimory_datastore_backend_down
         title: MySQL or Redis backend down
+        dashboardUid: laimory-overview
+        panelId: 16
         condition: C
         data:
           - refId: A
@@ -132,6 +136,8 @@ groups:
 
       - uid: laimory_https_probe_failed
         title: Dev HTTPS probe failed
+        dashboardUid: laimory-overview
+        panelId: 2
         condition: C
         data:
           - refId: A
@@ -200,6 +206,8 @@ groups:
     rules:
       - uid: laimory_http_5xx_high
         title: HTTP 5xx ratio high
+        dashboardUid: laimory-overview
+        panelId: 5
         condition: C
         data:
           - refId: A
@@ -263,6 +271,8 @@ groups:
 
       - uid: laimory_http_p95_high
         title: HTTP p95 latency high
+        dashboardUid: laimory-overview
+        panelId: 6
         condition: C
         data:
           - refId: A
@@ -326,6 +336,8 @@ groups:
 
       - uid: laimory_jvm_heap_high
         title: JVM heap pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 4
         condition: C
         data:
           - refId: A
@@ -389,6 +401,8 @@ groups:
 
       - uid: laimory_hikari_saturated
         title: Hikari connection pool pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 12
         condition: C
         data:
           - refId: A
@@ -457,6 +471,8 @@ groups:
     rules:
       - uid: laimory_host_memory_low
         title: Host memory low
+        dashboardUid: laimory-infrastructure
+        panelId: 3
         condition: C
         data:
           - refId: A
@@ -520,6 +536,8 @@ groups:
 
       - uid: laimory_filesystem_low
         title: Filesystem space low
+        dashboardUid: laimory-infrastructure
+        panelId: 4
         condition: C
         data:
           - refId: A
@@ -583,6 +601,8 @@ groups:
 
       - uid: laimory_mysql_connections_high
         title: MySQL connection pressure
+        dashboardUid: laimory-infrastructure
+        panelId: 7
         condition: C
         data:
           - refId: A
@@ -647,6 +667,8 @@ groups:
 
       - uid: laimory_redis_evictions
         title: Redis evictions detected
+        dashboardUid: laimory-infrastructure
+        panelId: 13
         condition: C
         data:
           - refId: A
@@ -716,6 +738,8 @@ groups:
     rules:
       - uid: laimory_prometheus_reload_failed
         title: Prometheus config reload failed
+        dashboardUid: laimory-infrastructure
+        panelId: 17
         condition: C
         data:
           - refId: A
@@ -780,6 +804,8 @@ groups:
 
       - uid: laimory_prometheus_internal_failures
         title: Prometheus rule or TSDB failure
+        dashboardUid: laimory-infrastructure
+        panelId: 18
         condition: C
         data:
           - refId: A

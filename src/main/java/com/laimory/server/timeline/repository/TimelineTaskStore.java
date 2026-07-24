@@ -3,8 +3,10 @@ package com.laimory.server.timeline.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Component;
 public class TimelineTaskStore {
 
     private static final String KEY_PREFIX = "timeline:draft-task:";
+    static final String PROCESSING_INDEX_KEY = "timeline:draft-task:processing-index";
     private static final String DATE_GUARD_KEY_PREFIX = "timeline:date-guard:";
 
     private final RedisGateway redis;
@@ -29,7 +32,16 @@ public class TimelineTaskStore {
     public void save(String taskId, TimelineDraftTask task, Duration ttl) {
         try {
             String json = objectMapper.writeValueAsString(task);
-            redis.set(KEY_PREFIX + taskId, json, ttl);
+            if (task.status() == TaskStatus.PROCESSING) {
+                if (task.processingStartedAt() == null) {
+                    throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
+                }
+                redis.setAndAddToSortedSet(KEY_PREFIX + taskId, json, ttl,
+                        PROCESSING_INDEX_KEY, taskId, task.processingStartedAt().toEpochMilli());
+            } else {
+                redis.setAndRemoveFromSortedSet(KEY_PREFIX + taskId, json, ttl,
+                        PROCESSING_INDEX_KEY, taskId);
+            }
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
         }
@@ -45,6 +57,17 @@ public class TimelineTaskStore {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 역직렬화에 실패했습니다: " + taskId, e);
         }
+    }
+
+    /**
+     * task TTL 밖의 고아 PROCESSING index를 정리하고, 아직 유효하지만 threshold를 넘긴 작업 수를 센다.
+     * task JSON이 권위 원천이며 이 index는 운영 관측만 위한 보조 자료다.
+     */
+    public long countStuckProcessing(Instant now, Duration stuckAfter, Duration processingTtl) {
+        long nowMillis = now.toEpochMilli();
+        return redis.pruneAndCountSortedSet(PROCESSING_INDEX_KEY,
+                nowMillis - processingTtl.toMillis(),
+                nowMillis - stuckAfter.toMillis());
     }
 
     /** 날짜 guard를 holder 명의로 선점한다(SET NX). 선점했으면 true, 이미 다른 작업이 잡고 있으면 false. */

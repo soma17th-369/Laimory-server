@@ -38,6 +38,8 @@ install -m 0755 \
   "$WORK_DIR/node_exporter-${VERSION_WITHOUT_V}.linux-amd64/node_exporter" \
   /usr/local/bin/node_exporter
 install -d -m 0755 /etc/node_exporter
+install -d -m 0750 -o root -g node_exporter \
+  /var/lib/node_exporter/textfile_collector
 printf 'NODE_EXPORTER_LISTEN_ADDRESS=%s:9100\n' "$PRIVATE_IP" \
   > /etc/node_exporter/environment
 chown root:node_exporter /etc/node_exporter/environment
@@ -53,7 +55,7 @@ Wants=network-online.target
 User=node_exporter
 Group=node_exporter
 EnvironmentFile=/etc/node_exporter/environment
-ExecStart=/usr/local/bin/node_exporter --web.listen-address=${NODE_EXPORTER_LISTEN_ADDRESS}
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=${NODE_EXPORTER_LISTEN_ADDRESS} --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
@@ -70,5 +72,6 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now node_exporter
+systemctl enable node_exporter
+systemctl restart node_exporter
 systemctl is-active --quiet node_exporter

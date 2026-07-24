@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TimelineTaskService {
 
-    private static final Duration PROCESSING_TTL = Duration.ofHours(1);
+    static final Duration PROCESSING_TTL = Duration.ofHours(1);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
     // guard가 고아로 남아도(서버 크래시 등) PROCESSING task와 같은 주기로 자연 해제되게 정렬한다.
     private static final Duration DATE_GUARD_TTL = Duration.ofHours(1);
@@ -91,6 +91,15 @@ public class TimelineTaskService {
 
     public Optional<TimelineDraftTask> find(String taskId) {
         return timelineTaskStore.find(taskId);
+    }
+
+    long countStuckProcessing(Instant now, Duration stuckAfter) {
+        if (stuckAfter.isZero() || stuckAfter.isNegative()
+                || stuckAfter.compareTo(PROCESSING_TTL) >= 0) {
+            throw new IllegalArgumentException(
+                    "stuck threshold는 0보다 크고 PROCESSING TTL보다 짧아야 합니다: " + stuckAfter);
+        }
+        return timelineTaskStore.countStuckProcessing(now, stuckAfter, PROCESSING_TTL);
     }
 
     /** 날짜 guard를 holder 명의로 선점한다. false = 같은 날짜에 진행 중인 작업이 있음(ERROR_1016 거절 대상). */

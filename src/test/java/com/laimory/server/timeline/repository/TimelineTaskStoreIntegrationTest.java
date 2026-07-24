@@ -60,6 +60,8 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(found).isPresent();
             assertThat(found.get().processingStartedAt()).isEqualTo(startedAt);
         } finally {
+            timelineTaskStore.save(taskId,
+                    TimelineDraftTask.success(7L, 42L, "token-hash"), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + taskId);
         }
     }
@@ -104,10 +106,50 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(timelineTaskStore.find(fId).orElseThrow().userId()).isEqualTo(7L);
             assertThat(timelineTaskStore.find(legacyId).orElseThrow().userId()).isNull();
         } finally {
+            timelineTaskStore.save(pId,
+                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + pId);
             redisGateway.delete("timeline:draft-task:" + sId);
             redisGateway.delete("timeline:draft-task:" + fId);
             redisGateway.delete("timeline:draft-task:" + legacyId);
+        }
+    }
+
+    @Test
+    void processingIndex_countsStuck_removesTerminal_andPrunesExpired() {
+        Instant now = Instant.now();
+        String stuckId = "it-stuck-" + UUID.randomUUID();
+        String expiredId = "it-expired-" + UUID.randomUUID();
+        try {
+            long baseline = timelineTaskStore.countStuckProcessing(
+                    now, Duration.ofMinutes(10), Duration.ofHours(1));
+            timelineTaskStore.save(stuckId,
+                    TimelineDraftTask.processing(7L, 42L, null, "h",
+                            now.minus(Duration.ofMinutes(11))),
+                    Duration.ofHours(1));
+
+            assertThat(timelineTaskStore.countStuckProcessing(
+                    now, Duration.ofMinutes(10), Duration.ofHours(1))).isEqualTo(baseline + 1L);
+
+            timelineTaskStore.save(stuckId,
+                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
+            assertThat(timelineTaskStore.countStuckProcessing(
+                    now, Duration.ofMinutes(10), Duration.ofHours(1))).isEqualTo(baseline);
+
+            // task key를 일부러 살아 있게 저장해도 startedAt이 TTL 창 밖이면 index 관측에서 제거된다.
+            timelineTaskStore.save(expiredId,
+                    TimelineDraftTask.processing(7L, 42L, null, "h",
+                            now.minus(Duration.ofMinutes(61))),
+                    Duration.ofHours(1));
+            assertThat(timelineTaskStore.countStuckProcessing(
+                    now, Duration.ofMinutes(10), Duration.ofHours(1))).isEqualTo(baseline);
+        } finally {
+            timelineTaskStore.save(stuckId,
+                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+            timelineTaskStore.save(expiredId,
+                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+            redisGateway.delete("timeline:draft-task:" + stuckId);
+            redisGateway.delete("timeline:draft-task:" + expiredId);
         }
     }
 

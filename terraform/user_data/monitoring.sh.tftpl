@@ -71,13 +71,20 @@ download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-logs.json 
 download_bootstrap_asset grafana/provisioning/alerting/contact-points.yml /opt/laimory-monitoring/grafana/provisioning/alerting/contact-points.yml
 download_bootstrap_asset grafana/provisioning/alerting/notification-policy.yml /opt/laimory-monitoring/grafana/provisioning/alerting/notification-policy.yml
 download_bootstrap_asset grafana/provisioning/alerting/rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/operational-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
 download_bootstrap_asset grafana/provisioning/alerting/templates.yml /opt/laimory-monitoring/grafana/provisioning/alerting/templates.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.firing.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.firing.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.resolved.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.resolved.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.delete.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.delete.yml
 download_bootstrap_asset scripts/install-secret.sh /opt/laimory-monitoring/scripts/install-secret.sh
 download_bootstrap_asset scripts/validate-secrets.sh /opt/laimory-monitoring/scripts/validate-secrets.sh
+download_bootstrap_asset scripts/collect-aws-metrics.sh /opt/laimory-monitoring/scripts/collect-aws-metrics.sh
+download_bootstrap_asset scripts/collect-elasticsearch-metrics.sh /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 download_bootstrap_asset systemd/laimory-monitoring.service /etc/systemd/system/laimory-monitoring.service
+download_bootstrap_asset systemd/laimory-aws-metrics.service /etc/systemd/system/laimory-aws-metrics.service
+download_bootstrap_asset systemd/laimory-aws-metrics.timer /etc/systemd/system/laimory-aws-metrics.timer
+download_bootstrap_asset systemd/laimory-elasticsearch-metrics.service /etc/systemd/system/laimory-elasticsearch-metrics.service
+download_bootstrap_asset systemd/laimory-elasticsearch-metrics.timer /etc/systemd/system/laimory-elasticsearch-metrics.timer
 
 cat > /opt/laimory-monitoring/.env <<'ENVEOF'
 MONITORING_PRIVATE_IP=${monitoring_private_ip}
@@ -102,7 +109,9 @@ chmod 0750 \
   /opt/laimory-monitoring/node-exporter/install.sh \
   /opt/laimory-monitoring/node-exporter/uninstall.sh \
   /opt/laimory-monitoring/scripts/install-secret.sh \
-  /opt/laimory-monitoring/scripts/validate-secrets.sh
+  /opt/laimory-monitoring/scripts/validate-secrets.sh \
+  /opt/laimory-monitoring/scripts/collect-aws-metrics.sh \
+  /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 
 # Host에서는 parent 0700으로 일반 사용자를 차단하고 container UID별 파일 read만 허용한다.
 # 값은 SSM으로 수동 주입한다. 빈 placeholder는 Git/S3/Terraform/user_data에 secret을 남기지 않는다.
@@ -119,6 +128,7 @@ systemctl enable laimory-monitoring.service
 
 # Host 자체도 private interface에서만 node metrics를 노출한다.
 /opt/laimory-monitoring/node-exporter/install.sh ${node_exporter_version} ${node_exporter_linux_amd64_sha256}
+systemctl enable --now laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
 
 # 비밀이 필요 없는 수집 core만 먼저 올린다. Grafana/exporter는 여섯 secret 주입 후 systemctl로 합류한다.
 cd /opt/laimory-monitoring

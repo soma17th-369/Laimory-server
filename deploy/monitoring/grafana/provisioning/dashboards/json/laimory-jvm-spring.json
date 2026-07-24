@@ -12,6 +12,21 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "(changes(process_start_time_seconds{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[2m]) > 0) * on(job, instance, application, environment) group_left(commit) laimory_build_info{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}",
+        "hide": false,
+        "iconColor": "orange",
+        "name": "Application restart / deploy",
+        "step": "2m",
+        "tagKeys": "commit,environment",
+        "textFormat": "{{application}} · {{instance}} started",
+        "titleFormat": "Deploy / restart {{commit}}"
       }
     ]
   },
@@ -19,7 +34,68 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Overview",
+      "tooltip": "Overview 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-overview/laimory-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "JVM & Spring",
+      "tooltip": "JVM & Spring 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-jvm-spring/laimory-jvm-spring"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Infrastructure",
+      "tooltip": "Infrastructure 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-infrastructure/laimory-infrastructure"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Logs",
+      "tooltip": "Logs 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-logs/laimory-logs"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Runbook",
+      "tooltip": "장애 대응 절차를 엽니다.",
+      "type": "link",
+      "url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#alert-runbook"
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -71,7 +147,8 @@
         }
       ],
       "title": "Process Uptime",
-      "type": "stat"
+      "type": "stat",
+      "description": "현재 Spring Boot 프로세스가 시작된 뒤 경과한 시간입니다."
     },
     {
       "datasource": {
@@ -136,7 +213,8 @@
         }
       ],
       "title": "CPU Usage",
-      "type": "stat"
+      "type": "stat",
+      "description": "애플리케이션 프로세스와 호스트 전체의 CPU 사용 비율입니다."
     },
     {
       "datasource": {
@@ -189,7 +267,8 @@
         }
       ],
       "title": "File Descriptor Usage",
-      "type": "stat"
+      "type": "stat",
+      "description": "프로세스에 허용된 file descriptor 중 현재 열린 비율입니다."
     },
     {
       "datasource": {
@@ -240,7 +319,8 @@
         }
       ],
       "title": "JVM Memory Pools",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "JVM memory pool(area/id)별 현재 사용량입니다."
     },
     {
       "datasource": {
@@ -285,13 +365,14 @@
           "editorMode": "code",
           "expr": "sum by (action, cause) (rate(jvm_gc_pause_seconds_sum{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) / clamp_min(sum by (action, cause) (rate(jvm_gc_pause_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])), 1e-9)",
           "instant": false,
-          "legendFormat": "p95 {{action}} / {{cause}}",
+          "legendFormat": "mean {{action}} / {{cause}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Mean GC Pause",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "GC action/cause별 pause 총시간을 횟수로 나눈 구간 평균입니다."
     },
     {
       "datasource": {
@@ -341,7 +422,8 @@
         }
       ],
       "title": "GC Pause Rate",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "GC action/cause별 pause 발생률입니다."
     },
     {
       "datasource": {
@@ -404,7 +486,8 @@
         }
       ],
       "title": "Allocation & Promotion",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "JVM의 메모리 할당 및 old generation 승격 처리량입니다."
     },
     {
       "datasource": {
@@ -479,7 +562,8 @@
         }
       ],
       "title": "JVM Threads",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "JVM live, daemon, peak thread 수입니다."
     },
     {
       "datasource": {
@@ -530,7 +614,8 @@
         }
       ],
       "title": "HTTP Server p95 by URI",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "URI template별 HTTP server 응답시간 p95입니다."
     },
     {
       "datasource": {
@@ -545,7 +630,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 29
       },
@@ -572,15 +657,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (method, uri) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval]))",
+          "expr": "sum by (client_name, method, uri) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{method}} {{uri}}",
+          "legendFormat": "{{client_name}} · {{method}} {{uri}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "HTTP Client Request Rate",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "저카디널리티 client name, method, URI template별 외부 HTTP 요청률입니다."
     },
     {
       "datasource": {
@@ -595,8 +681,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 29
       },
       "id": 11,
@@ -623,15 +709,28 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (method, uri) (rate(http_client_requests_seconds_sum{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) / clamp_min(sum by (method, uri) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])), 0.001)",
+          "expr": "sum by (client_name, method, uri) (rate(http_client_requests_seconds_sum{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) / clamp_min(sum by (client_name, method, uri) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])), 0.001)",
           "instant": false,
-          "legendFormat": "{{method}} {{uri}}",
+          "legendFormat": "avg {{client_name}} · {{method}} {{uri}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, client_name, method, uri) (rate(http_client_requests_seconds_bucket{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])))",
+          "instant": false,
+          "legendFormat": "p95 {{client_name}} · {{method}} {{uri}}",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "HTTP Client Average Duration",
-      "type": "timeseries"
+      "title": "HTTP Client Latency",
+      "type": "timeseries",
+      "description": "외부 HTTP 호출의 구간 평균과 고정 SLO bucket 기반 p95입니다."
     },
     {
       "datasource": {
@@ -718,7 +817,8 @@
         }
       ],
       "title": "Hikari Pool",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "HikariCP active, idle, pending, max connection 수입니다."
     },
     {
       "datasource": {
@@ -794,6 +894,61 @@
         }
       ],
       "title": "Hikari Acquire & Timeouts",
+      "type": "timeseries",
+      "description": "HikariCP connection 획득 평균시간과 timeout 발생률입니다."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "외부 HTTP 호출 중 CLIENT_ERROR, SERVER_ERROR, UNKNOWN outcome 비율입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (client_name) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\", outcome=~\"CLIENT_ERROR|SERVER_ERROR|UNKNOWN\"}[$__rate_interval])) / clamp_min(sum by (client_name) (rate(http_client_requests_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])), 1e-9)",
+          "instant": false,
+          "legendFormat": "{{client_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP Client Error Ratio",
       "type": "timeseries"
     }
   ],
@@ -871,5 +1026,6 @@
   "title": "Laimory / JVM & Spring",
   "uid": "laimory-jvm-spring",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "Spring Boot 프로세스, JVM, HTTP client/server와 HikariCP의 상세 런타임 상태를 확인합니다."
 }

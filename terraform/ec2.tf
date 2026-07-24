@@ -75,6 +75,7 @@ resource "aws_instance" "was" {
   }
 
   depends_on = [
+    aws_s3_object.elk_filebeat,
     aws_s3_object.monitoring_assets,
   ]
 }
@@ -335,6 +336,7 @@ resource "aws_instance" "monitoring" {
     aws_nat_gateway.main,
     aws_route_table_association.private,
     aws_iam_role_policy.monitoring_bootstrap_read,
+    aws_iam_role_policy.monitoring_cloudwatch_read,
     aws_s3_object.monitoring_assets,
     aws_s3_object.monitoring_application_targets,
     aws_s3_object.monitoring_node_targets,

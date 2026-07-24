@@ -343,6 +343,7 @@ grafana/provisioning/dashboards/json/laimory-logs.json
 grafana/provisioning/alerting/contact-points.yml
 grafana/provisioning/alerting/notification-policy.yml
 grafana/provisioning/alerting/rules.yml
+grafana/provisioning/alerting/operational-rules.yml
 grafana/provisioning/alerting/templates.yml
 grafana/smoke/smoke-rule.firing.yml
 grafana/smoke/smoke-rule.resolved.yml
@@ -351,8 +352,17 @@ scripts/install-secret.sh
 scripts/validate-secrets.sh
 scripts/configure-mysql-exporter-user.sh
 scripts/configure-redis-exporter-user.sh
+scripts/collect-aws-metrics.sh
+scripts/collect-elasticsearch-metrics.sh
+scripts/collect-filebeat-metrics.sh
 nginx/manage-grafana-proxy.sh
 systemd/laimory-monitoring.service
+systemd/laimory-aws-metrics.service
+systemd/laimory-aws-metrics.timer
+systemd/laimory-elasticsearch-metrics.service
+systemd/laimory-elasticsearch-metrics.timer
+systemd/laimory-filebeat-metrics.service
+systemd/laimory-filebeat-metrics.timer
 ASSETS
 
 aws s3 cp "$BOOTSTRAP_TMP/application.yml" "s3://$BACKUP_BUCKET/bootstrap/monitoring/prometheus/targets/application.yml" --profile sandbox
@@ -367,8 +377,9 @@ aws s3 cp "$BOOTSTRAP_TMP/probe.yml" "s3://$BACKUP_BUCKET/bootstrap/monitoring/p
 
 Terraform의 다음 리소스를 그대로 보고 Console에서 만든다.
 
-1. `aws_iam_role.monitoring`/profile: SSM Core와 해당 bucket의
-   `bootstrap/monitoring/*` `s3:GetObject`만 허용한다.
+1. `aws_iam_role.monitoring`/profile: SSM Core, 해당 bucket의
+   `bootstrap/monitoring/*` `s3:GetObject`, `cloudwatch:GetMetricData`,
+   `ec2:DescribeInstances` read만 허용한다.
 2. `monitoring`, `monitoring_proxy_source`, `monitoring_scrape_target`,
    `monitoring_dev_mysql` SG를 만든다.
 3. identity SG는 dev에만 붙인다:
@@ -405,7 +416,8 @@ envsubst '${region} ${backup_bucket} ${monitoring_private_ip} ${prometheus_versi
   < terraform/user_data/monitoring.sh.tftpl > "$BOOTSTRAP_TMP/monitoring-user-data.sh"
 ```
 
-부팅 후 monitoring host의 node_exporter와 secret 없는 Prometheus/blackbox만 자동 기동된다.
+부팅 후 monitoring host의 node_exporter, CloudWatch textfile timer와 secret 없는
+Prometheus/blackbox가 자동 기동된다. Elasticsearch timer는 API key가 non-empty가 될 때부터 수집한다.
 나머지 target은 아래 SSM 절차가 끝나기 전까지 DOWN이 정상이다.
 
 ### 3. SSM으로 exporter identity와 여섯 secret 구성
@@ -430,6 +442,8 @@ aws ssm start-session --profile sandbox --target <monitoring-instance-id>
 6. 사용자가 지정한 Discord channel webhook URL을 host secret 파일로 넣는다.
 7. `validate-secrets.sh`, `systemctl start laimory-monitoring`, `docker compose ps` 순서로 확인한다.
 8. synthetic smoke rule로 Discord firing/resolved를 모두 확인한 뒤 `deleteRules`로 제거한다.
+9. dev WAS Filebeat의 loopback stats와 textfile timer, monitoring의 AWS/Elasticsearch timer를
+   `deploy/monitoring/README.md` 절차로 확인한다.
 
 secret이 하나라도 없거나 UID/mode가 다르면 systemd는 fail-closed한다. Grafana admin password는 최초
 DB 생성 때 각인되고, stable `grafana_secret_key`는 datasource/contact credential 복호화에 계속 필요하다.
@@ -478,11 +492,12 @@ sudo /usr/local/sbin/laimory-grafana-proxy enable 10.0.32.14 \
 
 - Prometheus의 `spring_boot`, `node`, `mysqld`, `redis`, `blackbox_https`, `grafana`, `prometheus`
   target이 모두 UP이고 scrape duration이 interval의 50% 미만인지 확인한다.
-- `mysql_up=1`, `redis_up=1`, JVM/HTTP/Hikari와 #186 custom metric이 실제 dev 요청 후 생기는지 확인한다.
+- `mysql_up=1`, `redis_up=1`, JVM/HTTP/Hikari와 app custom metric이 실제 dev 요청 후 생기는지 확인한다.
+- `laimory_aws_cloudwatch_up`, `laimory_filebeat_up`, `laimory_elasticsearch_up`이 모두 1인지 확인한다.
 - dashboard 4개가 query error 없이 로드되고 Logs가 `laimory-dev-*`만 읽는지 확인한다.
 - Discord synthetic rule의 firing/resolved와 허용 필드만 포함된 메시지를 확인하고 test rule을 삭제한다.
-- 24시간 동안 RSS/OOM/restart, active series, disk 증가율, query latency를 dashboard에서 확인한다.
-  `CPUCreditBalance`와 `CPUSurplusCreditsCharged`는 IAM/exporter를 늘리지 않고 CloudWatch에서 확인한다.
+- 24시간 동안 RSS/OOM/restart, active series, disk 증가율, query latency, CPU credit과 root EBS
+  queue/latency를 dashboard에서 확인한다.
 - live 수동 보정이 필요했다면 먼저 이 recipe/runbook에 동기화한다.
 
 ### 6. 중지와 rollback

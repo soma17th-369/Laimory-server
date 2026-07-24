@@ -10,9 +10,11 @@ Terraform은 recipe이며 살아 있는 dev에 blanket/target `terraform apply`�
 - Grafana: Prometheus metrics와 read-only Elasticsearch dev log datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK의 private IP:9100
+- textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
-- alert: target/probe, HTTP 오류·지연, JVM/Hikari, host disk/memory, MySQL/Redis, Prometheus self-health
+- alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
+  MySQL/Redis, AWS credit 수집, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
 Grafana 3000만 loopback과 monitoring private IP에 publish한다. Prometheus 9090, blackbox 9115,
@@ -23,7 +25,8 @@ health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
 refresh는 30초다. 24시간 관찰에서 host memory 75% 초과가 15분 이상 반복되거나 OOM/restart가
 생기면 collector와 label을 먼저 줄인다. active series 10,000 초과, root disk 70% 초과, scrape
 duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 뒤에도 해소되지 않을 때 t3.large를
-별도 변경으로 검토한다. EC2 CPU credit은 이 stack이 아니라 CloudWatch에서 확인한다.
+별도 변경으로 검토한다. monitoring EC2의 CPU credit과 root EBS 지표는 5분마다 CloudWatch에서 읽어
+Infrastructure dashboard에 표시한다.
 
 ## Secret gate
 
@@ -70,7 +73,9 @@ reset 절차를 사용한다. `grafana_secret_key`는 재부팅과 재배포에�
 ### node_exporter
 
 `v1.12.1` linux-amd64 archive의 고정 SHA256을 검증하고 별도 system user로 실행한다. IMDSv2에서
-private IPv4를 얻어 그 주소의 9100에만 bind하며 textfile collector는 켜지 않는다.
+private IPv4를 얻어 그 주소의 9100에만 bind한다. textfile collector directory는
+`/var/lib/node_exporter/textfile_collector` 하나로 고정하고 root oneshot collector가 atomic rename한
+비밀 없는 `.prom` 파일만 읽는다.
 
 살아 있는 monitoring, dev WAS, dev MySQL, Redis, ELK 각 host의 SSM 세션에서 같은 명령을 실행한다.
 prod host에는 설치하지 않는다. 기존 Redis host처럼 AWS CLI가 아직 없으면 먼저 아래처럼 설치한다.
@@ -202,11 +207,8 @@ curl -fsS -u elastic \
 `view_index_metadata`만 true, `write`와 `delete`는 false여야 한다.
 
 ```bash
-{
-  printf 'header = "Authorization: ApiKey '
-  sudo cat /opt/laimory-monitoring/secrets/elasticsearch_api_key
-  printf '"\n'
-} |
+API_KEY=$(sudo cat /opt/laimory-monitoring/secrets/elasticsearch_api_key | tr -d '\r\n')
+printf 'header = "Authorization: ApiKey %s"\n' "$API_KEY" |
   curl -fsS --config - \
     -X POST http://10.0.32.13:9200/_security/user/_has_privileges \
     -H 'Content-Type: application/json' \
@@ -217,7 +219,147 @@ curl -fsS -u elastic \
       }]
     }' |
   jq .
+unset API_KEY
 ```
+
+## Existing live rollout
+
+이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. Terraform apply는 하지 않는다.
+먼저 운영자 로컬에서 비밀 없는 변경 자산을 exact S3 key로 올린다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+while IFS= read -r asset; do
+  aws s3 cp "deploy/monitoring/$asset" \
+    "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
+    --profile sandbox --region ap-northeast-2 --only-show-errors
+done <<'ASSETS'
+node-exporter/install.sh
+grafana/provisioning/dashboards/json/laimory-overview.json
+grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+grafana/provisioning/dashboards/json/laimory-infrastructure.json
+grafana/provisioning/dashboards/json/laimory-logs.json
+grafana/provisioning/alerting/rules.yml
+grafana/provisioning/alerting/operational-rules.yml
+scripts/collect-aws-metrics.sh
+scripts/collect-elasticsearch-metrics.sh
+scripts/collect-filebeat-metrics.sh
+systemd/laimory-aws-metrics.service
+systemd/laimory-aws-metrics.timer
+systemd/laimory-elasticsearch-metrics.service
+systemd/laimory-elasticsearch-metrics.timer
+systemd/laimory-filebeat-metrics.service
+systemd/laimory-filebeat-metrics.timer
+ASSETS
+aws s3 cp deploy/elk/filebeat.yml \
+  "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
+  --profile sandbox --region ap-northeast-2 --only-show-errors
+```
+
+monitoring role에는 아래 read-only inline policy를 Console 또는 동등한 검토된 CLI 변경으로 추가한다.
+resource write 권한과 CloudWatch wildcard action은 추가하지 않는다.
+
+```bash
+aws iam put-role-policy --profile sandbox \
+  --role-name laimory-monitoring-role \
+  --policy-name laimory-monitoring-cloudwatch-read \
+  --policy-document '{
+    "Version":"2012-10-17",
+    "Statement":[
+      {"Effect":"Allow","Action":"cloudwatch:GetMetricData","Resource":"*"},
+      {"Effect":"Allow","Action":"ec2:DescribeInstances","Resource":"*"}
+    ]
+  }'
+```
+
+monitoring host의 SSM 세션에서 정확한 파일만 교체하고 timer를 켠다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+while IFS='|' read -r source destination; do
+  sudo aws s3 cp "$BASE/$source" "$destination" \
+    --region ap-northeast-2 --only-show-errors
+done <<'ASSETS'
+node-exporter/install.sh|/opt/laimory-monitoring/node-exporter/install.sh
+grafana/provisioning/dashboards/json/laimory-overview.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-overview.json
+grafana/provisioning/dashboards/json/laimory-jvm-spring.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+grafana/provisioning/dashboards/json/laimory-infrastructure.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json
+grafana/provisioning/dashboards/json/laimory-logs.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
+grafana/provisioning/alerting/rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
+grafana/provisioning/alerting/operational-rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
+scripts/collect-aws-metrics.sh|/opt/laimory-monitoring/scripts/collect-aws-metrics.sh
+scripts/collect-elasticsearch-metrics.sh|/opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
+systemd/laimory-aws-metrics.service|/etc/systemd/system/laimory-aws-metrics.service
+systemd/laimory-aws-metrics.timer|/etc/systemd/system/laimory-aws-metrics.timer
+systemd/laimory-elasticsearch-metrics.service|/etc/systemd/system/laimory-elasticsearch-metrics.service
+systemd/laimory-elasticsearch-metrics.timer|/etc/systemd/system/laimory-elasticsearch-metrics.timer
+ASSETS
+sudo chmod 0750 /opt/laimory-monitoring/node-exporter/install.sh \
+  /opt/laimory-monitoring/scripts/collect-aws-metrics.sh \
+  /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
+sudo /opt/laimory-monitoring/node-exporter/install.sh \
+  v1.12.1 b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+sudo systemctl daemon-reload
+sudo systemctl enable --now \
+  laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
+sudo systemctl start \
+  laimory-aws-metrics.service laimory-elasticsearch-metrics.service
+```
+
+dev WAS의 SSM 세션에서는 기존 Filebeat credential을 다시 표시하거나 재입력하지 않는다. bind mount
+원본만 교체한 뒤 기존 container를 restart한다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+sudo apt-get update -y
+sudo apt-get install -y jq
+sudo aws s3 cp \
+  "s3://$BACKUP_BUCKET/bootstrap/monitoring/node-exporter/install.sh" \
+  /usr/local/sbin/install-laimory-node-exporter \
+  --region ap-northeast-2 --only-show-errors
+sudo chmod 0750 /usr/local/sbin/install-laimory-node-exporter
+sudo /usr/local/sbin/install-laimory-node-exporter \
+  v1.12.1 b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
+  /tmp/laimory-filebeat.yml --region ap-northeast-2 --only-show-errors
+# 실행 중 container의 file bind mount가 같은 inode의 새 내용을 보도록 destination을 in-place overwrite한다.
+sudo cp /tmp/laimory-filebeat.yml /home/ubuntu/filebeat.yml
+sudo rm -f /tmp/laimory-filebeat.yml
+sudo chown ubuntu:ubuntu /home/ubuntu/filebeat.yml
+sudo chmod 0644 /home/ubuntu/filebeat.yml
+sudo docker restart filebeat
+
+sudo aws s3 cp \
+  "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/collect-filebeat-metrics.sh" \
+  /usr/local/sbin/collect-laimory-filebeat-metrics \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp \
+  "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-filebeat-metrics.service" \
+  /etc/systemd/system/laimory-filebeat-metrics.service \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp \
+  "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-filebeat-metrics.timer" \
+  /etc/systemd/system/laimory-filebeat-metrics.timer \
+  --region ap-northeast-2 --only-show-errors
+sudo chmod 0750 /usr/local/sbin/collect-laimory-filebeat-metrics
+sudo chmod 0644 /etc/systemd/system/laimory-filebeat-metrics.*
+sudo systemctl daemon-reload
+sudo systemctl enable --now laimory-filebeat-metrics.timer
+sudo systemctl start laimory-filebeat-metrics.service
+```
+
+세 collector의 `up`/freshness metric이 정상인 것을 확인한 뒤에만 monitoring host에서 Grafana를
+재시작해 새 dashboard와 alert를 provisioning한다. 이 순서는 배포 도중 collector 부재 alert가
+Discord로 잘못 발송되는 것을 피한다.
+
+```bash
+cd /opt/laimory-monitoring
+sudo docker compose restart grafana
+```
+
+마지막으로 두 host에서 아래 `Extended metric collectors` 검증과 dashboard/alert/Discord 확인을 수행한다.
 
 ## Start, status, reload
 
@@ -241,6 +383,39 @@ sudo systemctl reload laimory-monitoring
 
 운영 host에서 interpolation된 credential이 출력될 수 있는 `docker compose config`는 쓰지 않고
 `config --quiet`만 사용한다. 별도 데이터 삭제 승인이 없으면 `docker compose down -v`를 실행하지 않는다.
+
+## Extended metric collectors
+
+monitoring host의 `laimory-aws-metrics.timer`는 5분마다 IMDSv2로 자기 instance/root volume을 확인하고
+`cloudwatch:GetMetricData`와 `ec2:DescribeInstances` 최소권한으로 CPU credit, surplus charge, root EBS
+queue/busy/read-write latency를 수집한다. 여덟 query가 모두 `Complete`일 때만 collector를 up으로
+기록하고 partial/error 응답은 실패로 노출한다. `laimory-elasticsearch-metrics.timer`는 1분마다 기존
+read-only API key로 cluster health와 가장 최근 dev log 시각을 읽는다. API key가 아직 비어 있으면
+service의 `ExecCondition`이 수집을 건너뛴다.
+
+dev WAS의 Filebeat HTTP stats는 `127.0.0.1:5066`에만 열고,
+`laimory-filebeat-metrics.timer`가 output result/queue/active/harvester 지표로 변환한다. SG나 public
+port는 추가하지 않는다. 최근 log 시각은 무트래픽과 장애를 구분할 수 없으므로 표시만 하고 freshness
+alert 조건으로 쓰지 않는다.
+
+```bash
+sudo systemctl list-timers 'laimory-*-metrics.timer'
+sudo systemctl start laimory-aws-metrics.service
+sudo systemctl start laimory-elasticsearch-metrics.service
+sudo systemctl status laimory-aws-metrics.service \
+  laimory-elasticsearch-metrics.service --no-pager
+curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" |
+  grep -E '^laimory_(aws|elasticsearch)_'
+```
+
+WAS에서는 아래처럼 확인한다.
+
+```bash
+curl -fsS http://127.0.0.1:5066/stats | jq '.libbeat.output.events,.libbeat.pipeline.queue,.filebeat'
+sudo systemctl start laimory-filebeat-metrics.service
+curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" |
+  grep '^laimory_filebeat_'
+```
 
 ## Discord smoke test
 
@@ -285,6 +460,13 @@ source-limited SG와 대상 private port를 순서대로 확인한다. app의 90
 DNS, TLS 만료, nginx, `/status` 응답을 분리해 확인한다. `/status`가 성공해도 Redis, Kakao, S3까지
 ready라는 뜻은 아니다.
 
+### TLS certificate expiry
+
+Overview의 남은 시간을 확인한 뒤 dev WAS에서 `sudo certbot certificates`,
+`sudo systemctl status certbot.timer`를 본다. 만료 30일 전 warning과 14일 전 critical은 겹치지 않는다.
+필요하면 `sudo certbot renew --dry-run` 후 실제 갱신을 수행하고 `sudo nginx -t`,
+`sudo systemctl reload nginx`를 거쳐 blackbox의 새 만료 시각을 확인한다.
+
 ### HTTP errors or latency
 
 Overview에서 최소 traffic 조건과 status/URI를 확인한 뒤 Logs dashboard에서 같은 시간대를 좁힌다.
@@ -300,6 +482,27 @@ JVM & Spring에서 heap/GC, pending connection, acquire timeout을 함께 본다
 Infrastructure에서 실제 filesystem과 `MemAvailable`을 확인한다. tmpfs/overlay 같은 pseudo filesystem은
 disk alert에서 제외된다. collector/cardinality를 줄여도 medium의 memory 75%가 지속되면 별도 resize
 변경을 검토한다.
+
+### Timeline PROCESSING stuck
+
+Overview의 stuck count와 Timeline workflow/callback, Redis target 상태를 함께 본다. 이 값은 10분을 넘고
+1시간 TTL 안인 task만 센다. task JSON 저장과 보조 sorted-set index 갱신은 원자적이며 terminal 전이 때
+index에서 제거된다. 첫 앱 rollout 전에 이미 존재하던 PROCESSING task는 index에 없으므로 최대 1시간
+warm-up 뒤부터 완전한 값이다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
+
+### AWS metric collection
+
+`systemctl status laimory-aws-metrics.service`와 journal을 확인하고 IMDSv2, AWS CLI,
+monitoring role의 `cloudwatch:GetMetricData`/`ec2:DescribeInstances`를 순서대로 본다. CPU credit이 낮으면
+Infrastructure의 node CPU/load와 surplus charge를 함께 보고 일시 burst인지 지속 포화인지 구분한다.
+권한을 write로 넓히지 않는다.
+
+### Log pipeline
+
+Logs dashboard에서 Filebeat up/queue/output failure와 Elasticsearch up/red/unassigned shard를 먼저 본다.
+WAS의 `docker logs --tail 100 filebeat`, ELK의 cluster health, monitoring collector timer 순으로 좁힌다.
+최근 indexed log 시각만 오래된 경우에는 먼저 실제 앱 traffic이 있었는지 확인한다. 복구를 위해 API key나
+Filebeat role에 write 범위를 추가하지 않는다.
 
 ### MySQL or Redis pressure
 
@@ -323,8 +526,32 @@ promtool 통과 전 reload하지 않는다. volume은 보존한 채 service만 s
 
 ## Rollback
 
-exporter rollback은 Prometheus target/job을 먼저 제거·reload한 뒤 각 host에서 node_exporter를
-disable/remove하고 MySQL/Redis monitoring identity를 lock/off한다. stack rollback은
+exporter rollback은 Prometheus target/job을 먼저 제거·reload한다. textfile collector host에서는
+node_exporter를 제거하기 전에 timer와 생성 파일을 먼저 정리한다.
+
+```bash
+# monitoring host
+sudo systemctl disable --now \
+  laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
+sudo systemctl stop \
+  laimory-aws-metrics.service laimory-elasticsearch-metrics.service
+sudo rm -f /etc/systemd/system/laimory-{aws,elasticsearch}-metrics.{service,timer}
+sudo rm -f /opt/laimory-monitoring/scripts/collect-{aws,elasticsearch}-metrics.sh
+sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_{aws,elasticsearch}.prom
+sudo systemctl daemon-reload
+
+# dev WAS
+sudo systemctl disable --now laimory-filebeat-metrics.timer
+sudo systemctl stop laimory-filebeat-metrics.service
+sudo rm -f /etc/systemd/system/laimory-filebeat-metrics.{service,timer}
+sudo rm -f /usr/local/sbin/collect-laimory-filebeat-metrics
+sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_filebeat.prom
+sudo systemctl daemon-reload
+```
+
+그 뒤 각 host에서 node_exporter를 disable/remove하고 MySQL/Redis monitoring identity를 lock/off한다.
+이 삭제는 재생성 가능한 script/unit/textfile만 대상으로 하며 Prometheus/Grafana volume과 앱/ELK
+데이터는 건드리지 않는다. stack rollback은
 `sudo systemctl stop laimory-monitoring`으로 수행하며 TSDB/Grafana volume은 보존한다. 다시 올릴 때는
 `sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. `/grafana/`를 개방했다면
 dev WAS에서 `/usr/local/sbin/laimory-grafana-proxy disable`로 Grafana include만 제거해 Kibana를

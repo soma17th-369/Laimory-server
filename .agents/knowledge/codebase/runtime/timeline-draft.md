@@ -42,6 +42,8 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
    **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다.**
+   같은 저장 Lua가 관측 전용 PROCESSING sorted-set index에도 시작 시각을 추가하고, terminal 저장 Lua가
+   제거한다. index는 10분 초과 stuck gauge에만 쓰며 task 상태·callback 계약의 권위는 기존 JSON이다.
 9. AI dispatcher를 호출한다 — body는 `taskId`·원문 `callbackToken`·`dailyRecordId`·record timezone 기반
    offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기다.
    **실패는 "미접수 확정 vs UNKNOWN"으로 분류한다**: 4xx 응답(미접수 확정, `TimelineAiDispatchRejectedException`)만
@@ -130,6 +132,8 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 ### Retention and cleanup
 
 - PROCESSING TTL: 1시간 / SUCCESS·FAILED TTL: 24시간 / source staging retention: 7일
+- PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 1시간보다 오래된 고아 member를 정리한다.
+  첫 도입 전에 저장된 PROCESSING task는 index에 없어 최대 1시간 warm-up 후 완전한 값이 된다.
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)뿐이다 — AI가 채택한 source는 final
   transaction에서 이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
 - 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.

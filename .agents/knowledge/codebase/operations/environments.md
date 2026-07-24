@@ -51,6 +51,7 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 - `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`
 - `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
 - `SWAGGER_ENABLED`
+- `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `APP_ENV`
 

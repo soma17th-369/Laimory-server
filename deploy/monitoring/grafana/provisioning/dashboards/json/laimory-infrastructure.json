@@ -19,7 +19,68 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Overview",
+      "tooltip": "Overview 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-overview/laimory-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "JVM & Spring",
+      "tooltip": "JVM & Spring 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-jvm-spring/laimory-jvm-spring"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Infrastructure",
+      "tooltip": "Infrastructure 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-infrastructure/laimory-infrastructure"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Logs",
+      "tooltip": "Logs 대시보드로 이동합니다.",
+      "type": "link",
+      "url": "/grafana/d/laimory-logs/laimory-logs"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "Runbook",
+      "tooltip": "장애 대응 절차를 엽니다.",
+      "type": "link",
+      "url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#alert-runbook"
+    }
+  ],
   "liveNow": false,
   "panels": [
     {
@@ -39,7 +100,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 0
+        "y": 5
       },
       "id": 1,
       "options": {
@@ -73,7 +134,8 @@
         }
       ],
       "title": "Node CPU",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "선택한 host의 idle 시간을 제외한 전체 CPU 사용 비율입니다."
     },
     {
       "datasource": {
@@ -82,7 +144,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "percentunit",
+          "min": 0
         },
         "overrides": []
       },
@@ -90,7 +153,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 0
+        "y": 5
       },
       "id": 2,
       "options": {
@@ -116,7 +179,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "node_load1{job=\"node\", environment=\"$environment\", host=\"$host\"}",
+          "expr": "node_load1{job=\"node\", environment=\"$environment\", host=\"$host\"} / count without (cpu, mode) (node_cpu_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", mode=\"idle\"})",
           "instant": false,
           "legendFormat": "1m",
           "range": true,
@@ -128,7 +191,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "node_load5{job=\"node\", environment=\"$environment\", host=\"$host\"}",
+          "expr": "node_load5{job=\"node\", environment=\"$environment\", host=\"$host\"} / count without (cpu, mode) (node_cpu_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", mode=\"idle\"})",
           "instant": false,
           "legendFormat": "5m",
           "range": true,
@@ -140,15 +203,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "node_load15{job=\"node\", environment=\"$environment\", host=\"$host\"}",
+          "expr": "node_load15{job=\"node\", environment=\"$environment\", host=\"$host\"} / count without (cpu, mode) (node_cpu_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", mode=\"idle\"})",
           "instant": false,
           "legendFormat": "15m",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "Node Load",
-      "type": "timeseries"
+      "title": "Node Load / CPU",
+      "type": "timeseries",
+      "description": "선택한 host의 1/5/15분 load average를 논리 CPU 수로 나눈 포화도입니다."
     },
     {
       "datasource": {
@@ -167,7 +231,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 0
+        "y": 5
       },
       "id": 3,
       "options": {
@@ -201,7 +265,8 @@
         }
       ],
       "title": "Node Memory",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "선택한 host의 전체 memory 대비 MemAvailable을 제외한 사용 비율입니다."
     },
     {
       "datasource": {
@@ -220,7 +285,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 7
+        "y": 12
       },
       "id": 4,
       "options": {
@@ -254,7 +319,8 @@
         }
       ],
       "title": "Root Filesystem Usage",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "선택한 host root filesystem의 사용 비율입니다."
     },
     {
       "datasource": {
@@ -271,7 +337,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 7
+        "y": 12
       },
       "id": 5,
       "options": {
@@ -317,7 +383,8 @@
         }
       ],
       "title": "Node Network",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "loopback/container interface를 제외한 수신·송신 network 처리량입니다."
     },
     {
       "datasource": {
@@ -348,7 +415,7 @@
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 14
+        "y": 34
       },
       "id": 6,
       "options": {
@@ -381,8 +448,9 @@
           "refId": "A"
         }
       ],
-      "title": "MySQL Exporter",
-      "type": "stat"
+      "title": "MySQL Backend",
+      "type": "stat",
+      "description": "MySQL exporter가 dev MySQL에 연결·인증해 상태를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
     },
     {
       "datasource": {
@@ -401,7 +469,7 @@
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 14
+        "y": 34
       },
       "id": 7,
       "options": {
@@ -435,7 +503,8 @@
         }
       ],
       "title": "MySQL Connection Usage",
-      "type": "stat"
+      "type": "stat",
+      "description": "MySQL max_connections 대비 현재 연결 수 비율입니다."
     },
     {
       "datasource": {
@@ -452,7 +521,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 14
+        "y": 34
       },
       "id": 8,
       "options": {
@@ -498,7 +567,8 @@
         }
       ],
       "title": "MySQL Queries",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "MySQL query 유형별 초당 실행률입니다."
     },
     {
       "datasource": {
@@ -517,7 +587,7 @@
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 14
+        "y": 34
       },
       "id": 9,
       "options": {
@@ -551,7 +621,8 @@
         }
       ],
       "title": "InnoDB Buffer Miss Ratio",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "InnoDB buffer pool read 요청 중 disk read가 필요했던 비율입니다."
     },
     {
       "datasource": {
@@ -582,7 +653,7 @@
         "h": 6,
         "w": 4,
         "x": 0,
-        "y": 20
+        "y": 40
       },
       "id": 10,
       "options": {
@@ -615,8 +686,9 @@
           "refId": "A"
         }
       ],
-      "title": "Redis Exporter",
-      "type": "stat"
+      "title": "Redis Backend",
+      "type": "stat",
+      "description": "Redis exporter가 Redis에 연결·인증해 PING/INFO를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
     },
     {
       "datasource": {
@@ -633,7 +705,7 @@
         "h": 6,
         "w": 5,
         "x": 4,
-        "y": 20
+        "y": 40
       },
       "id": 11,
       "options": {
@@ -679,7 +751,8 @@
         }
       ],
       "title": "Redis Clients",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Redis connected, blocked, rejected client 상태입니다."
     },
     {
       "datasource": {
@@ -696,7 +769,7 @@
         "h": 6,
         "w": 5,
         "x": 9,
-        "y": 20
+        "y": 40
       },
       "id": 12,
       "options": {
@@ -742,7 +815,8 @@
         }
       ],
       "title": "Redis Memory",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Redis memory 사용량과 설정된 maxmemory를 비교합니다."
     },
     {
       "datasource": {
@@ -759,7 +833,7 @@
         "h": 6,
         "w": 5,
         "x": 14,
-        "y": 20
+        "y": 40
       },
       "id": 13,
       "options": {
@@ -805,7 +879,8 @@
         }
       ],
       "title": "Redis Commands & Evictions",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Redis command 처리율과 eviction 발생률입니다."
     },
     {
       "datasource": {
@@ -824,7 +899,7 @@
         "h": 6,
         "w": 5,
         "x": 19,
-        "y": 20
+        "y": 40
       },
       "id": 14,
       "options": {
@@ -858,7 +933,8 @@
         }
       ],
       "title": "Redis Cache Hit Ratio",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Redis keyspace hit/(hit+miss) 비율입니다."
     },
     {
       "datasource": {
@@ -875,7 +951,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 26
+        "y": 46
       },
       "id": 15,
       "options": {
@@ -909,7 +985,8 @@
         }
       ],
       "title": "Prometheus Head Series",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Prometheus가 현재 head block에서 유지하는 활성 time series 수입니다."
     },
     {
       "datasource": {
@@ -926,7 +1003,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 26
+        "y": 46
       },
       "id": 16,
       "options": {
@@ -960,7 +1037,8 @@
         }
       ],
       "title": "Prometheus Block Storage",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Prometheus TSDB block이 사용하는 disk 용량입니다."
     },
     {
       "datasource": {
@@ -977,7 +1055,7 @@
         "h": 7,
         "w": 6,
         "x": 12,
-        "y": 26
+        "y": 46
       },
       "id": 17,
       "options": {
@@ -1023,7 +1101,8 @@
         }
       ],
       "title": "Prometheus Reload & Rules",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Prometheus 설정 reload 성공 상태와 rule evaluation 실패율입니다."
     },
     {
       "datasource": {
@@ -1040,7 +1119,7 @@
         "h": 7,
         "w": 6,
         "x": 18,
-        "y": 26
+        "y": 46
       },
       "id": 18,
       "options": {
@@ -1074,6 +1153,726 @@
         }
       ],
       "title": "Prometheus TSDB Failures",
+      "type": "timeseries",
+      "description": "Prometheus TSDB/WAL truncate 및 compaction 실패율의 합입니다."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "선택한 host의 node_exporter scrape 상태입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 19,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "min(up{job=\"node\", environment=\"$environment\", host=\"$host\"})",
+          "instant": true,
+          "legendFormat": "$host",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Node Availability",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "선택한 host의 전체 swap 대비 사용량입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "clamp_max((node_memory_SwapTotal_bytes{job=\"node\", environment=\"$environment\", host=\"$host\"} - node_memory_SwapFree_bytes{job=\"node\", environment=\"$environment\", host=\"$host\"}) / clamp_min(node_memory_SwapTotal_bytes{job=\"node\", environment=\"$environment\", host=\"$host\"}, 1), 1)",
+          "instant": false,
+          "legendFormat": "$host",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Swap Usage",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "선택한 host에서 kernel OOM killer가 프로세스를 종료한 초당 발생률입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.000001
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(node_vmstat_oom_kill{job=\"node\", environment=\"$environment\", host=\"$host\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "$host",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "OOM Kill Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "monitoring EC2에서 CloudWatch/EC2 API를 읽는 textfile collector의 최근 성공 여부입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 22,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(laimory_aws_cloudwatch_up{job=\"node\", environment=\"$environment\", host=\"monitoring\"})",
+          "instant": true,
+          "legendFormat": "monitoring",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "CloudWatch Collector",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "선택한 host의 block device별 I/O busy 비율과 weighted queue depth입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 19
+      },
+      "id": 23,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_disk_io_time_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval])",
+          "instant": false,
+          "legendFormat": "busy {{device}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_disk_io_time_weighted_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval])",
+          "instant": false,
+          "legendFormat": "queue {{device}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Disk Busy & Queue",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "선택한 host의 block device별 operation당 평균 read/write latency입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 19
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_disk_read_time_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval]) / clamp_min(rate(node_disk_reads_completed_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval]), 0.001)",
+          "instant": false,
+          "legendFormat": "read {{device}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(node_disk_write_time_seconds_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval]) / clamp_min(rate(node_disk_writes_completed_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"loop.*|ram.*|fd.*|sr.*|dm-.*\"}[$__rate_interval]), 0.001)",
+          "instant": false,
+          "legendFormat": "write {{device}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Disk I/O Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "loopback/container interface를 제외한 network error/drop 발생률입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "pps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 19
+      },
+      "id": 25,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (device) (rate(node_network_receive_errs_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"lo|veth.*|docker.*|br-.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "RX error {{device}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (device) (rate(node_network_transmit_errs_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"lo|veth.*|docker.*|br-.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "TX error {{device}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (device) (rate(node_network_receive_drop_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"lo|veth.*|docker.*|br-.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "RX drop {{device}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (device) (rate(node_network_transmit_drop_total{job=\"node\", environment=\"$environment\", host=\"$host\", device!~\"lo|veth.*|docker.*|br-.*\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "TX drop {{device}}",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Network Errors & Drops",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "CloudWatch에서 수집한 monitoring EC2 CPU credit 잔량과 최근 5분 surplus charge입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 26,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ec2_cpu_credit_balance{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "credit balance",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ec2_cpu_surplus_credits_charged_last_5m{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "surplus charged / 5m",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Monitoring EC2 CPU Credits",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "CloudWatch에서 수집한 monitoring EC2 root EBS queue, busy, read/write latency입니다.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 27,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ebs_queue_length{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "queue length",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ebs_busy_ratio{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "busy ratio",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ebs_read_latency_seconds{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "read latency",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "laimory_aws_ebs_write_latency_seconds{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "instant": false,
+          "legendFormat": "write latency",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Monitoring Root EBS",
       "type": "timeseries"
     }
   ],
@@ -1151,5 +1950,6 @@
   "title": "Laimory / Infrastructure",
   "uid": "laimory-infrastructure",
   "version": 1,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "EC2 host, MySQL, Redis, Prometheus와 monitoring EC2의 CloudWatch/EBS 상태를 확인합니다."
 }

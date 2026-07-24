@@ -132,6 +132,7 @@ locals {
     "grafana/provisioning/alerting/contact-points.yml"                 = "grafana/provisioning/alerting/contact-points.yml"
     "grafana/provisioning/alerting/notification-policy.yml"            = "grafana/provisioning/alerting/notification-policy.yml"
     "grafana/provisioning/alerting/rules.yml"                          = "grafana/provisioning/alerting/rules.yml"
+    "grafana/provisioning/alerting/operational-rules.yml"              = "grafana/provisioning/alerting/operational-rules.yml"
     "grafana/provisioning/alerting/templates.yml"                      = "grafana/provisioning/alerting/templates.yml"
     "grafana/smoke/smoke-rule.firing.yml"                              = "grafana/smoke/smoke-rule.firing.yml"
     "grafana/smoke/smoke-rule.resolved.yml"                            = "grafana/smoke/smoke-rule.resolved.yml"
@@ -140,8 +141,17 @@ locals {
     "scripts/validate-secrets.sh"                                      = "scripts/validate-secrets.sh"
     "scripts/configure-mysql-exporter-user.sh"                         = "scripts/configure-mysql-exporter-user.sh"
     "scripts/configure-redis-exporter-user.sh"                         = "scripts/configure-redis-exporter-user.sh"
+    "scripts/collect-aws-metrics.sh"                                   = "scripts/collect-aws-metrics.sh"
+    "scripts/collect-elasticsearch-metrics.sh"                         = "scripts/collect-elasticsearch-metrics.sh"
+    "scripts/collect-filebeat-metrics.sh"                              = "scripts/collect-filebeat-metrics.sh"
     "nginx/manage-grafana-proxy.sh"                                    = "nginx/manage-grafana-proxy.sh"
     "systemd/laimory-monitoring.service"                               = "systemd/laimory-monitoring.service"
+    "systemd/laimory-aws-metrics.service"                              = "systemd/laimory-aws-metrics.service"
+    "systemd/laimory-aws-metrics.timer"                                = "systemd/laimory-aws-metrics.timer"
+    "systemd/laimory-elasticsearch-metrics.service"                    = "systemd/laimory-elasticsearch-metrics.service"
+    "systemd/laimory-elasticsearch-metrics.timer"                      = "systemd/laimory-elasticsearch-metrics.timer"
+    "systemd/laimory-filebeat-metrics.service"                         = "systemd/laimory-filebeat-metrics.service"
+    "systemd/laimory-filebeat-metrics.timer"                           = "systemd/laimory-filebeat-metrics.timer"
   }
 
   monitoring_application_targets = templatefile("${path.module}/../deploy/monitoring/prometheus/application-targets.yml.tftpl", {

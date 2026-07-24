@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.TaskStatus;
@@ -102,5 +103,24 @@ class TimelineTaskServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         verify(timelineMetrics, never()).recordTerminalSuccess();
+    }
+
+    @Test
+    void countStuckProcessing_usesProcessingTtl() {
+        Instant now = Instant.parse("2026-07-24T12:00:00Z");
+        Duration threshold = Duration.ofMinutes(10);
+        when(timelineTaskStore.countStuckProcessing(
+                now, threshold, Duration.ofHours(1))).thenReturn(2L);
+
+        assertThat(service.countStuckProcessing(now, threshold)).isEqualTo(2L);
+    }
+
+    @Test
+    void countStuckProcessing_rejectsThresholdOutsideProcessingWindow() {
+        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofHours(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineTaskStore, never()).countStuckProcessing(any(), any(), any());
     }
 }

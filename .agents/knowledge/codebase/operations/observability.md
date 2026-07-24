@@ -129,13 +129,16 @@ Spring JSON stdout
   env/beans/configprops/heapdump/loggers 등은 노출하지 않는다.
 - health 응답은 aggregate `status`만 보여 component/detail을 숨긴다.
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
-- 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server latency에는
-  100ms/250ms/500ms/1s/2s/5s 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
+- 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
+  callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
 - custom meter:
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
-- custom label은 고정 `result` 값만 사용한다. userId/taskId/transactionId/FID/좌표/raw URL·query/
+  - `laimory.timeline.task.processing.stuck`: 10분 초과, 1시간 TTL 안인 PROCESSING task 수
+  - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
+  - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
+- custom label은 고정 `result`와 전용 build info의 `commit`만 사용한다. userId/taskId/transactionId/FID/좌표/raw URL·query/
   자유 입력/exception message는 tag로 쓰지 않는다.
 - Fake AI callback은 URI template을 보존하며, Kakao WebClient의 URI function도 좌표·주소 query를
   low-cardinality tag로 만들지 않는다.
@@ -151,8 +154,10 @@ retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Gra
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
 node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK의 private interface:9100에만 bind하는
-systemd service다. pinned release archive SHA를 검증하며 prod에는 설치하지 않고 textfile collector도
-사용하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
+systemd service다. pinned release archive SHA를 검증하며 prod에는 설치하지 않는다. textfile collector는
+root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
+Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
+무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
 status/variables만 읽는다. Redis exporter ACL은 INFO/PING/CLIENT SETNAME만 허용하고 key pattern,
 GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
 
@@ -230,7 +235,7 @@ dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, A
 
 - provisioning 자산은 live rollout 완료를 뜻하지 않는다. application metric change와 infra recipe가
   dev에 합쳐진 뒤 SSM identity/secret 구성, Discord firing/resolved, 24시간 soak가 별도로 필요하다.
-- distributed tracing, dependency-complete readiness endpoint와 CloudWatch CPU credit datasource는 없다.
+- distributed tracing과 dependency-complete readiness endpoint는 없다.
 
 ## Update When
 

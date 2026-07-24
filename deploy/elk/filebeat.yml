@@ -1,5 +1,10 @@
 # WAS 박스에서 도는 Filebeat 설정(ELK 박스 아님). 앱 컨테이너 stdout(JSON) 을 ES 로 직송한다.
 # 비밀 없음 — ${FILEBEAT_PASSWORD} 는 컨테이너 env(docker run -e)로 주입한다.
+
+# host의 textfile collector가 loopback으로만 읽는다. 외부 SG/포트 개방은 하지 않는다.
+http.enabled: true
+http.host: 127.0.0.1
+http.port: 5066
 #
 # 이중 JSON: Docker json-file 이 앱 JSON 라인을 {"log":"...","stream":..} 봉투로 감싼다.
 # container 입력이 봉투를 벗기고(→ message 에 앱 원문 JSON), decode_json_fields 가 앱 JSON 을 루트로 승격.

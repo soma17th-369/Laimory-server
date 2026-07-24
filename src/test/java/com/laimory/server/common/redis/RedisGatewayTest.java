@@ -137,4 +137,58 @@ class RedisGatewayTest {
         assertThatThrownBy(() -> redis.expireIfValueMatches(LOGICAL_KEY, "holder", Duration.ofHours(1)))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void setAndAddToSortedSet_prefixesBothKeys_andPassesAtomicScriptArguments() {
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("dev_timeline:draft-task:abc",
+                        "dev_timeline:draft-task:processing-index")),
+                eq("3600000"), eq("{\"status\":\"PROCESSING\"}"),
+                eq("1780000000000"), eq("abc"))).thenReturn(1L);
+
+        redis.setAndAddToSortedSet(LOGICAL_KEY, "{\"status\":\"PROCESSING\"}",
+                Duration.ofHours(1), "timeline:draft-task:processing-index",
+                "abc", 1_780_000_000_000L);
+    }
+
+    @Test
+    void setAndRemoveFromSortedSet_prefixesBothKeys_andPassesAtomicScriptArguments() {
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("dev_timeline:draft-task:abc",
+                        "dev_timeline:draft-task:processing-index")),
+                eq("86400000"), eq("{\"status\":\"SUCCESS\"}"), eq("abc")))
+                .thenReturn(1L);
+
+        redis.setAndRemoveFromSortedSet(LOGICAL_KEY, "{\"status\":\"SUCCESS\"}",
+                Duration.ofHours(24), "timeline:draft-task:processing-index", "abc");
+    }
+
+    @Test
+    void pruneAndCountSortedSet_prefixesKey_andReturnsCount() {
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("dev_timeline:draft-task:processing-index")),
+                eq("1779996400000"), eq("1779999400000"))).thenReturn(3L);
+
+        assertThat(redis.pruneAndCountSortedSet("timeline:draft-task:processing-index",
+                1_779_996_400_000L, 1_779_999_400_000L)).isEqualTo(3L);
+    }
+
+    @Test
+    void atomicSortedSetOps_nullFromTemplate_throwIllegalState() {
+        RedisGateway redis = new RedisGateway(template, "");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(), any(), any(Object[].class)))
+                .thenReturn(null);
+
+        assertThatThrownBy(() -> redis.setAndAddToSortedSet(LOGICAL_KEY, "v",
+                Duration.ofMinutes(1), "index", "abc", 1L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> redis.setAndRemoveFromSortedSet(LOGICAL_KEY, "v",
+                Duration.ofMinutes(1), "index", "abc"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> redis.pruneAndCountSortedSet("index", 1L, 2L))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

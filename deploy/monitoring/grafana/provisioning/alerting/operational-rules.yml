@@ -1,0 +1,494 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-lifecycle
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_processing_stuck
+        title: Timeline task stuck in PROCESSING
+        dashboardUid: laimory-overview
+        panelId: 18
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: '{{ $values.B.Value }} timeline task(s) have remained PROCESSING for over ten minutes.'
+          description: 'The gauge excludes expired one-hour tasks and is backed by an atomic Redis processing index.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#timeline-processing-stuck
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-tls
+    folder: Laimory
+    interval: 1h
+    rules:
+      - uid: laimory_tls_expiry_warning
+        title: TLS certificate expires within 30 days
+        dashboardUid: laimory-overview
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 7200, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time()) and (probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time() >= 1209600)'
+              instant: true
+              intervalMs: 60000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [2592000], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'The dev TLS certificate expires within 30 days.'
+          description: 'The warning is gated above 14 days so it does not duplicate the critical alert.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#tls-certificate-expiry
+        labels:
+          environment: dev
+          job: blackbox_https
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_tls_expiry_critical
+        title: TLS certificate expires within 14 days
+        dashboardUid: laimory-overview
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 7200, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time()'
+              instant: true
+              intervalMs: 60000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1209600], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'The dev TLS certificate expires within 14 days.'
+          description: 'Automatic renewal has not produced a sufficiently long-lived certificate.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#tls-certificate-expiry
+        labels:
+          environment: dev
+          job: blackbox_https
+          service: laimory
+          severity: critical
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-extended-infrastructure
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_aws_metric_collection_failed
+        title: AWS metric collection failed
+        dashboardUid: laimory-infrastructure
+        panelId: 22
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(1 - laimory_aws_cloudwatch_up{job="node",environment="dev",host="monitoring"}) or (time() - laimory_aws_cloudwatch_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 900) or (absent(laimory_aws_cloudwatch_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'The monitoring host cannot collect EC2/EBS CloudWatch metrics.'
+          description: 'Check the timer, instance metadata, AWS CLI, and the monitoring role read policy.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#aws-metric-collection
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_cpu_credit_low
+        title: Monitoring EC2 CPU credits low
+        dashboardUid: laimory-infrastructure
+        panelId: 26
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_aws_ec2_cpu_credit_balance{job="node",environment="dev",host="monitoring"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [20], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: 'The monitoring EC2 CPU credit balance is below 20.'
+          description: 'Sustained CPU use can throttle a burstable instance or incur surplus-credit charges.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#aws-metric-collection
+        labels:
+          environment: dev
+          host: monitoring
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_host_oom_kill
+        title: Host OOM kill detected
+        dashboardUid: laimory-infrastructure
+        panelId: 21
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum by (instance,host) (increase(node_vmstat_oom_kill{job="node",environment="dev"}[10m]))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'The kernel OOM killer terminated a process on {{ $labels.host }}.'
+          description: 'Inspect kernel logs and the memory/swap panels before restarting workloads.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: critical
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-log-pipeline
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_log_pipeline_unhealthy
+        title: Log pipeline unhealthy
+        dashboardUid: laimory-logs
+        panelId: 8
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(1 - laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) or (time() - laimory_filebeat_last_attempt_unixtime_seconds{job="node",environment="dev",host="dev-was"} > 180) or (absent(laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) and on(job,environment,host) (up{job="node",environment="dev",host="dev-was"} == 1)) or (1 - laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) or (time() - laimory_elasticsearch_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 180) or (absent(laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1)) or laimory_elasticsearch_cluster_status{job="node",environment="dev",host="monitoring",status="red"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Filebeat stats, Elasticsearch health collection, or the Elasticsearch cluster is unhealthy.'
+          description: 'A node target-down alert covers missing node_exporter series; this alert covers a reachable collector reporting failure.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
+        labels:
+          environment: dev
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_filebeat_output_failures
+        title: Filebeat output failures detected
+        dashboardUid: laimory-logs
+        panelId: 10
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(increase(laimory_filebeat_output_events_total{job="node",environment="dev",host="dev-was",result=~"failed|dropped"}[10m]))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'Filebeat reported failed or dropped output events in the last ten minutes.'
+          description: 'Inspect Filebeat container logs, queue pressure, Elasticsearch availability, and credentials.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
+        labels:
+          environment: dev
+          host: dev-was
+          service: laimory
+          severity: warning
+        isPaused: false
