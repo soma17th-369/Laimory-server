@@ -27,6 +27,7 @@ install -d -m 0755 \
   /opt/laimory-monitoring/blackbox \
   /opt/laimory-monitoring/node-exporter \
   /opt/laimory-monitoring/scripts \
+  /opt/laimory-monitoring/grafana/rollback \
   /opt/laimory-monitoring/grafana/smoke \
   /opt/laimory-monitoring/grafana/provisioning/datasources \
   /opt/laimory-monitoring/grafana/provisioning/dashboards/json \
@@ -73,6 +74,7 @@ download_bootstrap_asset grafana/provisioning/alerting/notification-policy.yml /
 download_bootstrap_asset grafana/provisioning/alerting/rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
 download_bootstrap_asset grafana/provisioning/alerting/operational-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
 download_bootstrap_asset grafana/provisioning/alerting/templates.yml /opt/laimory-monitoring/grafana/provisioning/alerting/templates.yml
+download_bootstrap_asset grafana/rollback/operational-rules.delete.yml /opt/laimory-monitoring/grafana/rollback/operational-rules.delete.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.firing.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.firing.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.resolved.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.resolved.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.delete.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.delete.yml

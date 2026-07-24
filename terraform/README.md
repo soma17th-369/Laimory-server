@@ -345,6 +345,7 @@ grafana/provisioning/alerting/notification-policy.yml
 grafana/provisioning/alerting/rules.yml
 grafana/provisioning/alerting/operational-rules.yml
 grafana/provisioning/alerting/templates.yml
+grafana/rollback/operational-rules.delete.yml
 grafana/smoke/smoke-rule.firing.yml
 grafana/smoke/smoke-rule.resolved.yml
 grafana/smoke/smoke-rule.delete.yml
@@ -509,6 +510,9 @@ sudo systemctl stop laimory-monitoring
 `docker compose down -v`는 Prometheus/Grafana volume을 삭제하므로 실행하지 않는다. 설정 실패 시
 stack을 stop해도 앱 API와 ELK는 독립적으로 계속 동작한다. 다시 올릴 때는
 `sudo systemctl start laimory-monitoring`으로 secret gate를 다시 통과시킨다.
+기존 live dashboard/alert/collector 보강만 되돌릴 때는 `deploy/monitoring/README.md`의
+commit-specific rollback을 따라 신규 8개 rule을 `deleteRules`로 먼저 제거한다. 이 변경은
+Prometheus target을 바꾸지 않으므로 기존 `node` job이나 5대 target을 제거하지 않는다.
 
 `/grafana/`를 이미 개방했다면 dev WAS에서 아래 명령으로 Grafana include만 제거한다. script가 backup,
 `nginx -t`, reload와 실패 시 복원을 수행하며 Kibana는 보존한다.

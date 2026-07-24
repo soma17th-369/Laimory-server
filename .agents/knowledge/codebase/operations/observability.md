@@ -178,6 +178,10 @@ Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret file �
 다르면 systemd가 fail-closed하고, 비밀이 필요 없는 Prometheus/blackbox만 먼저 기동할 수 있다. live
 proxy는 Grafana 전용 nginx include로 관리해 기존 Kibana location을 보존하며, allowlist 밖에서는 slash
 유무와 관계없이 `/grafana` 경로를 차단한다.
+live dashboard/alert upgrade는 기존 provisioning 파일과 generated unit을 root-only로 백업한다.
+provisioned alert 파일을 rollback할 때는 collector를 제거하기 전에 먼저 해당 UID를 `deleteRules`로
+Grafana DB에서 지워 absent alert가 잘못 firing하지 않게 한다. operational 보강은 기존 Prometheus
+`node` job/target을 바꾸지 않으므로 commit rollback에서도 해당 target을 제거하지 않는다.
 
 ## Runbook: access log field 추가 롤아웃
 

@@ -134,6 +134,7 @@ locals {
     "grafana/provisioning/alerting/rules.yml"                          = "grafana/provisioning/alerting/rules.yml"
     "grafana/provisioning/alerting/operational-rules.yml"              = "grafana/provisioning/alerting/operational-rules.yml"
     "grafana/provisioning/alerting/templates.yml"                      = "grafana/provisioning/alerting/templates.yml"
+    "grafana/rollback/operational-rules.delete.yml"                    = "grafana/rollback/operational-rules.delete.yml"
     "grafana/smoke/smoke-rule.firing.yml"                              = "grafana/smoke/smoke-rule.firing.yml"
     "grafana/smoke/smoke-rule.resolved.yml"                            = "grafana/smoke/smoke-rule.resolved.yml"
     "grafana/smoke/smoke-rule.delete.yml"                              = "grafana/smoke/smoke-rule.delete.yml"

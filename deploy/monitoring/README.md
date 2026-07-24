@@ -228,8 +228,16 @@ unset API_KEY
 먼저 운영자 로컬에서 비밀 없는 변경 자산을 exact S3 key로 올린다.
 
 ```bash
+set -euo pipefail
 BACKUP_BUCKET='<backup bucket>'
+ROLLBACK_PREFIX="bootstrap/rollback/monitoring/$(date -u +%Y%m%dT%H%M%SZ)"
 while IFS= read -r asset; do
+  if aws s3api head-object --bucket "$BACKUP_BUCKET" \
+    --key "bootstrap/monitoring/$asset" --profile sandbox >/dev/null 2>&1; then
+    aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
+      "s3://$BACKUP_BUCKET/$ROLLBACK_PREFIX/$asset" \
+      --profile sandbox --region ap-northeast-2 --only-show-errors
+  fi
   aws s3 cp "deploy/monitoring/$asset" \
     "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
     --profile sandbox --region ap-northeast-2 --only-show-errors
@@ -241,6 +249,7 @@ grafana/provisioning/dashboards/json/laimory-infrastructure.json
 grafana/provisioning/dashboards/json/laimory-logs.json
 grafana/provisioning/alerting/rules.yml
 grafana/provisioning/alerting/operational-rules.yml
+grafana/rollback/operational-rules.delete.yml
 scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh
 scripts/collect-filebeat-metrics.sh
@@ -251,10 +260,19 @@ systemd/laimory-elasticsearch-metrics.timer
 systemd/laimory-filebeat-metrics.service
 systemd/laimory-filebeat-metrics.timer
 ASSETS
+if aws s3api head-object --bucket "$BACKUP_BUCKET" \
+  --key bootstrap/elk/filebeat.yml --profile sandbox >/dev/null 2>&1; then
+  aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
+    "s3://$BACKUP_BUCKET/$ROLLBACK_PREFIX/elk/filebeat.yml" \
+    --profile sandbox --region ap-northeast-2 --only-show-errors
+fi
 aws s3 cp deploy/elk/filebeat.yml \
   "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
   --profile sandbox --region ap-northeast-2 --only-show-errors
 ```
+
+backup bucket은 versioning을 전제로 하지 않으므로 기존 object snapshot이 성공한 뒤에만 원래 key를
+덮어쓴다. rollback 시에는 기록한 `ROLLBACK_PREFIX`의 object를 원래 key로 복원한다.
 
 monitoring role에는 아래 read-only inline policy를 Console 또는 동등한 검토된 CLI 변경으로 추가한다.
 resource write 권한과 CloudWatch wildcard action은 추가하지 않는다.
@@ -277,6 +295,26 @@ monitoring host의 SSM 세션에서 정확한 파일만 교체하고 timer를 �
 ```bash
 BACKUP_BUCKET='<backup bucket>'
 BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+ROLLBACK_DIR=/opt/laimory-monitoring/rollback/pre-operational-observability
+sudo install -d -m 0700 "$ROLLBACK_DIR" "$ROLLBACK_DIR/dashboards"
+sudo install -d -m 0755 /opt/laimory-monitoring/grafana/rollback
+if [ ! -f "$ROLLBACK_DIR/.complete" ]; then
+  if find "$ROLLBACK_DIR" -mindepth 1 -type f -print -quit | grep -q .; then
+    echo "incomplete monitoring rollback packet already exists" >&2
+    exit 1
+  fi
+  sudo install -m 0600 \
+    /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml \
+    "$ROLLBACK_DIR/rules.yml"
+  for dashboard in laimory-overview laimory-jvm-spring laimory-infrastructure laimory-logs; do
+    sudo install -m 0600 \
+      "/opt/laimory-monitoring/grafana/provisioning/dashboards/json/$dashboard.json" \
+      "$ROLLBACK_DIR/dashboards/$dashboard.json"
+  done
+  sudo install -m 0600 /etc/systemd/system/node_exporter.service \
+    "$ROLLBACK_DIR/node_exporter.service"
+  sudo touch "$ROLLBACK_DIR/.complete"
+fi
 while IFS='|' read -r source destination; do
   sudo aws s3 cp "$BASE/$source" "$destination" \
     --region ap-northeast-2 --only-show-errors
@@ -288,6 +326,7 @@ grafana/provisioning/dashboards/json/laimory-infrastructure.json|/opt/laimory-mo
 grafana/provisioning/dashboards/json/laimory-logs.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
 grafana/provisioning/alerting/rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
 grafana/provisioning/alerting/operational-rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
+grafana/rollback/operational-rules.delete.yml|/opt/laimory-monitoring/grafana/rollback/operational-rules.delete.yml
 scripts/collect-aws-metrics.sh|/opt/laimory-monitoring/scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh|/opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 systemd/laimory-aws-metrics.service|/etc/systemd/system/laimory-aws-metrics.service
@@ -312,6 +351,18 @@ dev WAS의 SSM 세션에서는 기존 Filebeat credential을 다시 표시하거
 
 ```bash
 BACKUP_BUCKET='<backup bucket>'
+ROLLBACK_DIR=/var/lib/laimory-monitoring/rollback/pre-operational-observability
+sudo install -d -m 0700 "$ROLLBACK_DIR"
+if [ ! -f "$ROLLBACK_DIR/.complete" ]; then
+  if find "$ROLLBACK_DIR" -mindepth 1 -type f -print -quit | grep -q .; then
+    echo "incomplete WAS rollback packet already exists" >&2
+    exit 1
+  fi
+  sudo install -m 0600 /home/ubuntu/filebeat.yml "$ROLLBACK_DIR/filebeat.yml"
+  sudo install -m 0600 /etc/systemd/system/node_exporter.service \
+    "$ROLLBACK_DIR/node_exporter.service"
+  sudo touch "$ROLLBACK_DIR/.complete"
+fi
 sudo apt-get update -y
 sudo apt-get install -y jq
 sudo aws s3 cp \
@@ -329,6 +380,12 @@ sudo cp /tmp/laimory-filebeat.yml /home/ubuntu/filebeat.yml
 sudo rm -f /tmp/laimory-filebeat.yml
 sudo chown ubuntu:ubuntu /home/ubuntu/filebeat.yml
 sudo chmod 0644 /home/ubuntu/filebeat.yml
+if ! sudo docker exec filebeat filebeat test config -e --strict.perms=false; then
+  sudo cp "$ROLLBACK_DIR/filebeat.yml" /home/ubuntu/filebeat.yml
+  sudo chown ubuntu:ubuntu /home/ubuntu/filebeat.yml
+  sudo chmod 0644 /home/ubuntu/filebeat.yml
+  exit 1
+fi
 sudo docker restart filebeat
 
 sudo aws s3 cp \
@@ -350,9 +407,12 @@ sudo systemctl enable --now laimory-filebeat-metrics.timer
 sudo systemctl start laimory-filebeat-metrics.service
 ```
 
-세 collector의 `up`/freshness metric이 정상인 것을 확인한 뒤에만 monitoring host에서 Grafana를
-재시작해 새 dashboard와 alert를 provisioning한다. 이 순서는 배포 도중 collector 부재 alert가
-Discord로 잘못 발송되는 것을 피한다.
+세 collector의 `up`/freshness metric이 정상인 것을 확인한 뒤, WAS SSM 작업과 겹치지 않게 앱
+변경을 정상 deploy workflow로 배포하고 health gate를 통과시킨다. 실제 배포 SHA의 build info와
+callback/FCM/PROCESSING metric을 확인한 뒤에만 monitoring host에서 Grafana를 재시작해 새 dashboard와
+alert를 provisioning한다. PROCESSING index는 새 앱 배포 뒤 생성된 task부터 채워지고 최대 1시간이면
+기존 PROCESSING task가 모두 TTL로 빠진다. 이 순서는 배포 도중 collector/metric 부재 alert가 Discord로
+잘못 발송되는 것을 피한다.
 
 ```bash
 cd /opt/laimory-monitoring
@@ -425,24 +485,27 @@ request/response body, transactionId, user/task/FID, 좌표, exception message�
 
 ```bash
 cd /opt/laimory-monitoring
+read -rp 'Grafana admin username [admin]: ' GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
 
 sudo install -m 0644 grafana/smoke/smoke-rule.firing.yml \
   grafana/provisioning/alerting/smoke-rule.yml
-curl -fsS -u admin -X POST \
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
   http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
 # Discord firing 도착 확인
 
 sudo install -m 0644 grafana/smoke/smoke-rule.resolved.yml \
   grafana/provisioning/alerting/smoke-rule.yml
-curl -fsS -u admin -X POST \
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
   http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
 # Discord resolved 도착 확인
 
 sudo install -m 0644 grafana/smoke/smoke-rule.delete.yml \
   grafana/provisioning/alerting/smoke-rule.yml
-curl -fsS -u admin -X POST \
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
   http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
 sudo rm /opt/laimory-monitoring/grafana/provisioning/alerting/smoke-rule.yml
+unset GRAFANA_ADMIN_USER
 ```
 
 파일을 바로 지우면 provisioned rule이 Grafana DB에 남으므로 반드시 `deleteRules`를 먼저 reload한다.
@@ -526,11 +589,36 @@ promtool 통과 전 reload하지 않는다. volume은 보존한 채 service만 s
 
 ## Rollback
 
-exporter rollback은 Prometheus target/job을 먼저 제거·reload한다. textfile collector host에서는
-node_exporter를 제거하기 전에 timer와 생성 파일을 먼저 정리한다.
+이번 operational observability 보강은 Prometheus target/job을 바꾸지 않는다. 따라서 이 변경만
+rollback할 때 기존 `node` job이나 5대 target을 제거하지 않는다. Grafana를 재시작한 뒤라면 collector를
+지우기 전에 먼저 신규 rule 8개를 `deleteRules`로 제거하고 이전 rule/dashboard를 복원한다. 순서를
+뒤집으면 node target이 살아 있는 동안 collector absent alert가 firing할 수 있다.
 
 ```bash
-# monitoring host
+# monitoring host — Grafana를 새 자산으로 restart한 경우에만 먼저 수행
+cd /opt/laimory-monitoring
+ROLLBACK_DIR=/opt/laimory-monitoring/rollback/pre-operational-observability
+test -s "$ROLLBACK_DIR/rules.yml"
+test -s grafana/rollback/operational-rules.delete.yml
+read -rp 'Grafana admin username [admin]: ' GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+sudo install -m 0644 grafana/rollback/operational-rules.delete.yml \
+  grafana/provisioning/alerting/operational-rules.yml
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
+  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+sudo rm -f grafana/provisioning/alerting/operational-rules.yml
+sudo install -m 0644 "$ROLLBACK_DIR/rules.yml" \
+  grafana/provisioning/alerting/rules.yml
+for dashboard in laimory-overview laimory-jvm-spring laimory-infrastructure laimory-logs; do
+  sudo install -m 0644 "$ROLLBACK_DIR/dashboards/$dashboard.json" \
+    "grafana/provisioning/dashboards/json/$dashboard.json"
+done
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
+  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+unset GRAFANA_ADMIN_USER
+sudo docker compose restart grafana
+
+# monitoring host — collector 정리와 기존 node_exporter unit 복원
 sudo systemctl disable --now \
   laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
 sudo systemctl stop \
@@ -538,20 +626,44 @@ sudo systemctl stop \
 sudo rm -f /etc/systemd/system/laimory-{aws,elasticsearch}-metrics.{service,timer}
 sudo rm -f /opt/laimory-monitoring/scripts/collect-{aws,elasticsearch}-metrics.sh
 sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_{aws,elasticsearch}.prom
+sudo install -m 0644 "$ROLLBACK_DIR/node_exporter.service" \
+  /etc/systemd/system/node_exporter.service
 sudo systemctl daemon-reload
+sudo systemctl restart node_exporter
+sudo rmdir /var/lib/node_exporter/textfile_collector 2>/dev/null || true
 
-# dev WAS
+# dev WAS — collector/Filebeat 정리와 기존 node_exporter unit 복원
+ROLLBACK_DIR=/var/lib/laimory-monitoring/rollback/pre-operational-observability
 sudo systemctl disable --now laimory-filebeat-metrics.timer
 sudo systemctl stop laimory-filebeat-metrics.service
 sudo rm -f /etc/systemd/system/laimory-filebeat-metrics.{service,timer}
 sudo rm -f /usr/local/sbin/collect-laimory-filebeat-metrics
 sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_filebeat.prom
+sudo cp "$ROLLBACK_DIR/filebeat.yml" /home/ubuntu/filebeat.yml
+sudo chown ubuntu:ubuntu /home/ubuntu/filebeat.yml
+sudo chmod 0644 /home/ubuntu/filebeat.yml
+sudo docker restart filebeat
+sudo install -m 0644 "$ROLLBACK_DIR/node_exporter.service" \
+  /etc/systemd/system/node_exporter.service
 sudo systemctl daemon-reload
+sudo systemctl restart node_exporter
+sudo rmdir /var/lib/node_exporter/textfile_collector 2>/dev/null || true
 ```
 
-그 뒤 각 host에서 node_exporter를 disable/remove하고 MySQL/Redis monitoring identity를 lock/off한다.
-이 삭제는 재생성 가능한 script/unit/textfile만 대상으로 하며 Prometheus/Grafana volume과 앱/ELK
-데이터는 건드리지 않는다. stack rollback은
+로컬 운영자 권한에서는 이번에 새로 만든
+`laimory-monitoring-cloudwatch-read` inline policy를 삭제한다. 배포 전 동명 policy가 있었다면 삭제
+대신 snapshot한 기존 document를 복원한다.
+
+```bash
+aws iam delete-role-policy --profile sandbox \
+  --role-name laimory-monitoring-role \
+  --policy-name laimory-monitoring-cloudwatch-read
+```
+
+이 rollback은 Prometheus/Grafana volume과 앱/ELK 데이터를 건드리지 않으며 `docker compose down -v`를
+실행하지 않는다. 앱 변경 rollback은 별도 image rollback으로 수행한다. 전체 #185 stack 자체를
+철거할 때만 각 host의 node_exporter와 MySQL/Redis monitoring identity를 함께 disable/revoke한다.
+stack rollback은
 `sudo systemctl stop laimory-monitoring`으로 수행하며 TSDB/Grafana volume은 보존한다. 다시 올릴 때는
 `sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. `/grafana/`를 개방했다면
 dev WAS에서 `/usr/local/sbin/laimory-grafana-proxy disable`로 Grafana include만 제거해 Kibana를
