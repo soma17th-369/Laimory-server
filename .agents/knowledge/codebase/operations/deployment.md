@@ -31,7 +31,7 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 11. `/api/v1/intro`를 최대 90초 polling한다.
 12. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
 
-workflow는 dev에서 Redis prefix, application environment, AI/geo mode, Swagger switch와 현재 image
+workflow는 dev에서 Redis prefix, application environment, geo mode, Swagger switch와 현재 image
 commit(`APP_COMMIT_SHA`)을 명시적으로
 주입한다. 이름과 의미만 문서화하며 값이나 credential은 workflow/config가 권위다.
 

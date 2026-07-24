@@ -23,7 +23,7 @@ automation을 바꿀 때 읽는다.
 |---|---|---|---|---|---|---|---|---|---|
 | local | `docker` | Compose | default noop | default noop | default noop | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | on | text | empty | local task |
-| dev | default | dev MySQL + shared Redis | workflow fake | workflow Kakao | `.env` 전환(기본 noop) | on | JSON, dev environment | `dev_` | `dev` push |
+| dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | workflow Kakao | `.env` 전환(기본 noop) | on | JSON, dev environment | `dev_` | `dev` push |
 | prod | default | Terraform has prod MySQL + shared Redis | default noop | default noop | default noop | off | JSON intended | empty | no app deploy workflow |
 
 Push(`APP_PUSH_MODE`)는 workflow `-e` 주입이 아니라 host `.env`로 켠다 — firebase 전환 시 deploy.yml
