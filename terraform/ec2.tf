@@ -49,14 +49,16 @@ resource "aws_instance" "was" {
     certbot_email          = var.certbot_email
     bastion_ssh_public_key = var.bastion_ssh_public_key
     # ELK 로그 수집(신규 박스 재현용 — dev-was 만 was.sh.tftpl 이 env=="dev" 게이트로 Filebeat+nginx /kibana 렌더).
-    backup_bucket         = aws_s3_bucket.backup.bucket
-    stack_version         = var.elk_stack_version
-    filebeat_password     = var.elk_filebeat_password
-    elk_private_ip        = var.elk_private_ip
-    kibana_allowed_cidrs  = var.bastion_ssh_allowed_cidrs # Kibana IP 허용목록(지금은 DB 터널 CIDR 재사용)
-    monitoring_private_ip = var.monitoring_private_ip
-    grafana_allowed_cidrs = var.grafana_allowed_cidrs
-    grafana_proxy_script  = file("${path.module}/../deploy/monitoring/nginx/manage-grafana-proxy.sh")
+    backup_bucket                    = aws_s3_bucket.backup.bucket
+    stack_version                    = var.elk_stack_version
+    filebeat_password                = var.elk_filebeat_password
+    elk_private_ip                   = var.elk_private_ip
+    kibana_allowed_cidrs             = var.bastion_ssh_allowed_cidrs # Kibana IP 허용목록(지금은 DB 터널 CIDR 재사용)
+    monitoring_private_ip            = var.monitoring_private_ip
+    grafana_allowed_cidrs            = var.grafana_allowed_cidrs
+    grafana_proxy_script             = file("${path.module}/../deploy/monitoring/nginx/manage-grafana-proxy.sh")
+    node_exporter_version            = var.node_exporter_version
+    node_exporter_linux_amd64_sha256 = var.node_exporter_linux_amd64_sha256
   })
 
   root_block_device {
@@ -71,6 +73,11 @@ resource "aws_instance" "was" {
     # 신규 박스는 생성 시점 user_data로 부팅되므로 재현성은 유지된다.
     ignore_changes = [ami, user_data]
   }
+
+  depends_on = [
+    aws_s3_object.elk_filebeat,
+    aws_s3_object.monitoring_assets,
+  ]
 }
 
 resource "aws_eip" "was" {
@@ -103,15 +110,19 @@ resource "aws_instance" "mysql" {
   user_data_replace_on_change = false
 
   user_data = templatefile("${path.module}/user_data/mysql.sh.tftpl", {
-    env               = each.key
-    region            = var.region
-    db_name           = "laimory"
-    app_user          = var.db_app_username
-    app_password      = var.db_app_password
-    backup_bucket     = aws_s3_bucket.backup.bucket
-    schema_s3_uri     = "s3://${aws_s3_bucket.backup.bucket}/bootstrap/schema.sql"
-    backup_enabled    = each.key == "prod" # dev는 binlog→S3 백업 스킵(스키마는 부팅 시 S3서 재적용)
-    readonly_password = var.db_readonly_password
+    env                              = each.key
+    region                           = var.region
+    db_name                          = "laimory"
+    app_user                         = var.db_app_username
+    app_password                     = var.db_app_password
+    backup_bucket                    = aws_s3_bucket.backup.bucket
+    schema_s3_uri                    = "s3://${aws_s3_bucket.backup.bucket}/bootstrap/schema.sql"
+    backup_enabled                   = each.key == "prod" # dev는 binlog→S3 백업 스킵(스키마는 부팅 시 S3서 재적용)
+    readonly_password                = var.db_readonly_password
+    mysql_exporter_username          = var.mysql_exporter_username
+    monitoring_private_ip            = var.monitoring_private_ip
+    node_exporter_version            = var.node_exporter_version
+    node_exporter_linux_amd64_sha256 = var.node_exporter_linux_amd64_sha256
   })
 
   root_block_device {
@@ -131,6 +142,7 @@ resource "aws_instance" "mysql" {
     aws_nat_gateway.main,
     aws_route_table_association.private,
     aws_s3_object.schema,
+    aws_s3_object.monitoring_assets,
   ]
 }
 
@@ -155,8 +167,13 @@ resource "aws_instance" "redis" {
   iam_instance_profile = aws_iam_instance_profile.ec2.name
 
   user_data = templatefile("${path.module}/user_data/redis.sh.tftpl", {
-    redis_username = var.redis_app_username
-    redis_password = var.redis_app_password
+    region                           = var.region
+    backup_bucket                    = aws_s3_bucket.backup.bucket
+    redis_username                   = var.redis_app_username
+    redis_password                   = var.redis_app_password
+    redis_exporter_username          = var.redis_exporter_username
+    node_exporter_version            = var.node_exporter_version
+    node_exporter_linux_amd64_sha256 = var.node_exporter_linux_amd64_sha256
   })
 
   root_block_device {
@@ -173,6 +190,7 @@ resource "aws_instance" "redis" {
   depends_on = [
     aws_nat_gateway.main,
     aws_route_table_association.private,
+    aws_s3_object.monitoring_assets,
   ]
 }
 
@@ -232,13 +250,15 @@ resource "aws_instance" "elk" {
   }
 
   user_data = templatefile("${path.module}/user_data/elk.sh.tftpl", {
-    region            = var.region
-    backup_bucket     = aws_s3_bucket.backup.bucket
-    stack_version     = var.elk_stack_version
-    es_java_opts      = var.elk_es_java_opts
-    elastic_password  = var.elk_elastic_password
-    kibana_password   = var.elk_kibana_password
-    filebeat_password = var.elk_filebeat_password
+    region                           = var.region
+    backup_bucket                    = aws_s3_bucket.backup.bucket
+    stack_version                    = var.elk_stack_version
+    es_java_opts                     = var.elk_es_java_opts
+    elastic_password                 = var.elk_elastic_password
+    kibana_password                  = var.elk_kibana_password
+    filebeat_password                = var.elk_filebeat_password
+    node_exporter_version            = var.node_exporter_version
+    node_exporter_linux_amd64_sha256 = var.node_exporter_linux_amd64_sha256
   })
 
   root_block_device {
@@ -260,6 +280,7 @@ resource "aws_instance" "elk" {
     aws_s3_object.elk_ilm,
     aws_s3_object.elk_template,
     aws_s3_object.elk_filebeat,
+    aws_s3_object.monitoring_assets,
   ]
 }
 
@@ -281,14 +302,22 @@ resource "aws_instance" "monitoring" {
   user_data_replace_on_change = false
 
   user_data = templatefile("${path.module}/user_data/monitoring.sh.tftpl", {
-    region                    = var.region
-    backup_bucket             = aws_s3_bucket.backup.bucket
-    monitoring_private_ip     = var.monitoring_private_ip
-    prometheus_version        = var.prometheus_version
-    grafana_version           = var.grafana_version
-    blackbox_exporter_version = var.blackbox_exporter_version
-    grafana_root_url          = length(var.grafana_allowed_cidrs) > 0 ? "https://${var.api_domains["dev"]}/grafana/" : "http://localhost:3000/grafana/"
-    grafana_cookie_secure     = length(var.grafana_allowed_cidrs) > 0 ? "true" : "false"
+    region                           = var.region
+    backup_bucket                    = aws_s3_bucket.backup.bucket
+    monitoring_private_ip            = var.monitoring_private_ip
+    prometheus_version               = var.prometheus_version
+    grafana_version                  = var.grafana_version
+    blackbox_exporter_version        = var.blackbox_exporter_version
+    node_exporter_version            = var.node_exporter_version
+    node_exporter_linux_amd64_sha256 = var.node_exporter_linux_amd64_sha256
+    mysqld_exporter_version          = var.mysqld_exporter_version
+    redis_exporter_version           = var.redis_exporter_version
+    redis_exporter_username          = var.redis_exporter_username
+    dev_mysql_private_ip             = var.mysql_private_ip["dev"]
+    redis_private_ip                 = var.redis_private_ip
+    elk_private_ip                   = var.elk_private_ip
+    grafana_root_url                 = length(var.grafana_allowed_cidrs) > 0 ? "https://${var.api_domains["dev"]}/grafana/" : "http://localhost:3000/grafana/"
+    grafana_cookie_secure            = length(var.grafana_allowed_cidrs) > 0 ? "true" : "false"
   })
 
   root_block_device {
@@ -307,6 +336,7 @@ resource "aws_instance" "monitoring" {
     aws_nat_gateway.main,
     aws_route_table_association.private,
     aws_iam_role_policy.monitoring_bootstrap_read,
+    aws_iam_role_policy.monitoring_cloudwatch_read,
     aws_s3_object.monitoring_assets,
     aws_s3_object.monitoring_application_targets,
     aws_s3_object.monitoring_node_targets,

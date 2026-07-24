@@ -96,14 +96,13 @@ jobs:
           docker rm laimory 2>/dev/null || true
           # REDIS_KEY_PREFIX=dev_ : dev/prod 공유 Redis에서 dev 키 격리. 이 워크플로는 dev 전용이라 여기 고정(누락 불가).
           # APP_ENV=dev : JSON 로그의 environment 필드(ELK index 라우팅용). prod는 자체 배포에서 APP_ENV=prod.
-          # APP_AI_MODE=fake : dev 전용 in-process fake AI(dev runtime 시뮬레이터 — 앱에서 draft→콜백 성공 흐름 확인용). prod 워크플로는 미주입 → noop 기본.
           # APP_GEO_MODE=kakao : 지오코딩 enrich 활성화(기본 noop). 키(KAKAO_REST_API_KEY)는 secret이라
           #   YAML에 두지 않고 EC2 .env(--env-file)로 주입 — .env에 키가 없으면 기동이 fail-fast로 실패한다.
           # SWAGGER_ENABLED=true : dev 전용 Swagger UI(/swagger-ui) 노출. prod는 미주입 → 기본 off.
           # -e가 --env-file보다 우선하므로 dev 값이 항상 적용된다(prod는 자체 배포라 미설정 → 기본값).
           # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
           # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount + ADC 경로 주입(위 pre-flight).
-          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file /home/ubuntu/app/.env -e REDIS_KEY_PREFIX=dev_ -e APP_ENV=dev -e APP_GEO_MODE=kakao -e SWAGGER_ENABLED=true \$PUSH_ARGS ${IMG}
+          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file /home/ubuntu/app/.env -e REDIS_KEY_PREFIX=dev_ -e APP_ENV=dev -e APP_GEO_MODE=kakao -e SWAGGER_ENABLED=true -e APP_COMMIT_SHA=${IMAGE_TAG} \$PUSH_ARGS ${IMG}
           echo "waiting for /api/v1/intro ..."
           ok=0
           for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done

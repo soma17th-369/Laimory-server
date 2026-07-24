@@ -31,7 +31,8 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 11. `/api/v1/intro`를 최대 90초 polling한다.
 12. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
 
-workflow는 dev에서 Redis prefix, application environment, AI/geo mode와 Swagger switch를 명시적으로
+workflow는 dev에서 Redis prefix, application environment, geo mode, Swagger switch와 현재 image
+commit(`APP_COMMIT_SHA`)을 명시적으로
 주입한다. 이름과 의미만 문서화하며 값이나 credential은 workflow/config가 권위다.
 
 ### Preflight
@@ -58,6 +59,7 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - management port 9090도 host network에 bind된다. nginx는 Actuator를 proxy하지 않으며, live 접근은
   monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
+- 현재 image SHA는 모든 meter의 공통 tag가 아니라 `laimory.build.info` 한 meter에만 노출한다.
 - image build는 `-x test`
 - ECR lifecycle은 최근 15개 image를 보존
 
@@ -76,10 +78,15 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - 기존 WAS/MySQL/ELK는 `user_data` change를 ignore한다. 수정은 새 instance만 자동 재현하며
   기존 instance에는 SSM/manual 적용이 필요하다.
 - dev monitoring recipe는 private On-Demand t3.medium, encrypted gp3 30GiB, 전용 최소권한
-  SSM/bootstrap-read profile을 사용한다. live host와 SG attachment는 Console/SSM으로 반영하고,
+  SSM/bootstrap/CloudWatch read profile을 사용한다. live host와 SG attachment는 Console/SSM으로 반영하고,
   수동 생성 리소스가 Terraform state에 없다는 중복 생성 위험을 runbook에서 관리한다.
-- monitoring bootstrap S3 prefix에는 비밀 없는 Compose/config/systemd 자산만 둔다. Grafana admin
-  password와 encryption key는 host의 보호된 파일에 SSM으로 주입되기 전까지 Grafana 시작을 막는다.
+- monitoring bootstrap S3 prefix에는 비밀 없는 Compose/config/dashboard/alert/script/systemd 자산만
+  둔다. Grafana admin/encryption key, Elasticsearch/Discord와 MySQL/Redis exporter credential은 host의
+  UID별 보호 파일에 SSM으로 주입한다. 여섯 파일 중 하나라도 없거나 mode가 다르면 systemd가 fail-closed한다.
+- 신규 dev WAS/MySQL/Redis/ELK와 monitoring user data는 같은 pinned node_exporter installer를 exact
+  S3 object로 받아 private interface:9100에만 bind하고 textfile directory를 켠다. monitoring의 AWS/ES,
+  dev WAS의 Filebeat oneshot timer도 rebuild recipe에 포함한다. 기존 live host는 user data가 아니라
+  SSM으로 같은 script/unit을 적용하며 prod에는 설치하지 않는다.
 - 공용 EC2 role의 backup write는 `binlog/*`에만 한정해 실행형 monitoring bootstrap object를 기존
   WAS/DB/ELK가 덮어쓸 수 없게 한다.
 - live `/grafana/` 개방은 전용 관리 script로 별도 nginx include만 추가·제거한다. script는 기존

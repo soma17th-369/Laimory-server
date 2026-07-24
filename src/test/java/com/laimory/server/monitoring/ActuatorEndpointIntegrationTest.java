@@ -9,8 +9,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.logging.TransactionIdFilter;
+import com.laimory.server.common.monitoring.BuildInfoMetrics;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.push.PushMetrics;
 import com.laimory.server.timeline.service.TimelineMetrics;
+import io.micrometer.core.instrument.Timer;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -48,7 +51,8 @@ import org.springframework.web.reactive.function.client.WebClient;
         webEnvironment = WebEnvironment.RANDOM_PORT,
         properties = {
                 "management.server.port=0",
-                "APP_ENV=test"
+                "APP_ENV=test",
+                "APP_COMMIT_SHA=abcdef1234567890abcdef1234567890abcdef12"
         })
 @AutoConfigureObservability
 class ActuatorEndpointIntegrationTest {
@@ -70,6 +74,9 @@ class ActuatorEndpointIntegrationTest {
 
     @Autowired
     private WebClient.Builder webClientBuilder;
+
+    @Autowired
+    private TimelineMetrics timelineMetrics;
 
     @MockitoBean
     private JwtTokens jwtTokens;
@@ -127,17 +134,24 @@ class ActuatorEndpointIntegrationTest {
                 .toBodilessEntity()
                 .block();
 
+        Timer.Sample callback = timelineMetrics.startCallback();
+        timelineMetrics.recordCallback(callback);
+
         String metrics = http.getForObject(managementUrl("/actuator/prometheus"), String.class);
 
         assertThat(metrics)
                 .contains("http_server_requests_seconds_count")
                 .contains("http_client_requests_seconds_count")
+                .contains("http_client_requests_seconds_bucket")
                 .contains("application=\"laimory\"")
                 .contains("environment=\"test\"")
                 .contains("uri=\"/probe/{id}\"")
                 .contains("laimory_timeline_draft_creation_total")
                 .contains("laimory_timeline_task_terminal_total")
                 .contains("laimory_timeline_callback_duration_seconds_count")
+                .contains("laimory_timeline_callback_duration_seconds_bucket")
+                .contains("laimory_push_delivery_total")
+                .contains("laimory_build_info{application=\"laimory\",commit=\"abcdef123456\",environment=\"test\"} 1")
                 .doesNotContain(taskId, latitude, longitude);
     }
 
@@ -180,6 +194,8 @@ class ActuatorEndpointIntegrationTest {
     @Import({
             SecurityConfig.class,
             TransactionIdFilter.class,
+            BuildInfoMetrics.class,
+            PushMetrics.class,
             TimelineMetrics.class,
             ProbeController.class
     })

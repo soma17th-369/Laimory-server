@@ -64,7 +64,10 @@ class TimelineTaskStoreTest {
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
-        verify(redis).set(keyCaptor.capture(), jsonCaptor.capture(), ttlCaptor.capture());
+        verify(redis).setAndRemoveFromSortedSet(
+                keyCaptor.capture(), jsonCaptor.capture(), ttlCaptor.capture(),
+                org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq("abc"));
 
         assertThat(keyCaptor.getValue()).isEqualTo("timeline:draft-task:abc");
         assertThat(ttlCaptor.getValue()).isEqualTo(Duration.ofHours(24));
@@ -79,7 +82,8 @@ class TimelineTaskStoreTest {
         store.save("abc", processingTask(), Duration.ofHours(1));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
+                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
         String json = jsonCaptor.getValue();
         assertThat(json).contains("\"dailyRecordId\":42");
         assertThat(json).contains("\"userId\":7");
@@ -97,7 +101,8 @@ class TimelineTaskStoreTest {
         store.save("abc", processingTask(), Duration.ofHours(1));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
+                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
         TimelineDraftTask roundTripped = objectMapper.readValue(jsonCaptor.getValue(), TimelineDraftTask.class);
         assertThat(roundTripped.processingStartedAt()).isEqualTo(STARTED_AT);
         assertThat(roundTripped.timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(18, 30));
@@ -110,7 +115,8 @@ class TimelineTaskStoreTest {
         store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis, times(2)).set(anyString(), jsonCaptor.capture(), any());
+        verify(redis, times(2)).setAndRemoveFromSortedSet(
+                anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
         assertThat(jsonCaptor.getAllValues()).allSatisfy(json -> {
             assertThat(json).doesNotContain("processingStartedAt");
             assertThat(json).doesNotContain("timelineWindow");
@@ -124,13 +130,64 @@ class TimelineTaskStoreTest {
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
         store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
 
-        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis, times(3)).set(anyString(), jsonCaptor.capture(), any());
-        for (String json : jsonCaptor.getAllValues()) {
+        ArgumentCaptor<String> processingJson = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> terminalJson = ArgumentCaptor.forClass(String.class);
+        verify(redis).setAndAddToSortedSet(anyString(), processingJson.capture(), any(),
+                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(redis, times(2)).setAndRemoveFromSortedSet(
+                anyString(), terminalJson.capture(), any(), anyString(), anyString());
+        java.util.List<String> allJson = new java.util.ArrayList<>();
+        allJson.add(processingJson.getValue());
+        allJson.addAll(terminalJson.getAllValues());
+        for (String json : allJson) {
             TimelineDraftTask roundTripped = objectMapper.readValue(json, TimelineDraftTask.class);
             assertThat(roundTripped.userId()).isEqualTo(7L);
             assertThat(roundTripped.dailyRecordId()).isEqualTo(42L);
         }
+    }
+
+    @Test
+    void save_processingAtomicallyAddsStartedAtToIndex() {
+        store.save("abc", processingTask(), Duration.ofHours(1));
+
+        verify(redis).setAndAddToSortedSet(
+                org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
+                anyString(),
+                org.mockito.ArgumentMatchers.eq(Duration.ofHours(1)),
+                org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq("abc"),
+                org.mockito.ArgumentMatchers.eq(STARTED_AT.toEpochMilli()));
+    }
+
+    @Test
+    void save_terminalAtomicallyRemovesTaskFromProcessingIndex() {
+        store.save("success", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
+        store.save("failed", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
+                Duration.ofHours(24));
+
+        verify(redis).setAndRemoveFromSortedSet(
+                org.mockito.ArgumentMatchers.eq("timeline:draft-task:success"),
+                anyString(),
+                org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)),
+                org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq("success"));
+        verify(redis).setAndRemoveFromSortedSet(
+                org.mockito.ArgumentMatchers.eq("timeline:draft-task:failed"),
+                anyString(),
+                org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)),
+                org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq("failed"));
+    }
+
+    @Test
+    void countStuckProcessing_delegatesExactTtlAndThresholdCutoffs() {
+        Instant now = Instant.parse("2026-07-24T12:00:00Z");
+        when(redis.pruneAndCountSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY,
+                now.minus(Duration.ofHours(1)).toEpochMilli(),
+                now.minus(Duration.ofMinutes(10)).toEpochMilli())).thenReturn(2L);
+
+        assertThat(store.countStuckProcessing(
+                now, Duration.ofMinutes(10), Duration.ofHours(1))).isEqualTo(2L);
     }
 
     @Test

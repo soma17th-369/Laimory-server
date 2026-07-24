@@ -62,6 +62,73 @@ services:
         max-size: 10m
         max-file: "3"
 
+  mysqld-exporter:
+    image: prom/mysqld-exporter:${MYSQLD_EXPORTER_VERSION:-v0.19.0}
+    command:
+      - --config.my-cnf=/run/secrets/mysql_exporter_my_cnf
+      - --mysqld.address=${DEV_MYSQL_ADDRESS:-10.0.32.12:3306}
+      - --no-collect.slave_status
+      - --no-collect.info_schema.innodb_cmp
+      - --no-collect.info_schema.innodb_cmpmem
+      - --no-collect.info_schema.query_response_time
+      - --log.format=json
+    volumes:
+      - ./secrets/mysql_exporter_my.cnf:/run/secrets/mysql_exporter_my_cnf:ro
+    expose:
+      - "9104"
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9104/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 192m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.87.0-alpine}
+    command:
+      - --redis.addr=${REDIS_ADDRESS:-redis://10.0.32.11:6379}
+      - --redis.user=${REDIS_EXPORTER_USERNAME:-laimory_monitoring}
+      - --redis.password-file=/run/secrets/redis_exporter_password.json
+      - --config-command=-
+      - --exclude-latency-histogram-metrics
+      - --ping-on-connect
+      - --disable-exporting-key-values
+      - --disable-scrape-endpoint
+      - --connection-timeout=5s
+      - --log-format=json
+    volumes:
+      - ./secrets/redis_exporter_password.json:/run/secrets/redis_exporter_password.json:ro
+    expose:
+      - "9121"
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9121/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 192m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
   grafana:
     image: grafana/grafana:${GRAFANA_VERSION:-13.1.1}
     depends_on:
@@ -84,6 +151,7 @@ services:
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://10.0.32.13:9200}
       GF_LOG_MODE: console
       GF_LOG_FORMAT: json
     volumes:
@@ -93,6 +161,8 @@ services:
       - ./grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
       - ./secrets/grafana_admin_password:/run/secrets/grafana_admin_password:ro
       - ./secrets/grafana_secret_key:/run/secrets/grafana_secret_key:ro
+      - ./secrets/elasticsearch_api_key:/run/secrets/elasticsearch_api_key:ro
+      - ./secrets/discord_webhook_url:/run/secrets/discord_webhook_url:ro
     ports:
       - "127.0.0.1:3000:3000"
       - "${MONITORING_PRIVATE_IP:-127.0.0.2}:3000:3000"

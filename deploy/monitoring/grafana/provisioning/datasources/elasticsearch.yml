@@ -1,0 +1,25 @@
+apiVersion: 1
+
+deleteDatasources:
+  - name: Elasticsearch Dev Logs
+    orgId: 1
+
+datasources:
+  - name: Elasticsearch Dev Logs
+    uid: elasticsearch-dev
+    type: elasticsearch
+    access: proxy
+    orgId: 1
+    url: $ELASTICSEARCH_URL
+    isDefault: false
+    editable: false
+    version: 1
+    jsonData:
+      index: "[laimory-dev-]YYYY.MM.DD"
+      interval: Daily
+      timeField: "@timestamp"
+      logMessageField: message
+      logLevelField: level
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: "ApiKey $__file{/run/secrets/elasticsearch_api_key}"

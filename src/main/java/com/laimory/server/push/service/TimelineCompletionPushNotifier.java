@@ -1,6 +1,7 @@
 package com.laimory.server.push.service;
 
 import com.laimory.server.push.PushMessageSender;
+import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
@@ -30,6 +31,7 @@ public class TimelineCompletionPushNotifier {
 
     private final PushRegistrationService pushRegistrationService;
     private final PushMessageSender pushMessageSender;
+    private final PushMetrics pushMetrics;
     private final Clock clock;
 
     @Async
@@ -43,6 +45,8 @@ public class TimelineCompletionPushNotifier {
                 return;
             }
             PushSendResult result = pushMessageSender.send(taskId, status, firebaseInstallationIds);
+            // 발송 결과는 invalid registration DB 정리와 독립된 사실이다. 정리 실패 전에 먼저 기록한다.
+            pushMetrics.record(result);
             if (!result.invalidFirebaseInstallationIds().isEmpty()) {
                 pushRegistrationService.removeInvalidRegistrations(
                         result.invalidFirebaseInstallationIds(), snapshotAt);

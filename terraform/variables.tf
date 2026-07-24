@@ -305,6 +305,47 @@ variable "blackbox_exporter_version" {
   default     = "v0.28.0"
 }
 
+variable "node_exporter_version" {
+  description = "공식 node_exporter release tag"
+  type        = string
+  default     = "v1.12.1"
+}
+
+variable "node_exporter_linux_amd64_sha256" {
+  description = "node_exporter linux-amd64 release archive SHA256"
+  type        = string
+  default     = "b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.node_exporter_linux_amd64_sha256))
+    error_message = "node_exporter_linux_amd64_sha256는 64자리 lowercase SHA256이어야 한다."
+  }
+}
+
+variable "mysqld_exporter_version" {
+  description = "공식 mysqld_exporter image tag"
+  type        = string
+  default     = "v0.19.0"
+}
+
+variable "redis_exporter_version" {
+  description = "공식 redis_exporter alpine image tag"
+  type        = string
+  default     = "v1.87.0-alpine"
+}
+
+variable "mysql_exporter_username" {
+  description = "dev MySQL의 USAGE-only monitoring 계정명"
+  type        = string
+  default     = "laimory_exporter"
+}
+
+variable "redis_exporter_username" {
+  description = "Redis의 INFO/PING-only monitoring ACL 계정명"
+  type        = string
+  default     = "laimory_monitoring"
+}
+
 variable "grafana_allowed_cidrs" {
   description = "dev nginx /grafana/ 접근 허용 IPv4 CIDR. 빈 목록이면 location을 만들지 않고 SSM-only로 유지한다."
   type        = list(string)

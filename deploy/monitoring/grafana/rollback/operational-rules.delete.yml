@@ -1,0 +1,19 @@
+apiVersion: 1
+
+deleteRules:
+  - orgId: 1
+    uid: laimory_processing_stuck
+  - orgId: 1
+    uid: laimory_tls_expiry_warning
+  - orgId: 1
+    uid: laimory_tls_expiry_critical
+  - orgId: 1
+    uid: laimory_aws_metric_collection_failed
+  - orgId: 1
+    uid: laimory_cpu_credit_low
+  - orgId: 1
+    uid: laimory_host_oom_kill
+  - orgId: 1
+    uid: laimory_log_pipeline_unhealthy
+  - orgId: 1
+    uid: laimory_filebeat_output_failures

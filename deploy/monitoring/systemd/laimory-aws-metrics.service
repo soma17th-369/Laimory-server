@@ -1,0 +1,14 @@
+[Unit]
+Description=Laimory AWS CloudWatch metric collector
+Wants=network-online.target
+After=network-online.target node_exporter.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/laimory-monitoring/scripts/collect-aws-metrics.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

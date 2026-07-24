@@ -1,0 +1,869 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-availability
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_target_down
+        title: Prometheus target down
+        dashboardUid: laimory-overview
+        panelId: 16
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'up{job=~"spring_boot|node|mysqld|redis|prometheus|blackbox_exporter|grafana"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: 'Prometheus cannot scrape {{ $labels.job }} on {{ $labels.instance }}.'
+          description: 'The target has returned no successful scrape for at least two minutes.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#target-down
+        labels:
+          environment: dev
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_datastore_backend_down
+        title: MySQL or Redis backend down
+        dashboardUid: laimory-overview
+        panelId: 16
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'mysql_up{job="mysqld",environment="dev"} or redis_up{job="redis",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: '{{ $labels.job }} exporter cannot reach or authenticate to its backend.'
+          description: 'The exporter endpoint is scrapeable, but the MySQL or Redis backend check is failing.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#mysql-or-redis-pressure
+        labels:
+          environment: dev
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_https_probe_failed
+        title: Dev HTTPS probe failed
+        dashboardUid: laimory-overview
+        panelId: 2
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'probe_success{job="blackbox_https",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: 'The public dev /status probe is failing.'
+          description: '/status checks HTTP/TLS and database connectivity; it is not dependency-complete readiness.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#https-probe-failed
+        labels:
+          environment: dev
+          job: blackbox_https
+          service: laimory
+          severity: critical
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-application
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_http_5xx_high
+        title: HTTP 5xx ratio high
+        dashboardUid: laimory-overview
+        panelId: 5
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",status=~"5..",uri!~"/actuator.*"}[5m])) / clamp_min(sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])), 1)) and on (instance) (sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])) >= 20)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.05], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'HTTP 5xx ratio is above 5% on {{ $labels.instance }}.'
+          description: 'At least 20 requests occurred in five minutes and more than 5% returned 5xx.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#http-errors-or-latency
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_http_p95_high
+        title: HTTP p95 latency high
+        dashboardUid: laimory-overview
+        panelId: 6
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(histogram_quantile(0.95, sum by (le, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])))) and on (instance) (sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])) >= 20)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'HTTP server p95 latency is above one second on {{ $labels.instance }}.'
+          description: 'The five-minute SLO-bucket estimate is elevated under at least 20 requests.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#http-errors-or-latency
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_jvm_heap_high
+        title: JVM heap pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 4
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum by (instance) (jvm_memory_used_bytes{job="spring_boot",environment="dev",area="heap"}) / clamp_min(sum by (instance) (jvm_memory_max_bytes{job="spring_boot",environment="dev",area="heap"} > 0), 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.85], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'JVM heap usage is above 85% on {{ $labels.instance }}.'
+          description: 'Heap pressure persisted across normal garbage-collection cycles.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#jvm-or-hikari-pressure
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_hikari_saturated
+        title: Hikari connection pool pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 12
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(max by (instance) (hikaricp_connections_active{job="spring_boot",environment="dev"}) / clamp_min(max by (instance) (hikaricp_connections_max{job="spring_boot",environment="dev"}), 1)) and on (instance) (max by (instance) (hikaricp_connections_pending{job="spring_boot",environment="dev"}) > 0)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.9], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Hikari pool usage is above 90% with pending callers on {{ $labels.instance }}.'
+          description: 'Database connection acquisition is queued while the application pool is near capacity.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#jvm-or-hikari-pressure
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-infrastructure
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_host_memory_low
+        title: Host memory low
+        dashboardUid: laimory-infrastructure
+        panelId: 3
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (instance, host) (node_memory_MemAvailable_bytes{job="node",environment="dev"}) / max by (instance, host) (node_memory_MemTotal_bytes{job="node",environment="dev"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.15], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'Available memory is below 15% on {{ $labels.host }}.'
+          description: 'MemAvailable, which accounts for reclaimable cache, has remained low.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_filesystem_low
+        title: Filesystem space low
+        dashboardUid: laimory-infrastructure
+        panelId: 4
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"}) / max by (instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.2], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Filesystem free space is below 20% on {{ $labels.host }} {{ $labels.mountpoint }}.'
+          description: 'A real host filesystem is approaching its capacity limit; pseudo filesystems are excluded.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_mysql_connections_high
+        title: MySQL connection pressure
+        dashboardUid: laimory-infrastructure
+        panelId: 7
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (host) (mysql_global_status_threads_connected{job="mysqld",environment="dev"}) / clamp_min(max by (host) (mysql_global_variables_max_connections{job="mysqld",environment="dev"}), 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.8], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'MySQL connections exceed 80% of max_connections.'
+          description: 'The dev MySQL server is approaching its configured connection limit.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#mysql-or-redis-pressure
+        labels:
+          environment: dev
+          instance: dev-mysql
+          job: mysqld
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_redis_evictions
+        title: Redis evictions detected
+        dashboardUid: laimory-infrastructure
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(increase(redis_evicted_keys_total{job="redis",environment="dev"}[5m]))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Redis has continuously reported key evictions.'
+          description: 'The five-minute eviction increase remained positive; inspect memory policy and capacity.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#mysql-or-redis-pressure
+        labels:
+          environment: dev
+          instance: redis
+          job: redis
+          service: laimory
+          severity: warning
+        isPaused: false
+
+  - orgId: 1
+    name: laimory-prometheus
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_prometheus_reload_failed
+        title: Prometheus config reload failed
+        dashboardUid: laimory-infrastructure
+        panelId: 17
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'prometheus_config_last_reload_successful{job="prometheus",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: 'Prometheus rejected its most recent configuration reload.'
+          description: 'Keep the last known-good configuration active and validate before retrying.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prometheus-self-health
+        labels:
+          environment: dev
+          instance: monitoring
+          job: prometheus
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_prometheus_internal_failures
+        title: Prometheus rule or TSDB failure
+        dashboardUid: laimory-infrastructure
+        panelId: 18
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(sum(increase(prometheus_rule_evaluation_failures_total{job="prometheus",environment="dev"}[5m])) or vector(0)) + (sum(increase(prometheus_tsdb_compactions_failed_total{job="prometheus",environment="dev"}[5m])) or vector(0)) + (sum(increase(prometheus_tsdb_wal_truncations_failed_total{job="prometheus",environment="dev"}[5m])) or vector(0))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: 'Prometheus reported a rule evaluation, TSDB compaction, or WAL truncation failure.'
+          description: 'Inspect Prometheus logs and disk state before restarting or reloading.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prometheus-self-health
+        labels:
+          environment: dev
+          instance: monitoring
+          job: prometheus
+          service: laimory
+          severity: critical
+        isPaused: false

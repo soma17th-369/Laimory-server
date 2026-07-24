@@ -5,7 +5,7 @@ set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg unzip
+apt-get install -y ca-certificates curl gnupg jq unzip
 
 # AWS CLI v2 (정확한 S3 object만 pull; monitoring role에는 ListBucket 권한이 없다).
 curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
@@ -25,6 +25,10 @@ usermod -aG docker ubuntu
 install -d -m 0755 \
   /opt/laimory-monitoring/prometheus/targets \
   /opt/laimory-monitoring/blackbox \
+  /opt/laimory-monitoring/node-exporter \
+  /opt/laimory-monitoring/scripts \
+  /opt/laimory-monitoring/grafana/rollback \
+  /opt/laimory-monitoring/grafana/smoke \
   /opt/laimory-monitoring/grafana/provisioning/datasources \
   /opt/laimory-monitoring/grafana/provisioning/dashboards/json \
   /opt/laimory-monitoring/grafana/provisioning/alerting
@@ -56,15 +60,45 @@ download_bootstrap_asset prometheus/targets/application.yml /opt/laimory-monitor
 download_bootstrap_asset prometheus/targets/node.yml /opt/laimory-monitoring/prometheus/targets/node.yml
 download_bootstrap_asset prometheus/targets/probe.yml /opt/laimory-monitoring/prometheus/targets/probe.yml
 download_bootstrap_asset blackbox/blackbox.yml /opt/laimory-monitoring/blackbox/blackbox.yml
+download_bootstrap_asset node-exporter/install.sh /opt/laimory-monitoring/node-exporter/install.sh
+download_bootstrap_asset node-exporter/uninstall.sh /opt/laimory-monitoring/node-exporter/uninstall.sh
 download_bootstrap_asset grafana/provisioning/datasources/prometheus.yml /opt/laimory-monitoring/grafana/provisioning/datasources/prometheus.yml
+download_bootstrap_asset grafana/provisioning/datasources/elasticsearch.yml /opt/laimory-monitoring/grafana/provisioning/datasources/elasticsearch.yml
 download_bootstrap_asset grafana/provisioning/dashboards/provider.yml /opt/laimory-monitoring/grafana/provisioning/dashboards/provider.yml
+download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-overview.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-overview.json
+download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-jvm-spring.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-infrastructure.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json
+download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-logs.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
+download_bootstrap_asset grafana/provisioning/alerting/contact-points.yml /opt/laimory-monitoring/grafana/provisioning/alerting/contact-points.yml
+download_bootstrap_asset grafana/provisioning/alerting/notification-policy.yml /opt/laimory-monitoring/grafana/provisioning/alerting/notification-policy.yml
+download_bootstrap_asset grafana/provisioning/alerting/rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/operational-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/templates.yml /opt/laimory-monitoring/grafana/provisioning/alerting/templates.yml
+download_bootstrap_asset grafana/rollback/operational-rules.delete.yml /opt/laimory-monitoring/grafana/rollback/operational-rules.delete.yml
+download_bootstrap_asset grafana/smoke/smoke-rule.firing.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.firing.yml
+download_bootstrap_asset grafana/smoke/smoke-rule.resolved.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.resolved.yml
+download_bootstrap_asset grafana/smoke/smoke-rule.delete.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.delete.yml
+download_bootstrap_asset scripts/install-secret.sh /opt/laimory-monitoring/scripts/install-secret.sh
+download_bootstrap_asset scripts/validate-secrets.sh /opt/laimory-monitoring/scripts/validate-secrets.sh
+download_bootstrap_asset scripts/collect-aws-metrics.sh /opt/laimory-monitoring/scripts/collect-aws-metrics.sh
+download_bootstrap_asset scripts/collect-elasticsearch-metrics.sh /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 download_bootstrap_asset systemd/laimory-monitoring.service /etc/systemd/system/laimory-monitoring.service
+download_bootstrap_asset systemd/laimory-aws-metrics.service /etc/systemd/system/laimory-aws-metrics.service
+download_bootstrap_asset systemd/laimory-aws-metrics.timer /etc/systemd/system/laimory-aws-metrics.timer
+download_bootstrap_asset systemd/laimory-elasticsearch-metrics.service /etc/systemd/system/laimory-elasticsearch-metrics.service
+download_bootstrap_asset systemd/laimory-elasticsearch-metrics.timer /etc/systemd/system/laimory-elasticsearch-metrics.timer
 
 cat > /opt/laimory-monitoring/.env <<'ENVEOF'
 MONITORING_PRIVATE_IP=${monitoring_private_ip}
 PROMETHEUS_VERSION=${prometheus_version}
 GRAFANA_VERSION=${grafana_version}
 BLACKBOX_EXPORTER_VERSION=${blackbox_exporter_version}
+MYSQLD_EXPORTER_VERSION=${mysqld_exporter_version}
+REDIS_EXPORTER_VERSION=${redis_exporter_version}
+DEV_MYSQL_ADDRESS=${dev_mysql_private_ip}:3306
+REDIS_ADDRESS=redis://${redis_private_ip}:6379
+REDIS_EXPORTER_USERNAME=${redis_exporter_username}
+ELASTICSEARCH_URL=http://${elk_private_ip}:9200
 GRAFANA_ROOT_URL=${grafana_root_url}
 GRAFANA_COOKIE_SECURE=${grafana_cookie_secure}
 ENVEOF
@@ -73,17 +107,32 @@ chown -R root:root /opt/laimory-monitoring
 find /opt/laimory-monitoring -type d -exec chmod 0755 {} +
 find /opt/laimory-monitoring -type f -exec chmod 0644 {} +
 chmod 0600 /opt/laimory-monitoring/.env
+chmod 0750 \
+  /opt/laimory-monitoring/node-exporter/install.sh \
+  /opt/laimory-monitoring/node-exporter/uninstall.sh \
+  /opt/laimory-monitoring/scripts/install-secret.sh \
+  /opt/laimory-monitoring/scripts/validate-secrets.sh \
+  /opt/laimory-monitoring/scripts/collect-aws-metrics.sh \
+  /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 
-# Host에서는 parent 0700으로 일반 사용자를 차단하고, container UID 472에만 파일 read를 허용한다.
+# Host에서는 parent 0700으로 일반 사용자를 차단하고 container UID별 파일 read만 허용한다.
 # 값은 SSM으로 수동 주입한다. 빈 placeholder는 Git/S3/Terraform/user_data에 secret을 남기지 않는다.
 install -d -m 0700 -o root -g root /opt/laimory-monitoring/secrets
 install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/grafana_admin_password
 install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/grafana_secret_key
+install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/elasticsearch_api_key
+install -m 0400 -o 472 -g root /dev/null /opt/laimory-monitoring/secrets/discord_webhook_url
+install -m 0400 -o 65534 -g root /dev/null /opt/laimory-monitoring/secrets/mysql_exporter_my.cnf
+install -m 0400 -o 59000 -g 59000 /dev/null /opt/laimory-monitoring/secrets/redis_exporter_password.json
 
 systemctl daemon-reload
 systemctl enable laimory-monitoring.service
 
-# 비밀이 필요 없는 수집 core만 먼저 올린다. Grafana는 두 secret 주입 후 systemctl start로 합류한다.
+# Host 자체도 private interface에서만 node metrics를 노출한다.
+/opt/laimory-monitoring/node-exporter/install.sh ${node_exporter_version} ${node_exporter_linux_amd64_sha256}
+systemctl enable --now laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
+
+# 비밀이 필요 없는 수집 core만 먼저 올린다. Grafana/exporter는 여섯 secret 주입 후 systemctl로 합류한다.
 cd /opt/laimory-monitoring
 docker compose pull
 docker compose up -d prometheus blackbox-exporter

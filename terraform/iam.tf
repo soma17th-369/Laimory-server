@@ -96,6 +96,28 @@ resource "aws_iam_role_policy" "monitoring_bootstrap_read" {
   policy = data.aws_iam_policy_document.monitoring_bootstrap_read.json
 }
 
+data "aws_iam_policy_document" "monitoring_cloudwatch_read" {
+  statement {
+    sid       = "MonitoringCloudWatchRead"
+    effect    = "Allow"
+    actions   = ["cloudwatch:GetMetricData"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "MonitoringDescribeOwnInstance"
+    effect    = "Allow"
+    actions   = ["ec2:DescribeInstances"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "monitoring_cloudwatch_read" {
+  name   = "${var.project_name}-monitoring-cloudwatch-read"
+  role   = aws_iam_role.monitoring.id
+  policy = data.aws_iam_policy_document.monitoring_cloudwatch_read.json
+}
+
 resource "aws_iam_instance_profile" "monitoring" {
   name = "${var.project_name}-monitoring-role"
   role = aws_iam_role.monitoring.name

@@ -275,9 +275,12 @@ blanket/target `terraform apply`를 하지 않는다. Console/SSM으로 같은 �
 - private subnet[0], 고정 IP 후보 `10.0.32.14`, public IP 없음
 - On-Demand `t3.medium`, 암호화 gp3 30GiB
 - 전용 `laimory-monitoring-role`: SSM Core + `bootstrap/monitoring/*` GetObject만
-- Prometheus 7일/12GB, Grafana, blackbox exporter
-- Grafana 3000만 dev WAS identity SG에서 접근; 9090/9115는 host에 publish하지 않음
-- secret을 쓰는 Grafana의 시작은 systemd가 소유하고 process 실패만 Docker `on-failure`로 복구
+- Prometheus 7일/12GB, Grafana, blackbox, central MySQL/Redis exporter
+- monitoring/dev WAS/dev MySQL/Redis/ELK에는 private-IP-bound node_exporter
+- Prometheus metrics dashboard 3개와 Elasticsearch dev log dashboard 1개, Grafana native Discord alert
+- Grafana 3000만 dev WAS identity SG에서 접근; 9090/9104/9115/9121은 host에 publish하지 않음
+- secret을 쓰는 Grafana/MySQL/Redis exporter의 시작은 systemd가 소유하고 process 실패만 Docker
+  `on-failure`로 복구
 - `grafana_allowed_cidrs=[]`이면 dev nginx에 `/grafana/`를 만들지 않고 SSM-only
 
 ### 1. 사전 조회와 비밀 없는 bootstrap 업로드
@@ -320,16 +323,52 @@ envsubst '${dev_api_domain}' \
   > "$BOOTSTRAP_TMP/probe.yml"
 
 BACKUP_BUCKET='<terraform output -raw backup_bucket 값>'
-aws s3 cp deploy/monitoring/docker-compose.yml "s3://$BACKUP_BUCKET/bootstrap/monitoring/docker-compose.yml" --profile sandbox
-aws s3 cp deploy/monitoring/prometheus/prometheus.yml "s3://$BACKUP_BUCKET/bootstrap/monitoring/prometheus/prometheus.yml" --profile sandbox
+while IFS= read -r asset; do
+  aws s3 cp "deploy/monitoring/$asset" \
+    "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
+    --profile sandbox --only-show-errors
+done <<'ASSETS'
+docker-compose.yml
+prometheus/prometheus.yml
+blackbox/blackbox.yml
+node-exporter/install.sh
+node-exporter/uninstall.sh
+grafana/provisioning/datasources/prometheus.yml
+grafana/provisioning/datasources/elasticsearch.yml
+grafana/provisioning/dashboards/provider.yml
+grafana/provisioning/dashboards/json/laimory-overview.json
+grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+grafana/provisioning/dashboards/json/laimory-infrastructure.json
+grafana/provisioning/dashboards/json/laimory-logs.json
+grafana/provisioning/alerting/contact-points.yml
+grafana/provisioning/alerting/notification-policy.yml
+grafana/provisioning/alerting/rules.yml
+grafana/provisioning/alerting/operational-rules.yml
+grafana/provisioning/alerting/templates.yml
+grafana/rollback/operational-rules.delete.yml
+grafana/smoke/smoke-rule.firing.yml
+grafana/smoke/smoke-rule.resolved.yml
+grafana/smoke/smoke-rule.delete.yml
+scripts/install-secret.sh
+scripts/validate-secrets.sh
+scripts/configure-mysql-exporter-user.sh
+scripts/configure-redis-exporter-user.sh
+scripts/collect-aws-metrics.sh
+scripts/collect-elasticsearch-metrics.sh
+scripts/collect-filebeat-metrics.sh
+nginx/manage-grafana-proxy.sh
+systemd/laimory-monitoring.service
+systemd/laimory-aws-metrics.service
+systemd/laimory-aws-metrics.timer
+systemd/laimory-elasticsearch-metrics.service
+systemd/laimory-elasticsearch-metrics.timer
+systemd/laimory-filebeat-metrics.service
+systemd/laimory-filebeat-metrics.timer
+ASSETS
+
 aws s3 cp "$BOOTSTRAP_TMP/application.yml" "s3://$BACKUP_BUCKET/bootstrap/monitoring/prometheus/targets/application.yml" --profile sandbox
 aws s3 cp "$BOOTSTRAP_TMP/node.yml" "s3://$BACKUP_BUCKET/bootstrap/monitoring/prometheus/targets/node.yml" --profile sandbox
 aws s3 cp "$BOOTSTRAP_TMP/probe.yml" "s3://$BACKUP_BUCKET/bootstrap/monitoring/prometheus/targets/probe.yml" --profile sandbox
-aws s3 cp deploy/monitoring/blackbox/blackbox.yml "s3://$BACKUP_BUCKET/bootstrap/monitoring/blackbox/blackbox.yml" --profile sandbox
-aws s3 cp deploy/monitoring/grafana/provisioning/datasources/prometheus.yml "s3://$BACKUP_BUCKET/bootstrap/monitoring/grafana/provisioning/datasources/prometheus.yml" --profile sandbox
-aws s3 cp deploy/monitoring/grafana/provisioning/dashboards/provider.yml "s3://$BACKUP_BUCKET/bootstrap/monitoring/grafana/provisioning/dashboards/provider.yml" --profile sandbox
-aws s3 cp deploy/monitoring/nginx/manage-grafana-proxy.sh "s3://$BACKUP_BUCKET/bootstrap/monitoring/nginx/manage-grafana-proxy.sh" --profile sandbox
-aws s3 cp deploy/monitoring/systemd/laimory-monitoring.service "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-monitoring.service" --profile sandbox
 ```
 
 임시 target 파일에는 secret이 없지만 작업이 끝나면 임시 디렉터리를 폐기한다. S3 prefix에는 admin
@@ -339,8 +378,9 @@ aws s3 cp deploy/monitoring/systemd/laimory-monitoring.service "s3://$BACKUP_BUC
 
 Terraform의 다음 리소스를 그대로 보고 Console에서 만든다.
 
-1. `aws_iam_role.monitoring`/profile: SSM Core와 해당 bucket의
-   `bootstrap/monitoring/*` `s3:GetObject`만 허용한다.
+1. `aws_iam_role.monitoring`/profile: SSM Core, 해당 bucket의
+   `bootstrap/monitoring/*` `s3:GetObject`, `cloudwatch:GetMetricData`,
+   `ec2:DescribeInstances` read만 허용한다.
 2. `monitoring`, `monitoring_proxy_source`, `monitoring_scrape_target`,
    `monitoring_dev_mysql` SG를 만든다.
 3. identity SG는 dev에만 붙인다:
@@ -363,39 +403,52 @@ export monitoring_private_ip='10.0.32.14'
 export prometheus_version='v3.13.1'
 export grafana_version='13.1.1'
 export blackbox_exporter_version='v0.28.0'
+export node_exporter_version='v1.12.1'
+export node_exporter_linux_amd64_sha256='b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63'
+export mysqld_exporter_version='v0.19.0'
+export redis_exporter_version='v1.87.0-alpine'
+export redis_exporter_username='laimory_monitoring'
+export dev_mysql_private_ip='10.0.32.12'
+export redis_private_ip='10.0.32.11'
+export elk_private_ip='10.0.32.13'
 export grafana_root_url='http://localhost:3000/grafana/'
 export grafana_cookie_secure='false'
-envsubst '${region} ${backup_bucket} ${monitoring_private_ip} ${prometheus_version} ${grafana_version} ${blackbox_exporter_version} ${grafana_root_url} ${grafana_cookie_secure}' \
+envsubst '${region} ${backup_bucket} ${monitoring_private_ip} ${prometheus_version} ${grafana_version} ${blackbox_exporter_version} ${node_exporter_version} ${node_exporter_linux_amd64_sha256} ${mysqld_exporter_version} ${redis_exporter_version} ${redis_exporter_username} ${dev_mysql_private_ip} ${redis_private_ip} ${elk_private_ip} ${grafana_root_url} ${grafana_cookie_secure}' \
   < terraform/user_data/monitoring.sh.tftpl > "$BOOTSTRAP_TMP/monitoring-user-data.sh"
 ```
 
-부팅 후 Prometheus와 blackbox만 자동 기동된다. node targets는 #185에서 각 host에 node_exporter를
-설치하기 전까지 DOWN이 정상이다.
+부팅 후 monitoring host의 node_exporter, CloudWatch textfile timer와 secret 없는
+Prometheus/blackbox가 자동 기동된다. Elasticsearch timer는 API key가 non-empty가 될 때부터 수집한다.
+나머지 target은 아래 SSM 절차가 끝나기 전까지 DOWN이 정상이다.
 
-### 3. SSM으로 Grafana secret 주입과 최초 기동
+### 3. SSM으로 exporter identity와 여섯 secret 구성
 
-Git/Terraform/S3/명령 이력에 secret 원문을 넣지 않는다. Session Manager 안에서 password를 hidden
-prompt로 받고, secret key는 host에서 바로 생성한다.
+Git/Terraform/S3/명령 이력에 secret 원문을 넣지 않는다. Session Manager의 hidden prompt와
+`deploy/monitoring/scripts/install-secret.sh`만 사용한다.
 
 ```bash
 aws ssm start-session --profile sandbox --target <monitoring-instance-id>
 ```
 
-```bash
-read -rsp 'Grafana admin password: ' GRAFANA_ADMIN_PASSWORD; echo
-printf %s "$GRAFANA_ADMIN_PASSWORD" | sudo tee /opt/laimory-monitoring/secrets/grafana_admin_password >/dev/null
-unset GRAFANA_ADMIN_PASSWORD
-sudo openssl rand -hex 32 | sudo tee /opt/laimory-monitoring/secrets/grafana_secret_key >/dev/null
-sudo chown 472:root /opt/laimory-monitoring/secrets/grafana_admin_password /opt/laimory-monitoring/secrets/grafana_secret_key
-sudo chmod 0400 /opt/laimory-monitoring/secrets/grafana_admin_password /opt/laimory-monitoring/secrets/grafana_secret_key
-sudo test -s /opt/laimory-monitoring/secrets/grafana_admin_password
-sudo test -s /opt/laimory-monitoring/secrets/grafana_secret_key
-sudo systemctl start laimory-monitoring
-sudo docker compose -f /opt/laimory-monitoring/docker-compose.yml ps
-```
+설정 순서와 정확한 명령은 `deploy/monitoring/README.md`를 따른다.
 
-Grafana admin password는 첫 DB 생성 때 각인된다. 파일 교체만으로는 회전되지 않으며 Grafana admin
-password reset 절차를 사용한다. `grafana_secret_key`는 datasource credential 복호화를 위해 유지한다.
+1. monitoring, dev WAS, dev MySQL, Redis, ELK에 같은 pinned node_exporter installer를 SSM으로 실행한다.
+2. dev MySQL에는 monitoring private IP-scoped `USAGE`-only 계정을 만들고 SELECT/DDL denial을 확인한다.
+3. Redis에는 INFO/PING/CLIENT SETNAME만 허용한 별도 ACL 계정을 만들고 GET/SET/SCAN/SLOWLOG denial을
+   `ACL DRYRUN`으로 확인한다.
+4. monitoring host에 Grafana admin/secret key, MySQL CNF, Redis password JSON을 UID별 `0400` 파일로
+   넣는다.
+5. `laimory-dev-*`에 `monitor`, `read`, `view_index_metadata`만 가진 Elasticsearch API key를 만들고
+   read true, write/delete false를 `_has_privileges`로 확인한다.
+6. 사용자가 지정한 Discord channel webhook URL을 host secret 파일로 넣는다.
+7. `validate-secrets.sh`, `systemctl start laimory-monitoring`, `docker compose ps` 순서로 확인한다.
+8. synthetic smoke rule로 Discord firing/resolved를 모두 확인한 뒤 `deleteRules`로 제거한다.
+9. dev WAS Filebeat의 loopback stats와 textfile timer, monitoring의 AWS/Elasticsearch timer를
+   `deploy/monitoring/README.md` 절차로 확인한다.
+
+secret이 하나라도 없거나 UID/mode가 다르면 systemd는 fail-closed한다. Grafana admin password는 최초
+DB 생성 때 각인되고, stable `grafana_secret_key`는 datasource/contact credential 복호화에 계속 필요하다.
+Discord 메시지는 raw log/body/transactionId/user/task/FID/좌표/exception 원문을 포함하지 않는다.
 
 ### 4. SSM-only 검증과 allowlist 개방
 
@@ -436,7 +489,19 @@ sudo /usr/local/sbin/laimory-grafana-proxy enable 10.0.32.14 \
 허용된 client에서는 `/grafana`와 `/grafana/`가 Grafana login으로 이동하고 `/kibana/`가 이전처럼
 동작해야 한다. allowlist 밖 client에서는 `/grafana`와 `/grafana/`가 모두 403이어야 한다.
 
-### 5. 중지와 rollback
+### 5. target/dashboard/alert 검증과 24시간 soak
+
+- Prometheus의 `spring_boot`, `node`, `mysqld`, `redis`, `blackbox_https`, `grafana`, `prometheus`
+  target이 모두 UP이고 scrape duration이 interval의 50% 미만인지 확인한다.
+- `mysql_up=1`, `redis_up=1`, JVM/HTTP/Hikari와 app custom metric이 실제 dev 요청 후 생기는지 확인한다.
+- `laimory_aws_cloudwatch_up`, `laimory_filebeat_up`, `laimory_elasticsearch_up`이 모두 1인지 확인한다.
+- dashboard 4개가 query error 없이 로드되고 Logs가 `laimory-dev-*`만 읽는지 확인한다.
+- Discord synthetic rule의 firing/resolved와 허용 필드만 포함된 메시지를 확인하고 test rule을 삭제한다.
+- 24시간 동안 RSS/OOM/restart, active series, disk 증가율, query latency, CPU credit과 root EBS
+  queue/latency를 dashboard에서 확인한다.
+- live 수동 보정이 필요했다면 먼저 이 recipe/runbook에 동기화한다.
+
+### 6. 중지와 rollback
 
 ```bash
 sudo systemctl stop laimory-monitoring
@@ -445,6 +510,9 @@ sudo systemctl stop laimory-monitoring
 `docker compose down -v`는 Prometheus/Grafana volume을 삭제하므로 실행하지 않는다. 설정 실패 시
 stack을 stop해도 앱 API와 ELK는 독립적으로 계속 동작한다. 다시 올릴 때는
 `sudo systemctl start laimory-monitoring`으로 secret gate를 다시 통과시킨다.
+기존 live dashboard/alert/collector 보강만 되돌릴 때는 `deploy/monitoring/README.md`의
+commit-specific rollback을 따라 신규 8개 rule을 `deleteRules`로 먼저 제거한다. 이 변경은
+Prometheus target을 바꾸지 않으므로 기존 `node` job이나 5대 target을 제거하지 않는다.
 
 `/grafana/`를 이미 개방했다면 dev WAS에서 아래 명령으로 Grafana include만 제거한다. script가 backup,
 `nginx -t`, reload와 실패 시 복원을 수행하며 Kibana는 보존한다.

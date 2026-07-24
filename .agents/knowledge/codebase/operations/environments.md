@@ -6,14 +6,16 @@ local, integration, dev와 prod의 profile, dependency, feature mode, logging과
 
 ## Read When
 
-환경별 property, mode, environment variable, logging, Redis isolation 또는 deploy automation을 바꿀 때 읽는다.
+환경별 property, mode, environment variable, logging, Redis isolation, monitoring topology 또는 deploy
+automation을 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
 - `application.properties`, `application-docker.properties`
 - `logback-spring.xml`, `docker-compose.yml`
 - `.github/workflows/deploy.yml`
-- `terraform/ec2.tf`, `terraform/user_data/was.sh.tftpl`
+- `terraform/ec2.tf`, `terraform/security_groups.tf`, `terraform/user_data/*.tftpl`
+- `deploy/monitoring/*`
 
 ## Current Matrix
 
@@ -21,7 +23,7 @@ local, integration, dev와 prod의 profile, dependency, feature mode, logging과
 |---|---|---|---|---|---|---|---|---|---|
 | local | `docker` | Compose | default noop | default noop | default noop | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | on | text | empty | local task |
-| dev | default | dev MySQL + shared Redis | workflow fake | workflow Kakao | `.env` 전환(기본 noop) | on | JSON, dev environment | `dev_` | `dev` push |
+| dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | workflow Kakao | `.env` 전환(기본 noop) | on | JSON, dev environment | `dev_` | `dev` push |
 | prod | default | Terraform has prod MySQL + shared Redis | default noop | default noop | default noop | off | JSON intended | empty | no app deploy workflow |
 
 Push(`APP_PUSH_MODE`)는 workflow `-e` 주입이 아니라 host `.env`로 켠다 — firebase 전환 시 deploy.yml
@@ -35,6 +37,11 @@ production workflow는 아직 없다.
 `environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev workflow는
 `dev`가 된다. management endpoint의 실제 네트워크 접근 허용은 환경별 SG가 소유한다.
 
+dev monitoring recipe는 별도 private On-Demand t3.medium에 있고 prod는 수집하지 않는다. monitoring
+host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK
+9200으로 나가는 source-limited 경로만 갖는다. Grafana는 dev WAS nginx/SSM을 통해서만 접근하며,
+monitoring 장애는 application 배포·health gate 의존성이 아니다.
+
 ## Configuration Names
 
 값이나 credential은 기록하지 않고 이름과 역할만 다룬다.
@@ -44,6 +51,7 @@ production workflow는 아직 없다.
 - `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`
 - `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
 - `SWAGGER_ENABLED`
+- `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `APP_ENV`
 

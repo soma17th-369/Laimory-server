@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.push.PushMessageSender;
+import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
@@ -42,9 +43,12 @@ class TimelineCompletionPushNotifierTest {
     private PushRegistrationService pushRegistrationService;
     @Mock
     private PushMessageSender pushMessageSender;
+    @Mock
+    private PushMetrics pushMetrics;
 
     private TimelineCompletionPushNotifier notifier() {
-        return new TimelineCompletionPushNotifier(pushRegistrationService, pushMessageSender, FIXED_CLOCK);
+        return new TimelineCompletionPushNotifier(
+                pushRegistrationService, pushMessageSender, pushMetrics, FIXED_CLOCK);
     }
 
     @Test
@@ -57,6 +61,7 @@ class TimelineCompletionPushNotifierTest {
         notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
 
         verify(pushMessageSender).send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
+        verify(pushMetrics).record(new PushSendResult(2, 2, 0, List.of()));
         // invalid 0건이면 정리 query를 만들지 않는다.
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
     }
@@ -68,6 +73,7 @@ class TimelineCompletionPushNotifierTest {
         notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
 
         verify(pushMessageSender, never()).send(any(), any(), anyList());
+        verify(pushMetrics, never()).record(any());
     }
 
     @Test
@@ -91,6 +97,7 @@ class TimelineCompletionPushNotifierTest {
         assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
         verify(pushMessageSender, never()).send(any(), any(), anyList());
+        verify(pushMetrics, never()).record(any());
     }
 
     @Test
@@ -101,6 +108,7 @@ class TimelineCompletionPushNotifierTest {
         assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED))
                 .doesNotThrowAnyException();
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
+        verify(pushMetrics, never()).record(any());
     }
 
     @Test
@@ -113,5 +121,6 @@ class TimelineCompletionPushNotifierTest {
 
         assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
+        verify(pushMetrics).record(new PushSendResult(1, 0, 1, List.of("fid-1")));
     }
 }

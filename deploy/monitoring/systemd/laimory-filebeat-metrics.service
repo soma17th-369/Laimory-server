@@ -1,0 +1,14 @@
+[Unit]
+Description=Laimory Filebeat metric collector
+Wants=network-online.target
+After=network-online.target node_exporter.service docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/collect-laimory-filebeat-metrics
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

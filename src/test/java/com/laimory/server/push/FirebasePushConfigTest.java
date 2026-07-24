@@ -40,6 +40,7 @@ class FirebasePushConfigTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withBean(FirebaseMessaging.class, () -> Mockito.mock(FirebaseMessaging.class))
             .withBean(PushRegistrationService.class, () -> Mockito.mock(PushRegistrationService.class))
+            .withBean(PushMetrics.class, () -> Mockito.mock(PushMetrics.class))
             .withBean(Clock.class, () -> Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneId.of("Asia/Seoul")))
             .withUserConfiguration(
                     AsyncConfig.class,
