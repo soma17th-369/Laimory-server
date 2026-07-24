@@ -363,7 +363,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(sum by (action, cause) (increase(jvm_gc_pause_seconds_sum{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) / sum by (action, cause) (increase(jvm_gc_pause_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval]))) and on (action, cause) (sum by (action, cause) (increase(jvm_gc_pause_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) > 0)",
+          "expr": "sum by (action, cause) (rate(jvm_gc_pause_seconds_sum{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])) / clamp_min(sum by (action, cause) (rate(jvm_gc_pause_seconds_count{job=\"spring_boot\", environment=\"$environment\", application=\"$application\"}[$__rate_interval])), 1e-9)",
           "instant": false,
           "legendFormat": "mean {{action}} / {{cause}}",
           "range": true,
@@ -372,7 +372,7 @@
       ],
       "title": "Mean GC Pause",
       "type": "timeseries",
-      "description": "GC action/cause별 pause 총시간을 횟수로 나눈 구간 평균이며, GC가 실제 발생한 구간만 표시합니다."
+      "description": "GC action/cause별 pause 총시간을 횟수로 나눈 구간 평균입니다."
     },
     {
       "datasource": {
