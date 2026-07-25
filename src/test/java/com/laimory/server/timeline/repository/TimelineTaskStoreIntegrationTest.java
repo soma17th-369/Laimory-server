@@ -7,8 +7,15 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -158,6 +165,44 @@ class TimelineTaskStoreIntegrationTest {
         String unknownTaskId = "it-" + UUID.randomUUID();
 
         assertThat(timelineTaskStore.find(unknownTaskId)).isEmpty();
+    }
+
+    @Test
+    void callbackTokenConsume_isAtomicUnderConcurrentCalls() throws Exception {
+        String taskId = "it-token-" + UUID.randomUUID();
+        String logicalKey = "timeline:callback-token-uses:" + taskId;
+        int contenders = 8;
+        ExecutorService executor = Executors.newFixedThreadPool(contenders);
+        CountDownLatch ready = new CountDownLatch(contenders);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> results = new ArrayList<>();
+            for (int i = 0; i < contenders; i++) {
+                results.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("callback token consume 경쟁 시작 timeout");
+                    }
+                    return timelineTaskStore.consumeCallbackToken(taskId, Duration.ofHours(25));
+                }));
+            }
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            long winners = 0L;
+            for (Future<Boolean> result : results) {
+                if (result.get(5, TimeUnit.SECONDS)) {
+                    winners++;
+                }
+            }
+            assertThat(winners).isEqualTo(1L);
+            assertThat(redisGateway.get(logicalKey)).isEqualTo("used");
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            redisGateway.delete(logicalKey);
+        }
     }
 
     @Test

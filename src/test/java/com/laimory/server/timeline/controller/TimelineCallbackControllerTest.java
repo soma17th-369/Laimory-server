@@ -24,7 +24,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 서버간 콜백 컨트롤러 슬라이스 테스트(MockMvc). Callback-Token 헤더 전달과 401/404 매핑(envelope 에러 코드 포함)을 검증한다. 인프라 0.
+ * 서버간 콜백 컨트롤러 슬라이스 테스트(MockMvc). Callback-Token 헤더 전달과 401/404 매핑
+ * (envelope 에러 코드 포함)을 검증한다. 인프라 0.
  * (토큰 검증 자체의 정/오답 로직은 TimelineCallbackServiceTest에서 단위 검증.)
  */
 @WebMvcTest(TimelineCallbackController.class)
@@ -62,6 +63,21 @@ class TimelineCallbackControllerTest {
                         .content(BODY))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1002"))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void callback_consumedToken_returns401WithError1012() throws Exception {
+        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED))
+                .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
+
+        mockMvc.perform(post(CALLBACK)
+                        .header("Callback-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value("ERROR_1012"))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }

@@ -46,7 +46,7 @@ timeline draft의 큰 흐름은 다음과 같다.
 DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
 → AI dispatch (POST /v1/timeline — taskId·callbackToken·dailyRecordId·offset window)
 → AI가 validation + final Event/Item/junction INSERT + accepted source DELETE를 direct-write commit
-→ status-only callback → 서버는 Redis terminal 전이만 기록(멱등)
+→ status-only callback → 서버는 token을 원자 소비한 최초 요청만 Redis terminal 전이
 ```
 
 Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 guard 없이 Event/memo transaction을

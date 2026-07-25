@@ -28,15 +28,15 @@ public interface TimelineCallbackApi {
     @Operation(summary = "AI draft 생성 결과 콜백",
             description = "AI 서버가 final Event/Item/junction direct-write commit 뒤 결과 상태(status/errorCode/error)를 "
                     + "알린다. 결과 graph는 body로 보내지 않는다(서버는 상태 전이만 기록). "
-                    + "Callback-Token은 작업 dispatch body로 AI에 전달된 task별 토큰이다 — commit 후 네트워크 오류로 "
-                    + "반복된 유효한 재콜백은 terminal no-op 200으로 멱등 흡수된다.")
+                    + "Callback-Token은 작업 dispatch body로 AI에 전달된 task별 one-time 토큰이다. "
+                    + "task 조회와 hash 검증을 통과하면 후속 처리 전에 원자 소비되며, 이후 처리 실패에도 복구되지 않는다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "콜백 처리 완료(본문 없음 — terminal 재콜백 멱등 흡수 포함)"),
+                    description = "최초 콜백 처리 완료(본문 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — 불량 콜백 바디(미지원 status 등)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_1002` — 토큰 누락·불일치"),
+                    description = "`ERROR_1002` — 토큰 누락·불일치, `ERROR_1012` — 이미 소비된 토큰"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`ERROR_1001` — 작업 없음(만료 포함)")
     })

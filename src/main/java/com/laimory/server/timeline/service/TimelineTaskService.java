@@ -14,9 +14,8 @@ import org.springframework.stereotype.Service;
  * timeline draft 작업 상태 leaf 서비스. 자신과 1:1인 TimelineTaskStore에만 접근한다.
  * 처리중(PROCESSING)은 1시간, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
  *
- * <p>콜백 재시도는 token-use 카운터 없이 멱등 흡수한다 — AI direct-write 구조에서 서버는 finalize를
- * 하지 않으므로 유효한 동일 콜백의 반복은 terminal no-op 200으로 안전하다(카운터가 있으면 terminal
- * 저장 실패 뒤 정당한 재콜백까지 401로 막아 복구가 불가능해진다).
+ * <p>callback token은 hash 검증 직후 task별 Redis marker로 원자 소비한다. marker는 terminal task보다
+ * 한 시간 긴 25시간 동안 유지하며 소비 뒤 후속 처리가 실패해도 삭제하거나 환불하지 않는다.
  *
  * <p><b>날짜 guard</b>: 같은 (userId, recordDate)에 AI 작업·삭제·Event PHOTO 추가가 겹치지 않게 하는 Redis lease다.
  * holder({@code task:{taskId}}, {@code delete:{operationId}}, {@code patch-photo-add:{operationId}})를 값으로
@@ -31,6 +30,7 @@ public class TimelineTaskService {
 
     static final Duration PROCESSING_TTL = Duration.ofHours(1);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
+    static final Duration CALLBACK_TOKEN_USE_TTL = Duration.ofHours(25);
     // guard가 고아로 남아도(서버 크래시 등) PROCESSING task와 같은 주기로 자연 해제되게 정렬한다.
     private static final Duration DATE_GUARD_TTL = Duration.ofHours(1);
 
@@ -91,6 +91,14 @@ public class TimelineTaskService {
 
     public Optional<TimelineDraftTask> find(String taskId) {
         return timelineTaskStore.find(taskId);
+    }
+
+    /**
+     * task별 callback token을 인증 시점에 원자 소비한다. false면 이미 사용된 token이다.
+     * 소비 뒤 처리 실패에도 marker를 되돌리지 않는 at-most-once admission 계약이다.
+     */
+    public boolean consumeCallbackToken(String taskId) {
+        return timelineTaskStore.consumeCallbackToken(taskId, CALLBACK_TOKEN_USE_TTL);
     }
 
     long countStuckProcessing(Instant now, Duration stuckAfter) {

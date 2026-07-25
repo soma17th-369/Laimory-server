@@ -19,28 +19,33 @@ import org.springframework.stereotype.Service;
 /**
  * AI 작성 콜백 오케스트레이터 — direct-write 계약에서 서버는 finalize를 하지 않는다. AI가 final
  * Event/Item/junction 저장과 accepted source 삭제를 자신의 transaction으로 commit한 <b>뒤에만</b> 콜백을
- * 보내므로, 여기서는 token 검증 + owner 확인 + Redis terminal 전이 + guard 해제 + 완료 푸시만 수행한다.
- * 결과 graph를 조립·검증·저장하지 않는다.
+ * 보내므로, 여기서는 token 검증·소비 + owner 확인 + Redis terminal 전이 + guard 해제 + 완료 푸시만
+ * 수행한다. 결과 graph를 조립·검증·저장하지 않는다.
  *
  * <p>순서가 load-bearing이다:
  * <ol>
  *   <li>task 로드(없음/만료 → 404)</li>
  *   <li><b>토큰 검증(401 ERROR_1002)</b> — terminal task도 해시를 보존하므로 재콜백도 토큰으로 검증된다</li>
- *   <li>terminal이면 idempotent no-op 200 — AI callback은 commit 후 네트워크 오류로 반복될 수 있고(at-least-once),
- *       direct-write 구조에선 서버가 재처리할 것이 없어 유효한 동일 콜백을 안전하게 흡수한다.
- *       (과거 token-use 카운터는 제거 — terminal 저장 실패 뒤 정당한 재콜백까지 401로 막아 복구를 불가능하게 했다)</li>
+ *   <li><b>토큰 원자 소비</b> — Redis SET NX marker를 선점한 요청 하나만 통과한다. 이미 소비됐으면
+ *       401 ERROR_1012이며 terminal 전이·guard 해제·push에 도달하지 않는다</li>
+ *   <li>terminal 안전망 — marker가 없던 배포 전 terminal task도 이 요청에서 token을 소비한 뒤
+ *       ERROR_1012로 거부한다</li>
  *   <li><b>task owner·dailyRecordId 확인</b> — 콜백은 {@code /s/api}라 request principal이 없으므로 이후 전이·guard
  *       해제는 task에 저장된 값을 쓴다. owner나 dailyRecordId가 없는 legacy task는 추정하지 않고 404로 fail-closed</li>
  *   <li>FAILED → markFailed(allowlist 분류 코드만 기록), SUCCESS → markSuccess. 그 외 status → 400</li>
  * </ol>
  *
+ * <p>token은 처리 완료가 아니라 인증 시점에 소비하며, 이후 검증·terminal 저장이 실패해도 marker를
+ * 삭제하거나 환불하지 않는다. 따라서 이 경계는 exactly-once 처리가 아니라 at-most-once admission을
+ * 보장한다. 같은 token 재시도로 복구할 수 없는 문제는 별도 복구 과제다.
+ *
  * <p>모든 terminal 전이(markSuccess/markFailed)는 저장 <b>성공 직후</b> 날짜 guard를 compare-and-release한다
  * (해제 경계 규칙 ③ — {@link TimelineTaskService} 참고). 날짜는 task의 dailyRecordId로 DailyRecord를 조회해
  * 얻는다 — record가 이미 없으면 다른 날짜를 추정하지 않고 guard TTL 만료에 맡긴다. terminal 저장이 실패하면
- * 해제하지 않고 TTL(1h) 만료에 맡기며(규칙 ②), AI의 콜백 재시도가 멱등 게이트를 통과해 전이를 복구한다.
+ * 해제하지 않고 TTL(1h) 만료에 맡긴다(규칙 ②).
  *
  * <p>terminal 확정(저장+guard 해제 시도) 뒤에는 완료 푸시를 비동기 best-effort로 예약한다 — FCM 실패·지연은
- * 콜백 200과 무관하고, 이미 terminal인 멱등 단축·토큰 거절·terminal 저장 실패 경로에서는 예약하지 않는다.
+ * 콜백 200과 무관하고, terminal 안전망·토큰 거절·terminal 저장 실패 경로에서는 예약하지 않는다.
  */
 @Slf4j
 @Service
@@ -76,12 +81,20 @@ public class TimelineCallbackService {
             throw new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH);
         }
 
-        // 2. 멱등: 이미 종결(SUCCESS/FAILED)된 task면 재처리하지 않는다 — AI 재콜백(at-least-once)의 정상 흡수 경로.
-        if (task.status() != TaskStatus.PROCESSING) {
-            return;
+        // 2. 유효한 token은 인증 시점에 원자 소비한다. 소비 후 실패에도 marker를 환불하지 않는다.
+        if (!timelineTaskService.consumeCallbackToken(taskId)) {
+            log.warn("callback token already consumed: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED);
         }
 
-        // 3. task owner·결과 record ID 해소 — 콜백엔 request principal이 없으므로 이후 전이·guard 해제 기준이다.
+        // 3. 배포 전 terminal task처럼 marker가 없던 닫힌 task의 재처리를 막는 안전망.
+        if (task.status() != TaskStatus.PROCESSING) {
+            log.warn("terminal task rejected after callback token consumption: taskId={} status={}",
+                    taskId, task.status());
+            throw new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED);
+        }
+
+        // 4. task owner·결과 record ID 해소 — 콜백엔 request principal이 없으므로 이후 전이·guard 해제 기준이다.
         //    없는 legacy task(구 shape)는 추정하지 않고 404로 fail-closed(전이 없이 TTL 만료에 맡김).
         if (task.userId() == null || task.dailyRecordId() == null) {
             log.warn("legacy task without owner/dailyRecordId, refusing callback: taskId={}", taskId);
@@ -101,7 +114,7 @@ public class TimelineCallbackService {
             throw new IllegalArgumentException("invalid callback status: " + request.status());
         }
 
-        // 4. SUCCESS: AI가 이미 final commit을 마친 상태다 — Redis 전이만 기록한다(결과 검증·조립·저장 없음).
+        // 5. SUCCESS: AI가 이미 final commit을 마친 상태다 — Redis 전이만 기록한다(결과 검증·조립·저장 없음).
         finishSuccess(taskId, userId, dailyRecordId, callbackTokenHash);
     }
 
@@ -122,7 +135,7 @@ public class TimelineCallbackService {
     /**
      * terminal 확정 뒤 완료 푸시를 비동기 best-effort로 예약한다. guard 해제처럼 실패해도 콜백 200을
      * 보존한다 — executor 제출 예외까지 삼킨다(FCM은 조회를 유도하는 완료 신호일 뿐, polling이 권위·안전망).
-     * finishSuccess/finishFailed 뒤에서만 호출되므로 terminal 저장 실패·멱등 단축 경로엔 알림이 없다.
+     * finishSuccess/finishFailed 뒤에서만 호출되므로 terminal 저장 실패·token 거절 경로엔 알림이 없다.
      */
     private void enqueuePushQuietly(String taskId, long userId, TaskStatus status) {
         try {

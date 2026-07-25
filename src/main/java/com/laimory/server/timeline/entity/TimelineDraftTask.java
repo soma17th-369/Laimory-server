@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  * 결과를 조회해, record 삭제 후 같은 날짜가 재생성돼도 과거 task가 새 기록을 반환하지 않는다.
  *
  * <p>error는 FAILED일 때만 채워진다. callbackTokenHash는 종결(SUCCESS/FAILED) 후에도 보존된다 —
- * terminal 재콜백을 token-first로 검증하려면 해시가 남아 있어야 하기 때문이다(idempotent replay 흡수).
+ * terminal 재콜백도 token hash를 먼저 검증한 뒤 소비 marker 또는 terminal 안전망에서 거절한다.
  * callbackTokenHash는 콜백 토큰의 SHA-256 해시이며, 원문 토큰은 저장하지 않는다(dispatch body로 AI에만 전달).
  *
  * <p>{@code timelineWindow}는 클라이언트가 요청에 지정한 AI 이벤트 생성 범위의 local 원본이다(서버는
