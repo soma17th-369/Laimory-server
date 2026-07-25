@@ -4,7 +4,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.DailyRecordStatus;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -31,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>실제 PATCH DB 변경은 별도 {@link TimelineEventEditTransactionService}가 맡는다. 따라서 guard는
  * Event·memo·PHOTO Item·junction transaction이 commit된 뒤 해제된다. PROCESSING 중에도 사진 없는 PATCH와
- * legacy memo PUT은 계속 허용된다.
+ * memo PUT은 계속 허용된다.
  *
  * <p>이벤트 없음·record 없음·비소유는 모두 404(ERROR_0404)로 은닉하고 SAVED는 입력 검증보다 먼저
  * 409(ERROR_1003)로 거절한다. 사용자 입력 문자열·사진 식별자는 로그에 남기지 않는다.
@@ -49,7 +48,6 @@ public class TimelineEventEditService {
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineEventEditTransactionService timelineEventEditTransactionService;
-    private final TimelineEventResponseAssembler timelineEventResponseAssembler;
     private final int maxPhotoCount;
 
     public TimelineEventEditService(
@@ -57,24 +55,23 @@ public class TimelineEventEditService {
             DailyRecordService dailyRecordService,
             TimelineTaskService timelineTaskService,
             TimelineEventEditTransactionService timelineEventEditTransactionService,
-            TimelineEventResponseAssembler timelineEventResponseAssembler,
             @Value("${photo.upload.max-count}") int maxPhotoCount) {
         this.timelineEventService = timelineEventService;
         this.dailyRecordService = dailyRecordService;
         this.timelineTaskService = timelineTaskService;
         this.timelineEventEditTransactionService = timelineEventEditTransactionService;
-        this.timelineEventResponseAssembler = timelineEventResponseAssembler;
         this.maxPhotoCount = maxPhotoCount;
     }
 
     /** Event 상세·optional memo·optional PHOTO append를 하나의 PATCH 계약으로 처리한다. */
-    public TimelineEventResponse updateEvent(String applicationVersion, long userId, Long timelineEventId,
-                                             UpdateTimelineEventRequest request) {
+    public void updateEvent(String applicationVersion, long userId, Long timelineEventId,
+                            UpdateTimelineEventRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         OwnedEvent ownedEvent = findOwnedEditableEvent(userId, timelineEventId);
         TimelineEventEditCommand command = requireValidCommand(request);
         if (command.photosToAdd().isEmpty()) {
-            return timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
+            timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
+            return;
         }
 
         String operationId = UuidV7.randomUuidV7().toString();
@@ -83,20 +80,18 @@ public class TimelineEventEditService {
             throw new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS);
         }
         try {
-            return timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
+            timelineEventEditTransactionService.updateEvent(userId, timelineEventId, command);
         } finally {
             releaseDateGuardQuietly(userId, ownedEvent.record(), guardHolder, operationId);
         }
     }
 
-    /** legacy 메모 API. null·공백뿐은 제거, 그 외는 trim 없이 원문 저장한다. */
+    /** 메모 전용 API. null·공백뿐은 제거, 그 외는 trim 없이 원문 저장한다. */
     @Transactional
-    public TimelineEventResponse updateMemo(String applicationVersion, long userId, Long timelineEventId,
-                                            String memo) {
+    public void updateMemo(String applicationVersion, long userId, Long timelineEventId, String memo) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEditableEvent(userId, timelineEventId).event();
         event.updateMemo(normalizeMemo(memo));
-        return timelineEventResponseAssembler.toResponse(event);
     }
 
     /** owner/DRAFT 검증은 입력 검증·guard·DB mutation보다 먼저 수행한다. */

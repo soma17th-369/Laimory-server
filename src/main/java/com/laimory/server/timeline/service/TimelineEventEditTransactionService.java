@@ -6,7 +6,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
@@ -37,13 +36,12 @@ public class TimelineEventEditTransactionService {
     private final DailyRecordService dailyRecordService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
-    private final TimelineEventResponseAssembler timelineEventResponseAssembler;
     private final PhotoUrlService photoUrlService;
     private final ObjectMapper objectMapper;
 
     /** 소유권·DRAFT를 재확인하고 Event 필드와 수동 PHOTO graph를 원자적으로 반영한다. */
     @Transactional
-    public TimelineEventResponse updateEvent(long userId, Long timelineEventId, TimelineEventEditCommand command) {
+    public void updateEvent(long userId, Long timelineEventId, TimelineEventEditCommand command) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         DailyRecord record = requireOwnedDraftRecord(userId, event.getDailyRecordId());
@@ -73,7 +71,6 @@ public class TimelineEventEditTransactionService {
         if (!links.isEmpty()) {
             timelineEventItemService.saveAll(links);
         }
-        return timelineEventResponseAssembler.toResponse(event);
     }
 
     /**

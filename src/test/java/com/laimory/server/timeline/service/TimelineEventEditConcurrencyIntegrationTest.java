@@ -24,7 +24,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * memo를 생략한 통합 Event PATCH ↔ legacy memo PUT의 교차-필드 lost update 회귀 검증(실 MySQL).
+ * memo를 생략한 통합 Event PATCH ↔ memo PUT의 교차-필드 lost update 회귀 검증(실 MySQL).
  *
  * <p>{@code TimelineEvent}의 {@code @DynamicUpdate}가 지키는 불변식: 두 트랜잭션이 같은 row를 읽고
  * 서로 다른 필드 그룹을 갱신해 순차 커밋해도, 나중 커밋이 상대의 변경을 자신의 로드 시점 스냅샷으로

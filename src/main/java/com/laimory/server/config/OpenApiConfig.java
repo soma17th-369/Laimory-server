@@ -41,7 +41,8 @@ public class OpenApiConfig {
 
                         ## 공통 응답 envelope
                         앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code, message}, body}` 형태다.
-                        - **성공**: `header.code = COMMON_0000`, 결과는 `body`에 담긴다.
+                        - **성공**: `header.code = COMMON_0000`. 조회 결과는 `body`에 담기고, 반환할 결과가 없는 \
+                        성공은 `body = null`이다.
                         - **에러**: `header.code = ERROR_*`, `body = null`. **code가 `ERROR_`로 시작하면 에러**로 분기한다.
                         - `header.message`는 로캘(Accept-Language, 기본 한국어)이 적용된 사용자 노출 문구다 — \
                         클라이언트 분기는 message가 아니라 code로 한다.

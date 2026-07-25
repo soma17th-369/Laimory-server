@@ -132,9 +132,15 @@ class AuthControllerTest {
                         .content("{\"refreshToken\":\"refresh-old\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(this::assertBodyIsExplicitNull);
 
         verify(authTokenService).logout(any(), eq("refresh-old"));
+    }
+
+    private void assertBodyIsExplicitNull(MvcResult result) throws Exception {
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(response.has("body")).isTrue();
+        assertThat(response.get("body").isNull()).isTrue();
     }
 
     private ILoggingEvent findAccessEvent(MvcResult result) {

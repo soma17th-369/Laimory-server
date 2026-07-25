@@ -2,6 +2,7 @@ package com.laimory.server.timeline.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.common.ApiResponse;
 import com.laimory.server.timeline.controller.TimelineRecordApi;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,8 +10,9 @@ import io.swagger.v3.oas.models.media.Schema;
 import java.lang.reflect.Method;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.ResolvableType;
 
-/** Event PATCH request와 legacy memo API의 OpenAPI 계약을 인프라 없이 고정한다. */
+/** Event PATCH request와 memo PUT API의 OpenAPI 계약을 인프라 없이 고정한다. */
 class UpdateTimelineEventRequestSchemaTest {
 
     @Test
@@ -36,14 +38,27 @@ class UpdateTimelineEventRequestSchemaTest {
     }
 
     @Test
-    void legacyMemoPut_isDeprecatedInOpenApi() {
-        Method memoOperation = java.util.Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
-                .filter(method -> method.getName().equals("updateTimelineEventMemo"))
-                .findFirst()
-                .orElseThrow();
+    void memoPut_isSupportedAndBothEditOperationsReturnVoidEnvelope() {
+        Method memoOperation = method("updateTimelineEventMemo");
 
         Operation operation = memoOperation.getAnnotation(Operation.class);
         assertThat(operation).isNotNull();
-        assertThat(operation.deprecated()).isTrue();
+        assertThat(operation.deprecated()).isFalse();
+        assertVoidEnvelopeReturn(method("updateTimelineEvent"));
+        assertVoidEnvelopeReturn(memoOperation);
+    }
+
+    private Method method(String name) {
+        return java.util.Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
+                .filter(method -> method.getName().equals(name))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private void assertVoidEnvelopeReturn(Method method) {
+        ResolvableType responseEntity = ResolvableType.forMethodReturnType(method);
+        ResolvableType apiResponse = responseEntity.getGeneric(0);
+        assertThat(apiResponse.resolve()).isEqualTo(ApiResponse.class);
+        assertThat(apiResponse.getGeneric(0).resolve()).isEqualTo(Void.class);
     }
 }

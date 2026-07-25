@@ -47,9 +47,11 @@ version별 동작은 service가 결정한다.
 배열은 Item 변경 없음이며 날짜 guard도 취득하지 않고, 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 `description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
-한 DB transaction으로 commit하며 guard 충돌은 409 `ERROR_1016`이다. 응답은 수정된 Event와 연결된 전체
-Item을 반환한다. 별도 PHOTO 추가 endpoint는 없고 기존 `PUT .../events/{timelineEventId}/memo`는 호환용으로
-유지하되 OpenAPI에서 deprecated다. 기존 operation을 확장한 것이므로 보호 operation 수는 11개로 유지된다.
+한 DB transaction으로 commit하며 guard 충돌은 409 `ERROR_1016`이다. 성공 응답은
+`200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 DailyRecord 단건 GET으로
+권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
+`PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
+`body=null`이다. 기존 operation을 확장한 것이므로 보호 operation 수는 11개로 유지된다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
@@ -74,11 +76,15 @@ app-facing success/error는 다음 envelope를 사용한다.
     "code": "COMMON_0000",
     "message": "..."
   },
-  "body": {}
+  "body": {
+    "result": "..."
+  }
 }
 ```
 
 - success code는 `COMMON_0000`이다.
+- 조회처럼 반환할 결과가 있는 성공은 typed response를 `body`에 담는다.
+- 반환할 결과가 없는 성공도 envelope를 유지하며 `body` key를 명시적 JSON null로 반환한다.
 - error code는 `ERROR_`로 시작하고 `body=null`이다.
 - `/status`는 infrastructure probe를 위한 plain JSON으로 envelope 밖이다.
 - AI callback은 성공 시 body 없는 HTTP 200을 반환한다.

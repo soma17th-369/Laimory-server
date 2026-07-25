@@ -37,7 +37,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI direct-write가 생성하고 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
-| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재는 변경 없음, null·blank는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). 기존 PUT memo endpoint도 호환을 위해 유지하지만 OpenAPI에서는 deprecated다. |
+| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재는 변경 없음, null·blank는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). PUT memo endpoint는 Event의 다른 필드 없이 memo만 교체하는 현재 지원 API다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
 | 이벤트 종료 시각 | End At | 현재 구현 | 이벤트 시간 범위의 끝이다. 단일 시점이면 nullable이다. |
 

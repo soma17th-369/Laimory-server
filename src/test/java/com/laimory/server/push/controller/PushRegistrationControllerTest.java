@@ -1,6 +1,7 @@
 package com.laimory.server.push.controller;
 
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -13,6 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.testsupport.AuthTestSupport;
@@ -23,6 +26,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * FID 등록 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(PUT/DELETE)·인증 게이트(401)·envelope·
@@ -40,6 +44,9 @@ class PushRegistrationControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @MockitoBean
     private PushRegistrationService pushRegistrationService;
@@ -64,7 +71,7 @@ class PushRegistrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이고, FID는 body 원문 그대로 서비스에 전달된다.
         verify(pushRegistrationService).register("v1", USER_ID, "fid-abc");
@@ -77,7 +84,7 @@ class PushRegistrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(this::assertBodyIsExplicitNull);
 
         verify(pushRegistrationService).unregister("v1", USER_ID, "fid-abc");
     }
@@ -117,5 +124,11 @@ class PushRegistrationControllerTest {
                 .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
 
         verify(pushRegistrationService).register("v1", USER_ID, null);
+    }
+
+    private void assertBodyIsExplicitNull(MvcResult result) throws Exception {
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(response.has("body")).isTrue();
+        assertThat(response.get("body").isNull()).isTrue();
     }
 }
