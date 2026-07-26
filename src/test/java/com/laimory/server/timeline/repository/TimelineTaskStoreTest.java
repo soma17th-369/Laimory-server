@@ -191,6 +191,16 @@ class TimelineTaskStoreTest {
     }
 
     @Test
+    void consumeCallbackToken_delegatesExactMarkerKeyValueAndTtl() {
+        Duration ttl = Duration.ofHours(25);
+        when(redis.setIfAbsent("timeline:callback-token-uses:abc", "used", ttl)).thenReturn(true);
+
+        assertThat(store.consumeCallbackToken("abc", ttl)).isTrue();
+
+        verify(redis).setIfAbsent("timeline:callback-token-uses:abc", "used", ttl);
+    }
+
+    @Test
     void find_legacyJsonWithOldShape_deserializesWithNullNewFields() {
         // 배포 전 저장된 구 shape JSON(record 메타데이터 포함, dailyRecordId/userId 없음) → 예외 없이 역직렬화되고
         // 새 필수 판정 재료(dailyRecordId/userId)는 null — 콜백·폴링이 fail-closed 판정한다.

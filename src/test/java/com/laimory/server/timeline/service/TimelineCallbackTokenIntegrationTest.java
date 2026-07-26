@@ -114,6 +114,7 @@ class TimelineCallbackTokenIntegrationTest {
         createdTaskIds.forEach(id -> {
             draftSourceItemService.deleteByTaskId(id);
             redis.delete("timeline:draft-task:" + id);
+            redis.delete("timeline:callback-token-uses:" + id);
             // redis는 RedisGateway → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
@@ -123,7 +124,7 @@ class TimelineCallbackTokenIntegrationTest {
     }
 
     @Test
-    void validToken_recordPreCreated_directWriteThenCallback_success_andIdempotentReplay() {
+    void validToken_recordPreCreated_directWriteThenCallback_success_andReplayRejected1012() {
         String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
         createdTaskIds.add(taskId);
 
@@ -161,8 +162,10 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(terminal.callbackTokenHash()).isEqualTo(stored.callbackTokenHash());
         assertThat(terminal.userId()).isEqualTo(USER_ID);
 
-        // 재콜백(같은 토큰) → terminal no-op 200으로 멱등 흡수(token-use 카운터 없음 — commit 후 재전송 복구 허용).
-        callbackService.handleCallback(VERSION, taskId, token, success());
+        // 같은 token 재사용은 terminal 상태를 다시 쓰지 않고 인증 게이트에서 1012로 거절한다.
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, token, success()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
         DraftTaskStatusResponse afterReplay = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(afterReplay.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(afterReplay.result().events()).hasSameSizeAs(status.result().events());
@@ -197,6 +200,14 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(status.error()).isEqualTo(ErrorCode.ERROR_1008.name());
         // empty DRAFT는 삭제하지 않는다 — 같은 날짜 재시도가 재사용한다. source는 retention cleanup 대상.
         assertThat(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).isPresent();
+        assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
+
+        // FAILED token도 한 번만 쓸 수 있고, 재사용 거절은 failure/source 상태를 바꾸지 않는다.
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, token,
+                new DraftTaskCallbackRequest(TaskStatus.FAILED, ErrorCode.ERROR_1008.name(), "retry")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+        assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.FAILED);
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
 
         // FAILED terminal이 guard를 해제했으므로 같은 날짜 재시도 POST가 즉시 가능하다(1016 아님).

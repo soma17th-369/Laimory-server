@@ -51,10 +51,12 @@ public enum ErrorCode {
 
     // ── ERROR_1xxx: timeline task 실패 분류 — 폴링 body.error 전용(200 안), status는 예비값 ──
     // ERROR_1010: 결번 — staging 누락 분류를 AI direct-write 전환으로 제거(서버가 staging을 finalize하지 않음). 재사용 금지.
-    // ERROR_1012: 결번 — 콜백 token-use 소비 게이트를 멱등 재콜백 허용으로 제거. 재사용 금지.
     ERROR_1008(HttpStatus.BAD_GATEWAY),            // AI가 실패 보고(콜백 status=FAILED)
     ERROR_1009(HttpStatus.BAD_GATEWAY),            // AI 서버 호출 실패(dispatch)
     ERROR_1011(HttpStatus.INTERNAL_SERVER_ERROR),  // task 실패 분류 read-side 폴백(과거 raw 값 방어)
+
+    // ── ERROR_1xxx: timeline callback 인증 — 동기 401 전용(task 실패 분류 아님) ──
+    ERROR_1012(HttpStatus.UNAUTHORIZED),    // 검증에 성공한 callback token이 이미 소비됨
 
     // ── ERROR_1xxx: timeline append 도메인 거절 ──
     ERROR_1013(HttpStatus.CONFLICT),       // append 요청의 모든 item이 이미 타임라인에 저장됨(추가할 신규 item 없음)

@@ -37,6 +37,7 @@ public enum ExceptionType {
     DRAFT_TASK_NOT_FOUND(ErrorCode.ERROR_1001, Level.INFO),         // 만료 포함 — 정상 수명주기
     DRAFT_RESULT_NOT_FOUND(ErrorCode.ERROR_0404, Level.INFO),       // SUCCESS task의 결과 record 없음 — 삭제됨 또는 legacy task(dailyRecordId 부재)
     CALLBACK_TOKEN_MISMATCH(ErrorCode.ERROR_1002, Level.WARN),      // 보안/버그 신호
+    CALLBACK_TOKEN_ALREADY_CONSUMED(ErrorCode.ERROR_1012, Level.WARN), // 재사용·중복 callback 보안/버그 신호
     DAILY_RECORD_ALREADY_SAVED(ErrorCode.ERROR_1003, Level.INFO),   // 클라 재시도 시나리오
     PHOTO_COUNT_EXCEEDED(ErrorCode.ERROR_1004, Level.INFO),
     PHOTO_SIZE_EXCEEDED(ErrorCode.ERROR_1005, Level.INFO),

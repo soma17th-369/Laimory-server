@@ -103,7 +103,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작성 작업 | Draft Task | 현재 구현 | DRAFT daily record를 비동기로 만드는 작업 resource다. POST가 즉시 반환하고 상태는 Redis에 둔다. |
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
-| AI 작성 콜백 | AI Draft Callback | 현재 구현 | AI의 final commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버는 Redis terminal 전이만 기록한다. 유효한 재콜백은 terminal no-op 200으로 멱등 흡수된다. |
+| AI 작성 콜백 | AI Draft Callback | 현재 구현 | AI의 final commit 이후 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 서버는 Redis terminal 전이만 기록한다. Callback Token은 hash 검증 직후 원자 소비되며 같은 token 재사용은 `ERROR_1012`다. |
+| 콜백 토큰 | Callback Token | 현재 구현 | task별 one-time bearer credential이다. 원문은 AI dispatch/callback transport에만 있고 서버는 hash와 25시간 소비 marker만 저장한다. 유효 token을 인증에 사용한 순간 소비하며 이후 실패에도 환불하지 않는다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI transport에는 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED와 시각 없는 legacy task에서는 필드를 생략한다. |

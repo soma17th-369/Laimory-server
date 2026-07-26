@@ -71,14 +71,17 @@ PHOTO 추가와 각 작업 사이 경합을 409 `ERROR_1016`으로 차단한다(
 1. AI가 validation → final Event/Item/junction INSERT + 채택 source DELETE를 한 transaction으로 commit한다
    (append-only — 기존 graph 불변, +10분 startAt nudge/end clamp 포함. 계약 상세는 ai-contract).
 2. commit 이후에만 `Callback-Token` header + body `{status,errorCode,error}`로 알린다. 결과 graph는 body에 없다.
-3. 서버 콜백은 token 검증(401 `ERROR_1002`) → terminal이면 멱등 no-op 200(AI at-least-once 재시도 흡수 —
-   token-use 카운터 없음) → owner·dailyRecordId 없는 legacy task는 404 fail-closed → Redis terminal 전이만
+3. 서버 콜백은 task 조회 → token hash constant-time 검증(불일치 401 `ERROR_1002`) → Redis
+   `timeline:callback-token-uses:{taskId}` marker 원자 소비 순서다. 이미 소비된 token과 terminal 재콜백은
+   401 `ERROR_1012`이며 marker를 선점한 요청 하나만 이후 처리로 진행한다.
+4. 소비 뒤 owner·dailyRecordId 없는 legacy task는 404 fail-closed, body status가 불량이면 400이다.
+   두 경우와 terminal 저장 실패 모두 marker를 환불하지 않는다. 정상 요청은 Redis terminal 전이만
    기록한다(SUCCESS든 FAILED든 결과 조립·검증·저장 없음).
-4. terminal 저장 성공 직후 task의 `dailyRecordId`로 DailyRecord를 조회해 recordDate를 얻어 날짜 guard를
+5. terminal 저장 성공 직후 task의 `dailyRecordId`로 DailyRecord를 조회해 recordDate를 얻어 날짜 guard를
    compare-and-release한다(record 없음/owner 불일치면 추정하지 않고 TTL에 맡김). 그 뒤 완료 푸시를
-   비동기 best-effort로 예약한다(멱등 단축·토큰 거절·terminal 저장 실패 경로엔 알림 없음).
-5. terminal 저장 실패는 guard를 풀지 않고 전파된다 — AI의 콜백 재시도가 멱등 게이트를 통과해 전이를
-   복구한다.
+   비동기 best-effort로 예약한다(token 거절·terminal 저장 실패 경로엔 알림 없음).
+6. terminal 저장 실패는 guard를 풀지 않고 전파된다. token은 이미 소비됐으므로 같은 token 재시도는
+   `ERROR_1012`이며 PROCESSING task·guard TTL 1시간이 최종 회수한다.
 
 **수용된 MVP 한계**: commit 후 callback 전 AI process가 종료되면 살아있는 재시도 주체가 없다 — 원 task는
 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다. 동일 source 전량 재시도는 `ERROR_1013`이며,
@@ -131,7 +134,8 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ### Retention and cleanup
 
-- PROCESSING TTL: 1시간 / SUCCESS·FAILED TTL: 24시간 / source staging retention: 7일
+- PROCESSING TTL: 1시간 / SUCCESS·FAILED TTL: 24시간 / callback token 소비 marker TTL: 25시간 /
+  source staging retention: 7일
 - PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 1시간보다 오래된 고아 member를 정리한다.
   첫 도입 전에 저장된 PROCESSING task는 index에 없어 최대 1시간 warm-up 후 완전한 값이 된다.
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)뿐이다 — AI가 채택한 source는 final
@@ -144,7 +148,8 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 - Redis SUCCESS는 AI final commit보다 먼저 기록되지 않는다(commit-then-callback + 서버는 상태 전이만).
 - 서버 callback은 AI 결과 Event/Item/junction을 쓰지 않는다 — draft final write는 AI(fake 포함)가 소유한다.
   별도로 Event PATCH는 수동 PHOTO Item/junction을 서버 transaction에서 쓴다.
-- 유효한 재콜백은 terminal no-op 200이다(멱등) — 재시도를 막는 소비 게이트를 다시 넣지 않는다.
+- callback token은 hash 검증 직후 원자 소비하고 환불하지 않는다. 최초 요청만 terminal 처리로 진행하며
+  같은 token 재사용은 401 `ERROR_1012`다(at-most-once admission).
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps

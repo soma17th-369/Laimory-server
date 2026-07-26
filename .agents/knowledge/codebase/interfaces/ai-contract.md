@@ -82,15 +82,19 @@ commit **이후에만** 다음 값으로 알린다(commit-then-callback).
 - header: `Callback-Token` — dispatch body로 받은 원문을 그대로 반환
 - body: `status`, `errorCode`, `error` — SUCCESS에도 event/item 결과는 없다(서버는 상태 전이만 기록)
 
-AI는 2xx를 받을 때까지 재시도한다(at-least-once). 서버는 finalize를 하지 않으므로 유효한 동일 콜백의
-반복은 terminal no-op 200으로 멱등 흡수된다 — 과거 token-use 소비 카운터(1012)는 제거됐다(terminal 저장
-실패 뒤 정당한 재콜백까지 막아 복구를 불가능하게 했기 때문).
+기준 AI 구현은 callback을 한 번 POST하고 실패를 log/반환할 뿐 자동 재시도하지 않는다. 서버는 task 조회와
+constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최초 요청 하나만 terminal 처리로 진행한다.
+같은 유효 token의 동시·순차 재사용은 401 `ERROR_1012`다.
 
 ## Callback Authentication
 
 - raw token은 dispatch body로 AI에만 전달한다.
 - Redis에는 SHA-256 hash만 저장하고 비교는 constant-time으로 한다.
-- 토큰 누락·불일치는 401 `ERROR_1002`. 소비 개념은 없다(멱등 재콜백 허용).
+- task 없음은 404 `ERROR_1001`, token 누락·불일치는 401 `ERROR_1002`이며 이 경로에서는 소비하지 않는다.
+- hash 검증 직후 `timeline:callback-token-uses:{taskId}`=`used` marker를 25시간 TTL로 원자 선점한다.
+  선점 실패와 terminal 재콜백은 401 `ERROR_1012`이며 terminal 저장·guard 해제·push에 도달하지 않는다.
+- token은 인증 시점에 소비한다. 이후 owner/body 검증이나 terminal 저장이 실패해도 marker를 삭제·환불하지
+  않으므로 같은 token으로 재시도할 수 없다(at-most-once admission, exactly-once processing 아님).
 
 ## Failure Semantics
 
@@ -99,6 +103,8 @@ AI는 2xx를 받을 때까지 재시도한다(at-least-once). 서버는 finalize
 - DB commit 뒤에만 task를 SUCCESS로 바꾼다. commit 후 callback 전 AI process가 종료되면 살아있는 재시도
   주체가 없다 — 원 task는 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다(수용된 MVP 한계 —
   동일 source 전량 재시도는 `ERROR_1013`, 일부 신규 source 재시도가 실질 복구 경로).
+- callback token 소비 뒤 terminal 저장이 실패해도 같은 token을 재사용하지 않는다. PROCESSING task와 날짜
+  guard는 1시간 TTL이 회수하며 durable receipt·redispatch는 별도 복구 과제다.
 - callback 성공은 application envelope 없이 body 없는 HTTP 200이다.
   400/401/404 error는 `GlobalExceptionHandler`의 application envelope를 사용한다.
 
@@ -106,7 +112,7 @@ AI는 2xx를 받을 때까지 재시도한다(at-least-once). 서버는 finalize
 
 - `noop`(기본): dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
 - `fake`(dev): in-process로 direct-write(`FakeAiTimelineAppendService`) 후 실제 HTTP callback 경로를
-  호출한다. callback retry는 없다.
+  한 번 호출한다. callback retry는 없다.
 - `http`: 실 AI 연동 — `app.ai.http.base-url` 필수, 접수 타임아웃(connect 2s/read 5s 기본) 초과는 FAILED.
 
 ## Invariants

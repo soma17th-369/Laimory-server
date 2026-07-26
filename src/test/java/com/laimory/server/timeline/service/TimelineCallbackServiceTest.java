@@ -33,9 +33,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 콜백 오케스트레이터 단위 검증(direct-write 계약). 404·token-first(401)·terminal 멱등 no-op·legacy fail-closed·
- * 상태 전이·guard 해제(record 조회 경유)·push best-effort. 인프라 0, finalize 경로 없음 — AI가 commit을
- * 이미 마친 상태라 서버는 Redis 전이만 기록한다.
+ * 콜백 오케스트레이터 단위 검증(direct-write 계약). 404·token 검증/원자 소비·terminal 재사용 거절·
+ * legacy fail-closed·상태 전이·guard 해제(record 조회 경유)·push best-effort. 인프라 0,
+ * finalize 경로 없음 — AI가 commit을 이미 마친 상태라 서버는 Redis 전이만 기록한다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineCallbackServiceTest {
@@ -76,6 +76,11 @@ class TimelineCallbackServiceTest {
         when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask()));
     }
 
+    private void givenConsumableProcessingTask() {
+        givenProcessingTask();
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
+    }
+
     /** guard 해제 경로: task의 dailyRecordId로 owner 일치 record를 찾아 recordDate를 얻는다. */
     private void givenOwnedRecord() {
         DailyRecord record = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
@@ -94,6 +99,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "missing", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+        verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineMetrics).recordCallback(callbackSample);
     }
 
@@ -104,6 +110,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "t", null, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+        verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
     }
@@ -115,6 +122,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+        verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
     }
 
@@ -127,16 +135,37 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+        verify(timelineTaskService, never()).consumeCallbackToken(anyString());
     }
 
     @Test
-    void handleCallback_terminalTask_validRetry_isIdempotentNoOp() {
-        // AI callback은 commit 후 네트워크 오류로 반복될 수 있다(at-least-once) — 유효한 재콜백은
-        // terminal no-op 200으로 흡수하고 어떤 전이·알림도 다시 만들지 않는다(token-use 카운터 없음).
+    void handleCallback_markerlessTerminalTask_consumesThenRejects1012() {
+        // 배포 전 terminal task에는 marker가 없을 수 있다. token을 먼저 소비한 뒤 terminal 안전망에서 거절한다.
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
 
-        service.handleCallback("v1", "t", TOKEN, successRequest());
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+
+        verify(timelineTaskService).consumeCallbackToken("t");
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
+    }
+
+    @Test
+    void handleCallback_consumedTerminalTask_rejects1012BeforeSideEffects() {
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, RECORD_ID,
+                        ErrorCode.ERROR_1008.name(), TOKEN_HASH)));
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
 
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
@@ -145,15 +174,18 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_terminalFailedTask_validRetry_isIdempotentNoOp() {
-        when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, RECORD_ID,
-                        ErrorCode.ERROR_1008.name(), TOKEN_HASH)));
+    void handleCallback_processingTaskWithConsumedToken_rejects1012BeforeStateChange() {
+        givenProcessingTask();
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(false);
 
-        service.handleCallback("v1", "t", TOKEN, successRequest());
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
 
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 
     @Test
@@ -163,6 +195,7 @@ class TimelineCallbackServiceTest {
         TimelineDraftTask legacy = new TimelineDraftTask(TaskStatus.PROCESSING, RECORD_ID, null,
                 null, TOKEN_HASH, null, null);
         when(timelineTaskService.find("t")).thenReturn(Optional.of(legacy));
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -178,6 +211,7 @@ class TimelineCallbackServiceTest {
         TimelineDraftTask legacy = new TimelineDraftTask(TaskStatus.PROCESSING, null, null,
                 null, TOKEN_HASH, null, USER_ID);
         when(timelineTaskService.find("t")).thenReturn(Optional.of(legacy));
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -186,23 +220,26 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_aiReportedFailure_marksFailed() {
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
         DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, null, "ai gave up");
 
         service.handleCallback("v1", "t", TOKEN, req);
 
+        InOrder order = inOrder(timelineTaskService, timelineCompletionPushNotifier);
+        order.verify(timelineTaskService).consumeCallbackToken("t");
         // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함.
-        verify(timelineTaskService).markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1008, TOKEN_HASH);
+        order.verify(timelineTaskService)
+                .markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1008, TOKEN_HASH);
         // FAILED terminal 저장 성공 후에도 guard를 해제한다(규칙 ③ — 실패 종결도 날짜를 풀어줘야 재시도 가능).
-        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
+        order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
         // AI가 보고한 FAILED도 완료 푸시를 예약한다(실패도 조회 유도 신호).
-        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.FAILED);
+        order.verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.FAILED);
     }
 
     @Test
     void handleCallback_aiReportedFailure_withValidCode_storesIt() {
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
         DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_1008", "gpu timeout");
 
@@ -214,7 +251,7 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_aiReportedFailure_withUnknownCode_fallsBackTo1008() {
         // 허용 목록 밖 코드(HTTP용 코드 포함)는 저장하지 않고 ERROR_1008로 폴백 — 오분류·유출 차단.
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
         DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_9999", null);
 
@@ -225,7 +262,7 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_success_marksSuccessThenReleasesGuardThenPush() {
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
@@ -233,8 +270,9 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markSuccess("t", USER_ID, RECORD_ID, TOKEN_HASH);
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
 
-        // 불변식: terminal 저장 성공 → guard 해제 → 완료 푸시 예약 순서(terminal 확정 전 알림 금지).
+        // 불변식: token 소비 → terminal 저장 → guard 해제 → 완료 푸시 예약.
         InOrder order = inOrder(timelineTaskService, timelineCompletionPushNotifier);
+        order.verify(timelineTaskService).consumeCallbackToken("t");
         order.verify(timelineTaskService).markSuccess("t", USER_ID, RECORD_ID, TOKEN_HASH);
         order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
         order.verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, "t", TaskStatus.SUCCESS);
@@ -243,7 +281,7 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_success_recordMissing_skipsGuardReleaseButCompletes() {
         // guard 해제용 record 조회 실패 시(삭제됨 등) 다른 날짜를 추정하지 않고 TTL 만료에 맡긴다 — 콜백은 성공.
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.empty());
 
         service.handleCallback("v1", "t", TOKEN, successRequest());
@@ -256,7 +294,7 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_success_recordOwnedByOther_skipsGuardRelease() {
         // 결과 record owner가 task owner와 다르면(이상 상태) 그 record의 날짜로 guard를 풀지 않는다(fail-closed).
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         DailyRecord foreign = DailyRecord.createDraft(999L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(foreign, "dailyRecordId", RECORD_ID);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(foreign));
@@ -269,7 +307,7 @@ class TimelineCallbackServiceTest {
 
     @Test
     void handleCallback_invalidStatus_throwsBadRequest() {
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.PROCESSING, null, null);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, req))
@@ -278,10 +316,10 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_terminalSaveFails_doesNotReleaseGuard() {
+    void handleCallback_terminalSaveFails_keepsTokenConsumedAndRejectsRetry() {
         // 해제 경계 규칙 ②: terminal 저장 실패 = 전이 미확정 → guard를 풀지 않고 TTL에 맡긴다.
-        // AI의 콜백 재시도가 멱등 게이트를 통과해 전이를 복구한다(token-use 카운터가 없어 재시도가 막히지 않는다).
         givenProcessingTask();
+        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true, false);
         doThrow(new RuntimeException("redis down")).when(timelineTaskService)
                 .markSuccess(anyString(), anyLong(), anyLong(), anyString());
 
@@ -290,12 +328,30 @@ class TimelineCallbackServiceTest {
 
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
         verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+    }
+
+    @Test
+    void handleCallback_tokenConsumeFails_doesNotChangeState() {
+        givenProcessingTask();
+        doThrow(new RuntimeException("redis down")).when(timelineTaskService).consumeCallbackToken("t");
+
+        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
+        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
     }
 
     @Test
     void handleCallback_guardReleaseFails_isSwallowedAndCallbackSucceeds() {
         // 해제는 best-effort: terminal 상태는 이미 확정됐고 TTL이 안전망이라, 해제 실패로 콜백을 500으로 만들지 않는다.
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
         doThrow(new RuntimeException("redis down")).when(timelineTaskService)
                 .releaseDateGuard(anyLong(), any(), anyString());
@@ -309,7 +365,7 @@ class TimelineCallbackServiceTest {
     @Test
     void handleCallback_pushEnqueueFails_isSwallowedAndCallbackSucceeds() {
         // 알림은 best-effort: executor 제출 실패(포화·종료 중)도 콜백 200과 terminal 확정을 바꾸지 않는다.
-        givenProcessingTask();
+        givenConsumableProcessingTask();
         givenOwnedRecord();
         doThrow(new RuntimeException("executor rejected")).when(timelineCompletionPushNotifier)
                 .notifyAsync(anyLong(), anyString(), any());

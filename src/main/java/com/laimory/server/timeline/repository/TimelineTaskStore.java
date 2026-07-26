@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 /**
  * timeline draft 작업 상태의 Redis 데이터 접근 계층.
  * 논리 키: {@code timeline:draft-task:{taskId}}, 값: TimelineDraftTask JSON.
+ * callback token 소비 논리 키: {@code timeline:callback-token-uses:{taskId}}, 값: {@code used}.
  * 날짜 guard 논리 키: {@code timeline:date-guard:{userId}:{recordDate}}, 값: holder 문자열.
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  */
@@ -24,6 +25,8 @@ public class TimelineTaskStore {
 
     private static final String KEY_PREFIX = "timeline:draft-task:";
     static final String PROCESSING_INDEX_KEY = "timeline:draft-task:processing-index";
+    private static final String CALLBACK_TOKEN_USE_KEY_PREFIX = "timeline:callback-token-uses:";
+    private static final String CALLBACK_TOKEN_USED_VALUE = "used";
     private static final String DATE_GUARD_KEY_PREFIX = "timeline:date-guard:";
 
     private final RedisGateway redis;
@@ -57,6 +60,14 @@ public class TimelineTaskStore {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 역직렬화에 실패했습니다: " + taskId, e);
         }
+    }
+
+    /**
+     * callback token을 task별 marker로 원자 소비한다. true를 받은 요청 하나만 인증 게이트를 통과하며,
+     * false는 이미 소비된 token이다. marker에는 raw token이나 hash를 저장하지 않는다.
+     */
+    public boolean consumeCallbackToken(String taskId, Duration ttl) {
+        return redis.setIfAbsent(CALLBACK_TOKEN_USE_KEY_PREFIX + taskId, CALLBACK_TOKEN_USED_VALUE, ttl);
     }
 
     /**

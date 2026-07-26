@@ -106,6 +106,15 @@ class TimelineTaskServiceTest {
     }
 
     @Test
+    void consumeCallbackToken_usesTwentyFiveHourMarkerTtl() {
+        when(timelineTaskStore.consumeCallbackToken("t", Duration.ofHours(25))).thenReturn(true);
+
+        assertThat(service.consumeCallbackToken("t")).isTrue();
+
+        verify(timelineTaskStore).consumeCallbackToken("t", Duration.ofHours(25));
+    }
+
+    @Test
     void countStuckProcessing_usesProcessingTtl() {
         Instant now = Instant.parse("2026-07-24T12:00:00Z");
         Duration threshold = Duration.ofMinutes(10);
