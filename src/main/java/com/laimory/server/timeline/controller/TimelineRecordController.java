@@ -3,7 +3,6 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.service.DailyTimelineService;
@@ -42,17 +41,17 @@ public class TimelineRecordController implements TimelineRecordApi {
     }
 
     @Override
-    public ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEvent(
+    public ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
             String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateEvent(
-                applicationVersion, userId, timelineEventId, request)));
+        timelineEventEditService.updateEvent(applicationVersion, userId, timelineEventId, request);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
-    public ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEventMemo(
+    public ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
             String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(timelineEventEditService.updateMemo(
-                applicationVersion, userId, timelineEventId, request.memo())));
+        timelineEventEditService.updateMemo(applicationVersion, userId, timelineEventId, request.memo());
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override

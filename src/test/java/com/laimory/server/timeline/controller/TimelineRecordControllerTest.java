@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
@@ -187,22 +188,12 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_returns200WithUpdatedEvent() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenReturn(updatedEvent());
-
+    void updateTimelineEvent_returns200WithExplicitNullBody() throws Exception {
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body.timelineEventId").value(11))
-                .andExpect(jsonPath("$.body.eventType").value("REST"))
-                .andExpect(jsonPath("$.body.title").value("카페에서 휴식"))
-                .andExpect(jsonPath("$.body.subtitle").value("성수동"))
-                .andExpect(jsonPath("$.body.memo").value("기존 메모"))
-                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
-                .andExpect(jsonPath("$.body.items[0].payload.description").doesNotExist())
-                .andExpect(jsonPath("$.body.items[0].payload.photoUrl").value("https://cdn.example/u.jpg"));
+                .andExpect(this::assertBodyIsExplicitNull);
 
         // 구버전 4키 요청은 그대로 호환한다. optional 키 누락은 eventType/memo 유지와 PHOTO no-op으로 전달된다.
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
@@ -235,9 +226,6 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_explicitNullClearsSubtitleAndEndAt() throws Exception {
         // 명시적 null은 누락(400)과 달리 "비움"이다 — subtitle/endAt에 null이 그대로 서비스로 전달된다.
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenReturn(updatedEvent());
-
         String body = """
                 {
                   "title": "카페에서 휴식",
@@ -258,9 +246,6 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_withEventType_passesEnumToService() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenReturn(updatedEvent());
-
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.put("eventType", "MEAL");
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
@@ -299,8 +284,6 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_explicitNullMemoIsPresentAndRequestsRemoval() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenReturn(updatedEvent());
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.putNull("memo");
 
@@ -316,8 +299,6 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_parsesManualPhotoAndIgnoresAiAndServerOnlyPayloadFields() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenReturn(updatedEvent());
         String body = """
                 {
                   "title": "카페에서 휴식",
@@ -383,8 +364,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenThrow(new IllegalArgumentException("title is required"));
+        doThrow(new IllegalArgumentException("title is required"))
+                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isBadRequest())
@@ -394,8 +375,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsNotFoundTo404() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+        doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
+                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isNotFound())
@@ -404,8 +385,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsSavedConflictTo409() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
@@ -414,8 +395,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsDateGuardConflictTo409With1016() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS));
+        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
+                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -425,8 +406,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
-        when(timelineEventEditService.updateEvent(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20));
+        doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20))
+                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -435,9 +416,7 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEventMemo_returns200WithUpdatedEvent() throws Exception {
-        when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any())).thenReturn(updatedEvent());
-
+    void updateTimelineEventMemo_returns200WithExplicitNullBody() throws Exception {
         String body = """
                 {"memo": " 원문 보존 메모 "}
                 """;
@@ -445,8 +424,7 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body.timelineEventId").value(11))
-                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21));
+                .andExpect(this::assertBodyIsExplicitNull);
 
         // memo는 컨트롤러에서 trim 없이 그대로 서비스에 전달된다(제거/보존 판정은 서비스 책임).
         verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), eq(" 원문 보존 메모 "));
@@ -455,19 +433,18 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEventMemo_emptyBodyPassesNullMemo() throws Exception {
         // body가 {}(필드 부재)면 memo=null로 서비스에 전달돼 "메모 제거"로 처리된다(계약: absent=null).
-        when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any())).thenReturn(updatedEvent());
-
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
+                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(this::assertBodyIsExplicitNull);
 
         verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), isNull());
     }
 
     @Test
     void updateTimelineEventMemo_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any()))
-                .thenThrow(new IllegalArgumentException("memo is too long: length=10001"));
+        doThrow(new IllegalArgumentException("memo is too long: length=10001"))
+                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
 
         String body = """
                 {"memo": "x"}
@@ -480,8 +457,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEventMemo_mapsNotFoundTo404() throws Exception {
-        when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+        doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
+                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
 
         String body = """
                 {"memo": "m"}
@@ -493,8 +470,8 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEventMemo_mapsSavedConflictTo409() throws Exception {
-        when(timelineEventEditService.updateMemo(any(), anyLong(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
 
         String body = """
                 {"memo": "m"}
@@ -512,7 +489,7 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이다.
         verify(timelineDeletionService).deleteEvent(eq("v1"), eq(USER_ID), eq(11L));
@@ -567,7 +544,7 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(this::assertBodyIsExplicitNull);
 
         verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(USER_ID), eq(77L));
     }
@@ -600,5 +577,11 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value("ERROR_1017"));
+    }
+
+    private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {
+        JsonNode response = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(response.has("body")).isTrue();
+        assertThat(response.get("body").isNull()).isTrue();
     }
 }

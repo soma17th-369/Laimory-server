@@ -18,7 +18,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
@@ -63,8 +62,6 @@ class TimelineEventEditTransactionServiceTest {
     @Mock
     private TimelineItemService timelineItemService;
     @Mock
-    private TimelineEventResponseAssembler timelineEventResponseAssembler;
-    @Mock
     private PhotoUrlService photoUrlService;
 
     private TimelineEventEditTransactionService service;
@@ -76,7 +73,6 @@ class TimelineEventEditTransactionServiceTest {
                 dailyRecordService,
                 timelineEventItemService,
                 timelineItemService,
-                timelineEventResponseAssembler,
                 photoUrlService,
                 new ObjectMapper());
     }
@@ -92,12 +88,8 @@ class TimelineEventEditTransactionServiceTest {
             ReflectionTestUtils.setField(item, "timelineItemId", 21L);
             return item;
         });
-        TimelineEventResponse expected = responseFor(event);
-        when(timelineEventResponseAssembler.toResponse(event)).thenReturn(expected);
+        service.updateEvent(USER_ID, EVENT_ID, command);
 
-        TimelineEventResponse actual = service.updateEvent(USER_ID, EVENT_ID, command);
-
-        assertThat(actual).isSameAs(expected);
         assertThat(event.getEventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(event.getTitle()).isEqualTo("새 제목");
         assertThat(event.getSubtitle()).isEqualTo("새 부제");
@@ -136,8 +128,6 @@ class TimelineEventEditTransactionServiceTest {
         TimelineItem existing = item(21L, ItemType.PHOTO, RAW_ID);
         TimelineEventItem targetLink = TimelineEventItem.of(EVENT_ID, 21L);
         stubRecordGraph(List.of(event), List.of(targetLink), List.of(existing));
-        when(timelineEventResponseAssembler.toResponse(event)).thenReturn(responseFor(event));
-
         service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
@@ -156,8 +146,6 @@ class TimelineEventEditTransactionServiceTest {
                 List.of(event, other),
                 List.of(TimelineEventItem.of(OTHER_EVENT_ID, 30L), TimelineEventItem.of(OTHER_EVENT_ID, 20L)),
                 List.of(higherId, lowerId));
-        when(timelineEventResponseAssembler.toResponse(event)).thenReturn(responseFor(event));
-
         service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
 
         verify(timelineItemService, never()).save(any());
@@ -188,7 +176,7 @@ class TimelineEventEditTransactionServiceTest {
                 .hasMessage("rawId is already used by a non-PHOTO item");
 
         assertOriginalState(event, "기존 메모");
-        verifyNoWritesOrResponse();
+        verifyNoWrites();
     }
 
     @Test
@@ -203,7 +191,7 @@ class TimelineEventEditTransactionServiceTest {
                 .hasMessage("filename is duplicated across new photos");
 
         assertOriginalState(event, "기존 메모");
-        verifyNoWritesOrResponse();
+        verifyNoWrites();
     }
 
     @Test
@@ -219,7 +207,7 @@ class TimelineEventEditTransactionServiceTest {
                 });
 
         assertOriginalState(event, null);
-        verifyNoWritesOrResponse();
+        verifyNoWrites();
     }
 
     @Test
@@ -236,7 +224,7 @@ class TimelineEventEditTransactionServiceTest {
                 });
 
         assertOriginalState(event, null);
-        verifyNoWritesOrResponse();
+        verifyNoWrites();
     }
 
     private TimelineEvent stubOwnedDraftEvent() {
@@ -302,10 +290,6 @@ class TimelineEventEditTransactionServiceTest {
                 126.9780);
     }
 
-    private TimelineEventResponse responseFor(TimelineEvent event) {
-        return TimelineEventResponse.from(event, List.of());
-    }
-
     private void assertOriginalState(TimelineEvent event, String memo) {
         assertThat(event.getEventType()).isEqualTo(TimelineEventType.REST);
         assertThat(event.getTitle()).isEqualTo("원래 제목");
@@ -315,10 +299,9 @@ class TimelineEventEditTransactionServiceTest {
         assertThat(event.getMemo()).isEqualTo(memo);
     }
 
-    private void verifyNoWritesOrResponse() {
+    private void verifyNoWrites() {
         verify(timelineItemService, never()).save(any());
         verify(timelineEventItemService, never()).saveAll(anyList());
         verify(photoUrlService, never()).buildUrl(any(), anyLong());
-        verify(timelineEventResponseAssembler, never()).toResponse(any());
     }
 }

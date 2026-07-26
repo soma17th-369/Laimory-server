@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,7 +17,6 @@ import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -41,7 +41,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** Event 편집 외부 오케스트레이션과 legacy memo 경로의 단위 검증. */
+/** Event 편집 외부 오케스트레이션과 memo PUT 경로의 단위 검증. */
 @ExtendWith(MockitoExtension.class)
 class TimelineEventEditServiceTest {
 
@@ -59,9 +59,6 @@ class TimelineEventEditServiceTest {
     private static final String RAW_ID_2 = "0190a1b2-0002-7000-8000-000000000002";
     private static final String FILENAME_1 = "0190a1b2-0001-7000-8000-000000000001.jpg";
     private static final String FILENAME_2 = "0190a1b2-0002-7000-8000-000000000002.png";
-    private static final TimelineEventResponse RESPONSE = new TimelineEventResponse(
-            EVENT_ID, TimelineEventType.REST, NEW_START, NEW_END, "제목", null, null, List.of());
-
     @Mock
     private TimelineEventService timelineEventService;
     @Mock
@@ -70,8 +67,6 @@ class TimelineEventEditServiceTest {
     private TimelineTaskService timelineTaskService;
     @Mock
     private TimelineEventEditTransactionService transactionService;
-    @Mock
-    private TimelineEventResponseAssembler responseAssembler;
 
     private TimelineEventEditService service;
 
@@ -82,7 +77,6 @@ class TimelineEventEditServiceTest {
                 dailyRecordService,
                 timelineTaskService,
                 transactionService,
-                responseAssembler,
                 MAX_PHOTO_COUNT);
     }
 
@@ -138,14 +132,12 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_omittedOrEmptyPhotosNormalizesScalarsAndSkipsDateGuard() {
         stubOwnedDraftEvent();
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         UpdateTimelineEventRequest request = request(
                 TimelineEventType.MEAL, "  a  ", "   ", NEW_START, NEW_START,
                 null, false, List.of());
 
-        TimelineEventResponse result = service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
 
-        assertThat(result).isSameAs(RESPONSE);
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
@@ -164,7 +156,6 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_presentMemoPreservesNonBlankRawTextInCommand() {
         stubOwnedDraftEvent();
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, " 앞뒤 공백 메모 ", true, List.of());
 
@@ -183,7 +174,6 @@ class TimelineEventEditServiceTest {
     @ValueSource(strings = {"", "   "})
     void updateEvent_presentNullOrBlankMemoNormalizesToRemoval(String memo) {
         stubOwnedDraftEvent();
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, memo, true, List.of());
 
@@ -259,7 +249,6 @@ class TimelineEventEditServiceTest {
     void updateEvent_duplicateRawIdKeepsFirstPhoto() {
         stubOwnedDraftEvent();
         when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         UpdateTimelineEventPhotoRequest first = new UpdateTimelineEventPhotoRequest(
                 RAW_ID_1, NEW_START, null,
                 new UpdateTimelineEventPhotoPayloadRequest(FILENAME_1, "content://first", 37.1, 127.1));
@@ -285,12 +274,10 @@ class TimelineEventEditServiceTest {
     void updateEvent_nonEmptyPhotosClaimsWritesAndReleasesSameHolderInOrder() {
         stubOwnedDraftEvent();
         when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         UpdateTimelineEventRequest request = requestWithOnePhoto();
 
-        TimelineEventResponse result = service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
 
-        assertThat(result).isSameAs(RESPONSE);
         ArgumentCaptor<String> holderCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineTaskService).claimDateGuard(eq(USER_ID), eq(RECORD_DATE), holderCaptor.capture());
         String holder = holderCaptor.getValue();
@@ -323,7 +310,7 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
         when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
         IllegalStateException failure = new IllegalStateException("writer failed");
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenThrow(failure);
+        doThrow(failure).when(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto()))
                 .isSameAs(failure);
@@ -337,25 +324,22 @@ class TimelineEventEditServiceTest {
     void updateEvent_releaseFailureIsSwallowedAfterSuccessfulWriter() {
         stubOwnedDraftEvent();
         when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
-        when(transactionService.updateEvent(eq(USER_ID), eq(EVENT_ID), any())).thenReturn(RESPONSE);
         when(timelineTaskService.releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString()))
                 .thenThrow(new IllegalStateException("redis unavailable"));
 
-        assertThat(service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto())).isSameAs(RESPONSE);
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto());
 
         verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString());
     }
 
-    // --- legacy memo PUT ---
+    // --- memo PUT ---
 
     @Test
     void updateMemo_storesRawTextAndDoesNotUseGuardOrPatchWriter() {
         TimelineEvent event = stubOwnedDraftEvent();
-        when(responseAssembler.toResponse(event)).thenReturn(RESPONSE);
 
-        TimelineEventResponse result = service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
+        service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
 
-        assertThat(result).isSameAs(RESPONSE);
         assertThat(event.getMemo()).isEqualTo(" 앞뒤 공백 메모 ");
         assertThat(event.getTitle()).isEqualTo("원래 제목");
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
@@ -368,7 +352,6 @@ class TimelineEventEditServiceTest {
     void updateMemo_nullOrBlankRemovesMemo(String memo) {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
-        when(responseAssembler.toResponse(event)).thenReturn(RESPONSE);
 
         service.updateMemo(VERSION, USER_ID, EVENT_ID, memo);
 
@@ -379,7 +362,6 @@ class TimelineEventEditServiceTest {
     void updateMemo_blankCheckPrecedesLengthAndExactly10000NonBlankCharsAreAccepted() {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
-        when(responseAssembler.toResponse(event)).thenReturn(RESPONSE);
 
         service.updateMemo(VERSION, USER_ID, EVENT_ID, " ".repeat(10_001));
         assertThat(event.getMemo()).isNull();
@@ -398,7 +380,7 @@ class TimelineEventEditServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
-        verifyNoInteractions(responseAssembler, timelineTaskService, transactionService);
+        verifyNoInteractions(timelineTaskService, transactionService);
     }
 
     @Test
@@ -413,7 +395,7 @@ class TimelineEventEditServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
 
-        verifyNoInteractions(responseAssembler, timelineTaskService, transactionService);
+        verifyNoInteractions(timelineTaskService, transactionService);
     }
 
     @Test
@@ -426,7 +408,7 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
                 });
 
-        verifyNoInteractions(responseAssembler, timelineTaskService, transactionService);
+        verifyNoInteractions(timelineTaskService, transactionService);
     }
 
     private TimelineEvent stubOwnedDraftEvent() {

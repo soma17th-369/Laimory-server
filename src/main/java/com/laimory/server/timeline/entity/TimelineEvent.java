@@ -18,7 +18,7 @@ import org.hibernate.annotations.DynamicUpdate;
  * 타임라인 이벤트. daily_record에 plain Long FK로 연결(@OneToMany 미사용 - 서비스=레포 1개 규칙 보존).
  * memo는 사용자가 나중에 작성하므로 생성 시점엔 비어 있다.
  *
- * <p>{@code @DynamicUpdate}: 통합 PATCH에서 memo가 생략된 요청과 legacy memo PUT이 서로 다른 필드 그룹을
+ * <p>{@code @DynamicUpdate}: 통합 PATCH에서 memo가 생략된 요청과 memo PUT이 서로 다른 필드 그룹을
  * 갱신할 수 있다. Hibernate 기본 UPDATE는 모든 updatable 컬럼을 SET에 포함하므로, 두 요청이 같은 row를 읽고
  * 순차 커밋하면 나중 커밋이 상대의 변경을 자신의 로드 시점 스냅샷으로 되돌린다(교차-필드 lost update).
  * dynamic update는 실제 변경된 컬럼만 SET해 이 경로를 제거한다(같은 필드 동시 수정은 여전히

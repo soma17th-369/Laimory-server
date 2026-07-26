@@ -4,7 +4,6 @@ import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -86,7 +85,7 @@ public interface TimelineRecordApi {
                     + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "수정 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
+                    description = "수정 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal · "
@@ -101,19 +100,18 @@ public interface TimelineRecordApi {
                             + "`ERROR_1016` — non-empty photosToAdd가 있고 같은 날짜 AI/사진추가/삭제가 진행 중")
     })
     @PatchMapping("/events/{timelineEventId}")
-    ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEvent(
+    ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "수정할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventRequest request);
 
-    @Operation(summary = "타임라인 Event 메모 작성·수정·제거", deprecated = true,
+    @Operation(summary = "타임라인 Event 메모 작성·수정·제거",
             description = "메모를 요청 값으로 교체하는 단일 endpoint다. memo가 null·공백뿐이거나 필드가 없으면(`{}`) "
-                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 10,000자). "
-                    + "호환용 deprecated API이며 신규 클라이언트는 Event PATCH의 memo를 사용한다.")
+                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 10,000자).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "반영 성공 — 갱신된 Event(하위 items 포함)", useReturnTypeSchema = true),
+                    description = "반영 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`ERROR_0400` — memo가 10,000자 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -124,7 +122,7 @@ public interface TimelineRecordApi {
                     description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
     })
     @PutMapping("/events/{timelineEventId}/memo")
-    ResponseEntity<ApiResponse<TimelineEventResponse>> updateTimelineEventMemo(
+    ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "메모를 바꿀 타임라인 이벤트 ID") @PathVariable Long timelineEventId,

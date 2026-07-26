@@ -28,4 +28,10 @@ class OpenApiConfigTest {
         assertThat(scheme.getScheme()).isEqualTo("bearer");
         assertThat(scheme.getBearerFormat()).isEqualTo("JWT");
     }
+
+    @Test
+    void 공통응답_설명이_결과없는_성공의_null_body를_구분한다() {
+        assertThat(openApi.getInfo().getDescription())
+                .contains("반환할 결과가 없는 성공은 `body = null`");
+    }
 }

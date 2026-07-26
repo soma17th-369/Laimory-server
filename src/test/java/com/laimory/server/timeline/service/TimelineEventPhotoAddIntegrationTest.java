@@ -8,7 +8,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
-import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -92,13 +91,12 @@ class TimelineEventPhotoAddIntegrationTest {
     @Test
     void samePatchRetryCreatesOnePhotoAndOneLink_withManualPayloadContract() throws Exception {
         UpdateTimelineEventRequest request = request("새 제목", "새 메모", List.of(photo("raw-photo")));
+        long itemCountBefore = timelineItemRepository.count();
 
-        TimelineEventResponse first = timelineEventEditService.updateEvent("v1", userId, eventId, request);
-        TimelineEventResponse retried = timelineEventEditService.updateEvent("v1", userId, eventId, request);
+        timelineEventEditService.updateEvent("v1", userId, eventId, request);
+        timelineEventEditService.updateEvent("v1", userId, eventId, request);
 
-        assertThat(first.items()).hasSize(1);
-        assertThat(retried.items()).hasSize(1);
-        assertThat(retried.items().get(0).timelineItemId()).isEqualTo(first.items().get(0).timelineItemId());
+        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore + 1);
         List<TimelineEventItem> links = timelineEventItemRepository.findByTimelineEventId(eventId);
         assertThat(links).hasSize(1);
 
