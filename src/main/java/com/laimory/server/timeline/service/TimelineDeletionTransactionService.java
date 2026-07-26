@@ -81,7 +81,7 @@ public class TimelineDeletionTransactionService {
                 .toList();
     }
 
-    /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(ERROR_1003)로 거절한다. */
+    /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(-1003)로 거절한다. */
     private DailyRecord requireOwnedDraftRecord(long userId, Long dailyRecordId, ExceptionType notFoundType) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getUserId() == userId)

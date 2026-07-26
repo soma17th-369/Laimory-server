@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -16,15 +15,15 @@ import org.springframework.stereotype.Service;
 
 /**
  * 폴링(GET) 오케스트레이터. Redis task 상태를 읽고, SUCCESS면 task에 저장된 dailyRecordId로 그날 전체
- * 타임라인을 조립해 반환한다. task 없음(만료)은 404(ERROR_1001)다.
+ * 타임라인을 조립해 반환한다. task 없음(만료)은 404(-1001)다.
  *
  * <p>task owner와 request userId를 상태 분기 <b>전에</b> 대조한다 — 타 사용자의 taskId와 owner가 없는
- * legacy task는 상태와 무관하게 404(ERROR_1001)로 은닉한다(존재 여부 비노출, fallback 0 추정 금지).
+ * legacy task는 상태와 무관하게 404(-1001)로 은닉한다(존재 여부 비노출, fallback 0 추정 금지).
  *
  * <p>SUCCESS 결과는 (userId, recordDate) 재조회로 찾지 않는다 — record 삭제 후 같은 날짜가 재생성되면
  * 과거 task가 새 기록을 반환하는 오조회가 생기기 때문이다. ID 조회가 실패하는 경우(결과 record 삭제됨,
- * 결과 record의 owner 불일치, 또는 dailyRecordId가 없는 배포 전 legacy SUCCESS task)는 404(ERROR_0404)로
- * 응답한다 — "task 자체가 없음"(ERROR_1001)과 클라이언트가 구분한다.
+ * 결과 record의 owner 불일치, 또는 dailyRecordId가 없는 배포 전 legacy SUCCESS task)는 404(-404)로
+ * 응답한다 — "task 자체가 없음"(-1001)과 클라이언트가 구분한다.
  */
 @Slf4j
 @Service
@@ -53,9 +52,9 @@ public class TimelineDraftTaskPollingService {
 
         return switch (task.status()) {
             case PROCESSING -> DraftTaskStatusResponse.processing(elapsedSeconds(task.processingStartedAt()));
-            // read-side 유출 방어: 알려진 실패 코드가 아니면(과거 raw 잔존 — FAILED TTL 24h 내) ERROR_1011로 대체.
+            // read-side 유출 방어: 알려진 실패 코드가 아니면(과거 raw 잔존 — FAILED TTL 24h 내) -1011로 대체.
             case FAILED -> DraftTaskStatusResponse.failed(
-                    ErrorCode.isTaskFailureCode(task.error()) ? task.error() : ErrorCode.ERROR_1011.name());
+                    TimelineTaskService.resolveFailureType(task.error()).code());
             case SUCCESS -> {
                 DailyRecord record = findResultRecord(task, userId);
                 DailyTimelineResponse result = dailyTimelineService.getDailyTimeline(record.getDailyRecordId());

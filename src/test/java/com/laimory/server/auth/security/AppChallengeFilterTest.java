@@ -64,7 +64,7 @@ class AppChallengeFilterTest {
 
         assertThat(response.getStatus()).isEqualTo(400);
         JsonNode clientBody = objectMapper.readTree(response.getContentAsByteArray());
-        assertThat(clientBody.at("/header/code").asText()).isEqualTo("ERROR_0400");
+        assertThat(clientBody.at("/header/code").asInt()).isEqualTo(-400);
         assertThat(clientBody.at("/header/message").asText()).isEqualTo("잘못된 요청입니다.");
         assertThat(clientBody.get("body").isNull()).isTrue();
         assertThat(request.getAttribute(RequestLogAttributes.EXCEPTION_TYPE))
@@ -72,7 +72,7 @@ class AppChallengeFilterTest {
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO); // 400이어도 레벨은 타입(INFO)이 정한다
         JsonNode log = encoded(accessLog.list.get(0));
-        assertThat(log.get("errorCode").asText()).isEqualTo("ERROR_0400");
+        assertThat(log.get("errorCode").asText()).isEqualTo("-400");
         assertThat(log.get("exceptionType").asText()).isEqualTo("APP_CHALLENGE_REJECTED");
         assertThat(objectMapper.readTree(log.get("responseBody").asText())).isEqualTo(clientBody);
     }

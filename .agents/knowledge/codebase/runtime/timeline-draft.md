@@ -28,9 +28,9 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
    검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through).
 4. UUIDv7 `taskId`를 만들고 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)를
-   holder `task:{taskId}`로 선점한다(SET NX). 실패 = 같은 날짜 작업 진행 중 → 409 `ERROR_1016`.
+   holder `task:{taskId}`로 선점한다(SET NX). 실패 = 같은 날짜 작업 진행 중 → 409 `-1016`.
 5. SAVED record를 거부하고, 기존 final `rawId`(record의 Event→junction→Item 경로 조회)와 request 안
-   중복을 제외한다. 제외 결과 신규 item이 0이면 409 `ERROR_1013`.
+   중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
 6. geo/photo enrich를 DB transaction 밖에서 수행한다. callback token을 만든다(원문은 dispatch body 전용,
    서버는 hash만 보관).
 7. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
@@ -41,13 +41,13 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    성공하면 dispatch 전에 guard 소유를 재확인(refresh)하며 TTL을 1시간으로 재갱신한다 —
-   **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`ERROR_1009`)로 종결한다.**
+   **소유 미확인(false/예외)이면 dispatch하지 않고 FAILED(`-1009`)로 종결한다.**
    같은 저장 Lua가 관측 전용 PROCESSING sorted-set index에도 시작 시각을 추가하고, terminal 저장 Lua가
    제거한다. index는 10분 초과 stuck gauge에만 쓰며 task 상태·callback 계약의 권위는 기존 JSON이다.
 9. AI dispatcher를 호출한다 — body는 `taskId`·원문 `callbackToken`·`dailyRecordId`·record timezone 기반
    offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기다.
    **실패는 "미접수 확정 vs UNKNOWN"으로 분류한다**: 4xx 응답(미접수 확정, `TimelineAiDispatchRejectedException`)만
-   FAILED(`ERROR_1009`) 종결 + guard 해제한다. read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 —
+   FAILED(`-1009`) 종결 + guard 해제한다. read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 —
    AI가 이미 접수해 final write 중일 수 있으므로 — FAILED로 확정하지 않고 PROCESSING·guard를 유지한다
    (AI callback이 종결하거나 TTL 1h 만료가 회수). FAILED로 확정하면 커밋된 결과와 어긋나고 이후 AI write가
    새 draft/사진추가/삭제와 겹칠 수 있다.
@@ -59,7 +59,7 @@ terminal 저장 성공 시에만 해제한다. 해제는 best-effort고 TTL이 �
 
 같은 guard를 삭제 API(`TimelineDeletionService`)는 holder `delete:{operationId}`, non-empty
 `photosToAdd` Event PATCH는 `patch-photo-add:{operationId}`로 선점한다. PROCESSING draft 진행 중 삭제·
-PHOTO 추가와 각 작업 사이 경합을 409 `ERROR_1016`으로 차단한다(날짜당 graph 작업 하나 직렬화).
+PHOTO 추가와 각 작업 사이 경합을 409 `-1016`으로 차단한다(날짜당 graph 작업 하나 직렬화).
 삭제와 PHOTO 추가는 draft와 달리 성공·실패 모든 종료 경로에서 finally로 compare-and-release한다.
 
 `app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
@@ -71,9 +71,9 @@ PHOTO 추가와 각 작업 사이 경합을 409 `ERROR_1016`으로 차단한다(
 1. AI가 validation → final Event/Item/junction INSERT + 채택 source DELETE를 한 transaction으로 commit한다
    (append-only — 기존 graph 불변, +10분 startAt nudge/end clamp 포함. 계약 상세는 ai-contract).
 2. commit 이후에만 `Callback-Token` header + body `{status,errorCode,error}`로 알린다. 결과 graph는 body에 없다.
-3. 서버 콜백은 task 조회 → token hash constant-time 검증(불일치 401 `ERROR_1002`) → Redis
+3. 서버 콜백은 task 조회 → token hash constant-time 검증(불일치 401 `-1002`) → Redis
    `timeline:callback-token-uses:{taskId}` marker 원자 소비 순서다. 이미 소비된 token과 terminal 재콜백은
-   401 `ERROR_1012`이며 marker를 선점한 요청 하나만 이후 처리로 진행한다.
+   401 `-1012`이며 marker를 선점한 요청 하나만 이후 처리로 진행한다.
 4. 소비 뒤 owner·dailyRecordId 없는 legacy task는 404 fail-closed, body status가 불량이면 400이다.
    두 경우와 terminal 저장 실패 모두 marker를 환불하지 않는다. 정상 요청은 Redis terminal 전이만
    기록한다(SUCCESS든 FAILED든 결과 조립·검증·저장 없음).
@@ -81,10 +81,10 @@ PHOTO 추가와 각 작업 사이 경합을 409 `ERROR_1016`으로 차단한다(
    compare-and-release한다(record 없음/owner 불일치면 추정하지 않고 TTL에 맡김). 그 뒤 완료 푸시를
    비동기 best-effort로 예약한다(token 거절·terminal 저장 실패 경로엔 알림 없음).
 6. terminal 저장 실패는 guard를 풀지 않고 전파된다. token은 이미 소비됐으므로 같은 token 재시도는
-   `ERROR_1012`이며 PROCESSING task·guard TTL 1시간이 최종 회수한다.
+   `-1012`이며 PROCESSING task·guard TTL 1시간이 최종 회수한다.
 
 **수용된 MVP 한계**: commit 후 callback 전 AI process가 종료되면 살아있는 재시도 주체가 없다 — 원 task는
-PROCESSING TTL로 만료되고 final graph는 commit대로 남는다. 동일 source 전량 재시도는 `ERROR_1013`이며,
+PROCESSING TTL로 만료되고 final graph는 commit대로 남는다. 동일 source 전량 재시도는 `-1013`이며,
 일부 신규 source가 섞인 재시도의 SUCCESS 폴링이 기존 커밋분까지 반환해 실질 복구 경로가 된다.
 durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 시점에 설계한다.
 
@@ -93,15 +93,17 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 - `GET /a/api/{version}/timeline/daily-records`는 principal userId의 DRAFT/SAVED DailyRecord 전체를
   최신 날짜·ID 내림차순으로 반환한다(빈 record 포함, 없으면 200 `timelines=[]`).
   `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 `(dailyRecordId, userId)`가 일치하는
-  한 건만 반환하며 없음·비소유는 404 `ERROR_0404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
+  한 건만 반환하며 없음·비소유는 404 `-404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
   한 read-only transaction에서 bulk 조회하고 Event별 `items`까지 조립한다.
 - polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자·
-  owner 없는 legacy task는 상태와 무관하게 404 `ERROR_1001`로 은닉한다. SUCCESS 결과는 task의
+  owner 없는 legacy task는 상태와 무관하게 404 `-1001`로 은닉한다. SUCCESS 결과는 task의
   `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 쓰지 않는다. ID가 없거나(legacy) record가
-  삭제·비소유면 404 `ERROR_0404`(task 자체 없음 `ERROR_1001`과 구분). polling 선검증 뒤 조립 서비스의
+  삭제·비소유면 404 `-404`(task 자체 없음 `-1001`과 구분). polling 선검증 뒤 조립 서비스의
   권위 재조회 전에 record가 삭제돼도 `DRAFT_RESULT_NOT_FOUND`로 변환해 catch-all 500을 내지 않는다.
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 반환한다(음수 0 clamp,
-  terminal·legacy는 필드 생략). FAILED의 `body.error`는 분류 코드(`ERROR_1008`/`1009`/`1011`)만 나간다.
+  terminal·legacy는 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`)만
+  나간다. 신규 Redis writer는 JSON number를 저장하고 reader는 terminal TTL 소진까지 JSON number와
+  exact legacy `ERROR_XXXX`를 모두 읽는다. 누락·형식 불량·양수·allowlist 밖 값은 `-1011`로 수렴한다.
 - 하루 타임라인 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건 반복 없이
   record/Event/junction/Item 4단계 bulk SELECT로 읽는다. Event별 Item을 junction으로 로드해
   startAt(null 먼저)·id 순으로 정렬한다. 같은 Item이 여러 Event에 연결되면 같은 `timelineItemId`가 여러
@@ -149,7 +151,7 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 - 서버 callback은 AI 결과 Event/Item/junction을 쓰지 않는다 — draft final write는 AI(fake 포함)가 소유한다.
   별도로 Event PATCH는 수동 PHOTO Item/junction을 서버 transaction에서 쓴다.
 - callback token은 hash 검증 직후 원자 소비하고 환불하지 않는다. 최초 요청만 terminal 처리로 진행하며
-  같은 token 재사용은 401 `ERROR_1012`다(at-most-once admission).
+  같은 token 재사용은 401 `-1012`다(at-most-once admission).
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps

@@ -3,6 +3,8 @@ package com.laimory.server.timeline.entity;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.laimory.server.common.error.LegacyErrorCodeDeserializer;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -38,7 +40,8 @@ public record TimelineDraftTask(
         TaskStatus status,
         @JsonInclude(JsonInclude.Include.NON_NULL) Long dailyRecordId,
         @JsonInclude(JsonInclude.Include.NON_NULL) TimelineWindow timelineWindow,
-        String error,
+        @JsonDeserialize(using = LegacyErrorCodeDeserializer.class)
+        Integer error,
         String callbackTokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
@@ -63,7 +66,7 @@ public record TimelineDraftTask(
                 null, callbackTokenHash, null, userId);
     }
 
-    public static TimelineDraftTask failed(long userId, long dailyRecordId, String error,
+    public static TimelineDraftTask failed(long userId, long dailyRecordId, int error,
                                            String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null,
                 error, callbackTokenHash, null, userId);

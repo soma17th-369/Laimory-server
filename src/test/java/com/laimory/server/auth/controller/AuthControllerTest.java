@@ -76,7 +76,7 @@ class AuthControllerTest {
         MvcResult result = mockMvc.perform(post(TOKEN).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"appCode\":\"code-1\",\"appVerifier\":\"verifier-1\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.accessToken").value("access-abc"))
                 .andExpect(jsonPath("$.body.refreshToken").value("refresh-def"))
                 .andReturn();
@@ -97,7 +97,7 @@ class AuthControllerTest {
         mockMvc.perform(post(TOKEN).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"appCode\":\"c\",\"appVerifier\":\"v\"}"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2002"))
+                .andExpect(jsonPath("$.header.code").value(-2002))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -109,7 +109,7 @@ class AuthControllerTest {
         mockMvc.perform(post(REFRESH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"refresh-old\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.accessToken").value("access-new"))
                 .andExpect(jsonPath("$.body.refreshToken").value("refresh-new"));
     }
@@ -122,7 +122,7 @@ class AuthControllerTest {
         mockMvc.perform(post(REFRESH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"refresh-old\"}"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2003"))
+                .andExpect(jsonPath("$.header.code").value(-2003))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -131,7 +131,7 @@ class AuthControllerTest {
         mockMvc.perform(post(LOGOUT).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"refresh-old\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(this::assertBodyIsExplicitNull);
 
         verify(authTokenService).logout(any(), eq("refresh-old"));

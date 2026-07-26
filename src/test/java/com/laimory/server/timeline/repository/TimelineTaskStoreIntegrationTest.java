@@ -102,7 +102,7 @@ class TimelineTaskStoreIntegrationTest {
                     Instant.parse("2026-05-08T13:41:07Z")), Duration.ofMinutes(1));
             timelineTaskStore.save(sId, TimelineDraftTask.success(7L, 42L, "h"),
                     Duration.ofMinutes(1));
-            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
+            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, -1009, "h"),
                     Duration.ofMinutes(1));
             redisGateway.set("timeline:draft-task:" + legacyId,
                     "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"callbackTokenHash\":\"h\"}",
@@ -111,6 +111,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(timelineTaskStore.find(pId).orElseThrow().userId()).isEqualTo(7L);
             assertThat(timelineTaskStore.find(sId).orElseThrow().userId()).isEqualTo(7L);
             assertThat(timelineTaskStore.find(fId).orElseThrow().userId()).isEqualTo(7L);
+            assertThat(timelineTaskStore.find(fId).orElseThrow().error()).isEqualTo(-1009);
             assertThat(timelineTaskStore.find(legacyId).orElseThrow().userId()).isNull();
         } finally {
             timelineTaskStore.save(pId,

@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
@@ -109,7 +108,7 @@ class TimelineDeletionTransactionServiceTest {
 
         assertThatThrownBy(() -> service.deleteEvent(USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
         verify(timelineEventService, never()).deleteById(anyLong());
     }
 
@@ -122,7 +121,7 @@ class TimelineDeletionTransactionServiceTest {
 
         assertThatThrownBy(() -> service.deleteEvent(USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verify(timelineEventService, never()).deleteById(anyLong());
     }
 
@@ -164,7 +163,7 @@ class TimelineDeletionTransactionServiceTest {
 
         assertThatThrownBy(() -> service.deleteDailyRecord(USER_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verify(dailyRecordService, never()).deleteById(anyLong());
     }
 }

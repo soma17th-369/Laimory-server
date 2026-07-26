@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -115,12 +114,12 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_failed_returnsFailureCode() {
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, ErrorCode.ERROR_1009.name(), "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, -1009, "h")));
 
         DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
         assertThat(res.status()).isEqualTo(TaskStatus.FAILED);
-        assertThat(res.error()).isEqualTo("ERROR_1009"); // body.error = 실패 분류 코드
+        assertThat(res.error()).isEqualTo(-1009); // body.error = 실패 분류 numeric code
         assertThat(res.result()).isNull();
         // 경과 시간은 PROCESSING 전용 — terminal은 null(응답 key 생략)이고 Clock도 읽지 않는다.
         assertThat(res.elapsedSeconds()).isNull();
@@ -131,12 +130,11 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_failed_legacyRawError_isReplacedNotLeaked() {
         // 과거(코드화 이전) 저장분의 raw 메시지는 그대로 내보내지 않고 ERROR_1011로 대체한다(read-side 유출 방어).
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, "Connection refused: 10.0.32.99", "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, 1234, "h")));
 
         DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
-        assertThat(res.error()).isEqualTo(ErrorCode.ERROR_1011.name());
-        assertThat(res.error()).doesNotContain("10.0.32.99");
+        assertThat(res.error()).isEqualTo(-1011);
     }
 
     @Test
@@ -167,7 +165,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
         verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
     }
 
@@ -179,7 +177,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
     }
 
     @Test
@@ -207,7 +205,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
     }
 
     @Test
@@ -216,7 +214,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "missing"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
     }
 
     @Test
@@ -227,7 +225,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verifyNoInteractions(dailyRecordService, dailyTimelineService);
     }
 
@@ -239,7 +237,7 @@ class TimelineDraftTaskPollingServiceTest {
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verifyNoInteractions(dailyRecordService, dailyTimelineService);
     }
 }

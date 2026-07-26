@@ -29,6 +29,6 @@ public final class ApiUrls {
     /** 서버간 통신(엔드포인트별 자체 인증; 예: AI 콜백은 task별 one-time Callback-Token 검증). */
     public static final String SERVER_API_URL = SERVER_API + "/" + VERSION;
 
-    /** 사용자 인증이 필요한 요청 — 유효한 자체 access JWT(Bearer) 없이는 401 {@code ERROR_2001}로 거절된다. */
+    /** 사용자 인증이 필요한 요청 — 유효한 자체 access JWT(Bearer) 없이는 401 {@code -2001}로 거절된다. */
     public static final String AUTHENTICATED_API_URL = AUTHENTICATED_API_PREFIX + "/" + VERSION;
 }

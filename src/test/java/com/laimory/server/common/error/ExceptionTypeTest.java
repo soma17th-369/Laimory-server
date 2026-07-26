@@ -6,23 +6,47 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.event.Level;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 
-/** ExceptionType↔ErrorCode N:1 계약과 프레임워크 status 폴백 매핑을 고정한다. 인프라 0. */
+/** ExceptionType numeric code/status/level 카탈로그와 프레임워크 status 폴백 매핑을 고정한다. 인프라 0. */
 class ExceptionTypeTest {
 
     @Test
     void nToOne_distinctInternalTypesShareOneClientCode_withDifferentLevels() {
         // 클라이언트 계약은 하나(재로그인) — 내부 구분(일상 vs 공격 신호)은 로그 레벨로만 갈린다. N:1의 존재 이유.
-        assertThat(ExceptionType.APP_CODE_INVALID.errorCode()).isEqualTo(ErrorCode.ERROR_2002);
-        assertThat(ExceptionType.APP_CODE_VERIFIER_MISMATCH.errorCode()).isEqualTo(ErrorCode.ERROR_2002);
+        assertThat(ExceptionType.APP_CODE_INVALID.code()).isEqualTo(-2002);
+        assertThat(ExceptionType.APP_CODE_VERIFIER_MISMATCH.code()).isEqualTo(-2002);
         assertThat(ExceptionType.APP_CODE_INVALID.logLevel()).isEqualTo(Level.INFO);
         assertThat(ExceptionType.APP_CODE_VERIFIER_MISMATCH.logLevel()).isEqualTo(Level.WARN);
 
-        assertThat(ExceptionType.REFRESH_TOKEN_INVALID.errorCode()).isEqualTo(ErrorCode.ERROR_2003);
-        assertThat(ExceptionType.REFRESH_TOKEN_REUSED.errorCode()).isEqualTo(ErrorCode.ERROR_2003);
+        assertThat(ExceptionType.REFRESH_TOKEN_INVALID.code()).isEqualTo(-2003);
+        assertThat(ExceptionType.REFRESH_TOKEN_REUSED.code()).isEqualTo(-2003);
         assertThat(ExceptionType.REFRESH_TOKEN_INVALID.logLevel()).isEqualTo(Level.INFO);
         assertThat(ExceptionType.REFRESH_TOKEN_REUSED.logLevel()).isEqualTo(Level.WARN);
+    }
+
+    @Test
+    void everyFailureCodeIsNegative_andSpecialOwnersHaveExactContract() {
+        assertThat(ExceptionType.values()).allMatch(type -> type.code() < 0);
+        assertThat(ExceptionType.AI_REPORTED_FAILURE)
+                .extracting(ExceptionType::code, ExceptionType::status, ExceptionType::logLevel)
+                .containsExactly(-1008, HttpStatus.BAD_GATEWAY, Level.WARN);
+        assertThat(ExceptionType.AI_DISPATCH_FAILED)
+                .extracting(ExceptionType::code, ExceptionType::status, ExceptionType::logLevel)
+                .containsExactly(-1009, HttpStatus.BAD_GATEWAY, Level.ERROR);
+        assertThat(ExceptionType.DRAFT_TASK_FAILURE_FALLBACK)
+                .extracting(ExceptionType::code, ExceptionType::status, ExceptionType::logLevel)
+                .containsExactly(-1011, HttpStatus.INTERNAL_SERVER_ERROR, Level.ERROR);
+        assertThat(ExceptionType.OAUTH_LOGIN_FAILED)
+                .extracting(ExceptionType::code, ExceptionType::status, ExceptionType::logLevel)
+                .containsExactly(-2004, HttpStatus.UNAUTHORIZED, Level.WARN);
+    }
+
+    @Test
+    void messageKeyIsDerivedFromNumericCode() {
+        assertThat(ExceptionType.VALIDATION_FAILED.messageKey()).isEqualTo("ERROR_0400");
+        assertThat(ExceptionType.AI_REPORTED_FAILURE.messageKey()).isEqualTo("ERROR_1008");
     }
 
     /**

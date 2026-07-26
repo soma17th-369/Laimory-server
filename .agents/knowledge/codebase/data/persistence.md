@@ -71,7 +71,7 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 보존, PROCESSING에만 `timelineWindow`(local 원본)·`processingStartedAt`(UTC ISO-8601 — polling 경과 시간 기준, terminal 폐기) 포함 — record 메타데이터(recordDate/recordAt/recordTimezone/userMemory)는 없다(DailyRecord가 단일 권위); 구 shape 잔존 JSON은 `@JsonIgnoreProperties`로 관용 수용하고 새 필드 부재는 null → 폴링 1001·콜백 fail-closed | PROCESSING 1h, terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 보존, PROCESSING에만 `timelineWindow`·`processingStartedAt` 포함). FAILED `error`의 신규 표현은 JSON number이고 reader는 terminal TTL 호환 기간 동안 exact legacy `ERROR_XXXX`도 음수 integer로 정규화한다. 누락·미지 값은 polling에서 `-1011`로 수렴한다. 구 shape 잔존 JSON은 `@JsonIgnoreProperties`로 관용 수용하고 owner/record ID 부재는 폴링 `-1001`·콜백 fail-closed다. | PROCESSING 1h, terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 1h cutoff 관측 때 제거 |
 | `timeline:callback-token-uses:{taskId}` | callback token 소비 marker. hash 검증 직후 `SET NX`로 고정값 `used`를 저장하며 raw token/hash는 넣지 않는다. 소비 뒤 후속 처리 실패에도 삭제·환불하지 않는다. | 25h |
 | `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`, Event PHOTO 추가 `patch-photo-add:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제·PHOTO 추가는 모든 종료 경로에서 해제) |
@@ -99,7 +99,7 @@ Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서�
 삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로),
 Event/DailyRecord 삭제는 `DeleteObjects` 배치(최대 1,000 key/batch 순차, 요청 단위
 override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 SDK 예외 또는
-객체별 error 1건이라도 있으면 `ERROR_1017`로 실패하고 DB 삭제를 시작하지 않는다
+객체별 error 1건이라도 있으면 `-1017`로 실패하고 DB 삭제를 시작하지 않는다
 (DB 보존 → 재시도 수렴). PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고
 행 삭제는 진행한다(orphan 허용 — cleanup과 동일 규칙).
 

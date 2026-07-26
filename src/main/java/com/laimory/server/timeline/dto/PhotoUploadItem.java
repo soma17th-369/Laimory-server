@@ -11,10 +11,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record PhotoUploadItem(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "image/jpeg",
                 allowableValues = {"image/jpeg", "image/png", "image/webp"},
-                description = "사진 MIME 타입. image/jpeg·image/png·image/webp만 허용(image/jpg 아님) — 그 외는 ERROR_1007.")
+                description = "사진 MIME 타입. image/jpeg·image/png·image/webp만 허용(image/jpg 아님) — 그 외는 -1007.")
         String contentType,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "1048576",
-                description = "파일 크기(바이트). 0 초과, 장당 최대 5MB(=5,242,880 bytes) — 초과 시 ERROR_1005. "
+                description = "파일 크기(바이트). 0 초과, 장당 최대 5MB(=5,242,880 bytes) — 초과 시 -1005. "
                         + "발급되는 presigned PUT의 Content-Length에 바인딩돼 S3가 업로드 시점에 정확한 크기를 강제한다.")
         Long size
 ) {

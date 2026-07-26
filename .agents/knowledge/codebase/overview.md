@@ -46,7 +46,7 @@ Terraform은 AWS 인프라를 재현하는 recipe를 소유한다.
 
 - code/config/schema/workflow가 문서보다 우선한다.
 - 환경 설정 문서에는 변수 이름과 역할만 기록하고 값·credential은 복제하지 않는다.
-- `/a/api`는 JWT Bearer 인증이 강제되는 사용자 영역이다(무토큰/무효 토큰 401 `ERROR_2001`,
+- `/a/api`는 JWT Bearer 인증이 강제되는 사용자 영역이다(무토큰/무효 토큰 401 `-2001`,
   principal userId가 timeline 흐름 전체에 전파).
 
 ## Known Gaps

@@ -85,7 +85,7 @@ class FakeTimelineAiDispatcherTest {
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("Callback-Token", "raw-token"))
                 .andExpect(jsonPath("$.status").value("FAILED"))
-                .andExpect(jsonPath("$.errorCode").value("ERROR_1008"))
+                .andExpect(jsonPath("$.errorCode").value(-1008))
                 .andRespond(withSuccess());
 
         dispatcher.dispatch(request());

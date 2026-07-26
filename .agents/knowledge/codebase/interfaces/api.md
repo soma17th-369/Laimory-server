@@ -12,7 +12,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 
 - `com.laimory.server.common.ApiUrls`
 - 각 feature의 `*Api.java`, controller, request/response DTO
-- `ApiResponse`, `ErrorCode`, `ExceptionType`, `GlobalExceptionHandler`
+- `ApiResponse`, `ExceptionType`, `GlobalExceptionHandler`
 - `OpenApiConfig`, API/controller/error contract tests
 - 실행 중 생성되는 OpenAPI 문서
 
@@ -26,7 +26,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 |---|---|---|
 | `/api/{version}` | 인증 없는 app-facing public API | public |
 | `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | callback token 등 endpoint가 강제 |
-| `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `ERROR_2001` |
+| `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `-2001` |
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
@@ -38,7 +38,7 @@ version별 동작은 service가 결정한다.
 
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`이며,
-`GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 없음·비소유를 같은 404 `ERROR_0404`로
+`GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 없음·비소유를 같은 404 `-404`로
 은닉한다. 두 응답 모두 Event별 연결 Item을 `events[].items[]`에 포함한다.
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
@@ -47,7 +47,7 @@ version별 동작은 service가 결정한다.
 배열은 Item 변경 없음이며 날짜 guard도 취득하지 않고, 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 `description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
-한 DB transaction으로 commit하며 guard 충돌은 409 `ERROR_1016`이다. 성공 응답은
+한 DB transaction으로 commit하며 guard 충돌은 409 `-1016`이다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
@@ -73,8 +73,8 @@ app-facing success/error는 다음 envelope를 사용한다.
 ```json
 {
   "header": {
-    "code": "COMMON_0000",
-    "message": "..."
+    "code": 0,
+    "message": ""
   },
   "body": {
     "result": "..."
@@ -82,38 +82,34 @@ app-facing success/error는 다음 envelope를 사용한다.
 }
 ```
 
-- success code는 `COMMON_0000`이다.
+- success code는 JSON integer `0`이고 성공 message는 항상 `""`다.
 - 조회처럼 반환할 결과가 있는 성공은 typed response를 `body`에 담는다.
 - 반환할 결과가 없는 성공도 envelope를 유지하며 `body` key를 명시적 JSON null로 반환한다.
-- error code는 `ERROR_`로 시작하고 `body=null`이다.
+- error code는 기존 번호를 음수화한 JSON integer이고 `body=null`이다.
 - `/status`는 infrastructure probe를 위한 plain JSON으로 envelope 밖이다.
-- AI callback은 성공 시 body 없는 HTTP 200을 반환한다.
+- AI callback은 성공 시 body 없는 HTTP 200을 반환한다. callback `errorCode`는 JSON integer다.
 - Entity를 직접 반환하지 않고 response DTO를 사용한다.
 
 ### Errors
 
 - service는 response를 만들지 않고 exception을 던진다.
 - client가 구분해야 하는 domain rejection은 `BusinessException(ExceptionType)`이다.
-  `ExceptionType`은 내부 실패 사유(access log level 소유)이고, client 노출 code·HTTP status는
-  타입이 참조하는 `ErrorCode`가 결정한다 — **N:1 매핑**이라 같은 code라도 내부 사유·심각도가
-  다를 수 있다(예: `REFRESH_TOKEN_INVALID`/`REFRESH_TOKEN_REUSED` → 둘 다 `ERROR_2003`).
-- 모든 상태에서 잘못된 input은 `IllegalArgumentException`이며 400 `ERROR_0400`
+  각 `ExceptionType`은 공개 `int code`, HTTP status와 access log level을 소유한다. 서로 다른 내부 타입이
+  같은 code를 공유할 수 있다(예: `REFRESH_TOKEN_INVALID`/`REFRESH_TOKEN_REUSED` → 둘 다 `-2003`).
+  numeric code를 타입으로 되돌리는 전역 lookup은 없고 task/callback 경계만 local allowlist를 소유한다.
+- 모든 상태에서 잘못된 input은 `IllegalArgumentException`이며 400 `-400`
   (`VALIDATION_FAILED`)으로 매핑한다.
 - `ResponseStatusException`을 domain service에서 사용하지 않는다.
-- 내부 invariant failure는 catch-all 500 `ERROR_0500`(`UNEXPECTED_ERROR`)으로 처리한다.
+- 내부 invariant failure는 catch-all 500 `-500`(`UNEXPECTED_ERROR`)으로 처리한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
-  `ExceptionType.fromStatus` 폴백으로 정한다(406이 `ERROR_0400`과 함께 나갈 수 있음 —
-  `ErrorCode.status()`는 `BusinessException` 경로의 SSOT).
-- `ErrorCode` 이름은 배포 후 client contract라 rename하지 않는다.
-- 새 code block을 할당할 때 `ErrorCode` 상단 block registry를 따른다.
-  domain block 숫자는 HTTP status와 무관하며 status는 enum field가 결정한다.
-- 새 error 추가는 세 경우로 나뉜다:
-  ① 새로 throw되는 공개 error = `ErrorCode` + 기본·ko·en message bundle + `ExceptionType` 한 줄
-  ② 기존 공개 응답의 새 내부 원인 = `ExceptionType` 한 줄만
-  ③ 폴링 데이터/링크 파라미터 전용 = `ErrorCode`(+bundle)만 — throw되지 않으면 `ExceptionType` 불필요
+  `ExceptionType.fromStatus` 폴백으로 정한다(406이 `-400`과 함께 나갈 수 있음).
+- 새 code block을 할당할 때 기존 번호 블록을 보존한다. domain block 숫자는 HTTP status와 무관하며
+  status는 enum field가 결정한다. `1006`, `1010` 결번은 재사용하지 않는다.
+- 새 error는 `ExceptionType`에 code/status/logLevel을 추가하고 기본·ko·en message bundle을 함께 추가한다.
+  같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.
-  client는 message가 아니라 code로 분기한다. message는 `ErrorCode` 이름이 key라
-  같은 code=같은 message가 구조적으로 보장된다(내부 구분을 응답 문구로 유출하지 않음).
+  client는 message가 아니라 code로 분기한다. bundle key는 numeric code에서 `ERROR_XXXX`로 계산하므로
+  같은 code는 같은 message를 사용한다(legacy key는 외부에 노출하지 않음).
 - 사용자 입력을 message argument에 넣지 않는다.
 
 ### Transaction ID

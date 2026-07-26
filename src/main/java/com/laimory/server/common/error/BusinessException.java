@@ -22,8 +22,8 @@ public class BusinessException extends RuntimeException {
         this.args = args;
     }
 
-    /** 클라이언트 응답 계약 코드 — {@link ExceptionType}의 N:1 매핑을 따른다. */
-    public ErrorCode getErrorCode() {
-        return exceptionType.errorCode();
+    /** 클라이언트 응답 계약 numeric code. */
+    public int getErrorCode() {
+        return exceptionType.code();
     }
 }

@@ -12,7 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.TaskStatus;
@@ -98,7 +98,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "missing", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineMetrics).recordCallback(callbackSample);
     }
@@ -109,7 +109,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", null, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
         verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
@@ -121,7 +121,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
         verify(timelineTaskService, never()).consumeCallbackToken(anyString());
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
     }
@@ -134,7 +134,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", "wrong-token", successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1002));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
         verify(timelineTaskService, never()).consumeCallbackToken(anyString());
     }
 
@@ -147,7 +147,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1012));
 
         verify(timelineTaskService).consumeCallbackToken("t");
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
@@ -160,12 +160,12 @@ class TimelineCallbackServiceTest {
     void handleCallback_consumedTerminalTask_rejects1012BeforeSideEffects() {
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, RECORD_ID,
-                        ErrorCode.ERROR_1008.name(), TOKEN_HASH)));
+                        -1008, TOKEN_HASH)));
         when(timelineTaskService.consumeCallbackToken("t")).thenReturn(false);
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1012));
 
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
@@ -180,7 +180,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1012));
 
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
@@ -199,7 +199,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
         verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
@@ -215,7 +215,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1001));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
     }
 
     @Test
@@ -230,7 +230,7 @@ class TimelineCallbackServiceTest {
         order.verify(timelineTaskService).consumeCallbackToken("t");
         // errorCode 누락 -> 1008 폴백, 자유 텍스트는 저장 안 함.
         order.verify(timelineTaskService)
-                .markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1008, TOKEN_HASH);
+                .markFailed("t", USER_ID, RECORD_ID, ExceptionType.AI_REPORTED_FAILURE, TOKEN_HASH);
         // FAILED terminal 저장 성공 후에도 guard를 해제한다(규칙 ③ — 실패 종결도 날짜를 풀어줘야 재시도 가능).
         order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:t");
         // AI가 보고한 FAILED도 완료 푸시를 예약한다(실패도 조회 유도 신호).
@@ -241,11 +241,12 @@ class TimelineCallbackServiceTest {
     void handleCallback_aiReportedFailure_withValidCode_storesIt() {
         givenConsumableProcessingTask();
         givenOwnedRecord();
-        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_1008", "gpu timeout");
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "gpu timeout");
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1008, TOKEN_HASH);
+        verify(timelineTaskService).markFailed(
+                "t", USER_ID, RECORD_ID, ExceptionType.AI_REPORTED_FAILURE, TOKEN_HASH);
     }
 
     @Test
@@ -253,11 +254,12 @@ class TimelineCallbackServiceTest {
         // 허용 목록 밖 코드(HTTP용 코드 포함)는 저장하지 않고 ERROR_1008로 폴백 — 오분류·유출 차단.
         givenConsumableProcessingTask();
         givenOwnedRecord();
-        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, "ERROR_9999", null);
+        DraftTaskCallbackRequest req = new DraftTaskCallbackRequest(TaskStatus.FAILED, -9999, null);
 
         service.handleCallback("v1", "t", TOKEN, req);
 
-        verify(timelineTaskService).markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1008, TOKEN_HASH);
+        verify(timelineTaskService).markFailed(
+                "t", USER_ID, RECORD_ID, ExceptionType.AI_REPORTED_FAILURE, TOKEN_HASH);
     }
 
     @Test
@@ -331,7 +333,7 @@ class TimelineCallbackServiceTest {
 
         assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1012));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1012));
     }
 
     @Test

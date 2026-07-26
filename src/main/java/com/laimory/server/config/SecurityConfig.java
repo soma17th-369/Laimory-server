@@ -22,7 +22,7 @@ import org.springframework.security.web.savedrequest.NullRequestCache;
  * API 필터체인(OAuth 핸드셰이크 경로 외 전부) — stateless.
  *
  * <p>{@code /a/api}(정확한 prefix와 하위 경로만)는 {@link JwtAuthenticationFilter}가 만든 인증이 있어야
- * 접근할 수 있고, 무인증 거절은 {@link ApiAuthenticationEntryPoint}가 401 {@code ERROR_2001} envelope로
+ * 접근할 수 있고, 무인증 거절은 {@link ApiAuthenticationEntryPoint}가 401 {@code -2001} envelope로
  * 직접 응답한다. 나머지 경로는 permitAll 유지 — denyAll로 잠그면 미매핑 경로의 404 계약이 401로
  * 회귀하므로 공개 경로({@code /api}, {@code /s/api}, {@code /status} 등)와 미매핑 경로를 함께 열어 둔다.
  *

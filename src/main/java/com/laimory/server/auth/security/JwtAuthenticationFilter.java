@@ -17,7 +17,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * {@code /a/api} 요청의 Bearer access JWT를 검증해 {@code Long} userId principal을 SecurityContext에 넣는다.
  *
  * <p>이 필터는 인증 "시도"만 한다 — 헤더 부재·형식 불량·검증 실패는 사유 구분 없이 context 없이 chain을
- * 진행시키고, 거절(401 {@code ERROR_2001})은 인가 단계의 {@link ApiAuthenticationEntryPoint}가 담당한다.
+ * 진행시키고, 거절(401 {@code -2001})은 인가 단계의 {@link ApiAuthenticationEntryPoint}가 담당한다.
  * 사유는 클라이언트 행동을 바꾸지 않으므로(전부 재인증 경로) 응답·로그에 상세를 남기지 않는다.
  *
  * <p>principal은 별도 래퍼 없이 {@code Long} userId 그대로다 — 컨트롤러의

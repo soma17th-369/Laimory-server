@@ -26,8 +26,8 @@ import org.springframework.util.unit.DataSize;
  * UX 엣지만 만들어서 제거했다(비용 비상시엔 개수/장당 env로 조인다).
  *
  * <p>예외 정책: 정상 사용자가 유발 가능한 한도/포맷 위반(개수·크기·미지원 타입)은
- * {@link BusinessException}(ERROR_1004/1005/1007, 한도값을 메시지에 포함)으로, 형식 불량(누락·비양수·null 요소)은
- * {@link IllegalArgumentException}(→400 ERROR_0400)으로 던진다.
+ * {@link BusinessException}(-1004/1005/1007, 한도값을 메시지에 포함)으로, 형식 불량(누락·비양수·null 요소)은
+ * {@link IllegalArgumentException}(→400 -400)으로 던진다.
  */
 @Slf4j
 @Service

@@ -17,7 +17,6 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
@@ -239,7 +238,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
@@ -280,13 +279,15 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         // raw 메시지는 저장하지 않는다 — 분류 코드만(상세는 로그로).
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
+        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
+                eq(ExceptionType.AI_DISPATCH_FAILED),
                 anyString());
         // draft는 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
         // 규칙 ③: FAILED terminal 저장 성공 후 guard를 해제한다(순서: markFailed → release).
         InOrder order = inOrder(timelineTaskService);
-        order.verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
+        order.verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
+                eq(ExceptionType.AI_DISPATCH_FAILED),
                 anyString());
         order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:" + taskId);
     }
@@ -318,7 +319,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1014));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
@@ -348,7 +349,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
         // 선점 실패 = 남의 guard다 — 해제하면 안 되고, 어떤 처리(조회·enrich·저장·dispatch)도 시작하지 않는다.
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
         verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
@@ -384,7 +385,8 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         verify(timelineAiDispatcher, never()).dispatch(any());
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
+        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
+                eq(ExceptionType.AI_DISPATCH_FAILED),
                 anyString());
         // 내 lease가 아님이 확정된 상태 — 해제(남의 guard 훼손 가능 경로)도 하지 않는다.
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
@@ -403,7 +405,8 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         verify(timelineAiDispatcher, never()).dispatch(any());
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID), eq(ErrorCode.ERROR_1009),
+        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
+                eq(ExceptionType.AI_DISPATCH_FAILED),
                 anyString());
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
     }
@@ -419,7 +422,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
     }
 
     @Test
@@ -707,7 +710,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1013));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1013));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());

@@ -32,8 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Event·memo·PHOTO Item·junction transaction이 commit된 뒤 해제된다. PROCESSING 중에도 사진 없는 PATCH와
  * memo PUT은 계속 허용된다.
  *
- * <p>이벤트 없음·record 없음·비소유는 모두 404(ERROR_0404)로 은닉하고 SAVED는 입력 검증보다 먼저
- * 409(ERROR_1003)로 거절한다. 사용자 입력 문자열·사진 식별자는 로그에 남기지 않는다.
+ * <p>이벤트 없음·record 없음·비소유는 모두 404(-404)로 은닉하고 SAVED는 입력 검증보다 먼저
+ * 409(-1003)로 거절한다. 사용자 입력 문자열·사진 식별자는 로그에 남기지 않는다.
  */
 @Slf4j
 @Service

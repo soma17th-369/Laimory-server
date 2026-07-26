@@ -64,7 +64,7 @@ class GlobalExceptionHandlerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1003"))
+                .andExpect(jsonPath("$.header.code").value(-1003))
                 .andExpect(jsonPath("$.header.message").isNotEmpty())
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.header.transactionId").doesNotExist()) // 노출 채널은 헤더뿐(hard cut 회귀 방지)
@@ -78,7 +78,7 @@ class GlobalExceptionHandlerTest {
 
         var result = mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andReturn();
 
         // access 로그 합류 계약: 내부 타입·검증 메시지가 attribute로 전달된다(레벨·필드 조립은 필터 몫)
@@ -112,7 +112,7 @@ class GlobalExceptionHandlerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0500"))
+                .andExpect(jsonPath("$.header.code").value(-500))
                 .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("secret")))); // 내부 상세 비노출
     }
@@ -121,7 +121,7 @@ class GlobalExceptionHandlerTest {
     void unmappedPath_returns404Envelope() throws Exception {
         mockMvc.perform(get("/no/such/path"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"))
+                .andExpect(jsonPath("$.header.code").value(-404))
                 .andExpect(header().exists("Transaction-Id"));
     }
 
@@ -130,21 +130,21 @@ class GlobalExceptionHandlerTest {
         mockMvc.perform(delete(TASKS).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(header().exists("Allow")) // ResponseEntityExceptionHandler가 보존
-                .andExpect(jsonPath("$.header.code").value("ERROR_0405"));
+                .andExpect(jsonPath("$.header.code").value(-405));
     }
 
     @Test
     void missingContentType_returns415Envelope() throws Exception {
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.TEXT_PLAIN).content("not json"))
                 .andExpect(status().isUnsupportedMediaType())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0415"));
+                .andExpect(jsonPath("$.header.code").value(-415));
     }
 
     @Test
     void malformedJson_returns400Envelope() throws Exception {
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{broken"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
     }
 
     @Test

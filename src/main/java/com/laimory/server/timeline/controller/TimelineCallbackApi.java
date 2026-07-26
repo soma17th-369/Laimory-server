@@ -34,11 +34,11 @@ public interface TimelineCallbackApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "최초 콜백 처리 완료(본문 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — 불량 콜백 바디(미지원 status 등)"),
+                    description = "`-400` — 불량 콜백 바디(미지원 status 등)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_1002` — 토큰 누락·불일치, `ERROR_1012` — 이미 소비된 토큰"),
+                    description = "`-1002` — 토큰 누락·불일치, `-1012` — 이미 소비된 토큰"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_1001` — 작업 없음(만료 포함)")
+                    description = "`-1001` — 작업 없음(만료 포함)")
     })
     @PostMapping("/{taskId}/callback")
     ResponseEntity<Void> callback(@Parameter(description = "API 버전", example = "v1")

@@ -2,7 +2,6 @@ package com.laimory.server.auth.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,7 +16,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 
 /**
- * {@code /a/api} 인가 거절(무인증)의 401 {@code ERROR_2001} envelope 직접 작성.
+ * {@code /a/api} 인가 거절(무인증)의 401 {@code -2001} envelope 직접 작성.
  *
  * <p>Security filter 단계는 {@code GlobalExceptionHandler}에 도달하지 않으므로 공통 envelope을 여기서
  * 직접 쓴다({@link AppChallengeFilter}의 400 작성이 선례). Bearer 부재/무효/만료는 사유 구분 없이 같은
@@ -38,15 +37,16 @@ public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
-        // access 로그의 errorCode=ERROR_2001·INFO 레벨은 이 attribute에서 파생된다(EXCEPTION_TYPE 계약).
+        // access 로그의 errorCode=-2001·INFO 레벨은 이 attribute에서 파생된다(EXCEPTION_TYPE 계약).
         request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.API_AUTHENTICATION_REQUIRED);
         // 필터 단계는 MVC LocaleResolver(spring.web.locale=ko) 미적용 — 헤더 없으면 한국어로 직접 폴백.
         Locale locale = request.getHeader("Accept-Language") == null ? Locale.KOREAN : request.getLocale();
-        String message = messageSource.getMessage(ErrorCode.ERROR_2001.code(), null, locale);
+        ExceptionType type = ExceptionType.API_AUTHENTICATION_REQUIRED;
+        String message = messageSource.getMessage(type.messageKey(), null, locale);
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        objectMapper.writeValue(response.getWriter(), ApiResponse.error(ErrorCode.ERROR_2001.code(), message));
+        objectMapper.writeValue(response.getWriter(), ApiResponse.error(type.code(), message));
     }
 }

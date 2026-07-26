@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.CallbackTokens;
@@ -11,7 +10,6 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import io.micrometer.core.instrument.Timer;
 import java.time.LocalDate;
 import java.util.Optional;
-import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,11 +23,11 @@ import org.springframework.stereotype.Service;
  * <p>순서가 load-bearing이다:
  * <ol>
  *   <li>task 로드(없음/만료 → 404)</li>
- *   <li><b>토큰 검증(401 ERROR_1002)</b> — terminal task도 해시를 보존하므로 재콜백도 토큰으로 검증된다</li>
+ *   <li><b>토큰 검증(401 -1002)</b> — terminal task도 해시를 보존하므로 재콜백도 토큰으로 검증된다</li>
  *   <li><b>토큰 원자 소비</b> — Redis SET NX marker를 선점한 요청 하나만 통과한다. 이미 소비됐으면
- *       401 ERROR_1012이며 terminal 전이·guard 해제·push에 도달하지 않는다</li>
+ *       401 -1012이며 terminal 전이·guard 해제·push에 도달하지 않는다</li>
  *   <li>terminal 안전망 — marker가 없던 배포 전 terminal task도 이 요청에서 token을 소비한 뒤
- *       ERROR_1012로 거부한다</li>
+ *       -1012로 거부한다</li>
  *   <li><b>task owner·dailyRecordId 확인</b> — 콜백은 {@code /s/api}라 request principal이 없으므로 이후 전이·guard
  *       해제는 task에 저장된 값을 쓴다. owner나 dailyRecordId가 없는 legacy task는 추정하지 않고 404로 fail-closed</li>
  *   <li>FAILED → markFailed(allowlist 분류 코드만 기록), SUCCESS → markSuccess. 그 외 status → 400</li>
@@ -51,9 +49,6 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TimelineCallbackService {
-
-    /** AI가 콜백으로 보고할 수 있는 실패 코드 허용 목록(당분간 ERROR_1008 하나 — 확장 시 여기에 추가). */
-    private static final Set<String> AI_FAILURE_CODES = Set.of(ErrorCode.ERROR_1008.name());
 
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
@@ -125,9 +120,9 @@ public class TimelineCallbackService {
         enqueuePushQuietly(taskId, userId, TaskStatus.SUCCESS);
     }
 
-    private void finishFailed(String taskId, long userId, long dailyRecordId, ErrorCode failureCode,
+    private void finishFailed(String taskId, long userId, long dailyRecordId, ExceptionType failureType,
                               String callbackTokenHash) {
-        timelineTaskService.markFailed(taskId, userId, dailyRecordId, failureCode, callbackTokenHash);
+        timelineTaskService.markFailed(taskId, userId, dailyRecordId, failureType, callbackTokenHash);
         releaseDateGuardQuietly(taskId, userId, dailyRecordId);
         enqueuePushQuietly(taskId, userId, TaskStatus.FAILED);
     }
@@ -168,18 +163,19 @@ public class TimelineCallbackService {
     }
 
     /**
-     * AI가 보고한 실패 코드를 해석한다. 허용 목록 밖(null 포함)이면 {@link ErrorCode#ERROR_1008} 폴백 —
+     * AI가 보고한 실패 코드를 해석한다. 허용 목록 밖(null 포함)이면
+     * {@link ExceptionType#AI_REPORTED_FAILURE}로 폴백 —
      * 코드 불일치로 콜백을 400으로 튕기면 task가 PROCESSING에 갇히므로 관대하게 받는다.
      * 진단용 자유 텍스트({@code error})는 저장하지 않고 로그로만 남긴다(자유 텍스트는 우리 AI 서버가 계약대로 채운다).
      */
-    private ErrorCode resolveAiFailureCode(String taskId, DraftTaskCallbackRequest request) {
-        String requested = request.errorCode();
-        boolean known = requested != null && AI_FAILURE_CODES.contains(requested);
+    private ExceptionType resolveAiFailureCode(String taskId, DraftTaskCallbackRequest request) {
+        Integer requested = request.errorCode();
+        boolean known = requested != null && requested == ExceptionType.AI_REPORTED_FAILURE.code();
         if (requested != null && !known) {
             log.warn("unknown ai failure code, falling back: taskId={} requested={}", taskId, requested);
         }
-        ErrorCode code = known ? ErrorCode.valueOf(requested) : ErrorCode.ERROR_1008;
-        log.warn("ai reported failure: taskId={} code={} detail={}", taskId, code, request.error());
-        return code;
+        ExceptionType type = ExceptionType.AI_REPORTED_FAILURE;
+        log.warn("ai reported failure: taskId={} code={} detail={}", taskId, type.code(), request.error());
+        return type;
     }
 }

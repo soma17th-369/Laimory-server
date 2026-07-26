@@ -35,7 +35,7 @@ import org.springframework.stereotype.Service;
  * ({@link GeocodingService#lookupAll}) 후 ③ 완성된 map으로 재구성한다. 좌표가 없으면(PHOTO/HEALTH만)
  * lookupAll 자체를 생략한다. source 결과 순서와 envelope 필드는 그대로 보존한다.
  *
- * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(전이=ERROR_1014 / 영구=ERROR_1015)로 실패시킨다 —
+ * <p>지오코딩이 끝내 실패하면(재시도 provider 내부 소진) 해당 draft 생성을 502(전이=-1014 / 영구=-1015)로 실패시킨다 —
  * 저품질 타임라인을 굽지 않는다(좌표만 있고 주소·장소가 없으면 AI가 장소를 알 수 없다). 하나라도 실패하면
  * enrich 전체가 throw한다. 병렬 조회라 1014/1015는 배치 종합 판정이 아니라 <b>가장 먼저 관측된 실패</b>의
  * 분류다(전이·영구가 경쟁하면 실행마다 다를 수 있음 — 둘 다 502라 수용). 같은 좌표는 요청 내 1회만 조회한다

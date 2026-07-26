@@ -18,7 +18,7 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 ## Current Contract
 
 - `/a/api/{version}`은 사용자가 `Authorization: Bearer <access-token>`으로 접근하는 인증 영역이다.
-  유효한 자체 access JWT 없이는 401 `ERROR_2001` envelope로 거절된다(`WWW-Authenticate: Bearer`).
+  유효한 자체 access JWT 없이는 401 `-2001` envelope로 거절된다(`WWW-Authenticate: Bearer`).
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
 - 인증된 principal(`Long` userId)이 controller `@AuthenticationPrincipal`로 주입돼 service까지 전달된다.
 
@@ -35,7 +35,7 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 1. `JwtAuthenticationFilter`(security chain 내부, `AuthorizationFilter` 앞)가 Bearer token을
    `JwtTokens.parseUserId`로 검증해 성공 시 `Long` userId principal 인증을 SecurityContext에 넣는다.
    부재/형식 불량/무효/만료는 사유 구분 없이 context 없이 통과시킨다(token 원문은 어디에도 보존 안 함).
-2. 인가 단계에서 무인증이면 `ApiAuthenticationEntryPoint`가 401 `ERROR_2001` envelope를 직접 쓴다
+2. 인가 단계에서 무인증이면 `ApiAuthenticationEntryPoint`가 401 `-2001` envelope를 직접 쓴다
    (Security filter 단계는 `GlobalExceptionHandler` 미도달 — `AppChallengeFilter` 400 작성과 같은 선례).
    `ExceptionType.API_AUTHENTICATION_REQUIRED`(INFO)를 request attribute에 심어 access log와 합류하고,
    `Transaction-Id` 헤더는 전역 `TransactionIdFilter`가 이미 보장한다.
@@ -61,6 +61,12 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 8. logout은 전달된 refresh token을 revoke한다.
 9. `JwtTokens.parseUserId`로 서명·만료를 검증하고 subject userId를 읽는 기능은 있다.
 
+OAuth/OIDC 핸드셰이크 실패, 성공 handler의 handoff context 누락과 로그인 완료 예외는 모두
+`?error=-2004`로 앱에 redirect한다. 세 실패 경로는 `ExceptionType.OAUTH_LOGIN_FAILED.code()`에서 값을
+파생하며 session invalidation과 302를 보존한다. provider/OIDC 실패 WARN, context 누락 WARN,
+로그인 완료 예외 ERROR+stacktrace 진단 로그는 서로 독립적으로 유지한다. 정상 성공은 `app_code`
+handoff를 그대로 사용한다.
+
 ## userId Propagation
 
 - 9개 timeline 보호 API(`draft 생성/photo presign/polling` + `DailyRecord 전체/단건 조회` +
@@ -68,7 +74,7 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
   controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/날짜 guard/S3 key/
   polling·직접 조회 결과가 전부 같은 userId에 귀속된다.
 - Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
-  polling은 상태 분기 전에 owner를 대조하고, 타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다.
+  polling은 상태 분기 전에 owner를 대조하고, 타 사용자·owner 없는 legacy task는 404 `-1001`로 은닉한다.
 - AI callback(`/s/api`)은 Bearer 대상이 아니다 — request principal 없이 task 저장 owner로
   recovery/finalize/guard 해제를 수행하고, owner 없는 legacy task는 finalize 없이 404로 fail-closed한다.
 - 고정 fallback(`TimelineDefaults.DEFAULT_USER_ID=0`)은 제거됐다. 기존 user 0 데이터는 인증 API에서

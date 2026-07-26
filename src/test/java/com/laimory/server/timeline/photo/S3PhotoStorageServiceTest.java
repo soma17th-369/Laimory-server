@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -214,7 +213,7 @@ class S3PhotoStorageServiceTest {
         assertThatThrownBy(() -> service.deleteAll(keys(1_001)))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.PHOTO_BATCH_DELETE_FAILED);
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1017);
+                    assertThat(ex.getErrorCode()).isEqualTo(-1017);
                 });
         // 실패한 batch에서 멈춘다 — 남은 batch를 계속 지우지 않는다(DB 미삭제라 재시도가 전체를 다시 다룬다).
         verify(s3Client, times(1)).deleteObjects(any(DeleteObjectsRequest.class));
@@ -228,6 +227,6 @@ class S3PhotoStorageServiceTest {
 
         assertThatThrownBy(() -> service.deleteAll(List.of("deadbeef/photos/a.jpg")))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
     }
 }

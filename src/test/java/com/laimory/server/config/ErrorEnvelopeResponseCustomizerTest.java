@@ -1,5 +1,7 @@
 package com.laimory.server.config;
 
+import com.laimory.server.common.ApiHeader;
+import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
@@ -31,6 +33,9 @@ class ErrorEnvelopeResponseCustomizerTest {
                 .isEqualTo("#/components/schemas/ApiResponse");
         // 참조 대상인 envelope 스키마가 components에 등록됐다
         assertThat(openApi.getComponents().getSchemas()).containsKey("ApiResponse");
+        Schema<?> apiHeader = ModelConverters.getInstance().read(ApiHeader.class).get("ApiHeader");
+        assertThat(apiHeader.getProperties().get("code").getType()).isEqualTo("integer");
+        assertThat(apiHeader.getProperties().get("code").getFormat()).isEqualTo("int32");
     }
 
     @Test

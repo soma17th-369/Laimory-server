@@ -15,7 +15,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
@@ -88,11 +87,11 @@ class TimelineControllerTest {
         // 인증 게이트: 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+                .andExpect(jsonPath("$.header.code").value(-2001));
 
         org.mockito.Mockito.verifyNoInteractions(
                 timelineDraftTaskService, timelineDraftTaskPollingService, photoUploadService);
@@ -104,7 +103,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.taskId").value("task-123"));
     }
@@ -131,7 +130,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -143,7 +142,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
@@ -153,12 +152,12 @@ class TimelineControllerTest {
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1013"));
+                .andExpect(jsonPath("$.header.code").value(-1013));
     }
 
     @ParameterizedTest
-    @CsvSource({"GEOCODING_TRANSIENT_FAILURE, ERROR_1014", "GEOCODING_PERMANENT_FAILURE, ERROR_1015"})
-    void createDraftTask_mapsGeocodingFailureTo502(String type, String code) throws Exception {
+    @CsvSource({"GEOCODING_TRANSIENT_FAILURE, -1014", "GEOCODING_PERMANENT_FAILURE, -1015"})
+    void createDraftTask_mapsGeocodingFailureTo502(String type, int code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
         when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
@@ -180,7 +179,7 @@ class TimelineControllerTest {
                 """;
         mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.uploads[0].filename").value("f.jpg"))
                 .andExpect(jsonPath("$.body.uploads[0].uploadUrl").value("https://example/put"));
 
@@ -198,7 +197,7 @@ class TimelineControllerTest {
                 """;
         mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1005"))
+                .andExpect(jsonPath("$.header.code").value(-1005))
                 .andExpect(jsonPath("$.header.message").value(org.hamcrest.Matchers.containsString("15")));
     }
 
@@ -212,7 +211,7 @@ class TimelineControllerTest {
                 """;
         mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
     }
 
     @Test
@@ -222,7 +221,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-1").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.status").value("PROCESSING"))
                 // PROCESSING 전용: AI 작업 대기 경과 시간(완료된 초)이 숫자로 실린다.
                 .andExpect(jsonPath("$.body.elapsedSeconds").value(12));
@@ -244,19 +243,19 @@ class TimelineControllerTest {
     }
 
     /**
-     * FAILED 폴링도 에러가 아니라 성공 envelope다: HTTP 200 + header.code=COMMON_0000, 실제 상태는 body.status.
+     * FAILED 폴링도 에러가 아니라 성공 envelope다: HTTP 200 + header.code=0, 실제 상태는 body.status.
      * (FAILED를 별도 에러 응답으로 매핑하는 회귀 방지 — error는 body.error에 실패 분류 코드로, result는 null.)
      */
     @Test
     void pollDraftTask_failed_returns200WithEnvelope() throws Exception {
         when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-failed")))
-                .thenReturn(DraftTaskStatusResponse.failed(ErrorCode.ERROR_1008.name()));
+                .thenReturn(DraftTaskStatusResponse.failed(-1008));
 
         mockMvc.perform(get(TASKS + "/t-failed").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.status").value("FAILED"))
-                .andExpect(jsonPath("$.body.error").value("ERROR_1008"))
+                .andExpect(jsonPath("$.body.error").value(-1008))
                 .andExpect(jsonPath("$.body.result").value(nullValue()))
                 // 경과 시간은 PROCESSING 전용 — terminal 응답 shape는 바뀌지 않는다(key 생략).
                 .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
@@ -269,7 +268,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/missing").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1001"));
+                .andExpect(jsonPath("$.header.code").value(-1001));
     }
 
     /**
@@ -293,7 +292,7 @@ class TimelineControllerTest {
 
         mockMvc.perform(get(TASKS + "/t-ok").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.status").value("SUCCESS"))
                 // dailyRecordId는 삭제 API 타깃팅용 결과 식별자 — 응답 직렬화 계약에 포함된다.
                 .andExpect(jsonPath("$.body.result.dailyRecordId").value(42))

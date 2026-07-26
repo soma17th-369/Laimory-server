@@ -42,9 +42,9 @@ public interface PushRegistrationApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "등록 성공(body 없음)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — firebaseInstallationId null/공백/255자 초과"),
+                    description = "`-400` — firebaseInstallationId null/공백/255자 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @PutMapping
     ResponseEntity<ApiResponse<Void>> registerPushRegistration(
@@ -60,9 +60,9 @@ public interface PushRegistrationApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "해제 성공(body 없음 — 등록이 없었어도 200)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — firebaseInstallationId null/공백/255자 초과"),
+                    description = "`-400` — firebaseInstallationId null/공백/255자 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @DeleteMapping
     ResponseEntity<ApiResponse<Void>> unregisterPushRegistration(

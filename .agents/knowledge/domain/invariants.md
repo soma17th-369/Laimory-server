@@ -52,7 +52,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   없음·비소유는 404로 은닉한다.
 - 삭제는 exclusive Item(삭제 대상 Event에만 연결) PHOTO의 S3 배치 삭제가 **전부 성공한 후에만**
   DB 삭제를 시작한다. 다른 Event에도 연결된 shared Item/PHOTO는 유지한다.
-  S3 실패(`ERROR_1017`)면 DB를 보존하고, S3 성공 후 DB 실패(500)는 재시도로 수렴한다
+  S3 실패(`-1017`)면 DB를 보존하고, S3 성공 후 DB 실패(500)는 재시도로 수렴한다
   (이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고 행 삭제는 진행한다
   (orphan 허용 — draft cleanup과 동일 규칙).
@@ -72,10 +72,12 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - AI는 final direct-write commit 이후에만 알린다(commit-then-callback).
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
+- 신규 callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 서버는 terminal task
+  24시간 호환 기간 동안 exact legacy `ERROR_XXXX` input도 읽되 출력과 신규 저장은 숫자만 쓴다.
 - 서버는 callback에서 결과를 조립·검증·저장하지 않고 Redis terminal 전이만 기록한다.
 - raw callback token은 dispatch body로 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
 - callback token은 constant-time 비교 직후 Redis `SET NX` marker로 원자 소비한다. 최초 요청 하나만
-  terminal 처리로 진행하고 같은 token 재사용은 401 `ERROR_1012`다. 소비 뒤 검증·저장 실패에도 marker를
+  terminal 처리로 진행하고 같은 token 재사용은 401 `-1012`다. 소비 뒤 검증·저장 실패에도 marker를
   환불하지 않는다(at-most-once admission).
 - commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 final graph는 남는다 —
   자동 복구(durable receipt·redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
@@ -119,14 +121,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - refresh token raw value는 저장하지 않고 hash만 저장한다.
 - refresh rotation과 reuse detection은 transactionally 처리하고 reuse 때 그 사용자의 refresh를 모두 revoke한다.
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
-- `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `ERROR_2001`
+- `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 요청 하나의 principal userId가 draft record 조회·날짜 guard·enrich photo key·staging row·
   Redis task owner·polling·DailyRecord 전체/단건 조회·편집/삭제 소유권 검사까지 전부 동일해야 한다
   (지점 분기 금지).
 - Redis draft task owner는 세 상태 모두 보존된다. polling은 상태 분기 전에 owner를 대조하고
-  타 사용자·owner 없는 legacy task는 404 `ERROR_1001`로 은닉한다(fallback 0 추정 금지).
+  타 사용자·owner 없는 legacy task는 404 `-1001`로 은닉한다(fallback 0 추정 금지).
 - callback은 request principal이 아니라 task 저장 owner를 쓴다. owner·dailyRecordId 없는 legacy task는
   전이 없이 404로 fail-closed한다. source owner와 record owner의 일치는 AI validation이 검증한다.
 

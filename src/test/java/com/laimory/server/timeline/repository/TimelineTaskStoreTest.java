@@ -112,7 +112,7 @@ class TimelineTaskStoreTest {
     void save_terminalTasks_omitProcessingStartedAtAndWindow() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(2)).setAndRemoveFromSortedSet(
@@ -124,11 +124,28 @@ class TimelineTaskStoreTest {
     }
 
     @Test
+    void save_failedTask_writesNumericError_andLegacyStringStillReads() {
+        store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).setAndRemoveFromSortedSet(
+                anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
+        assertThat(jsonCaptor.getValue()).contains("\"error\":-1009");
+        assertThat(jsonCaptor.getValue()).doesNotContain("\"error\":\"");
+
+        when(redis.get("timeline:draft-task:legacy-error")).thenReturn(
+                "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"ERROR_1009\","
+                        + "\"callbackTokenHash\":\"h\",\"userId\":7}");
+
+        assertThat(store.find("legacy-error").orElseThrow().error()).isEqualTo(-1009);
+    }
+
+    @Test
     void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
         // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회·guard 해제의 기준값.
         store.save("p", processingTask(), Duration.ofHours(1));
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> processingJson = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> terminalJson = ArgumentCaptor.forClass(String.class);
@@ -162,7 +179,7 @@ class TimelineTaskStoreTest {
     @Test
     void save_terminalAtomicallyRemovesTaskFromProcessingIndex() {
         store.save("success", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("failed", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
+        store.save("failed", TimelineDraftTask.failed(7L, 42L, -1009, "h"),
                 Duration.ofHours(24));
 
         verify(redis).setAndRemoveFromSortedSet(

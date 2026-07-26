@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -100,7 +99,7 @@ class PhotoUploadServiceTest {
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L))))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1004);
+                    assertThat(ex.getErrorCode()).isEqualTo(-1004);
                     assertThat(ex.getArgs()).containsExactly(3); // 메시지 {0} = 한도값
                 });
     }
@@ -125,7 +124,7 @@ class PhotoUploadServiceTest {
         assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
                 List.of(new PhotoUploadItem("image/jpeg", TEN_MB + 1))))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1005);
+                    assertThat(ex.getErrorCode()).isEqualTo(-1005);
                     assertThat(ex.getArgs()).containsExactly(10L); // MB 표기(바이트 아님)
                 });
     }
@@ -150,13 +149,13 @@ class PhotoUploadServiceTest {
         assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
                 List.of(new PhotoUploadItem("image/heic", 1000L))))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1007);
+                    assertThat(ex.getErrorCode()).isEqualTo(-1007);
                     assertThat(ex.getArgs()).isEmpty();
                 });
         assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
                 List.of(new PhotoUploadItem("image/gif", 1000L))))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1007));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1007));
     }
 
     @Test

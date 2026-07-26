@@ -27,7 +27,7 @@ public class OpenApiConfig {
                 // springdoc이 scheme을 http로 유추해 https 페이지가 mixed-content로 차단되던 문제를 원천 차단.)
                 .servers(List.of(new Server().url("/")))
                 // 자체 access token(Bearer) 입력용 스킴 — Swagger UI Authorize 버튼에서 토큰을 넣어 try-out.
-                // (/a/api는 유효한 토큰 없이는 401 ERROR_2001로 거절된다.)
+                // (/a/api는 유효한 토큰 없이는 401 -2001로 거절된다.)
                 .components(new Components().addSecuritySchemes("bearerAuth", new SecurityScheme()
                         .type(SecurityScheme.Type.HTTP)
                         .scheme("bearer")
@@ -41,9 +41,9 @@ public class OpenApiConfig {
 
                         ## 공통 응답 envelope
                         앱-facing API의 모든 응답(성공·에러)은 `ApiResponse{header{code, message}, body}` 형태다.
-                        - **성공**: `header.code = COMMON_0000`. 조회 결과는 `body`에 담기고, 반환할 결과가 없는 \
+                        - **성공**: `header.code = 0`, `header.message = ""`. 조회 결과는 `body`에 담기고, 반환할 결과가 없는 \
                         성공은 `body = null`이다.
-                        - **에러**: `header.code = ERROR_*`, `body = null`. **code가 `ERROR_`로 시작하면 에러**로 분기한다.
+                        - **에러**: `header.code`는 음수 정수이고 `body = null`. **code < 0이면 에러**로 분기한다.
                         - `header.message`는 로캘(Accept-Language, 기본 한국어)이 적용된 사용자 노출 문구다 — \
                         클라이언트 분기는 message가 아니라 code로 한다.
                         - 모든 응답에는 요청 추적 ID(UUID)가 **응답 헤더 `Transaction-Id`**로 내려간다. 문의·버그 리포트 시 함께 전달한다.
@@ -51,7 +51,7 @@ public class OpenApiConfig {
                         ## 경로 prefix
                         - `/api/{applicationVersion}` — 공개(인증 불필요)
                         - `/a/api/{applicationVersion}` — 사용자 인증 필요(`Authorization: Bearer <access-token>`, \
-                        무토큰/무효 토큰은 401 `ERROR_2001`)
+                        무토큰/무효 토큰은 401 `-2001`)
                         - `/s/api/{applicationVersion}` — 서버간 통신(AI 콜백 등, 엔드포인트별 자체 인증)
                         """));
     }

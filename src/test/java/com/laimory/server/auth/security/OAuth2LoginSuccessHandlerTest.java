@@ -7,13 +7,20 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.user.Provider;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
@@ -30,6 +37,21 @@ class OAuth2LoginSuccessHandlerTest {
 
     @Mock
     private SocialLoginService socialLoginService;
+
+    private final Logger logger = (Logger) LoggerFactory.getLogger(OAuth2LoginSuccessHandler.class);
+    private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+
+    @BeforeEach
+    void attachLogger() {
+        logs.start();
+        logger.addAppender(logs);
+    }
+
+    @AfterEach
+    void detachLogger() {
+        logger.detachAppender(logs);
+        logs.stop();
+    }
 
     private OAuth2AuthenticationToken googleToken(OidcUser oidcUser) {
         return new OAuth2AuthenticationToken(
@@ -134,7 +156,10 @@ class OAuth2LoginSuccessHandlerTest {
         new OAuth2LoginSuccessHandler(socialLoginService)
                 .onAuthenticationSuccess(request, response, googleToken(oidcUser()));
 
-        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=ERROR_2004");
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=-2004");
+        assertThat(logs.list).hasSize(1);
+        assertThat(logs.list.get(0).getLevel().toString()).isEqualTo(Level.ERROR.toString());
+        assertThat(logs.list.get(0).getThrowableProxy()).isNotNull();
     }
 
     @Test
@@ -146,8 +171,12 @@ class OAuth2LoginSuccessHandlerTest {
         new OAuth2LoginSuccessHandler(socialLoginService)
                 .onAuthenticationSuccess(request, response, googleToken(oidcUser()));
 
-        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=ERROR_2004");
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=-2004");
         verify(socialLoginService, never()).completeLogin(any(), any(), any(), any(), any());
+        assertThat(logs.list).hasSize(1);
+        assertThat(logs.list.get(0).getLevel().toString()).isEqualTo(Level.WARN.toString());
+        assertThat(logs.list.get(0).getFormattedMessage())
+                .contains("oauth2 login success without handoff context");
     }
 
     @Test
@@ -163,7 +192,7 @@ class OAuth2LoginSuccessHandlerTest {
 
         new OAuth2LoginSuccessHandler(socialLoginService).onAuthenticationSuccess(request, response, token);
 
-        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=ERROR_2004");
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?error=-2004");
         verify(socialLoginService, never()).completeLogin(any(), any(), any(), any(), any());
     }
 }
