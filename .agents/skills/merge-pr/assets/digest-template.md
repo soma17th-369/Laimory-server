@@ -1,3 +1,4 @@
+<!-- laimory-pr-digest:v1 -->
 ---
 schema_version: 1
 status: merge-candidate
@@ -6,7 +7,7 @@ pr_url: <url>
 title: "<pr-title>"
 base_branch: dev
 head_branch: <head-branch>
-implementation_head_sha: <pre-digest-head-sha>
+implementation_head_sha: <implementation-head-sha>
 generated_at: <ISO-8601 timestamp>
 linked_issues: []
 evidence_scope:
@@ -17,7 +18,7 @@ evidence_scope:
 
 # PR #<number> Digest
 
-> This document describes the implementation before its own digest commit. The final post-digest CI result and squash merge commit remain authoritative in GitHub.
+> This comment snapshots the implementation at `implementation_head_sha`. Final check and squash-merge results remain authoritative in GitHub.
 
 ## Goal
 
@@ -56,7 +57,7 @@ Record only decisions that changed or intentionally preserved the final design. 
 |---|---|---|---|
 | <behavior or risk> | <test, CI, or manual inspection> | passed / failed / not-run | <implementation SHA, check URL, or concise source> |
 
-The final check for the digest commit is intentionally not recorded here because changing this file would create another head SHA. Verify it on the GitHub PR before merging.
+The final same-head check and merge result are intentionally not patched back into this comment. Verify them on the GitHub PR before merging.
 
 ## Remaining Risks
 

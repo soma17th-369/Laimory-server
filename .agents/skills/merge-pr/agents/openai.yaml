@@ -1,6 +1,6 @@
 interface:
   display_name: "Merge PR"
-  short_description: "Create a PR digest, verify gates, and squash merge."
-  default_prompt: "Use $merge-pr to prepare the current pull request digest, verify merge gates, and squash merge it."
+  short_description: "Publish a PR digest comment, verify gates, and squash merge."
+  default_prompt: "Use $merge-pr to publish the current pull request digest comment, verify merge gates, and squash merge it."
 policy:
   allow_implicit_invocation: false

@@ -70,3 +70,6 @@ application-secret.properties
 
 ### Agent Local Plans ###
 /.agents/plans/
+
+### Per-PR Digest Comments ###
+/.agents/digest/
