@@ -53,6 +53,12 @@ version별 동작은 service가 결정한다.
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. 기존 operation을 확장한 것이므로 보호 operation 수는 11개로 유지된다.
 
+`DELETE /a/api/{version}/timeline/events/{timelineEventId}`와
+`DELETE /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 필요한 PHOTO S3 삭제 작업·원문 PHOTO
+Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. S3 완료는
+비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를 동기 502로
+반환하지 않는다. 없음·비소유 404, SAVED/date guard 409 계약은 유지한다.
+
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의

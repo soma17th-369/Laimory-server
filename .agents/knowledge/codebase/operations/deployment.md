@@ -35,6 +35,10 @@ workflow는 dev에서 Redis prefix, application environment, geo mode, Swagger s
 commit(`APP_COMMIT_SHA`)을 명시적으로
 주입한다. 이름과 의미만 문서화하며 값이나 credential은 workflow/config가 권위다.
 
+host `.env`는 container 생성 시 `docker run --env-file`로 읽힌다. 값을 바꾼 뒤 `docker restart`만 하면
+기존 container environment가 유지되므로 새 값이 반영되지 않는다. runtime flag 활성화·롤백은 deploy
+workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재생성이 필요하다.
+
 ### Preflight
 
 현재 기존 container stop 전에 확인하는 key:
@@ -70,6 +74,12 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - 두 endpoint 모두 Redis, Kakao, S3 전체 준비 상태를 검증하지 않는다.
 - Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
 - health failure 시 이전 image로 자동 rollback하지 않는다.
+
+PHOTO delete-job schema rollout은 live MySQL에 additive table을 먼저 적용하고 worker 기본 off Server를
+배포한 뒤 enqueue와 pending/oldest gauge를 확인한다. 그 다음 host `.env`의 worker flag를 켜고 deploy
+workflow를 재실행해 container를 재생성한다. rollback은 같은 방식으로 flag를 끄며 pending job row를
+수동 삭제하지 않는다. job은 보존 중인 원문 PHOTO Item을 FK로 참조하므로 backlog를 수동 정리할 때도
+job만 또는 Item만 단독 삭제하지 않는다.
 
 ## Terraform and Manual Operations
 

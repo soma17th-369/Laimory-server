@@ -129,10 +129,11 @@ public interface TimelineRecordApi {
             @RequestBody UpdateTimelineEventMemoRequest request);
 
     @Operation(summary = "타임라인 Event 삭제",
-            description = "Event와 하위 Item(사진 S3 객체 포함)을 삭제한다. 마지막 Event를 지워도 하루 기록"
+            description = "Event와 마지막 참조가 사라지는 non-PHOTO Item을 DB에서 삭제한다. 마지막 Event를 지워도 하루 기록"
                     + "(DailyRecord)은 유지된다 — 하루 전체 제거는 DailyRecord 삭제 API가 담당한다. "
-                    + "사진 S3 객체 삭제가 전부 성공한 뒤에만 DB 삭제를 시작하므로 실패(409/502) 시 데이터가 "
-                    + "보존된다 — 같은 요청을 잠시 후 재시도하면 된다.")
+                    + "마지막 참조가 사라지는 PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 "
+                    + "worker가 S3 성공 시 Item과 작업을 최종 삭제한다. 따라서 200은 root 삭제와 PHOTO "
+                    + "정리 작업 등록 성공을 뜻하고 S3 삭제 완료를 기다리지 않는다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
@@ -142,9 +143,7 @@ public interface TimelineRecordApi {
                     description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`-1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)")
     })
     @DeleteMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
@@ -153,9 +152,10 @@ public interface TimelineRecordApi {
             @Parameter(description = "삭제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
     @Operation(summary = "하루 기록(DailyRecord) 삭제",
-            description = "하루 전체(Record·Events·Items, 사진 S3 객체 포함)를 삭제한다. "
-                    + "사진 S3 객체 삭제가 전부 성공한 뒤에만 DB 삭제를 시작하므로 실패(409/502) 시 데이터가 "
-                    + "보존된다 — 같은 요청을 잠시 후 재시도하면 된다.")
+            description = "하루 전체 Record·Events와 마지막 참조가 사라지는 non-PHOTO Items를 DB에서 삭제한다. "
+                    + "마지막 참조가 사라지는 PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 "
+                    + "worker가 S3 성공 시 Item과 작업을 최종 삭제한다. 따라서 200은 root 삭제와 PHOTO "
+                    + "정리 작업 등록 성공을 뜻하고 S3 삭제 완료를 기다리지 않는다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
@@ -165,9 +165,7 @@ public interface TimelineRecordApi {
                     description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003` — 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`-1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)")
     })
     @DeleteMapping("/daily-records/{dailyRecordId}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecord(

@@ -139,6 +139,12 @@ Spring JSON stdout
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 10분 초과, 1시간 TTL 안인 PROCESSING task 수
+  - `laimory.timeline.photo.delete.attempt{result=success|failed}`: object별 S3 삭제 결과
+  - `laimory.timeline.photo.delete.pending`: MySQL PHOTO delete-job 대기 행 수
+  - `laimory.timeline.photo.delete.oldest.age`: 가장 오래된 PHOTO delete-job 대기 초
+  - `laimory.timeline.photo.delete.batch.duration`: S3 DeleteObjects batch 호출 시간
+  - `laimory.timeline.photo.delete.enqueue{result=scheduled|shared_retained|invalid_skipped}`:
+    root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
 - custom label은 고정 `result`와 전용 build info의 `commit`만 사용한다. userId/taskId/transactionId/FID/좌표/raw URL·query/
@@ -148,6 +154,9 @@ Spring JSON stdout
 - management child context에는 application의 `TransactionIdFilter`가 등록되지 않는다. 방어적으로
   health/prometheus exact path도 정상 access log 제외 목록에 유지한다.
 - 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
+- PHOTO delete worker가 꺼져 있어도 pending/oldest gauge는 등록돼 schema-first rollout 중 backlog를
+  관측한다. pending job마다 원문 PHOTO Item도 보존돼 있다. gauge DB 조회 실패는 scrape 전체 실패 대신
+  NaN이고 empty queue의 두 값은 0이다.
 
 ## Dev Metrics Rebuild Recipe
 

@@ -63,6 +63,9 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   `photoUrl`을 final payload에 저장한다.
 - key/CDN domain 변경은 기존 payload backfill을 검토한다.
 - cleanup은 만료 draft photo object를 먼저 지우고 성공 뒤 DB row를 삭제한다.
+- finalized PHOTO는 Event/DailyRecord hard delete transaction이 원문 PHOTO Item과 MySQL delete-job을
+  남긴 뒤 별도 worker가 verbose `DeleteObjects`로 처리한다. 성공 job과 Item만 한 DB transaction에서
+  삭제하고 Error·응답 누락·SDK 예외면 둘 다 남겨 재시도한다.
 
 관련 이름은 `AWS_REGION`, `PHOTO_S3_BUCKET`, `PHOTO_CDN_DOMAIN`과 upload limit property들이다.
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.

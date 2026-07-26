@@ -53,7 +53,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 기록 조회·편집 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/PATCH/PUT/DELETE)·envelope·상태 매핑
- * (400/404/409/502)과 "userId는 인증 principal에서 서비스로 전달" 계약을 검증한다. 인프라 0.
+ * (400/404/409)과 "userId는 인증 principal에서 서비스로 전달" 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineRecordController.class)
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
@@ -526,14 +526,13 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void deleteTimelineEvent_mapsPhotoBatchDeleteFailureTo502With1017() throws Exception {
-        doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
+    void deleteTimelineEvent_mapsUnexpectedTransactionFailureTo500() throws Exception {
+        doThrow(new RuntimeException("db down"))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.header.code").value(-1017))
-                .andExpect(jsonPath("$.body").doesNotExist());
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.header.code").value(-500));
     }
 
     // --- deleteDailyRecord ---
@@ -570,13 +569,13 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void deleteDailyRecord_mapsPhotoBatchDeleteFailureTo502With1017() throws Exception {
-        doThrow(new BusinessException(ExceptionType.PHOTO_BATCH_DELETE_FAILED))
+    void deleteDailyRecord_mapsUnexpectedTransactionFailureTo500() throws Exception {
+        doThrow(new RuntimeException("db down"))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.header.code").value(-1017));
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.header.code").value(-500));
     }
 
     private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {

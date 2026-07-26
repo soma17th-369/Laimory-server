@@ -55,6 +55,11 @@ Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH
 commit한다. orchestrator는 transaction 반환(즉 commit) 뒤 guard를 compare-and-release해 DB transaction과
 Redis lease 경계를 섞지 않는다.
 
+Event/DailyRecord 삭제는 날짜 guard 안의 별도 transaction service가 orphan PHOTO delete-job insert·원문
+PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. S3는 request
+transaction에 포함하지 않고 현재 REST 프로세스의 단일 scheduled worker가 MySQL job을 oldest-first로
+읽어, 성공 job과 원문 PHOTO Item을 별도 transaction에서 함께 제거한다.
+
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.
 

@@ -8,8 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +25,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.DeletedObject;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.S3Error;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -144,32 +144,45 @@ class S3PhotoStorageServiceTest {
     }
 
     @Test
-    void deleteAll_singleBatch_bindsBucketKeysAndPerRequestTimeouts() {
+    void deleteAll_singleBatch_bindsBucketKeysVerboseModeAndPerRequestTimeouts() {
         S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
         when(s3Client.deleteObjects(any(DeleteObjectsRequest.class)))
-                .thenReturn(DeleteObjectsResponse.builder().build());
+                .thenReturn(DeleteObjectsResponse.builder()
+                        .deleted(
+                                DeletedObject.builder().key("deadbeef/photos/a.jpg").build(),
+                                DeletedObject.builder().key("deadbeef/photos/b.jpg").build())
+                        .build());
 
-        service.deleteAll(List.of("deadbeef/photos/a.jpg", "deadbeef/photos/b.jpg"));
+        BatchDeleteResult result =
+                service.deleteAll(List.of("deadbeef/photos/a.jpg", "deadbeef/photos/b.jpg"));
 
         ArgumentCaptor<DeleteObjectsRequest> captor = ArgumentCaptor.forClass(DeleteObjectsRequest.class);
         verify(s3Client).deleteObjects(captor.capture());
         DeleteObjectsRequest request = captor.getValue();
         assertThat(request.bucket()).isEqualTo(BUCKET);
         assertThat(requestedKeys(request)).containsExactly("deadbeef/photos/a.jpg", "deadbeef/photos/b.jpg");
+        assertThat(request.delete().quiet()).isFalse();
         // 타임아웃은 요청 단위 override로만 조인다(전역 클라이언트 설정·단건 delete 불변).
         assertThat(request.overrideConfiguration()).hasValueSatisfying(override -> {
             assertThat(override.apiCallTimeout()).contains(Duration.ofSeconds(10));
             assertThat(override.apiCallAttemptTimeout()).contains(Duration.ofSeconds(3));
         });
+        assertThat(result.deletedObjectKeys())
+                .containsExactly("deadbeef/photos/a.jpg", "deadbeef/photos/b.jpg");
+        assertThat(result.errorCodeByObjectKey()).isEmpty();
+        assertThat(result.unreportedObjectKeys()).isEmpty();
     }
 
     @Test
     void deleteAll_emptyKeys_doesNotCallS3() {
         S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
 
-        service.deleteAll(List.of());
+        BatchDeleteResult result = service.deleteAll(List.of());
 
         verify(s3Client, never()).deleteObjects(any(DeleteObjectsRequest.class));
+        assertThat(result.deletedObjectKeys()).isEmpty();
+        assertThat(result.errorCodeByObjectKey()).isEmpty();
+        assertThat(result.unreportedObjectKeys()).isEmpty();
     }
 
     @Test
@@ -202,31 +215,68 @@ class S3PhotoStorageServiceTest {
     }
 
     @Test
-    void deleteAll_perObjectErrorThrows1017_andStopsRemainingBatches() {
+    void deleteAll_duplicateKeys_sendsEachKeyOnceAndClassifiesResultOnce() {
         S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
-        // 첫 batch 응답에 객체별 error 1건 — HTTP 200이어도 부분 실패이므로 1017로 실패해야 한다.
         when(s3Client.deleteObjects(any(DeleteObjectsRequest.class)))
                 .thenReturn(DeleteObjectsResponse.builder()
-                        .errors(S3Error.builder().key("deadbeef/photos/0.jpg").code("InternalError").build())
+                        .deleted(DeletedObject.builder().key("deadbeef/photos/a.jpg").build())
                         .build());
 
-        assertThatThrownBy(() -> service.deleteAll(keys(1_001)))
-                .isInstanceOfSatisfying(BusinessException.class, ex -> {
-                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.PHOTO_BATCH_DELETE_FAILED);
-                    assertThat(ex.getErrorCode()).isEqualTo(-1017);
-                });
-        // 실패한 batch에서 멈춘다 — 남은 batch를 계속 지우지 않는다(DB 미삭제라 재시도가 전체를 다시 다룬다).
-        verify(s3Client, times(1)).deleteObjects(any(DeleteObjectsRequest.class));
+        BatchDeleteResult result = service.deleteAll(List.of(
+                "deadbeef/photos/a.jpg",
+                "deadbeef/photos/a.jpg",
+                "deadbeef/photos/a.jpg"));
+
+        ArgumentCaptor<DeleteObjectsRequest> captor = ArgumentCaptor.forClass(DeleteObjectsRequest.class);
+        verify(s3Client).deleteObjects(captor.capture());
+        assertThat(requestedKeys(captor.getValue())).containsExactly("deadbeef/photos/a.jpg");
+        assertThat(result.deletedObjectKeys()).containsExactly("deadbeef/photos/a.jpg");
     }
 
     @Test
-    void deleteAll_sdkExceptionThrows1017() {
+    void deleteAll_distinguishesDeletedErrorAndUnreportedKeys() {
         S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        String deletedKey = "deadbeef/photos/deleted.jpg";
+        String errorKey = "deadbeef/photos/error.jpg";
+        String unreportedKey = "deadbeef/photos/unreported.jpg";
         when(s3Client.deleteObjects(any(DeleteObjectsRequest.class)))
-                .thenThrow(SdkClientException.create("connect timeout"));
+                .thenReturn(DeleteObjectsResponse.builder()
+                        .deleted(DeletedObject.builder().key(deletedKey).build())
+                        .errors(S3Error.builder().key(errorKey).code("InternalError").build())
+                        .build());
+
+        BatchDeleteResult result = service.deleteAll(List.of(deletedKey, errorKey, unreportedKey));
+
+        assertThat(result.deletedObjectKeys()).containsExactly(deletedKey);
+        assertThat(result.errorCodeByObjectKey()).containsExactlyEntriesOf(
+                java.util.Map.of(errorKey, "InternalError"));
+        assertThat(result.unreportedObjectKeys()).containsExactly(unreportedKey);
+    }
+
+    @Test
+    void deleteAll_sameKeyInDeletedAndError_treatsErrorAsFailure() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        String objectKey = "deadbeef/photos/a.jpg";
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class)))
+                .thenReturn(DeleteObjectsResponse.builder()
+                        .deleted(DeletedObject.builder().key(objectKey).build())
+                        .errors(S3Error.builder().key(objectKey).code("InternalError").build())
+                        .build());
+
+        BatchDeleteResult result = service.deleteAll(List.of(objectKey));
+
+        assertThat(result.deletedObjectKeys()).isEmpty();
+        assertThat(result.errorCodeByObjectKey()).containsEntry(objectKey, "InternalError");
+        assertThat(result.unreportedObjectKeys()).isEmpty();
+    }
+
+    @Test
+    void deleteAll_sdkExceptionPropagatesWithoutBusinessExceptionTranslation() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        SdkClientException sdkException = SdkClientException.create("connect timeout");
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class))).thenThrow(sdkException);
 
         assertThatThrownBy(() -> service.deleteAll(List.of("deadbeef/photos/a.jpg")))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+                .isSameAs(sdkException);
     }
 }

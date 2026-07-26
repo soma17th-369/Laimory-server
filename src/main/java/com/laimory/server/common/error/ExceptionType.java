@@ -49,7 +49,6 @@ public enum ExceptionType {
     RECORD_DATE_IN_PROGRESS(-1016, HttpStatus.CONFLICT, Level.INFO),
     TIMELINE_EVENT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     DAILY_RECORD_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
-    PHOTO_BATCH_DELETE_FAILED(-1017, HttpStatus.BAD_GATEWAY, Level.ERROR),
 
     // ── auth ──
     API_AUTHENTICATION_REQUIRED(-2001, HttpStatus.UNAUTHORIZED, Level.INFO),

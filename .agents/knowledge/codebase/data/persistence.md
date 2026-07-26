@@ -30,6 +30,8 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `app_config`
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
+- `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
+  성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
 - `users`, `refresh_tokens`
 - `push_registrations`
@@ -50,6 +52,13 @@ Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가를 한 tra
 감사 timestamp는 DB default(`CURRENT_TIMESTAMP(6)`)가 겸하고(AI는 컬럼 생략 가능), AI는 `modified_by`에
 `'AI'`를 명시한다(provenance — 재실행 삭제 조건으로 쓰지 않는다). `timeline_event_items`는 순수 연결
 행이라 감사 컬럼이 없다.
+
+`timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
+`object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
+가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접
+채운다. worker는 `created_at, timeline_photo_delete_job_id` oldest-first로 읽고, S3 성공 job을 먼저
+지운 뒤 해당 Item을 같은 transaction에서 지운다. Item 삭제가 실패하면 job 삭제도 rollback된다.
+상태·시도 횟수·backoff·lease·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 사용자 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -96,12 +105,14 @@ Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서�
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다.
 
-삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로),
-Event/DailyRecord 삭제는 `DeleteObjects` 배치(최대 1,000 key/batch 순차, 요청 단위
-override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 SDK 예외 또는
-객체별 error 1건이라도 있으면 `-1017`로 실패하고 DB 삭제를 시작하지 않는다
-(DB 보존 → 재시도 수렴). PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고
-행 삭제는 진행한다(orphan 허용 — cleanup과 동일 규칙).
+삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로) 뒤 source row를 지운다.
+Event/DailyRecord 삭제는 root/junction/non-PHOTO orphan hard delete와 함께 MySQL job을 만들고 유효한
+orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
+`DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
+apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 확인된 job과 그 PHOTO Item만
+별도 transaction에서 지우고 객체별 Error·응답 누락·SDK 예외면 두 행을 남겨 재시도한다. PHOTO payload가
+깨졌거나 filename/object key를 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다
+(orphan 허용).
 
 ## Invariants
 
@@ -122,10 +133,13 @@ override로 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 쓴다. 배치는 S
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
-- Event/DailyRecord 삭제는 S3 배치 삭제가 전부 성공한 뒤에만 DB row를 삭제한다.
+- Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard
+  delete를 같은 transaction으로 commit한다.
   Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`로 소멸하고(JPA cascade 없음),
   Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
-  명시 삭제한다(다른 Event에도 연결된 shared Item·PHOTO는 유지).
+  분류한다. non-PHOTO와 job을 만들 수 없는 손상 PHOTO만 즉시 삭제하고, 유효한 PHOTO는 job과 함께
+  보존한다(다른 Event에도 연결된 shared Item·PHOTO는 유지). S3 작업 권위는 MySQL job row이며 worker
+  성공 시 Item과 row를 한 transaction에서 삭제하고 실패 시 둘 다 보존한다.
 
 ## Known Gaps
 

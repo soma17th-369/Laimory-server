@@ -127,12 +127,16 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ### Delete
 
-- Event 삭제: guard 선점 → 삭제 Event에만 연결된 exclusive Item 판정(junction) → exclusive PHOTO만 S3
-  배치 삭제 → DB 트랜잭션에서 재확인 후 Event 삭제(junction은 FK cascade) + orphan Item 명시 삭제.
-  다른 Event에도 연결된 shared Item/PHOTO는 유지한다.
-- DailyRecord 삭제: record의 Event 집합에만 연결된 Item이 exclusive다. record 밖 Event에 연결된 후보는
-  방어적으로 shared 취급해 유지한다(정상 write 경로엔 없어야 하는 상태). record 삭제로 events/junction이
-  cascade되고 orphan Item은 명시 삭제된다.
+- Event 삭제: guard 선점 → DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
+  판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
+  non-PHOTO orphan 명시 삭제.
+- DailyRecord 삭제: record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문 PHOTO
+  Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
+  Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
+- 두 DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 현재 REST 프로세스의 환경당 단일
+  worker가 oldest job 최대 1,000개를 verbose `DeleteObjects`로 처리하고 `Deleted` job과 원문 PHOTO
+  Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외는 두 행을 남겨 다음 fixed delay에
+  재시도한다.
 
 ### Retention and cleanup
 

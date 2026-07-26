@@ -1,0 +1,44 @@
+package com.laimory.server.timeline.repository;
+
+import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+
+/** timeline_photo_delete_jobs 저장소. 행과 원문 PHOTO Item의 존재가 S3 삭제 대기 상태다. */
+public interface TimelinePhotoDeleteJobRepository extends JpaRepository<TimelinePhotoDeleteJob, Long> {
+
+    /**
+     * Item/object 중 하나라도 이미 enqueue됐다면 no-op하는 원자 insert.
+     *
+     * <p>native INSERT는 JPA auditing을 우회하므로 감사 timestamp를 직접 채운다. 입력은 service에서
+     * NOT NULL/길이/ASCII 계약을 먼저 검증하므로 IGNORE 대상은 두 UNIQUE 충돌로 제한된다.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "insert ignore into timeline_photo_delete_jobs "
+            + "(timeline_item_id, object_key, created_at, updated_at) "
+            + "values (:timelineItemId, :objectKey, current_timestamp(6), current_timestamp(6))",
+            nativeQuery = true)
+    int insertIfAbsent(@Param("timelineItemId") long timelineItemId,
+                       @Param("objectKey") String objectKey);
+
+    @Query("select j from TimelinePhotoDeleteJob j "
+            + "order by j.createdAt asc, j.timelinePhotoDeleteJobId asc")
+    List<TimelinePhotoDeleteJob> findOldest(Pageable pageable);
+
+    @Query("select min(j.createdAt) from TimelinePhotoDeleteJob j")
+    Optional<LocalDateTime> findOldestCreatedAt();
+
+    @Modifying
+    @Transactional
+    @Query("delete from TimelinePhotoDeleteJob j where j.timelinePhotoDeleteJobId in :jobIds")
+    int deleteAllByJobIdIn(@Param("jobIds") Collection<Long> jobIds);
+}
