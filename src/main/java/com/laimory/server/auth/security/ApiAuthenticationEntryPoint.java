@@ -22,8 +22,8 @@ import org.springframework.security.web.AuthenticationEntryPoint;
  * <p>Security filter 단계는 {@code GlobalExceptionHandler}에 도달하지 않으므로 공통 envelope을 여기서
  * 직접 쓴다({@link AppChallengeFilter}의 400 작성이 선례). Bearer 부재/무효/만료는 사유 구분 없이 같은
  * 응답으로 수렴하고({@code WWW-Authenticate: Bearer}, RFC 6750), token·헤더 원문·parse 실패 상세는
- * 응답과 로그 어디에도 남기지 않는다. {@code Transaction-Id} 헤더는 전역
- * {@code TransactionIdFilter(HIGHEST_PRECEDENCE)}가 이미 심어 둔다.
+ * 응답과 로그 어디에도 남기지 않는다. {@code Transaction-Id} 헤더는 trusted-edge 경계 바로 다음의
+ * 전역 {@code TransactionIdFilter}가 이미 심어 둔다.
  */
 public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
 

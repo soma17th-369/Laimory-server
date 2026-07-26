@@ -32,17 +32,17 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 
-/** 실제 Tomcat RemoteIpValve와 OAuth redirect/session cookie의 forwarded-header 계약을 검증한다. */
+/** 실제 Tomcat에서 trusted-edge client IP와 OAuth HTTPS redirect/session cookie 계약을 검증한다. */
 @Tag("integration")
 @ActiveProfiles("docker")
 @SpringBootTest(
         classes = ServerApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "management.server.port=0")
-class RemoteIpValveIntegrationTest {
+class TrustedEdgeIntegrationTest {
 
-    private static final String SPOOFED_LEFTMOST_IP = "198.51.100.9";
-    private static final String ACTUAL_CLIENT_IP = "203.0.113.7";
+    private static final String SPOOFED_XFF_IP = "198.51.100.9";
+    private static final String EDGE_CLIENT_IP = "203.0.113.7";
     private static final String EXTERNAL_HOST = "external.example";
 
     private final ListAppender<ILoggingEvent> accessLog = new ListAppender<>();
@@ -67,31 +67,70 @@ class RemoteIpValveIntegrationTest {
     }
 
     @Test
-    void trustedProxy_usesRightmostClientAndExternalHttpsForOauthRedirect() throws Exception {
-        String challenge = "A".repeat(43);
-        RawHttpResponse response = request(String.join("\r\n",
-                "GET /oauth2/authorization/google?app_challenge=" + challenge + " HTTP/1.1",
-                "Host: " + EXTERNAL_HOST,
-                "X-Forwarded-For: " + SPOOFED_LEFTMOST_IP + ", " + ACTUAL_CLIENT_IP,
-                "X-Forwarded-Proto: https",
-                "Connection: close",
-                "",
-                ""));
+    void trustedEdge_usesCustomIpAndExternalHttpsForOauthRedirect() throws Exception {
+        RawHttpResponse response = oauthRequest(
+                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
+                "X-Forwarded-For: " + SPOOFED_XFF_IP,
+                "X-Forwarded-Proto: https");
 
+        assertOauthHttpsContract(response);
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() -> {
+            JsonNode log = encoded(findAccessEvent(response.firstHeader(TransactionIds.HEADER_NAME)));
+            assertThat(log.path("event").asText()).isEqualTo("http_request_completed");
+            assertThat(log.path("clientIp").asText())
+                    .isEqualTo(EDGE_CLIENT_IP)
+                    .isNotEqualTo(SPOOFED_XFF_IP);
+        });
+    }
+
+    @Test
+    void missingCustomIp_ignoresXffButStillPreservesTrustedHttps() throws Exception {
+        RawHttpResponse response = oauthRequest(
+                "X-Forwarded-For: " + SPOOFED_XFF_IP,
+                "X-Forwarded-Proto: https");
+
+        assertOauthHttpsContract(response);
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() -> {
+            JsonNode log = encoded(findAccessEvent(response.firstHeader(TransactionIds.HEADER_NAME)));
+            assertThat(log.path("clientIp").asText())
+                    .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER)
+                    .isNotEqualTo(SPOOFED_XFF_IP);
+        });
+    }
+
+    @Test
+    void repeatedCustomIp_fallsBackToSocketPeer() throws Exception {
+        RawHttpResponse response = oauthRequest(
+                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
+                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
+                "X-Forwarded-Proto: https");
+
+        assertOauthHttpsContract(response);
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+                assertThat(encoded(findAccessEvent(response.firstHeader(TransactionIds.HEADER_NAME)))
+                        .path("clientIp").asText())
+                        .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER));
+    }
+
+    private RawHttpResponse oauthRequest(String... headers) throws IOException {
+        String challenge = "A".repeat(43);
+        List<String> lines = new ArrayList<>();
+        lines.add("GET /oauth2/authorization/google?app_challenge=" + challenge + " HTTP/1.1");
+        lines.add("Host: " + EXTERNAL_HOST);
+        lines.addAll(List.of(headers));
+        lines.add("Connection: close");
+        lines.add("");
+        lines.add("");
+        return request(String.join("\r\n", lines));
+    }
+
+    private void assertOauthHttpsContract(RawHttpResponse response) {
         assertThat(response.status()).isEqualTo(302);
-        String transactionId = response.firstHeader(TransactionIds.HEADER_NAME);
-        assertThat(transactionId).isNotBlank();
+        assertThat(response.firstHeader(TransactionIds.HEADER_NAME)).isNotBlank();
         assertThat(queryParameter(response.firstHeader("Location"), "redirect_uri"))
                 .isEqualTo("https://" + EXTERNAL_HOST + "/login/oauth2/code/google");
         assertThat(response.headers("Set-Cookie"))
                 .anyMatch(cookie -> cookie.toLowerCase(Locale.ROOT).contains("secure"));
-
-        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() -> {
-            JsonNode log = encoded(findAccessEvent(transactionId));
-            assertThat(log.path("event").asText()).isEqualTo("http_request_completed");
-            assertThat(log.path("clientIp").asText()).isEqualTo(ACTUAL_CLIENT_IP);
-            assertThat(log.path("clientIp").asText()).isNotEqualTo(SPOOFED_LEFTMOST_IP);
-        });
     }
 
     private RawHttpResponse request(String request) throws IOException {

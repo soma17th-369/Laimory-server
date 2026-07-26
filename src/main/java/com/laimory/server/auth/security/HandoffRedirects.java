@@ -8,7 +8,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
  *
  * <p>커스텀 스킴({@code laimory://})이 아니라 claimed HTTPS App Link를 쓴다 — 커스텀 스킴은 타 앱도
  * 등록 가능해 탈취될 수 있고, App Link는 assetlinks.json으로 서명 검증된 앱에만 OS가 배달한다.
- * base는 현재 요청의 scheme/host에서 구성한다(forward-headers 전략으로 프록시 뒤에서도 https 도메인).
+ * base는 trusted-edge 필터가 확정한 현재 요청의 scheme/host에서 구성한다(nginx 뒤에서도 https 도메인).
  */
 final class HandoffRedirects {
 
