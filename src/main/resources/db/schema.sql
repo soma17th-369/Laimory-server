@@ -83,6 +83,25 @@ CREATE TABLE IF NOT EXISTS timeline_event_items (
         FOREIGN KEY (timeline_item_id) REFERENCES timeline_items (timeline_item_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 마지막 Event 참조가 사라지는 PHOTO의 S3 삭제 의무와 원문 Item을 MySQL commit과 함께 보존하는 작업 테이블.
+-- 원 TimelineItem은 job이 존재하는 동안 남고, worker가 S3 성공 뒤 job→Item 순서로 한 transaction에서 지운다.
+-- 행 존재가 처리 대기 상태이며 완료 시 Item과 행을 함께 삭제한다(state/retry/lease/error 이력 없음).
+CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
+    timeline_photo_delete_job_id BIGINT NOT NULL AUTO_INCREMENT,
+    timeline_item_id BIGINT NOT NULL,
+    object_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (timeline_photo_delete_job_id),
+    UNIQUE KEY uq_timeline_photo_delete_jobs_item (timeline_item_id),
+    UNIQUE KEY uq_timeline_photo_delete_jobs_object (object_key),
+    KEY idx_timeline_photo_delete_jobs_created (created_at, timeline_photo_delete_job_id),
+    CONSTRAINT fk_timeline_photo_delete_jobs_item
+        FOREIGN KEY (timeline_item_id) REFERENCES timeline_items (timeline_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- API→AI 입력 staging(app↔AI 데이터 교환 경유). AI가 taskId로 읽고, final transaction에서 채택한 행만
 -- DELETE한다(omitted 행은 retention cleanup이 정리). (task_id, raw_id) unique는 task 안 rawId 중복을
 -- DB에서 차단한다(API 요청 dedupe의 백스톱).

@@ -4,6 +4,8 @@ deleteRules:
   - orgId: 1
     uid: laimory_processing_stuck
   - orgId: 1
+    uid: laimory_photo_delete_backlog
+  - orgId: 1
     uid: laimory_tls_expiry_warning
   - orgId: 1
     uid: laimory_tls_expiry_critical

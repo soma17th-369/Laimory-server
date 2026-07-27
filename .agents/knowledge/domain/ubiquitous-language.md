@@ -85,9 +85,10 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 파일명 | filename | 현재 구현 | DB에 저장하는 `{uuidv7}.{jpg|png|webp}` 형식의 최소 사진 식별자다. |
 | 클라이언트 사진 URI | clientPhotoUri | 현재 구현 | 기기 로컬 URI다. 서버는 해석하지 않고 저장·echo하며 `photoUrl`과 다른 layer다. |
-| 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{sha256hex(userId)}/photos/{filename}`으로 파생하는 S3 key다. DB에는 저장하지 않는다. |
+| 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{sha256hex(userId)}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
+| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. 행 존재가 대기 상태이며 job은 원 Item을 FK로 참조한다. S3 삭제 성공 시 job과 Item을 한 transaction에서 최종 hard delete한다. |
 
 ## AI 타임라인 이벤트 생성
 
@@ -115,7 +116,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(user_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
-| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. Item은 cascade되지 않아 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서 명시 삭제한다(shared Item/PHOTO 유지). 삭제 API는 exclusive PHOTO의 S3 배치 삭제 성공 후에만 DB 삭제를 시작한다. |
+| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI final 단일 트랜잭션 | 현재 구현(계약) | AI가 draft 결과 validation 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 서버 callback은 이 결과를 쓰지 않는다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |

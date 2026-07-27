@@ -13,7 +13,7 @@ Terraform은 recipe이며 살아 있는 dev에 blanket/target `terraform apply`�
 - textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
-- alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
+- alert: target/probe/TLS, HTTP 오류·지연, stuck task, PHOTO delete backlog, JVM/Hikari, host disk/memory/OOM,
   MySQL/Redis, AWS credit 수집, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
@@ -553,6 +553,22 @@ Overview의 stuck count와 Timeline workflow/callback, Redis target 상태를 �
 index에서 제거된다. 첫 앱 rollout 전에 이미 존재하던 PROCESSING task는 index에 없으므로 최대 1시간
 warm-up 뒤부터 완전한 값이다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
 
+### Timeline PHOTO delete backlog
+
+Overview의 pending 수와 oldest age를 먼저 확인하고, enqueue 대비 attempt 성공/실패 발생률을 비교한다.
+worker가 꺼져 있어도 두 gauge는 MySQL job table에서 계속 관측된다. dev WAS에서는 전체 환경을 출력하지 말고
+현재 container의 `TIMELINE_PHOTO_DELETE_WORKER_ENABLED` 한 값만 확인한다.
+
+worker flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를 다시 실행하거나 기존 container를
+stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야 한다. `docker restart`는 생성 당시
+환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
+
+flag가 true인데 backlog가 줄지 않으면 MySQL/Hikari 상태, S3/IAM 오류, delete attempt 실패와 batch duration을
+차례로 확인한다. 실패 job과 그 FK가 가리키는 원문 PHOTO Item은 다음 주기에 재시도되는 복구 권위이므로
+둘 중 하나를 수동 삭제하거나 object key를 로그·alert에 복사하지 않는다. monitoring 자산 변경은 앱 자동
+배포에 포함되지 않으므로 기존 provisioning 파일을 백업한 뒤 자산을 반영하고 Grafana provisioning
+reload/restart 절차를 따른다.
+
 ### AWS metric collection
 
 `systemctl status laimory-aws-metrics.service`와 journal을 확인하고 IMDSv2, AWS CLI,
@@ -591,7 +607,7 @@ promtool 통과 전 reload하지 않는다. volume은 보존한 채 service만 s
 
 이번 operational observability 보강은 Prometheus target/job을 바꾸지 않는다. 따라서 이 변경만
 rollback할 때 기존 `node` job이나 5대 target을 제거하지 않는다. Grafana를 재시작한 뒤라면 collector를
-지우기 전에 먼저 신규 rule 8개를 `deleteRules`로 제거하고 이전 rule/dashboard를 복원한다. 순서를
+지우기 전에 먼저 신규 rule 9개를 `deleteRules`로 제거하고 이전 rule/dashboard를 복원한다. 순서를
 뒤집으면 node target이 살아 있는 동안 collector absent alert가 firing할 수 있다.
 
 ```bash

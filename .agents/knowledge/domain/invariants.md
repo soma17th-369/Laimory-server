@@ -50,12 +50,16 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - Event·DailyRecord 삭제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에 거절하고
   없음·비소유는 404로 은닉한다.
-- 삭제는 exclusive Item(삭제 대상 Event에만 연결) PHOTO의 S3 배치 삭제가 **전부 성공한 후에만**
-  DB 삭제를 시작한다. 다른 Event에도 연결된 shared Item/PHOTO는 유지한다.
-  S3 실패(`-1017`)면 DB를 보존하고, S3 성공 후 DB 실패(500)는 재시도로 수렴한다
-  (이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
-- 삭제 대상 PHOTO payload가 깨졌거나 filename이 없으면 S3만 건너뛰고 행 삭제는 진행한다
-  (orphan 허용 — draft cleanup과 동일 규칙).
+- 삭제 transaction은 다른 Event가 참조하지 않아 association 0이 될 orphan Item을 계산하고, orphan PHOTO의
+  full object key와 원문 Item PK를 `timeline_photo_delete_jobs`에 insert한다. 같은 commit에서
+  root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
+  Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
+- DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. worker는 oldest job 최대 1,000개를
+  `DeleteObjects`로 처리해 `Deleted`로 확인된 job과 그 원문 PHOTO Item만 한 transaction에서 지운다.
+  Error·응답 누락·SDK 예외면 Item과 job을 남겨 고정 주기에 재시도한다.
+  state/attempt/backoff/lease/error/completed 이력과 Redis queue는 두지 않는다.
+- 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
+  진행한다(orphan 허용 — draft cleanup과 동일 규칙).
 - 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)가 같은 날짜의 draft(AI 작업), 삭제와
   Event PATCH의 수동 PHOTO 추가를 직렬화한다 — draft는 `task:{taskId}`, 삭제는
   `delete:{operationId}`, PHOTO 추가 PATCH는 `patch-photo-add:{operationId}` holder로 선점한다.
@@ -65,8 +69,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   상태 전이가 경합하지 않게 하는 직렬화 지점이다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
 - Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
-  Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
-  명시 삭제한다 — orphan 판정은 삭제 전 junction 스냅샷 기준이다(같은 날짜 쓰기는 guard가 직렬화).
+  Item은 record FK가 없어 cascade되지 않는다. 삭제 대상에만 연결된 non-PHOTO와 job을 만들 수 없는 손상
+  PHOTO는 같은 transaction에서 명시 삭제하고, 유효한 PHOTO는 job과 함께 보존한다. orphan 판정은 삭제 전
+  junction 스냅샷 기준이다(같은 날짜 쓰기는 guard가 직렬화).
 
 ### AI callback
 

@@ -65,6 +65,65 @@ groups:
           severity: warning
         isPaused: false
 
+      - uid: laimory_photo_delete_backlog
+        title: Timeline PHOTO delete backlog is stale
+        dashboardUid: laimory-overview
+        panelId: 22
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_timeline_photo_delete_oldest_age{job="spring_boot",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [3600], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: '{{ $values.B.Value }} seconds have elapsed since the oldest pending PHOTO delete job.'
+          description: 'Check the worker flag, MySQL/Hikari health, S3 access, and pending job growth. Do not delete job rows manually.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#timeline-photo-delete-backlog
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
   - orgId: 1
     name: laimory-tls
     folder: Laimory
