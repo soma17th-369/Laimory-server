@@ -5,7 +5,6 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
@@ -22,13 +21,6 @@ import org.springframework.stereotype.Service;
  *
  * <p>callback token은 hash 검증 직후 task별 Redis marker로 원자 소비한다. marker는 terminal task보다
  * 한 시간 긴 25시간 동안 유지하며 소비 뒤 후속 처리가 실패해도 삭제하거나 환불하지 않는다.
- *
- * <p><b>날짜 guard</b>: 같은 (userId, recordDate)에 AI 작업·삭제·Event PHOTO 추가가 겹치지 않게 하는 Redis lease다.
- * holder({@code task:{taskId}}, {@code delete:{operationId}}, {@code patch-photo-add:{operationId}})를 값으로
- * 새겨 자기 guard만 갱신·해제한다.
- * 해제 경계 규칙 — ① PROCESSING 저장 <b>전</b> 실패: 호출부가 즉시 해제. ② PROCESSING 저장 <b>후</b>
- * terminal 저장 실패: AI 진행 상태 불명이므로 해제하지 않고 TTL 만료에 맡긴다. ③ terminal 저장 <b>성공</b>:
- * 호출부가 compare-and-release. guard TTL은 1시간으로 PROCESSING TTL과 정렬한다(PROCESSING 저장 성공 시 refresh).
  */
 @Service
 @RequiredArgsConstructor
@@ -44,29 +36,12 @@ public class TimelineTaskService {
     static final Duration PROCESSING_TTL = Duration.ofHours(1);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
     static final Duration CALLBACK_TOKEN_USE_TTL = Duration.ofHours(25);
-    // guard가 고아로 남아도(서버 크래시 등) PROCESSING task와 같은 주기로 자연 해제되게 정렬한다.
-    private static final Duration DATE_GUARD_TTL = Duration.ofHours(1);
 
     private final TimelineTaskStore timelineTaskStore;
     private final TimelineMetrics timelineMetrics;
 
-    /** draft 작업이 날짜 guard에 새기는 holder 값({@code task:{taskId}}). */
-    public static String taskGuardHolder(String taskId) {
-        return "task:" + taskId;
-    }
-
-    /** 삭제 작업이 날짜 guard에 새기는 holder 값({@code delete:{operationId}}). */
-    public static String deleteGuardHolder(String operationId) {
-        return "delete:" + operationId;
-    }
-
-    /** Event PATCH PHOTO 추가가 날짜 guard에 새기는 holder 값. */
-    public static String photoAddGuardHolder(String operationId) {
-        return "patch-photo-add:" + operationId;
-    }
-
     /**
-     * dailyRecordId는 선생성된 DailyRecord의 ID다 — 세 상태 모두 보존되며 폴링·guard 해제의 기준이다.
+     * dailyRecordId는 선생성된 DailyRecord의 ID다 — 세 상태 모두 보존되며 폴링·콜백 전이의 기준이다.
      * processingStartedAt은 폴링의 AI 작업 대기 경과 시간 기준(PROCESSING 전용 — terminal은 보존하지 않음).
      * userId는 task owner다 — 세 상태 전이 모두 필수로 받아 보존한다(폴링 소유권 대조·콜백 전이 기준).
      */
@@ -129,23 +104,5 @@ public class TimelineTaskService {
                     "stuck threshold는 0보다 크고 PROCESSING TTL보다 짧아야 합니다: " + stuckAfter);
         }
         return timelineTaskStore.countStuckProcessing(now, stuckAfter, PROCESSING_TTL);
-    }
-
-    /** 날짜 guard를 holder 명의로 선점한다. false = 같은 날짜에 진행 중인 작업이 있음(-1016 거절 대상). */
-    public boolean claimDateGuard(long userId, LocalDate recordDate, String holder) {
-        return timelineTaskStore.claimDateGuard(userId, recordDate, holder, DATE_GUARD_TTL);
-    }
-
-    /**
-     * 내 holder일 때만 guard TTL을 1시간으로 재갱신한다(PROCESSING 저장 성공 직후 task TTL과 정렬).
-     * 반환값은 소유 재확인 결과다 — draft 생성은 true일 때만 AI dispatch를 진행한다(이중 dispatch 게이트).
-     */
-    public boolean refreshDateGuard(long userId, LocalDate recordDate, String holder) {
-        return timelineTaskStore.refreshDateGuard(userId, recordDate, holder, DATE_GUARD_TTL);
-    }
-
-    /** 내 holder일 때만 guard를 해제한다(compare-and-release). false = 이미 만료됐거나 남의 guard(no-op). */
-    public boolean releaseDateGuard(long userId, LocalDate recordDate, String holder) {
-        return timelineTaskStore.releaseDateGuard(userId, recordDate, holder);
     }
 }

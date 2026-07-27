@@ -50,8 +50,8 @@ public class DailyRecordService {
      * all-or-nothing으로 묶인다 — 후속 단계가 실패하면 신규 record도 롤백된다.
      *
      * <p>{@code REQUIRED}라 unique 위반을 catch해 재조회하는 옛 upsert는 못 쓴다 — 위반이 합류한 트랜잭션을
-     * rollback-only로 오염시키기 때문이다. 동시 생성 경합은 날짜 guard가 이 앞에서 직렬화하므로 정상 경로에서
-     * 나지 않고, 발생 시 그대로 전파돼 POST가 실패한다(guard 해제 후 클라 재시도로 수렴).
+     * rollback-only로 오염시키기 때문이다. 같은 날짜의 동시 생성 경합은 별도 직렬화 없이 unique 위반이
+     * 그대로 전파된다. 이 동시성 계약의 보완은 후속 작업 범위다.
      *
      * <p>같은 날짜 재요청(append)이면 기존 DRAFT의 record_at/record_timezone을 이번 요청 값으로 즉시 갱신한다
      * (AI 성공 시점이 아니라 draft 요청 시점 기준). 관리 엔티티라 dirty-checking으로 합류 트랜잭션 커밋 시

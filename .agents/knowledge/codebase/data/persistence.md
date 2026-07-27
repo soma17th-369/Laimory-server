@@ -83,19 +83,19 @@ application-owned access는 `RedisGateway`를 거친다.
 | `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 필수, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. | PROCESSING 1h, terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 1h cutoff 관측 때 제거 |
 | `timeline:callback-token-uses:{taskId}` | callback token 소비 marker. hash 검증 직후 `SET NX`로 고정값 `used`를 저장하며 raw token/hash는 넣지 않는다. 소비 뒤 후속 처리 실패에도 삭제·환불하지 않는다. | 25h |
-| `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`, Event PHOTO 추가 `patch-photo-add:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제·PHOTO 추가는 모든 종료 경로에서 해제) |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
-단순 get/set/delete 외에 원자 연산을 제공한다: `setIfAbsent`(SET NX + TTL),
-`expireIfValueMatches`/`deleteIfValueMatches`(Lua — 값 비교와 PEXPIRE/DEL을 원자화해
-만료→재선점 경합에서 남의 lease를 갱신·삭제하지 않는다).
+단순 get/set/delete 외에 callback token marker 등에 쓰는 `setIfAbsent`(SET NX + TTL)를 제공한다.
 Timeline task는 값 PSETEX와 PROCESSING index ZADD/ZREM도 Lua 한 경계에서 수행한다.
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
 dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.
 Spring Session은 framework-managed 영역이며 namespace 설정으로 격리한다.
+
+과거 같은 날짜 작업 admission에 쓰던 `timeline:date-guard:*` key는 더 이상 application key 계약이
+아니다. 배포 전에 남은 key는 읽거나 일괄 삭제하지 않으며 설정돼 있던 TTL로 자연 만료한다.
 
 ### S3
 
@@ -146,6 +146,7 @@ apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 �
 - Flyway/Liquibase와 자동 schema rollout이 없다.
 - finalized photo와 presign 후 staging이 없는 orphan object는 cleanup 대상이 아니다.
 - authenticated auditor propagation이 없다.
+- 같은 날짜 draft·수동 PHOTO 추가·삭제 사이의 공통 admission과 경합 정합성 보장은 미구현이다.
 
 ## Update When
 

@@ -394,17 +394,6 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_mapsDateGuardConflictTo409With1016() throws Exception {
-        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
-                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
-
-        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1016));
-    }
-
-    @Test
     void updateTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
         doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20))
                 .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
@@ -516,16 +505,6 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void deleteTimelineEvent_mapsDateGuardConflictTo409With1016() throws Exception {
-        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
-                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
-
-        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1016));
-    }
-
-    @Test
     void deleteTimelineEvent_mapsUnexpectedTransactionFailureTo500() throws Exception {
         doThrow(new RuntimeException("db down"))
                 .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
@@ -556,16 +535,6 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
-    }
-
-    @Test
-    void deleteDailyRecord_mapsDateGuardConflictTo409With1016() throws Exception {
-        doThrow(new BusinessException(ExceptionType.RECORD_DATE_IN_PROGRESS))
-                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
-
-        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1016));
     }
 
     @Test

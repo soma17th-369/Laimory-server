@@ -16,7 +16,7 @@ import java.util.List;
 public record CreateDraftTaskRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "2026-07-08",
                 description = "기록이 속하는 날. **클라이언트 선택 날짜가 단일 권위** — 서버는 계산·보정 없이 "
-                        + "날짜 guard, Daily Record 조회·생성, finalize에 그대로 쓴다. 과거·미래 제한 없음.")
+                        + "Daily Record 조회·생성과 finalize에 그대로 쓴다. 과거·미래 제한 없음.")
         LocalDate recordDate,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "2026-07-09T09:12:34",
                 description = "사용자가 실제로 기록을 만든 벽시계 시각. **타임존 없는 LocalDateTime** — offset이나 'Z'를 "

@@ -3,11 +3,8 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -35,7 +32,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -63,8 +59,6 @@ class TimelineEventEditServiceTest {
     @Mock
     private DailyRecordService dailyRecordService;
     @Mock
-    private TimelineTaskService timelineTaskService;
-    @Mock
     private TimelineEventEditTransactionService transactionService;
 
     private TimelineEventEditService service;
@@ -74,7 +68,6 @@ class TimelineEventEditServiceTest {
         service = new TimelineEventEditService(
                 timelineEventService,
                 dailyRecordService,
-                timelineTaskService,
                 transactionService,
                 MAX_PHOTO_COUNT);
     }
@@ -91,7 +84,7 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
-        verifyNoInteractions(dailyRecordService, timelineTaskService, transactionService);
+        verifyNoInteractions(dailyRecordService, transactionService);
     }
 
     @Test
@@ -106,7 +99,7 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
@@ -123,13 +116,13 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
                 });
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     // --- PATCH scalar/memo 정규화와 검증 ---
 
     @Test
-    void updateEvent_omittedOrEmptyPhotosNormalizesScalarsAndSkipsDateGuard() {
+    void updateEvent_omittedOrEmptyPhotosNormalizesScalarsAndCallsWriter() {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
                 TimelineEventType.MEAL, "  a  ", "   ", NEW_START, NEW_START,
@@ -149,7 +142,6 @@ class TimelineEventEditServiceTest {
         assertThat(command.memoPresent()).isFalse();
         assertThat(command.memo()).isNull();
         assertThat(command.photosToAdd()).isEmpty();
-        verifyNoInteractions(timelineTaskService);
     }
 
     @Test
@@ -165,7 +157,6 @@ class TimelineEventEditServiceTest {
         verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().memoPresent()).isTrue();
         assertThat(commandCaptor.getValue().memo()).isEqualTo(" 앞뒤 공백 메모 ");
-        verifyNoInteractions(timelineTaskService);
     }
 
     @ParameterizedTest
@@ -194,11 +185,11 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
-    void updateEvent_rejectsOversizedMemoBeforePhotoGuard() {
+    void updateEvent_rejectsOversizedMemoBeforeWriter() {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, "m".repeat(10_001), true,
@@ -207,15 +198,15 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     // --- PATCH PHOTO 검증/dedupe ---
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidPhotoLists")
-    void updateEvent_rejectsInvalidPhotoBeforeGuardAndWriter(String ignored,
-                                                             List<UpdateTimelineEventPhotoRequest> photos) {
+    void updateEvent_rejectsInvalidPhotoBeforeWriter(String ignored,
+                                                     List<UpdateTimelineEventPhotoRequest> photos) {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, null, false, photos);
@@ -223,7 +214,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
@@ -241,13 +232,12 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getArgs()).containsExactly(MAX_PHOTO_COUNT);
                 });
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
     void updateEvent_duplicateRawIdKeepsFirstPhoto() {
         stubOwnedDraftEvent();
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
         UpdateTimelineEventPhotoRequest first = new UpdateTimelineEventPhotoRequest(
                 RAW_ID_1, NEW_START, null,
                 new UpdateTimelineEventPhotoPayloadRequest(FILENAME_1, "content://first", 37.1, 127.1));
@@ -267,74 +257,32 @@ class TimelineEventEditServiceTest {
                         RAW_ID_1, NEW_START, null, FILENAME_1, "content://first", 37.1, 127.1));
     }
 
-    // --- PATCH PHOTO guard lifecycle ---
+    // --- PATCH PHOTO writer delegation ---
 
     @Test
-    void updateEvent_nonEmptyPhotosClaimsWritesAndReleasesSameHolderInOrder() {
+    void updateEvent_nonEmptyPhotosCallsWriterDirectly() {
         stubOwnedDraftEvent();
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
         UpdateTimelineEventRequest request = requestWithOnePhoto();
 
         service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
 
-        ArgumentCaptor<String> holderCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).claimDateGuard(eq(USER_ID), eq(RECORD_DATE), holderCaptor.capture());
-        String holder = holderCaptor.getValue();
-        assertThat(holder).startsWith("patch-photo-add:");
-        verify(timelineTaskService).releaseDateGuard(USER_ID, RECORD_DATE, holder);
-
-        InOrder order = inOrder(timelineTaskService, transactionService);
-        order.verify(timelineTaskService).claimDateGuard(USER_ID, RECORD_DATE, holder);
-        order.verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
-        order.verify(timelineTaskService).releaseDateGuard(USER_ID, RECORD_DATE, holder);
+        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
     }
 
     @Test
-    void updateEvent_guardClaimFailureReturns1016WithoutWriterOrRelease() {
+    void updateEvent_writerFailurePropagates() {
         stubOwnedDraftEvent();
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(false);
-
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto()))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.RECORD_DATE_IN_PROGRESS);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1016);
-                });
-
-        verifyNoInteractions(transactionService);
-        verify(timelineTaskService, never()).releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString());
-    }
-
-    @Test
-    void updateEvent_writerFailureStillReleasesGuard() {
-        stubOwnedDraftEvent();
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
         IllegalStateException failure = new IllegalStateException("writer failed");
         doThrow(failure).when(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto()))
                 .isSameAs(failure);
-
-        ArgumentCaptor<String> holderCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).claimDateGuard(eq(USER_ID), eq(RECORD_DATE), holderCaptor.capture());
-        verify(timelineTaskService).releaseDateGuard(USER_ID, RECORD_DATE, holderCaptor.getValue());
-    }
-
-    @Test
-    void updateEvent_releaseFailureIsSwallowedAfterSuccessfulWriter() {
-        stubOwnedDraftEvent();
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString())).thenReturn(true);
-        when(timelineTaskService.releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString()))
-                .thenThrow(new IllegalStateException("redis unavailable"));
-
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto());
-
-        verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString());
     }
 
     // --- memo PUT ---
 
     @Test
-    void updateMemo_storesRawTextAndDoesNotUseGuardOrPatchWriter() {
+    void updateMemo_storesRawTextAndDoesNotUsePatchWriter() {
         TimelineEvent event = stubOwnedDraftEvent();
 
         service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
@@ -342,7 +290,7 @@ class TimelineEventEditServiceTest {
         assertThat(event.getMemo()).isEqualTo(" 앞뒤 공백 메모 ");
         assertThat(event.getTitle()).isEqualTo("원래 제목");
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @ParameterizedTest
@@ -379,7 +327,7 @@ class TimelineEventEditServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
@@ -394,7 +342,7 @@ class TimelineEventEditServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     @Test
@@ -407,7 +355,7 @@ class TimelineEventEditServiceTest {
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
-        verifyNoInteractions(timelineTaskService, transactionService);
+        verifyNoInteractions(transactionService);
     }
 
     private TimelineEvent stubOwnedDraftEvent() {

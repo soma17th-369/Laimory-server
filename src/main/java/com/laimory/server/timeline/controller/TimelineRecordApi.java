@@ -28,8 +28,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * <p>모든 엔드포인트가 특정 사용자의 기록에 종속되므로 인증 prefix({@code /a/api})에 둔다.
  * userId는 인증된 JWT principal에서 받으며 클라이언트 입력이 아니다 — OpenAPI parameter로 노출하지 않는다.
  *
- * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING) 중 Event/memo
- * 필드만 바꾸는 PATCH는 허용하지만, {@code photosToAdd}가 있으면 같은 날짜 graph writer와 충돌하므로 409다.
+ * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING)만으로
+ * Event/memo/PHOTO 변경 요청을 거절하지 않는다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
@@ -96,8 +96,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능 · "
-                            + "`-1016` — non-empty photosToAdd가 있고 같은 날짜 AI/사진추가/삭제가 진행 중")
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
@@ -142,8 +141,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)")
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료)")
     })
     @DeleteMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
@@ -164,8 +162,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)")
+                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료)")
     })
     @DeleteMapping("/daily-records/{dailyRecordId}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecord(

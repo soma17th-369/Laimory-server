@@ -60,18 +60,16 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   state/attempt/backoff/lease/error/completed 이력과 Redis queue는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
   진행한다(orphan 허용 — draft cleanup과 동일 규칙).
-- 날짜 guard(`timeline:date-guard:{userId}:{recordDate}`)가 같은 날짜의 draft(AI 작업), 삭제와
-  Event PATCH의 수동 PHOTO 추가를 직렬화한다 — draft는 `task:{taskId}`, 삭제는
-  `delete:{operationId}`, PHOTO 추가 PATCH는 `patch-photo-add:{operationId}` holder로 선점한다.
-  삭제와 PHOTO 추가 PATCH는 성공·실패 모든 종료 경로에서 compare-and-release한다(해제는 best-effort,
-  TTL 1h가 안전망). `photosToAdd`가 없거나 빈 Event PATCH는 guard를 취득하지 않는다.
-- **향후 DRAFT→SAVED 전환(save) API도 같은 날짜 guard를 취득해야 한다** — 삭제·AI 작업과
-  상태 전이가 경합하지 않게 하는 직렬화 지점이다.
+- 같은 날짜의 draft(AI 작업), Event PATCH의 수동 PHOTO 추가, Event/DailyRecord 삭제 사이에는 공통
+  Redis admission guard가 없다. 각 작업의 입력·소유권·DRAFT preflight와 자기 DB transaction 경계는
+  유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나 지우지
+  않으며 기존 TTL로 자연 만료한다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
 - Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
   Item은 record FK가 없어 cascade되지 않는다. 삭제 대상에만 연결된 non-PHOTO와 job을 만들 수 없는 손상
   PHOTO는 같은 transaction에서 명시 삭제하고, 유효한 PHOTO는 job과 함께 보존한다. orphan 판정은 삭제 전
-  junction 스냅샷 기준이다(같은 날짜 쓰기는 guard가 직렬화).
+  junction 스냅샷 기준이다. 같은 날짜 graph 쓰기를 직렬화하는 공통 guard가 없으므로 경합 정합성은
+  보장하지 않는다.
 
 ### AI callback
 
@@ -128,7 +126,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
-- 요청 하나의 principal userId가 draft record 조회·날짜 guard·enrich photo key·staging row·
+- 요청 하나의 principal userId가 draft record 조회·enrich photo key·staging row·
   Redis task owner·polling·DailyRecord 전체/단건 조회·편집/삭제 소유권 검사까지 전부 동일해야 한다
   (지점 분기 금지).
 - Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에
@@ -141,6 +139,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - DRAFT→SAVED 사용자 전이, emotion 입력 API가 없다.
 - 실 AI writer(Laimory-AI)의 direct-write 구현은 별도 저장소 진행분이다.
 - photo orphan cleanup과 automatic deployment rollback이 없다.
+- 같은 날짜 draft·수동 PHOTO 추가·삭제가 겹칠 때의 graph 정합성 보장은 미구현이다. 공통 Redis
+  admission guard와 대체 DB lock·retry·upsert가 모두 없다.
 
 ## Update When
 

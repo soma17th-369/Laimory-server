@@ -41,7 +41,7 @@ class TimelineTaskServiceTest {
 
     @Test
     void createProcessing_storesRecordIdAndStartedAtWithProcessingTtl() {
-        // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이·guard 해제의 기준) + TTL 1시간.
+        // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이의 기준) + TTL 1시간.
         service.createProcessing("t", USER_ID, RECORD_ID, null, "hash", STARTED_AT);
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);

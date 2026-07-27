@@ -19,9 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>AI dispatch 전에 record 메타데이터(recordAt/recordTimezone)를 DB에 먼저 확정한다 — AI는 body의
  * dailyRecordId로 record를 읽으므로 이 커밋이 dispatch보다 선행해야 한다. SAVED 재확인이 던지면 전체
- * 롤백된다(신규 record·메타데이터 갱신·source rows 모두). 같은 (userId, recordDate) 동시 생성 경합은
- * 날짜 guard가 이 앞에서 직렬화하므로 unique 위반은 정상 경로에서 나지 않는다(발생 시 전파 → 500,
- * 호출부가 guard를 해제해 클라 재시도로 수렴).
+ * 롤백된다(신규 record·메타데이터 갱신·source rows 모두). 같은 (userId, recordDate) 동시 생성은
+ * 별도 직렬화 없이 경합할 수 있고 unique 위반은 그대로 전파된다. 이 동시성 계약의 보완은 후속 작업 범위다.
  */
 @Service
 @RequiredArgsConstructor

@@ -24,8 +24,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 타임라인 삭제의 DB 트랜잭션 경계 전담 빈. {@link TimelineDeletionService}가 날짜 guard 안에서 Spring
- * 프록시를 통해 호출한다 — 오케스트레이터 안에
+ * 타임라인 삭제의 DB 트랜잭션 경계 전담 빈. {@link TimelineDeletionService}가 Spring 프록시를 통해
+ * 호출한다 — 오케스트레이터 안에
  * {@code @Transactional} 메서드를 두면 self-invocation으로 트랜잭션이 조용히 무효화되므로 분리한다.
  *
  * <p>짧은 트랜잭션 안에서 소유권·DRAFT를 <b>재확인</b>하고, 삭제 후 association이 0이 될 PHOTO Item의

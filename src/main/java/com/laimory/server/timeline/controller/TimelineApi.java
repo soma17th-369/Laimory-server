@@ -146,8 +146,7 @@ public interface TimelineApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
-                            + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "
-                            + "`-1016`(같은 날짜의 타임라인 작업이 진행 중 — 잠시 후 재시도)"),
+                            + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "지오코딩(지도 API) 호출 실패로 draft 생성 실패. 재시도 가능성으로 코드가 나뉜다 — "
                             + "`-1014`(전이적 실패 — 재시도로 해결될 수 있음) · "

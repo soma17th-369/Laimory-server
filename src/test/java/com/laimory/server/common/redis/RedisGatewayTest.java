@@ -3,9 +3,7 @@ package com.laimory.server.common.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -86,55 +84,6 @@ class RedisGatewayTest {
         when(valueOps.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1))).thenReturn(null);
 
         assertThatThrownBy(() -> redis.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1)))
-                .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void expireIfValueMatches_executesScriptWithPrefixedKey_andMapsResult() {
-        // Lua 인자 계약: KEYS[1]=prefix 부착 키, ARGV[1]=기대값, ARGV[2]=밀리초 TTL 문자열.
-        RedisGateway redis = new RedisGateway(template, "dev_");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("dev_" + LOGICAL_KEY)), eq("holder"), eq("3600000"))).thenReturn(1L);
-
-        assertThat(redis.expireIfValueMatches(LOGICAL_KEY, "holder", Duration.ofHours(1))).isTrue();
-    }
-
-    @Test
-    void expireIfValueMatches_holderMismatch_returnsFalse() {
-        RedisGateway redis = new RedisGateway(template, "");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of(LOGICAL_KEY)), eq("holder"), eq("3600000"))).thenReturn(0L);
-
-        assertThat(redis.expireIfValueMatches(LOGICAL_KEY, "holder", Duration.ofHours(1))).isFalse();
-    }
-
-    @Test
-    void deleteIfValueMatches_executesScriptWithPrefixedKey_andMapsResult() {
-        RedisGateway redis = new RedisGateway(template, "dev_");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("dev_" + LOGICAL_KEY)), eq("holder"))).thenReturn(1L);
-
-        assertThat(redis.deleteIfValueMatches(LOGICAL_KEY, "holder")).isTrue();
-    }
-
-    @Test
-    void deleteIfValueMatches_holderMismatch_returnsFalse() {
-        RedisGateway redis = new RedisGateway(template, "");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of(LOGICAL_KEY)), eq("holder"))).thenReturn(0L);
-
-        assertThat(redis.deleteIfValueMatches(LOGICAL_KEY, "holder")).isFalse();
-    }
-
-    @Test
-    void scriptOps_nullFromTemplate_throwIllegalState() {
-        RedisGateway redis = new RedisGateway(template, "");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(), any(), any(Object[].class)))
-                .thenReturn(null);
-
-        assertThatThrownBy(() -> redis.deleteIfValueMatches(LOGICAL_KEY, "holder"))
-                .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> redis.expireIfValueMatches(LOGICAL_KEY, "holder", Duration.ofHours(1)))
                 .isInstanceOf(IllegalStateException.class);
     }
 

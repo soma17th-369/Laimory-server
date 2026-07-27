@@ -14,8 +14,7 @@ import java.util.Objects;
  *
  * <p>AI는 이 JSON을 더 이상 직접 읽지 않는다 — task 입력(taskId·callbackToken·dailyRecordId·window)은
  * dispatch HTTP body로 전달되므로 이 shape는 서버 내부 계약이다. record 메타데이터(recordDate/recordAt/
- * recordTimezone)는 draft 요청 시점에 DailyRecord로 먼저 확정되므로 여기 저장하지 않는다 —
- * 날짜가 필요한 소비처(guard 해제)는 {@code dailyRecordId}로 DailyRecord를 조회한다.
+ * recordTimezone)는 draft 요청 시점에 DailyRecord로 먼저 확정되므로 여기 저장하지 않는다.
  *
  * <p>{@code dailyRecordId}는 선생성된 DailyRecord의 ID로 <b>세 상태 모두</b> 보존된다 — 폴링은 이 ID로만
  * 결과를 조회해, record 삭제 후 같은 날짜가 재생성돼도 과거 task가 새 기록을 반환하지 않는다.
@@ -31,7 +30,7 @@ import java.util.Objects;
  * ({@code elapsedSeconds})을 계산하는 기준이다. 두 필드 모두 PROCESSING 전용으로 종결 시 보존하지 않는다.
  *
  * <p>{@code userId}는 task owner(작성 요청자)다 — 세 상태 모두 보존되며, 폴링의 소유권 대조와 콜백의
- * 전이·guard 해제가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다).
+ * terminal 전이·완료 push가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다).
  */
 public record TimelineDraftTask(
         TaskStatus status,

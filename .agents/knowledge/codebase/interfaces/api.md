@@ -44,10 +44,10 @@ version별 동작은 service가 결정한다.
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
 `title`·`subtitle`·`startAt`·`endAt`(네 key 모두 필수), 선택적 `eventType`, 선택적 `memo`와 선택적
 `photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
-배열은 Item 변경 없음이며 날짜 guard도 취득하지 않고, 명시적 null은 400이다. 배열 원소는
+배열은 Item 변경 없음이며 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 `description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
-한 DB transaction으로 commit하며 guard 충돌은 409 `-1016`이다. 성공 응답은
+한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
@@ -57,7 +57,8 @@ version별 동작은 service가 결정한다.
 `DELETE /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 필요한 PHOTO S3 삭제 작업·원문 PHOTO
 Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. S3 완료는
 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를 동기 502로
-반환하지 않는다. 없음·비소유 404, SAVED/date guard 409 계약은 유지한다.
+반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 같은 날짜 작업 중이라는 이유로
+`-1016`을 반환하지 않는다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
@@ -110,7 +111,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
   `ExceptionType.fromStatus` 폴백으로 정한다(406이 `-400`과 함께 나갈 수 있음).
 - 새 code block을 할당할 때 기존 번호 블록을 보존한다. domain block 숫자는 HTTP status와 무관하며
-  status는 enum field가 결정한다. `1006`, `1010` 결번은 재사용하지 않는다.
+  status는 enum field가 결정한다. `1006`, `1010`, `1016` 번호는 재사용하지 않는다.
 - 새 error는 `ExceptionType`에 code/status/logLevel을 추가하고 기본·ko·en message bundle을 함께 추가한다.
   같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.

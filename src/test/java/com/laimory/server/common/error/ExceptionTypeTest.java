@@ -49,6 +49,13 @@ class ExceptionTypeTest {
         assertThat(ExceptionType.AI_REPORTED_FAILURE.messageKey()).isEqualTo("ERROR_1008");
     }
 
+    @Test
+    void retiredDateGuardCode_isNotReused() {
+        assertThat(ExceptionType.values())
+                .extracting(ExceptionType::code)
+                .doesNotContain(-1016);
+    }
+
     /**
      * 프레임워크 폴백 매핑 고정 — Spring 6.2의 {@code ResponseEntityExceptionHandler}는
      * 406(MediaTypeNotAcceptable)·503(AsyncRequestTimeout)·500(ConversionNotSupported 등)도 처리하므로
