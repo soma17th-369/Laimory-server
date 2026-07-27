@@ -23,13 +23,13 @@ import org.springframework.web.client.RestClient;
  * 202 + 동일 taskId + PROCESSING을 검증한다.
  *
  * <p><b>실패 분류(중요)</b>: 결과가 "미접수 확정"인지 "접수 불명(UNKNOWN)"인지 구분해 서로 다른 예외로
- * 던진다. 호출부는 이 구분으로만 FAILED 확정·guard 해제 여부를 정한다.
+ * 던진다. 호출부는 이 구분으로만 FAILED 확정 여부를 정한다.
  * <ul>
  *   <li><b>미접수 확정</b> → {@link TimelineAiDispatchRejectedException}: <b>4xx 응답 수신</b>(AI HTTP 계층이
  *       스키마 검증 등으로 요청을 거절 — 접수·background 처리 없음이 확정). 호출부가 FAILED로 종결해도 안전하다.</li>
  *   <li><b>UNKNOWN</b> → 그 외 모든 예외 그대로 전파(read timeout·connect 실패·5xx 서버 오류·비202/계약 불일치):
- *       AI가 이미 접수해 final write를 진행 중일 수 있으므로 호출부는 FAILED 확정·guard 해제를 하지 않고
- *       PROCESSING·guard를 유지한다(AI callback 또는 TTL 만료가 종결).</li>
+ *       AI가 이미 접수해 final write를 진행 중일 수 있으므로 호출부는 FAILED로 확정하지 않고
+ *       PROCESSING을 유지한다(AI callback 또는 TTL 만료가 종결).</li>
  * </ul>
  * 5xx를 UNKNOWN으로 두는 이유: 서버 오류는 접수 이후 발생했을 수 있어 미접수를 확정하지 못한다(보수적).
  *
