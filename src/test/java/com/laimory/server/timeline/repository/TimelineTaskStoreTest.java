@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -124,7 +125,7 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void save_failedTask_writesNumericError_andLegacyStringStillReads() {
+    void save_failedTask_writesNumericError() {
         store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
@@ -132,12 +133,18 @@ class TimelineTaskStoreTest {
                 anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
         assertThat(jsonCaptor.getValue()).contains("\"error\":-1009");
         assertThat(jsonCaptor.getValue()).doesNotContain("\"error\":\"");
+    }
 
-        when(redis.get("timeline:draft-task:legacy-error")).thenReturn(
-                "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"ERROR_1009\","
-                        + "\"callbackTokenHash\":\"h\",\"userId\":7}");
+    @Test
+    void find_stringErrorCode_isRejected() {
+        for (String value : java.util.List.of("ERROR_1009", "-1009")) {
+            when(redis.get("timeline:draft-task:string-error")).thenReturn(
+                    "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"" + value + "\","
+                            + "\"callbackTokenHash\":\"h\",\"userId\":7}");
 
-        assertThat(store.find("legacy-error").orElseThrow().error()).isEqualTo(-1009);
+            assertThatThrownBy(() -> store.find("string-error"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Test
@@ -218,21 +225,14 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void find_legacyJsonWithOldShape_deserializesWithNullNewFields() {
-        // 배포 전 저장된 구 shape JSON(record 메타데이터 포함, dailyRecordId/userId 없음) → 예외 없이 역직렬화되고
-        // 새 필수 판정 재료(dailyRecordId/userId)는 null — 콜백·폴링이 fail-closed 판정한다.
-        when(redis.get("timeline:draft-task:legacy")).thenReturn(
+    void find_jsonWithoutRequiredTaskFields_isRejected() {
+        when(redis.get("timeline:draft-task:invalid")).thenReturn(
                 "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
                         + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
                         + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
 
-        Optional<TimelineDraftTask> found = store.find("legacy");
-
-        assertThat(found).isPresent();
-        assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(found.get().dailyRecordId()).isNull();
-        assertThat(found.get().userId()).isNull();
-        assertThat(found.get().processingStartedAt()).isNull();
+        assertThatThrownBy(() -> store.find("invalid"))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

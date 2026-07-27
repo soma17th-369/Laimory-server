@@ -34,7 +34,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 콜백 오케스트레이터 단위 검증(direct-write 계약). 404·token 검증/원자 소비·terminal 재사용 거절·
- * legacy fail-closed·상태 전이·guard 해제(record 조회 경유)·push best-effort. 인프라 0,
+ * 상태 전이·guard 해제(record 조회 경유)·push best-effort. 인프라 0,
  * finalize 경로 없음 — AI가 commit을 이미 마친 상태라 서버는 Redis 전이만 기록한다.
  */
 @ExtendWith(MockitoExtension.class)
@@ -139,8 +139,9 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void handleCallback_markerlessTerminalTask_consumesThenRejects1012() {
-        // 배포 전 terminal task에는 marker가 없을 수 있다. token을 먼저 소비한 뒤 terminal 안전망에서 거절한다.
+    void handleCallback_terminalTaskWithoutConsumptionMarker_consumesThenRejects1012() {
+        // callback 외부 경로에서 종결된 terminal task는 marker가 없을 수 있다.
+        // token을 먼저 소비한 뒤 terminal 안전망에서 거절한다.
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));
         when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
@@ -186,36 +187,6 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
         verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
         verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
-    }
-
-    @Test
-    void handleCallback_legacyTaskWithoutOwner_failsClosedWith404() {
-        // owner 없는 legacy PROCESSING task: 토큰 검증은 통과시키되 전이 없이 404로 fail-closed
-        // (fallback 0 추정 금지 — task·staging은 TTL/cleanup이 정리).
-        TimelineDraftTask legacy = new TimelineDraftTask(TaskStatus.PROCESSING, RECORD_ID, null,
-                null, TOKEN_HASH, null, null);
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(legacy));
-        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
-
-        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
-        verify(timelineTaskService, never()).markSuccess(anyString(), anyLong(), anyLong(), anyString());
-        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
-        verify(timelineCompletionPushNotifier, never()).notifyAsync(anyLong(), anyString(), any());
-    }
-
-    @Test
-    void handleCallback_legacyTaskWithoutDailyRecordId_failsClosedWith404() {
-        // dailyRecordId 없는 legacy PROCESSING task(구 shape): 결과 ID를 추정하지 않고 404로 fail-closed.
-        TimelineDraftTask legacy = new TimelineDraftTask(TaskStatus.PROCESSING, null, null,
-                null, TOKEN_HASH, null, USER_ID);
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(legacy));
-        when(timelineTaskService.consumeCallbackToken("t")).thenReturn(true);
-
-        assertThatThrownBy(() -> service.handleCallback("v1", "t", TOKEN, successRequest()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
     }
 
     @Test

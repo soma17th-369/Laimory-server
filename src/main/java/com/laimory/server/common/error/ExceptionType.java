@@ -12,8 +12,8 @@ import org.springframework.http.HttpStatusCode;
  * 탐지는 모두 {@code -2003}이지만 access log level은 각각 INFO/WARN이다. numeric code를 내부 타입으로
  * 되돌리는 전역 lookup은 두지 않는다. 역해석이 필요한 task/callback 경계는 자기 allowlist만 소유한다.
  *
- * <p>사용자 메시지는 기존 번역 자산과의 호환을 위해 code에서 계산한 {@code ERROR_XXXX} key로
- * 조회한다. 이 key는 외부 응답에 노출하지 않는다.
+ * <p>사용자 메시지는 code에서 계산한 {@code ERROR_XXXX} message bundle key로 조회한다.
+ * 이 key는 외부 응답에 노출하지 않는다.
  *
  * <p>이 레벨은 access 로그 1줄의 레벨만 정한다. 서비스가 남기는 보안 감사·외부 호출 진단
  * 로그는 독립 이벤트로 자기 레벨을 소유한다.

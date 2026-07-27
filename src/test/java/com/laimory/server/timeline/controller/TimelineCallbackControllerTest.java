@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -57,41 +58,33 @@ class TimelineCallbackControllerTest {
     }
 
     @Test
-    void callback_acceptsNumericAndExactLegacyErrorCodeAsSameInteger() throws Exception {
-        for (String body : new String[] {
-                "{\"status\":\"FAILED\",\"errorCode\":-1008}",
-                "{\"status\":\"FAILED\",\"errorCode\":\"ERROR_1008\"}"
-        }) {
-            mockMvc.perform(post(CALLBACK)
-                            .header("Callback-Token", "tok-123")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(body))
-                    .andExpect(status().isOk());
-        }
+    void callback_acceptsNumericErrorCode() throws Exception {
+        mockMvc.perform(post(CALLBACK)
+                        .header("Callback-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"FAILED\",\"errorCode\":-1008}"))
+                .andExpect(status().isOk());
 
         ArgumentCaptor<DraftTaskCallbackRequest> request = ArgumentCaptor.forClass(DraftTaskCallbackRequest.class);
-        verify(timelineCallbackService, org.mockito.Mockito.times(2))
+        verify(timelineCallbackService)
                 .handleCallback(anyString(), eq("t-1"), eq("tok-123"), request.capture());
-        assertThat(request.getAllValues()).allSatisfy(value -> assertThat(value.errorCode()).isEqualTo(-1008));
+        assertThat(request.getValue().errorCode()).isEqualTo(-1008);
     }
 
     @Test
-    void callback_malformedLegacyErrorCodeNormalizesToNullForServiceFallback() throws Exception {
+    void callback_rejectsStringErrorCode() throws Exception {
         for (String body : new String[] {
-                "{\"status\":\"FAILED\",\"errorCode\":\"error_1008\"}",
-                "{\"status\":\"FAILED\",\"errorCode\":999999999999999999999}"
+                "{\"status\":\"FAILED\",\"errorCode\":\"ERROR_1008\"}",
+                "{\"status\":\"FAILED\",\"errorCode\":\"-1008\"}"
         }) {
             mockMvc.perform(post(CALLBACK)
                             .header("Callback-Token", "tok-123")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(body))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isBadRequest());
         }
 
-        ArgumentCaptor<DraftTaskCallbackRequest> request = ArgumentCaptor.forClass(DraftTaskCallbackRequest.class);
-        verify(timelineCallbackService, org.mockito.Mockito.times(2))
-                .handleCallback(anyString(), eq("t-1"), eq("tok-123"), request.capture());
-        assertThat(request.getAllValues()).allSatisfy(value -> assertThat(value.errorCode()).isNull());
+        verifyNoInteractions(timelineCallbackService);
     }
 
     @Test

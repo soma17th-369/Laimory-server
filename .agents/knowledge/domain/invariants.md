@@ -72,8 +72,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - AI는 final direct-write commit 이후에만 알린다(commit-then-callback).
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
-- 신규 callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 서버는 terminal task
-  24시간 호환 기간 동안 exact legacy `ERROR_XXXX` input도 읽되 출력과 신규 저장은 숫자만 쓴다.
+- callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
 - 서버는 callback에서 결과를 조립·검증·저장하지 않고 Redis terminal 전이만 기록한다.
 - raw callback token은 dispatch body로 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
 - callback token은 constant-time 비교 직후 Redis `SET NX` marker로 원자 소비한다. 최초 요청 하나만
@@ -85,13 +84,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   staging retention은 7일이다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
-- 신규 PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
-  timestamp는 0 clamp). 시각이 없는 legacy PROCESSING task는 값을 위조하지 않고 필드를 생략한다(unknown).
+- PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
+  timestamp는 0 clamp). PROCESSING task에는 기준 시각이 항상 존재한다.
 
 ### Push
 
 - 완료 푸시는 callback이 처음 확정한 terminal(markSuccess/markFailed 성공) 뒤에만 비동기 best-effort로
-  예약한다 — terminal 저장 실패·token 거절·owner 없는 legacy 경로에는 알림이 없고,
+  예약한다 — terminal 저장 실패·token 거절 경로에는 알림이 없고,
   enqueue·발송 실패는 callback 200·Redis 상태·polling 계약을 바꾸지 않는다.
 - 푸시는 조회를 유도하는 신호일 뿐 결과 전달 경로가 아니다 — payload는 일반 문구와
   `taskId`/`status`뿐이고 polling이 권위 원천이자 유실 안전망이다(durable retry/outbox 없음).
@@ -127,10 +126,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 요청 하나의 principal userId가 draft record 조회·날짜 guard·enrich photo key·staging row·
   Redis task owner·polling·DailyRecord 전체/단건 조회·편집/삭제 소유권 검사까지 전부 동일해야 한다
   (지점 분기 금지).
-- Redis draft task owner는 세 상태 모두 보존된다. polling은 상태 분기 전에 owner를 대조하고
-  타 사용자·owner 없는 legacy task는 404 `-1001`로 은닉한다(fallback 0 추정 금지).
-- callback은 request principal이 아니라 task 저장 owner를 쓴다. owner·dailyRecordId 없는 legacy task는
-  전이 없이 404로 fail-closed한다. source owner와 record owner의 일치는 AI validation이 검증한다.
+- Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에
+  owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
+- callback은 request principal이 아니라 task 저장 owner를 쓴다. source owner와 record owner의 일치는
+  AI validation이 검증한다.
 
 ## Known Gaps
 

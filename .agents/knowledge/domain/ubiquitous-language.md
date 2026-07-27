@@ -107,7 +107,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 콜백 토큰 | Callback Token | 현재 구현 | task별 one-time bearer credential이다. 원문은 AI dispatch/callback transport에만 있고 서버는 hash와 25시간 소비 marker만 저장한다. 유효 token을 인증에 사용한 순간 소비하며 이후 실패에도 환불하지 않는다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI transport에는 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
-| 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED와 시각 없는 legacy task에서는 필드를 생략한다. |
+| 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
 
 ## 저장 규칙
 
@@ -139,7 +139,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 앱 인증 코드 | App Code | 현재 구현 | 로그인 성공 후 앱 handoff용 60초 one-time code다. Redis에는 hash key로만 저장하고 GETDEL로 소비한다. |
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
 | 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `-2001`이고 principal userId가 service까지 전파된다. |
-| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 전이·guard 해제의 기준이며, 없으면(legacy) fail-closed한다. |
+| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 전이·guard 해제의 기준이다. |
 
 ## 푸시 알림
 

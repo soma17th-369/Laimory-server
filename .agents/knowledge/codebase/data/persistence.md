@@ -71,7 +71,7 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 보존, PROCESSING에만 `timelineWindow`·`processingStartedAt` 포함). FAILED `error`의 신규 표현은 JSON number이고 reader는 terminal TTL 호환 기간 동안 exact legacy `ERROR_XXXX`도 음수 integer로 정규화한다. 누락·미지 값은 polling에서 `-1011`로 수렴한다. 구 shape 잔존 JSON은 `@JsonIgnoreProperties`로 관용 수용하고 owner/record ID 부재는 폴링 `-1001`·콜백 fail-closed다. | PROCESSING 1h, terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 필수, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. | PROCESSING 1h, terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 1h cutoff 관측 때 제거 |
 | `timeline:callback-token-uses:{taskId}` | callback token 소비 marker. hash 검증 직후 `SET NX`로 고정값 `used`를 저장하며 raw token/hash는 넣지 않는다. 소비 뒤 후속 처리 실패에도 삭제·환불하지 않는다. | 25h |
 | `timeline:date-guard:{userId}:{recordDate}` | 같은 날짜 동시 작업 lease — 값은 holder(draft `task:{taskId}`, 삭제 `delete:{operationId}`, Event PHOTO 추가 `patch-photo-add:{operationId}`) | 1h (PROCESSING 저장 성공 시 재갱신, 삭제·PHOTO 추가는 모든 종료 경로에서 해제) |

@@ -1,7 +1,7 @@
 package com.laimory.server.timeline.dto;
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.laimory.server.common.error.LegacyErrorCodeDeserializer;
+import com.laimory.server.common.error.StrictErrorCodeDeserializer;
 import com.laimory.server.timeline.TaskStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -15,16 +15,16 @@ import io.swagger.v3.oas.annotations.media.Schema;
  *
  * <p>FAILED 보고 시:
  * <ul>
- *   <li>{@code errorCode} — 실패 분류 numeric code(허용: {@code -1008}). 호환 기간에는 legacy
- *       {@code "ERROR_1008"}도 읽는다. null/미지 값은 서버가 {@code -1008}로 폴백한다.</li>
+ *   <li>{@code errorCode} — 실패 분류 numeric code(허용: {@code -1008}).
+ *       null/미지 값은 서버가 {@code -1008}로 폴백한다.</li>
  *   <li>{@code error} — 진단용 자유 텍스트. 저장·클라이언트 노출되지 않고 서버 로그로만 남는다.</li>
  * </ul>
  */
 public record DraftTaskCallbackRequest(
         TaskStatus status,
-        @Schema(description = "AI 실패 분류 code. 신규 writer는 JSON integer -1008을 사용한다.",
+        @Schema(description = "AI 실패 분류 code. JSON integer -1008을 사용한다.",
                 type = "integer", format = "int32", example = "-1008", nullable = true)
-        @JsonDeserialize(using = LegacyErrorCodeDeserializer.class)
+        @JsonDeserialize(using = StrictErrorCodeDeserializer.class)
         Integer errorCode,
         String error
 ) {

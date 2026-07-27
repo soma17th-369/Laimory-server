@@ -26,10 +26,10 @@ import org.springframework.stereotype.Service;
  *   <li><b>토큰 검증(401 -1002)</b> — terminal task도 해시를 보존하므로 재콜백도 토큰으로 검증된다</li>
  *   <li><b>토큰 원자 소비</b> — Redis SET NX marker를 선점한 요청 하나만 통과한다. 이미 소비됐으면
  *       401 -1012이며 terminal 전이·guard 해제·push에 도달하지 않는다</li>
- *   <li>terminal 안전망 — marker가 없던 배포 전 terminal task도 이 요청에서 token을 소비한 뒤
- *       -1012로 거부한다</li>
- *   <li><b>task owner·dailyRecordId 확인</b> — 콜백은 {@code /s/api}라 request principal이 없으므로 이후 전이·guard
- *       해제는 task에 저장된 값을 쓴다. owner나 dailyRecordId가 없는 legacy task는 추정하지 않고 404로 fail-closed</li>
+ *   <li>terminal 안전망 — callback 외부 경로에서 종결되어 marker가 없는 terminal task도 이 요청에서
+ *       token을 소비한 뒤 -1012로 거부한다</li>
+ *   <li><b>task owner·dailyRecordId 사용</b> — 콜백은 {@code /s/api}라 request principal이 없으므로 이후
+ *       전이·guard 해제는 task에 저장된 값을 쓴다</li>
  *   <li>FAILED → markFailed(allowlist 분류 코드만 기록), SUCCESS → markSuccess. 그 외 status → 400</li>
  * </ol>
  *
@@ -82,7 +82,7 @@ public class TimelineCallbackService {
             throw new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED);
         }
 
-        // 3. 배포 전 terminal task처럼 marker가 없던 닫힌 task의 재처리를 막는 안전망.
+        // 3. callback 외부 경로에서 종결되어 marker가 없는 task의 재처리를 막는 안전망.
         if (task.status() != TaskStatus.PROCESSING) {
             log.warn("terminal task rejected after callback token consumption: taskId={} status={}",
                     taskId, task.status());
@@ -90,11 +90,6 @@ public class TimelineCallbackService {
         }
 
         // 4. task owner·결과 record ID 해소 — 콜백엔 request principal이 없으므로 이후 전이·guard 해제 기준이다.
-        //    없는 legacy task(구 shape)는 추정하지 않고 404로 fail-closed(전이 없이 TTL 만료에 맡김).
-        if (task.userId() == null || task.dailyRecordId() == null) {
-            log.warn("legacy task without owner/dailyRecordId, refusing callback: taskId={}", taskId);
-            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
-        }
         long userId = task.userId();
         long dailyRecordId = task.dailyRecordId();
         String callbackTokenHash = task.callbackTokenHash();

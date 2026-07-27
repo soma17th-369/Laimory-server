@@ -101,17 +101,6 @@ class TimelineDraftTaskPollingServiceTest {
     }
 
     @Test
-    void poll_processing_legacyWithoutStartedAt_omitsElapsed() {
-        // 배포 전 legacy PROCESSING(시각 부재) → 값을 추측·위조하지 않고 null(응답 key 생략).
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(processingTask(null)));
-
-        DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
-
-        assertThat(res.status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(res.elapsedSeconds()).isNull();
-    }
-
-    @Test
     void poll_failed_returnsFailureCode() {
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, -1009, "h")));
@@ -127,8 +116,8 @@ class TimelineDraftTaskPollingServiceTest {
     }
 
     @Test
-    void poll_failed_legacyRawError_isReplacedNotLeaked() {
-        // 과거(코드화 이전) 저장분의 raw 메시지는 그대로 내보내지 않고 ERROR_1011로 대체한다(read-side 유출 방어).
+    void poll_failed_unknownNumericError_isReplacedNotLeaked() {
+        // 오염되거나 미지인 numeric code는 그대로 내보내지 않고 -1011로 대체한다(read-side 유출 방어).
         when(timelineTaskService.find("t"))
                 .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, 1234, "h")));
 
@@ -155,18 +144,6 @@ class TimelineDraftTaskPollingServiceTest {
         // 경과 시간은 PROCESSING 전용 — SUCCESS는 null(응답 key 생략)이고 Clock도 읽지 않는다.
         assertThat(res.elapsedSeconds()).isNull();
         verifyNoInteractions(clock);
-    }
-
-    @Test
-    void poll_success_legacyTaskWithoutRecordId_throws0404() {
-        // 배포 전 legacy SUCCESS task(dailyRecordId 부재, terminal TTL 최대 24h 잔존) → 0404(결과 소멸).
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(
-                new TimelineDraftTask(TaskStatus.SUCCESS, null, null, null, "h", null, USER_ID)));
-
-        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
-        verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
     }
 
     @Test
@@ -229,15 +206,4 @@ class TimelineDraftTaskPollingServiceTest {
         verifyNoInteractions(dailyRecordService, dailyTimelineService);
     }
 
-    @Test
-    void poll_legacyTaskWithoutOwner_hiddenAs1001() {
-        // owner가 없는 배포 전 legacy task는 0으로 추정하지 않고 fail-closed(1001) — 상태별 분기에 못 들어간다.
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(new TimelineDraftTask(
-                TaskStatus.PROCESSING, 42L, null, null, "h", null, null)));
-
-        assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
-        verifyNoInteractions(dailyRecordService, dailyTimelineService);
-    }
 }

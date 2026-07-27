@@ -74,8 +74,8 @@ PHOTO 추가와 각 작업 사이 경합을 409 `-1016`으로 차단한다(날�
 3. 서버 콜백은 task 조회 → token hash constant-time 검증(불일치 401 `-1002`) → Redis
    `timeline:callback-token-uses:{taskId}` marker 원자 소비 순서다. 이미 소비된 token과 terminal 재콜백은
    401 `-1012`이며 marker를 선점한 요청 하나만 이후 처리로 진행한다.
-4. 소비 뒤 owner·dailyRecordId 없는 legacy task는 404 fail-closed, body status가 불량이면 400이다.
-   두 경우와 terminal 저장 실패 모두 marker를 환불하지 않는다. 정상 요청은 Redis terminal 전이만
+4. 소비 뒤 body status가 불량이면 400이며 terminal 저장 실패와 마찬가지로 marker를 환불하지 않는다.
+   정상 요청은 Redis terminal 전이만
    기록한다(SUCCESS든 FAILED든 결과 조립·검증·저장 없음).
 5. terminal 저장 성공 직후 task의 `dailyRecordId`로 DailyRecord를 조회해 recordDate를 얻어 날짜 guard를
    compare-and-release한다(record 없음/owner 불일치면 추정하지 않고 TTL에 맡김). 그 뒤 완료 푸시를
@@ -95,15 +95,15 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
   `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 `(dailyRecordId, userId)`가 일치하는
   한 건만 반환하며 없음·비소유는 404 `-404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
   한 read-only transaction에서 bulk 조회하고 Event별 `items`까지 조립한다.
-- polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자·
-  owner 없는 legacy task는 상태와 무관하게 404 `-1001`로 은닉한다. SUCCESS 결과는 task의
-  `dailyRecordId`로만 조회한다 — (userId, recordDate) 재조회는 쓰지 않는다. ID가 없거나(legacy) record가
-  삭제·비소유면 404 `-404`(task 자체 없음 `-1001`과 구분). polling 선검증 뒤 조립 서비스의
+- polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자 task는
+  상태와 무관하게 404 `-1001`로 은닉한다. SUCCESS 결과는 task의 `dailyRecordId`로만 조회한다 —
+  (userId, recordDate) 재조회는 쓰지 않는다. record가 삭제·비소유면 404 `-404`(task 자체 없음
+  `-1001`과 구분). polling 선검증 뒤 조립 서비스의
   권위 재조회 전에 record가 삭제돼도 `DRAFT_RESULT_NOT_FOUND`로 변환해 catch-all 500을 내지 않는다.
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 반환한다(음수 0 clamp,
-  terminal·legacy는 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`)만
-  나간다. 신규 Redis writer는 JSON number를 저장하고 reader는 terminal TTL 소진까지 JSON number와
-  exact legacy `ERROR_XXXX`를 모두 읽는다. 누락·형식 불량·양수·allowlist 밖 값은 `-1011`로 수렴한다.
+  terminal은 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`)만
+  나간다. Redis writer와 reader는 JSON number만 사용한다. 누락·양수·allowlist 밖 numeric 값은
+  `-1011`로 수렴하고 문자열 값은 역직렬화를 거부한다.
 - 하루 타임라인 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건 반복 없이
   record/Event/junction/Item 4단계 bulk SELECT로 읽는다. Event별 Item을 junction으로 로드해
   startAt(null 먼저)·id 순으로 정렬한다. 같은 Item이 여러 Event에 연결되면 같은 `timelineItemId`가 여러

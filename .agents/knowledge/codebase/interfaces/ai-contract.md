@@ -82,9 +82,8 @@ commit **이후에만** 다음 값으로 알린다(commit-then-callback).
 - header: `Callback-Token` — dispatch body로 받은 원문을 그대로 반환
 - body: `status`, `errorCode`, `error` — SUCCESS에도 event/item 결과는 없다(서버는 상태 전이만 기록)
 
-신규 AI writer는 FAILED `errorCode`를 JSON integer(현재 `-1008`)로 보낸다. 서버는 호환 기간 동안
-integer와 exact legacy `"ERROR_1008"`을 모두 읽고, null·미지 값은 `-1008`로 수렴한다. SUCCESS의
-`errorCode`는 사용하지 않는다.
+AI writer는 FAILED `errorCode`를 JSON integer(현재 `-1008`)로 보낸다. 문자열 코드는 허용하지 않으며,
+null·미지 integer 값은 `-1008`로 수렴한다. SUCCESS의 `errorCode`는 사용하지 않는다.
 
 기준 AI 구현은 callback을 한 번 POST하고 실패를 log/반환할 뿐 자동 재시도하지 않는다. 서버는 task 조회와
 constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최초 요청 하나만 terminal 처리로 진행한다.

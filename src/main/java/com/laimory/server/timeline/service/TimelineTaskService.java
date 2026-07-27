@@ -102,7 +102,7 @@ public class TimelineTaskService {
         timelineMetrics.recordTerminalFailed();
     }
 
-    /** Redis task의 numeric/legacy-normalized code를 task-local 타입으로 제한해 해석한다. */
+    /** Redis task의 numeric code를 task-local 타입으로 제한해 해석한다. */
     public static ExceptionType resolveFailureType(Integer code) {
         if (code == null) {
             return ExceptionType.DRAFT_TASK_FAILURE_FALLBACK;

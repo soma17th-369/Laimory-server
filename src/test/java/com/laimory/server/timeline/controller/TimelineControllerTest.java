@@ -230,18 +230,6 @@ class TimelineControllerTest {
         verify(timelineDraftTaskPollingService).poll(eq("v1"), eq(USER_ID), eq("t-1"));
     }
 
-    @Test
-    void pollDraftTask_legacyProcessing_omitsElapsedSecondsKey() throws Exception {
-        // 기준 시각이 없는 legacy PROCESSING → 0으로 위조하지 않고 key 자체를 생략한다(NON_NULL).
-        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-legacy")))
-                .thenReturn(DraftTaskStatusResponse.processing(null));
-
-        mockMvc.perform(get(TASKS + "/t-legacy").with(authenticatedUser(USER_ID)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body.status").value("PROCESSING"))
-                .andExpect(jsonPath("$.body.elapsedSeconds").doesNotExist());
-    }
-
     /**
      * FAILED 폴링도 에러가 아니라 성공 envelope다: HTTP 200 + header.code=0, 실제 상태는 body.status.
      * (FAILED를 별도 에러 응답으로 매핑하는 회귀 방지 — error는 body.error에 실패 분류 코드로, result는 null.)

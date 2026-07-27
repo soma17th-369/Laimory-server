@@ -187,7 +187,7 @@ public interface TimelineApi {
                     + "미지의 코드는 제네릭 실패로 처리한다(전방 호환). "
                     + "PROCESSING에는 `body.elapsedSeconds`(AI 작업 대기 경과 시간, 완료된 초·0 이상)가 함께 담긴다 — "
                     + "기준은 서버가 전처리를 마치고 AI dispatch 대기 단계에 들어간 시각이다(POST 접수 시각 아님). "
-                    + "SUCCESS/FAILED와 기준 시각이 없는 구버전 작업에서는 필드가 생략되므로 optional로 파싱한다.")
+                    + "SUCCESS/FAILED에서는 필드가 생략되므로 optional로 파싱한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "폴링 성공(작업 상태는 body.status)", useReturnTypeSchema = true),
@@ -195,7 +195,7 @@ public interface TimelineApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-1001`(작업 없음 — 만료·타인 작업 포함, 존재 여부는 구분해 주지 않는다) · "
-                            + "`-404`(SUCCESS 작업의 결과 기록이 삭제됐거나 결과 ID가 없는 구버전 작업 — "
+                            + "`-404`(SUCCESS 작업의 결과 기록이 삭제됐거나 소유자가 일치하지 않는 경우 — "
                             + "클라이언트는 1001=작업 소멸, 0404=결과 소멸로 구분)")
     })
     @GetMapping("/{taskId}")

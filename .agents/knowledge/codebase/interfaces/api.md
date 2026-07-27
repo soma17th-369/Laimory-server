@@ -109,7 +109,7 @@ app-facing success/error는 다음 envelope를 사용한다.
   같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.
   client는 message가 아니라 code로 분기한다. bundle key는 numeric code에서 `ERROR_XXXX`로 계산하므로
-  같은 code는 같은 message를 사용한다(legacy key는 외부에 노출하지 않음).
+  같은 code는 같은 message를 사용한다(bundle key는 외부에 노출하지 않음).
 - 사용자 입력을 message argument에 넣지 않는다.
 
 ### Transaction ID

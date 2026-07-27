@@ -74,9 +74,9 @@ handoff를 그대로 사용한다.
   controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/날짜 guard/S3 key/
   polling·직접 조회 결과가 전부 같은 userId에 귀속된다.
 - Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
-  polling은 상태 분기 전에 owner를 대조하고, 타 사용자·owner 없는 legacy task는 404 `-1001`로 은닉한다.
+  polling은 상태 분기 전에 owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
 - AI callback(`/s/api`)은 Bearer 대상이 아니다 — request principal 없이 task 저장 owner로
-  recovery/finalize/guard 해제를 수행하고, owner 없는 legacy task는 finalize 없이 404로 fail-closed한다.
+  recovery/finalize/guard 해제를 수행한다.
 - 고정 fallback(`TimelineDefaults.DEFAULT_USER_ID=0`)은 제거됐다. 기존 user 0 데이터는 인증 API에서
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
 
