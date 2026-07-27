@@ -1,11 +1,13 @@
 package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.laimory.server.common.error.StrictErrorCodeDeserializer;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Objects;
 
 /**
  * timeline draft 비동기 작업의 상태 모델. Redis에 JSON으로 저장된다(JPA 엔티티 아님).
@@ -29,21 +31,33 @@ import java.time.LocalDateTime;
  * ({@code elapsedSeconds})을 계산하는 기준이다. 두 필드 모두 PROCESSING 전용으로 종결 시 보존하지 않는다.
  *
  * <p>{@code userId}는 task owner(작성 요청자)다 — 세 상태 모두 보존되며, 폴링의 소유권 대조와 콜백의
- * 전이·guard 해제가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다). reference type인
- * 이유는 배포 전 legacy JSON의 field 부재를 0으로 오인하지 않기 위해서다 — {@code null} owner는
- * fail-closed(폴링 404, 콜백 전이 거부) 대상이다.
+ * 전이·guard 해제가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다).
  */
-@JsonIgnoreProperties(ignoreUnknown = true) // 구 shape(record 메타데이터 포함) 잔존 JSON을 TTL 소멸까지 관용 수용
 public record TimelineDraftTask(
         TaskStatus status,
-        @JsonInclude(JsonInclude.Include.NON_NULL) Long dailyRecordId,
+        long dailyRecordId,
         @JsonInclude(JsonInclude.Include.NON_NULL) TimelineWindow timelineWindow,
-        String error,
+        @JsonDeserialize(using = StrictErrorCodeDeserializer.class)
+        Integer error,
         String callbackTokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
-        @JsonInclude(JsonInclude.Include.NON_NULL) Long userId
+        long userId
 ) {
+
+    public TimelineDraftTask {
+        Objects.requireNonNull(status, "status");
+        if (dailyRecordId <= 0) {
+            throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
+        }
+        Objects.requireNonNull(callbackTokenHash, "callbackTokenHash");
+        if (userId <= 0) {
+            throw new IllegalArgumentException("userId는 양수여야 합니다");
+        }
+        if (status == TaskStatus.PROCESSING && processingStartedAt == null) {
+            throw new IllegalArgumentException("PROCESSING task에는 processingStartedAt이 필요합니다");
+        }
+    }
 
     /** 클라이언트가 요청에 지정한 AI 이벤트 생성 범위의 local 원본(offset 없음 — 서버 내부 보존용). */
     public record TimelineWindow(
@@ -63,7 +77,7 @@ public record TimelineDraftTask(
                 null, callbackTokenHash, null, userId);
     }
 
-    public static TimelineDraftTask failed(long userId, long dailyRecordId, String error,
+    public static TimelineDraftTask failed(long userId, long dailyRecordId, int error,
                                            String callbackTokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null,
                 error, callbackTokenHash, null, userId);

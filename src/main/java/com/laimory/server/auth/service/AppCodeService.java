@@ -39,7 +39,7 @@ public class AppCodeService {
     /**
      * app_code를 원자 소비(GETDEL)하고 verifier를 검증해 userId를 반환한다.
      * 무효/만료/이미 소비는 {@code APP_CODE_INVALID}, verifier 불일치는 {@code APP_CODE_VERIFIER_MISMATCH} —
-     * 클라이언트엔 전부 {@code ERROR_2002}로 나간다(사유 구분은 공격자에게만 유용). 내부 구분은 access 로그에 남는다.
+     * 클라이언트엔 전부 {@code -2002}로 나간다(사유 구분은 공격자에게만 유용). 내부 구분은 access 로그에 남는다.
      */
     public long consume(String appCode, String appVerifier) {
         if (appCode == null || appCode.isBlank() || appVerifier == null || appVerifier.isBlank()) {

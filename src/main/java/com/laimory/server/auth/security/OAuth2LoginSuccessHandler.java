@@ -1,7 +1,7 @@
 package com.laimory.server.auth.security;
 
 import com.laimory.server.auth.service.SocialLoginService;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.user.Provider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -47,7 +47,8 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             // 비정상 진입(콜백 직접 호출 등) — 실패 핸드오프로 수렴시킨다.
             log.warn("oauth2 login success without handoff context: challengePresent={} principalType={}",
                     appChallenge != null, authentication.getPrincipal().getClass().getSimpleName());
-            response.sendRedirect(HandoffRedirects.uri(request, "error", ErrorCode.ERROR_2004.code()));
+            response.sendRedirect(HandoffRedirects.uri(
+                    request, "error", Integer.toString(ExceptionType.OAUTH_LOGIN_FAILED.code())));
             return;
         }
 
@@ -62,7 +63,8 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             // 필터 단계라 GlobalExceptionHandler 미도달 — 예상 못한 실패이므로 여기서만 stacktrace를 남긴다.
             log.error("social login completion failed: registrationId={}",
                     oauthToken.getAuthorizedClientRegistrationId(), e);
-            response.sendRedirect(HandoffRedirects.uri(request, "error", ErrorCode.ERROR_2004.code()));
+            response.sendRedirect(HandoffRedirects.uri(
+                    request, "error", Integer.toString(ExceptionType.OAUTH_LOGIN_FAILED.code())));
             return;
         }
         response.sendRedirect(HandoffRedirects.uri(request, "code", appCode));

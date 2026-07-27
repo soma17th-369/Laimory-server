@@ -55,9 +55,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             request.setAttribute(RequestLogAttributes.ERROR_DETAIL,
                     LogSanitizer.sanitize(logDetail, MAX_DETAIL_LENGTH));
         }
-        String code = type.errorCode().code();
-        String message = messageSource.getMessage(code, args, LocaleContextHolder.getLocale());
-        return ApiResponse.error(code, message);
+        String message = messageSource.getMessage(type.messageKey(), args, LocaleContextHolder.getLocale());
+        return ApiResponse.error(type.code(), message);
     }
 
     // ── (A) Spring MVC 표준 예외 전부: 베이스가 status/headers를 정해 여기로 모인다. raw status 보존 ──
@@ -79,7 +78,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiResponse<Void>> onBusiness(BusinessException e, HttpServletRequest request) {
         ExceptionType type = e.getExceptionType();
-        return ResponseEntity.status(type.errorCode().status())
+        return ResponseEntity.status(type.status())
                 .body(errorEnvelope(type, e.getArgs(), request, null));
     }
 

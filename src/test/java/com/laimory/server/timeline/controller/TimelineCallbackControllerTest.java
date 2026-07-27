@@ -1,16 +1,19 @@
 package com.laimory.server.timeline.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
@@ -22,6 +25,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.mockito.ArgumentCaptor;
 
 /**
  * 서버간 콜백 컨트롤러 슬라이스 테스트(MockMvc). Callback-Token 헤더 전달과 401/404 매핑
@@ -54,6 +58,36 @@ class TimelineCallbackControllerTest {
     }
 
     @Test
+    void callback_acceptsNumericErrorCode() throws Exception {
+        mockMvc.perform(post(CALLBACK)
+                        .header("Callback-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"FAILED\",\"errorCode\":-1008}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<DraftTaskCallbackRequest> request = ArgumentCaptor.forClass(DraftTaskCallbackRequest.class);
+        verify(timelineCallbackService)
+                .handleCallback(anyString(), eq("t-1"), eq("tok-123"), request.capture());
+        assertThat(request.getValue().errorCode()).isEqualTo(-1008);
+    }
+
+    @Test
+    void callback_rejectsStringErrorCode() throws Exception {
+        for (String body : new String[] {
+                "{\"status\":\"FAILED\",\"errorCode\":\"ERROR_1008\"}",
+                "{\"status\":\"FAILED\",\"errorCode\":\"-1008\"}"
+        }) {
+            mockMvc.perform(post(CALLBACK)
+                            .header("Callback-Token", "tok-123")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest());
+        }
+
+        verifyNoInteractions(timelineCallbackService);
+    }
+
+    @Test
     void callback_serviceUnauthorized_returns401WithErrorCode() throws Exception {
         doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
@@ -62,7 +96,7 @@ class TimelineCallbackControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1002"))
+                .andExpect(jsonPath("$.header.code").value(-1002))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -77,7 +111,7 @@ class TimelineCallbackControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1012"))
+                .andExpect(jsonPath("$.header.code").value(-1012))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -92,6 +126,6 @@ class TimelineCallbackControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"SUCCESS\"}"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1001"));
+                .andExpect(jsonPath("$.header.code").value(-1001));
     }
 }

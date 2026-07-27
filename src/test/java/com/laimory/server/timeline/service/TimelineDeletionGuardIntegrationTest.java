@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -76,7 +75,7 @@ class TimelineDeletionGuardIntegrationTest {
         assertThat(timelineTaskService.claimDateGuard(userId, DATE, taskHolder)).isTrue();
         assertThatThrownBy(() -> timelineDeletionService.deleteEvent("v1", userId, eventId))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
         assertThat(timelineEventRepository.findById(eventId)).isPresent();
         assertThat(dailyRecordRepository.findById(recordId)).isPresent();
 
@@ -98,7 +97,7 @@ class TimelineDeletionGuardIntegrationTest {
         assertThat(timelineTaskService.claimDateGuard(userId, DATE, taskHolder)).isTrue();
         assertThatThrownBy(() -> timelineDeletionService.deleteDailyRecord("v1", userId, recordId))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
         assertThat(dailyRecordRepository.findById(recordId)).isPresent();
 
         assertThat(timelineTaskService.releaseDateGuard(userId, DATE, taskHolder)).isTrue();

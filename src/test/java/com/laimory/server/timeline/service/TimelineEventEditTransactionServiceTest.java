@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -203,7 +202,7 @@ class TimelineEventEditTransactionServiceTest {
         assertThatThrownBy(() -> service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of())))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
         assertOriginalState(event, null);
@@ -220,7 +219,7 @@ class TimelineEventEditTransactionServiceTest {
         assertThatThrownBy(() -> service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of())))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
                 });
 
         assertOriginalState(event, null);

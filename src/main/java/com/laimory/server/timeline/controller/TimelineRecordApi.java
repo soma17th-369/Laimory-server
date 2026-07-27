@@ -46,7 +46,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "전체 조회 성공", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @GetMapping("/daily-records")
     ResponseEntity<ApiResponse<DailyTimelinesResponse>> getDailyTimelines(
@@ -60,9 +60,9 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "단건 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_0404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
+                    description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @GetMapping("/daily-records/{dailyRecordId}")
     ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimeline(
@@ -87,17 +87,17 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
+                    description = "`-400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal · "
                             + "memo 10,000자 초과 · photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌 · "
-                            + "`ERROR_1004` — 사진 수 초과"),
+                            + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능 · "
-                            + "`ERROR_1016` — non-empty photosToAdd가 있고 같은 날짜 AI/사진추가/삭제가 진행 중")
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능 · "
+                            + "`-1016` — non-empty photosToAdd가 있고 같은 날짜 AI/사진추가/삭제가 진행 중")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
@@ -113,13 +113,13 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "반영 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — memo가 10,000자 초과"),
+                    description = "`-400` — memo가 10,000자 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
     })
     @PutMapping("/events/{timelineEventId}/memo")
     ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
@@ -137,14 +137,14 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_0404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`ERROR_1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) · "
+                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+                    description = "`-1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
     })
     @DeleteMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
@@ -160,14 +160,14 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_0404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
+                    description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003` — 하루 기록이 이미 SAVED(작성완료) · "
-                            + "`ERROR_1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
+                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료) · "
+                            + "`-1016` — 같은 날짜의 AI 작업/사진추가/삭제가 진행 중(잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`ERROR_1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
+                    description = "`-1017` — 사진 S3 삭제 실패(데이터 보존됨 — 잠시 후 재시도)")
     })
     @DeleteMapping("/daily-records/{dailyRecordId}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecord(

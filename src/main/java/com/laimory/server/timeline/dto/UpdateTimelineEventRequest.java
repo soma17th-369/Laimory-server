@@ -66,7 +66,7 @@ public record UpdateTimelineEventRequest(
 
     /**
      * 4개 키의 presence를 강제하는 역직렬화기. 키가 하나라도 없으면 {@code MismatchedInputException}을
-     * 던지고, Spring MVC가 {@code HttpMessageNotReadableException}(→ 400 {@code ERROR_0400})으로 매핑한다 —
+     * 던지고, Spring MVC가 {@code HttpMessageNotReadableException}(→ 400 {@code -400})으로 매핑한다 —
      * 깨진 JSON과 같은 경로다. 키가 다 있으면 값 변환은 context에 위임한다(포맷 오류도 동일하게 400).
      * eventType은 optional 키라 presence를 강제하지 않되, 키가 있으면 명시적 null을 여기서 거부한다.
      */

@@ -56,10 +56,10 @@ class PushRegistrationControllerTest {
         // 인증 게이트: 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
         mockMvc.perform(put(PATH).contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+                .andExpect(jsonPath("$.header.code").value(-2001));
         mockMvc.perform(delete(PATH).contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+                .andExpect(jsonPath("$.header.code").value(-2001));
 
         verifyNoInteractions(pushRegistrationService);
     }
@@ -69,7 +69,7 @@ class PushRegistrationControllerTest {
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -82,7 +82,7 @@ class PushRegistrationControllerTest {
         mockMvc.perform(delete(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -97,7 +97,7 @@ class PushRegistrationControllerTest {
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"firebaseInstallationId\":\"\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -109,7 +109,7 @@ class PushRegistrationControllerTest {
         mockMvc.perform(delete(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
     }
 
     @Test
@@ -121,7 +121,7 @@ class PushRegistrationControllerTest {
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
 
         verify(pushRegistrationService).register("v1", USER_ID, null);
     }

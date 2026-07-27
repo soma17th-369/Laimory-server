@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -112,7 +113,7 @@ class TimelineTaskStoreTest {
     void save_terminalTasks_omitProcessingStartedAtAndWindow() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(2)).setAndRemoveFromSortedSet(
@@ -124,11 +125,34 @@ class TimelineTaskStoreTest {
     }
 
     @Test
+    void save_failedTask_writesNumericError() {
+        store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).setAndRemoveFromSortedSet(
+                anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
+        assertThat(jsonCaptor.getValue()).contains("\"error\":-1009");
+        assertThat(jsonCaptor.getValue()).doesNotContain("\"error\":\"");
+    }
+
+    @Test
+    void find_stringErrorCode_isRejected() {
+        for (String value : java.util.List.of("ERROR_1009", "-1009")) {
+            when(redis.get("timeline:draft-task:string-error")).thenReturn(
+                    "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"" + value + "\","
+                            + "\"callbackTokenHash\":\"h\",\"userId\":7}");
+
+            assertThatThrownBy(() -> store.find("string-error"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
     void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
         // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회·guard 해제의 기준값.
         store.save("p", processingTask(), Duration.ofHours(1));
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> processingJson = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> terminalJson = ArgumentCaptor.forClass(String.class);
@@ -162,7 +186,7 @@ class TimelineTaskStoreTest {
     @Test
     void save_terminalAtomicallyRemovesTaskFromProcessingIndex() {
         store.save("success", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("failed", TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
+        store.save("failed", TimelineDraftTask.failed(7L, 42L, -1009, "h"),
                 Duration.ofHours(24));
 
         verify(redis).setAndRemoveFromSortedSet(
@@ -201,21 +225,14 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void find_legacyJsonWithOldShape_deserializesWithNullNewFields() {
-        // 배포 전 저장된 구 shape JSON(record 메타데이터 포함, dailyRecordId/userId 없음) → 예외 없이 역직렬화되고
-        // 새 필수 판정 재료(dailyRecordId/userId)는 null — 콜백·폴링이 fail-closed 판정한다.
-        when(redis.get("timeline:draft-task:legacy")).thenReturn(
+    void find_jsonWithoutRequiredTaskFields_isRejected() {
+        when(redis.get("timeline:draft-task:invalid")).thenReturn(
                 "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
                         + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
                         + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
 
-        Optional<TimelineDraftTask> found = store.find("legacy");
-
-        assertThat(found).isPresent();
-        assertThat(found.get().status()).isEqualTo(TaskStatus.PROCESSING);
-        assertThat(found.get().dailyRecordId()).isNull();
-        assertThat(found.get().userId()).isNull();
-        assertThat(found.get().processingStartedAt()).isNull();
+        assertThatThrownBy(() -> store.find("invalid"))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

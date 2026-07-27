@@ -9,12 +9,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -72,13 +73,13 @@ class TimelineTaskServiceTest {
     }
 
     @Test
-    void markFailed_storesFailureCodeName() {
-        service.markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_1009, "hash");
+    void markFailed_storesNumericFailureCode() {
+        service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, "hash");
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         verify(timelineTaskStore).save(eq("t"), task.capture(), any(Duration.class));
         assertThat(task.getValue().status()).isEqualTo(TaskStatus.FAILED);
-        assertThat(task.getValue().error()).isEqualTo("ERROR_1009");
+        assertThat(task.getValue().error()).isEqualTo(-1009);
         // FAILED도 PROCESSING 시각을 보존하지 않는다. owner·dailyRecordId는 보존된다.
         assertThat(task.getValue().processingStartedAt()).isNull();
         assertThat(task.getValue().userId()).isEqualTo(USER_ID);
@@ -89,10 +90,27 @@ class TimelineTaskServiceTest {
     @Test
     void markFailed_rejectsNonTaskFailureCode() {
         // HTTP 에러 코드(ERROR_0400 등)를 task 상태로 저장하는 오용은 시그니처+가드가 차단한다.
-        assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ErrorCode.ERROR_0400, "hash"))
+        assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.VALIDATION_FAILED, "hash"))
                 .isInstanceOf(IllegalStateException.class);
         verify(timelineTaskStore, never()).save(any(), any(), any());
         verify(timelineMetrics, never()).recordTerminalFailed();
+    }
+
+    @Test
+    void resolveFailureType_onlyAcceptsTaskLocalCodes_andFallsBackForUnknownOrNull() {
+        assertThat(List.of(
+                ExceptionType.AI_REPORTED_FAILURE,
+                ExceptionType.AI_DISPATCH_FAILED,
+                ExceptionType.DRAFT_TASK_FAILURE_FALLBACK))
+                .allSatisfy(type -> assertThat(TimelineTaskService.resolveFailureType(type.code()))
+                        .isEqualTo(type));
+
+        assertThat(TimelineTaskService.resolveFailureType(null))
+                .isEqualTo(ExceptionType.DRAFT_TASK_FAILURE_FALLBACK);
+        assertThat(TimelineTaskService.resolveFailureType(1008))
+                .isEqualTo(ExceptionType.DRAFT_TASK_FAILURE_FALLBACK);
+        assertThat(TimelineTaskService.resolveFailureType(-2001))
+                .isEqualTo(ExceptionType.DRAFT_TASK_FAILURE_FALLBACK);
     }
 
     @Test

@@ -44,6 +44,9 @@ class VoidSuccessResponseCustomizerTest {
         JsonNode componentExample = serialized.at("/components/schemas/ApiResponseVoid/example");
         assertThat(componentExample.has("body")).isTrue();
         assertThat(componentExample.get("body").isNull()).isTrue();
+        assertThat(componentExample.at("/header/code").isIntegralNumber()).isTrue();
+        assertThat(componentExample.at("/header/code").asInt()).isZero();
+        assertThat(componentExample.at("/header/message").asText()).isEmpty();
         JsonNode responseExample = serialized.at("/paths/~1void/get/responses/200/content/*~1*/example");
         assertThat(responseExample.has("body")).isTrue();
         assertThat(responseExample.get("body").isNull()).isTrue();

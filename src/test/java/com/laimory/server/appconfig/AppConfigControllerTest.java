@@ -38,7 +38,8 @@ class AppConfigControllerTest {
 
         mockMvc.perform(get(INTRO))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.header.message").value(""))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.header.transactionId").doesNotExist()) // 노출 채널은 헤더뿐(hard cut 회귀 방지)
                 .andExpect(jsonPath("$.body.minAppVersion").value(1))

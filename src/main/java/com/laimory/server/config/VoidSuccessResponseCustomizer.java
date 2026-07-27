@@ -76,8 +76,8 @@ public class VoidSuccessResponseCustomizer implements OpenApiCustomizer {
     private ObjectNode successExample() {
         JsonNodeFactory nodes = JsonNodeFactory.instance;
         ObjectNode header = nodes.objectNode()
-                .put("code", "COMMON_0000")
-                .put("message", "success");
+                .put("code", 0)
+                .put("message", "");
         ObjectNode example = nodes.objectNode();
         example.set("header", header);
         example.set("body", nodes.nullNode());

@@ -92,7 +92,7 @@ public class S3PhotoStorageService {
     /**
      * 객체들을 {@code DeleteObjects}로 배치 삭제한다(최대 {@value #MAX_KEYS_PER_BATCH_DELETE}개/batch 순차 호출).
      * SDK 예외 또는 응답의 객체별 error가 1건이라도 있으면 {@link ExceptionType#PHOTO_BATCH_DELETE_FAILED}
-     * (ERROR_1017, 502)를 던진다 — 호출부(삭제 파이프라인)는 이때 DB 삭제를 시작하지 않아 재시도로 수렴한다
+     * (-1017, 502)를 던진다 — 호출부(삭제 파이프라인)는 이때 DB 삭제를 시작하지 않아 재시도로 수렴한다
      * (이미 지워진 key는 S3가 성공 처리하므로 재시도가 안전하다).
      *
      * <p>로그에 객체 key·URL은 남기지 않는다(개수·에러 코드만).

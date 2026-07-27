@@ -31,7 +31,7 @@ public record CreateDraftTaskRequest(
                         + "검증하고 값 변형 없이 AI에 전달한다. recordDate·recordAt·source item 시각과 독립이다.")
         TimelineWindowDto timelineWindow,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
-                description = "하루 기록 원천 아이템 목록. 비어 있으면 안 되고, 추가할 신규가 하나도 없으면 ERROR_1013.")
+                description = "하루 기록 원천 아이템 목록. 비어 있으면 안 되고, 추가할 신규가 하나도 없으면 -1013.")
         List<SourceItemDto> sourceItems
 ) {
 }

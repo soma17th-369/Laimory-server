@@ -13,7 +13,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
@@ -89,7 +88,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
         verifyNoInteractions(dailyRecordService, timelineTaskService, transactionService);
@@ -104,7 +103,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
         verifyNoInteractions(timelineTaskService, transactionService);
@@ -121,7 +120,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
                 });
 
         verifyNoInteractions(timelineTaskService, transactionService);
@@ -238,7 +237,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_COUNT_EXCEEDED);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1004);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1004);
                     assertThat(exception.getArgs()).containsExactly(MAX_PHOTO_COUNT);
                 });
 
@@ -298,7 +297,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto()))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.RECORD_DATE_IN_PROGRESS);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1016);
                 });
 
         verifyNoInteractions(transactionService);
@@ -393,7 +392,7 @@ class TimelineEventEditServiceTest {
 
         assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(10_001)))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
 
         verifyNoInteractions(timelineTaskService, transactionService);
     }
@@ -405,7 +404,7 @@ class TimelineEventEditServiceTest {
         assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "메모"))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-                    assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
 
         verifyNoInteractions(timelineTaskService, transactionService);

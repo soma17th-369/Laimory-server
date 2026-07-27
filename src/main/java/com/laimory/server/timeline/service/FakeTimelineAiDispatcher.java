@@ -1,7 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -75,12 +75,12 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
                     fakeAiTimelineAppendService.append(taskId, request.dailyRecordId());
             result = appendResult == FakeAiTimelineAppendService.AppendResult.SUCCESS
                     ? new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null)
-                    : new DraftTaskCallbackRequest(TaskStatus.FAILED, ErrorCode.ERROR_1008.name(),
+                    : new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
                             "fake validation failed");
         } catch (RuntimeException e) {
             log.warn("fake AI append failed: taskId={}", taskId, e);
             // 상세 예외는 위 로그에만 — 콜백 서비스가 error를 또 로깅하므로 고정 문구로 이중 노출을 피한다.
-            result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ErrorCode.ERROR_1008.name(),
+            result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
                     "fake append failed");
         }
         // append()가 리턴했다 = final 트랜잭션 커밋 완료. 여기서부터가 callback(조기 콜백 구조적 차단).

@@ -114,7 +114,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.timelines[0].dailyRecordId").value(77))
                 .andExpect(jsonPath("$.body.timelines[0].recordDate").value("2026-07-08"))
@@ -140,7 +140,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.timelines").isArray())
                 .andExpect(jsonPath("$.body.timelines").isEmpty());
     }
@@ -152,7 +152,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.dailyRecordId").value(77))
                 .andExpect(jsonPath("$.body.events[0].timelineEventId").value(11))
@@ -170,7 +170,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"))
+                .andExpect(jsonPath("$.header.code").value(-404))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -178,11 +178,11 @@ class TimelineRecordControllerTest {
     void timelineReads_withoutAuthentication_return401Envelope() throws Exception {
         mockMvc.perform(get(DAILY_RECORDS_PATH))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
         mockMvc.perform(get(DAILY_RECORD_PATH))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+                .andExpect(jsonPath("$.header.code").value(-2001));
 
         verifyNoInteractions(dailyTimelineService);
     }
@@ -191,7 +191,7 @@ class TimelineRecordControllerTest {
     void updateTimelineEvent_returns200WithExplicitNullBody() throws Exception {
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -218,7 +218,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
 
         verifyNoInteractions(timelineEventEditService);
     }
@@ -236,7 +236,7 @@ class TimelineRecordControllerTest {
                 """;
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
+                .andExpect(jsonPath("$.header.code").value(0));
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
@@ -250,7 +250,7 @@ class TimelineRecordControllerTest {
         body.put("eventType", "MEAL");
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"));
+                .andExpect(jsonPath("$.header.code").value(0));
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
@@ -265,7 +265,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
 
         verifyNoInteractions(timelineEventEditService);
     }
@@ -277,7 +277,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
 
         verifyNoInteractions(timelineEventEditService);
     }
@@ -357,7 +357,7 @@ class TimelineRecordControllerTest {
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
 
         verifyNoInteractions(timelineEventEditService);
     }
@@ -369,7 +369,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -380,7 +380,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -390,7 +390,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
@@ -401,7 +401,7 @@ class TimelineRecordControllerTest {
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+                .andExpect(jsonPath("$.header.code").value(-1016));
     }
 
     @Test
@@ -412,7 +412,7 @@ class TimelineRecordControllerTest {
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1004"));
+                .andExpect(jsonPath("$.header.code").value(-1004));
     }
 
     @Test
@@ -422,7 +422,7 @@ class TimelineRecordControllerTest {
                 """;
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -435,7 +435,7 @@ class TimelineRecordControllerTest {
         // body가 {}(필드 부재)면 memo=null로 서비스에 전달돼 "메모 제거"로 처리된다(계약: absent=null).
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(this::assertBodyIsExplicitNull);
 
         verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), isNull());
@@ -451,7 +451,7 @@ class TimelineRecordControllerTest {
                 """;
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -465,7 +465,7 @@ class TimelineRecordControllerTest {
                 """;
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -478,7 +478,7 @@ class TimelineRecordControllerTest {
                 """;
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     // --- deleteTimelineEvent ---
@@ -487,7 +487,7 @@ class TimelineRecordControllerTest {
     void deleteTimelineEvent_returns200WithEmptyBody() throws Exception {
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -502,7 +502,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -512,7 +512,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1003"));
+                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
@@ -522,7 +522,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+                .andExpect(jsonPath("$.header.code").value(-1016));
     }
 
     @Test
@@ -532,7 +532,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1017"))
+                .andExpect(jsonPath("$.header.code").value(-1017))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
@@ -542,7 +542,7 @@ class TimelineRecordControllerTest {
     void deleteDailyRecord_returns200WithEmptyBody() throws Exception {
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.header.code").value("COMMON_0000"))
+                .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
@@ -556,7 +556,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -566,7 +566,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1016"));
+                .andExpect(jsonPath("$.header.code").value(-1016));
     }
 
     @Test
@@ -576,7 +576,7 @@ class TimelineRecordControllerTest {
 
         mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.header.code").value("ERROR_1017"));
+                .andExpect(jsonPath("$.header.code").value(-1017));
     }
 
     private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {

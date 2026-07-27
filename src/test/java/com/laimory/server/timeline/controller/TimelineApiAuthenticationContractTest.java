@@ -47,7 +47,7 @@ class TimelineApiAuthenticationContractTest {
                 .filter(response -> "401".equals(response.responseCode()))
                 .toList();
         assertThat(unauthorized).hasSize(1);
-        assertThat(unauthorized.get(0).description()).contains("ERROR_2001");
+        assertThat(unauthorized.get(0).description()).contains("-2001");
     }
 
     @ParameterizedTest

@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
@@ -125,7 +124,7 @@ class TimelineEventPhotoAddIntegrationTest {
                 List.of(photo("raw-photo")));
         assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", userId, eventId, photoRequest))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
         TimelineEvent unchanged = timelineEventRepository.findById(eventId).orElseThrow();
         assertThat(unchanged.getTitle()).isEqualTo("기존 제목");
         assertThat(unchanged.getMemo()).isNull();

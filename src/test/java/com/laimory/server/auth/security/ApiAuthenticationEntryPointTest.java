@@ -48,7 +48,7 @@ class ApiAuthenticationEntryPointTest {
         assertThat(response.getCharacterEncoding()).isEqualToIgnoringCase("UTF-8");
         assertThat(response.getHeader("WWW-Authenticate")).isEqualTo("Bearer");
         JsonNode body = objectMapper.readTree(response.getContentAsString());
-        assertThat(body.path("header").path("code").asText()).isEqualTo("ERROR_2001");
+        assertThat(body.path("header").path("code").asInt()).isEqualTo(-2001);
         assertThat(body.path("header").path("message").asText()).isNotBlank();
         assertThat(body.path("body").isNull()).isTrue();
     }

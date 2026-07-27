@@ -83,7 +83,7 @@ class SecurityConfigTest {
     void authorizationStart_withoutAppChallenge_returns400Envelope() throws Exception {
         mockMvc.perform(get("/oauth2/authorization/google"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"))
+                .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(header().exists("Transaction-Id")) // 필터단 직접 400에도 tx 헤더(TransactionIdFilter가 Security 체인보다 앞)
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -92,7 +92,7 @@ class SecurityConfigTest {
     void authorizationStart_withMalformedAppChallenge_returns400Envelope() throws Exception {
         mockMvc.perform(get("/oauth2/authorization/google").queryParam("app_challenge", "short"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0400"));
+                .andExpect(jsonPath("$.header.code").value(-400));
     }
 
     @Test
@@ -123,7 +123,7 @@ class SecurityConfigTest {
         // /a/api 인증 강제: 무토큰 요청은 컨트롤러 유무와 무관하게 Security 단계에서 401 ERROR_2001로 거절된다.
         mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"))
+                .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist())
                 .andExpect(header().string("WWW-Authenticate", "Bearer"))
                 // Security 단계 401에도 tx 헤더(TransactionIdFilter가 Security 체인보다 앞).
@@ -135,7 +135,7 @@ class SecurityConfigTest {
         mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
                         .header("Authorization", "Bearer not-a-valid-token"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value("ERROR_2001"));
+                .andExpect(jsonPath("$.header.code").value(-2001));
     }
 
     @Test
@@ -146,7 +146,7 @@ class SecurityConfigTest {
         mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -154,10 +154,10 @@ class SecurityConfigTest {
         // 공개(/api)·서버간(/s/api) 경로는 Bearer 없음만으로 거절되지 않는다 — 미매핑이라 404 envelope(401 아님).
         mockMvc.perform(get("/api/v1/whatever"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
         mockMvc.perform(get("/s/api/v1/whatever"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
@@ -165,6 +165,6 @@ class SecurityConfigTest {
         // 문자열 prefix가 아니라 경로 세그먼트 매칭 — /a/apiary는 보호 대상이 아니다(404, 401 아님).
         mockMvc.perform(get("/a/apiary"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value("ERROR_0404"));
+                .andExpect(jsonPath("$.header.code").value(-404));
     }
 }

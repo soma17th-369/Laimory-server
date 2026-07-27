@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.timeline.CallbackTokens;
@@ -47,7 +46,7 @@ import org.springframework.stereotype.Service;
  * 파생하지 않는다. 세 값 사이의 날짜 정합성도 검증하지 않는다(독립 계약).
  *
  * <p>같은 (userId, recordDate)에는 날짜 guard(Redis SET NX lease)로 AI 작업 하나만 허용한다 — 두 번째 POST는
- * guard 선점 실패로 409(ERROR_1016) 거절된다. guard는 terminal 전이 시 compare-and-release로 해제되고,
+ * guard 선점 실패로 409(-1016) 거절된다. guard는 terminal 전이 시 compare-and-release로 해제되고,
  * 서버 크래시 등 이상 시에도 TTL 1시간으로 자연 해제된다(해제 경계 규칙은 {@link TimelineTaskService} 참고).
  *
  * <p>⚠️ 단계 순서가 load-bearing이다: DailyRecord 선생성 + source 저장을 <b>먼저 커밋</b>한 뒤 Redis에
@@ -76,8 +75,8 @@ public class TimelineDraftTaskService {
 
     /**
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
-     * 같은 날짜에 진행 중인 작업(guard 선점 실패)이면 409(ERROR_1016), 이미 SAVED인 daily record면
-     * 409(ERROR_1003), 기존 final rawId 제외 후 새 item이 없으면 409(ERROR_1013)로 거절한다.
+     * 같은 날짜에 진행 중인 작업(guard 선점 실패)이면 409(-1016), 이미 SAVED인 daily record면
+     * 409(-1003), 기존 final rawId 제외 후 새 item이 없으면 409(-1013)로 거절한다.
      * PROCESSING 저장 후 dispatch 전에 guard 소유를 재확인(refresh)하며, 소유 미확인이면 dispatch 없이
      * FAILED로 종결한다. dispatch가 동기 예외를 던져도 task를 FAILED로 고정한다 — 두 경우 모두 taskId는
      * 정상 반환한다(클라가 폴링으로 결과 확인).
@@ -116,7 +115,7 @@ public class TimelineDraftTaskService {
         // 남의 namespace에 귀속되는 버그다(불변식).
 
         // 같은 날짜 동시 작업 차단: taskId를 holder로 새겨 날짜 guard를 선점한다(SET NX).
-        // 실패 = 같은 날짜의 draft/사진추가/삭제가 진행 중 → 409(ERROR_1016).
+        // 실패 = 같은 날짜의 draft/사진추가/삭제가 진행 중 → 409(-1016).
         String taskId = UuidV7.randomUuidV7().toString();
         String guardHolder = TimelineTaskService.taskGuardHolder(taskId);
         if (!timelineTaskService.claimDateGuard(userId, recordDate, guardHolder)) {
@@ -146,7 +145,7 @@ public class TimelineDraftTaskService {
 
             // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
             // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
-            // BusinessException(ERROR_1014 전이 / ERROR_1015 영구)를 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
+            // BusinessException(-1014 전이 / -1015 영구)를 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
             List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
 
             // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
@@ -184,7 +183,8 @@ public class TimelineDraftTaskService {
         // 보존한다(cleanup이 정리). 내 lease가 아니므로 guard는 건드리지 않는다(해제 금지).
         if (!refreshDateGuardConfirmingOwnership(userId, recordDate, guardHolder, taskId)) {
             log.warn("date guard ownership not confirmed before dispatch, aborting: taskId={}", taskId);
-            timelineTaskService.markFailed(taskId, userId, dailyRecordId, ErrorCode.ERROR_1009, callbackTokenHash);
+            timelineTaskService.markFailed(
+                    taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
             return taskId;
         }
 
@@ -197,7 +197,8 @@ public class TimelineDraftTaskService {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED 종결 + guard 해제가 안전하다.
             // 상세는 로그로만(폴링 body.error 유출 차단). terminal 저장 성공 시에만 해제(규칙 ③).
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
-            timelineTaskService.markFailed(taskId, userId, dailyRecordId, ErrorCode.ERROR_1009, callbackTokenHash);
+            timelineTaskService.markFailed(
+                    taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
             releaseDateGuardQuietly(userId, recordDate, guardHolder, taskId);
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수

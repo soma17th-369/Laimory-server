@@ -18,7 +18,6 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -249,7 +248,7 @@ class TimelineDeletionServiceTest {
         assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(ex.getErrorCode()).isEqualTo(-404);
                 });
         verifyNoInteractions(timelineTaskService, s3PhotoStorageService, timelineDeletionTransactionService);
     }
@@ -274,7 +273,7 @@ class TimelineDeletionServiceTest {
 
         assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         // SAVED 선거절 — guard·S3·DB 어떤 부수효과도 없다.
         verifyNoInteractions(timelineTaskService, s3PhotoStorageService, timelineDeletionTransactionService);
     }
@@ -288,7 +287,7 @@ class TimelineDeletionServiceTest {
         assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.RECORD_DATE_IN_PROGRESS);
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016);
+                    assertThat(ex.getErrorCode()).isEqualTo(-1016);
                 });
         verifyNoInteractions(s3PhotoStorageService, timelineDeletionTransactionService);
         // 내 guard가 아니므로 해제하지 않는다(남의 lease를 건드리면 안 됨).
@@ -306,7 +305,7 @@ class TimelineDeletionServiceTest {
 
         assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
 
         // S3 실패 시 DB 삭제를 시작하지 않는다(데이터 보존 → 재시도 수렴).
         verifyNoInteractions(timelineDeletionTransactionService);
@@ -388,7 +387,7 @@ class TimelineDeletionServiceTest {
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
-                    assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_0404);
+                    assertThat(ex.getErrorCode()).isEqualTo(-404);
                 });
         verifyNoInteractions(timelineTaskService, s3PhotoStorageService, timelineDeletionTransactionService);
     }
@@ -410,7 +409,7 @@ class TimelineDeletionServiceTest {
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1003));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verifyNoInteractions(timelineTaskService, s3PhotoStorageService, timelineDeletionTransactionService);
     }
 
@@ -421,7 +420,7 @@ class TimelineDeletionServiceTest {
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1016));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
         verifyNoInteractions(s3PhotoStorageService, timelineDeletionTransactionService);
     }
 
@@ -436,7 +435,7 @@ class TimelineDeletionServiceTest {
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
         verifyNoInteractions(timelineDeletionTransactionService);
         verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(RECORD_DATE), anyString());
     }

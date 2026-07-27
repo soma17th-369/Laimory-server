@@ -8,7 +8,7 @@ import java.util.List;
  */
 public record PhotoUploadCreateRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
-                description = "업로드할 사진 메타 목록. 비어 있으면 안 되고, 요청당 최대 20장 — 초과 시 ERROR_1004.")
+                description = "업로드할 사진 메타 목록. 비어 있으면 안 되고, 요청당 최대 20장 — 초과 시 -1004.")
         List<PhotoUploadItem> photos
 ) {
 }

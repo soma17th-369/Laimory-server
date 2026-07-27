@@ -32,7 +32,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>공통 순서가 load-bearing이다:
  * 조회·소유권/상태 사전 검증(404 은닉·SAVED 409 — 아무 부수효과 전에 거절) → 날짜 guard를
- * {@code delete:{operationId}} holder로 선점(실패 = 같은 날짜 AI 작업/사진추가/삭제 진행 중 → 409 ERROR_1016) →
+ * {@code delete:{operationId}} holder로 선점(실패 = 같은 날짜 AI 작업/사진추가/삭제 진행 중 → 409 -1016) →
  * <b>exclusive Item</b>(삭제 대상 Event에만 연결된 Item)의 PHOTO S3 key 수집(guard 안에서 — 동시 AI append가
  * 수집과 삭제 사이에 연결을 바꾸지 못함) → S3 배치 삭제(DB 트랜잭션 밖) → 전 batch 성공 시에만 별도 빈
  * 트랜잭션에서 재확인 후 DB 삭제({@link TimelineDeletionTransactionService} — Event/junction은 DB
@@ -42,11 +42,11 @@ import org.springframework.stereotype.Service;
  * 유지하고, exclusive Item만 S3·DB에서 지운다. 정상 write 경로에선 same-record 규칙으로 record 밖 Event에
  * 연결된 후보가 없어야 하지만, 있어도 shared로 간주해 방어적으로 유지한다.
  *
- * <p>S3 실패(ERROR_1017)면 DB 삭제를 시작하지 않아 데이터가 보존되고, S3 성공 후 DB 실패(500)는
+ * <p>S3 실패(-1017)면 DB 삭제를 시작하지 않아 데이터가 보존되고, S3 성공 후 DB 실패(500)는
  * 재시도로 수렴한다(이미 지워진 key는 S3가 성공 처리). Outbox·보상 업로드·참조 카운트는 두지 않는다.
  *
  * <p>guard는 <b>성공·1017·500 모든 종료 경로에서 finally로 compare-and-release</b>한다 — 실패 시
- * 미해제면 클라 재시도가 TTL(1h) 동안 ERROR_1016으로 막혀 "재시도로 수렴" 설계가 깨진다.
+ * 미해제면 클라 재시도가 TTL(1h) 동안 -1016으로 막혀 "재시도로 수렴" 설계가 깨진다.
  * 해제 자체는 best-effort다(예외는 삼키고 WARN — TTL이 안전망).
  *
  * <p>마지막 Event를 지워도 DailyRecord는 유지한다 — 하루 전체 제거는 DailyRecord 삭제만 담당한다.
@@ -120,7 +120,7 @@ public class TimelineDeletionService {
         }
     }
 
-    /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(ERROR_1003)로 사전 거절한다. */
+    /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(-1003)로 사전 거절한다. */
     private DailyRecord requireOwnedDraftRecord(long userId, Long dailyRecordId, ExceptionType notFoundType) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getUserId() == userId)

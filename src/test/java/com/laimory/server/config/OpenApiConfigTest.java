@@ -32,6 +32,8 @@ class OpenApiConfigTest {
     @Test
     void 공통응답_설명이_결과없는_성공의_null_body를_구분한다() {
         assertThat(openApi.getInfo().getDescription())
-                .contains("반환할 결과가 없는 성공은 `body = null`");
+                .contains("반환할 결과가 없는 성공은 `body = null`")
+                .contains("`header.code = 0`", "**code < 0이면 에러**")
+                .doesNotContain("COMMON_0000", "ERROR_*");
     }
 }

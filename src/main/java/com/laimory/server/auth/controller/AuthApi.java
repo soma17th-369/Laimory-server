@@ -33,7 +33,7 @@ public interface AuthApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "발급 성공", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2002` — appCode 무효/만료/이미 소비/verifier 불일치(재로그인 필요)")
+                    description = "`-2002` — appCode 무효/만료/이미 소비/verifier 불일치(재로그인 필요)")
     })
     @PostMapping("/token")
     ResponseEntity<ApiResponse<TokenResponse>> issueTokens(
@@ -48,7 +48,7 @@ public interface AuthApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "갱신 성공", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2003` — refresh 무효/만료/철회/재사용 탐지(재로그인 필요)")
+                    description = "`-2003` — refresh 무효/만료/철회/재사용 탐지(재로그인 필요)")
     })
     @PostMapping("/refresh")
     ResponseEntity<ApiResponse<TokenResponse>> refresh(

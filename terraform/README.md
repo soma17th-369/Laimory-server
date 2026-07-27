@@ -230,8 +230,10 @@ sudo docker ps --filter name=filebeat   # Up 확인
 Stack Management > Data Views 에서 **`laimory-dev-*`**(time field `@timestamp`) 생성.
 E2E: `curl -i https://dev.laimory.app/api/v1/intro` 응답 헤더의 `Transaction-Id` 값을 Kibana 에서 검색하면
 그 요청의 액세스 로그(`event:http_request_completed`, `status`, `latencyMs`, `path`)와 앱 라인이 함께 보인다.
-에러 요청은 `errorCode`(클라이언트 계약)·`exceptionType`(내부 실패 사유)·`errorDetail` 필드까지 keyword로
-검색돼야 한다 — text+keyword 멀티필드로 보이면 template보다 앱이 먼저 배포돼 dynamic mapping으로 굳은 것.
+에러 요청은 `errorCode`(공개 numeric code의 10진 문자열, 예: `"-1008"`)·`exceptionType`(내부 실패 사유)·
+`errorDetail` 필드까지 keyword로 검색돼야 한다. REST 응답과 달리 access log는 기존 Elasticsearch
+`keyword` mapping을 유지한다 — text+keyword 멀티필드로 보이면 template보다 앱이 먼저 배포돼 dynamic
+mapping으로 굳은 것.
 
 ### 5. 스팟 운용 (persistent+stop, 상시 가동)
 

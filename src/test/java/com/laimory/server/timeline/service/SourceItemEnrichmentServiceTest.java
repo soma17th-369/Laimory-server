@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import com.laimory.server.geo.Coordinate;
 import com.laimory.server.geo.GeoPlace;
 import com.laimory.server.geo.GeocodingService;
@@ -192,7 +191,7 @@ class SourceItemEnrichmentServiceTest {
 
         assertThatThrownBy(() -> service().enrich(sources, USER_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1014));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
     }
 
     @Test
@@ -206,7 +205,7 @@ class SourceItemEnrichmentServiceTest {
 
         assertThatThrownBy(() -> service().enrich(sources, USER_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_1015));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1015));
     }
 
     @Test

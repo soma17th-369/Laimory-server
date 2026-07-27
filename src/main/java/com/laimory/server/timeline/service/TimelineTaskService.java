@@ -1,12 +1,18 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.common.error.ErrorCode;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +33,13 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TimelineTaskService {
+
+    static final Set<ExceptionType> TASK_FAILURE_TYPES = Collections.unmodifiableSet(EnumSet.of(
+            ExceptionType.AI_REPORTED_FAILURE,
+            ExceptionType.AI_DISPATCH_FAILED,
+            ExceptionType.DRAFT_TASK_FAILURE_FALLBACK));
+    private static final Map<Integer, ExceptionType> TASK_FAILURE_TYPES_BY_CODE = TASK_FAILURE_TYPES.stream()
+            .collect(Collectors.toUnmodifiableMap(ExceptionType::code, Function.identity()));
 
     static final Duration PROCESSING_TTL = Duration.ofHours(1);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
@@ -74,19 +87,27 @@ public class TimelineTaskService {
     }
 
     /**
-     * task를 FAILED로 종결한다. {@code failureCode}는 task 실패 분류({@link ErrorCode#TASK_FAILURE_CODES})만
+     * task를 FAILED로 종결한다. {@code failureType}은 task 실패 분류 세 타입만
      * 허용한다 — raw 문자열을 받지 않아, 내부 예외 메시지가 폴링 {@code body.error}로 유출되는 경로를
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */
-    public void markFailed(String taskId, long userId, long dailyRecordId, ErrorCode failureCode,
+    public void markFailed(String taskId, long userId, long dailyRecordId, ExceptionType failureType,
                            String callbackTokenHash) {
-        if (!ErrorCode.TASK_FAILURE_CODES.contains(failureCode)) {
-            throw new IllegalStateException("task 실패 분류 코드가 아닙니다: " + failureCode);
+        if (!TASK_FAILURE_TYPES.contains(failureType)) {
+            throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(userId, dailyRecordId, failureCode.name(), callbackTokenHash),
+                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), callbackTokenHash),
                 TERMINAL_TTL);
         timelineMetrics.recordTerminalFailed();
+    }
+
+    /** Redis task의 numeric code를 task-local 타입으로 제한해 해석한다. */
+    public static ExceptionType resolveFailureType(Integer code) {
+        if (code == null) {
+            return ExceptionType.DRAFT_TASK_FAILURE_FALLBACK;
+        }
+        return TASK_FAILURE_TYPES_BY_CODE.getOrDefault(code, ExceptionType.DRAFT_TASK_FAILURE_FALLBACK);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {
@@ -110,7 +131,7 @@ public class TimelineTaskService {
         return timelineTaskStore.countStuckProcessing(now, stuckAfter, PROCESSING_TTL);
     }
 
-    /** 날짜 guard를 holder 명의로 선점한다. false = 같은 날짜에 진행 중인 작업이 있음(ERROR_1016 거절 대상). */
+    /** 날짜 guard를 holder 명의로 선점한다. false = 같은 날짜에 진행 중인 작업이 있음(-1016 거절 대상). */
     public boolean claimDateGuard(long userId, LocalDate recordDate, String holder) {
         return timelineTaskStore.claimDateGuard(userId, recordDate, holder, DATE_GUARD_TTL);
     }

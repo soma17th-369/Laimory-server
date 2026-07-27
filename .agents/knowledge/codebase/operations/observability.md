@@ -31,8 +31,11 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
   **정상 완료만** 생략된다. 에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
 - fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
-  `errorCode`(client 계약), `exceptionType`(내부 실패 사유), `errorDetail`(예외 클래스명·검증 메시지),
+  `errorCode`(공개 numeric code의 10진 문자열 projection), `exceptionType`(내부 실패 사유),
+  `errorDetail`(예외 클래스명·검증 메시지),
   `clientIp`, `requestBody`, `responseBody`. field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
+- REST의 code는 JSON integer지만 access log `errorCode`는 기존 Elasticsearch `keyword` mapping을
+  유지하기 위해 `"-1008"` 같은 문자열로 기록한다. live index field type과 template은 바꾸지 않는다.
 - query string은 포함하지 않는다.
 - **log level은 HTTP status가 아니라 `ExceptionType.logLevel()`이 정한다**(access log level의 SSOT —
   status는 client 계약, level은 서버 관점 심각도로 독립 축. 같은 status라도 내부 사유에 따라

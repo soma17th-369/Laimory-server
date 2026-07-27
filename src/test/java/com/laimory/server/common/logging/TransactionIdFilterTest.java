@@ -187,7 +187,7 @@ class TransactionIdFilterTest {
         assertThat(accessLog.list).hasSize(1);
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN); // 401이라서가 아니라 타입 레벨이 WARN이라서
         JsonNode json = encoded(accessLog.list.get(0));
-        assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1002");
+        assertThat(json.get("errorCode").asText()).isEqualTo("-1002");
         assertThat(json.get("exceptionType").asText()).isEqualTo("CALLBACK_TOKEN_MISMATCH");
     }
 
@@ -222,7 +222,7 @@ class TransactionIdFilterTest {
         assertThat(json.get("status").isInt()).isTrue();
         assertThat(json.get("status").asInt()).isEqualTo(502);
         assertThat(json.get("latencyMs").isNumber()).isTrue();
-        assertThat(json.get("errorCode").asText()).isEqualTo("ERROR_1015");
+        assertThat(json.get("errorCode").asText()).isEqualTo("-1015");
         assertThat(json.get("exceptionType").asText()).isEqualTo("GEOCODING_PERMANENT_FAILURE");
         assertThat(json.get("errorDetail").asText()).isEqualTo("MapPlaceLookupException");
         assertThat(json.get("clientIp").asText()).isEqualTo("127.0.0.1");
@@ -294,7 +294,7 @@ class TransactionIdFilterTest {
     @Test
     void encodedPollingAndWorstCasePreviewStayWellBelowDockerSingleLineLimit() throws Exception {
         String processing = """
-                {"header":{"code":"COMMON_0000","message":"성공"},
+                {"header":{"code":0,"message":""},
                  "body":{"status":"PROCESSING","result":null,"error":null}}
                 """;
         String success = representativeSuccessPollingBody();
@@ -454,7 +454,7 @@ class TransactionIdFilterTest {
                 "events", events));
         body.put("error", null);
         return objectMapper.writeValueAsString(Map.of(
-                "header", Map.of("code", "COMMON_0000", "message", "성공"),
+                "header", Map.of("code", 0, "message", ""),
                 "body", body));
     }
 

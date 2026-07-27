@@ -8,7 +8,6 @@ import com.laimory.server.auth.entity.RefreshToken;
 import com.laimory.server.auth.repository.RefreshTokenRepository;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -62,7 +61,7 @@ class RefreshTokenRotationIntegrationTest {
             // 구 토큰 재제시 = 재사용 탐지 → 2003 + 해당 userId 전체 REVOKED.
             assertThatThrownBy(() -> refreshTokenService.rotate(first))
                     .isInstanceOfSatisfying(BusinessException.class,
-                            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003));
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo(-2003));
 
             List<RefreshToken> userRows = refreshTokenRepository.findAll().stream()
                     .filter(r -> r.getUserId() == userId)
@@ -83,7 +82,7 @@ class RefreshTokenRotationIntegrationTest {
 
             assertThatThrownBy(() -> refreshTokenService.rotate(raw))
                     .isInstanceOfSatisfying(BusinessException.class,
-                            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ERROR_2003));
+                            ex -> assertThat(ex.getErrorCode()).isEqualTo(-2003));
 
             Optional<RefreshToken> row = refreshTokenRepository.findByTokenHash(AuthTokens.sha256Hex(raw));
             assertThat(row).get()
@@ -124,7 +123,7 @@ class RefreshTokenRotationIntegrationTest {
                     // 스레드에서 던져진 예외는 ExecutionException으로 감싸진다 → getCause()로 언래핑.
                     Throwable cause = e.getCause();
                     assertThat(cause).isInstanceOf(BusinessException.class);
-                    assertThat(((BusinessException) cause).getErrorCode()).isEqualTo(ErrorCode.ERROR_2003);
+                    assertThat(((BusinessException) cause).getErrorCode()).isEqualTo(-2003);
                     reuseDetected++;
                 }
             }

@@ -25,9 +25,9 @@ class DraftTaskStatusResponseSchemaTest {
         assertThat(elapsed.getType()).isEqualTo("integer");
         assertThat(elapsed.getFormat()).isEqualTo("int64");
         assertThat(elapsed.getMinimum()).isEqualByComparingTo(BigDecimal.ZERO);
-        // PROCESSING 전용·legacy 생략 의미가 설명에 실린다(정확 문구는 계약이 아님 — 존재만 고정).
+        // PROCESSING 전용 의미가 설명에 실린다(정확 문구는 계약이 아님 — 존재만 고정).
         assertThat(elapsed.getDescription()).isNotBlank();
-        // optional: PROCESSING에서만 실리고 terminal/legacy는 생략되므로 required로 선언되지 않는다.
+        // optional: PROCESSING에서만 실리고 terminal은 생략되므로 required로 선언되지 않는다.
         assertThat(response.getRequired() == null || !response.getRequired().contains("elapsedSeconds")).isTrue();
     }
 }

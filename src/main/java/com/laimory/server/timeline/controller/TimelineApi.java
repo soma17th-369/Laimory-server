@@ -140,18 +140,18 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "작업 접수 — body.taskId로 폴링", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_0400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
+                    description = "`-400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
                             + "timelineWindow/sourceItems 등, window의 `startTime >= endTime` 포함)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`ERROR_1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
-                            + "`ERROR_1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "
-                            + "`ERROR_1016`(같은 날짜의 타임라인 작업이 진행 중 — 잠시 후 재시도)"),
+                    description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
+                            + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음) · "
+                            + "`-1016`(같은 날짜의 타임라인 작업이 진행 중 — 잠시 후 재시도)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "지오코딩(지도 API) 호출 실패로 draft 생성 실패. 재시도 가능성으로 코드가 나뉜다 — "
-                            + "`ERROR_1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
-                            + "`ERROR_1015`(영구적 실패 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
+                            + "`-1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
+                            + "`-1015`(영구적 실패 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
@@ -169,10 +169,10 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "발급 성공", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`ERROR_1004`(최대 장수 초과) · `ERROR_1005`(장당 크기 초과) · "
-                            + "`ERROR_1007`(미지원 포맷 — JPG/PNG/WebP만) · `ERROR_0400`(필수값 누락)"),
+                    description = "`-1004`(최대 장수 초과) · `-1005`(장당 크기 초과) · "
+                            + "`-1007`(미지원 포맷 — JPG/PNG/WebP만) · `-400`(필수값 누락)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @PostMapping("/photo-uploads")
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
@@ -182,20 +182,20 @@ public interface TimelineApi {
 
     @Operation(summary = "draft 작업 상태 폴링",
             description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
-                    + "(FAILED도 HTTP 200 + COMMON_0000). body.error 코드: `ERROR_1008`(AI가 실패 보고) · "
-                    + "`ERROR_1009`(AI 요청 전달 실패) · `ERROR_1011`(서버 처리 실패). "
+                    + "(FAILED도 HTTP 200 + 0). body.error 코드: `-1008`(AI가 실패 보고) · "
+                    + "`-1009`(AI 요청 전달 실패) · `-1011`(서버 처리 실패). "
                     + "미지의 코드는 제네릭 실패로 처리한다(전방 호환). "
                     + "PROCESSING에는 `body.elapsedSeconds`(AI 작업 대기 경과 시간, 완료된 초·0 이상)가 함께 담긴다 — "
                     + "기준은 서버가 전처리를 마치고 AI dispatch 대기 단계에 들어간 시각이다(POST 접수 시각 아님). "
-                    + "SUCCESS/FAILED와 기준 시각이 없는 구버전 작업에서는 필드가 생략되므로 optional로 파싱한다.")
+                    + "SUCCESS/FAILED에서는 필드가 생략되므로 optional로 파싱한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "폴링 성공(작업 상태는 body.status)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`ERROR_2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`ERROR_1001`(작업 없음 — 만료·타인 작업 포함, 존재 여부는 구분해 주지 않는다) · "
-                            + "`ERROR_0404`(SUCCESS 작업의 결과 기록이 삭제됐거나 결과 ID가 없는 구버전 작업 — "
+                    description = "`-1001`(작업 없음 — 만료·타인 작업 포함, 존재 여부는 구분해 주지 않는다) · "
+                            + "`-404`(SUCCESS 작업의 결과 기록이 삭제됐거나 소유자가 일치하지 않는 경우 — "
                             + "클라이언트는 1001=작업 소멸, 0404=결과 소멸로 구분)")
     })
     @GetMapping("/{taskId}")

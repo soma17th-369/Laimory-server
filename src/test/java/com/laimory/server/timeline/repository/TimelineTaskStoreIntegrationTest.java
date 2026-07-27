@@ -91,34 +91,29 @@ class TimelineTaskStoreIntegrationTest {
     }
 
     @Test
-    void ownerUserId_roundTripsForAllStates_andLegacyJsonDeserializesToNull() {
-        // 실 Redis/Spring ObjectMapper에서 세 상태의 owner 왕복과, owner 없는 legacy JSON의 null 역직렬화를 고정한다.
+    void ownerUserId_roundTripsForAllStates() {
+        // 실 Redis/Spring ObjectMapper에서 세 상태의 owner와 numeric error 왕복을 고정한다.
         String pId = "it-" + UUID.randomUUID();
         String sId = "it-" + UUID.randomUUID();
         String fId = "it-" + UUID.randomUUID();
-        String legacyId = "it-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, 42L, null, "h",
                     Instant.parse("2026-05-08T13:41:07Z")), Duration.ofMinutes(1));
             timelineTaskStore.save(sId, TimelineDraftTask.success(7L, 42L, "h"),
                     Duration.ofMinutes(1));
-            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, "ERROR_1009", "h"),
-                    Duration.ofMinutes(1));
-            redisGateway.set("timeline:draft-task:" + legacyId,
-                    "{\"status\":\"SUCCESS\",\"recordDate\":\"2026-05-08\",\"callbackTokenHash\":\"h\"}",
+            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, -1009, "h"),
                     Duration.ofMinutes(1));
 
             assertThat(timelineTaskStore.find(pId).orElseThrow().userId()).isEqualTo(7L);
             assertThat(timelineTaskStore.find(sId).orElseThrow().userId()).isEqualTo(7L);
             assertThat(timelineTaskStore.find(fId).orElseThrow().userId()).isEqualTo(7L);
-            assertThat(timelineTaskStore.find(legacyId).orElseThrow().userId()).isNull();
+            assertThat(timelineTaskStore.find(fId).orElseThrow().error()).isEqualTo(-1009);
         } finally {
             timelineTaskStore.save(pId,
                     TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + pId);
             redisGateway.delete("timeline:draft-task:" + sId);
             redisGateway.delete("timeline:draft-task:" + fId);
-            redisGateway.delete("timeline:draft-task:" + legacyId);
         }
     }
 
