@@ -82,6 +82,377 @@ prod=`laimory.app`(apex), dev=`dev.laimory.app`.
 > 적용**한다 — 로그인 code가 쿼리로 나가는 앱 버전이 로그 설정 없는 박스에 배포되는 일을 구조적으로 막는다.
 > 수동 runbook에서 이 부분을 빠뜨려도 다음 배포에서 자동 보정된다(certbot·server_name은 여전히 수동).
 
+## trusted-edge client IP — 기존 WAS nginx 선반영
+
+애플리케이션은 같은 호스트 nginx의 socket peer(`127.0.0.1`)에서 온 단일
+`Laimory-Client-IP`만 client IP로 신뢰한다. nginx는 외부 client가 보낸 같은 이름의 header를 전달하거나
+append하지 않고 `$remote_addr`로 덮어쓴다. `X-Forwarded-Proto`는 OAuth HTTPS redirect와 Secure cookie를
+위해 계속 덮어쓰며, XFF/X-Real-IP는 구버전 애플리케이션 rollback 호환용으로만 남긴다.
+
+신규/재구축 WAS는 `user_data/was.sh.tftpl`이 이 설정을 만든다. 기존 dev/prod WAS에는 아래 SSM 절차를
+**trusted-edge 애플리케이션 배포 전에 각각 실행**한다. user data 변경은 live 박스에 반영되지 않으며,
+살아 있는 인프라에는 blanket/target `terraform apply`를 하지 않는다.
+
+```bash
+aws ssm start-session --profile sandbox --target <was-instance-id>
+```
+
+박스 안에서 실행한다. 활성 설정은 같은 디렉터리의 임시 파일을 rename해 원자 교체하고, 변경 전 파일은
+root-only backup으로 남긴다. 아래 patcher는 정확히 하나의 `location /` 안에서
+`proxy_pass http://127.0.0.1:8080;`, `Host`, `X-Forwarded-Proto`를 먼저 구조적으로 확인한다. 그
+application block 안의 exact client-IP directive만 멱등 판단에 사용하므로 다른 location의 같은
+directive를 성공으로 오인하지 않는다. 중첩·중복·비표준 layout은 활성 파일을 바꾸기 전에 중단한다.
+
+```bash
+sudo bash <<'ROOT'
+set -Eeuo pipefail
+
+SITE=/etc/nginx/sites-available/laimory
+BACKUP_DIR=/var/backups/laimory-nginx
+STAMP=$(date -u +%Y%m%dT%H%M%S%N)
+BACKUP="$BACKUP_DIR/laimory.before-trusted-edge.$STAMP"
+[[ -f "$SITE" && ! -L "$SITE" ]] \
+  || { echo "expected regular nginx site file: $SITE" >&2; exit 1; }
+PATCHER=$(mktemp /tmp/laimory-trusted-edge-patcher.XXXXXX)
+TMP=$(mktemp /etc/nginx/sites-available/.laimory.trusted-edge.XXXXXX)
+EFFECTIVE=$(mktemp /tmp/laimory-nginx-effective.XXXXXX)
+cleanup() {
+  rm -f "$PATCHER" "$EFFECTIVE"
+  [[ -z "$TMP" ]] || rm -f "$TMP"
+}
+trap cleanup EXIT
+
+# 이 heredoc은 repository의 terraform/scripts/patch_trusted_edge_nginx.py와 동일하다.
+cat > "$PATCHER" <<'TRUSTED_EDGE_PATCHER'
+#!/usr/bin/env python3
+"""Fail-closed patcher for the Laimory application nginx location."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass, field
+from pathlib import Path
+import re
+import sys
+
+
+LOCATION_ROOT = re.compile(r"^[ \t]*location[ \t]+/[ \t]*\{[ \t]*$")
+SERVER_BLOCK = re.compile(r"^[ \t]*server[ \t]*\{[ \t]*$")
+ANY_PROXY_PASS = re.compile(r"^[ \t]*proxy_pass\b")
+APPLICATION_PROXY_PASS = re.compile(
+    r"^[ \t]*proxy_pass[ \t]+http://127[.]0[.]0[.]1:8080;[ \t]*$"
+)
+ANY_HOST_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+Host(?:[ \t;]|$)", re.IGNORECASE
+)
+HOST_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+Host[ \t]+[$]host;[ \t]*$"
+)
+ANY_CLIENT_IP_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+Laimory-Client-IP(?:[ \t;]|$)",
+    re.IGNORECASE,
+)
+CLIENT_IP_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+Laimory-Client-IP"
+    r"[ \t]+[$]remote_addr;[ \t]*$"
+)
+ANY_FORWARDED_PROTO_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+X-Forwarded-Proto(?:[ \t;]|$)",
+    re.IGNORECASE,
+)
+FORWARDED_PROTO_HEADER = re.compile(
+    r"^[ \t]*proxy_set_header[ \t]+X-Forwarded-Proto"
+    r"[ \t]+[$]scheme;[ \t]*$"
+)
+
+
+class LayoutError(ValueError):
+    """The active nginx file is outside the runbook's expected layout."""
+
+
+@dataclass
+class LocationBlock:
+    inner_depth: int
+    proxy_passes: list[int] = field(default_factory=list)
+    application_proxy_passes: list[int] = field(default_factory=list)
+    host_headers: list[int] = field(default_factory=list)
+    exact_host_headers: list[int] = field(default_factory=list)
+    client_ip_headers: list[int] = field(default_factory=list)
+    exact_client_ip_headers: list[int] = field(default_factory=list)
+    forwarded_proto_headers: list[int] = field(default_factory=list)
+    exact_forwarded_proto_headers: list[int] = field(default_factory=list)
+
+
+def _scan_line(line: str) -> tuple[str, int, int]:
+    """Strip an nginx comment and count unquoted braces."""
+    visible: list[str] = []
+    quote: str | None = None
+    escaped = False
+    opens = 0
+    closes = 0
+
+    for char in line:
+        if escaped:
+            visible.append(char)
+            escaped = False
+            continue
+        if quote is not None:
+            visible.append(char)
+            if char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+            visible.append(char)
+            continue
+        if char == "#":
+            break
+        visible.append(char)
+        if char == "{":
+            opens += 1
+        elif char == "}":
+            closes += 1
+
+    if quote is not None:
+        raise LayoutError("multiline quoted directives are not supported")
+    return "".join(visible).rstrip(), opens, closes
+
+
+def _record_directive(block: LocationBlock, line_number: int, directive: str) -> None:
+    if ANY_PROXY_PASS.match(directive):
+        block.proxy_passes.append(line_number)
+    if APPLICATION_PROXY_PASS.match(directive):
+        block.application_proxy_passes.append(line_number)
+    if ANY_HOST_HEADER.match(directive):
+        block.host_headers.append(line_number)
+    if HOST_HEADER.match(directive):
+        block.exact_host_headers.append(line_number)
+    if ANY_CLIENT_IP_HEADER.match(directive):
+        block.client_ip_headers.append(line_number)
+    if CLIENT_IP_HEADER.match(directive):
+        block.exact_client_ip_headers.append(line_number)
+    if ANY_FORWARDED_PROTO_HEADER.match(directive):
+        block.forwarded_proto_headers.append(line_number)
+    if FORWARDED_PROTO_HEADER.match(directive):
+        block.exact_forwarded_proto_headers.append(line_number)
+
+
+def _find_root_locations(text: str) -> list[LocationBlock]:
+    depth = 0
+    top_level_block: str | None = None
+    current: LocationBlock | None = None
+    locations: list[LocationBlock] = []
+
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        directive, opens, closes = _scan_line(line)
+        depth_before = depth
+
+        if current is None and LOCATION_ROOT.match(directive):
+            if depth_before != 1 or not SERVER_BLOCK.match(top_level_block or ""):
+                raise LayoutError(
+                    f"root application location must be directly inside a server block "
+                    f"at line {line_number}"
+                )
+            if opens != 1 or closes != 0:
+                raise LayoutError(f"unsupported root location opener at line {line_number}")
+            current = LocationBlock(inner_depth=depth_before + 1)
+        elif current is not None and depth_before == current.inner_depth:
+            if opens:
+                raise LayoutError(
+                    f"nested application location layout is not supported at line {line_number}"
+                )
+            _record_directive(current, line_number, directive)
+
+        depth += opens - closes
+        if depth < 0:
+            raise LayoutError(f"unmatched closing brace at line {line_number}")
+        if depth_before == 0 and depth > 0:
+            top_level_block = directive if opens == 1 and closes == 0 else None
+        elif depth == 0:
+            top_level_block = None
+        if current is not None and depth < current.inner_depth:
+            locations.append(current)
+            current = None
+
+    if depth != 0 or current is not None:
+        raise LayoutError("unbalanced nginx block braces")
+    return locations
+
+
+def _application_location(text: str, require_client_header: bool) -> LocationBlock:
+    locations = _find_root_locations(text)
+    candidates = [
+        location for location in locations if location.application_proxy_passes
+    ]
+    if len(candidates) != 1:
+        raise LayoutError(
+            "expected exactly one root `location /` with "
+            "`proxy_pass http://127.0.0.1:8080;`"
+        )
+
+    target = candidates[0]
+    if len(target.proxy_passes) != 1 or len(target.application_proxy_passes) != 1:
+        raise LayoutError("application location must contain exactly one expected proxy_pass")
+    if len(target.host_headers) != 1 or len(target.exact_host_headers) != 1:
+        raise LayoutError(
+            "application location must contain exactly "
+            "`proxy_set_header Host $host;`"
+        )
+    if (
+        len(target.forwarded_proto_headers) != 1
+        or len(target.exact_forwarded_proto_headers) != 1
+    ):
+        raise LayoutError(
+            "application location must contain exactly "
+            "`proxy_set_header X-Forwarded-Proto $scheme;`"
+        )
+    if len(target.client_ip_headers) != len(target.exact_client_ip_headers):
+        raise LayoutError(
+            "application location contains a non-canonical Laimory-Client-IP directive"
+        )
+    expected_client_headers = 1 if require_client_header else (0, 1)
+    if require_client_header:
+        valid_client_count = len(target.exact_client_ip_headers) == expected_client_headers
+    else:
+        valid_client_count = len(target.exact_client_ip_headers) in expected_client_headers
+    if not valid_client_count:
+        qualifier = "exactly one" if require_client_header else "zero or one"
+        raise LayoutError(
+            f"application location must contain {qualifier} canonical "
+            "Laimory-Client-IP directive"
+        )
+    return target
+
+
+def validate_text(text: str) -> None:
+    """Require the effective application location to have the trusted-edge header."""
+    _application_location(text, require_client_header=True)
+
+
+def patch_text(text: str) -> str:
+    """Insert the trusted-edge header in the sole expected application location."""
+    target = _application_location(text, require_client_header=False)
+    if target.exact_client_ip_headers:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    host_index = target.exact_host_headers[0] - 1
+    host_line = lines[host_index]
+    indent = re.match(r"^[ \t]*", host_line).group(0)
+    newline = "\r\n" if host_line.endswith("\r\n") else "\n"
+    lines.insert(
+        host_index + 1,
+        f"{indent}proxy_set_header Laimory-Client-IP $remote_addr;{newline}",
+    )
+    patched = "".join(lines)
+    validate_text(patched)
+    return patched
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("source")
+    parser.add_argument("destination", nargs="?")
+    args = parser.parse_args(argv)
+    if args.check and args.destination is not None:
+        parser.error("--check does not accept a destination")
+    if not args.check and args.destination is None:
+        parser.error("destination is required unless --check is used")
+
+    try:
+        source = Path(args.source).read_bytes().decode("utf-8")
+        if args.check:
+            validate_text(source)
+        else:
+            patched = patch_text(source)
+            Path(args.destination).write_bytes(patched.encode("utf-8"))
+    except (LayoutError, OSError, UnicodeError) as error:
+        print(f"trusted-edge nginx layout rejected: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+TRUSTED_EDGE_PATCHER
+
+# preflight + 후보 파일 생성만 수행한다. layout이 예상 밖이면 SITE는 아직 바뀌지 않았다.
+python3 "$PATCHER" "$SITE" "$TMP"
+chown --reference="$SITE" "$TMP"
+chmod --reference="$SITE" "$TMP"
+
+install -d -m 0700 "$BACKUP_DIR"
+cp -a "$SITE" "$BACKUP"
+
+restore_and_fail() {
+  reason=$1
+  if cp -a "$BACKUP" "$SITE" && nginx -t && systemctl reload nginx; then
+    echo "$reason; previous nginx site restored" >&2
+  else
+    echo "$reason; automatic restore/reload also failed, inspect backup=$BACKUP" >&2
+  fi
+  exit 1
+}
+
+mv "$TMP" "$SITE"
+TMP=
+
+# 파일 자체와 nginx가 실제 include한 전체 config를 모두 같은 block-aware checker로 검증한다.
+python3 "$PATCHER" --check "$SITE" \
+  || restore_and_fail "trusted-edge semantic post-check failed"
+nginx -t || restore_and_fail "nginx config test failed"
+systemctl reload nginx || restore_and_fail "nginx reload failed"
+nginx -T > "$EFFECTIVE" 2>/dev/null \
+  || restore_and_fail "effective nginx config dump failed"
+python3 "$PATCHER" --check "$EFFECTIVE" \
+  || restore_and_fail "effective nginx semantic post-check failed"
+
+echo "backup=$BACKUP"
+ROOT
+```
+
+repository에서 `python3 -m unittest discover -s terraform/tests -p 'test_*.py'`를 실행하면 다른 location의
+동명 directive 오인, 중복·중첩 layout, 비정상 header, mutation 전 실패와 README embedded patcher
+drift를 fixture로 검증한다.
+
+검증 순서는 다음과 같다.
+
+1. 구버전 애플리케이션 상태에서 public API와 Google/Kakao OAuth 시작이 정상인지 확인한다.
+2. public 요청에 spoof `Laimory-Client-IP`와 XFF를 보내고, 응답 `Transaction-Id`로 application access
+   log를 찾아 `clientIp`가 nginx가 관찰한 caller IP인지 확인한다. spoof 값이면 실패다.
+3. AI host에서 WAS private `:8080`으로 같은 header를 보내고 `clientIp`가 AI socket private IP인지
+   확인한다.
+4. 가능한 IPv6 public 경로와 OAuth HTTPS redirect/Secure cookie를 확인한다.
+
+public spoof 검증 예시다. `clientIp`는 두 spoof 값이 아니라 같은 요청의 nginx access log에 기록된
+caller IP여야 한다.
+
+```bash
+HEADERS=$(mktemp)
+trap 'rm -f "$HEADERS"' EXIT
+curl -fsS -D "$HEADERS" \
+  -H 'Laimory-Client-IP: 198.51.100.99' \
+  -H 'X-Forwarded-For: 203.0.113.99' \
+  https://dev.laimory.app/api/v1/intro >/dev/null
+TX_ID=$(awk 'BEGIN{IGNORECASE=1} /^Transaction-Id:/{gsub("\r","",$2); print $2}' "$HEADERS")
+sudo docker logs --since 2m laimory 2>&1 \
+  | jq -r --arg tx "$TX_ID" 'select(.transactionId == $tx) | .clientIp'
+```
+
+AI direct 검증은 AI host에서 `<was-private-ip>:8080/api/v1/intro`에 같은 두 spoof header를 보내고, WAS의
+application log를 같은 `Transaction-Id`로 조회한다. 출력은 AI host의 private socket IP여야 한다.
+
+설정 또는 reload 실패 시 위 script가 backup을 복원하고 다시 검증/reload한다. 배포 뒤 회귀하면
+애플리케이션을 먼저 rollback한다(XFF 전달을 남겨 구버전 동작을 보존). nginx 자체를 되돌려야 하면 출력된
+backup을 `SITE`에 복사한 뒤 `nginx -t && systemctl reload nginx`를 실행한다.
+
+미래에 별도 최외곽 ingress가 생기면 그 edge가 client-supplied header를 socket peer로 덮어쓰고,
+인증된 내부 hop만 값을 그대로 전달해야 한다. 이 trust 구성이 끝나기 전에는 현재 nginx를 pass-through로
+바꾸지 않는다.
+
 ## WAS 스왑 2GB — 기존 박스는 수동 적용
 
 스왑 없는 1~2GB WAS 박스는 메모리 스파이크(apt-daily 등) 때 OOM 킬 대신 페이지 회수 라이브락으로

@@ -220,10 +220,17 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 머지 전 Kibana saved query/alert가 `message` 문자열 파싱에 의존하지 않는지 확인한다. access log의
 `message`는 고정값 `http_request_completed`이며 `event` 등 top-level field 쿼리가 계약이다.
 
-forwarded header는 Tomcat `RemoteIpValve`가 socket peer가 internal proxy일 때만 XFF/XFP를 신뢰한다.
-dev/prod의 같은 호스트 nginx loopback만 internal proxy로 명시하며, AI 서버 등 사설망에서 애플리케이션
-8080으로 직접 접근하는 peer의 forwarded header는 신뢰하지 않는다. `clientIp`는 valve 처리 후
-`request.getRemoteAddr()`다.
+현재 최외곽 ingress인 WAS nginx는 client-supplied `Laimory-Client-IP`를 전달/append하지 않고 자신이
+관찰한 `$remote_addr` 한 값으로 덮어쓴다. application의 `TrustedEdgeRequestFilter`는 원본 socket peer가
+정확히 `127.0.0.1`이고 header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를 normalize해
+downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing header와 다른 peer는
+socket address로 fallback하며 XFF와 User-Agent는 IP 결정에 사용하지 않는다. rejected 원문도 기록하지
+않는다.
+
+같은 loopback trust 경계의 단일 `X-Forwarded-Proto: https|http`만 scheme/secure/serverPort view를
+변환해 OAuth HTTPS redirect와 Secure cookie를 보존한다. AI 서버 등 사설망에서 애플리케이션 8080으로
+직접 접근하는 peer가 보낸 custom IP/XFP/XFF는 모두 무시한다. access log `clientIp`는 trusted-edge
+filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 ## Health Signals
 

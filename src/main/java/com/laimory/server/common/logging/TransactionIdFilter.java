@@ -19,7 +19,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * 모든 요청의 최전방에서 transactionId를 부여하고 요청당 정확히 한 줄의 access 로그를 남기는 필터.
+ * trusted-edge request 경계 바로 다음에서 transactionId를 부여하고 요청당 정확히 한 줄의 access 로그를
+ * 남기는 필터.
  *
  * <ul>
  *   <li>요청마다 새 UUIDv7을 발급해 MDC에 넣고, 같은 값을 응답 헤더 {@code Transaction-Id}로
@@ -39,7 +40,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 @Slf4j(topic = "http.access") // access 로그 전용 로거 — 클래스 로거와 분리해 라우팅/레벨을 독립 제어한다.
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 public class TransactionIdFilter extends OncePerRequestFilter {
 
     private static final Logger INTERNAL_LOGGER = LoggerFactory.getLogger(TransactionIdFilter.class);

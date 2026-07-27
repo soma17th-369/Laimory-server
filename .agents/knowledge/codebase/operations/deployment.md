@@ -91,6 +91,10 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
   WAS/DB/ELK가 덮어쓸 수 없게 한다.
 - live `/grafana/` 개방은 전용 관리 script로 별도 nginx include만 추가·제거한다. script는 기존
   Kibana snippet을 backup하고 `nginx -t`와 reload 실패 시 원복한다.
+- 신규 WAS nginx recipe는 application upstream에 `Laimory-Client-IP $remote_addr`를 overwrite한다.
+  기존 live dev/prod WAS는 `terraform/README.md`의 SSM runbook으로 backup → 같은 디렉터리 atomic
+  교체 → `nginx -t` → reload를 먼저 수행해야 하며, source recipe 변경만으로 live 반영됐다고 보지 않는다.
+  application은 loopback nginx header만 신뢰하고 AI의 8080 direct socket은 그대로 기록한다.
 - DNS는 Gabia, TLS는 certbot runbook으로 운영한다.
 - Terraform에는 prod topology가 있지만 repository에 production application deploy workflow는 없다.
 - state와 secret tfvars는 credential을 포함할 수 있어 commit하지 않는다.
@@ -116,6 +120,7 @@ manual runbook 경계가 바뀔 때 갱신한다.
 ```bash
 ./gradlew build
 docker build -t laimory:local .
+python3 -m unittest discover -s terraform/tests -p 'test_*.py'
 terraform fmt -check -recursive terraform
 terraform -chdir=terraform validate
 git diff --check
