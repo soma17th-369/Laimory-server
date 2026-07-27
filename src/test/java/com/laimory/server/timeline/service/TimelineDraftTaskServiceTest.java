@@ -86,7 +86,7 @@ class TimelineDraftTaskServiceTest {
     private TimelineDraftTaskService service;
 
     private static final String VERSION = "v1";
-    // 인증 principal userId — 모든 귀속 지점(조회·guard·enrich·staging·task)에 이 값 하나만 흘러야 한다.
+    // 인증 principal userId — 모든 귀속 지점(조회·enrich·staging·task)에 이 값 하나만 흘러야 한다.
     private static final long USER_ID = 7L;
     private static final String ZONE = "Asia/Seoul";
     // 클라 선택 날짜(단일 권위) — 서버는 계산 없이 그대로 쓴다.
@@ -118,9 +118,6 @@ class TimelineDraftTaskServiceTest {
                 .thenReturn(RECORD_ID);
         // PROCESSING 도달 경로에서만 읽히는 시각 스텁 — 호출 횟수는 전용 테스트가 검증한다.
         lenient().when(clock.instant()).thenReturn(PROCESSING_STARTED_AT);
-        // 날짜 guard 기본 스텁: 선점·재갱신 성공. guard 거절/해제 경계는 전용 테스트가 검증한다.
-        lenient().when(timelineTaskService.claimDateGuard(anyLong(), any(), anyString())).thenReturn(true);
-        lenient().when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString())).thenReturn(true);
     }
 
     private List<SourceItemDto> oneSource() {
@@ -148,6 +145,29 @@ class TimelineDraftTaskServiceTest {
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
                 eq(PROCESSING_STARTED_AT));
         order.verify(timelineAiDispatcher).dispatch(any(AiTimelineDispatchRequest.class));
+    }
+
+    @Test
+    void createDraftTask_sameDateRequests_areBothDispatchedWithoutAdmissionGate() {
+        // 동시 실행의 정합성까지 보장하는 테스트는 아니다. 같은 날짜 PROCESSING task가 있다는 이유만으로
+        // 다음 요청을 사전 거절하지 않는 #211의 admission 계약만 고정한다.
+        DailyRecord draft = DailyRecord.createDraft(USER_ID, DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(draft, "dailyRecordId", RECORD_ID);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE))
+                .thenReturn(Optional.empty(), Optional.of(draft));
+
+        String firstTaskId =
+                service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String secondTaskId =
+                service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+
+        assertThat(firstTaskId).isNotEqualTo(secondTaskId);
+        verify(timelineDraftPreparationService, times(2))
+                .prepareDraft(eq(USER_ID), eq(DATE), eq(RECORD_AT), eq(ZONE), anyList());
+        verify(timelineTaskService, times(2))
+                .createProcessing(anyString(), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+                        eq(PROCESSING_STARTED_AT));
+        verify(timelineAiDispatcher, times(2)).dispatch(any(AiTimelineDispatchRequest.class));
     }
 
     @Test
@@ -242,11 +262,6 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
-        // 해제 경계 규칙 ①: PROCESSING 저장 전 실패(SAVED 거절)는 자신이 선점한 guard(동일 holder)를 즉시 해제한다.
-        ArgumentCaptor<String> holderCaptor = ArgumentCaptor.forClass(String.class);
-        verify(timelineTaskService).claimDateGuard(eq(USER_ID), eq(DATE), holderCaptor.capture());
-        assertThat(holderCaptor.getValue()).startsWith("task:");
-        verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, holderCaptor.getValue());
     }
 
     @Test
@@ -264,14 +279,12 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftSourceItemService).deleteByTaskId(anyString());
         verify(dailyRecordService, never()).deleteById(anyLong());
         verify(timelineAiDispatcher, never()).dispatch(any());
-        // 규칙 ①: PROCESSING 저장 실패도 보상 후 자신의 guard를 해제해 즉시 재시도가 가능해야 한다.
-        verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(DATE), anyString());
     }
 
     @Test
-    void createDraftTask_whenDispatchRejected_marksFailedKeepsDraftsAndReleasesGuard() {
+    void createDraftTask_whenDispatchRejected_marksFailedAndKeepsDrafts() {
         // 미접수 확정(dispatcher가 TimelineAiDispatchRejectedException) — AI가 접수·write하지 않았음이 확실하므로
-        // FAILED 종결 + guard 해제가 안전하다.
+        // FAILED로 종결한다.
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
 
@@ -284,27 +297,20 @@ class TimelineDraftTaskServiceTest {
                 anyString());
         // draft는 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
-        // 규칙 ③: FAILED terminal 저장 성공 후 guard를 해제한다(순서: markFailed → release).
-        InOrder order = inOrder(timelineTaskService);
-        order.verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
-                eq(ExceptionType.AI_DISPATCH_FAILED),
-                anyString());
-        order.verify(timelineTaskService).releaseDateGuard(USER_ID, DATE, "task:" + taskId);
     }
 
     @Test
-    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessingAndGuard() {
+    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessing() {
         // UNKNOWN(read timeout·5xx·계약 불일치 — Rejected가 아닌 예외) — AI가 이미 접수해 final write를 진행
-        // 중일 수 있으므로 FAILED로 확정하지 않고 PROCESSING·guard를 유지한다(AI callback 또는 TTL이 종결).
+        // 중일 수 있으므로 FAILED로 확정하지 않고 PROCESSING을 유지한다(AI callback 또는 TTL이 종결).
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("read timeout")).when(timelineAiDispatcher).dispatch(any());
 
         String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
-        // taskId는 정상 반환하고 PROCESSING은 그대로 둔다(위에서 createProcessing 이미 성공). 종결·해제 없음.
+        // taskId는 정상 반환하고 PROCESSING은 그대로 둔다(위에서 createProcessing 이미 성공). 종결 없음.
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
-        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
         // draft·record 모두 보존(보상 삭제 없음).
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
@@ -312,7 +318,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_whenEnrichFails_propagates1014AndSavesNothing() {
         // 지오코딩 loud fail: enrich가 BusinessException(1014)을 던지면 그대로 전파(502)되고,
-        // 선생성·PROCESSING·dispatch 前이라 저장물이 없다(롤백 불필요) — 선점한 guard만 해제한다.
+        // 선생성·PROCESSING·dispatch 前이라 저장물이 없다(롤백 불필요).
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         when(sourceItemEnrichmentService.enrich(anyList(), anyLong()))
                 .thenThrow(new BusinessException(ExceptionType.GEOCODING_TRANSIENT_FAILURE));
@@ -323,13 +329,11 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
-        // 규칙 ①: 선처리(enrich) 실패도 자신의 guard를 즉시 해제한다.
-        verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(DATE), anyString());
     }
 
     @Test
-    void createDraftTask_whenPreparationFails_propagatesAndReleasesGuard() {
-        // 선생성 트랜잭션 실패(SAVED 재확인·DB 오류)는 전체 롤백 후 전파 — guard만 해제하면 재시도 가능하다.
+    void createDraftTask_whenPreparationFails_propagates() {
+        // 선생성 트랜잭션 실패(SAVED 재확인·DB 오류)는 전체 롤백 후 전파한다.
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         when(timelineDraftPreparationService.prepareDraft(anyLong(), any(), any(), anyString(), anyList()))
                 .thenThrow(new RuntimeException("db down"));
@@ -339,98 +343,12 @@ class TimelineDraftTaskServiceTest {
         verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         // 트랜잭션이 롤백됐으므로 보상 삭제도 없다(지울 게 없음).
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
-        verify(timelineTaskService).releaseDateGuard(eq(USER_ID), eq(DATE), anyString());
-    }
-
-    @Test
-    void createDraftTask_guardClaimFails_rejectsWith1016_beforeAnyProcessing() {
-        // 같은 날짜에 진행 중인 draft/삭제가 있으면(SET NX 실패) 409(ERROR_1016)로 즉시 거절한다.
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(DATE), anyString())).thenReturn(false);
-
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
-        // 선점 실패 = 남의 guard다 — 해제하면 안 되고, 어떤 처리(조회·enrich·저장·dispatch)도 시작하지 않는다.
-        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
-        verify(dailyRecordService, never()).findByUserIdAndRecordDate(anyLong(), any());
-        verify(sourceItemEnrichmentService, never()).enrich(anyList(), anyLong());
-        verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
-        verify(timelineAiDispatcher, never()).dispatch(any());
-    }
-
-    @Test
-    void createDraftTask_happyPath_refreshConfirmsOwnershipBeforeDispatch_andKeepsGuardHeld() {
-        // refresh(소유 재확인+TTL 정렬)가 반드시 dispatch보다 앞선다 — 소유 확인 없이 AI 작업이 나가지 않는다.
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
-
-        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
-
-        InOrder order = inOrder(timelineTaskService, timelineAiDispatcher);
-        order.verify(timelineTaskService).claimDateGuard(USER_ID, DATE, "task:" + taskId);
-        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
-                eq(PROCESSING_STARTED_AT));
-        order.verify(timelineTaskService).refreshDateGuard(USER_ID, DATE, "task:" + taskId);
-        order.verify(timelineAiDispatcher).dispatch(any(AiTimelineDispatchRequest.class));
-        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
-    }
-
-    @Test
-    void createDraftTask_guardOwnershipLostBeforeDispatch_marksFailedWithoutDispatch() {
-        // refresh=false = 내 lease 만료 후 다른 작업(draft/삭제)이 같은 날짜를 선점했을 수 있음.
-        // 날짜당 작업 하나 불변식을 지키기 위해 dispatch하지 않고 FAILED(1009)로 종결한다(클라는 폴링 후 재시도).
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
-        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString())).thenReturn(false);
-
-        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
-
-        assertThat(taskId).isNotBlank();
-        verify(timelineAiDispatcher, never()).dispatch(any());
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
-                eq(ExceptionType.AI_DISPATCH_FAILED),
-                anyString());
-        // 내 lease가 아님이 확정된 상태 — 해제(남의 guard 훼손 가능 경로)도 하지 않는다.
-        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
-        // draft 행은 dispatch 동기 실패와 동일하게 보존한다(cleanup이 정리).
-        verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
-    }
-
-    @Test
-    void createDraftTask_guardRefreshThrows_ownershipUnconfirmed_noDispatch() {
-        // refresh 예외 = 소유 미확인 — 이중 dispatch 위험을 감수하지 않고 FAILED로 종결한다(보수적).
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
-        when(timelineTaskService.refreshDateGuard(anyLong(), any(), anyString()))
-                .thenThrow(new RuntimeException("redis down"));
-
-        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
-
-        assertThat(taskId).isNotBlank();
-        verify(timelineAiDispatcher, never()).dispatch(any());
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
-                eq(ExceptionType.AI_DISPATCH_FAILED),
-                anyString());
-        verify(timelineTaskService, never()).releaseDateGuard(anyLong(), any(), anyString());
-    }
-
-    @Test
-    void createDraftTask_guardReleaseFails_originalRejectionStillPropagates() {
-        // 해제는 best-effort: release가 던져도 원래 거절(1003)이 그대로 전파된다(TTL이 안전망).
-        DailyRecord saved = DailyRecord.createDraft(USER_ID, DATE, RECORD_AT, ZONE);
-        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.of(saved));
-        doThrow(new RuntimeException("redis down"))
-                .when(timelineTaskService).releaseDateGuard(anyLong(), any(), anyString());
-
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
     }
 
     @Test
     void createDraftTask_rejectsNullRecordDate() {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, null, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
-        // 검증은 모든 side effect 전이다 — guard 선점조차 하지 않는다.
-        verify(timelineTaskService, never()).claimDateGuard(anyLong(), any(), anyString());
     }
 
     @Test
@@ -449,7 +367,6 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_rejectsNullTimelineWindow() {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, null, oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).claimDateGuard(anyLong(), any(), anyString());
     }
 
     @Test
@@ -460,7 +377,6 @@ class TimelineDraftTaskServiceTest {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE,
                 new TimelineWindowDto(LocalDateTime.of(2026, 6, 17, 0, 0), null), oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).claimDateGuard(anyLong(), any(), anyString());
         verify(sourceItemEnrichmentService, never()).enrich(anyList(), anyLong());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
@@ -475,7 +391,6 @@ class TimelineDraftTaskServiceTest {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE,
                 new TimelineWindowDto(point, point.minusHours(1)), oneSource()))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).claimDateGuard(anyLong(), any(), anyString());
     }
 
     @Test
@@ -775,13 +690,13 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_recordDateIndependentOfRecordAt() {
         // recordAt이 선택 날짜(6/17)와 무관한 다음날 오후여도 recordDate는 요청값 그대로다 —
-        // guard와 선생성 모두 요청 recordDate 기준으로 흐른다(소급 기록 회귀 방지).
+        // 조회와 선생성 모두 요청 recordDate 기준으로 흐른다(소급 기록 회귀 방지).
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         LocalDateTime nextDayAfternoon = LocalDateTime.of(2026, 6, 18, 15, 0);
 
         service.createDraftTask(VERSION, USER_ID, DATE, nextDayAfternoon, ZONE, WINDOW, oneSource());
 
-        verify(timelineTaskService).claimDateGuard(eq(USER_ID), eq(DATE), anyString());
+        verify(dailyRecordService).findByUserIdAndRecordDate(USER_ID, DATE);
         verify(timelineDraftPreparationService).prepareDraft(eq(USER_ID), eq(DATE), eq(nextDayAfternoon), eq(ZONE),
                 anyList());
     }
@@ -803,12 +718,15 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_rejectionPaths_doNotReadClock() {
-        // PROCESSING에 도달하지 않는 거절(guard 선점 실패)에서는 시각을 캡처하지 않는다.
-        when(timelineTaskService.claimDateGuard(eq(USER_ID), eq(DATE), anyString())).thenReturn(false);
+    void createDraftTask_savedRecordRejection_doesNotReadClock() {
+        // PROCESSING에 도달하지 않는 SAVED 거절에서는 시각을 캡처하지 않는다.
+        DailyRecord saved = DailyRecord.createDraft(USER_ID, DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.of(saved));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verify(clock, never()).instant();
     }
 

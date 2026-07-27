@@ -149,7 +149,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
-        // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회·guard 해제의 기준값.
+        // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회의 기준값.
         store.save("p", processingTask(), Duration.ofHours(1));
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
         store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
@@ -233,21 +233,6 @@ class TimelineTaskStoreTest {
 
         assertThatThrownBy(() -> store.find("invalid"))
                 .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void dateGuard_claimRefreshRelease_delegateWithLogicalKey() {
-        // 논리 키 {userId}:{recordDate}(ISO) 조립과 RedisGateway 원자 연산 위임을 고정한다.
-        LocalDate date = LocalDate.of(2026, 5, 8);
-        when(redis.setIfAbsent("timeline:date-guard:7:2026-05-08", "task:abc", Duration.ofHours(1)))
-                .thenReturn(true);
-        when(redis.expireIfValueMatches("timeline:date-guard:7:2026-05-08", "task:abc", Duration.ofHours(1)))
-                .thenReturn(true);
-        when(redis.deleteIfValueMatches("timeline:date-guard:7:2026-05-08", "task:abc")).thenReturn(true);
-
-        assertThat(store.claimDateGuard(7L, date, "task:abc", Duration.ofHours(1))).isTrue();
-        assertThat(store.refreshDateGuard(7L, date, "task:abc", Duration.ofHours(1))).isTrue();
-        assertThat(store.releaseDateGuard(7L, date, "task:abc")).isTrue();
     }
 
     @Test

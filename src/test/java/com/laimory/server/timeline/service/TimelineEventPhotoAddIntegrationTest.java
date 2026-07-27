@@ -1,10 +1,8 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
@@ -19,6 +17,7 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -31,7 +30,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
-/** Event PATCH PHOTO append의 실제 MySQL transaction과 Redis date guard 계약 검증. */
+/** Event PATCH PHOTO append의 실제 MySQL transaction과 과거 guard 키 무시 계약 검증. */
 @SpringBootTest
 @ActiveProfiles("docker")
 @TestPropertySource(properties = "photo.cdn.domain=cdn.integration.test")
@@ -43,8 +42,6 @@ class TimelineEventPhotoAddIntegrationTest {
 
     @Autowired
     private TimelineEventEditService timelineEventEditService;
-    @Autowired
-    private TimelineTaskService timelineTaskService;
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
     @Autowired
@@ -84,7 +81,7 @@ class TimelineEventPhotoAddIntegrationTest {
         if (!itemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(itemIds);
         }
-        redisGateway.delete("timeline:date-guard:" + userId + ":" + DATE);
+        redisGateway.delete(legacyGuardKey());
     }
 
     @Test
@@ -116,29 +113,18 @@ class TimelineEventPhotoAddIntegrationTest {
     }
 
     @Test
-    void taskGuardBlocksPhotoPatchWithoutMutations_butAllowsScalarPatch_thenPhotoSucceedsAfterRelease() {
-        String taskHolder = TimelineTaskService.taskGuardHolder("event-photo-it");
-        assertThat(timelineTaskService.claimDateGuard(userId, DATE, taskHolder)).isTrue();
+    void staleGuardKeyDoesNotBlockPhotoPatchAndRemainsUntouched() {
+        redisGateway.set(legacyGuardKey(), "task:legacy-photo", Duration.ofHours(1));
 
-        UpdateTimelineEventRequest photoRequest = request("막혀야 할 제목", "막혀야 할 메모",
+        UpdateTimelineEventRequest photoRequest = request("사진 제목", "사진 메모",
                 List.of(photo("raw-photo")));
-        assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", userId, eventId, photoRequest))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1016));
-        TimelineEvent unchanged = timelineEventRepository.findById(eventId).orElseThrow();
-        assertThat(unchanged.getTitle()).isEqualTo("기존 제목");
-        assertThat(unchanged.getMemo()).isNull();
-        assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).isEmpty();
-
-        UpdateTimelineEventRequest scalarRequest = request("scalar 제목", "scalar 메모", List.of());
-        timelineEventEditService.updateEvent("v1", userId, eventId, scalarRequest);
-        TimelineEvent scalarUpdated = timelineEventRepository.findById(eventId).orElseThrow();
-        assertThat(scalarUpdated.getTitle()).isEqualTo("scalar 제목");
-        assertThat(scalarUpdated.getMemo()).isEqualTo("scalar 메모");
-
-        assertThat(timelineTaskService.releaseDateGuard(userId, DATE, taskHolder)).isTrue();
         timelineEventEditService.updateEvent("v1", userId, eventId, photoRequest);
+
         assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).hasSize(1);
+        TimelineEvent updated = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(updated.getTitle()).isEqualTo("사진 제목");
+        assertThat(updated.getMemo()).isEqualTo("사진 메모");
+        assertThat(redisGateway.get(legacyGuardKey())).isEqualTo("task:legacy-photo");
     }
 
     private UpdateTimelineEventRequest request(String title, String memo,
@@ -153,5 +139,9 @@ class TimelineEventPhotoAddIntegrationTest {
                 rawId, DATE.atTime(14, 5), null,
                 new UpdateTimelineEventPhotoPayloadRequest(
                         FILENAME, "content://photo/" + rawId, 37.5, 127.0));
+    }
+
+    private String legacyGuardKey() {
+        return "timeline:date-guard:" + userId + ":" + DATE;
     }
 }

@@ -23,11 +23,11 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 일일 기록 | Daily Record | 현재 구현 | 한 사용자의 특정 날짜 기록이다. `user_id + record_date`는 유일하다. |
-| 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 날짜 guard·조회·finalize에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
+| 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
-| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다(도입 시 같은 날짜 guard를 취득해야 한다). |
+| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
 
 ## 타임라인 이벤트
 
@@ -140,7 +140,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 앱 인증 코드 | App Code | 현재 구현 | 로그인 성공 후 앱 handoff용 60초 one-time code다. Redis에는 hash key로만 저장하고 GETDEL로 소비한다. |
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
 | 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `-2001`이고 principal userId가 service까지 전파된다. |
-| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 전이·guard 해제의 기준이다. |
+| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 terminal 전이의 기준이다. |
 
 ## 푸시 알림
 
@@ -176,6 +176,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 부분 구현·미구현·목표 계약 상태는 해당 설명에 빠진 동작을 명시한다. 새 목표 용어를 추가할 때
 구현된 것처럼 표현하지 않는다.
+같은 날짜 draft·수동 PHOTO 추가·삭제 사이의 공통 admission/직렬화와 경합 정합성 보장은 미구현이다.
 
 ## Update When
 

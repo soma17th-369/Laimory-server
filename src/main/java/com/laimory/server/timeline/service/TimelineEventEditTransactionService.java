@@ -25,8 +25,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Event PATCH의 단일 DB transaction writer. outer edit service가 사전 검증과 선택적 date guard를 끝낸 뒤
- * 이 별도 Spring bean을 호출하므로, 메서드 반환 전에 Event·memo·Item·junction commit이 완료된다.
+ * Event PATCH의 단일 DB transaction writer. outer edit service가 사전 검증을 끝낸 뒤 이 별도 Spring bean을
+ * 호출하므로, 메서드 반환 전에 Event·memo·Item·junction commit이 완료된다.
  */
 @Service
 @RequiredArgsConstructor

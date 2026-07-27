@@ -22,22 +22,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class RedisGateway {
 
-    // GET-비교와 PEXPIRE/DEL을 Lua로 원자화한다 — 두 명령으로 나누면 비교와 실행 사이에 내 lease가
-    // 만료되고 다른 holder가 선점한 경우 남의 lease를 갱신/삭제하는 경합이 생긴다(Redis 공식 lock 패턴).
-    private static final RedisScript<Long> EXPIRE_IF_VALUE_MATCHES = new DefaultRedisScript<>("""
-            if redis.call('get', KEYS[1]) == ARGV[1] then
-                return redis.call('pexpire', KEYS[1], ARGV[2])
-            end
-            return 0
-            """, Long.class);
-
-    private static final RedisScript<Long> DELETE_IF_VALUE_MATCHES = new DefaultRedisScript<>("""
-            if redis.call('get', KEYS[1]) == ARGV[1] then
-                return redis.call('del', KEYS[1])
-            end
-            return 0
-            """, Long.class);
-
     // task JSON과 PROCESSING 관측 인덱스를 한 원자 경계에서 갱신한다. 둘을 별도 명령으로 쓰면
     // 앱/Redis 장애 사이에 task와 인덱스가 어긋나 stuck gauge가 거짓말할 수 있다.
     private static final RedisScript<Long> SET_AND_SORTED_SET_ADD = new DefaultRedisScript<>("""
@@ -88,7 +72,7 @@ public class RedisGateway {
 
     /**
      * 키가 없을 때만 값을 원자적으로 저장한다(SET NX + TTL). 저장했으면 true, 이미 있으면 false.
-     * 분산 lease 선점용 — 동시 선점 경합에서 정확히 한 호출만 true를 받는다.
+     * callback token 같은 일회성 admission marker에서 동시 호출 중 정확히 하나만 true를 받게 한다.
      */
     public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
         Boolean acquired = template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl);
@@ -97,19 +81,6 @@ public class RedisGateway {
             throw new IllegalStateException("Redis setIfAbsent가 null을 반환했습니다: " + logicalKey);
         }
         return acquired;
-    }
-
-    /** 저장된 값이 기대값과 일치할 때만 TTL을 갱신한다(Lua 원자). 갱신했으면 true. */
-    public boolean expireIfValueMatches(String logicalKey, String expectedValue, Duration ttl) {
-        Long result = template.execute(EXPIRE_IF_VALUE_MATCHES, List.of(prefix + logicalKey),
-                expectedValue, String.valueOf(ttl.toMillis()));
-        return requireScriptResult(result, logicalKey) == 1L;
-    }
-
-    /** 저장된 값이 기대값과 일치할 때만 삭제한다(Lua 원자, compare-and-delete). 삭제했으면 true. */
-    public boolean deleteIfValueMatches(String logicalKey, String expectedValue) {
-        Long result = template.execute(DELETE_IF_VALUE_MATCHES, List.of(prefix + logicalKey), expectedValue);
-        return requireScriptResult(result, logicalKey) == 1L;
     }
 
     /**

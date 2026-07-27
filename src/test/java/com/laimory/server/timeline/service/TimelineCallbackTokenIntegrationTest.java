@@ -2,6 +2,8 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.laimory.server.common.error.BusinessException;
@@ -26,6 +28,7 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -87,6 +90,7 @@ class TimelineCallbackTokenIntegrationTest {
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2000, 1, 1, 12, 0); // 실제 작성 시각 메타데이터
     private static final TimelineWindowDto WINDOW = new TimelineWindowDto(
             LocalDateTime.of(2000, 1, 1, 0, 0), LocalDateTime.of(2000, 1, 2, 0, 0));
+    private static final String LEGACY_DATE_GUARD_KEY = "timeline:date-guard:" + USER_ID + ":" + DATE;
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
@@ -117,9 +121,8 @@ class TimelineCallbackTokenIntegrationTest {
             // redis는 RedisGateway → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
         });
         createdTaskIds.clear();
-        // 날짜 guard: terminal에 못 간 테스트(wrongToken 등)의 task는 guard를 쥔 채 남는다(운영에선 TTL 1h 해제).
-        // 이 클래스는 같은 고정 날짜를 공유하므로 다음 테스트의 draft 생성이 1016으로 막히지 않게 지운다.
-        redis.delete("timeline:date-guard:" + USER_ID + ":" + DATE);
+        // 제거된 guard의 stale-key 회귀 fixture만 정리한다. 운영 코드는 이 key를 읽거나 지우지 않는다.
+        redis.delete(LEGACY_DATE_GUARD_KEY);
     }
 
     @Test
@@ -209,13 +212,15 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.FAILED);
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
 
-        // FAILED terminal이 guard를 해제했으므로 같은 날짜 재시도 POST가 즉시 가능하다(1016 아님).
+        // 날짜별 admission이 없으므로 FAILED terminal 뒤 같은 날짜 재시도도 즉시 진행한다.
         String retryTaskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW,
                 List.of(new SourceItemDto(ItemType.PHOTO, "raw-p2", DATE.atTime(10, 0), null,
                         new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://p2",
                                 37.5, 127.0, null, null))));
         createdTaskIds.add(retryTaskId);
         assertThat(retryTaskId).isNotEqualTo(taskId);
+        assertThat(taskService.find(retryTaskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
+        verify(dispatcher, times(2)).dispatch(any(AiTimelineDispatchRequest.class));
     }
 
     @Test
@@ -233,9 +238,9 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
 
-        // guard TTL 만료를 시뮬레이션(운영과 동일한 자연 해제)한 뒤 동일 source로 재시도하면 —
-        // 저장된 rawId 전량 제외로 ERROR_1013이다(자동 SUCCESS 복구를 하지 않는 것이 수용된 계약).
-        redis.delete("timeline:date-guard:" + USER_ID + ":" + DATE);
+        // 같은 날짜의 PROCESSING task와 배포 전에 남은 legacy guard key가 있어도 재시도 admission을
+        // 막지 않는다. 동일 source는 저장된 rawId 전량 제외로 ERROR_1013이다.
+        redis.set(LEGACY_DATE_GUARD_KEY, "legacy-holder", Duration.ofHours(1));
         assertThatThrownBy(() -> draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW,
                 sources()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -252,6 +257,8 @@ class TimelineCallbackTokenIntegrationTest {
         assertThat(draftSourceItemService.findByTaskId(retryTaskId))
                 .extracting(TimelineDraftSourceItem::getRawId)
                 .containsExactly("raw-p2");
+        assertThat(taskService.find(retryTaskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
+        assertThat(redis.get(LEGACY_DATE_GUARD_KEY)).isEqualTo("legacy-holder");
     }
 
     /** AI direct-write 시뮬: final Event 1건 + source별 Item/junction INSERT 후 accepted source 삭제(한 커밋처럼). */

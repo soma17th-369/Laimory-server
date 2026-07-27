@@ -95,7 +95,7 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
 - Redis에는 SHA-256 hash만 저장하고 비교는 constant-time으로 한다.
 - task 없음은 404 `-1001`, token 누락·불일치는 401 `-1002`이며 이 경로에서는 소비하지 않는다.
 - hash 검증 직후 `timeline:callback-token-uses:{taskId}`=`used` marker를 25시간 TTL로 원자 선점한다.
-  선점 실패와 terminal 재콜백은 401 `-1012`이며 terminal 저장·guard 해제·push에 도달하지 않는다.
+  선점 실패와 terminal 재콜백은 401 `-1012`이며 terminal 저장·push에 도달하지 않는다.
 - token은 인증 시점에 소비한다. 이후 owner/body 검증이나 terminal 저장이 실패해도 marker를 삭제·환불하지
   않으므로 같은 token으로 재시도할 수 없다(at-most-once admission, exactly-once processing 아님).
 
@@ -106,8 +106,8 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
 - DB commit 뒤에만 task를 SUCCESS로 바꾼다. commit 후 callback 전 AI process가 종료되면 살아있는 재시도
   주체가 없다 — 원 task는 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다(수용된 MVP 한계 —
   동일 source 전량 재시도는 `-1013`, 일부 신규 source 재시도가 실질 복구 경로).
-- callback token 소비 뒤 terminal 저장이 실패해도 같은 token을 재사용하지 않는다. PROCESSING task와 날짜
-  guard는 1시간 TTL이 회수하며 durable receipt·redispatch는 별도 복구 과제다.
+- callback token 소비 뒤 terminal 저장이 실패해도 같은 token을 재사용하지 않는다. PROCESSING task는
+  1시간 TTL로 만료하며 durable receipt·redispatch는 별도 복구 과제다.
 - callback 성공은 application envelope 없이 body 없는 HTTP 200이다.
   400/401/404 error는 `GlobalExceptionHandler`의 application envelope를 사용한다.
 

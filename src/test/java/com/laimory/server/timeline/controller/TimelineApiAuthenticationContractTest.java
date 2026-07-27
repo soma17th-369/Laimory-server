@@ -68,6 +68,18 @@ class TimelineApiAuthenticationContractTest {
     }
 
     @org.junit.jupiter.api.Test
+    void timelineOperations_doNotAdvertiseRetiredDateGuardError() {
+        List<String> descriptions = Stream.of(TimelineApi.class, TimelineRecordApi.class)
+                .flatMap(api -> Arrays.stream(api.getDeclaredMethods()))
+                .map(method -> method.getAnnotation(ApiResponses.class))
+                .flatMap(responses -> Arrays.stream(responses.value()))
+                .map(ApiResponse::description)
+                .toList();
+
+        assertThat(descriptions).noneMatch(description -> description.contains("-1016"));
+    }
+
+    @org.junit.jupiter.api.Test
     void protectedOperationCount_isEleven() {
         // timeline 9개 + push-registrations PUT/DELETE 2개.
         assertThat(protectedOperations().count()).isEqualTo(11);

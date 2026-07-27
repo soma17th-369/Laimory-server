@@ -49,16 +49,15 @@ DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
 → status-only callback → 서버는 token을 원자 소비한 최초 요청만 Redis terminal 전이
 ```
 
-Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 guard 없이 Event/memo transaction을
-실행한다. non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고 날짜 guard를 취득한 뒤,
-별도 public transaction service가 소유권·DRAFT를 다시 확인하고 Event/memo + PHOTO Item/junction을 한 번에
-commit한다. orchestrator는 transaction 반환(즉 commit) 뒤 guard를 compare-and-release해 DB transaction과
-Redis lease 경계를 섞지 않는다.
+Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 Event/memo transaction을 실행한다.
+non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, 별도 public transaction service가
+소유권·DRAFT를 다시 확인해 Event/memo + PHOTO Item/junction을 한 번에 commit한다. 두 경로 모두 날짜
+단위 Redis admission 없이 자기 DB transaction 경계만 가진다.
 
-Event/DailyRecord 삭제는 날짜 guard 안의 별도 transaction service가 orphan PHOTO delete-job insert·원문
-PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. S3는 request
-transaction에 포함하지 않고 현재 REST 프로세스의 단일 scheduled worker가 MySQL job을 oldest-first로
-읽어, 성공 job과 원문 PHOTO Item을 별도 transaction에서 함께 제거한다.
+Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan PHOTO delete-job insert·원문
+PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. 날짜 Redis
+admission은 없다. S3는 request transaction에 포함하지 않고 현재 REST 프로세스의 단일 scheduled worker가
+MySQL job을 oldest-first로 읽어, 성공 job과 원문 PHOTO Item을 별도 transaction에서 함께 제거한다.
 
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.
@@ -76,6 +75,7 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 - 실 AI writer(Laimory-AI)의 draft direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
   Event PATCH 수동 PHOTO writer는 구현됨).
 - schema migration framework가 없다.
+- 같은 날짜 draft·수동 PHOTO 추가·삭제의 교차 작업 concurrency control은 미구현이다.
 
 ## Update When
 
