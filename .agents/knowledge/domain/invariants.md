@@ -91,6 +91,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   유효하다 — 502를 미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
+- 사용자별 진행 작업 index(`timeline:draft-task:user:{userId}:processing`)는 조회 후보일 뿐이다 —
+  task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
+  소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
+  요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
+- PROCESSING 저장은 task JSON+전역 index+사용자 index(+사용자 index key TTL 갱신)를, terminal 저장은
+  task JSON+두 index ZREM을 각각 한 Lua 실행 경계로 쓴다 — `TimelineTaskStore#save`가 모든 lifecycle
+  전이의 단일 write 지점이다. 사용자 index key TTL은 마지막 PROCESSING 생성 뒤 3분 inactivity cleanup
+  이며 member별 TTL이 아니다.
 - PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
   timestamp는 0 clamp). PROCESSING task에는 기준 시각이 항상 존재한다.
 

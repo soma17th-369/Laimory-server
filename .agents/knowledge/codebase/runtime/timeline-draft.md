@@ -39,8 +39,11 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
    `processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
-   같은 저장 Lua가 관측 전용 PROCESSING sorted-set index에도 시작 시각을 추가하고, terminal 저장 Lua가
-   제거한다. index는 90초 초과 stuck gauge에만 쓰며 task 상태·callback 계약의 권위는 기존 JSON이다.
+   같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
+   (`timeline:draft-task:user:{userId}:processing`)에 시작 시각 score로 taskId를 추가하고 사용자 index
+   key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
+   90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
+   callback 계약의 권위는 기존 JSON이다.
 8. AI dispatcher를 호출한다 — body는 `taskId`·원문 `callbackToken`·`dailyRecordId`·record timezone 기반
    offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
    접수가 확인된 경우에만 POST가 202와 `taskId`를 반환한다.
@@ -89,6 +92,14 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
   `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 `(dailyRecordId, userId)`가 일치하는
   한 건만 반환하며 없음·비소유는 404 `-404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
   한 read-only transaction에서 bulk 조회하고 Event별 `items`까지 조립한다.
+- `GET /a/api/{version}/timeline/drafts`는 principal 사용자가 소유한 현재 PROCESSING taskId만 생성
+  최신순(score 내림차순, 동일 ms score는 member 역 lexicographic)으로 반환한다 — 없으면 `taskIds=[]`.
+  사용자 index는 후보일 뿐이며 매 조회가 후보 task JSON을 batch로 읽어 status/owner를 검증한다.
+  만료(missing)·terminal·타인 소유 member는 응답에서 제외하고 요청 사용자 index에서만 best-effort
+  ZREM한다(제거 실패는 유효 200을 깨지 않고 개수만 로그 — 다음 조회·terminal 전이가 재시도). owner
+  누락·null·0을 포함한 역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다. 목록은 lock이 아니다 —
+  create/terminal/expiry와 겹치면 새 task가 이번 응답에서 빠지거나 권위 read 직후 종결된 task가 포함될
+  수 있고, 각 taskId의 최신 권위는 단건 폴링이다(폴링의 404·terminal은 정상 수명주기).
 - polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자 task는
   상태와 무관하게 404 `-1001`로 은닉한다. SUCCESS 결과는 task의 `dailyRecordId`로만 조회한다 —
   (userId, recordDate) 재조회는 쓰지 않는다. record가 삭제·비소유면 404 `-404`(task 자체 없음
@@ -140,6 +151,10 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
   404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
 - PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 3분(PROCESSING TTL)보다 오래된 고아
   member를 정리한다.
+- 사용자별 진행 작업 index key는 PROCESSING 저장마다 TTL이 3분으로 갱신되고, 마지막 생성 뒤 3분
+  inactivity면 통째로 만료한다(key TTL은 member별 TTL이 아님). member 회수는 terminal ZREM과 목록 조회
+  lazy prune이 담당하며 별도 sweep은 없다 — 3분 미만 간격 생성이 terminal·조회 없이 계속되면 만료
+  member가 누적될 수 있다(수용된 MVP trade-off).
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)뿐이다 — AI가 채택한 source는 final
   transaction에서 이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
 - 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.

@@ -31,10 +31,16 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 11개(timeline 9 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 12개(timeline 10 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
+
+`GET /a/api/{version}/timeline/drafts`는 인증 사용자가 소유한 현재 진행 중(`PROCESSING`) draft 작업의
+taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 작업이 없으면 404가 아니라 200과
+`taskIds=[]`다. 완료·실패·만료 작업과 타 사용자 작업은 개별 오류 없이 목록에서 제외한다(존재 비노출).
+목록은 앱 재진입 시 잃은 taskId를 재발견하는 힌트이고, 각 작업의 최신 상태·결과는 기존 단건 폴링
+(`GET .../drafts/{taskId}`)이 권위다. Redis 권위 read·task JSON 해석 실패는 catch-all 500 `-500`이다.
 
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`이며,
@@ -51,7 +57,7 @@ version별 동작은 service가 결정한다.
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
-`body=null`이다. 기존 operation을 확장한 것이므로 보호 operation 수는 11개로 유지된다.
+`body=null`이다. 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}`와
 `DELETE /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 필요한 PHOTO S3 삭제 작업·원문 PHOTO
