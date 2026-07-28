@@ -80,7 +80,7 @@ class TimelineTaskStoreTest {
     void save_processingShape_hasRecordIdWindowStartedAtOwner_withoutRecordMetadata() throws Exception {
         // 축소된 shape: record 메타데이터(recordDate/recordAt/recordTimezone/userMemory)는 더 이상 없다 —
         // DailyRecord가 선생성되어 DB가 단일 권위다. dailyRecordId는 PROCESSING부터 실린다.
-        store.save("abc", processingTask(), Duration.ofHours(1));
+        store.save("abc", processingTask(), Duration.ofMinutes(2));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
@@ -99,7 +99,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_processingStartedAt_roundTripsAsInstant() throws Exception {
-        store.save("abc", processingTask(), Duration.ofHours(1));
+        store.save("abc", processingTask(), Duration.ofMinutes(2));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
@@ -150,7 +150,7 @@ class TimelineTaskStoreTest {
     @Test
     void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
         // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회의 기준값.
-        store.save("p", processingTask(), Duration.ofHours(1));
+        store.save("p", processingTask(), Duration.ofMinutes(2));
         store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
         store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
@@ -172,12 +172,12 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_processingAtomicallyAddsStartedAtToIndex() {
-        store.save("abc", processingTask(), Duration.ofHours(1));
+        store.save("abc", processingTask(), Duration.ofMinutes(2));
 
         verify(redis).setAndAddToSortedSet(
                 org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
                 anyString(),
-                org.mockito.ArgumentMatchers.eq(Duration.ofHours(1)),
+                org.mockito.ArgumentMatchers.eq(Duration.ofMinutes(2)),
                 org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
                 org.mockito.ArgumentMatchers.eq("abc"),
                 org.mockito.ArgumentMatchers.eq(STARTED_AT.toEpochMilli()));
@@ -205,13 +205,14 @@ class TimelineTaskStoreTest {
 
     @Test
     void countStuckProcessing_delegatesExactTtlAndThresholdCutoffs() {
+        // 만료 cutoff(now-2m)는 prune, stuck cutoff(now-90s)는 count 상한 — 정확한 epoch millis 전달을 고정한다.
         Instant now = Instant.parse("2026-07-24T12:00:00Z");
         when(redis.pruneAndCountSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY,
-                now.minus(Duration.ofHours(1)).toEpochMilli(),
-                now.minus(Duration.ofMinutes(10)).toEpochMilli())).thenReturn(2L);
+                now.minus(Duration.ofMinutes(2)).toEpochMilli(),
+                now.minus(Duration.ofSeconds(90)).toEpochMilli())).thenReturn(2L);
 
         assertThat(store.countStuckProcessing(
-                now, Duration.ofMinutes(10), Duration.ofHours(1))).isEqualTo(2L);
+                now, Duration.ofSeconds(90), Duration.ofMinutes(2))).isEqualTo(2L);
     }
 
     @Test

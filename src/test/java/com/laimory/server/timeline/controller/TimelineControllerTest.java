@@ -169,6 +169,19 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createDraftTask_mapsAiDispatchFailureTo502WithoutTaskId() throws Exception {
+        // AI dispatch 실패 계약: 502 + -1009 envelope, body=null — 실패 응답에는 내부 taskId가 없다.
+        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ExceptionType.AI_DISPATCH_FAILED));
+
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.header.code").value(-1009))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
     void createPhotoUploads_returns200WithUploads() throws Exception {
         when(photoUploadService.createUploads(any(), anyLong(), any()))
                 .thenReturn(new PhotoUploadCreateResponse(List.of(

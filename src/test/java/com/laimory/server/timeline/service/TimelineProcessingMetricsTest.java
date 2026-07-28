@@ -27,7 +27,7 @@ class TimelineProcessingMetricsTest {
     @Test
     void gaugeCountsStuckProcessingAtFixedTime() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        Duration threshold = Duration.ofMinutes(10);
+        Duration threshold = Duration.ofSeconds(90);
         when(timelineTaskService.countStuckProcessing(NOW, threshold)).thenReturn(2L);
 
         new TimelineProcessingMetrics(registry, timelineTaskService, CLOCK, threshold);
@@ -40,7 +40,7 @@ class TimelineProcessingMetricsTest {
     @Test
     void redisFailureBecomesNanInsteadOfBreakingScrape() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        Duration threshold = Duration.ofMinutes(10);
+        Duration threshold = Duration.ofSeconds(90);
         when(timelineTaskService.countStuckProcessing(NOW, threshold))
                 .thenThrow(new RuntimeException("redis down"));
 
@@ -52,13 +52,17 @@ class TimelineProcessingMetricsTest {
 
     @Test
     void invalidThresholdFailsFast() {
+        // 0·음수·PROCESSING TTL(2m) 이상은 기동 시 거부한다(90s는 위 테스트에서 허용 확인).
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
 
         assertThatThrownBy(() -> new TimelineProcessingMetrics(
                 registry, timelineTaskService, CLOCK, Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new TimelineProcessingMetrics(
-                registry, timelineTaskService, CLOCK, Duration.ofHours(1)))
+                registry, timelineTaskService, CLOCK, Duration.ofSeconds(-1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new TimelineProcessingMetrics(
+                registry, timelineTaskService, CLOCK, Duration.ofMinutes(2)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

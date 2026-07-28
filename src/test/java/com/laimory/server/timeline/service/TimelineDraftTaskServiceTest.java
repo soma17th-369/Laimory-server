@@ -282,17 +282,21 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenDispatchRejected_marksFailedAndKeepsDrafts() {
+    void createDraftTask_whenDispatchRejected_marksFailedAndFailsWith1009() {
         // 미접수 확정(dispatcher가 TimelineAiDispatchRejectedException) — AI가 접수·write하지 않았음이 확실하므로
-        // FAILED로 종결한다.
+        // FAILED(24h) 종결을 시도하고, POST는 성공 202로 위장하지 않고 502(-1009)로 실패한다.
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
 
-        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
 
-        assertThat(taskId).isNotBlank();
-        // raw 메시지는 저장하지 않는다 — 분류 코드만(상세는 로그로).
-        verify(timelineTaskService).markFailed(eq(taskId), eq(USER_ID), eq(RECORD_ID),
+        // FAILED는 dispatch에 실었던 그 server taskId로 저장한다. raw 메시지는 저장하지 않는다 — 분류 코드만(상세는 로그로).
+        ArgumentCaptor<AiTimelineDispatchRequest> requestCaptor =
+                ArgumentCaptor.forClass(AiTimelineDispatchRequest.class);
+        verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
+        verify(timelineTaskService).markFailed(eq(requestCaptor.getValue().taskId()), eq(USER_ID), eq(RECORD_ID),
                 eq(ExceptionType.AI_DISPATCH_FAILED),
                 anyString());
         // draft는 보존한다(cleanup이 정리). 보상 삭제 없음.
@@ -300,16 +304,39 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessing() {
+    void createDraftTask_whenDispatchRejectedAndMarkFailedFails_stillFailsWith1009_withoutRetry() {
+        // FAILED 저장까지 실패해도 500으로 뒤집히지 않는다 — read-back·재저장·retry 없이 같은 502(-1009)로 끝낸다.
+        // task는 PROCESSING으로 남을 수 있고 그 경우 최초 TTL이 회수한다.
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
+        doThrow(new RuntimeException("redis down")).when(timelineTaskService)
+                .markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
+
+        verify(timelineTaskService, times(1)).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, times(1))
+                .createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+        verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+    }
+
+    @Test
+    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessingAndFailsWith1009() {
         // UNKNOWN(read timeout·5xx·계약 불일치 — Rejected가 아닌 예외) — AI가 이미 접수해 final write를 진행
-        // 중일 수 있으므로 FAILED로 확정하지 않고 PROCESSING을 유지한다(AI callback 또는 TTL이 종결).
+        // 중일 수 있으므로 FAILED로 덮거나 재저장(TTL 연장)하지 않고 기존 PROCESSING을 유지한 채
+        // 502(-1009)로 실패한다(AI callback 또는 TTL 만료가 종결).
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("read timeout")).when(timelineAiDispatcher).dispatch(any());
 
-        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
 
-        // taskId는 정상 반환하고 PROCESSING은 그대로 둔다(위에서 createProcessing 이미 성공). 종결 없음.
-        assertThat(taskId).isNotBlank();
+        // 종결·재저장 없음: createProcessing은 최초 1회 그대로, markFailed 미호출.
+        verify(timelineTaskService, times(1))
+                .createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
         verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
         // draft·record 모두 보존(보상 삭제 없음).
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());

@@ -72,8 +72,9 @@ public class TimelineDraftTaskService {
     /**
      * 작성 작업을 만들고 taskId를 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
      * 이미 SAVED인 daily record면 409(-1003), 기존 final rawId 제외 후 새 item이 없으면
-     * 409(-1013)로 거절한다. dispatch가 미접수 확정이면 FAILED로 종결하고, 접수 여부를 알 수 없는
-     * 예외면 PROCESSING을 유지한다 — 두 경우 모두 taskId는 정상 반환한다(클라가 폴링으로 결과 확인).
+     * 409(-1013)로 거절한다. taskId는 dispatcher가 정상 반환(접수 확인)한 경우에만 반환하며,
+     * dispatch 실패는 내부 구분(미접수 확정 4xx → FAILED 종결 시도 / UNKNOWN → PROCESSING 유지)과
+     * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
      */
     public String createDraftTask(String applicationVersion, long userId, LocalDate recordDate,
                                   LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
@@ -158,22 +159,33 @@ public class TimelineDraftTaskService {
         }
 
         // 3. AI dispatch — 접수 body에 taskId·원문 callbackToken·dailyRecordId·offset 변환 window를 싣는다.
-        //    실패 처리는 dispatcher가 준 "미접수 확정 vs UNKNOWN" 구분을 따른다(taskId는 어느 경우든 정상 반환).
+        //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
+        //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
+        //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
         try {
             timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
                     taskId, callbackToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
         } catch (TimelineAiDispatchRejectedException e) {
-            // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED로 종결한다.
-            // 상세는 로그로만 남겨 폴링 body.error로 유출하지 않는다.
+            // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
+            // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
-            timelineTaskService.markFailed(
-                    taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
+            try {
+                timelineTaskService.markFailed(
+                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
+            } catch (RuntimeException saveFailure) {
+                // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
+                // PROCESSING으로 남았다면 최초 2분 TTL이 회수한다.
+                log.warn("timeline ai dispatch rejected, markFailed also failed (task state unknown): taskId={}",
+                        taskId, saveFailure);
+            }
+            throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
-            // 있다. FAILED로 확정하면 커밋된 결과와 어긋날 수 있으므로 task를 PROCESSING으로 둔다.
-            // AI callback이 종결하거나 task TTL 1시간이 회수하며, draft도 보존한다.
+            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 2분 TTL)을 그대로 둔다.
+            // AI callback 또는 TTL 만료가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
                     taskId, e.getMessage());
+            throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         }
 
         return taskId;
