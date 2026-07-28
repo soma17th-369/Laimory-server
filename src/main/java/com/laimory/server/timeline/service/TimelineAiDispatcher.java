@@ -11,8 +11,10 @@ import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
  * 받은 원문 token을 그대로 반환). 서버는 결과 graph를 다시 조립·검증·저장하지 않는다.
  *
  * <p>{@code dispatch}는 접수 확인까지 동기다 — AI의 202는 schema 수락 즉시 반환되므로 요청 스레드가
- * LLM inference를 기다리지 않는다. 접수 실패(비202·shape 불일치·타임아웃)는 RuntimeException으로 던지고,
- * 호출부가 task를 FAILED로 종결한다.
+ * LLM inference를 기다리지 않는다. 접수 실패는 두 갈래다: 4xx 거절은
+ * {@link TimelineAiDispatchRejectedException}(미접수 확정 — 호출부가 FAILED 종결을 시도),
+ * 그 외 예외(타임아웃·전송 실패·5xx·비202/계약 불일치)는 접수 여부 불명(UNKNOWN)으로 그대로 전파해
+ * 호출부가 PROCESSING을 유지한다. 어느 경우든 호출부는 draft POST를 502(-1009)로 실패시킨다.
  *
  * <p>구현 선택은 {@code app.ai.mode}: {@code noop}(기본 — AI 미연동, prod 안전) /
  * {@code fake}(dev — in-process fake가 AI direct-write를 대행) / {@code http}(실 AI HTTP 연동).

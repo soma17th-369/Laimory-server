@@ -80,8 +80,8 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 필수, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. | PROCESSING 1h, terminal 24h |
-| `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 1h cutoff 관측 때 제거 |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 필수, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 3m, terminal 24h |
+| `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
 | `timeline:callback-token-uses:{taskId}` | callback token 소비 marker. hash 검증 직후 `SET NX`로 고정값 `used`를 저장하며 raw token/hash는 넣지 않는다. 소비 뒤 후속 처리 실패에도 삭제·환불하지 않는다. | 25h |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |

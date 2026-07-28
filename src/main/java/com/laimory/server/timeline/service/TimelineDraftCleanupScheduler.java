@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
  * 보관기간을 초과한 draft source staging 행을 주기적으로 정리하는 스케줄러.
  * 행마다 PHOTO 사진의 S3 객체를 먼저 지운 뒤 행을 삭제한다(S3 삭제 실패 시 행을 남겨 다음 실행에서 재시도).
  *
- * <p>불변식: 보관기간(retentionDays, 기본 7일)은 PROCESSING_TTL(1시간)보다 훨씬 커야 한다(retention ≫ PROCESSING_TTL 1h).
+ * <p>불변식: 보관기간(retentionDays, 기본 7일)은 PROCESSING_TTL(3분)보다 훨씬 커야 한다(retention ≫ PROCESSING_TTL 3m).
  * 그래야 처리 중(in-flight)인 task의 draft가 cutoff에 걸려 조기 삭제되는 일이 없다.
  *
  * <p>대상은 만료된 <b>draft 행</b>(omitted 또는 FAILED task 잔여)의 사진뿐이다. AI가 채택한 source는 final
@@ -34,7 +34,7 @@ import org.springframework.stereotype.Component;
 public class TimelineDraftCleanupScheduler {
 
     /**
-     * 허용 최소 보관기간(일). 1일(24h)이면 PROCESSING_TTL(1h)보다 충분히 크다.
+     * 허용 최소 보관기간(일). 1일(24h)이면 PROCESSING_TTL(3m)보다 충분히 크다.
      * 이보다 작은 값(0·음수 포함)은 active draft를 조기 삭제할 수 있어 기동 시 거부한다.
      */
     private static final long MIN_RETENTION_DAYS = 1;
@@ -48,14 +48,14 @@ public class TimelineDraftCleanupScheduler {
     private long retentionDays;
 
     /**
-     * 클래스 불변식(retention ≫ PROCESSING_TTL 1h)을 기동 시점에 fail-fast로 강제한다.
+     * 클래스 불변식(retention ≫ PROCESSING_TTL 3m)을 기동 시점에 fail-fast로 강제한다.
      * 잘못된 설정이 04:00 cleanup 때 조용히 active draft를 지우는 대신, 배포 즉시 부팅을 실패시킨다.
      */
     @PostConstruct
     void validateRetentionDays() {
         if (retentionDays < MIN_RETENTION_DAYS) {
             throw new IllegalStateException(
-                    "app.draft.retention-days는 최소 %d 이상이어야 한다(현재 %d). retention은 PROCESSING_TTL(1h)보다 훨씬 커야 active draft가 조기 삭제되지 않는다."
+                    "app.draft.retention-days는 최소 %d 이상이어야 한다(현재 %d). retention은 PROCESSING_TTL(3m)보다 훨씬 커야 active draft가 조기 삭제되지 않는다."
                             .formatted(MIN_RETENTION_DAYS, retentionDays));
         }
     }

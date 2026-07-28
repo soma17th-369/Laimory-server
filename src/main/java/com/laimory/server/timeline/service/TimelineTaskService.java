@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 /**
  * timeline draft 작업 상태 leaf 서비스. 자신과 1:1인 TimelineTaskStore에만 접근한다.
- * 처리중(PROCESSING)은 1시간, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
+ * 처리중(PROCESSING)은 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
+ * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
+ * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
  *
  * <p>callback token은 hash 검증 직후 task별 Redis marker로 원자 소비한다. marker는 terminal task보다
  * 한 시간 긴 25시간 동안 유지하며 소비 뒤 후속 처리가 실패해도 삭제하거나 환불하지 않는다.
@@ -33,7 +35,9 @@ public class TimelineTaskService {
     private static final Map<Integer, ExceptionType> TASK_FAILURE_TYPES_BY_CODE = TASK_FAILURE_TYPES.stream()
             .collect(Collectors.toUnmodifiableMap(ExceptionType::code, Function.identity()));
 
-    static final Duration PROCESSING_TTL = Duration.ofHours(1);
+    // AI 접수는 202 즉시 반환, 정상 inference·callback은 3분 내 종료가 운영 목표 — 사용자에게
+    // 무기한 PROCESSING을 노출하지 않기 위해 callback 없는 task는 이 TTL이 회수한다.
+    static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
     static final Duration CALLBACK_TOKEN_USE_TTL = Duration.ofHours(25);
 

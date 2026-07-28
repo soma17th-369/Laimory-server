@@ -80,6 +80,19 @@ class HttpTimelineAiDispatcherTest {
                 .hasMessageContaining("absolute http");
     }
 
+    @Test
+    void constructor_ackWaitReachingHalfProcessingTtl_failsFast() {
+        // task는 dispatch 전에 TTL(3m)로 저장되므로 접수 대기 상한(connect+read 합)이 수명에 근접하면
+        // 유효한 202를 받고도 만료된 taskId를 반환할 수 있다 — 합 90s(TTL 절반) 이상은 기동 시 거부한다.
+        assertThatThrownBy(() -> new HttpTimelineAiDispatcher(RestClient.builder(),
+                server.url("/").toString(), Duration.ofSeconds(45), Duration.ofSeconds(45)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("PROCESSING TTL");
+        assertThatCode(() -> new HttpTimelineAiDispatcher(RestClient.builder(),
+                server.url("/").toString(), Duration.ofSeconds(45), Duration.ofMillis(44_999)))
+                .doesNotThrowAnyException();
+    }
+
     // --- 정상 접수 ---
 
     @Test

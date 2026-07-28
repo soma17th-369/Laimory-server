@@ -134,7 +134,8 @@ public interface TimelineApi {
 
     @Operation(summary = "draft 작업 생성",
             description = "sourceItems(하루 기록 원천: 머문 곳·이동·사진·건강·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
-                    + "202로 반환된 taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
+                    + "AI 접수가 확인된 경우에만 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
+                    + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
                     + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
@@ -148,7 +149,8 @@ public interface TimelineApi {
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "지오코딩(지도 API) 호출 실패로 draft 생성 실패. 재시도 가능성으로 코드가 나뉜다 — "
+                    description = "`-1009`(AI 접수 실패 — AI가 거절했거나 접수 확인 불가. 응답에 taskId 없음) · "
+                            + "지오코딩(지도 API) 호출 실패는 재시도 가능성으로 코드가 나뉜다 — "
                             + "`-1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
                             + "`-1015`(영구적 실패 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })

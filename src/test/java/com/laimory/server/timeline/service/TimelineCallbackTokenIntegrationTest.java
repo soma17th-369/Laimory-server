@@ -233,7 +233,7 @@ class TimelineCallbackTokenIntegrationTest {
         // AI가 commit까지 마쳤지만 callback은 오지 않았다.
         simulateAiDirectWrite(taskId, record.getDailyRecordId());
 
-        // 원 task는 PROCESSING인 채 남고(운영에선 TTL 1h 만료), final graph는 commit대로 유지된다.
+        // 원 task는 PROCESSING인 채 남고(운영에선 TTL 3m 만료), final graph는 commit대로 유지된다.
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
@@ -259,6 +259,28 @@ class TimelineCallbackTokenIntegrationTest {
                 .containsExactly("raw-p2");
         assertThat(taskService.find(retryTaskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(redis.get(LEGACY_DATE_GUARD_KEY)).isEqualTo("legacy-holder");
+    }
+
+    @Test
+    void callbackAfterTaskExpiry_returns404_withoutMarkerOrResurrection() {
+        // task 만료(=key 소멸) 뒤 도착한 유효-토큰 callback은 404(-1001)로 끝난다 — token marker도
+        // terminal task도 만들지 않는다(부활 금지). 만료는 실제 TTL 대기 대신 key 삭제로 재현한다(의미 동일).
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources());
+        createdTaskIds.add(taskId);
+        String token = capturedRequest().callbackToken();
+
+        redis.delete("timeline:draft-task:" + taskId);
+
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, token, success()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
+        assertThat(taskService.find(taskId)).isEmpty();
+        assertThat(redis.get("timeline:callback-token-uses:" + taskId)).isNull();
+
+        // 만료 뒤 폴링도 같은 404(-1001)로 수렴한다.
+        assertThatThrownBy(() -> pollingService.poll(VERSION, USER_ID, taskId))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
     }
 
     /** AI direct-write 시뮬: final Event 1건 + source별 Item/junction INSERT 후 accepted source 삭제(한 커밋처럼). */

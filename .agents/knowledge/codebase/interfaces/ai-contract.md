@@ -44,8 +44,10 @@ Content-Type: application/json
 - source item은 body로 보내지 않는다 — AI가 `taskId`로 `timeline_draft_source_items`를 읽는다.
   `recordDate`/`recordAt`/`recordTimezone`/`userId`도 반복하지 않는다(AI가 `dailyRecordId`로 DB에서 읽음).
 - 접수 성공은 `202 Accepted` + body `{"taskId": <동일>, "status": "PROCESSING"}` — final 성공이 아니다.
-  dispatcher는 202·동일 taskId·PROCESSING을 검증하고 불일치·비202·타임아웃은 던져서 task를 FAILED(`-1009`)로
-  종결한다. 필수 필드 누락·offset 파싱 실패는 FastAPI 표준 422다.
+  dispatcher는 202·동일 taskId·PROCESSING을 검증한다. 4xx 거절만 미접수 확정으로 task FAILED(`-1009`)
+  종결을 시도하고, 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명(UNKNOWN)이라 PROCESSING을
+  유지한다. 어느 실패든 draft POST는 502(`-1009`)로 끝나고 taskId를 반환하지 않는다.
+  필수 필드 누락·offset 파싱 실패는 FastAPI 표준 422다(4xx → 미접수 확정).
 - 현재 AI endpoint는 무인증이다(private network 전제) — production 전 service authentication 추가 시
   request header와 fixture를 양 저장소에서 함께 갱신한다.
 
@@ -107,7 +109,8 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
   주체가 없다 — 원 task는 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다(수용된 MVP 한계 —
   동일 source 전량 재시도는 `-1013`, 일부 신규 source 재시도가 실질 복구 경로).
 - callback token 소비 뒤 terminal 저장이 실패해도 같은 token을 재사용하지 않는다. PROCESSING task는
-  1시간 TTL로 만료하며 durable receipt·redispatch는 별도 복구 과제다.
+  3분 TTL로 만료하며(만료 뒤 폴링·콜백은 404 `-1001`, 부활 없음) durable receipt·redispatch는 별도
+  복구 과제다.
 - callback 성공은 application envelope 없이 body 없는 HTTP 200이다.
   400/401/404 error는 `GlobalExceptionHandler`의 application envelope를 사용한다.
 
@@ -116,7 +119,9 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
 - `noop`(기본): dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
 - `fake`(dev): in-process로 direct-write(`FakeAiTimelineAppendService`) 후 실제 HTTP callback 경로를
   한 번 호출한다. callback retry는 없다.
-- `http`: 실 AI 연동 — `app.ai.http.base-url` 필수, 접수 타임아웃(connect 2s/read 5s 기본) 초과는 FAILED.
+- `http`: 실 AI 연동 — `app.ai.http.base-url` 필수, 접수 타임아웃(connect 2s/read 5s 기본) 초과는
+  접수 불명(UNKNOWN)으로 PROCESSING을 유지한 채 POST 502다. connect+read 합은 PROCESSING TTL(3m)의
+  절반 미만이어야 기동한다(대기 상한이 task 수명에 근접하면 만료된 taskId를 202로 반환할 수 있음).
 
 ## Invariants
 

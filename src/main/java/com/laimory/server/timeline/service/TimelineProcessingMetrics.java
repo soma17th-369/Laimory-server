@@ -28,12 +28,12 @@ public class TimelineProcessingMetrics {
     public TimelineProcessingMetrics(MeterRegistry meterRegistry,
                                      TimelineTaskService timelineTaskService,
                                      Clock clock,
-                                     @Value("${app.metrics.timeline.stuck-after:10m}")
+                                     @Value("${app.metrics.timeline.stuck-after:90s}")
                                      Duration stuckAfter) {
         if (stuckAfter.isZero() || stuckAfter.isNegative()
                 || stuckAfter.compareTo(TimelineTaskService.PROCESSING_TTL) >= 0) {
             throw new IllegalArgumentException(
-                    "app.metrics.timeline.stuck-after는 0보다 크고 1시간보다 짧아야 합니다: " + stuckAfter);
+                    "app.metrics.timeline.stuck-after는 0보다 크고 PROCESSING TTL(3분)보다 짧아야 합니다: " + stuckAfter);
         }
         this.timelineTaskService = timelineTaskService;
         this.clock = clock;
