@@ -124,6 +124,14 @@ class TimelineTaskServiceTest {
     }
 
     @Test
+    void findProcessingTaskIds_delegatesOwnerScopedLookup_preservingOrder() {
+        // 사용자별 진행 작업 조회는 store가 소유한다(권위 검증·stale prune 포함) — leaf는 순서 그대로 전달만.
+        when(timelineTaskStore.findProcessingTaskIds(USER_ID)).thenReturn(List.of("newer", "older"));
+
+        assertThat(service.findProcessingTaskIds(USER_ID)).containsExactly("newer", "older");
+    }
+
+    @Test
     void consumeCallbackToken_usesTwentyFiveHourMarkerTtl() {
         when(timelineTaskStore.consumeCallbackToken("t", Duration.ofHours(25))).thenReturn(true);
 

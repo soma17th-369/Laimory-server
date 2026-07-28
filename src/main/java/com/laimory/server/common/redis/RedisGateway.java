@@ -2,6 +2,7 @@ package com.laimory.server.common.redis;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -22,16 +23,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class RedisGateway {
 
-    // task JSON과 PROCESSING 관측 인덱스를 한 원자 경계에서 갱신한다. 둘을 별도 명령으로 쓰면
-    // 앱/Redis 장애 사이에 task와 인덱스가 어긋나 stuck gauge가 거짓말할 수 있다.
-    private static final RedisScript<Long> SET_AND_SORTED_SET_ADD = new DefaultRedisScript<>("""
+    // task JSON과 두 인덱스(전역 관측 + 사용자별 조회)를 한 원자 경계에서 갱신한다. 셋을 별도 명령으로
+    // 쓰면 앱/Redis 장애 사이에 task와 인덱스가 어긋나 stuck gauge가 거짓말하거나 목록 후보가 유실된다.
+    // 두 번째 sorted set(KEYS[3])은 값과 같은 TTL로 매번 PEXPIRE한다 — 마지막 추가 뒤 TTL 동안
+    // 비활성인 key만 자연 소멸한다(member별 TTL 아님). Lua 안에서 값 JSON은 decode하지 않는다.
+    private static final RedisScript<Long> SET_AND_SORTED_SETS_ADD = new DefaultRedisScript<>("""
             redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
-            return redis.call('zadd', KEYS[2], ARGV[3], ARGV[4])
+            redis.call('zadd', KEYS[2], ARGV[3], ARGV[4])
+            redis.call('zadd', KEYS[3], ARGV[3], ARGV[4])
+            return redis.call('pexpire', KEYS[3], ARGV[1])
             """, Long.class);
 
-    private static final RedisScript<Long> SET_AND_SORTED_SET_REMOVE = new DefaultRedisScript<>("""
+    private static final RedisScript<Long> SET_AND_SORTED_SETS_REMOVE = new DefaultRedisScript<>("""
             redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
-            return redis.call('zrem', KEYS[2], ARGV[3])
+            redis.call('zrem', KEYS[2], ARGV[3])
+            return redis.call('zrem', KEYS[3], ARGV[3])
             """, Long.class);
 
     // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
@@ -84,25 +90,69 @@ public class RedisGateway {
     }
 
     /**
-     * TTL 값 저장과 sorted-set member 추가를 원자적으로 수행한다.
+     * TTL 값 저장과 두 sorted set의 같은 member/score 추가를 한 Lua 실행으로 원자 수행한다.
+     * {@code logicalExpiringSortedSetKey}에는 값과 같은 TTL을 매번 PEXPIRE로 갱신한다 — 마지막 추가 뒤
+     * TTL 동안 비활성인 key만 자연 소멸한다(member별 TTL이 아니다).
      *
-     * <p>두 키 모두 prefix 없는 논리 키이며, score는 epoch milliseconds처럼 호출부가 정한 단위를 쓴다.
+     * <p>세 키 모두 prefix 없는 논리 키이며, score는 epoch milliseconds처럼 호출부가 정한 단위를 쓴다.
      */
-    public void setAndAddToSortedSet(String logicalValueKey, String value, Duration ttl,
-                                     String logicalSortedSetKey, String member, long score) {
-        Long result = template.execute(SET_AND_SORTED_SET_ADD,
-                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey),
+    public void setAndAddToSortedSets(String logicalValueKey, String value, Duration ttl,
+                                      String logicalSortedSetKey, String logicalExpiringSortedSetKey,
+                                      String member, long score) {
+        Long result = template.execute(SET_AND_SORTED_SETS_ADD,
+                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey,
+                        prefix + logicalExpiringSortedSetKey),
                 String.valueOf(ttl.toMillis()), value, String.valueOf(score), member);
         requireScriptResult(result, logicalValueKey);
     }
 
-    /** TTL 값 저장과 sorted-set member 제거를 원자적으로 수행한다. */
-    public void setAndRemoveFromSortedSet(String logicalValueKey, String value, Duration ttl,
-                                          String logicalSortedSetKey, String member) {
-        Long result = template.execute(SET_AND_SORTED_SET_REMOVE,
-                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey),
+    /** TTL 값 저장과 두 sorted set의 member 제거를 한 Lua 실행으로 원자 수행한다(TTL은 연장하지 않음). */
+    public void setAndRemoveFromSortedSets(String logicalValueKey, String value, Duration ttl,
+                                           String logicalFirstSortedSetKey, String logicalSecondSortedSetKey,
+                                           String member) {
+        Long result = template.execute(SET_AND_SORTED_SETS_REMOVE,
+                List.of(prefix + logicalValueKey, prefix + logicalFirstSortedSetKey,
+                        prefix + logicalSecondSortedSetKey),
                 String.valueOf(ttl.toMillis()), value, member);
         requireScriptResult(result, logicalValueKey);
+    }
+
+    /**
+     * sorted set 전체 member를 score 내림차순으로 반환한다(ZREVRANGE 0 -1). 같은 score의 member는
+     * Redis reverse range 계약대로 역 lexicographic 순서다. key가 없으면 빈 목록이다.
+     */
+    public List<String> getSortedSetReverseRange(String logicalSortedSetKey) {
+        Set<String> members = template.opsForZSet().reverseRange(prefix + logicalSortedSetKey, 0, -1);
+        if (members == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis reverseRange가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return List.copyOf(members);
+    }
+
+    /**
+     * 여러 값을 한 명령(MGET)으로 읽는다. 반환 목록은 요청 키 순서와 index가 정렬돼 있으며,
+     * 없는 키 자리는 null이다.
+     */
+    public List<String> multiGet(List<String> logicalKeys) {
+        List<String> values = template.opsForValue()
+                .multiGet(logicalKeys.stream().map(key -> prefix + key).toList());
+        if (values == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis multiGet이 null을 반환했습니다");
+        }
+        return values;
+    }
+
+    /** sorted set에서 여러 member를 한 명령으로 제거하고 실제 제거 수를 반환한다(missing member는 무시). */
+    public long removeFromSortedSet(String logicalSortedSetKey, List<String> members) {
+        Long removed = template.opsForZSet()
+                .remove(prefix + logicalSortedSetKey, members.toArray(new Object[0]));
+        if (removed == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis zrem이 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return removed;
     }
 
     /**

@@ -17,6 +17,7 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,8 @@ class TimelineTaskStoreTest {
     private TimelineTaskStore store;
 
     private static final Instant STARTED_AT = Instant.parse("2026-05-08T13:41:07Z");
+    // 저장 fixture의 owner(7)로 store가 조립하는 사용자별 진행 작업 index 논리 키.
+    private static final String USER_INDEX_KEY = "timeline:draft-task:user:7:processing";
 
     @BeforeEach
     void setUp() {
@@ -65,9 +68,10 @@ class TimelineTaskStoreTest {
         ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
-        verify(redis).setAndRemoveFromSortedSet(
+        verify(redis).setAndRemoveFromSortedSets(
                 keyCaptor.capture(), jsonCaptor.capture(), ttlCaptor.capture(),
                 org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq(USER_INDEX_KEY),
                 org.mockito.ArgumentMatchers.eq("abc"));
 
         assertThat(keyCaptor.getValue()).isEqualTo("timeline:draft-task:abc");
@@ -83,8 +87,8 @@ class TimelineTaskStoreTest {
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(redis).setAndAddToSortedSets(anyString(), jsonCaptor.capture(), any(),
+                anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
         String json = jsonCaptor.getValue();
         assertThat(json).contains("\"dailyRecordId\":42");
         assertThat(json).contains("\"userId\":7");
@@ -102,8 +106,8 @@ class TimelineTaskStoreTest {
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).setAndAddToSortedSet(anyString(), jsonCaptor.capture(), any(),
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(redis).setAndAddToSortedSets(anyString(), jsonCaptor.capture(), any(),
+                anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
         TimelineDraftTask roundTripped = objectMapper.readValue(jsonCaptor.getValue(), TimelineDraftTask.class);
         assertThat(roundTripped.processingStartedAt()).isEqualTo(STARTED_AT);
         assertThat(roundTripped.timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(18, 30));
@@ -116,8 +120,8 @@ class TimelineTaskStoreTest {
         store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis, times(2)).setAndRemoveFromSortedSet(
-                anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
+        verify(redis, times(2)).setAndRemoveFromSortedSets(
+                anyString(), jsonCaptor.capture(), any(), anyString(), anyString(), anyString());
         assertThat(jsonCaptor.getAllValues()).allSatisfy(json -> {
             assertThat(json).doesNotContain("processingStartedAt");
             assertThat(json).doesNotContain("timelineWindow");
@@ -129,8 +133,8 @@ class TimelineTaskStoreTest {
         store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(redis).setAndRemoveFromSortedSet(
-                anyString(), jsonCaptor.capture(), any(), anyString(), anyString());
+        verify(redis).setAndRemoveFromSortedSets(
+                anyString(), jsonCaptor.capture(), any(), anyString(), anyString(), anyString());
         assertThat(jsonCaptor.getValue()).contains("\"error\":-1009");
         assertThat(jsonCaptor.getValue()).doesNotContain("\"error\":\"");
     }
@@ -156,10 +160,10 @@ class TimelineTaskStoreTest {
 
         ArgumentCaptor<String> processingJson = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> terminalJson = ArgumentCaptor.forClass(String.class);
-        verify(redis).setAndAddToSortedSet(anyString(), processingJson.capture(), any(),
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-        verify(redis, times(2)).setAndRemoveFromSortedSet(
-                anyString(), terminalJson.capture(), any(), anyString(), anyString());
+        verify(redis).setAndAddToSortedSets(anyString(), processingJson.capture(), any(),
+                anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(redis, times(2)).setAndRemoveFromSortedSets(
+                anyString(), terminalJson.capture(), any(), anyString(), anyString(), anyString());
         java.util.List<String> allJson = new java.util.ArrayList<>();
         allJson.add(processingJson.getValue());
         allJson.addAll(terminalJson.getAllValues());
@@ -171,35 +175,42 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void save_processingAtomicallyAddsStartedAtToIndex() {
+    void save_processingAtomicallyAddsStartedAtToBothIndexes() {
+        // T13: task JSON·전역 index·소유자의 사용자 index가 같은 member/score·PROCESSING TTL로
+        // gateway 원자 호출 한 번에 전달된다(사용자 index key TTL 갱신은 gateway script 책임).
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
-        verify(redis).setAndAddToSortedSet(
+        verify(redis).setAndAddToSortedSets(
                 org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
                 anyString(),
                 org.mockito.ArgumentMatchers.eq(Duration.ofMinutes(3)),
                 org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq(USER_INDEX_KEY),
                 org.mockito.ArgumentMatchers.eq("abc"),
                 org.mockito.ArgumentMatchers.eq(STARTED_AT.toEpochMilli()));
     }
 
     @Test
-    void save_terminalAtomicallyRemovesTaskFromProcessingIndex() {
+    void save_terminalAtomicallyRemovesTaskFromBothIndexes() {
+        // T14: SUCCESS/FAILED 종류와 무관하게 terminal 저장 한 번이 전역·사용자 index 제거를 함께 나른다.
+        // 사용자 index key는 보존된 양수 owner로 조립한다(터미널에도 owner 필수 — D6/D14).
         store.save("success", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
         store.save("failed", TimelineDraftTask.failed(7L, 42L, -1009, "h"),
                 Duration.ofHours(24));
 
-        verify(redis).setAndRemoveFromSortedSet(
+        verify(redis).setAndRemoveFromSortedSets(
                 org.mockito.ArgumentMatchers.eq("timeline:draft-task:success"),
                 anyString(),
                 org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)),
                 org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq(USER_INDEX_KEY),
                 org.mockito.ArgumentMatchers.eq("success"));
-        verify(redis).setAndRemoveFromSortedSet(
+        verify(redis).setAndRemoveFromSortedSets(
                 org.mockito.ArgumentMatchers.eq("timeline:draft-task:failed"),
                 anyString(),
                 org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)),
                 org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq(USER_INDEX_KEY),
                 org.mockito.ArgumentMatchers.eq("failed"));
     }
 
@@ -257,5 +268,120 @@ class TimelineTaskStoreTest {
         when(redis.get("timeline:draft-task:missing")).thenReturn(null);
 
         assertThat(store.find("missing")).isEmpty();
+    }
+
+    private String processingJson() throws Exception {
+        return objectMapper.writeValueAsString(processingTask());
+    }
+
+    @Test
+    void findProcessingTaskIds_emptyIndex_returnsEmptyList() {
+        // T2: index key 없음(빈 range)이면 후보 read 없이 빈 목록이다 — null이 아니다.
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of());
+
+        assertThat(store.findProcessingTaskIds(7L)).isNotNull().isEmpty();
+        verify(redis, org.mockito.Mockito.never()).multiGet(any());
+    }
+
+    @Test
+    void findProcessingTaskIds_returnsOwnedProcessing_inCandidateOrder() throws Exception {
+        // T1·T6: 후보 순서(score 내림차순 — gateway ZREVRANGE 계약)를 그대로 보존해 반환하고,
+        // 전부 유효하면 index를 정리하지 않는다.
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("newer", "older"));
+        when(redis.multiGet(List.of("timeline:draft-task:newer", "timeline:draft-task:older")))
+                .thenReturn(List.of(processingJson(), processingJson()));
+
+        assertThat(store.findProcessingTaskIds(7L)).containsExactly("newer", "older");
+        verify(redis, org.mockito.Mockito.never()).removeFromSortedSet(anyString(), any());
+    }
+
+    @Test
+    void findProcessingTaskIds_missingTaskKey_isExcludedAndPruned() throws Exception {
+        // T8: task key 만료·소멸 뒤 남은 member는 응답에서 제외하고 같은 조회에서 lazy ZREM한다.
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("gone", "alive"));
+        when(redis.multiGet(List.of("timeline:draft-task:gone", "timeline:draft-task:alive")))
+                .thenReturn(java.util.Arrays.asList(null, processingJson()));
+
+        assertThat(store.findProcessingTaskIds(7L)).containsExactly("alive");
+        verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("gone"));
+    }
+
+    @Test
+    void findProcessingTaskIds_terminalTasks_areExcludedAndPruned() throws Exception {
+        // T9·T16: 권위 read 시점에 이미 terminal(SUCCESS/FAILED)인 후보는 종류와 무관하게 제외·prune한다.
+        // (권위 read '직후' terminal이 되는 race는 이번 응답에 포함될 수 있음 — 단건 폴링이 최신 권위, D13.)
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY))
+                .thenReturn(List.of("succeeded", "failed", "alive"));
+        when(redis.multiGet(List.of("timeline:draft-task:succeeded", "timeline:draft-task:failed",
+                "timeline:draft-task:alive")))
+                .thenReturn(List.of(
+                        objectMapper.writeValueAsString(TimelineDraftTask.success(7L, 42L, "h")),
+                        objectMapper.writeValueAsString(TimelineDraftTask.failed(7L, 42L, -1009, "h")),
+                        processingJson()));
+
+        assertThat(store.findProcessingTaskIds(7L)).containsExactly("alive");
+        verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("succeeded", "failed"));
+    }
+
+    @Test
+    void findProcessingTaskIds_wrongOwnerTask_isExcludedAndPrunedFromRequesterIndexOnly() throws Exception {
+        // T4: 역직렬화 가능한 양수의 다른 owner task는 존재 여부를 노출하지 않고 제외하며,
+        // 요청 사용자의 index member만 정리한다(task JSON·타 사용자 index는 건드리지 않음).
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("foreign", "mine"));
+        when(redis.multiGet(List.of("timeline:draft-task:foreign", "timeline:draft-task:mine")))
+                .thenReturn(List.of(
+                        objectMapper.writeValueAsString(
+                                TimelineDraftTask.processing(8L, 43L, null, "h", STARTED_AT)),
+                        processingJson()));
+
+        assertThat(store.findProcessingTaskIds(7L)).containsExactly("mine");
+        verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("foreign"));
+        verify(redis, org.mockito.Mockito.never())
+                .removeFromSortedSet(org.mockito.ArgumentMatchers.eq("timeline:draft-task:user:8:processing"), any());
+    }
+
+    @Test
+    void findProcessingTaskIds_pruneFailure_stillReturnsValidIds() throws Exception {
+        // T10: stale ZREM은 best-effort cleanup이다 — 실패해도 이미 판정한 유효 목록 반환을 깨지 않는다.
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("alive", "gone"));
+        when(redis.multiGet(List.of("timeline:draft-task:alive", "timeline:draft-task:gone")))
+                .thenReturn(java.util.Arrays.asList(processingJson(), null));
+        when(redis.removeFromSortedSet(USER_INDEX_KEY, List.of("gone")))
+                .thenThrow(new IllegalStateException("redis down"));
+
+        assertThat(store.findProcessingTaskIds(7L)).containsExactly("alive");
+    }
+
+    @Test
+    void findProcessingTaskIds_candidateReadFailure_propagates() throws Exception {
+        // T11: 후보 task batch read 실패는 권위를 판정할 수 없다 — index만 보고 결과를 만들지 않고 전파한다(500).
+        when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("a"));
+        when(redis.multiGet(any())).thenThrow(new IllegalStateException("redis down"));
+
+        assertThatThrownBy(() -> store.findProcessingTaskIds(7L))
+                .isInstanceOf(IllegalStateException.class);
+        verify(redis, org.mockito.Mockito.never()).removeFromSortedSet(anyString(), any());
+    }
+
+    @Test
+    void findProcessingTaskIds_malformedOwnerJson_throwsWithoutPrune() {
+        // T12: owner 누락·null·0 등 역직렬화 불가 JSON은 안전 판정이 불가하므로 500이며,
+        // 같은 조회의 어떤 member도 자동 삭제하지 않는다(수동 조사 가능성 보존).
+        for (String malformed : java.util.List.of(
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                        + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\"}",
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                        + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\",\"userId\":null}",
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                        + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\",\"userId\":0}",
+                "not-json")) {
+            when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("bad", "gone"));
+            when(redis.multiGet(List.of("timeline:draft-task:bad", "timeline:draft-task:gone")))
+                    .thenReturn(java.util.Arrays.asList(malformed, null));
+
+            assertThatThrownBy(() -> store.findProcessingTaskIds(7L))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+        verify(redis, org.mockito.Mockito.never()).removeFromSortedSet(anyString(), any());
     }
 }

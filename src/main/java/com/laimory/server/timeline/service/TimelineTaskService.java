@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -91,6 +92,15 @@ public class TimelineTaskService {
 
     public Optional<TimelineDraftTask> find(String taskId) {
         return timelineTaskStore.find(taskId);
+    }
+
+    /**
+     * 요청 사용자가 소유한 현재 PROCESSING taskId 목록(생성 최신순)이다. 사용자 index는 조회 후보일
+     * 뿐이고 task JSON의 status/owner가 권위다 — stale 후보(만료·terminal·타인 소유)는 store가 응답에서
+     * 제외하고 best-effort로 정리한다.
+     */
+    public List<String> findProcessingTaskIds(long userId) {
+        return timelineTaskStore.findProcessingTaskIds(userId);
     }
 
     /**

@@ -17,6 +17,7 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.service.PhotoUploadService;
+import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,8 @@ class GlobalExceptionHandlerTest {
     private TimelineDraftTaskService timelineDraftTaskService;
     @MockitoBean
     private TimelineDraftTaskPollingService timelineDraftTaskPollingService;
+    @MockitoBean
+    private TimelineDraftTaskListService timelineDraftTaskListService;
     @MockitoBean
     private PhotoUploadService photoUploadService;
 

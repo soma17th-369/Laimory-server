@@ -25,8 +25,10 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadResponse;
+import com.laimory.server.timeline.dto.DraftTaskListResponse;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.PhotoUploadService;
+import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import java.time.LocalDate;
@@ -80,11 +82,13 @@ class TimelineControllerTest {
     @MockitoBean
     private TimelineDraftTaskPollingService timelineDraftTaskPollingService;
     @MockitoBean
+    private TimelineDraftTaskListService timelineDraftTaskListService;
+    @MockitoBean
     private PhotoUploadService photoUploadService;
 
     @Test
     void protectedEndpoints_withoutAuthentication_return401Envelope() throws Exception {
-        // 인증 게이트: 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
+        // 인증 게이트(T3 포함): 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
         mockMvc.perform(post(TASKS).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
@@ -92,9 +96,14 @@ class TimelineControllerTest {
         mockMvc.perform(get(TASKS + "/t-1"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001));
+        mockMvc.perform(get(TASKS))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
+                .andExpect(jsonPath("$.body").doesNotExist());
 
         org.mockito.Mockito.verifyNoInteractions(
-                timelineDraftTaskService, timelineDraftTaskPollingService, photoUploadService);
+                timelineDraftTaskService, timelineDraftTaskPollingService, timelineDraftTaskListService,
+                photoUploadService);
     }
 
     @Test
@@ -225,6 +234,49 @@ class TimelineControllerTest {
         mockMvc.perform(post(TASKS + "/photo-uploads").with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
+    }
+
+    @Test
+    void listProcessingDraftTasks_returns200WithTaskIdsNewestFirst() throws Exception {
+        // T1: 성공 envelope(code 0) + body.taskIds에 진행 중 작업 ID만 최신순 — 상세 필드는 싣지 않는다.
+        when(timelineDraftTaskListService.list(any(), anyLong()))
+                .thenReturn(new DraftTaskListResponse(List.of("t-newer", "t-older")));
+
+        mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.taskIds[0]").value("t-newer"))
+                .andExpect(jsonPath("$.body.taskIds[1]").value("t-older"))
+                .andExpect(jsonPath("$.body.taskIds.length()").value(2));
+
+        // principal userId가 service 인자로 전달된다 — userId는 path/query/body 입력이 아니다(D16).
+        verify(timelineDraftTaskListService).list(eq("v1"), eq(USER_ID));
+    }
+
+    @Test
+    void listProcessingDraftTasks_empty_returns200WithEmptyArray() throws Exception {
+        // T2: 진행 작업이 없어도 404/null이 아니라 200 + 빈 배열 계약이다.
+        when(timelineDraftTaskListService.list(any(), anyLong()))
+                .thenReturn(new DraftTaskListResponse(List.of()));
+
+        mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.body.taskIds").isArray())
+                .andExpect(jsonPath("$.body.taskIds").isEmpty());
+    }
+
+    @Test
+    void listProcessingDraftTasks_redisAuthorityFailure_maps500Envelope() throws Exception {
+        // T11: 후보 read·역직렬화 실패는 index만 보고 목록을 만들 수 없다 — catch-all 500(-500)으로 끝난다.
+        when(timelineDraftTaskListService.list(any(), anyLong()))
+                .thenThrow(new IllegalStateException("TimelineDraftTask 역직렬화에 실패했습니다: t-1"));
+
+        mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.header.code").value(-500))
+                .andExpect(jsonPath("$.body").doesNotExist());
     }
 
     @Test

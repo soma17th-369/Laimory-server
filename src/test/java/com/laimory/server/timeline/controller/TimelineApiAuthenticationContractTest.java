@@ -15,7 +15,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
- * 보호 API 11개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
+ * 보호 API 12개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code ERROR_2001} 응답 문서,
  * {@code @AuthenticationPrincipal Long} principal의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  */
@@ -80,8 +80,8 @@ class TimelineApiAuthenticationContractTest {
     }
 
     @org.junit.jupiter.api.Test
-    void protectedOperationCount_isEleven() {
-        // timeline 9개 + push-registrations PUT/DELETE 2개.
-        assertThat(protectedOperations().count()).isEqualTo(11);
+    void protectedOperationCount_isTwelve() {
+        // timeline 10개(진행 중 draft 작업 목록 GET 포함) + push-registrations PUT/DELETE 2개.
+        assertThat(protectedOperations().count()).isEqualTo(12);
     }
 }
