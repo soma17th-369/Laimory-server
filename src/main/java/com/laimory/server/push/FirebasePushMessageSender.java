@@ -1,5 +1,6 @@
 package com.laimory.server.push;
 
+import com.google.firebase.ErrorCode;
 import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.BatchResponse;
 import com.google.firebase.messaging.FirebaseMessaging;
@@ -76,9 +77,9 @@ class FirebasePushMessageSender implements PushMessageSender {
                         continue;
                     }
                     failureCount++;
-                    MessagingErrorCode code = response.getException() == null
-                            ? null : response.getException().getMessagingErrorCode();
-                    failureByCode.merge(code == null ? "UNKNOWN" : code.name(), 1, Integer::sum);
+                    FirebaseMessagingException exception = response.getException();
+                    MessagingErrorCode code = exception == null ? null : exception.getMessagingErrorCode();
+                    failureByCode.merge(classifyError("TARGET", exception), 1, Integer::sum);
                     if (code == MessagingErrorCode.UNREGISTERED || code == MessagingErrorCode.INVALID_ARGUMENT) {
                         invalidFids.add(chunk.get(index));
                     }
@@ -86,8 +87,7 @@ class FirebasePushMessageSender implements PushMessageSender {
             } catch (FirebaseMessagingException e) {
                 // 호출 수준(전체 chunk) 실패 — target 무효 근거가 아니므로 등록은 지우지 않고 다음 chunk 계속.
                 failureCount += chunk.size();
-                MessagingErrorCode code = e.getMessagingErrorCode();
-                failureByCode.merge(code == null ? "UNKNOWN" : code.name(), 1, Integer::sum);
+                failureByCode.merge(classifyError("CALL", e), chunk.size(), Integer::sum);
             }
         }
         if (failureCount > 0) {
@@ -96,6 +96,18 @@ class FirebasePushMessageSender implements PushMessageSender {
         }
         return new PushSendResult(firebaseInstallationIds.size(), successCount, failureCount,
                 List.copyOf(invalidFids));
+    }
+
+    private static String classifyError(String scope, FirebaseMessagingException exception) {
+        if (exception == null) {
+            return scope + "_UNKNOWN";
+        }
+        MessagingErrorCode messagingCode = exception.getMessagingErrorCode();
+        if (messagingCode != null) {
+            return scope + "_FCM_" + messagingCode.name();
+        }
+        ErrorCode platformCode = exception.getErrorCode();
+        return scope + "_PLATFORM_" + (platformCode == null ? "UNKNOWN" : platformCode.name());
     }
 
     private static MulticastMessage buildMessage(String taskId, TaskStatus status, List<String> fids) {
