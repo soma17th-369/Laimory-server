@@ -960,16 +960,16 @@ sudo awk -F= '
   $1=="APP_ENV"{envCount++; if ($0=="APP_ENV=dev") envValid++}
   $1=="APP_GEO_MODE"{geoCount++; if ($0=="APP_GEO_MODE=kakao") geoValid++}
   $1=="SWAGGER_ENABLED"{swaggerCount++; if ($0=="SWAGGER_ENABLED=true") swaggerValid++}
-  $1=="APP_AI_MODE"{aiCount++; ai=$2; if ($2=="noop" || $2=="fake" || $2=="http") aiValid++}
+  $1=="APP_AI_MODE"{aiCount++; if ($0=="APP_AI_MODE=noop" || $0=="APP_AI_MODE=fake" || $0=="APP_AI_MODE=http") aiValid++; if ($0=="APP_AI_MODE=http") aiHttp=1}
   $1=="APP_AI_HTTP_BASE_URL"{aiUrlCount++; if (length($0)>length("APP_AI_HTTP_BASE_URL=")) aiUrlValid++}
-  $1=="APP_PUSH_MODE"{pushCount++; push=$2; if ($2=="noop" || $2=="firebase") pushValid++}
-  $1=="GOOGLE_APPLICATION_CREDENTIALS"{adcCount++; if ($2=="/run/secrets/firebase-service-account.json") adcValid++}
+  $1=="APP_PUSH_MODE"{pushCount++; if ($0=="APP_PUSH_MODE=noop" || $0=="APP_PUSH_MODE=firebase") pushValid++; if ($0=="APP_PUSH_MODE=firebase") pushFirebase=1}
+  $1=="GOOGLE_APPLICATION_CREDENTIALS"{adcCount++; if ($0=="GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json") adcValid++}
   END {
     ok=(redisCount==1 && redisValid==1 && envCount==1 && envValid==1 &&
         geoCount==1 && geoValid==1 && swaggerCount==1 && swaggerValid==1 &&
         aiCount==1 && aiValid==1 && pushCount==1 && pushValid==1);
-    if (ai=="http") ok=(ok && aiUrlCount==1 && aiUrlValid==1);
-    if (push=="firebase") ok=(ok && adcCount==1 && adcValid==1);
+    if (aiHttp) ok=(ok && aiUrlCount==1 && aiUrlValid==1);
+    if (pushFirebase) ok=(ok && adcCount==1 && adcValid==1);
     exit ok ? 0 : 1
   }
 ' /home/ubuntu/app/.env && echo env-ok
