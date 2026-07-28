@@ -22,18 +22,26 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 2. `deploy-dev` concurrency group으로 배포를 직렬화한다.
 3. GitHub OIDC로 AWS deploy role을 assume한다.
 4. commit SHA tag Docker image를 ECR에 push한다.
-5. SSM으로 dev WAS에 remote script를 보낸다.
-6. 기존 container를 내리기 전에 일부 `.env` key를 preflight한다.
-7. nginx no-query access log 설정을 idempotent하게 보정한다.
-8. 새 image를 pull한다.
-9. 기존 `laimory` container를 stop/remove한다.
-10. host network와 rotated `json-file` logging으로 새 container를 실행한다.
-11. `/api/v1/intro`를 최대 90초 polling한다.
-12. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
+5. SSM으로 dev WAS에 remote script를 보낸다. script는 첫 실패 가능 명령보다 앞에서 EXIT cleanup
+   trap을 설치한다.
+6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + dev 고정값·mode
+   exact-one, 값 비출력 — 아래 Preflight).
+7. nginx no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는 배포를 중단한다.
+8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
+9. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
+   원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
+10. 기존 `laimory` container를 stop/remove한다.
+11. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
+    rotated `json-file` logging; firebase면 read-only credential mount만 추가).
+12. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
+13. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
+    어떤 container도 참조하지 않는 tagged/dangling image가 제거되고, prune 실패는 고정 경고만 남기며
+    원래 배포 status를 바꾸지 않는다.
 
-workflow는 dev에서 Redis prefix, application environment, geo mode, Swagger switch와 현재 image
-commit(`APP_COMMIT_SHA`)을 명시적으로
-주입한다. 이름과 의미만 문서화하며 값이나 credential은 workflow/config가 권위다.
+장기 실행 container의 runtime env는 host `.env`가 단일 권위(SSOT)다. workflow는 `-e` override를
+사용하지 않고 dev 고정값(Redis prefix·application environment·geo mode·Swagger)과 AI/push mode를
+exact-one으로 검증만 하며, `APP_COMMIT_SHA`가 workflow가 `.env`에 쓰는 유일한 key다. 이름과 의미만
+문서화하며 값이나 credential은 host `.env`가 권위다.
 
 host `.env`는 container 생성 시 `docker run --env-file`로 읽힌다. 값을 바꾼 뒤 `docker restart`만 하면
 기존 container environment가 유지되므로 새 값이 반영되지 않는다. runtime flag 활성화·롤백은 deploy
@@ -41,15 +49,19 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
 
 ### Preflight
 
-현재 기존 container stop 전에 확인하는 key:
+현재 기존 container stop 전에 확인하는 계약(실패 진단은 key 이름·개수까지만 — 값 비출력):
 
-- `JWT_SECRET` minimum length
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`
-- `.env`가 `APP_PUSH_MODE=firebase`일 때만: `/home/ubuntu/app/secrets/firebase-service-account.json`
-  존재·non-empty 검사 후, pull한 image의 runtime user(appuser, UID 1001)로 `test -r`까지 통과해야
-  구 컨테이너를 중지한다(파일은 chown 1001·0400 — root 관점 검사만으론 권한 문제를 못 잡음).
-  통과 시 read-only bind mount + `GOOGLE_APPLICATION_CREDENTIALS` 조건부 주입, noop/미설정이면 mount 없이 기동
+- `JWT_SECRET` minimum length, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
+  `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` presence
+- dev 고정값 exact-one: `REDIS_KEY_PREFIX=dev_` · `APP_ENV=dev` · `APP_GEO_MODE=kakao` ·
+  `SWAGGER_ENABLED=true` 각각 정확히 한 줄
+- `APP_AI_MODE` exact-one(`noop|fake|http`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도 정확히 한 줄
+- `APP_PUSH_MODE` exact-one(`noop|firebase`). `firebase`일 때만:
+  `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json` exact-one과
+  `/home/ubuntu/app/secrets/firebase-service-account.json` 존재·non-empty 검사 후, pull한 image의
+  runtime user(appuser, UID 1001)로 `test -r`까지 통과해야 구 컨테이너를 중지한다(파일은 chown
+  1001·0400 — root 관점 검사만으론 권한 문제를 못 잡음). 통과 시 read-only bind mount만 추가하며
+  ADC 경로는 `.env`가 소유한다. `noop`이면 mount·credential 검사 없이 기동
 
 `DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 현재 preflight하지 않는다.
 dev는 Kakao geo mode를 켜므로 API key 누락 시 기존 container 제거 후 새 앱 boot가 실패할 수 있다.
@@ -73,7 +85,9 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - `/status`는 DB connection probe지만 deploy gate가 아니다.
 - 두 endpoint 모두 Redis, Kakao, S3 전체 준비 상태를 검증하지 않는다.
 - Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
-- health failure 시 이전 image로 자동 rollback하지 않는다.
+- health failure 시 이전 image로 자동 rollback하지 않는다. 이전 image의 host-local cache는 cleanup이
+  prune하므로 없을 수 있다 — rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해
+  재배포한다.
 
 PHOTO delete-job schema rollout은 live MySQL에 additive table을 먼저 적용하고 worker 기본 off Server를
 배포한 뒤 enqueue와 pending/oldest gauge를 확인한다. 그 다음 host `.env`의 worker flag를 켜고 deploy
@@ -112,6 +126,13 @@ job만 또는 Item만 단독 삭제하지 않는다.
 ## Invariants
 
 - preflight와 health gate를 기존 container stop보다 앞뒤 어느 위치에서 수행하는지 정확히 유지한다.
+  `APP_COMMIT_SHA` 원자 upsert는 모든 pre-stop 검사·pull 성공 뒤, 첫 stop 직전에만 수행한다.
+- 장기 실행 `docker run`에 `-e`/`--env`를 추가하지 않는다 — runtime env는 host `.env`가 SSOT다.
+  일회성 preflight `docker run --rm`은 이 제한 대상이 아니다.
+- EXIT cleanup(`docker image prune -af`)은 종료 경로마다 정확히 1회 실행하고 원래 배포 status를
+  바꾸지 않는다.
+- remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
+  script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow의 실제 variable 이름과 Terraform output 설명을 맞춘다.
 - user data를 live mutation mechanism으로 설명하지 않는다.
 - Terraform plan/apply에는 운영자 승인과 범위 review가 필요하다.
