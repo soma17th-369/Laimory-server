@@ -1,5 +1,6 @@
 package com.laimory.server.push.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -10,6 +11,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
@@ -19,10 +24,13 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 /**
  * 완료 푸시 notifier 단위 검증 — owner 전체 FID 발송, 0개 단축, snapshot 조건부 invalid 정리, 예외 최종 격리.
@@ -46,6 +54,22 @@ class TimelineCompletionPushNotifierTest {
     @Mock
     private PushMetrics pushMetrics;
 
+    private ListAppender<ILoggingEvent> logAppender;
+    private Logger notifierLogger;
+
+    @BeforeEach
+    void setUp() {
+        notifierLogger = (Logger) LoggerFactory.getLogger(TimelineCompletionPushNotifier.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        notifierLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void tearDown() {
+        notifierLogger.detachAppender(logAppender);
+    }
+
     private TimelineCompletionPushNotifier notifier() {
         return new TimelineCompletionPushNotifier(
                 pushRegistrationService, pushMessageSender, pushMetrics, FIXED_CLOCK);
@@ -64,6 +88,12 @@ class TimelineCompletionPushNotifierTest {
         verify(pushMetrics).record(new PushSendResult(2, 2, 0, List.of()));
         // invalid 0건이면 정리 query를 만들지 않는다.
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
+        assertThat(logAppender.list).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.INFO);
+            assertThat(event.getFormattedMessage()).isEqualTo(
+                    "timeline completion push result: taskId=t-1 taskStatus=SUCCESS "
+                            + "targets=2 accepted=2 failed=0 invalidTargets=0");
+        });
     }
 
     @Test
@@ -113,14 +143,21 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_cleanupFailure_isIsolated() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID)).thenReturn(List.of("fid-1"));
+        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID))
+                .thenReturn(List.of("fid-1", "fid-2"));
         when(pushMessageSender.send(any(), any(), anyList()))
-                .thenReturn(new PushSendResult(1, 0, 1, List.of("fid-1")));
+                .thenReturn(new PushSendResult(2, 1, 1, List.of("fid-1")));
         doThrow(new RuntimeException("db down"))
                 .when(pushRegistrationService).removeInvalidRegistrations(anyCollection(), any());
 
         assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
-        verify(pushMetrics).record(new PushSendResult(1, 0, 1, List.of("fid-1")));
+        verify(pushMetrics).record(new PushSendResult(2, 1, 1, List.of("fid-1")));
+        assertThat(logAppender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .containsSequence(
+                        "timeline completion push result: taskId=t-1 taskStatus=SUCCESS "
+                                + "targets=2 accepted=1 failed=1 invalidTargets=1",
+                        "timeline completion push failed (polling이 안전망): taskId=t-1 status=SUCCESS");
     }
 }

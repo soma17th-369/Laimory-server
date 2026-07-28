@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.google.firebase.ErrorCode;
 import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.BatchResponse;
 import com.google.firebase.messaging.FirebaseMessaging;
@@ -298,6 +299,25 @@ class FirebasePushMessageSenderTest {
     }
 
     @Test
+    void missingMessagingCode_fallsBackToTargetPlatformCode() throws Exception {
+        FirebaseMessagingException exception = mock(FirebaseMessagingException.class);
+        when(exception.getErrorCode()).thenReturn(ErrorCode.PERMISSION_DENIED);
+        SendResponse response = mock(SendResponse.class);
+        when(response.isSuccessful()).thenReturn(false);
+        when(response.getException()).thenReturn(exception);
+        BatchResponse batch = batchOf(response);
+        when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
+
+        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+
+        assertThat(logAppender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .containsExactly(
+                        "fcm send failures: taskId=t-1 status=SUCCESS failure=1 "
+                                + "byCode={TARGET_PLATFORM_PERMISSION_DENIED=1}");
+    }
+
+    @Test
     void callLevelException_countsChunkAsFailed_withoutInvalidation_andContinuesOtherChunks() throws Exception {
         // 호출 수준(chunk 전체) 실패: payload/일시 장애일 수 있으므로 삭제 근거가 아니고 다음 chunk는 계속한다.
         List<String> fids = IntStream.range(0, 501).mapToObj(i -> "fid-" + i).toList();
@@ -314,6 +334,26 @@ class FirebasePushMessageSenderTest {
         assertThat(result.failureCount()).isEqualTo(500);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
+        assertThat(logAppender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .containsExactly(
+                        "fcm send failures: taskId=t-1 status=SUCCESS failure=500 "
+                                + "byCode={CALL_FCM_INTERNAL=500}");
+    }
+
+    @Test
+    void missingMessagingCode_fallsBackToCallPlatformCode() throws Exception {
+        FirebaseMessagingException callFailure = mock(FirebaseMessagingException.class);
+        when(callFailure.getErrorCode()).thenReturn(ErrorCode.UNAVAILABLE);
+        when(firebaseMessaging.sendEachForMulticast(any())).thenThrow(callFailure);
+
+        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+
+        assertThat(logAppender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .containsExactly(
+                        "fcm send failures: taskId=t-1 status=SUCCESS failure=1 "
+                                + "byCode={CALL_PLATFORM_UNAVAILABLE=1}");
     }
 
     // --- 비밀 비로그 ---
