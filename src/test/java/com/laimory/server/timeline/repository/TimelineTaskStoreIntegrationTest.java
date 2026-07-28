@@ -3,6 +3,8 @@ package com.laimory.server.timeline.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
+
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -50,7 +52,7 @@ class TimelineTaskStoreIntegrationTest {
 
     /** terminal 저장(전역·사용자 index ZREM)을 거쳐 task key와 사용자 index key를 제거한다. */
     private void cleanupTask(long userId, String taskId) {
-        timelineTaskStore.save(taskId, TimelineDraftTask.success(userId, 42L, "h"), Duration.ofMinutes(1));
+        timelineTaskStore.save(taskId, TimelineDraftTask.success(userId, 42L, tokenHashes("h")), Duration.ofMinutes(1));
         redisGateway.delete("timeline:draft-task:" + taskId);
         redisGateway.delete(TimelineTaskStore.userProcessingIndexKey(userId));
     }
@@ -59,7 +61,7 @@ class TimelineTaskStoreIntegrationTest {
     void savesAndFindsTaskFromRealRedis() {
         String taskId = "it-" + UUID.randomUUID();
         try {
-            TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, "token-hash");
+            TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, tokenHashes("token-hash"));
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
@@ -77,7 +79,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-" + UUID.randomUUID();
         try {
             Instant startedAt = Instant.parse("2026-05-08T13:41:07Z");
-            TimelineDraftTask task = TimelineDraftTask.processing(7L, 42L, null, "token-hash", startedAt);
+            TimelineDraftTask task = TimelineDraftTask.processing(7L, 42L, null, tokenHashes("token-hash"), startedAt);
             timelineTaskStore.save(taskId, task, Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
@@ -86,7 +88,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(found.get().processingStartedAt()).isEqualTo(startedAt);
         } finally {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.success(7L, 42L, "token-hash"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("token-hash")), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + taskId);
         }
     }
@@ -97,7 +99,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.success(7L, 42L, "token-hash"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("token-hash")), Duration.ofMinutes(1));
 
             Optional<TimelineDraftTask> found = timelineTaskStore.find(taskId);
 
@@ -115,11 +117,11 @@ class TimelineTaskStoreIntegrationTest {
         String sId = "it-" + UUID.randomUUID();
         String fId = "it-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, 42L, null, "h",
+            timelineTaskStore.save(pId, TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                     Instant.parse("2026-05-08T13:41:07Z")), Duration.ofMinutes(1));
-            timelineTaskStore.save(sId, TimelineDraftTask.success(7L, 42L, "h"),
+            timelineTaskStore.save(sId, TimelineDraftTask.success(7L, 42L, tokenHashes("h")),
                     Duration.ofMinutes(1));
-            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, -1009, "h"),
+            timelineTaskStore.save(fId, TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h")),
                     Duration.ofMinutes(1));
 
             assertThat(timelineTaskStore.find(pId).orElseThrow().userId()).isEqualTo(7L);
@@ -128,7 +130,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(timelineTaskStore.find(fId).orElseThrow().error()).isEqualTo(-1009);
         } finally {
             timelineTaskStore.save(pId,
-                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + pId);
             redisGateway.delete("timeline:draft-task:" + sId);
             redisGateway.delete("timeline:draft-task:" + fId);
@@ -144,7 +146,7 @@ class TimelineTaskStoreIntegrationTest {
             long baseline = timelineTaskStore.countStuckProcessing(
                     now, Duration.ofSeconds(90), Duration.ofMinutes(3));
             timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.processing(7L, 42L, null, "h",
+                    TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                             now.minus(Duration.ofSeconds(100))),
                     Duration.ofMinutes(3));
 
@@ -152,22 +154,22 @@ class TimelineTaskStoreIntegrationTest {
                     now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline + 1L);
 
             timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofHours(24));
             assertThat(timelineTaskStore.countStuckProcessing(
                     now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
 
             // task key를 일부러 살아 있게 저장해도 startedAt이 TTL 창 밖이면 index 관측에서 제거된다.
             timelineTaskStore.save(expiredId,
-                    TimelineDraftTask.processing(7L, 42L, null, "h",
+                    TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                             now.minus(Duration.ofSeconds(181))),
                     Duration.ofMinutes(3));
             assertThat(timelineTaskStore.countStuckProcessing(
                     now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
         } finally {
             timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofMinutes(1));
             timelineTaskStore.save(expiredId,
-                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + stuckId);
             redisGateway.delete("timeline:draft-task:" + expiredId);
         }
@@ -185,13 +187,13 @@ class TimelineTaskStoreIntegrationTest {
         try {
             long baseline = timelineTaskStore.countStuckProcessing(
                     now, Duration.ofSeconds(90), Duration.ofMinutes(3));
-            timelineTaskStore.save(beforeThresholdId, TimelineDraftTask.processing(7L, 42L, null, "h",
+            timelineTaskStore.save(beforeThresholdId, TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofMillis(89_999))), Duration.ofMinutes(3));
-            timelineTaskStore.save(atThresholdId, TimelineDraftTask.processing(7L, 42L, null, "h",
+            timelineTaskStore.save(atThresholdId, TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofMillis(90_000))), Duration.ofMinutes(3));
-            timelineTaskStore.save(beforeExpiryId, TimelineDraftTask.processing(7L, 42L, null, "h",
+            timelineTaskStore.save(beforeExpiryId, TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofMillis(179_999))), Duration.ofMinutes(3));
-            timelineTaskStore.save(atExpiryId, TimelineDraftTask.processing(7L, 42L, null, "h",
+            timelineTaskStore.save(atExpiryId, TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofMillis(180_000))), Duration.ofMinutes(3));
 
             assertThat(timelineTaskStore.countStuckProcessing(
@@ -199,7 +201,7 @@ class TimelineTaskStoreIntegrationTest {
         } finally {
             for (String id : ids) {
                 timelineTaskStore.save(id,
-                        TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+                        TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofMinutes(1));
                 redisGateway.delete("timeline:draft-task:" + id);
             }
         }
@@ -212,7 +214,7 @@ class TimelineTaskStoreIntegrationTest {
         String taskId = "it-expiry-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.processing(7L, 42L, null, "h", Instant.now()),
+                    TimelineDraftTask.processing(7L, 42L, null, tokenHashes("h"), Instant.now()),
                     Duration.ofSeconds(1));
             assertThat(timelineTaskStore.find(taskId)).isPresent();
 
@@ -225,7 +227,7 @@ class TimelineTaskStoreIntegrationTest {
             assertThat(timelineTaskStore.find(taskId)).isEmpty();
         } finally {
             timelineTaskStore.save(taskId,
-                    TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
+                    TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofMinutes(1));
             redisGateway.delete("timeline:draft-task:" + taskId);
         }
     }
@@ -235,44 +237,6 @@ class TimelineTaskStoreIntegrationTest {
         String unknownTaskId = "it-" + UUID.randomUUID();
 
         assertThat(timelineTaskStore.find(unknownTaskId)).isEmpty();
-    }
-
-    @Test
-    void callbackTokenConsume_isAtomicUnderConcurrentCalls() throws Exception {
-        String taskId = "it-token-" + UUID.randomUUID();
-        String logicalKey = "timeline:callback-token-uses:" + taskId;
-        int contenders = 8;
-        ExecutorService executor = Executors.newFixedThreadPool(contenders);
-        CountDownLatch ready = new CountDownLatch(contenders);
-        CountDownLatch start = new CountDownLatch(1);
-        try {
-            List<Future<Boolean>> results = new ArrayList<>();
-            for (int i = 0; i < contenders; i++) {
-                results.add(executor.submit(() -> {
-                    ready.countDown();
-                    if (!start.await(5, TimeUnit.SECONDS)) {
-                        throw new IllegalStateException("callback token consume 경쟁 시작 timeout");
-                    }
-                    return timelineTaskStore.consumeCallbackToken(taskId, Duration.ofHours(25));
-                }));
-            }
-
-            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-            start.countDown();
-
-            long winners = 0L;
-            for (Future<Boolean> result : results) {
-                if (result.get(5, TimeUnit.SECONDS)) {
-                    winners++;
-                }
-            }
-            assertThat(winners).isEqualTo(1L);
-            assertThat(redisGateway.get(logicalKey)).isEqualTo("used");
-        } finally {
-            start.countDown();
-            executor.shutdownNow();
-            redisGateway.delete(logicalKey);
-        }
     }
 
     @Test
@@ -287,13 +251,13 @@ class TimelineTaskStoreIntegrationTest {
         String a3 = "it-user-" + UUID.randomUUID();
         String b1 = "it-user-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(a1, TimelineDraftTask.processing(userA, 42L, null, "h",
+            timelineTaskStore.save(a1, TimelineDraftTask.processing(userA, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofSeconds(20))), Duration.ofMinutes(3));
-            timelineTaskStore.save(a2, TimelineDraftTask.processing(userA, 42L, null, "h",
+            timelineTaskStore.save(a2, TimelineDraftTask.processing(userA, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofSeconds(10))), Duration.ofMinutes(3));
-            timelineTaskStore.save(a3, TimelineDraftTask.processing(userA, 42L, null, "h", now),
+            timelineTaskStore.save(a3, TimelineDraftTask.processing(userA, 42L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
-            timelineTaskStore.save(b1, TimelineDraftTask.processing(userB, 43L, null, "h", now),
+            timelineTaskStore.save(b1, TimelineDraftTask.processing(userB, 43L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
 
             assertThat(timelineTaskStore.findProcessingTaskIds(userA)).containsExactly(a3, a2, a1);
@@ -316,9 +280,9 @@ class TimelineTaskStoreIntegrationTest {
         String lower = base + "-a";
         String higher = base + "-b";
         try {
-            timelineTaskStore.save(lower, TimelineDraftTask.processing(user, 42L, null, "h", sameInstant),
+            timelineTaskStore.save(lower, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), sameInstant),
                     Duration.ofMinutes(3));
-            timelineTaskStore.save(higher, TimelineDraftTask.processing(user, 42L, null, "h", sameInstant),
+            timelineTaskStore.save(higher, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), sameInstant),
                     Duration.ofMinutes(3));
 
             assertThat(timelineTaskStore.findProcessingTaskIds(user)).containsExactly(higher, lower);
@@ -338,16 +302,16 @@ class TimelineTaskStoreIntegrationTest {
         String p1 = "it-terminal-" + UUID.randomUUID();
         String p2 = "it-terminal-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(p1, TimelineDraftTask.processing(user, 42L, null, "h",
+            timelineTaskStore.save(p1, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"),
                     now.minus(Duration.ofSeconds(5))), Duration.ofMinutes(3));
-            timelineTaskStore.save(p2, TimelineDraftTask.processing(user, 42L, null, "h", now),
+            timelineTaskStore.save(p2, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
             assertThat(timelineTaskStore.findProcessingTaskIds(user)).containsExactly(p2, p1);
 
-            timelineTaskStore.save(p1, TimelineDraftTask.success(user, 42L, "h"), Duration.ofMinutes(1));
+            timelineTaskStore.save(p1, TimelineDraftTask.success(user, 42L, tokenHashes("h")), Duration.ofMinutes(1));
             assertThat(timelineTaskStore.findProcessingTaskIds(user)).containsExactly(p2);
 
-            timelineTaskStore.save(p2, TimelineDraftTask.failed(user, 42L, -1009, "h"), Duration.ofMinutes(1));
+            timelineTaskStore.save(p2, TimelineDraftTask.failed(user, 42L, -1009, tokenHashes("h")), Duration.ofMinutes(1));
             assertThat(timelineTaskStore.findProcessingTaskIds(user)).isEmpty();
             assertThat(redisGateway.getSortedSetReverseRange(
                     TimelineTaskStore.userProcessingIndexKey(user))).isEmpty();
@@ -366,10 +330,10 @@ class TimelineTaskStoreIntegrationTest {
         String shortLived = "it-expired-" + UUID.randomUUID();
         String alive = "it-alive-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(shortLived, TimelineDraftTask.processing(user, 42L, null, "h", now),
+            timelineTaskStore.save(shortLived, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), now),
                     Duration.ofSeconds(1));
             // 이후 저장의 TTL(1m)이 사용자 index key TTL을 갱신해 shortLived 만료 뒤에도 key가 살아 있다.
-            timelineTaskStore.save(alive, TimelineDraftTask.processing(user, 42L, null, "h",
+            timelineTaskStore.save(alive, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"),
                     now.plusMillis(10)), Duration.ofMinutes(1));
 
             long deadline = System.currentTimeMillis() + 5_000;
@@ -395,10 +359,10 @@ class TimelineTaskStoreIntegrationTest {
         long user = uniqueUserId();
         String taskId = "it-leftover-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(taskId, TimelineDraftTask.processing(user, 42L, null, "h", Instant.now()),
+            timelineTaskStore.save(taskId, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), Instant.now()),
                     Duration.ofMinutes(3));
             redisGateway.set("timeline:draft-task:" + taskId,
-                    objectMapper.writeValueAsString(TimelineDraftTask.success(user, 42L, "h")),
+                    objectMapper.writeValueAsString(TimelineDraftTask.success(user, 42L, tokenHashes("h"))),
                     Duration.ofMinutes(1));
 
             assertThat(timelineTaskStore.findProcessingTaskIds(user)).isEmpty();
@@ -421,9 +385,9 @@ class TimelineTaskStoreIntegrationTest {
         String dummyValueKey = "timeline:draft-task:it-dummy-" + UUID.randomUUID();
         String userAIndexKey = TimelineTaskStore.userProcessingIndexKey(userA);
         try {
-            timelineTaskStore.save(a1, TimelineDraftTask.processing(userA, 42L, null, "h", now),
+            timelineTaskStore.save(a1, TimelineDraftTask.processing(userA, 42L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
-            timelineTaskStore.save(b1, TimelineDraftTask.processing(userB, 43L, null, "h", now),
+            timelineTaskStore.save(b1, TimelineDraftTask.processing(userB, 43L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
             // 오염 주입: b1 member를 userA index에만 추가한다(b1 task JSON·userB index는 건드리지 않음).
             redisGateway.setAndAddToSortedSets(dummyValueKey, "x", Duration.ofMinutes(3),
@@ -453,9 +417,9 @@ class TimelineTaskStoreIntegrationTest {
         String first = "it-ttl-" + UUID.randomUUID();
         String second = "it-ttl-" + UUID.randomUUID();
         try {
-            timelineTaskStore.save(first, TimelineDraftTask.processing(user, 42L, null, "h", t0), shortTtl);
+            timelineTaskStore.save(first, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), t0), shortTtl);
             Thread.sleep(1_500);
-            timelineTaskStore.save(second, TimelineDraftTask.processing(user, 42L, null, "h",
+            timelineTaskStore.save(second, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"),
                     t0.plusMillis(1_500)), shortTtl);
 
             // first task key 만료를 기다린다(만료 시점: t0+3s — second와 index key는 t0+4.5s까지 유효).
@@ -500,7 +464,7 @@ class TimelineTaskStoreIntegrationTest {
         java.util.Collections.reverse(newestFirst);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            timelineTaskStore.save(foreign, TimelineDraftTask.processing(userB, 43L, null, "h", base),
+            timelineTaskStore.save(foreign, TimelineDraftTask.processing(userB, 43L, null, tokenHashes("h"), base),
                     Duration.ofMinutes(3));
 
             List<List<String>> snapshots = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -509,7 +473,7 @@ class TimelineTaskStoreIntegrationTest {
             runWithConcurrentReads(executor, snapshots, userA, () -> {
                 for (int i = 0; i < created.size(); i++) {
                     timelineTaskStore.save(created.get(i), TimelineDraftTask.processing(
-                            userA, 42L, null, "h", base.plusMillis(i * 10L)), Duration.ofMinutes(3));
+                            userA, 42L, null, tokenHashes("h"), base.plusMillis(i * 10L)), Duration.ofMinutes(3));
                     Thread.sleep(20);
                 }
             });
@@ -518,7 +482,7 @@ class TimelineTaskStoreIntegrationTest {
             // phase 2 — terminal 경쟁: 최종 상태는 결정적으로 빈 목록이다.
             runWithConcurrentReads(executor, snapshots, userA, () -> {
                 for (String taskId : created) {
-                    timelineTaskStore.save(taskId, TimelineDraftTask.success(userA, 42L, "h"),
+                    timelineTaskStore.save(taskId, TimelineDraftTask.success(userA, 42L, tokenHashes("h")),
                             Duration.ofMinutes(1));
                     Thread.sleep(20);
                 }

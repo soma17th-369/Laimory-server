@@ -8,8 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import java.time.Duration;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -48,11 +46,7 @@ class HttpTimelineAiDispatcherTest {
     }
 
     private AiTimelineDispatchRequest request() {
-        ZoneOffset kst = ZoneOffset.ofHours(9);
-        return new AiTimelineDispatchRequest("task-20260722-001", "callback-token-001", 42L,
-                new AiTimelineDispatchRequest.Window(
-                        OffsetDateTime.of(2026, 7, 22, 0, 0, 0, 0, kst),
-                        OffsetDateTime.of(2026, 7, 23, 0, 0, 0, 0, kst)));
+        return new AiTimelineDispatchRequest("task-20260722-001", "task-token-001");
     }
 
     private MockResponse accepted(String taskId, String status) {
@@ -107,15 +101,12 @@ class HttpTimelineAiDispatcherTest {
         assertThat(recorded.getPath()).isEqualTo("/v1/timeline");
         assertThat(recorded.getHeader("Content-Type")).startsWith("application/json");
 
-        // contract fixture: 필드명·offset ISO-8601 초 포함 포맷을 정확히 고정한다(양 저장소 공통 계약).
+        // contract fixture: 접수 body는 taskId와 첫 단계 토큰뿐이다(양 저장소 공통 계약).
+        // 입력 데이터는 AI가 이 토큰으로 입력 조회 API를 호출해 받아간다 — DB 식별자·window는 싣지 않는다.
         JsonNode body = MAPPER.readTree(recorded.getBody().readUtf8());
         assertThat(body.get("taskId").asText()).isEqualTo("task-20260722-001");
-        assertThat(body.get("callbackToken").asText()).isEqualTo("callback-token-001");
-        assertThat(body.get("dailyRecordId").asLong()).isEqualTo(42L);
-        assertThat(body.get("window").get("startAt").asText()).isEqualTo("2026-07-22T00:00:00+09:00");
-        assertThat(body.get("window").get("endAt").asText()).isEqualTo("2026-07-23T00:00:00+09:00");
-        assertThat(body.size()).isEqualTo(4);
-        assertThat(body.get("window").size()).isEqualTo(2);
+        assertThat(body.get("taskToken").asText()).isEqualTo("task-token-001");
+        assertThat(body.size()).isEqualTo(2);
     }
 
     @Test

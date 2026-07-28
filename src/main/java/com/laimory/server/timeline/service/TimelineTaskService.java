@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
@@ -22,8 +23,9 @@ import org.springframework.stereotype.Service;
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
  * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
  *
- * <p>callback token은 hash 검증 직후 task별 Redis marker로 원자 소비한다. marker는 terminal task보다
- * 한 시간 긴 25시간 동안 유지하며 소비 뒤 후속 처리가 실패해도 삭제하거나 환불하지 않는다.
+ * <p>단계별 토큰은 hash 비교로만 검증하며 one-time 소비 marker를 두지 않는다 — 응답 유실 후 같은 단계
+ * 재시도를 허용해야 하기 때문이다. 결과 중복 저장을 막는 권위는 DB 영수증
+ * ({@code timeline_ai_result_receipts})이다.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,7 +42,6 @@ public class TimelineTaskService {
     // 무기한 PROCESSING을 노출하지 않기 위해 callback 없는 task는 이 TTL이 회수한다.
     static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
-    static final Duration CALLBACK_TOKEN_USE_TTL = Duration.ofHours(25);
 
     private final TimelineTaskStore timelineTaskStore;
     private final TimelineMetrics timelineMetrics;
@@ -52,17 +53,32 @@ public class TimelineTaskService {
      */
     public void createProcessing(String taskId, long userId, long dailyRecordId,
                                  TimelineDraftTask.TimelineWindow timelineWindow,
-                                 String callbackTokenHash, Instant processingStartedAt) {
+                                 TimelineDraftTask.TokenHashes tokenHashes, Instant processingStartedAt) {
         timelineTaskStore.save(taskId,
                 TimelineDraftTask.processing(userId, dailyRecordId, timelineWindow,
-                        callbackTokenHash, processingStartedAt),
+                        tokenHashes, processingStartedAt),
                 PROCESSING_TTL);
         timelineMetrics.recordDraftCreated();
     }
 
-    public void markSuccess(String taskId, long userId, long dailyRecordId, String callbackTokenHash) {
+    /**
+     * PROCESSING task의 TTL만 3분으로 다시 확보한다(JSON은 그대로 재저장 — {@code processingStartedAt}
+     * 보존이라 폴링 {@code elapsedSeconds} 의미가 바뀌지 않는다).
+     *
+     * <p>AI가 입력을 조회한 시점부터 추론이 시작되고, 결과 저장 뒤에도 콜백이 남는다 — 최초 3분을
+     * dispatch 시점부터 소진시키면 정상 처리가 마지막 단계에서 만료로 잘릴 수 있다.
+     */
+    public void refreshProcessing(String taskId, TimelineDraftTask task) {
+        if (task.status() != TaskStatus.PROCESSING) {
+            throw new IllegalStateException("PROCESSING task만 TTL을 갱신할 수 있습니다: " + task.status());
+        }
+        timelineTaskStore.save(taskId, task, PROCESSING_TTL);
+    }
+
+    public void markSuccess(String taskId, long userId, long dailyRecordId,
+                            TimelineDraftTask.TokenHashes tokenHashes) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.success(userId, dailyRecordId, callbackTokenHash), TERMINAL_TTL);
+                TimelineDraftTask.success(userId, dailyRecordId, tokenHashes), TERMINAL_TTL);
         timelineMetrics.recordTerminalSuccess();
     }
 
@@ -72,12 +88,12 @@ public class TimelineTaskService {
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */
     public void markFailed(String taskId, long userId, long dailyRecordId, ExceptionType failureType,
-                           String callbackTokenHash) {
+                           TimelineDraftTask.TokenHashes tokenHashes) {
         if (!TASK_FAILURE_TYPES.contains(failureType)) {
             throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), callbackTokenHash),
+                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), tokenHashes),
                 TERMINAL_TTL);
         timelineMetrics.recordTerminalFailed();
     }
@@ -101,14 +117,6 @@ public class TimelineTaskService {
      */
     public List<String> findProcessingTaskIds(long userId) {
         return timelineTaskStore.findProcessingTaskIds(userId);
-    }
-
-    /**
-     * task별 callback token을 인증 시점에 원자 소비한다. false면 이미 사용된 token이다.
-     * 소비 뒤 처리 실패에도 marker를 되돌리지 않는 at-most-once admission 계약이다.
-     */
-    public boolean consumeCallbackToken(String taskId) {
-        return timelineTaskStore.consumeCallbackToken(taskId, CALLBACK_TOKEN_USE_TTL);
     }
 
     long countStuckProcessing(Instant now, Duration stuckAfter) {

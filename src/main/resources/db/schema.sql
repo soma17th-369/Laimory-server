@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS daily_records (
     UNIQUE KEY uq_daily_records_user_date (user_id, record_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 감사 컬럼 default: final 테이블은 API JPA와 AI raw INSERT 두 writer가 쓴다. AI는 timestamp를 생략하고
--- DB default가 채우며, modified_by는 AI가 INSERT에 'AI'를 명시한다(§AI raw insert 계약).
+-- 감사 컬럼 default: final 테이블 writer는 API JPA 하나뿐이다(AI 결과도 서버 transaction이 저장한다).
+-- timestamp DB default는 과거 AI raw INSERT 계약의 잔재로 남겨 둔다(live DDL 변경 없이 무해).
 CREATE TABLE IF NOT EXISTS timeline_events (
     timeline_event_id BIGINT NOT NULL AUTO_INCREMENT,
     daily_record_id BIGINT NOT NULL,
@@ -123,6 +123,23 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     PRIMARY KEY (timeline_draft_source_item_id),
     UNIQUE KEY uq_draft_source_task_raw (task_id, raw_id), -- leftmost prefix가 task_id 조회 index를 겸한다
     KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI 결과 저장 영수증. task 하나가 final graph에 반영됐다는 사실을 결과 저장과 같은 transaction에 기록한다.
+-- final 테이블에는 task_id가 없고 채택 source는 같은 transaction에서 삭제되므로, 이 행이 없으면 응답 유실 후
+-- 재시도가 이미 반영된 task인지 판별할 수 없다. PK가 task_id인 것이 load-bearing이다 — 저장 transaction의 첫
+-- write가 이 INSERT라 재시도·동시 중복 요청이 duplicate key로 직렬화된다(별도 record lock 없음).
+CREATE TABLE IF NOT EXISTS timeline_ai_result_receipts (
+    task_id VARCHAR(36) NOT NULL,                    -- draft task ID(UUIDv7). 대리 키 없이 이 값이 PK
+    daily_record_id BIGINT NOT NULL,
+    -- 감사 컬럼 (BaseEntity)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (task_id),
+    KEY idx_ai_result_receipts_created (created_at), -- cleanup 보관기간 스캔용
+    CONSTRAINT fk_ai_result_receipts_daily_record
+        FOREIGN KEY (daily_record_id) REFERENCES daily_records (daily_record_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).

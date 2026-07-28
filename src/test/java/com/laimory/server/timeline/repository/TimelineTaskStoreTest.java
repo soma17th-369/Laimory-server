@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
+
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -56,12 +58,12 @@ class TimelineTaskStoreTest {
         return TimelineDraftTask.processing(7L, 42L,
                 new TimelineDraftTask.TimelineWindow(
                         LocalDate.of(2026, 5, 8).atTime(18, 30), LocalDate.of(2026, 5, 8).atTime(22, 41)),
-                "token-hash", STARTED_AT);
+                tokenHashes("token-hash"), STARTED_AT);
     }
 
     @Test
     void save_serializesWithKeyAndTtl() throws Exception {
-        TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, "token-hash");
+        TimelineDraftTask task = TimelineDraftTask.success(7L, 42L, tokenHashes("token-hash"));
 
         store.save("abc", task, Duration.ofHours(24));
 
@@ -116,8 +118,8 @@ class TimelineTaskStoreTest {
     @Test
     void save_terminalTasks_omitProcessingStartedAtAndWindow() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
-        store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
+        store.save("s", TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h")), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis, times(2)).setAndRemoveFromSortedSets(
@@ -130,7 +132,7 @@ class TimelineTaskStoreTest {
 
     @Test
     void save_failedTask_writesNumericError() {
-        store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
+        store.save("numeric", TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h")), Duration.ofHours(24));
 
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         verify(redis).setAndRemoveFromSortedSets(
@@ -155,8 +157,8 @@ class TimelineTaskStoreTest {
     void save_allStates_preserveOwnerAndDailyRecordId() throws Exception {
         // 세 상태 전이 모두 owner·dailyRecordId를 보존한다 — 폴링 소유권 대조·결과 조회의 기준값.
         store.save("p", processingTask(), Duration.ofMinutes(3));
-        store.save("s", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, "h"), Duration.ofHours(24));
+        store.save("s", TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofHours(24));
+        store.save("f", TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h")), Duration.ofHours(24));
 
         ArgumentCaptor<String> processingJson = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> terminalJson = ArgumentCaptor.forClass(String.class);
@@ -194,8 +196,8 @@ class TimelineTaskStoreTest {
     void save_terminalAtomicallyRemovesTaskFromBothIndexes() {
         // T14: SUCCESS/FAILED 종류와 무관하게 terminal 저장 한 번이 전역·사용자 index 제거를 함께 나른다.
         // 사용자 index key는 보존된 양수 owner로 조립한다(터미널에도 owner 필수 — D6/D14).
-        store.save("success", TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
-        store.save("failed", TimelineDraftTask.failed(7L, 42L, -1009, "h"),
+        store.save("success", TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofHours(24));
+        store.save("failed", TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h")),
                 Duration.ofHours(24));
 
         verify(redis).setAndRemoveFromSortedSets(
@@ -224,16 +226,6 @@ class TimelineTaskStoreTest {
 
         assertThat(store.countStuckProcessing(
                 now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(2L);
-    }
-
-    @Test
-    void consumeCallbackToken_delegatesExactMarkerKeyValueAndTtl() {
-        Duration ttl = Duration.ofHours(25);
-        when(redis.setIfAbsent("timeline:callback-token-uses:abc", "used", ttl)).thenReturn(true);
-
-        assertThat(store.consumeCallbackToken("abc", ttl)).isTrue();
-
-        verify(redis).setIfAbsent("timeline:callback-token-uses:abc", "used", ttl);
     }
 
     @Test
@@ -315,8 +307,8 @@ class TimelineTaskStoreTest {
         when(redis.multiGet(List.of("timeline:draft-task:succeeded", "timeline:draft-task:failed",
                 "timeline:draft-task:alive")))
                 .thenReturn(List.of(
-                        objectMapper.writeValueAsString(TimelineDraftTask.success(7L, 42L, "h")),
-                        objectMapper.writeValueAsString(TimelineDraftTask.failed(7L, 42L, -1009, "h")),
+                        objectMapper.writeValueAsString(TimelineDraftTask.success(7L, 42L, tokenHashes("h"))),
+                        objectMapper.writeValueAsString(TimelineDraftTask.failed(7L, 42L, -1009, tokenHashes("h"))),
                         processingJson()));
 
         assertThat(store.findProcessingTaskIds(7L)).containsExactly("alive");
@@ -331,7 +323,7 @@ class TimelineTaskStoreTest {
         when(redis.multiGet(List.of("timeline:draft-task:foreign", "timeline:draft-task:mine")))
                 .thenReturn(List.of(
                         objectMapper.writeValueAsString(
-                                TimelineDraftTask.processing(8L, 43L, null, "h", STARTED_AT)),
+                                TimelineDraftTask.processing(8L, 43L, null, tokenHashes("h"), STARTED_AT)),
                         processingJson()));
 
         assertThat(store.findProcessingTaskIds(7L)).containsExactly("mine");

@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.CallbackTokens;
+import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.HealthMetric;
 import com.laimory.server.timeline.ItemType;
@@ -41,8 +41,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -133,7 +131,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThat(taskId).isNotBlank();
         // 선생성 커밋이 반환한 dailyRecordId가 PROCESSING task에 실린다(recordDate/recordAt/zone은 Redis에 없음).
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
 
         // 순서 불변식: enrich(저장 전 — AI가 DB에서 직접 읽음) → 선생성+source 저장 커밋 → Redis PROCESSING → dispatch.
@@ -142,7 +140,7 @@ class TimelineDraftTaskServiceTest {
         order.verify(sourceItemEnrichmentService).enrich(anyList(), anyLong());
         order.verify(timelineDraftPreparationService).prepareDraft(eq(USER_ID), eq(DATE), eq(RECORD_AT), eq(ZONE),
                 anyList());
-        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
         order.verify(timelineAiDispatcher).dispatch(any(AiTimelineDispatchRequest.class));
     }
@@ -165,7 +163,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftPreparationService, times(2))
                 .prepareDraft(eq(USER_ID), eq(DATE), eq(RECORD_AT), eq(ZONE), anyList());
         verify(timelineTaskService, times(2))
-                .createProcessing(anyString(), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+                .createProcessing(anyString(), eq(USER_ID), eq(RECORD_ID), any(), any(),
                         eq(PROCESSING_STARTED_AT));
         verify(timelineAiDispatcher, times(2)).dispatch(any(AiTimelineDispatchRequest.class));
     }
@@ -182,12 +180,8 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
         AiTimelineDispatchRequest request = requestCaptor.getValue();
         assertThat(request.taskId()).isEqualTo(taskId);
-        assertThat(request.dailyRecordId()).isEqualTo(RECORD_ID);
-        // Asia/Seoul(+09:00) 변환 — wall-clock은 유지되고 offset만 붙는다.
-        assertThat(request.window().startAt())
-                .isEqualTo(OffsetDateTime.of(WINDOW.startTime(), ZoneOffset.ofHours(9)));
-        assertThat(request.window().endAt())
-                .isEqualTo(OffsetDateTime.of(WINDOW.endTime(), ZoneOffset.ofHours(9)));
+        // 입력 데이터는 body에 싣지 않는다 — AI가 이 토큰으로 입력 조회 API를 호출해 받아간다.
+        assertThat(request.taskToken()).isNotBlank();
     }
 
     @Test
@@ -196,19 +190,26 @@ class TimelineDraftTaskServiceTest {
 
         String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
-        // Redis에 저장되는 값(createProcessing 인자)은 해시, AI에 전달되는 값(dispatch body)은 원문이어야 한다.
-        ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
+        // Redis에 저장되는 값(createProcessing 인자)은 세 단계 hash, AI에 전달되는 값(dispatch body)은 T1 원문이어야 한다.
+        ArgumentCaptor<TimelineDraftTask.TokenHashes> hashCaptor =
+                ArgumentCaptor.forClass(TimelineDraftTask.TokenHashes.class);
         verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(),
                 hashCaptor.capture(), any());
         ArgumentCaptor<AiTimelineDispatchRequest> requestCaptor =
                 ArgumentCaptor.forClass(AiTimelineDispatchRequest.class);
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
 
-        String storedHash = hashCaptor.getValue();
-        String dispatchedToken = requestCaptor.getValue().callbackToken();
+        TimelineDraftTask.TokenHashes stored = hashCaptor.getValue();
+        String dispatchedToken = requestCaptor.getValue().taskToken();
         assertThat(dispatchedToken).isNotBlank();
-        assertThat(storedHash).isNotEqualTo(dispatchedToken);
-        assertThat(storedHash).isEqualTo(CallbackTokens.hash(dispatchedToken));
+        assertThat(stored.inputTokenHash()).isEqualTo(TaskTokens.hash(dispatchedToken));
+        assertThat(stored.inputTokenHash()).isNotEqualTo(dispatchedToken);
+
+        // 다음 단계 hash는 파생 chain을 따른다 — 서버는 어느 단계 원문도 저장하지 않는다.
+        String resultToken = TaskTokens.deriveResultToken(dispatchedToken, taskId);
+        assertThat(stored.resultTokenHash()).isEqualTo(TaskTokens.hash(resultToken));
+        assertThat(stored.callbackTokenHash())
+                .isEqualTo(TaskTokens.hash(TaskTokens.deriveCallbackToken(resultToken, taskId)));
     }
 
     @Test
@@ -245,7 +246,7 @@ class TimelineDraftTaskServiceTest {
         String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
         assertThat(taskId).isNotBlank();
-        verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+        verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
     }
 
@@ -260,7 +261,7 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
-        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
@@ -268,7 +269,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_whenRedisFails_compensatesByDeletingSourcesButKeepsRecord() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("redis down"))
-                .when(timelineTaskService).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+                .when(timelineTaskService).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOf(RuntimeException.class)
@@ -298,7 +299,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
         verify(timelineTaskService).markFailed(eq(requestCaptor.getValue().taskId()), eq(USER_ID), eq(RECORD_ID),
                 eq(ExceptionType.AI_DISPATCH_FAILED),
-                anyString());
+                any());
         // draft는 보존한다(cleanup이 정리). 보상 삭제 없음.
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
@@ -310,15 +311,15 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
         doThrow(new RuntimeException("redis down")).when(timelineTaskService)
-                .markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+                .markFailed(anyString(), anyLong(), anyLong(), any(), any());
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
 
-        verify(timelineTaskService, times(1)).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+        verify(timelineTaskService, times(1)).markFailed(anyString(), anyLong(), anyLong(), any(), any());
         verify(timelineTaskService, times(1))
-                .createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+                .createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
 
@@ -336,8 +337,8 @@ class TimelineDraftTaskServiceTest {
 
         // 종결·재저장 없음: createProcessing은 최초 1회 그대로, markFailed 미호출.
         verify(timelineTaskService, times(1))
-                .createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
-        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), anyString());
+                .createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
+        verify(timelineTaskService, never()).markFailed(anyString(), anyLong(), anyLong(), any(), any());
         // draft·record 모두 보존(보상 삭제 없음).
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
@@ -354,7 +355,7 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
-        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
@@ -367,7 +368,7 @@ class TimelineDraftTaskServiceTest {
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOf(RuntimeException.class);
-        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
         // 트랜잭션이 롤백됐으므로 보상 삭제도 없다(지울 게 없음).
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
@@ -654,7 +655,7 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1013));
         verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
-        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), anyString(), any());
+        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
@@ -691,7 +692,7 @@ class TimelineDraftTaskServiceTest {
         ArgumentCaptor<TimelineDraftTask.TimelineWindow> windowCaptor =
                 ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
         verify(timelineTaskService).createProcessing(anyString(), eq(USER_ID), eq(RECORD_ID),
-                windowCaptor.capture(), anyString(), any());
+                windowCaptor.capture(), any(), any());
         assertThat(windowCaptor.getValue().startTime()).isEqualTo(WINDOW.startTime());
         assertThat(windowCaptor.getValue().endTime()).isEqualTo(WINDOW.endTime());
     }
@@ -709,7 +710,7 @@ class TimelineDraftTaskServiceTest {
         ArgumentCaptor<TimelineDraftTask.TimelineWindow> windowCaptor =
                 ArgumentCaptor.forClass(TimelineDraftTask.TimelineWindow.class);
         verify(timelineTaskService).createProcessing(anyString(), eq(USER_ID), eq(RECORD_ID),
-                windowCaptor.capture(), anyString(), any());
+                windowCaptor.capture(), any(), any());
         assertThat(windowCaptor.getValue().startTime()).isEqualTo(partial.startTime());
         assertThat(windowCaptor.getValue().endTime()).isEqualTo(partial.endTime());
     }
@@ -740,7 +741,7 @@ class TimelineDraftTaskServiceTest {
         InOrder order = inOrder(timelineDraftPreparationService, clock, timelineTaskService);
         order.verify(timelineDraftPreparationService).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
         order.verify(clock).instant();
-        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), anyString(),
+        order.verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
     }
 

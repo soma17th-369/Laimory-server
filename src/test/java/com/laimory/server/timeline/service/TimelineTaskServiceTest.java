@@ -9,6 +9,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
+
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -42,7 +44,7 @@ class TimelineTaskServiceTest {
     @Test
     void createProcessing_storesRecordIdAndStartedAtWithProcessingTtl() {
         // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이의 기준) + TTL 3분.
-        service.createProcessing("t", USER_ID, RECORD_ID, null, "hash", STARTED_AT);
+        service.createProcessing("t", USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
@@ -56,9 +58,33 @@ class TimelineTaskServiceTest {
     }
 
     @Test
+    void refreshProcessing_resavesSameTaskWithProcessingTtl() {
+        // AI 단계(입력 조회·결과 저장)마다 3분을 다시 확보하되 시작 시각은 보존한다 —
+        // 폴링 elapsedSeconds가 갱신 때문에 되감기면 안 된다.
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
+
+        service.refreshProcessing("t", task);
+
+        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
+        verify(timelineTaskStore).save(eq("t"), eq(task), ttl.capture());
+        assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
+        assertThat(task.processingStartedAt()).isEqualTo(STARTED_AT);
+    }
+
+    @Test
+    void refreshProcessing_terminalTask_isRejected() {
+        TimelineDraftTask terminal = TimelineDraftTask.success(USER_ID, RECORD_ID, tokenHashes("hash"));
+
+        assertThatThrownBy(() -> service.refreshProcessing("t", terminal))
+                .isInstanceOf(IllegalStateException.class);
+        verify(timelineTaskStore, never()).save(any(), any(), any());
+    }
+
+    @Test
     void markSuccess_discardsProcessingStartedAt_withTerminalTtl() {
         // PROCESSING 전용 lifecycle: terminal에는 시각·window를 보존하지 않는다(의도적 폐기) + terminal TTL 24시간.
-        service.markSuccess("t", USER_ID, RECORD_ID, "hash");
+        service.markSuccess("t", USER_ID, RECORD_ID, tokenHashes("hash"));
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
@@ -74,7 +100,7 @@ class TimelineTaskServiceTest {
 
     @Test
     void markFailed_storesNumericFailureCode() {
-        service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, "hash");
+        service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, tokenHashes("hash"));
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         verify(timelineTaskStore).save(eq("t"), task.capture(), any(Duration.class));
@@ -90,7 +116,7 @@ class TimelineTaskServiceTest {
     @Test
     void markFailed_rejectsNonTaskFailureCode() {
         // HTTP 에러 코드(ERROR_0400 등)를 task 상태로 저장하는 오용은 시그니처+가드가 차단한다.
-        assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.VALIDATION_FAILED, "hash"))
+        assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.VALIDATION_FAILED, tokenHashes("hash")))
                 .isInstanceOf(IllegalStateException.class);
         verify(timelineTaskStore, never()).save(any(), any(), any());
         verify(timelineMetrics, never()).recordTerminalFailed();
@@ -117,7 +143,7 @@ class TimelineTaskServiceTest {
     void terminalMetric_isNotIncrementedWhenStoreFails() {
         doThrow(new RuntimeException("redis down")).when(timelineTaskStore).save(any(), any(), any());
 
-        assertThatThrownBy(() -> service.markSuccess("t", USER_ID, RECORD_ID, "hash"))
+        assertThatThrownBy(() -> service.markSuccess("t", USER_ID, RECORD_ID, tokenHashes("hash")))
                 .isInstanceOf(RuntimeException.class);
 
         verify(timelineMetrics, never()).recordTerminalSuccess();
@@ -129,15 +155,6 @@ class TimelineTaskServiceTest {
         when(timelineTaskStore.findProcessingTaskIds(USER_ID)).thenReturn(List.of("newer", "older"));
 
         assertThat(service.findProcessingTaskIds(USER_ID)).containsExactly("newer", "older");
-    }
-
-    @Test
-    void consumeCallbackToken_usesTwentyFiveHourMarkerTtl() {
-        when(timelineTaskStore.consumeCallbackToken("t", Duration.ofHours(25))).thenReturn(true);
-
-        assertThat(service.consumeCallbackToken("t")).isTrue();
-
-        verify(timelineTaskStore).consumeCallbackToken("t", Duration.ofHours(25));
     }
 
     @Test

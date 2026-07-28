@@ -40,6 +40,7 @@ public class TimelineDraftCleanupScheduler {
     private static final long MIN_RETENTION_DAYS = 1;
 
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final TimelineAiResultReceiptService timelineAiResultReceiptService;
     private final S3PhotoStorageService s3PhotoStorageService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -87,6 +88,12 @@ public class TimelineDraftCleanupScheduler {
             }
         }
         log.info("draft cleanup 완료: deleted={}, failed={}", deleted, failed);
+
+        // AI 결과 영수증도 같은 보관기간으로 정리한다. 영수증의 목적은 응답 유실 뒤 재시도의 중복 저장
+        // 차단인데, 재시도 주체인 task 토큰은 늦어도 terminal TTL(24h)에 만료되므로 보관기간이 지난 뒤
+        // 재처리 가능성은 없다. S3 부수효과가 없어 일괄 삭제한다.
+        long deletedReceipts = timelineAiResultReceiptService.deleteCreatedBefore(cutoff);
+        log.info("ai result receipt cleanup 완료: deleted={}", deletedReceipts);
     }
 
     /**

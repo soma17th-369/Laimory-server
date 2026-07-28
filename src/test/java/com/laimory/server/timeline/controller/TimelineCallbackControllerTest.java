@@ -89,7 +89,7 @@ class TimelineCallbackControllerTest {
 
     @Test
     void callback_serviceUnauthorized_returns401WithErrorCode() throws Exception {
-        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH))
+        doThrow(new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
@@ -102,16 +102,16 @@ class TimelineCallbackControllerTest {
     }
 
     @Test
-    void callback_consumedToken_returns401WithError1012() throws Exception {
-        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED))
+    void callback_conflictingTerminalResult_returns409WithError1017() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
                         .header("Callback-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value(-1012))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1017))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }

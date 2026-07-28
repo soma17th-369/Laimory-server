@@ -77,19 +77,6 @@ public class RedisGateway {
     }
 
     /**
-     * 키가 없을 때만 값을 원자적으로 저장한다(SET NX + TTL). 저장했으면 true, 이미 있으면 false.
-     * callback token 같은 일회성 admission marker에서 동시 호출 중 정확히 하나만 true를 받게 한다.
-     */
-    public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
-        Boolean acquired = template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl);
-        if (acquired == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
-            throw new IllegalStateException("Redis setIfAbsent가 null을 반환했습니다: " + logicalKey);
-        }
-        return acquired;
-    }
-
-    /**
      * TTL 값 저장과 두 sorted set의 같은 member/score 추가를 한 Lua 실행으로 원자 수행한다.
      * {@code logicalExpiringSortedSetKey}에는 값과 같은 TTL을 매번 PEXPIRE로 갱신한다 — 마지막 추가 뒤
      * TTL 동안 비활성인 key만 자연 소멸한다(member별 TTL이 아니다).

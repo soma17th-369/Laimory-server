@@ -44,9 +44,11 @@ timeline draft의 큰 흐름은 다음과 같다.
 
 ```text
 DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
-→ AI dispatch (POST /v1/timeline — taskId·callbackToken·dailyRecordId·offset window)
-→ AI가 validation + final Event/Item/junction INSERT + accepted source DELETE를 direct-write commit
-→ status-only callback → 서버는 token을 원자 소비한 최초 요청만 Redis terminal 전이
+→ AI dispatch (POST /v1/timeline — taskId·입력 토큰만)
+→ AI가 GET /s/api/{v}/timeline/drafts/{taskId}/input 으로 정규 입력 조회(다음 토큰 발급)
+→ AI가 POST .../result 로 결과 전달 → 서버가 영수증 + Event/Item/junction INSERT + accepted source DELETE를
+  한 트랜잭션으로 commit(다음 토큰 발급)
+→ status-only callback → 서버가 영수증을 확인하고 Redis terminal 전이 + 완료 푸시
 ```
 
 Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 Event/memo transaction을 실행한다.
@@ -72,8 +74,8 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 ## Known Gaps
 
 - API chain의 JWT authentication filter와 principal-to-userId 전달이 아직 없다.
-- 실 AI writer(Laimory-AI)의 draft direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
-  Event PATCH 수동 PHOTO writer는 구현됨).
+- 실 AI(Laimory-AI)의 서버간 입력·결과 호출 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
+  입력·결과 endpoint는 구현됨).
 - schema migration framework가 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제의 교차 작업 concurrency control은 미구현이다.
 

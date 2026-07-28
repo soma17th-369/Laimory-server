@@ -9,7 +9,7 @@ import java.util.HexFormat;
 
 /**
  * 자체 인증 토큰(app_code·refresh token) 원문 생성/해시 유틸. 원문은 클라이언트에만 전달하고
- * 서버(DB·Redis)에는 해시만 보관한다({@code timeline.CallbackTokens}와 같은 원칙 — 해시 인코딩이
+ * 서버(DB·Redis)에는 해시만 보관한다({@code timeline.TaskTokens}와 같은 원칙 — 해시 인코딩이
  * hex(DDL {@code CHAR(64)})라 별도 유틸로 둔다).
  */
 public final class AuthTokens {

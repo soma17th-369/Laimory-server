@@ -5,9 +5,9 @@ import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
-import com.laimory.server.timeline.CallbackTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
@@ -27,7 +27,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -111,9 +110,14 @@ public class TimelineDraftTaskService {
 
         String taskId = UuidV7.randomUuidV7().toString();
 
-        // one-time 콜백 토큰: 원문은 AI dispatch body로만 전달하고 서버는 해시만 보관한다.
-        String callbackToken = CallbackTokens.generate();
-        String callbackTokenHash = CallbackTokens.hash(callbackToken);
+        // 단계별 토큰 chain: T1 원문만 AI dispatch body로 전달하고, T2·T3는 이전 토큰에서 결정적으로
+        // 파생해 각 단계 응답에서 발급한다. 서버는 세 hash만 보관한다(원문 미저장).
+        String inputToken = TaskTokens.generate();
+        String resultToken = TaskTokens.deriveResultToken(inputToken, taskId);
+        TimelineDraftTask.TokenHashes tokenHashes = new TimelineDraftTask.TokenHashes(
+                TaskTokens.hash(inputToken),
+                TaskTokens.hash(resultToken),
+                TaskTokens.hash(TaskTokens.deriveCallbackToken(resultToken, taskId)));
 
         Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
         existingRecord
@@ -152,26 +156,26 @@ public class TimelineDraftTaskService {
         try {
             timelineTaskService.createProcessing(taskId, userId, dailyRecordId,
                     new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
-                    callbackTokenHash, processingStartedAt);
+                    tokenHashes, processingStartedAt);
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
             throw e;
         }
 
-        // 3. AI dispatch — 접수 body에 taskId·원문 callbackToken·dailyRecordId·offset 변환 window를 싣는다.
+        // 3. AI dispatch — 접수 body에 taskId와 첫 단계 토큰(T1) 원문만 싣는다. 나머지 입력(record 메타데이터·
+        //    window·source item)은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
         //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
         //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
         //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
         try {
-            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
-                    taskId, callbackToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
+            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(taskId, inputToken));
         } catch (TimelineAiDispatchRejectedException e) {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
             try {
                 timelineTaskService.markFailed(
-                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
+                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHashes);
             } catch (RuntimeException saveFailure) {
                 // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
                 // PROCESSING으로 남았다면 최초 3분 TTL이 회수한다.
@@ -189,17 +193,6 @@ public class TimelineDraftTaskService {
         }
 
         return taskId;
-    }
-
-    /**
-     * Android local window를 검증된 recordTimeZone 기반 offset ISO-8601로 변환한다(AI transport 계약).
-     * Redis에는 local 원본을 그대로 유지한다 — 변환은 transport 사본에만 적용된다.
-     */
-    private static AiTimelineDispatchRequest.Window toOffsetWindow(TimelineWindowDto window, String recordTimeZone) {
-        ZoneId zone = ZoneId.of(recordTimeZone);
-        return new AiTimelineDispatchRequest.Window(
-                window.startTime().atZone(zone).toOffsetDateTime(),
-                window.endTime().atZone(zone).toOffsetDateTime());
     }
 
     /** 요청 배치 내 중복 rawId를 제거한다(첫 항목 유지). 유출 방지로 로그엔 개수만 남긴다(rawId는 클라 입력값). */

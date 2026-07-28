@@ -3,9 +3,18 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
+import com.laimory.server.timeline.TaskTokens;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import com.laimory.server.timeline.dto.AiTimelineResultResponse;
+import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -15,31 +24,35 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 /**
- * dev 전용 fake AI 디스패처. 실 AI 역할을 in-process로 대행하는 dev runtime 시뮬레이터다 — 앱이 dev
- * 서버에서 draft→direct-write→callback→SUCCESS 흐름을 실제로 태워볼 수 있도록, delay(추론 시간 흉내) 후
- * final Event/Item/junction을 직접 커밋({@link FakeAiTimelineAppendService})하고, 자기 서버의 콜백
- * 엔드포인트를 <b>실제 HTTP</b>로 호출한다(commit-then-callback). 토큰이 프로세스 밖으로 나가지 않아
- * 보안 모델이 유지된다.
+ * dev 전용 fake AI 디스패처. 실 AI 역할을 대행하는 dev runtime 시뮬레이터다 — 앱이 dev 서버에서
+ * draft→입력 조회→결과 저장→콜백→SUCCESS 흐름을 실제로 태워볼 수 있도록, delay(추론 시간 흉내) 후
+ * <b>실 AI와 같은 순서로 자기 서버의 서버간 endpoint 3개를 실제 HTTP로 호출</b>한다.
  *
- * <p>실 AI 계약과의 의도적 차이: <b>콜백 재시도 없음</b>(dev 도구). 콜백 HTTP가 실패하면 task는
- * PROCESSING인 채 TTL로 소멸한다(final graph는 commit대로 남는다 — 실 AI의 "commit 후 callback 유실"
- * MVP 한계와 같은 상태). 서버가 8080이 아닌 포트로 떠 있으면 콜백이 유실된다(고정 URL 전제).
+ * <p>실 AI 계약과의 의도적 차이: <b>재시도 없음</b>(dev 도구). 어느 단계든 HTTP가 실패하면 task는
+ * PROCESSING인 채 TTL로 소멸한다. 서버가 8080이 아닌 포트로 떠 있으면 호출이 유실된다(고정 URL 전제).
+ * inference가 없으므로 분류는 {@code UNKNOWN} 고정이고 조회한 source 전부를 Event 하나로 묶는다.
  *
- * <p>⚠️ {@code callbackToken}은 비밀 — 어떤 로그에도 포함하지 않는다(헤더로만 전송).
+ * <p>⚠️ 단계별 토큰은 비밀 — 어떤 로그에도 포함하지 않는다(헤더로만 전송).
  */
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "app.ai.mode", havingValue = "fake")
 public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
 
-    // 콜백 경로 중 /timeline/drafts/{taskId}/callback은 TimelineCallbackController 매핑의 복제다
-    // (서비스가 컨트롤러 상수를 참조하는 레이어 역류를 피함). URL 형태는 FakeTimelineAiDispatcherTest,
-    // 컨트롤러 매핑은 TimelineCallbackControllerTest가 각각 소유하며, 둘의 조합 드리프트를 자동 검출하는 테스트는 없다.
-    private static final String CALLBACK_URL_TEMPLATE =
-            "http://localhost:8080" + ApiUrls.SERVER_API_URL.replace(ApiUrls.VERSION, "v1")
-                    + "/timeline/drafts/{taskId}/callback";
+    static final String FAKE_TITLE = "[FAKE] 타임라인 이벤트 제안";
 
-    private final FakeAiTimelineAppendService fakeAiTimelineAppendService;
+    // 서버간 경로는 TimelineAiTaskController/TimelineCallbackController 매핑의 복제다(서비스가 컨트롤러 상수를
+    // 참조하는 레이어 역류를 피함). URL 형태는 FakeTimelineAiDispatcherTest, 컨트롤러 매핑은 각 컨트롤러
+    // 테스트가 소유하며, 둘의 조합 드리프트를 자동 검출하는 테스트는 없다.
+    private static final String SERVER_API_BASE =
+            "http://localhost:8080" + ApiUrls.SERVER_API_URL.replace(ApiUrls.VERSION, "v1")
+                    + "/timeline/drafts/{taskId}";
+    private static final String INPUT_URL_TEMPLATE = SERVER_API_BASE + "/input";
+    private static final String RESULT_URL_TEMPLATE = SERVER_API_BASE + "/result";
+    private static final String CALLBACK_URL_TEMPLATE = SERVER_API_BASE + "/callback";
+    private static final String TASK_TOKEN_HEADER = "Task-Token";
+    private static final String CALLBACK_TOKEN_HEADER = "Callback-Token";
+
     private final RestClient restClient;
     private final Duration callbackDelay;
 
@@ -47,10 +60,8 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
     // requestFactory는 커스텀하지 않는다 — 단위 테스트의 MockRestServiceServer.bindTo(builder)가 심는
     // mock factory를 덮어버리기 때문(dev 전용이라 기본 타임아웃 수용).
     public FakeTimelineAiDispatcher(
-            FakeAiTimelineAppendService fakeAiTimelineAppendService,
             RestClient.Builder restClientBuilder,
             @Value("${app.ai.fake.callback-delay:2s}") Duration callbackDelay) {
-        this.fakeAiTimelineAppendService = fakeAiTimelineAppendService;
         this.restClient = restClientBuilder.build();
         this.callbackDelay = callbackDelay;
     }
@@ -58,41 +69,68 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
     @Async
     @Override
     public void dispatch(AiTimelineDispatchRequest request) {
-        // delay를 append 앞에 둔다: 앱이 PROCESSING을 관찰할 수 있고, 실 AI 동작(추론 시간 → commit과
-        // callback은 붙어서)과 일치한다. 기본 2s는 단위 테스트에선 ZERO로 대체된다(생성자 주입).
+        // delay를 입력 조회 앞에 둔다: 앱이 PROCESSING을 관찰할 수 있고, 실 AI 동작(접수 → 추론 →
+        // 저장·콜백)과 순서가 같다. 기본 2s는 단위 테스트에선 ZERO로 대체된다(생성자 주입).
         try {
             Thread.sleep(callbackDelay.toMillis());
         } catch (InterruptedException e) {
-            // 셧다운 시그널 — append 전이므로 중단하면 찌꺼기가 없다(task는 PROCESSING TTL로 소멸).
+            // 셧다운 시그널 — 아직 아무것도 저장하지 않았으므로 찌꺼기가 없다(task는 PROCESSING TTL로 소멸).
             Thread.currentThread().interrupt();
             return;
         }
 
         String taskId = request.taskId();
+        String callbackToken;
         DraftTaskCallbackRequest result;
         try {
-            FakeAiTimelineAppendService.AppendResult appendResult =
-                    fakeAiTimelineAppendService.append(taskId, request.dailyRecordId());
-            result = appendResult == FakeAiTimelineAppendService.AppendResult.SUCCESS
-                    ? new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null)
-                    : new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
-                            "fake validation failed");
+            AiTimelineTaskInputResponse input = getInput(taskId, request.taskToken());
+            AiTimelineResultResponse stored = postResult(taskId, input.resultToken(), toResult(input));
+            callbackToken = stored.callbackToken();
+            result = new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
         } catch (RuntimeException e) {
-            log.warn("fake AI append failed: taskId={}", taskId, e);
+            log.warn("fake AI result flow failed: taskId={}", taskId, e);
+            // 결과 저장에 실패했으므로 콜백 토큰이 없다 — FAILED는 결과 저장 단계 토큰으로도 보고할 수 있다.
+            callbackToken = deriveResultTokenQuietly(taskId, request.taskToken());
             // 상세 예외는 위 로그에만 — 콜백 서비스가 error를 또 로깅하므로 고정 문구로 이중 노출을 피한다.
             result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
-                    "fake append failed");
+                    "fake result flow failed");
         }
-        // append()가 리턴했다 = final 트랜잭션 커밋 완료. 여기서부터가 callback(조기 콜백 구조적 차단).
-        postCallback(taskId, request.callbackToken(), result);
+        postCallback(taskId, callbackToken, result);
+    }
+
+    private AiTimelineTaskInputResponse getInput(String taskId, String taskToken) {
+        AiTimelineTaskInputResponse input = restClient.get()
+                // URI template을 보존해야 Micrometer의 low-cardinality uri tag에 taskId 원문이 들어가지 않는다.
+                .uri(INPUT_URL_TEMPLATE, taskId)
+                .header(TASK_TOKEN_HEADER, taskToken)
+                .retrieve()
+                .body(AiTimelineTaskInputResponse.class);
+        if (input == null || input.sourceItems() == null || input.sourceItems().isEmpty()) {
+            throw new IllegalStateException("fake AI got no source items: taskId=" + taskId);
+        }
+        return input;
+    }
+
+    private AiTimelineResultResponse postResult(String taskId, String resultToken,
+                                                AiTimelineResultRequest body) {
+        AiTimelineResultResponse response = restClient.post()
+                .uri(RESULT_URL_TEMPLATE, taskId)
+                .header(TASK_TOKEN_HEADER, resultToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(AiTimelineResultResponse.class);
+        if (response == null || response.callbackToken() == null) {
+            throw new IllegalStateException("fake AI got no callback token: taskId=" + taskId);
+        }
+        return response;
     }
 
     private void postCallback(String taskId, String callbackToken, DraftTaskCallbackRequest body) {
         try {
             restClient.post()
-                    // URI template을 보존해야 Micrometer의 low-cardinality uri tag에 taskId 원문이 들어가지 않는다.
                     .uri(CALLBACK_URL_TEMPLATE, taskId)
-                    .header("Callback-Token", callbackToken)
+                    .header(CALLBACK_TOKEN_HEADER, callbackToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
                     .retrieve()
@@ -101,5 +139,38 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         } catch (RuntimeException e) {
             log.warn("fake AI callback failed: taskId={}", taskId, e);
         }
+    }
+
+    /** 조회한 source 전부를 Event 하나로 묶는다(추론 없음 — 분류는 UNKNOWN 고정). */
+    private static AiTimelineResultRequest toResult(AiTimelineTaskInputResponse input) {
+        List<AiTimelineTaskInputResponse.SourceItem> sources = input.sourceItems();
+        OffsetDateTime startAt = resolveStartAt(sources);
+        OffsetDateTime endAt = sources.stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::endAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .filter(value -> !value.isBefore(startAt))
+                .orElse(null);
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.UNKNOWN, FAKE_TITLE, null, startAt, endAt,
+                sources.stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
+    }
+
+    /** Event startAt은 필수라 폴백 체인으로 항상 값을 만든다(source start 최솟값 → end 최솟값 → window 시작). */
+    private static OffsetDateTime resolveStartAt(List<AiTimelineTaskInputResponse.SourceItem> sources) {
+        return sources.stream().map(AiTimelineTaskInputResponse.SourceItem::startAt).filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElseGet(() -> sources.stream().map(AiTimelineTaskInputResponse.SourceItem::endAt)
+                        .filter(Objects::nonNull)
+                        .min(Comparator.naturalOrder())
+                        .orElseGet(OffsetDateTime::now));
+    }
+
+    /**
+     * 실패 보고용 토큰. 입력 조회 응답을 못 받았을 수 있으므로 dispatch 토큰에서 직접 파생한다 —
+     * fake는 서버와 같은 프로세스라 파생 규칙을 그대로 쓸 수 있다(실 AI는 응답으로 받은 토큰을 쓴다).
+     */
+    private static String deriveResultTokenQuietly(String taskId, String taskToken) {
+        return TaskTokens.deriveResultToken(taskToken, taskId);
     }
 }
