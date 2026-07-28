@@ -901,22 +901,90 @@ sudo /usr/local/sbin/laimory-grafana-proxy disable
 
 ## 앱 `.env` 필수 키 (WAS 박스 `/home/ubuntu/app/.env`)
 
-user_data는 최초 부팅 시 인프라 유래 값만 시드한다. **아래 앱 secret 키들은 terraform을 거치지
+`/home/ubuntu/app/.env`는 장기 실행 앱 컨테이너 runtime 설정의 단일 권위(SSOT)다. `deploy.yml`은
+`-e` override 없이 `--env-file`로 이 파일만 사용하고, 아래 계약을 기존 컨테이너를 내리기 전에 값을
+출력하지 않는 방식으로 preflight한다(누락·중복·오값이면 fail-closed — 구 컨테이너는 계속 실행되고
+기존 `.env`와 `APP_COMMIT_SHA`가 보존된다).
+
+- secret presence: `JWT_SECRET`(32자 이상) + Google/Kakao OAuth client key 4개
+- dev 고정값 exact-one: `REDIS_KEY_PREFIX=dev_` · `APP_ENV=dev` · `APP_GEO_MODE=kakao` ·
+  `SWAGGER_ENABLED=true` 각각 정확히 한 줄
+- mode exact-one: `APP_AI_MODE`(`noop|fake|http`; `http`면 non-empty `APP_AI_HTTP_BASE_URL`도 정확히
+  한 줄), `APP_PUSH_MODE`(`noop|firebase`; `firebase`면
+  `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json` 정확히 한 줄 +
+  host service-account 파일 존재/비어있지 않음/UID 1001 가독성)
+
+`APP_COMMIT_SHA`는 배포 workflow가 소유한다 — 모든 pre-stop 검사와 image pull이 성공한 뒤 첫
+컨테이너 stop 직전에 같은 디렉터리 temp+rename 원자 upsert로 정확히 한 줄로 수렴시킨다(수동 편집
+금지). `DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 아직 preflight 대상이 아니며, 이 값이 빠지면 기존
+컨테이너 제거 후 새 앱 기동이 실패할 수 있다. health 실패 시 자동 rollback도 없다.
+
+user_data는 최초 부팅 시 인프라 유래 값과 위 계약 키의 안전 기본값(`APP_AI_MODE=noop` ·
+`APP_PUSH_MODE=noop` · env별 고정값 · ADC 경로)을 시드한다. **앱 secret 키들은 terraform을 거치지
 않으므로**(state 노출 방지 + 기존 박스엔 user_data 재실행이 없음) SSM으로 직접 추가·갱신한다.
-이 키들이 빠지면 앱이 fail-fast로 기동에 실패한다. 현재 `deploy.yml`은 기존 컨테이너를 내리기 전에
-`JWT_SECRET` 길이와 Google/Kakao OAuth client key 4개를 preflight하고, `.env`가
-`APP_PUSH_MODE=firebase`면 Firebase service-account 파일 존재도 preflight한다.
-`DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 아직 preflight 대상이 아니며,
-이 값이 빠지면 기존 컨테이너 제거 후 새 앱 기동이 실패할 수 있다. health 실패 시 자동 rollback도 없다.
 
 | 키 | 출처 | 비고 |
 |---|---|---|
 | `AWS_REGION` `DB_*` `REDIS_*` `PHOTO_*` | user_data 시드 | 인프라 유래 |
+| `APP_ENV` `REDIS_KEY_PREFIX` `APP_GEO_MODE` `SWAGGER_ENABLED` | user_data 시드 | env별 고정값 — dev 배포가 exact-one 검증 |
+| `APP_AI_MODE` | user_data 시드(`noop`) | `fake`/`http` 전환은 아래 SSM 원자 upsert로; `http`면 `APP_AI_HTTP_BASE_URL`도 필수 |
+| `APP_PUSH_MODE` | user_data 시드(`noop`) | `firebase` 전환은 아래 FCM runbook으로만 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | user_data 시드 | ADC "파일 경로"(고정 컨테이너 경로) — credential 원문 아님 |
+| `APP_COMMIT_SHA` | 배포 workflow | 배포 SHA 원자 upsert — 수동 편집 금지 |
 | `KAKAO_REST_API_KEY` | 수동 | 지오코딩용 (기존) |
 | `JWT_SECRET` | 수동 | 자체 JWT HS256 서명키, **32자 이상 랜덤** |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 수동 | env별 OAuth 클라이언트 분리 |
 | `KAKAO_CLIENT_ID` / `KAKAO_CLIENT_SECRET` | 수동 | 카카오 로그인용 REST API 키 — 지오코딩 키와 별도 선언 |
-| `APP_PUSH_MODE` | 수동 | FCM 푸시 모드(`noop` 기본/`firebase`) — 아래 FCM runbook으로만 전환 |
+
+### 기존(live) 박스 `.env` 사전 반영 runbook — SSM 원자 upsert
+
+live 박스에는 user_data가 재실행되지 않는다. `-e` 제거 workflow를 merge하기 **전에** 위 계약 키를
+SSM으로 먼저 수렴시킨다(값은 셸 히스토리 외 로그·출력에 남기지 않는다). key 값 전환(AI mode 등)에도
+같은 절차를 쓴다 — `tee -a` 추가는 중복 줄을 만들어 preflight가 거부하므로 쓰지 않는다.
+
+```bash
+aws ssm start-session --profile sandbox --target <instance-id>
+# key 하나를 정확히 한 줄로 수렴: 기존 동일 key 전부 제거 후 한 줄 추가(줄 시작의 정확한 KEY=만 대상).
+# 같은 디렉터리 temp+rename(원자)으로 반영하고 0600·owner를 보존한다. K/V만 바꿔 반복한다.
+sudo sh -c 'set -e; K=APP_ENV; V=dev; F=/home/ubuntu/app/.env; T=$(mktemp "$F.XXXXXX");
+  awk -v kv="$K=$V" -v k="$K=" "index(\$0, k) == 1 { next } { print } END { print kv }" "$F" > "$T";
+  chmod 600 "$T"; chown --reference="$F" "$T"; mv -f "$T" "$F"'
+```
+
+반영 후 검증(값 비출력, dev 기준 — 실패 시 exit 1만 반환):
+
+```bash
+sudo test "$(stat -c '%a' /home/ubuntu/app/.env)" = 600 && echo mode-ok
+sudo awk -F= '
+  $1=="REDIS_KEY_PREFIX"{redisCount++; if ($0=="REDIS_KEY_PREFIX=dev_") redisValid++}
+  $1=="APP_ENV"{envCount++; if ($0=="APP_ENV=dev") envValid++}
+  $1=="APP_GEO_MODE"{geoCount++; if ($0=="APP_GEO_MODE=kakao") geoValid++}
+  $1=="SWAGGER_ENABLED"{swaggerCount++; if ($0=="SWAGGER_ENABLED=true") swaggerValid++}
+  $1=="APP_AI_MODE"{aiCount++; ai=$2; if ($2=="noop" || $2=="fake" || $2=="http") aiValid++}
+  $1=="APP_AI_HTTP_BASE_URL"{aiUrlCount++; if (length($0)>length("APP_AI_HTTP_BASE_URL=")) aiUrlValid++}
+  $1=="APP_PUSH_MODE"{pushCount++; push=$2; if ($2=="noop" || $2=="firebase") pushValid++}
+  $1=="GOOGLE_APPLICATION_CREDENTIALS"{adcCount++; if ($2=="/run/secrets/firebase-service-account.json") adcValid++}
+  END {
+    ok=(redisCount==1 && redisValid==1 && envCount==1 && envValid==1 &&
+        geoCount==1 && geoValid==1 && swaggerCount==1 && swaggerValid==1 &&
+        aiCount==1 && aiValid==1 && pushCount==1 && pushValid==1);
+    if (ai=="http") ok=(ok && aiUrlCount==1 && aiUrlValid==1);
+    if (push=="firebase") ok=(ok && adcCount==1 && adcValid==1);
+    exit ok ? 0 : 1
+  }
+' /home/ubuntu/app/.env && echo env-ok
+```
+
+live rollback은 같은 원자 upsert로 이전 key 값을 복원하고 재배포/컨테이너 재기동한다 — Git rollback만으로는
+실행 중 컨테이너 env가 바뀌지 않는다.
+
+### 배포 Docker image cleanup과 rollback
+
+배포 원격 script는 성공·실패 모든 종료 경로에서 `docker image prune -af`를 EXIT trap으로 1회
+실행한다. 어떤 컨테이너도 참조하지 않는 tagged/dangling image만 제거되고, 실행/중지 컨테이너가
+참조하는 image는 Docker가 보존한다. prune 실패는 고정 경고만 남기고 배포 결과 status를 바꾸지
+않는다. host-local 이전 image를 수동 rollback cache로 쓰는 운영은 더 이상 지원하지 않는다 —
+rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해 이전 revision을 재배포한다.
 
 ## FCM 푸시(firebase 모드) 활성화 runbook — 기존 WAS 수동 적용
 
@@ -943,13 +1011,17 @@ FCM HTTP v1 API 활성화, service account에 FCM 발송 권한(`roles/firebasec
    sudo chmod 0400 /home/ubuntu/app/secrets/firebase-service-account.json
    ```
 
-2. `.env`에 모드 추가: `echo 'APP_PUSH_MODE=firebase' | sudo tee -a /home/ubuntu/app/.env`
-3. dev는 다음 `deploy.yml` 배포가 pre-flight(파일 존재) → credential read-only mount
-   (`/run/secrets/firebase-service-account.json`) + `GOOGLE_APPLICATION_CREDENTIALS` 주입까지 수행한다.
+2. `.env` 반영: 위 "SSM 원자 upsert" 절차로 `APP_PUSH_MODE=firebase`와
+   `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json`을 각각 정확히 한 줄로
+   수렴시킨다(`tee -a` 추가는 중복 줄을 만들어 preflight가 거부한다).
+3. dev는 다음 `deploy.yml` 배포가 pre-flight(mode·ADC 경로 exact-one + 파일 존재/비어있지 않음 +
+   UID 1001 가독성) → credential read-only mount(`/run/secrets/firebase-service-account.json`)까지
+   수행한다. ADC 경로는 `.env`가 소유하며 배포는 mount만 추가한다(-e 주입 없음).
    즉시 반영하려면 배포를 재실행한다(`.env`만 바꿔서는 실행 중 컨테이너에 반영되지 않음).
 4. 확인: 컨테이너 로그에 FirebaseApp 초기화 오류가 없고 `/api/v1/intro` 200. credential이 잘못되면
    앱이 fail-fast로 기동 실패한다(health check가 배포를 실패시킴 — 자동 rollback 없음).
-5. **rollback**: `.env`의 `APP_PUSH_MODE=firebase` 줄 제거(→ noop) 후 재배포/컨테이너 재기동.
+5. **rollback**: `.env`의 `APP_PUSH_MODE` 값을 `noop`으로 교체(줄 제거가 아니라 값 교체 — preflight는
+   정확히 한 줄을 요구한다) 후 재배포/컨테이너 재기동.
    FID 등록 API·DB는 유지된다(추후 재활성화 호환). credential 유출 의심 시 Google Cloud에서 키
    폐기·재발급 후 1번 절차로 파일 교체 — secret 값은 incident 문서·로그에 복제하지 않는다.
 
