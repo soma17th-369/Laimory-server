@@ -4,6 +4,7 @@ import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
+import com.laimory.server.timeline.dto.DraftTaskListResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.PhotoUploadCreateRequest;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
@@ -180,6 +181,23 @@ public interface TimelineApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @RequestBody PhotoUploadCreateRequest request);
+
+    @Operation(summary = "진행 중 draft 작업 목록 조회",
+            description = "인증 사용자가 소유한 현재 진행 중(PROCESSING) draft 작업의 taskId만 생성 최신순으로 반환한다. "
+                    + "앱 재진입 등으로 taskId를 잃은 클라이언트가 `GET /{taskId}` 폴링으로 복귀하는 재발견 용도다. "
+                    + "완료·실패·만료된 작업과 다른 사용자의 작업은 포함하지 않으며, 진행 작업이 없으면 "
+                    + "taskIds 빈 배열을 반환한다(404 아님). 목록 반환 직후에도 작업은 종결·만료될 수 있으므로 "
+                    + "각 taskId의 최신 상태는 단건 폴링이 권위다(폴링의 404·FAILED는 정상 수명주기로 처리).")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "조회 성공 — 진행 작업이 없으면 body.taskIds는 빈 배열", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+    })
+    @GetMapping
+    ResponseEntity<ApiResponse<DraftTaskListResponse>> listProcessingDraftTasks(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
 
     @Operation(summary = "draft 작업 상태 폴링",
             description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"

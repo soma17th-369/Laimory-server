@@ -82,13 +82,16 @@ application-owned access는 `RedisGateway`를 거친다.
 |---|---|---|
 | `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `userId`·선생성 `dailyRecordId`·token hash 필수, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 3m, terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
+| `timeline:draft-task:user:{userId}:processing` | 사용자별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). PROCESSING 저장 Lua가 task JSON·전역 index와 함께 ZADD하고 key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 ZREM한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 PROCESSING 저장마다 갱신(마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
 | `timeline:callback-token-uses:{taskId}` | callback token 소비 marker. hash 검증 직후 `SET NX`로 고정값 `used`를 저장하며 raw token/hash는 넣지 않는다. 소비 뒤 후속 처리 실패에도 삭제·환불하지 않는다. | 25h |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
 단순 get/set/delete 외에 callback token marker 등에 쓰는 `setIfAbsent`(SET NX + TTL)를 제공한다.
-Timeline task는 값 PSETEX와 PROCESSING index ZADD/ZREM도 Lua 한 경계에서 수행한다.
+Timeline task는 값 PSETEX와 전역·사용자별 index ZADD/ZREM(+사용자 index PEXPIRE)을 Lua 한 경계에서
+수행하고, 목록 조회용 ZREVRANGE·후보 순서 정렬 MGET·batch ZREM primitive도 gateway가 제공한다
+(Lua 안에서 task JSON은 decode하지 않는다).
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
 dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.

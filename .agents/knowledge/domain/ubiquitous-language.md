@@ -108,6 +108,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 콜백 토큰 | Callback Token | 현재 구현 | task별 one-time bearer credential이다. 원문은 AI dispatch/callback transport에만 있고 서버는 hash와 25시간 소비 marker만 저장한다. 유효 token을 인증에 사용한 순간 소비하며 이후 실패에도 환불하지 않는다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI transport에는 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
+| 사용자별 진행 작업 index | User Processing Index | 현재 구현 | 사용자별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{userId}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 목록 API가 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 PROCESSING 저장마다 3분으로 갱신되는 inactivity cleanup이다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
 
 ## 저장 규칙
