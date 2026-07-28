@@ -55,23 +55,74 @@ jobs:
           IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           # 원격 배포 스크립트: docker run 뒤 /api/v1/intro 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
           # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
+          # 이 heredoc 본문은 .github/scripts/test-deploy-contract.sh가 그대로 추출·실행해 검증한다.
           read -r -d '' SCRIPT <<EOF || true
           set -e
-          # pre-flight: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를 내리기 전에 실패시켜
-          # "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다. (JWT_SECRET은 HS256 최소 32자)
-          grep -qE '^JWT_SECRET=.{32,}\$' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env JWT_SECRET missing or shorter than 32 chars"; exit 1; }
-          grep -qE '^GOOGLE_CLIENT_ID=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_ID missing"; exit 1; }
-          grep -qE '^GOOGLE_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_SECRET missing"; exit 1; }
-          grep -qE '^KAKAO_CLIENT_ID=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_ID missing"; exit 1; }
-          grep -qE '^KAKAO_CLIENT_SECRET=.+' /home/ubuntu/app/.env || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_SECRET missing"; exit 1; }
-          # FCM push pre-flight: .env가 APP_PUSH_MODE=firebase면 host의 service account JSON이 있어야
-          # 배포를 진행한다(역시 구 컨테이너 중지 전 검사 — 앱은 ADC 실패 시 fail-fast). noop/미설정이면
-          # credential·mount 없이 기동한다. 파일은 SSM runbook으로 수동 배치(terraform/README.md 참고) —
-          # credential 원문은 Git/이미지/Terraform/env 값에 두지 않고 read-only 파일 mount로만 전달한다.
+          # EXIT cleanup: 성공·실패 어느 종료 경로에서도 임시 .env 제거와 미사용 image 정리(prune -af)를
+          # 수행한다. 진입 즉시 원래 exit status를 저장해 그대로 반환하므로 prune 실패가 배포 성공을
+          # 실패로, 실패를 성공으로 바꾸지 않는다(고정 경고만 남김). 다른 container가 참조하는 image는
+          # Docker가 보존하고, 미참조 tagged/dangling image만 삭제된다(rollback은 ECR 재pull).
+          TMP_ENV=""
+          cleanup() {
+            STATUS=\$?
+            trap - EXIT
+            { [ -n "\$TMP_ENV" ] && rm -f "\$TMP_ENV"; } 2>/dev/null || true
+            if ! docker image prune -af >/dev/null 2>&1; then
+              echo "WARNING: docker image prune failed (deploy status unchanged)"
+            fi
+            exit \$STATUS
+          }
+          trap cleanup EXIT
+          # 경로 상수(기본이 운영 경로). LAIMORY_* override는 test-deploy-contract.sh harness가 동일한
+          # script 본문을 다른 host에서 실행하기 위한 seam이며 SSM 운영 실행에서는 설정되지 않는다.
+          ENV_FILE="\${LAIMORY_ENV_FILE:-/home/ubuntu/app/.env}"
+          CRED_FILE="\${LAIMORY_FCM_CRED_FILE:-/home/ubuntu/app/secrets/firebase-service-account.json}"
+          # .env 검증 헬퍼(값 비출력): key가 정확히 한 줄 존재하고 기대 줄과 byte 일치해야 한다.
+          # 실패 메시지는 key 이름·개수까지만 — 값은 SSM/Actions 로그에 출력하지 않는다(로그 장기 보존).
+          require_exact_line() {
+            REQ_KEY="\$1"; REQ_LINE="\$2"
+            REQ_COUNT=\$(grep -c "^\$REQ_KEY=" "\$ENV_FILE" || true)
+            [ "\$REQ_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$REQ_KEY must appear exactly once (found \$REQ_COUNT)"; exit 1; }
+            grep -qxF "\$REQ_LINE" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$REQ_KEY has unexpected value"; exit 1; }
+          }
+          # pre-flight 1 — secret presence: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를
+          # 내리기 전에 실패시켜 "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다.
+          # (JWT_SECRET은 HS256 최소 32자)
+          grep -qE '^JWT_SECRET=.{32,}\$' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env JWT_SECRET missing or shorter than 32 chars"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_ID=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_ID missing"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_SECRET=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_SECRET missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_ID=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_ID missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_SECRET=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_SECRET missing"; exit 1; }
+          # pre-flight 2 — runtime SSOT exact-one 검증: 장기 실행 컨테이너에 -e override가 없으므로 dev
+          # 고정값·mode가 .env에 정확히 한 줄씩 없으면 앱이 application default(빈 Redis prefix·local·
+          # noop·Swagger off)로 조용히 기동한다. 그 전에 fail-closed한다(중복 key의 --env-file 해석
+          # 순서에도 의존하지 않는다).
+          require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX=dev_"
+          require_exact_line APP_ENV "APP_ENV=dev"
+          require_exact_line APP_GEO_MODE "APP_GEO_MODE=kakao"
+          require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=true"
+          AI_COUNT=\$(grep -c '^APP_AI_MODE=' "\$ENV_FILE" || true)
+          [ "\$AI_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must appear exactly once (found \$AI_COUNT)"; exit 1; }
+          grep -qxE 'APP_AI_MODE=(noop|fake|http)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must be one of noop|fake|http"; exit 1; }
+          if grep -qxF 'APP_AI_MODE=http' "\$ENV_FILE"; then
+            AI_URL_COUNT=\$(grep -c '^APP_AI_HTTP_BASE_URL=' "\$ENV_FILE" || true)
+            [ "\$AI_URL_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must appear exactly once when APP_AI_MODE=http (found \$AI_URL_COUNT)"; exit 1; }
+            grep -qE '^APP_AI_HTTP_BASE_URL=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must be non-empty when APP_AI_MODE=http"; exit 1; }
+          fi
+          # FCM push pre-flight: APP_PUSH_MODE가 credential mount 여부의 명시적 SSOT다. firebase면 ADC
+          # 경로(GOOGLE_APPLICATION_CREDENTIALS, 고정 컨테이너 경로)도 .env가 정확히 한 줄로 소유해야 하고
+          # host의 service account JSON이 있어야 배포를 진행한다(역시 구 컨테이너 중지 전 검사 — 앱은 ADC
+          # 실패 시 fail-fast). noop이면 credential·mount 없이 기동한다. 파일은 SSM runbook으로 수동
+          # 배치(terraform/README.md) — credential 원문은 Git/이미지/Terraform/env 값에 두지 않고
+          # read-only 파일 mount로만 전달한다.
+          PUSH_COUNT=\$(grep -c '^APP_PUSH_MODE=' "\$ENV_FILE" || true)
+          [ "\$PUSH_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_PUSH_MODE must appear exactly once (found \$PUSH_COUNT)"; exit 1; }
+          grep -qxE 'APP_PUSH_MODE=(noop|firebase)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_PUSH_MODE must be one of noop|firebase"; exit 1; }
           PUSH_ARGS=""
-          if grep -qE '^APP_PUSH_MODE=firebase\$' /home/ubuntu/app/.env; then
-            { [ -f /home/ubuntu/app/secrets/firebase-service-account.json ] && [ -s /home/ubuntu/app/secrets/firebase-service-account.json ]; } || { echo "PREFLIGHT FAILED: APP_PUSH_MODE=firebase but /home/ubuntu/app/secrets/firebase-service-account.json missing or empty"; exit 1; }
-            PUSH_ARGS="-v /home/ubuntu/app/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro -e GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json"
+          if grep -qxF 'APP_PUSH_MODE=firebase' "\$ENV_FILE"; then
+            require_exact_line GOOGLE_APPLICATION_CREDENTIALS "GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json"
+            { [ -f "\$CRED_FILE" ] && [ -s "\$CRED_FILE" ]; } || { echo "PREFLIGHT FAILED: APP_PUSH_MODE=firebase but \$CRED_FILE missing or empty"; exit 1; }
+            PUSH_ARGS="-v \$CRED_FILE:/run/secrets/firebase-service-account.json:ro"
           fi
           # nginx access log query 제거(멱등 가드) — 이 앱 버전부터 로그인 code(/auth/app?code=, IdP 콜백 ?code=)가
           # 쿼리로 나가므로, 배포보다 먼저 no-query log_format을 보장한다. 새 박스는 user_data가 구성하지만(PR #110),
@@ -83,31 +134,42 @@ jobs:
           NGINXLOG
           fi
           grep -q 'access_log /var/log/nginx/access.log noquery' /etc/nginx/sites-available/laimory || sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
-          nginx -t && systemctl reload nginx
+          # nginx -t 실패는 배포를 중단해야 하므로 &&로 묶지 않는다(set -e의 &&-리스트 예외 회피 — fail-closed).
+          nginx -t
+          systemctl reload nginx
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
           docker pull ${IMG}
           # firebase 모드면 runtime user 관점의 읽기 가능성까지 구 컨테이너 중지 전에 검증한다 — 앱 컨테이너는
           # Dockerfile의 appuser(UID 1001)로 실행되므로 root의 -f/-s 검사만으로는 소유권/권한 문제(예:
           # ubuntu:0600)를 못 잡는다. 방금 pull한 image를 그대로 사용해 동일 조건(test -r)으로 확인한다.
+          # (일회성 docker run --rm은 장기 실행 컨테이너가 아니므로 -e 금지 대상이 아니다.)
           if [ -n "\$PUSH_ARGS" ]; then
-            docker run --rm -v /home/ubuntu/app/secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400 (terraform/README.md FCM runbook)"; exit 1; }
+            docker run --rm -v "\$CRED_FILE":/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400 (terraform/README.md FCM runbook)"; exit 1; }
           fi
+          # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
+          # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
+          # 같은 디렉터리 temp + rename(같은 filesystem이라 원자적)으로 부분 쓰기를 막고 0600·owner를
+          # 보존한다. 기존 APP_COMMIT_SHA= 줄은 개수와 무관하게 전부 제거하고 정확히 한 줄만 남긴다
+          # (줄 시작의 정확한 KEY=만 대상 — 유사 이름 key는 건드리지 않는다).
+          TMP_ENV=\$(mktemp "\$ENV_FILE.XXXXXX")
+          awk -v sha="${IMAGE_TAG}" 'index(\$0, "APP_COMMIT_SHA=") == 1 { next } { print } END { print "APP_COMMIT_SHA=" sha }' "\$ENV_FILE" > "\$TMP_ENV"
+          chmod 600 "\$TMP_ENV"
+          chown --reference="\$ENV_FILE" "\$TMP_ENV"
+          mv -f "\$TMP_ENV" "\$ENV_FILE"
+          TMP_ENV=""
           docker stop laimory 2>/dev/null || true
           docker rm laimory 2>/dev/null || true
-          # REDIS_KEY_PREFIX=dev_ : dev/prod 공유 Redis에서 dev 키 격리. 이 워크플로는 dev 전용이라 여기 고정(누락 불가).
-          # APP_ENV=dev : JSON 로그의 environment 필드(ELK index 라우팅용). prod는 자체 배포에서 APP_ENV=prod.
-          # APP_GEO_MODE=kakao : 지오코딩 enrich 활성화(기본 noop). 키(KAKAO_REST_API_KEY)는 secret이라
-          #   YAML에 두지 않고 EC2 .env(--env-file)로 주입 — .env에 키가 없으면 기동이 fail-fast로 실패한다.
-          # SWAGGER_ENABLED=true : dev 전용 Swagger UI(/swagger-ui) 노출. prod는 미주입 → 기본 off.
-          # -e가 --env-file보다 우선하므로 dev 값이 항상 적용된다(prod는 자체 배포라 미설정 → 기본값).
+          # 장기 실행 컨테이너의 runtime env source는 --env-file(.env) 하나다 — -e/--env 없음(.env가 SSOT).
+          # dev 고정값(REDIS_KEY_PREFIX=dev_·APP_ENV=dev·APP_GEO_MODE=kakao·SWAGGER_ENABLED=true)과
+          # AI/push mode는 위 pre-flight가 exact-one으로 fail-closed 보장한다. prod는 자체 배포에서 자기
+          # .env로 같은 계약을 따른다(신규 박스 seed는 terraform/user_data, 값 전환은 SSM runbook).
           # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
-          # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount + ADC 경로 주입(위 pre-flight).
-          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file /home/ubuntu/app/.env -e REDIS_KEY_PREFIX=dev_ -e APP_ENV=dev -e APP_GEO_MODE=kakao -e SWAGGER_ENABLED=true -e APP_COMMIT_SHA=${IMAGE_TAG} \$PUSH_ARGS ${IMG}
+          # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount(ADC 경로는 .env가 소유).
+          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}
           echo "waiting for /api/v1/intro ..."
           ok=0
           for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
           if [ "\$ok" != "1" ]; then echo "HEALTH CHECK FAILED"; docker logs --tail 80 laimory 2>&1 || true; exit 1; fi
-          docker image prune -f
           EOF
           jq -n --arg s "$SCRIPT" '{commands: [$s]}' > params.json
           CMD_ID=$(aws ssm send-command \
