@@ -138,7 +138,7 @@ Spring JSON stdout
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
-  - `laimory.timeline.task.processing.stuck`: 90초 초과, 2분 TTL 만료 전인 PROCESSING task 수
+  - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
   - `laimory.timeline.photo.delete.attempt{result=success|failed}`: object별 S3 삭제 결과
   - `laimory.timeline.photo.delete.pending`: MySQL PHOTO delete-job 대기 행 수
   - `laimory.timeline.photo.delete.oldest.age`: 가장 오래된 PHOTO delete-job 대기 초

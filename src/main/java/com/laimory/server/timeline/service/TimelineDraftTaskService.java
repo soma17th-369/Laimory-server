@@ -174,14 +174,14 @@ public class TimelineDraftTaskService {
                         taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, callbackTokenHash);
             } catch (RuntimeException saveFailure) {
                 // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
-                // PROCESSING으로 남았다면 최초 2분 TTL이 회수한다.
+                // PROCESSING으로 남았다면 최초 3분 TTL이 회수한다.
                 log.warn("timeline ai dispatch rejected, markFailed also failed (task state unknown): taskId={}",
                         taskId, saveFailure);
             }
             throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
-            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 2분 TTL)을 그대로 둔다.
+            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 3분 TTL)을 그대로 둔다.
             // AI callback 또는 TTL 만료가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
                     taskId, e.getMessage());

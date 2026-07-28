@@ -109,7 +109,7 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
   주체가 없다 — 원 task는 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다(수용된 MVP 한계 —
   동일 source 전량 재시도는 `-1013`, 일부 신규 source 재시도가 실질 복구 경로).
 - callback token 소비 뒤 terminal 저장이 실패해도 같은 token을 재사용하지 않는다. PROCESSING task는
-  2분 TTL로 만료하며(만료 뒤 폴링·콜백은 404 `-1001`, 부활 없음) durable receipt·redispatch는 별도
+  3분 TTL로 만료하며(만료 뒤 폴링·콜백은 404 `-1001`, 부활 없음) durable receipt·redispatch는 별도
   복구 과제다.
 - callback 성공은 application envelope 없이 body 없는 HTTP 200이다.
   400/401/404 error는 `GlobalExceptionHandler`의 application envelope를 사용한다.

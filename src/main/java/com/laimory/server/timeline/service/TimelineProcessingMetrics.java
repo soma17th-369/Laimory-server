@@ -33,7 +33,7 @@ public class TimelineProcessingMetrics {
         if (stuckAfter.isZero() || stuckAfter.isNegative()
                 || stuckAfter.compareTo(TimelineTaskService.PROCESSING_TTL) >= 0) {
             throw new IllegalArgumentException(
-                    "app.metrics.timeline.stuck-after는 0보다 크고 PROCESSING TTL(2분)보다 짧아야 합니다: " + stuckAfter);
+                    "app.metrics.timeline.stuck-after는 0보다 크고 PROCESSING TTL(3분)보다 짧아야 합니다: " + stuckAfter);
         }
         this.timelineTaskService = timelineTaskService;
         this.clock = clock;

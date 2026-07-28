@@ -159,7 +159,7 @@ class TimelineDraftCleanupSchedulerTest {
         verify(timelineDraftSourceItemService, never()).deleteById(anyLong());
     }
 
-    // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 2m) ---
+    // --- 불변식 fail-fast 가드 (retention ≫ PROCESSING_TTL 3m) ---
 
     @Test
     void validate_rejectsZeroOrNegativeRetention() {

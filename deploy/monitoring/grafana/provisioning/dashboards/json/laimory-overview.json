@@ -1187,7 +1187,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "90초 이상 PROCESSING에 머문(2분 TTL 만료 전) timeline task 수입니다. 만료된 task는 gauge 조회가 index에서 제거합니다.",
+      "description": "90초 이상 PROCESSING에 머문(3분 TTL 만료 전) timeline task 수입니다. 만료된 task는 gauge 조회가 index에서 제거합니다.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",

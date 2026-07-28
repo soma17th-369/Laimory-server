@@ -123,27 +123,27 @@ class TimelineTaskStoreIntegrationTest {
         String expiredId = "it-expired-" + UUID.randomUUID();
         try {
             long baseline = timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2));
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3));
             timelineTaskStore.save(stuckId,
                     TimelineDraftTask.processing(7L, 42L, null, "h",
                             now.minus(Duration.ofSeconds(100))),
-                    Duration.ofMinutes(2));
+                    Duration.ofMinutes(3));
 
             assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2))).isEqualTo(baseline + 1L);
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline + 1L);
 
             timelineTaskStore.save(stuckId,
                     TimelineDraftTask.success(7L, 42L, "h"), Duration.ofHours(24));
             assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2))).isEqualTo(baseline);
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
 
             // task key를 일부러 살아 있게 저장해도 startedAt이 TTL 창 밖이면 index 관측에서 제거된다.
             timelineTaskStore.save(expiredId,
                     TimelineDraftTask.processing(7L, 42L, null, "h",
-                            now.minus(Duration.ofSeconds(121))),
-                    Duration.ofMinutes(2));
+                            now.minus(Duration.ofSeconds(181))),
+                    Duration.ofMinutes(3));
             assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2))).isEqualTo(baseline);
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
         } finally {
             timelineTaskStore.save(stuckId,
                     TimelineDraftTask.success(7L, 42L, "h"), Duration.ofMinutes(1));
@@ -156,7 +156,7 @@ class TimelineTaskStoreIntegrationTest {
 
     @Test
     void processingIndex_stuckWindowBoundaries_areExactAtMillis() {
-        // stuck 창 (now-2m, now-90s] 경계 고정: 89.999s 미포함·90s 포함·119.999s 포함·120s prune.
+        // stuck 창 (now-3m, now-90s] 경계 고정: 89.999s 미포함·90s 포함·179.999s 포함·180s prune.
         Instant now = Instant.now();
         String beforeThresholdId = "it-b1-" + UUID.randomUUID();
         String atThresholdId = "it-b2-" + UUID.randomUUID();
@@ -165,18 +165,18 @@ class TimelineTaskStoreIntegrationTest {
         List<String> ids = List.of(beforeThresholdId, atThresholdId, beforeExpiryId, atExpiryId);
         try {
             long baseline = timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2));
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3));
             timelineTaskStore.save(beforeThresholdId, TimelineDraftTask.processing(7L, 42L, null, "h",
-                    now.minus(Duration.ofMillis(89_999))), Duration.ofMinutes(2));
+                    now.minus(Duration.ofMillis(89_999))), Duration.ofMinutes(3));
             timelineTaskStore.save(atThresholdId, TimelineDraftTask.processing(7L, 42L, null, "h",
-                    now.minus(Duration.ofMillis(90_000))), Duration.ofMinutes(2));
+                    now.minus(Duration.ofMillis(90_000))), Duration.ofMinutes(3));
             timelineTaskStore.save(beforeExpiryId, TimelineDraftTask.processing(7L, 42L, null, "h",
-                    now.minus(Duration.ofMillis(119_999))), Duration.ofMinutes(2));
+                    now.minus(Duration.ofMillis(179_999))), Duration.ofMinutes(3));
             timelineTaskStore.save(atExpiryId, TimelineDraftTask.processing(7L, 42L, null, "h",
-                    now.minus(Duration.ofMillis(120_000))), Duration.ofMinutes(2));
+                    now.minus(Duration.ofMillis(180_000))), Duration.ofMinutes(3));
 
             assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(2))).isEqualTo(baseline + 2L);
+                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline + 2L);
         } finally {
             for (String id : ids) {
                 timelineTaskStore.save(id,
@@ -189,7 +189,7 @@ class TimelineTaskStoreIntegrationTest {
     @Test
     void processingTask_expiresViaTtl_withoutTerminalTransition() throws Exception {
         // PROCESSING 만료는 key 소멸이다(FAILED 전이 없음) — 짧은 test TTL로 만료 의미만 검증한다.
-        // production 상수 2m 전달은 TimelineTaskServiceTest가 고정한다(2분 실대기 금지).
+        // production 상수 3m 전달은 TimelineTaskServiceTest가 고정한다(3분 실대기 금지).
         String taskId = "it-expiry-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId,

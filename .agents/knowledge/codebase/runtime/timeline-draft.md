@@ -50,7 +50,7 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
    read-back·재저장 없이 상태를 불명으로 두고 같은 502로 끝낸다(500으로 전환하지 않음).
    read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 — AI가 이미 접수해 final write 중일 수
    있으므로 — FAILED로 덮거나 재저장(TTL 연장)하지 않고 PROCESSING을 유지한다(AI callback이 종결하거나
-   task TTL 2m 만료가 회수). 502는 접수 확인 실패지 미접수 증명이 아니다.
+   task TTL 3m 만료가 회수). 502는 접수 확인 실패지 미접수 증명이 아니다.
 
 같은 날짜의 draft, non-empty `photosToAdd` Event PATCH, Event/DailyRecord DELETE 사이에는 공통 Redis
 admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 쓰지 않아 배포 전에 남은 key도
@@ -75,7 +75,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 5. terminal 저장 성공 직후 완료 푸시를 비동기 best-effort로 예약한다(token 거절·terminal 저장 실패
    경로엔 알림 없음).
 6. terminal 저장 실패는 전파된다. token은 이미 소비됐으므로 같은 token 재시도는 `-1012`이며
-   PROCESSING task는 2분 TTL로 만료한다.
+   PROCESSING task는 3분 TTL로 만료한다.
 
 **수용된 MVP 한계**: commit 후 callback 전 AI process가 종료되면 살아있는 재시도 주체가 없다 — 원 task는
 PROCESSING TTL로 만료되고 final graph는 commit대로 남는다. 동일 source 전량 재시도는 `-1013`이며,
@@ -134,11 +134,11 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ### Retention and cleanup
 
-- PROCESSING TTL: 2분 / SUCCESS·FAILED TTL: 24시간 / callback token 소비 marker TTL: 25시간 /
+- PROCESSING TTL: 3분 / SUCCESS·FAILED TTL: 24시간 / callback token 소비 marker TTL: 25시간 /
   source staging retention: 7일
 - PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이
   404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
-- PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 2분(PROCESSING TTL)보다 오래된 고아
+- PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 3분(PROCESSING TTL)보다 오래된 고아
   member를 정리한다.
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)뿐이다 — AI가 채택한 source는 final
   transaction에서 이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.

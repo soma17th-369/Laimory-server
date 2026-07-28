@@ -56,7 +56,7 @@ groups:
         for: 0s
         annotations:
           summary: '{{ $values.B.Value }} timeline task(s) have remained PROCESSING for at least 90 seconds.'
-          description: 'Counts PROCESSING tasks between the 90-second threshold and the two-minute TTL expiry; the gauge read prunes expired members from an atomic Redis processing index.'
+          description: 'Counts PROCESSING tasks between the 90-second threshold and the three-minute TTL expiry; the gauge read prunes expired members from an atomic Redis processing index.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#timeline-processing-stuck
         labels:
           environment: dev

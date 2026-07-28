@@ -52,7 +52,7 @@ class TimelineProcessingMetricsTest {
 
     @Test
     void invalidThresholdFailsFast() {
-        // 0·음수·PROCESSING TTL(2m) 이상은 기동 시 거부한다(90s는 위 테스트에서 허용 확인).
+        // 0·음수·PROCESSING TTL(3m) 이상은 기동 시 거부한다(90s는 위 테스트에서 허용 확인).
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
 
         assertThatThrownBy(() -> new TimelineProcessingMetrics(
@@ -62,7 +62,7 @@ class TimelineProcessingMetricsTest {
                 registry, timelineTaskService, CLOCK, Duration.ofSeconds(-1)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new TimelineProcessingMetrics(
-                registry, timelineTaskService, CLOCK, Duration.ofMinutes(2)))
+                registry, timelineTaskService, CLOCK, Duration.ofMinutes(3)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

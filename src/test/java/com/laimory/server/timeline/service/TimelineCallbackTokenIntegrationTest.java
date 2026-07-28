@@ -233,7 +233,7 @@ class TimelineCallbackTokenIntegrationTest {
         // AI가 commit까지 마쳤지만 callback은 오지 않았다.
         simulateAiDirectWrite(taskId, record.getDailyRecordId());
 
-        // 원 task는 PROCESSING인 채 남고(운영에선 TTL 2m 만료), final graph는 commit대로 유지된다.
+        // 원 task는 PROCESSING인 채 남고(운영에선 TTL 3m 만료), final graph는 commit대로 유지된다.
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
