@@ -120,7 +120,8 @@ constant-time hash 검증 직후 Redis marker를 `SET NX`로 소비하며, 최�
 - `fake`(dev): in-process로 direct-write(`FakeAiTimelineAppendService`) 후 실제 HTTP callback 경로를
   한 번 호출한다. callback retry는 없다.
 - `http`: 실 AI 연동 — `app.ai.http.base-url` 필수, 접수 타임아웃(connect 2s/read 5s 기본) 초과는
-  접수 불명(UNKNOWN)으로 PROCESSING을 유지한 채 POST 502다.
+  접수 불명(UNKNOWN)으로 PROCESSING을 유지한 채 POST 502다. connect+read 합은 PROCESSING TTL(3m)의
+  절반 미만이어야 기동한다(대기 상한이 task 수명에 근접하면 만료된 taskId를 202로 반환할 수 있음).
 
 ## Invariants
 

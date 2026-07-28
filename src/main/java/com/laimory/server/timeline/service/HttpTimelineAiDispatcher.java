@@ -57,6 +57,7 @@ public class HttpTimelineAiDispatcher implements TimelineAiDispatcher {
             @Value("${app.ai.http.connect-timeout:2s}") Duration connectTimeout,
             @Value("${app.ai.http.read-timeout:5s}") Duration readTimeout) {
         requireAbsoluteHttpUrl(baseUrl);
+        requireAckWaitWithinTaskLifetime(connectTimeout, readTimeout);
         this.restClient = restClientBuilder
                 .baseUrl(baseUrl)
                 .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(
@@ -64,6 +65,21 @@ public class HttpTimelineAiDispatcher implements TimelineAiDispatcher {
                                 .withConnectTimeout(connectTimeout)
                                 .withReadTimeout(readTimeout)))
                 .build();
+    }
+
+    /**
+     * 접수 최대 대기(connect+read timeout 합)가 PROCESSING TTL의 절반 미만인지 기동 시 강제한다.
+     * task는 dispatch 전에 TTL과 함께 저장되므로, 대기 상한이 task 수명에 근접하면 유효한 202를 받고도
+     * 이미 만료된(첫 폴링·콜백이 즉시 404인) taskId를 202로 반환할 수 있다.
+     */
+    private static void requireAckWaitWithinTaskLifetime(Duration connectTimeout, Duration readTimeout) {
+        Duration maxAckWait = connectTimeout.plus(readTimeout);
+        if (maxAckWait.compareTo(TimelineTaskService.PROCESSING_TTL.dividedBy(2)) >= 0) {
+            throw new IllegalStateException(
+                    "app.ai.http.connect-timeout + read-timeout 합(" + maxAckWait
+                            + ")은 PROCESSING TTL(3분)의 절반보다 짧아야 합니다 — 접수 대기가 task 수명에 "
+                            + "근접하면 만료된 taskId를 202로 반환할 수 있습니다.");
+        }
     }
 
     /** http 모드 base-url이 non-blank absolute http(s) URL인지 기동 시 강제한다(아니면 IllegalStateException). */
