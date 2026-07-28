@@ -46,11 +46,13 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - 보안 감사·외부 호출 진단용 서비스 로그(재사용 탐지, verifier mismatch, callback replay, 지오코딩 실패,
   미지원 photo 타입)는 access log에 없는 데이터를 가진 **독립 이벤트**로 자기 level을 소유한다 —
   같은 exception을 중복 logging하지 않는 원칙은 유지.
-- FCM 발송 서비스 로그의 허용 필드는 `taskId`·status·target/success/failure/invalid **개수**와
+- FCM 발송 서비스 로그의 허용 필드는 `taskId`·`taskStatus`·`targets`/`accepted`/`failed`/
+  `invalidTargets` **개수**와
   오류 분류 집계뿐이다. 오류 분류는 실패 범위(`TARGET`/`CALL`)와 Firebase Messaging code를 우선
   기록하고, 없으면 platform `ErrorCode`로 fallback한다. 집계값은 영향받은 target 수라 전체 호출
   실패도 chunk 수가 아니라 chunk의 target 수를 더한다. FID 원문·Firebase 응답 body·credential은
-  application log·예외 메시지에 남기지 않는다(sender unit test가 고정).
+  application log·예외 메시지에 남기지 않는다. `accepted`는 FCM 접수 성공이지 단말 수신·노출 성공이
+  아니며, 발송 결과 summary는 무효 등록 DB 정리 전에 남긴다(sender/notifier unit test가 고정).
 
 **요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀만: token, password, credential, presigned URL,
 세션 값.** query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302

@@ -47,14 +47,16 @@ public class TimelineCompletionPushNotifier {
             PushSendResult result = pushMessageSender.send(taskId, status, firebaseInstallationIds);
             // 발송 결과는 invalid registration DB 정리와 독립된 사실이다. 정리 실패 전에 먼저 기록한다.
             pushMetrics.record(result);
+            // targets는 sender 결과가 아니라 조회한 FID 수 — noop sender는 0을 보고하므로 여기서 세야 진실이다.
+            // accepted는 FCM 접수 성공이며 단말 수신·노출 성공을 뜻하지 않는다.
+            log.info("timeline completion push result: taskId={} taskStatus={} targets={} "
+                            + "accepted={} failed={} invalidTargets={}",
+                    taskId, status, firebaseInstallationIds.size(), result.successCount(), result.failureCount(),
+                    result.invalidFirebaseInstallationIds().size());
             if (!result.invalidFirebaseInstallationIds().isEmpty()) {
                 pushRegistrationService.removeInvalidRegistrations(
                         result.invalidFirebaseInstallationIds(), snapshotAt);
             }
-            // targets는 sender 결과가 아니라 조회한 FID 수 — noop sender는 0을 보고하므로 여기서 세야 진실이다.
-            log.info("timeline completion push: taskId={} status={} targets={} success={} failure={} invalidRemoved={}",
-                    taskId, status, firebaseInstallationIds.size(), result.successCount(), result.failureCount(),
-                    result.invalidFirebaseInstallationIds().size());
         } catch (RuntimeException e) {
             log.warn("timeline completion push failed (polling이 안전망): taskId={} status={}", taskId, status, e);
         }
