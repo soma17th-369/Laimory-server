@@ -83,8 +83,12 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   환불하지 않는다(at-most-once admission).
 - commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 final graph는 남는다 —
   자동 복구(durable receipt·redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 1시간, terminal task TTL은 24시간, callback token 소비 marker TTL은 25시간이며
+- `PROCESSING` TTL은 2분, terminal task TTL은 24시간, callback token 소비 marker TTL은 25시간이며
   staging retention은 7일이다.
+- PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
+  폴링·콜백은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
+  않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI callback이 2분 안에 도착하면 terminal 전이는
+  유효하다 — 502를 미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
 - PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
