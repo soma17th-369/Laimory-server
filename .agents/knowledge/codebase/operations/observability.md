@@ -190,6 +190,9 @@ Elasticsearch의 `service=laimory AND environment=dev AND level=ERROR` count를 
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
+Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
+5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
+`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
 
 Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS user data에서
 활성화된다. 빈 목록은 SSM port forwarding 전용이다. Prometheus target file은 Terraform이 실제 dev

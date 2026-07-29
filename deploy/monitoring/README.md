@@ -600,8 +600,10 @@ down, OOM, 5xx 비율 조건이 소유한다. 알림의 `runbook` 링크는 인�
 ERROR 필터와 `message`, `level`, `errorCode`, `path`, `exceptionType` 열로 바로 연다. Discord에는
 원문, body, transactionId, 사용자·task·FID·좌표·예외 원문을 넣지 않는다.
 
-WARN은 기본적으로 사람을 호출하지 않는다. Logs dashboard에서 증가 시각을 확인한 뒤 Kibana Discover에서
-아래 KQL로 해당 문서를 조사한다.
+WARN은 기본적으로 사람을 호출하지 않는다. Logs dashboard의 `ERROR & WARN Logs`에서 증가한
+ERROR/WARN 데이터 포인트를 클릭하면 선택한 시각 전후 5분, 같은 environment와 level로 필터된 Kibana
+Discover가 새 탭에서 열린다. 링크는 Grafana의 클릭 시각과 series 이름만 전달하며 원문 로그를 URL에
+넣지 않는다. 직접 검색할 때는 아래 KQL로 해당 문서를 조사한다.
 
 ```text
 service:"laimory" and environment:"dev" and level:"WARN"
