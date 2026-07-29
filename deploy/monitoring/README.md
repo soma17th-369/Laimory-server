@@ -66,8 +66,10 @@ repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약
 - monitoring EC2 role: `bootstrap/monitoring/*`의 `s3:GetObject`와 SSM Core
 
 자동 배포는 release에 포함된 deploy/validate 도구를 checksum 검증한 뒤 staged 경로에서 실행한다.
-규칙 적용과 Grafana hot reload가 성공한 뒤에만 `/opt/laimory-monitoring/scripts`의 active 도구를
-교체하므로 실패한 도구는 다음 rollback 경로에 남지 않는다. deployer는 host의 root-only
+규칙 적용과 Grafana hot reload 후 release의 모든 UID가 provisioning API에 실제 등록된 것을 확인한
+뒤에만 `/opt/laimory-monitoring/scripts`의 active 도구를 교체하므로 실패한 도구는 다음 rollback
+경로에 남지 않는다. rollback은 Grafana가 읽는 alerting 디렉터리를 `0755`로 유지하고 파일만 복원한다.
+deployer는 host의 root-only
 `secrets/grafana_admin_password`를 사용한다. credential은 GitHub secret, workflow env, S3 release,
 SSM command와 process argument에 전달하지 않는다.
 

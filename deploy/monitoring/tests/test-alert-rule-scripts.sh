@@ -18,6 +18,7 @@ mkdir -p \
   "$FAKE_S3_ROOT" \
   "$FAKE_BIN" \
   "$CURL_CALL_DIR"
+chmod 0700 "$MONITORING_ROOT/grafana/provisioning/alerting"
 
 install -m 0755 "$MONITORING_DIR/scripts/validate-alert-rules.sh" \
   "$MONITORING_ROOT/scripts/validate-alert-rules.sh"
@@ -102,6 +103,13 @@ grep -Fq "user = \"laimory:$GRAFANA_TEST_PASSWORD\"" "$config_file" || {
   echo "Grafana admin username does not match the repository default" >&2
   exit 1
 }
+url=${!#}
+if [[ $url == "$GRAFANA_TEST_RULE_URL/"* ]]; then
+  uid=${url##*/}
+  [[ ${FAKE_CURL_MISSING_UID:-} != "$uid" ]] || exit 22
+  grep -R -Fq "uid: $uid" "$MONITORING_ROOT/grafana/provisioning/alerting"
+  exit
+fi
 count_file="$CURL_CALL_DIR/count"
 count=0
 [[ -f $count_file ]] && count=$(cat "$count_file")
@@ -167,8 +175,15 @@ run_deploy() {
     CURL_CALL_DIR="$CURL_CALL_DIR" \
     GRAFANA_TEST_PASSWORD="$GRAFANA_TEST_PASSWORD" \
     GRAFANA_RELOAD_URL=http://localhost/reload \
+    GRAFANA_PROVISIONING_RULE_URL=http://localhost/rules \
+    GRAFANA_TEST_RULE_URL=http://localhost/rules \
+    FAKE_CURL_MISSING_UID="${FAKE_CURL_MISSING_UID:-}" \
     "$MONITORING_DIR/scripts/deploy-alert-rules.sh" \
     "s3://test-bucket/bootstrap/monitoring/releases/alert-rules/$release_id"
+}
+
+directory_mode() {
+  ruby -e 'printf "%o\n", File.stat(ARGV[0]).mode & 0777' "$1"
 }
 
 # Legacy single-file provisioning migrates to the manifest-owned files and explicitly deletes removed UIDs.
@@ -182,6 +197,7 @@ test ! -e "$MONITORING_ROOT/grafana/provisioning/alerting/rules.yml"
 test ! -e "$MONITORING_ROOT/grafana/provisioning/alerting/laimory-alert-rule-deletes.yml"
 grep -Fq "uid: old_rule" "$CURL_CALL_DIR/delete-1.yml"
 grep -Fq "$FIRST_RELEASE" "$MONITORING_ROOT/grafana/alert-rule-release"
+test "$(directory_mode "$MONITORING_ROOT/grafana/provisioning/alerting")" = 755
 
 # A rejected reload restores the previous files and deletes any UID introduced by the failed release.
 rm -f "$CURL_CALL_DIR"/*
@@ -197,6 +213,23 @@ grep -Fq "$FIRST_RELEASE" "$MONITORING_ROOT/grafana/alert-rule-release"
 grep -Fq "uid: new_rule" "$CURL_CALL_DIR/delete-1.yml"
 grep -Fq "uid: rejected_rule" "$CURL_CALL_DIR/delete-2.yml"
 test ! -e "$MONITORING_ROOT/grafana/provisioning/alerting/laimory-alert-rule-deletes.yml"
+test "$(directory_mode "$MONITORING_ROOT/grafana/provisioning/alerting")" = 755
+
+# A reload HTTP 200 is rejected when Grafana does not expose an expected release UID.
+rm -f "$CURL_CALL_DIR"/*
+THIRD_RELEASE=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+write_release "$THIRD_RELEASE" missing_after_reload
+if FAKE_CURL_MISSING_UID=missing_after_reload run_deploy "$THIRD_RELEASE"; then
+  echo "deployment without a provisioned release UID unexpectedly succeeded" >&2
+  exit 1
+fi
+
+grep -Fq "uid: new_rule" "$MONITORING_ROOT/grafana/provisioning/alerting/test-rules.yml"
+grep -Fq "$FIRST_RELEASE" "$MONITORING_ROOT/grafana/alert-rule-release"
+grep -Fq "uid: new_rule" "$CURL_CALL_DIR/delete-1.yml"
+grep -Fq "uid: missing_after_reload" "$CURL_CALL_DIR/delete-2.yml"
+test ! -e "$MONITORING_ROOT/grafana/provisioning/alerting/laimory-alert-rule-deletes.yml"
+test "$(directory_mode "$MONITORING_ROOT/grafana/provisioning/alerting")" = 755
 
 # Publishing writes rule and root-tool checksums under one immutable commit prefix.
 PUBLISH_BIN="$TEST_DIR/publish-bin"
