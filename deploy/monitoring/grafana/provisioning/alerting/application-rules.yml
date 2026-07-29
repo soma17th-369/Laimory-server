@@ -1,0 +1,267 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-application
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_http_5xx_high
+        title: HTTP 5xx ratio high
+        dashboardUid: laimory-overview
+        panelId: 5
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",status=~"5..",uri!~"/actuator.*"}[5m])) / clamp_min(sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])), 1)) and on (instance) (sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])) >= 20)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.05], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'HTTP 5xx ratio is above 5% on {{ $labels.instance }}.'
+          description: 'At least 20 requests occurred in five minutes and more than 5% returned 5xx.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#http-errors-or-latency
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_http_p95_high
+        title: HTTP p95 latency high
+        dashboardUid: laimory-overview
+        panelId: 6
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(histogram_quantile(0.95, sum by (le, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])))) and on (instance) (sum by (instance) (increase(http_server_requests_seconds_count{job="spring_boot",environment="dev",uri!~"/actuator.*"}[5m])) >= 20)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'HTTP server p95 latency is above one second on {{ $labels.instance }}.'
+          description: 'The five-minute SLO-bucket estimate is elevated under at least 20 requests.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#http-errors-or-latency
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_jvm_heap_high
+        title: JVM heap pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 4
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum by (instance) (jvm_memory_used_bytes{job="spring_boot",environment="dev",area="heap"}) / clamp_min(sum by (instance) (jvm_memory_max_bytes{job="spring_boot",environment="dev",area="heap"} > 0), 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.85], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'JVM heap usage is above 85% on {{ $labels.instance }}.'
+          description: 'Heap pressure persisted across normal garbage-collection cycles.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#jvm-or-hikari-pressure
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_hikari_saturated
+        title: Hikari connection pool pressure
+        dashboardUid: laimory-jvm-spring
+        panelId: 12
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(max by (instance) (hikaricp_connections_active{job="spring_boot",environment="dev"}) / clamp_min(max by (instance) (hikaricp_connections_max{job="spring_boot",environment="dev"}), 1)) and on (instance) (max by (instance) (hikaricp_connections_pending{job="spring_boot",environment="dev"}) > 0)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.9], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Hikari pool usage is above 90% with pending callers on {{ $labels.instance }}.'
+          description: 'Database connection acquisition is queued while the application pool is near capacity.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#jvm-or-hikari-pressure
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false

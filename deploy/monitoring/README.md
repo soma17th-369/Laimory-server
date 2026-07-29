@@ -28,6 +28,63 @@ duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 �
 별도 변경으로 검토한다. monitoring EC2의 CPU credit과 root EBS 지표는 5분마다 CloudWatch에서 읽어
 Infrastructure dashboard에 표시한다.
 
+## Alert rule source와 release
+
+alert rule은 `grafana/alert-rule-files.txt`가 소유하는 책임별 `*-rules.yml` 8개로 관리한다. 파일 하나에는
+동일한 운영 책임의 group만 두며, UID를 바꾸는 migration이 아니라면 기존 UID를 유지한다. 라이브 EC2에서
+provisioning YAML을 직접 편집하지 않는다.
+
+```bash
+# repository에서 매 변경마다 실행
+deploy/monitoring/scripts/validate-alert-rules.sh
+deploy/monitoring/tests/test-alert-rule-scripts.sh
+```
+
+검증과 review가 끝난 commit에서 운영자 로컬이 immutable S3 release를 발행한다. script는 alert 자산이
+commit되지 않았으면 거부하고, 각 파일을 commit SHA prefix에 올린 뒤 checksum manifest를 마지막에
+업로드한다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+RELEASE_URI=$(
+  deploy/monitoring/scripts/publish-alert-rules.sh "$BACKUP_BUCKET" sandbox |
+    tail -n 1
+)
+printf '%s\n' "$RELEASE_URI"
+```
+
+기존 live monitoring host에는 배포 도구를 한 번 설치하고, 이후 도구 자체가 바뀐 release에서만 다시
+설치한다. root 실행 파일도 같은 commit SHA release에서 받고 checksum을 먼저 확인한다.
+
+```bash
+# monitoring host의 SSM session
+RELEASE_URI='s3://<backup-bucket>/bootstrap/monitoring/releases/alert-rules/<commit-sha>'
+TOOL_STAGE=$(mktemp -d)
+sudo aws s3 cp "$RELEASE_URI/tools/SHA256SUMS" "$TOOL_STAGE/SHA256SUMS" \
+  --region ap-northeast-2 --only-show-errors
+for tool in deploy-alert-rules.sh validate-alert-rules.sh; do
+  sudo aws s3 cp \
+    "$RELEASE_URI/tools/$tool" "$TOOL_STAGE/$tool" \
+    --region ap-northeast-2 --only-show-errors
+done
+(cd "$TOOL_STAGE" && sudo sha256sum --check --strict SHA256SUMS)
+sudo install -m 0750 "$TOOL_STAGE/deploy-alert-rules.sh" \
+  "$TOOL_STAGE/validate-alert-rules.sh" /opt/laimory-monitoring/scripts/
+rm -rf "$TOOL_STAGE"
+```
+
+release 반영은 monitoring host에서 한 명령과 Grafana admin password 입력으로 끝난다.
+
+```bash
+RELEASE_URI='s3://<backup-bucket>/bootstrap/monitoring/releases/alert-rules/<commit-sha>'
+sudo /opt/laimory-monitoring/scripts/deploy-alert-rules.sh "$RELEASE_URI"
+```
+
+배포기는 S3 checksum, manifest, 파일 집합, group/UID 중복을 검사하고 root-only backup을 만든다. 기존
+release에서 사라진 UID는 임시 `deleteRules`로 삭제하며, hot reload 실패 시 이전 파일과 새로 추가된
+UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-rule-release`에 기록한다. 이전 release로
+돌릴 때는 원하는 과거 `RELEASE_URI`로 같은 명령을 다시 실행한다.
+
 ## Secret gate
 
 다음 파일은 Git, Terraform, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
@@ -247,9 +304,6 @@ grafana/provisioning/dashboards/json/laimory-overview.json
 grafana/provisioning/dashboards/json/laimory-jvm-spring.json
 grafana/provisioning/dashboards/json/laimory-infrastructure.json
 grafana/provisioning/dashboards/json/laimory-logs.json
-grafana/provisioning/alerting/rules.yml
-grafana/provisioning/alerting/operational-rules.yml
-grafana/rollback/operational-rules.delete.yml
 scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh
 scripts/collect-filebeat-metrics.sh
@@ -297,15 +351,11 @@ BACKUP_BUCKET='<backup bucket>'
 BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
 ROLLBACK_DIR=/opt/laimory-monitoring/rollback/pre-operational-observability
 sudo install -d -m 0700 "$ROLLBACK_DIR" "$ROLLBACK_DIR/dashboards"
-sudo install -d -m 0755 /opt/laimory-monitoring/grafana/rollback
 if [ ! -f "$ROLLBACK_DIR/.complete" ]; then
   if find "$ROLLBACK_DIR" -mindepth 1 -type f -print -quit | grep -q .; then
     echo "incomplete monitoring rollback packet already exists" >&2
     exit 1
   fi
-  sudo install -m 0600 \
-    /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml \
-    "$ROLLBACK_DIR/rules.yml"
   for dashboard in laimory-overview laimory-jvm-spring laimory-infrastructure laimory-logs; do
     sudo install -m 0600 \
       "/opt/laimory-monitoring/grafana/provisioning/dashboards/json/$dashboard.json" \
@@ -324,9 +374,6 @@ grafana/provisioning/dashboards/json/laimory-overview.json|/opt/laimory-monitori
 grafana/provisioning/dashboards/json/laimory-jvm-spring.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json
 grafana/provisioning/dashboards/json/laimory-infrastructure.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json
 grafana/provisioning/dashboards/json/laimory-logs.json|/opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
-grafana/provisioning/alerting/rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
-grafana/provisioning/alerting/operational-rules.yml|/opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
-grafana/rollback/operational-rules.delete.yml|/opt/laimory-monitoring/grafana/rollback/operational-rules.delete.yml
 scripts/collect-aws-metrics.sh|/opt/laimory-monitoring/scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh|/opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
 systemd/laimory-aws-metrics.service|/etc/systemd/system/laimory-aws-metrics.service
@@ -543,8 +590,11 @@ JVM & Spring에서 heap/GC, pending connection, acquire timeout을 함께 본다
 ### Host resource pressure
 
 Infrastructure에서 실제 filesystem과 `MemAvailable`을 확인한다. tmpfs/overlay 같은 pseudo filesystem은
-disk alert에서 제외된다. collector/cardinality를 줄여도 medium의 memory 75%가 지속되면 별도 resize
-변경을 검토한다.
+disk alert에서 제외된다. 일반 host는 `MemAvailable < 15%`, filesystem cache를 적극 사용하는 ELK는
+`MemAvailable < 10%`가 각각 10분 지속될 때 경고한다. ELK 경고는 Elasticsearch heap, filesystem cache,
+swap activity와 OOM 이력을 함께 확인하고, 실제 reclaim 실패나 OOM 징후 없이 cache만 큰 경우에는 스펙
+증설 근거로 단독 사용하지 않는다. collector/cardinality를 줄여도 monitoring medium의 memory 75%가
+지속되면 별도 resize 변경을 검토한다.
 
 ### Timeline PROCESSING stuck
 
@@ -612,33 +662,29 @@ promtool 통과 전 reload하지 않는다. volume은 보존한 채 service만 s
 
 ## Rollback
 
-이번 operational observability 보강은 Prometheus target/job을 바꾸지 않는다. 따라서 이 변경만
-rollback할 때 기존 `node` job이나 5대 target을 제거하지 않는다. Grafana를 재시작한 뒤라면 collector를
-지우기 전에 먼저 신규 rule 9개를 `deleteRules`로 제거하고 이전 rule/dashboard를 복원한다. 순서를
-뒤집으면 node target이 살아 있는 동안 collector absent alert가 firing할 수 있다.
+alert rule은 원하는 과거 immutable release URI를 `deploy-alert-rules.sh`에 다시 넘겨 rollback한다.
+배포기가 현재 release에만 있는 UID를 `deleteRules`로 제거하므로 provisioning 파일을 직접 지우지 않는다.
+방금 실패한 배포는 자동 복구되며, 성공한 배포의 직전 release URI는 출력된 backup directory의
+`alert-rule-release`에서 확인한다.
 
 ```bash
-# monitoring host — Grafana를 새 자산으로 restart한 경우에만 먼저 수행
+cd /opt/laimory-monitoring
+PREVIOUS_RELEASE_URI=$(
+  sudo cat /opt/laimory-monitoring/rollback/alert-rules/<backup-timestamp>/alert-rule-release
+)
+sudo scripts/deploy-alert-rules.sh "$PREVIOUS_RELEASE_URI"
+```
+
+아래는 alert release가 아니라 operational collector/dashboard 보강 전체를 되돌릴 때만 사용한다.
+Prometheus의 기존 `node` job과 5대 target은 제거하지 않는다.
+
+```bash
 cd /opt/laimory-monitoring
 ROLLBACK_DIR=/opt/laimory-monitoring/rollback/pre-operational-observability
-test -s "$ROLLBACK_DIR/rules.yml"
-test -s grafana/rollback/operational-rules.delete.yml
-read -rp 'Grafana admin username [admin]: ' GRAFANA_ADMIN_USER
-GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-sudo install -m 0644 grafana/rollback/operational-rules.delete.yml \
-  grafana/provisioning/alerting/operational-rules.yml
-curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
-sudo rm -f grafana/provisioning/alerting/operational-rules.yml
-sudo install -m 0644 "$ROLLBACK_DIR/rules.yml" \
-  grafana/provisioning/alerting/rules.yml
 for dashboard in laimory-overview laimory-jvm-spring laimory-infrastructure laimory-logs; do
   sudo install -m 0644 "$ROLLBACK_DIR/dashboards/$dashboard.json" \
     "grafana/provisioning/dashboards/json/$dashboard.json"
 done
-curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
-unset GRAFANA_ADMIN_USER
 sudo docker compose restart grafana
 
 # monitoring host — collector 정리와 기존 node_exporter unit 복원

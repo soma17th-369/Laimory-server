@@ -194,10 +194,13 @@ Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret file �
 다르면 systemd가 fail-closed하고, 비밀이 필요 없는 Prometheus/blackbox만 먼저 기동할 수 있다. live
 proxy는 Grafana 전용 nginx include로 관리해 기존 Kibana location을 보존하며, allowlist 밖에서는 slash
 유무와 관계없이 `/grafana` 경로를 차단한다.
-live dashboard/alert upgrade는 기존 provisioning 파일과 generated unit을 root-only로 백업한다.
-provisioned alert 파일을 rollback할 때는 collector를 제거하기 전에 먼저 해당 UID를 `deleteRules`로
-Grafana DB에서 지워 absent alert가 잘못 firing하지 않게 한다. operational 보강은 기존 Prometheus
-`node` job/target을 바꾸지 않으므로 commit rollback에서도 해당 target을 제거하지 않는다.
+alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지
+않는다. commit SHA별 immutable S3 release는 checksum manifest를 마지막에 publish하고, host deployer가
+root-only backup, 파일 집합·UID 검증, hot reload를 수행한다. release 사이에서 사라진 UID는 임시
+`deleteRules`로 Grafana DB에서도 지우며 reload 실패 시 이전 파일과 새 UID를 함께 복구한다. 일반 host
+memory는 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10% 미만이 각각 10분 지속될 때
+경고한다. operational 보강은 기존 Prometheus `node` job/target을 바꾸지 않으므로 rollback에서도 해당
+target을 제거하지 않는다.
 
 ## Runbook: access log field 추가 롤아웃
 
