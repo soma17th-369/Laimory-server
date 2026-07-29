@@ -106,7 +106,7 @@ Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장
 
 | 파일 | 소비 UID:GID | 내용 |
 |---|---:|---|
-| `grafana_admin_password` | `472:0` | 최초 Grafana admin password |
+| `grafana_admin_password` | `472:0` | 최초 Grafana `Laimory` admin password |
 | `grafana_secret_key` | `472:0` | datasource/contact credential 암호화 key |
 | `elasticsearch_api_key` | `472:0` | Elasticsearch create API key 응답의 `encoded` 값 |
 | `discord_webhook_url` | `472:0` | 지정 Discord channel incoming webhook URL |
@@ -133,8 +133,9 @@ printf %s "$SECRET_VALUE" | sudo scripts/install-secret.sh discord_webhook_url
 unset SECRET_VALUE
 ```
 
-Grafana admin password는 최초 DB 생성 때 각인된다. 이후 파일만 바꾸지 말고 Grafana admin password
-reset 절차를 사용한다. `grafana_secret_key`는 재부팅과 재배포에도 유지해야 기존 암호화 값을 읽는다.
+Grafana admin username 기본값은 `Laimory`다. admin password는 최초 DB 생성 때 각인된다. 이후 파일만
+바꾸지 말고 Grafana admin password reset 절차를 사용한다. `grafana_secret_key`는 재부팅과 재배포에도
+유지해야 기존 암호화 값을 읽는다.
 
 ## Exporter identity와 secret
 
@@ -543,8 +544,8 @@ request/response body, transactionId, user/task/FID, 좌표, exception message�
 
 ```bash
 cd /opt/laimory-monitoring
-read -rp 'Grafana admin username [admin]: ' GRAFANA_ADMIN_USER
-GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+read -rp 'Grafana admin username [Laimory]: ' GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-Laimory}
 
 sudo install -m 0644 grafana/smoke/smoke-rule.firing.yml \
   grafana/provisioning/alerting/smoke-rule.yml
