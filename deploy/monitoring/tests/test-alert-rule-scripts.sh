@@ -98,6 +98,10 @@ grep -Fq "$GRAFANA_TEST_PASSWORD" "$config_file" || {
   echo "Grafana credential missing from protected curl config" >&2
   exit 1
 }
+grep -Fq "user = \"Laimory:$GRAFANA_TEST_PASSWORD\"" "$config_file" || {
+  echo "Grafana admin username does not match the repository default" >&2
+  exit 1
+}
 count_file="$CURL_CALL_DIR/count"
 count=0
 [[ -f $count_file ]] && count=$(cat "$count_file")

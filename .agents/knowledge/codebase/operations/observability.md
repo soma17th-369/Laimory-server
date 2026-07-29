@@ -199,10 +199,12 @@ Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev
 private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live
 rollout 완료를 의미하지 않는다.
 
-Grafana admin/encryption key, Elasticsearch API key, Discord webhook, MySQL/Redis exporter credential은
-Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret file 중 하나라도 비거나 owner/mode가
-다르면 systemd가 fail-closed하고, 비밀이 필요 없는 Prometheus/blackbox만 먼저 기동할 수 있다. live
-proxy는 Grafana 전용 nginx include로 관리해 기존 Kibana location을 보존하며, allowlist 밖에서는 slash
+Grafana admin username의 repository 기본값은 `Laimory`이며 compose 최초 생성과 alert provisioning
+reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
+MySQL/Redis exporter credential은 Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret
+file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
+Prometheus/blackbox만 먼저 기동할 수 있다. live proxy는 Grafana 전용 nginx include로 관리해 기존
+Kibana location을 보존하며, allowlist 밖에서는 slash
 유무와 관계없이 `/grafana` 경로를 차단한다.
 alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지
 않는다. commit SHA별 immutable S3 release는 conditional create로만 쓰고 checksum manifest를 마지막에
