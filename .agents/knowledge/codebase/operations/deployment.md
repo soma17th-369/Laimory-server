@@ -49,8 +49,9 @@ monitoring EC2에 SSM command를 보낸다. release object는 `If-None-Match: *`
 실행이 최신 규칙을 덮어쓰지 못하게 하되 명시적인 `workflow_dispatch` 선택은 허용한다. release의
 deploy/validate 도구는 checksum 확인 후 staged 경로에서 실행하며, 규칙 적용과 reload가 성공한 뒤에만
 active 경로에 설치한다. host deployer는 manifest/file/UID를 검증하고 root-only backup 후 Grafana
-provisioning API를 hot reload한다. 실패하면 기존 파일과 UID 상태를 복구하고 SSM command와 workflow를
-실패 처리한다.
+provisioning API를 hot reload한 다음 release의 모든 UID가 실제 조회되는지 확인한다. rollback은
+Grafana-readable alerting 디렉터리 mode를 유지한 채 파일만 복구한다. reload 또는 UID 확인이 실패하면
+기존 파일과 UID 상태를 복구하고 SSM command와 workflow를 실패 처리한다.
 
 Grafana admin password는 monitoring host의 `0400` secret file만이 소유한다. workflow, S3 release,
 SSM command와 process argument에는 credential을 전달하지 않는다. application deploy와 monitoring

@@ -28,6 +28,7 @@ BACKUP_ROOT="$MONITORING_ROOT/rollback/alert-rules"
 LOCK_FILE="$MONITORING_ROOT/.deploy-alert-rules.lock"
 DELETE_FILE="$ALERT_DIR/laimory-alert-rule-deletes.yml"
 GRAFANA_RELOAD_URL=${GRAFANA_RELOAD_URL:-http://localhost:3000/grafana/api/admin/provisioning/alerting/reload}
+GRAFANA_PROVISIONING_RULE_URL=${GRAFANA_PROVISIONING_RULE_URL:-http://localhost:3000/grafana/api/v1/provisioning/alert-rules}
 GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-laimory}
 GRAFANA_ADMIN_PASSWORD_FILE=${GRAFANA_ADMIN_PASSWORD_FILE:-$MONITORING_ROOT/secrets/grafana_admin_password}
 AWS_REGION=${AWS_REGION:-ap-northeast-2}
@@ -35,6 +36,7 @@ AWS_REGION=${AWS_REGION:-ap-northeast-2}
 [[ $VALIDATOR == /* ]] || { echo "validator must be an absolute path: $VALIDATOR" >&2; exit 1; }
 [[ -x $VALIDATOR ]] || { echo "missing executable validator: $VALIDATOR" >&2; exit 1; }
 [[ -d $ALERT_DIR ]] || { echo "missing alert provisioning directory: $ALERT_DIR" >&2; exit 1; }
+chmod 0755 "$ALERT_DIR"
 [[ $GRAFANA_ADMIN_USER =~ ^[A-Za-z0-9._-]+$ ]] ||
   { echo "invalid Grafana admin username" >&2; exit 1; }
 [[ -f $GRAFANA_ADMIN_PASSWORD_FILE && -s $GRAFANA_ADMIN_PASSWORD_FILE ]] ||
@@ -86,6 +88,14 @@ reload_grafana_alerting() {
   curl --config "$CURL_CONFIG" -fsS -X POST "$GRAFANA_RELOAD_URL"
 }
 
+verify_grafana_rule_uids() {
+  local uid
+  while IFS= read -r uid; do
+    curl --config "$CURL_CONFIG" -fsS "$GRAFANA_PROVISIONING_RULE_URL/$uid" >/dev/null ||
+      { echo "Grafana did not provision expected rule UID: $uid" >&2; return 1; }
+  done < "$STAGE_DIR/new-uids"
+}
+
 collect_uids() {
   local directory=$1
   local output=$2
@@ -113,7 +123,9 @@ restore_files() {
   rm -f "$DELETE_FILE"
   find "$ALERT_DIR" -maxdepth 1 -type f \
     \( -name '*-rules.yml' -o -name 'rules.yml' -o -name 'operational-rules.yml' \) -delete
-  cp -a "$BACKUP_DIR/alerting/." "$ALERT_DIR/"
+  find "$BACKUP_DIR/alerting" -maxdepth 1 -type f \
+    -exec cp -a {} "$ALERT_DIR/" \;
+  chmod 0755 "$ALERT_DIR"
   if [[ -f $BACKUP_DIR/alert-rule-files.txt ]]; then
     install -m 0644 "$BACKUP_DIR/alert-rule-files.txt" "$MANIFEST"
   else
@@ -186,7 +198,7 @@ write_delete_file "$STAGE_DIR/removed-uids" "$DELETE_FILE"
 
 "$VALIDATOR" "$ALERT_DIR" "$MANIFEST"
 
-if ! reload_grafana_alerting; then
+if ! reload_grafana_alerting || ! verify_grafana_rule_uids; then
   restore_files
   write_delete_file "$STAGE_DIR/added-uids" "$DELETE_FILE"
   echo "new rules were rejected; reloading the restored files" >&2
