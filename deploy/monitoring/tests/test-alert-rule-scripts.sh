@@ -98,7 +98,7 @@ grep -Fq "$GRAFANA_TEST_PASSWORD" "$config_file" || {
   echo "Grafana credential missing from protected curl config" >&2
   exit 1
 }
-grep -Fq "user = \"Laimory:$GRAFANA_TEST_PASSWORD\"" "$config_file" || {
+grep -Fq "user = \"laimory:$GRAFANA_TEST_PASSWORD\"" "$config_file" || {
   echo "Grafana admin username does not match the repository default" >&2
   exit 1
 }

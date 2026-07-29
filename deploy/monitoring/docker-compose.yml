@@ -137,7 +137,7 @@ services:
     environment:
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000/grafana/}
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-Laimory}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-laimory}
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_SECURITY_SECRET_KEY__FILE: /run/secrets/grafana_secret_key
       GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}

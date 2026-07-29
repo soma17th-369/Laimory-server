@@ -28,7 +28,7 @@ BACKUP_ROOT="$MONITORING_ROOT/rollback/alert-rules"
 LOCK_FILE="$MONITORING_ROOT/.deploy-alert-rules.lock"
 DELETE_FILE="$ALERT_DIR/laimory-alert-rule-deletes.yml"
 GRAFANA_RELOAD_URL=${GRAFANA_RELOAD_URL:-http://localhost:3000/grafana/api/admin/provisioning/alerting/reload}
-GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-Laimory}
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-laimory}
 GRAFANA_ADMIN_PASSWORD_FILE=${GRAFANA_ADMIN_PASSWORD_FILE:-$MONITORING_ROOT/secrets/grafana_admin_password}
 AWS_REGION=${AWS_REGION:-ap-northeast-2}
 
