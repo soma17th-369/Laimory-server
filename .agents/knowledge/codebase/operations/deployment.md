@@ -18,7 +18,9 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 
 ## Current Dev Deployment
 
-1. `dev` branch push가 모든 path에서 workflow를 시작한다.
+1. `dev` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
+   `deploy.yml` 자체가 바뀐 경우에만 workflow를 시작한다. test·문서·Terraform·monitoring-only 변경은
+   application을 재배포하지 않는다.
 2. `deploy-dev` concurrency group으로 배포를 직렬화한다.
 3. GitHub OIDC로 AWS deploy role을 assume한다.
 4. commit SHA tag Docker image를 ECR에 push한다.
@@ -150,6 +152,7 @@ job만 또는 Item만 단독 삭제하지 않는다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow의 실제 variable 이름과 Terraform output 설명을 맞춘다.
+- application deploy trigger는 Docker image와 remote deploy 계약에 영향을 주는 path로만 제한한다.
 - monitoring alert workflow는 관련 path로만 trigger하고 credential을 host 밖으로 전달하지 않는다.
 - user data를 live mutation mechanism으로 설명하지 않는다.
 - Terraform plan/apply에는 운영자 승인과 범위 review가 필요하다.

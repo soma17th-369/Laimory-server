@@ -77,8 +77,9 @@ WAS·mysql은 `lifecycle { ignore_changes = [ami, user_data] }`라 — user_data
   backend=local, 로컬 `terraform.tfstate`, providers는 `.terraform/`에 캐시됨.
 - **plan 시 `certbot_email` 필요**: secrets에 없어서 `-var="certbot_email=..."` placeholder를 넘겨야
   plan이 통과한다(was user_data는 ignore라 값은 결과에 무영향).
-- **`deploy.yml`은 dev push에 path 필터가 없다** → terraform/스킬 등 앱과 무관한 변경을 dev에
-  머지해도 **앱이 재배포(컨테이너 stop→start blip)** 된다. 인프라 PR을 머지할 땐 이걸 인지하고 진행한다.
+- **`deploy.yml`은 image/deploy 관련 path만 감시한다** → `src/main`, Gradle build/wrapper,
+  Dockerfile/dockerignore, workflow 자체가 바뀔 때만 dev application을 배포한다. Terraform·skill·문서·
+  monitoring-only 변경은 application container를 교체하지 않는다.
 - **정말 살아있는 인프라에 반영해야 하는 예외**: `terraform apply -target=<리소스>`로 해당 리소스만
   좁혀서 하되, 재시작/부수효과를 plan으로 먼저 확인한다. user_data가 걸린 인스턴스는 apply 시
   stop/start(다운타임)임을 기억한다. **기본값은 여전히 "apply 안 함"이다.**

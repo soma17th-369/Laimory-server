@@ -34,6 +34,20 @@ ruby -ryaml -e '
   rescue NoMethodError
     YAML.load(src)
   end
+  triggers = wf["on"] || wf[true]
+  abort "dev push trigger missing" unless triggers.dig("push", "branches") == ["dev"]
+  expected_paths = [
+    ".github/workflows/deploy.yml",
+    ".dockerignore",
+    "Dockerfile",
+    "build.gradle",
+    "gradle.properties",
+    "gradle/**",
+    "gradlew",
+    "settings.gradle",
+    "src/main/**",
+  ]
+  abort "application deploy paths changed" unless triggers.dig("push", "paths") == expected_paths
   step = wf["jobs"]["deploy"]["steps"].find { |s| s["id"] == "ssm" }
   abort "ssm step not found" unless step
   print step["run"]
