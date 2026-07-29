@@ -71,6 +71,81 @@ groups:
           severity: critical
         isPaused: false
 
+      - uid: laimory_application_error_log
+        title: Application ERROR log detected
+        dashboardUid: laimory-logs
+        panelId: 3
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: elasticsearch-dev
+            model:
+              alias: ERROR
+              bucketAggs:
+                - field: "@timestamp"
+                  id: "2"
+                  settings:
+                    interval: 1m
+                    min_doc_count: 0
+                  type: date_histogram
+              datasource: { type: elasticsearch, uid: elasticsearch-dev }
+              intervalMs: 60000
+              maxDataPoints: 43200
+              metrics:
+                - id: "1"
+                  type: count
+              query: 'service:laimory AND environment:dev AND level:ERROR'
+              refId: A
+              timeField: "@timestamp"
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: sum
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'At least one application ERROR log was indexed in the last five minutes.'
+          description: 'Open the authenticated Kibana search for details. Raw log content is intentionally excluded from this notification.'
+          runbook_url: >-
+            https://dev.laimory.app/kibana/app/discover#/?_g=%28filters%3A%21%28%29%2CrefreshInterval%3A%28pause%3A%21t%2Cvalue%3A60000%29%2Ctime%3A%28from%3Anow-15m%2Cto%3Anow%29%29&_a=%28columns%3A%21%28message%2Clevel%2CerrorCode%2Cpath%2CexceptionType%29%2CdataSource%3A%28dataViewId%3A%278e3c574e-45cc-430f-ae74-b91c277b8249%27%2Ctype%3AdataView%29%2Cfilters%3A%21%28%29%2Cinterval%3Aauto%2Cquery%3A%28language%3Akuery%2Cquery%3A%27service%3A%22laimory%22%20and%20environment%3A%22dev%22%20and%20level%3A%22ERROR%22%27%29%2Csort%3A%21%28%21%28%27%40timestamp%27%2Cdesc%29%29%29
+        labels:
+          environment: dev
+          job: application_logs
+          service: laimory
+          severity: warning
+        isPaused: false
+
       - uid: laimory_http_p95_high
         title: HTTP p95 latency high
         dashboardUid: laimory-overview

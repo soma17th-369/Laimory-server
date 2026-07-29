@@ -593,6 +593,20 @@ Overview의 남은 시간을 확인한 뒤 dev WAS에서 `sudo certbot certifica
 Overview에서 최소 traffic 조건과 status/URI를 확인한 뒤 Logs dashboard에서 같은 시간대를 좁힌다.
 원문·body 심층 분석은 Kibana로 이동한다. alert/Discord에는 원문을 복사하지 않는다.
 
+`Application ERROR log detected`는 Elasticsearch에 최근 5분 동안 `service=laimory`,
+`environment=dev`, `level=ERROR` 문서가 하나라도 있으면 pending 없이 warning으로 발화한다.
+단일 사용자 요청 실패를 서비스 전체 장애와 동일시하지 않으므로 critical은 기존 target/probe/backend
+down, OOM, 5xx 비율 조건이 소유한다. 알림의 `runbook` 링크는 인증된 Kibana Discover를 최근 15분
+ERROR 필터와 `message`, `level`, `errorCode`, `path`, `exceptionType` 열로 바로 연다. Discord에는
+원문, body, transactionId, 사용자·task·FID·좌표·예외 원문을 넣지 않는다.
+
+WARN은 기본적으로 사람을 호출하지 않는다. Logs dashboard에서 증가 시각을 확인한 뒤 Kibana Discover에서
+아래 KQL로 해당 문서를 조사한다.
+
+```text
+service:"laimory" and environment:"dev" and level:"WARN"
+```
+
 ### JVM or Hikari pressure
 
 JVM & Spring에서 heap/GC, pending connection, acquire timeout을 함께 본다. 단발 GC나 traffic 없는

@@ -184,6 +184,13 @@ contact point는 firing/resolved를 모두 보낸다. alert message에는 raw lo
 user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrape 성공과 backend 연결·인증
 성공은 별도로 판단해 `mysql_up`/`redis_up` 실패도 alert한다.
 
+Elasticsearch의 `service=laimory AND environment=dev AND level=ERROR` count를 1분 histogram으로
+평가해 최근 5분 합계가 1 이상이면 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
+않으며, notification의 runbook URL은 현재 dev Kibana data view에서 최근 15분 ERROR 문서와
+`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
+notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
+target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
+
 Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS user data에서
 활성화된다. 빈 목록은 SSM port forwarding 전용이다. Prometheus target file은 Terraform이 실제 dev
 private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live

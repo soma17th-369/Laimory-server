@@ -22,6 +22,47 @@ mkdir -p \
 install -m 0755 "$MONITORING_DIR/scripts/validate-alert-rules.sh" \
   "$MONITORING_ROOT/scripts/validate-alert-rules.sh"
 
+# Application ERROR notification is a numeric Elasticsearch alert with no raw log data in the payload.
+ruby -ryaml -e '
+  document = begin
+    YAML.unsafe_load_file(ARGV[0])
+  rescue NoMethodError
+    YAML.load_file(ARGV[0])
+  end
+  rules = document.fetch("groups").flat_map { |group| group.fetch("rules") }
+  rule = rules.find { |candidate| candidate["uid"] == "laimory_application_error_log" }
+  abort "application ERROR alert missing" unless rule
+  abort "application ERROR alert must fire without a pending period" unless rule["for"] == "0s"
+  abort "application ERROR alert must be warning severity" unless rule.dig("labels", "severity") == "warning"
+  abort "application ERROR alert must treat empty search results as OK" unless rule["noDataState"] == "OK"
+
+  query = rule.fetch("data").find { |item| item["refId"] == "A" }
+  abort "Elasticsearch query missing" unless query["datasourceUid"] == "elasticsearch-dev"
+  abort "ERROR query contract changed" unless query.dig("model", "query") == "service:laimory AND environment:dev AND level:ERROR"
+  abort "ERROR alert must count documents" unless query.dig("model", "metrics") == [{ "id" => "1", "type" => "count" }]
+  histogram = query.dig("model", "bucketAggs", 0)
+  abort "ERROR alert must use a one-minute date histogram" unless histogram == {
+    "field" => "@timestamp",
+    "id" => "2",
+    "settings" => { "interval" => "1m", "min_doc_count" => 0 },
+    "type" => "date_histogram",
+  }
+
+  reduce = rule.fetch("data").find { |item| item["refId"] == "B" }
+  abort "ERROR alert must sum the five-minute window" unless reduce.dig("model", "reducer") == "sum"
+  threshold = rule.fetch("data").find { |item| item["refId"] == "C" }
+  evaluator = threshold.dig("model", "conditions", 0, "evaluator")
+  abort "ERROR alert threshold must be greater than zero" unless evaluator == { "params" => [0], "type" => "gt" }
+
+  summary = rule.dig("annotations", "summary").to_s
+  description = rule.dig("annotations", "description").to_s
+  abort "notification must not interpolate raw query values" if (summary + description).include?("{{")
+  url = rule.dig("annotations", "runbook_url").to_s
+  abort "Kibana ERROR investigation link missing" unless url.start_with?("https://dev.laimory.app/kibana/app/discover#/")
+  abort "Kibana data view contract missing" unless url.include?("8e3c574e-45cc-430f-ae74-b91c277b8249")
+  abort "Kibana ERROR filter missing" unless url.include?("level%3A%22ERROR%22")
+' "$MONITORING_DIR/grafana/provisioning/alerting/application-rules.yml"
+
 cat > "$FAKE_BIN/aws" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
