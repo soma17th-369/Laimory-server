@@ -23,7 +23,7 @@ fi
 ALERT_DIR="$MONITORING_ROOT/grafana/provisioning/alerting"
 MANIFEST="$MONITORING_ROOT/grafana/alert-rule-files.txt"
 RELEASE_MARKER="$MONITORING_ROOT/grafana/alert-rule-release"
-VALIDATOR="$MONITORING_ROOT/scripts/validate-alert-rules.sh"
+VALIDATOR=${ALERT_RULE_VALIDATOR:-$MONITORING_ROOT/scripts/validate-alert-rules.sh}
 BACKUP_ROOT="$MONITORING_ROOT/rollback/alert-rules"
 LOCK_FILE="$MONITORING_ROOT/.deploy-alert-rules.lock"
 DELETE_FILE="$ALERT_DIR/laimory-alert-rule-deletes.yml"
@@ -32,6 +32,7 @@ GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
 GRAFANA_ADMIN_PASSWORD_FILE=${GRAFANA_ADMIN_PASSWORD_FILE:-$MONITORING_ROOT/secrets/grafana_admin_password}
 AWS_REGION=${AWS_REGION:-ap-northeast-2}
 
+[[ $VALIDATOR == /* ]] || { echo "validator must be an absolute path: $VALIDATOR" >&2; exit 1; }
 [[ -x $VALIDATOR ]] || { echo "missing executable validator: $VALIDATOR" >&2; exit 1; }
 [[ -d $ALERT_DIR ]] || { echo "missing alert provisioning directory: $ALERT_DIR" >&2; exit 1; }
 [[ $GRAFANA_ADMIN_USER =~ ^[A-Za-z0-9._-]+$ ]] ||

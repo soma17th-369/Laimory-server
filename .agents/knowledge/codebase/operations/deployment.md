@@ -44,8 +44,11 @@ deploy workflow, preflight, health gate, container, environment injection, Terra
 
 `deploy-monitoring.yml`은 `dev` push 중 alert manifest, `*-rules.yml`, alert release 도구 또는 workflow
 자체가 바뀐 경우에만 별도로 실행된다. GitHub OIDC deploy role로 commit SHA별 S3 release를 게시하고,
-monitoring EC2에 SSM command를 보내 release에 포함된 deploy/validate 도구의 checksum을 확인한 뒤
-host에 설치한다. host deployer는 manifest/file/UID를 검증하고 root-only backup 후 Grafana
+monitoring EC2에 SSM command를 보낸다. release object는 `If-None-Match: *` 조건부 생성만 허용하고
+같은 SHA 재시도는 기존 bytes가 같을 때만 성공한다. SSM 직전 현재 `dev` HEAD를 확인해 오래된 push
+실행이 최신 규칙을 덮어쓰지 못하게 하되 명시적인 `workflow_dispatch` 선택은 허용한다. release의
+deploy/validate 도구는 checksum 확인 후 staged 경로에서 실행하며, 규칙 적용과 reload가 성공한 뒤에만
+active 경로에 설치한다. host deployer는 manifest/file/UID를 검증하고 root-only backup 후 Grafana
 provisioning API를 hot reload한다. 실패하면 기존 파일과 UID 상태를 복구하고 SSM command와 workflow를
 실패 처리한다.
 
@@ -53,8 +56,8 @@ Grafana admin password는 monitoring host의 `0400` secret file만이 소유한�
 SSM command와 process argument에는 credential을 전달하지 않는다. application deploy와 monitoring
 deploy는 별도 concurrency group을 사용하며, alert와 무관한 merge는 monitoring deploy를 시작하지 않는다.
 live 자동화의 선행 조건은 repository의 monitoring instance/bucket Variable과 deploy role의 scoped S3
-PutObject·monitoring SSM 권한을 Console/검토된 CLI로 반영하는 것이다. Terraform은 재구축 recipe만
-소유하며 live apply mechanism이 아니다.
+conditional PutObject·동일 bytes 검증용 GetObject·monitoring SSM 권한을 Console/검토된 CLI로
+반영하는 것이다. Terraform은 재구축 recipe만 소유하며 live apply mechanism이 아니다.
 
 장기 실행 container의 runtime env는 host `.env`가 단일 권위(SSOT)다. workflow는 `-e` override를
 사용하지 않고 dev 고정값(Redis prefix·application environment·geo mode·Swagger)과 AI/push mode를

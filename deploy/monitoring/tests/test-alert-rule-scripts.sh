@@ -158,29 +158,68 @@ PUBLISH_BIN="$TEST_DIR/publish-bin"
 PUBLISH_ROOT="$TEST_DIR/published"
 PUBLISH_RELEASE=cccccccccccccccccccccccccccccccccccccccc
 mkdir -p "$PUBLISH_BIN" "$PUBLISH_ROOT"
-cat > "$PUBLISH_BIN/git" <<SCRIPT
+cat > "$PUBLISH_BIN/git" <<'SCRIPT'
 #!/usr/bin/env bash
-case " \$* " in
+case " $* " in
   *" status --porcelain "*) exit 0 ;;
-  *" rev-parse --verify HEAD "*) printf '%s\\n' "$PUBLISH_RELEASE"; exit 0 ;;
+  *" rev-parse --verify HEAD "*) printf '%s\n' "$PUBLISH_RELEASE_ID"; exit 0 ;;
 esac
 exit 1
 SCRIPT
 cat > "$PUBLISH_BIN/aws" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $1 == s3 && $2 == cp ]]
 printf '%s\n' "$*" >> "$PUBLISH_AWS_LOG"
-source_path=$3
-destination_uri=$4
-relative=${destination_uri#s3://test-bucket/}
-mkdir -p "$PUBLISH_ROOT/${relative%/*}"
-cp "$source_path" "$PUBLISH_ROOT/$relative"
+
+while [[ $# -gt 0 && $1 != s3api ]]; do
+  case $1 in
+    --region|--profile) shift 2 ;;
+    *) echo "unexpected global aws argument: $1" >&2; exit 2 ;;
+  esac
+done
+[[ ${1:-} == s3api && -n ${2:-} ]] || exit 2
+operation=$2
+shift 2
+
+bucket=
+key=
+body=
+if_none_match=
+output=
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --bucket) bucket=$2; shift 2 ;;
+    --key) key=$2; shift 2 ;;
+    --body) body=$2; shift 2 ;;
+    --if-none-match) if_none_match=$2; shift 2 ;;
+    --*) echo "unexpected s3api argument: $1" >&2; exit 2 ;;
+    *) output=$1; shift ;;
+  esac
+done
+
+[[ $bucket == test-bucket && -n $key ]] || exit 2
+destination="$PUBLISH_ROOT/$key"
+case $operation in
+  put-object)
+    [[ -n $body && $if_none_match == '*' ]] || exit 2
+    [[ ! -e $destination ]] || exit 1
+    mkdir -p "${destination%/*}"
+    cp "$body" "$destination"
+    ;;
+  get-object)
+    [[ -n $output && -f $destination ]] || exit 1
+    cp "$destination" "$output"
+    ;;
+  *)
+    echo "unexpected s3api operation: $operation" >&2
+    exit 2
+    ;;
+esac
 SCRIPT
 chmod 0755 "$PUBLISH_BIN/git" "$PUBLISH_BIN/aws"
 
 PUBLISH_AWS_LOG="$TEST_DIR/publish-aws.log"
-PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" \
+PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PUBLISH_RELEASE" \
   PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
   "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null
 PUBLISHED_PREFIX="$PUBLISH_ROOT/bootstrap/monitoring/releases/alert-rules/$PUBLISH_RELEASE"
@@ -189,10 +228,30 @@ test "$(wc -l < "$PUBLISHED_PREFIX/tools/SHA256SUMS" | tr -d ' ')" = "2"
 test -f "$PUBLISHED_PREFIX/infrastructure-rules.yml"
 test -f "$PUBLISHED_PREFIX/tools/deploy-alert-rules.sh"
 ! grep -q -- '--profile' "$PUBLISH_AWS_LOG"
+grep -q -- 's3api put-object' "$PUBLISH_AWS_LOG"
+grep -q -- '--if-none-match \\*' "$PUBLISH_AWS_LOG"
+
+# 같은 SHA와 같은 bytes 재시도는 기존 object를 검증하고 성공한다.
+: > "$PUBLISH_AWS_LOG"
+PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PUBLISH_RELEASE" \
+  PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
+  "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null
+grep -q -- 's3api get-object' "$PUBLISH_AWS_LOG"
+
+# 같은 SHA가 다른 bytes를 가리키면 기존 object를 덮어쓰지 않고 실패한다.
+printf '%s\n' 'different bytes' > "$PUBLISHED_PREFIX/infrastructure-rules.yml"
+if PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PUBLISH_RELEASE" \
+  PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
+  "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null 2>&1; then
+  echo "immutable release collision unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fxq 'different bytes' "$PUBLISHED_PREFIX/infrastructure-rules.yml"
 
 # 운영자 로컬 fallback은 명시한 profile을 계속 전달한다.
 : > "$PUBLISH_AWS_LOG"
-PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" \
+PROFILE_RELEASE=dddddddddddddddddddddddddddddddddddddddd
+PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PROFILE_RELEASE" \
   PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
   "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket sandbox >/dev/null
 grep -q -- '--profile sandbox' "$PUBLISH_AWS_LOG"

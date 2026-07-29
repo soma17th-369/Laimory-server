@@ -45,8 +45,18 @@ ruby -ryaml -e '
   abort "publisher must use GitHub OIDC credentials, not a local profile" if publish["run"].include?("--profile")
   abort "release SHA contract missing" unless publish["run"].include?("$GITHUB_SHA")
 
+  freshness = steps.find { |step| step["id"] == "freshness" }
+  abort "dev HEAD freshness guard missing" unless freshness
+  abort "manual dispatch contract missing" unless freshness["run"].include?("\"$GITHUB_EVENT_NAME\" != \"push\"")
+  abort "freshness guard must read refs/heads/dev" unless freshness["run"].include?("git ls-remote origin refs/heads/dev")
+  abort "freshness guard must compare current SHA" unless freshness["run"].include?("\"$DEV_HEAD\" != \"$GITHUB_SHA\"")
+  abort "freshness guard skip output missing" unless freshness["run"].include?("deploy=false")
+  abort "freshness guard deploy output missing" unless freshness["run"].include?("deploy=true")
+
   ssm = steps.find { |step| step["id"] == "ssm" }
   abort "SSM step missing" unless ssm
+  freshness_condition = "steps.freshness.outputs.deploy == " + 39.chr + "true" + 39.chr
+  abort "stale release may reach SSM" unless ssm["if"] == freshness_condition
   %w[SHA256SUMS sha256sum deploy-alert-rules.sh validate-alert-rules.sh].each do |marker|
     abort "SSM deploy missing #{marker}" unless ssm["run"].include?(marker)
   end
@@ -54,8 +64,14 @@ ruby -ryaml -e '
   abort "SSM remote shell must not require pipefail" if ssm["run"].include?("pipefail")
   abort "SSM target variable missing" unless ssm["run"].include?("--instance-ids \"$INSTANCE_ID\"")
   install_index = ssm["run"].index("install -m 0750")
-  deploy_index = ssm["run"].index("/opt/laimory-monitoring/scripts/deploy-alert-rules.sh")
-  abort "release tools must be installed before deploy" unless install_index && deploy_index && install_index < deploy_index
+  staged_deploy_index = ssm["run"].index("ALERT_RULE_VALIDATOR=")
+  abort "release tools must execute from staging before activation" unless install_index && staged_deploy_index && staged_deploy_index < install_index
+  abort "staged validator override missing" unless ssm["run"].include?("\"\\$TOOL_STAGE/validate-alert-rules.sh\"")
+  abort "active deployer must not execute before successful activation" if ssm["run"].include?("/opt/laimory-monitoring/scripts/deploy-alert-rules.sh")
+
+  wait = steps.find { |step| step["name"] == "Wait for deployment and fetch logs" }
+  abort "deployment wait step missing" unless wait
+  abort "stale release may wait for absent SSM command" unless wait["if"] == freshness_condition
   abort "workflow must not receive Grafana secret" if File.read(ARGV[0]).match?(/secrets\..*grafana|GRAFANA_ADMIN_PASSWORD/)
 ' "$WORKFLOW"
 

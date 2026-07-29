@@ -195,6 +195,21 @@ data "aws_iam_policy_document" "gha_deploy" {
     resources = [
       "${aws_s3_bucket.backup.arn}/bootstrap/monitoring/releases/alert-rules/*",
     ]
+
+    condition {
+      test     = "Null"
+      variable = "s3:if-none-match"
+      values   = ["false"]
+    }
+  }
+
+  statement {
+    sid     = "MonitoringAlertReleaseVerify"
+    effect  = "Allow"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.backup.arn}/bootstrap/monitoring/releases/alert-rules/*",
+    ]
   }
 
   # dev WAS와 monitoring 인스턴스로만 배포 명령. prod 배포는 후속(트러스트/타깃 확장 필요).

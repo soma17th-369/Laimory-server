@@ -43,8 +43,12 @@ deploy/monitoring/tests/test-alert-rule-scripts.sh
 
 PR CI는 위 검증을 수행한다. alert manifest, `*-rules.yml`, publish/deploy/validate script 또는
 `deploy-monitoring.yml`이 `dev`에 merge되면 `Deploy monitoring alert rules` workflow가 실행된다.
-workflow는 commit SHA prefix에 각 파일을 올리고 checksum manifest를 마지막에 업로드한 뒤 monitoring
-EC2에 SSM command를 보낸다. 다른 path만 바뀐 merge에는 monitoring workflow가 실행되지 않는다.
+workflow는 commit SHA prefix에 `If-None-Match: *` 조건으로 각 파일을 생성하고 checksum manifest를
+마지막에 업로드한 뒤 monitoring EC2에 SSM command를 보낸다. 같은 SHA 재시도에서는 기존 bytes가
+동일한 object만 허용하고, 다른 bytes이면 immutable collision으로 실패한다. push 실행은 SSM 전 현재
+`dev` HEAD를 다시 확인하므로 뒤늦게 실행된 과거 SHA는 host에 적용되지 않는다. 명시적으로 고른
+`workflow_dispatch` release는 이 자동 최신성 검사를 우회한다. 다른 path만 바뀐 merge에는 monitoring
+workflow가 실행되지 않는다.
 
 repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. Terraform은
 재구축 recipe일 뿐이므로 살아 있는 인프라에는 apply하지 않고 Console 또는 동등한 검토된 CLI 변경으로
@@ -56,14 +60,16 @@ repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약
 | `MONITORING_INSTANCE_ID` | dev monitoring EC2 instance ID |
 | `MONITORING_BACKUP_BUCKET` | monitoring bootstrap을 가진 backup bucket 이름 |
 
-- GitHub deploy role: alert release prefix `s3:PutObject`, monitoring EC2와
+- GitHub deploy role: `s3:if-none-match` header가 있는 요청만 허용하는 alert release prefix
+  `s3:PutObject`, 같은 bytes 재시도 검증용 `s3:GetObject`, monitoring EC2와
   `AWS-RunShellScript` document의 `ssm:SendCommand`, SSM command read
 - monitoring EC2 role: `bootstrap/monitoring/*`의 `s3:GetObject`와 SSM Core
 
-자동 배포는 release에 포함된 deploy/validate 도구를 checksum 검증한 뒤 `/opt/laimory-monitoring/scripts`
-에 교체하고, host의 root-only `secrets/grafana_admin_password`로 Grafana provisioning hot reload를
-호출한다. credential은 GitHub secret, workflow env, S3 release, SSM command와 process argument에
-전달하지 않는다.
+자동 배포는 release에 포함된 deploy/validate 도구를 checksum 검증한 뒤 staged 경로에서 실행한다.
+규칙 적용과 Grafana hot reload가 성공한 뒤에만 `/opt/laimory-monitoring/scripts`의 active 도구를
+교체하므로 실패한 도구는 다음 rollback 경로에 남지 않는다. deployer는 host의 root-only
+`secrets/grafana_admin_password`를 사용한다. credential은 GitHub secret, workflow env, S3 release,
+SSM command와 process argument에 전달하지 않는다.
 
 운영자 로컬 publish는 자동 workflow 장애 진단이나 과거 release를 명시적으로 만들 때만 사용한다.
 script는 alert 자산이 commit되지 않았으면 거부한다.

@@ -37,9 +37,10 @@ fi
 
 RELEASE_ID=$(git -C "$REPO_ROOT" rev-parse --verify HEAD)
 RELEASE_URI="s3://$BACKUP_BUCKET/bootstrap/monitoring/releases/alert-rules/$RELEASE_ID"
+RELEASE_PREFIX="bootstrap/monitoring/releases/alert-rules/$RELEASE_ID"
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
-AWS_ARGS=(--region "$AWS_REGION" --only-show-errors)
+AWS_ARGS=(--region "$AWS_REGION")
 if [[ -n $AWS_PROFILE ]]; then
   AWS_ARGS+=(--profile "$AWS_PROFILE")
 fi
@@ -52,26 +53,56 @@ checksum() {
   fi
 }
 
+put_immutable() {
+  local source_path=$1
+  local object_key=$2
+  local expected_digest=$3
+  local existing_path
+  local actual_digest
+
+  if aws "${AWS_ARGS[@]}" s3api put-object \
+    --bucket "$BACKUP_BUCKET" \
+    --key "$object_key" \
+    --body "$source_path" \
+    --if-none-match '*' >/dev/null; then
+    return 0
+  fi
+
+  existing_path=$(mktemp "$TEMP_DIR/existing.XXXXXX")
+  if ! aws "${AWS_ARGS[@]}" s3api get-object \
+    --bucket "$BACKUP_BUCKET" \
+    --key "$object_key" \
+    "$existing_path" >/dev/null; then
+    echo "failed to create or verify immutable release object: $object_key" >&2
+    return 1
+  fi
+
+  actual_digest=$(checksum "$existing_path")
+  if [[ $actual_digest != "$expected_digest" ]]; then
+    echo "immutable release collision: $object_key already contains different bytes" >&2
+    return 1
+  fi
+  echo "immutable release object already exists with identical bytes: $object_key" >&2
+}
+
 while IFS= read -r name || [[ -n $name ]]; do
   [[ -n $name ]] || continue
   digest=$(checksum "$ALERT_DIR/$name")
   printf '%s  %s\n' "$digest" "$name" >> "$TEMP_DIR/SHA256SUMS"
-  aws s3 cp "$ALERT_DIR/$name" "$RELEASE_URI/$name" \
-    "${AWS_ARGS[@]}"
+  put_immutable "$ALERT_DIR/$name" "$RELEASE_PREFIX/$name" "$digest"
 done < "$MANIFEST"
 
 for tool in deploy-alert-rules.sh validate-alert-rules.sh; do
   digest=$(checksum "$SCRIPT_DIR/$tool")
   printf '%s  %s\n' "$digest" "$tool" >> "$TEMP_DIR/TOOL_SHA256SUMS"
-  aws s3 cp "$SCRIPT_DIR/$tool" "$RELEASE_URI/tools/$tool" \
-    "${AWS_ARGS[@]}"
+  put_immutable "$SCRIPT_DIR/$tool" "$RELEASE_PREFIX/tools/$tool" "$digest"
 done
 
 # The checksum manifest is uploaded last. Its presence means every referenced object upload completed.
-aws s3 cp "$TEMP_DIR/SHA256SUMS" "$RELEASE_URI/SHA256SUMS" \
-  "${AWS_ARGS[@]}"
-aws s3 cp "$TEMP_DIR/TOOL_SHA256SUMS" "$RELEASE_URI/tools/SHA256SUMS" \
-  "${AWS_ARGS[@]}"
+digest=$(checksum "$TEMP_DIR/SHA256SUMS")
+put_immutable "$TEMP_DIR/SHA256SUMS" "$RELEASE_PREFIX/SHA256SUMS" "$digest"
+digest=$(checksum "$TEMP_DIR/TOOL_SHA256SUMS")
+put_immutable "$TEMP_DIR/TOOL_SHA256SUMS" "$RELEASE_PREFIX/tools/SHA256SUMS" "$digest"
 
 echo "published immutable alert rule release:"
 echo "$RELEASE_URI"

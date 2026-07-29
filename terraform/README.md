@@ -662,7 +662,10 @@ alert rule은 별도 `deploy-monitoring.yml`이 관련 path의 `dev` merge에만
 monitoring EC2 SSM 적용을 자동화한다. 새 계정에서는 `MONITORING_INSTANCE_ID`,
 `MONITORING_BACKUP_BUCKET`, `AWS_DEPLOY_ROLE_ARN` repository Variable을 설정한다. 살아 있는 계정에는
 Terraform apply 대신 Console 또는 동등한 검토된 CLI 변경으로 `github-actions-deploy` role에
-alert release prefix `s3:PutObject`와 monitoring EC2 대상 `ssm:SendCommand`를 반영해야 한다.
+`s3:if-none-match` header를 요구하는 alert release prefix `s3:PutObject`, 동일 bytes 재시도 검증용
+`s3:GetObject`, monitoring EC2 대상 `ssm:SendCommand`를 반영해야 한다. workflow는 SSM 직전 현재
+`dev` HEAD를 재확인해 stale push를 건너뛰되 명시적인 `workflow_dispatch`는 허용한다. release 도구는
+staged 실행 성공 후에만 active 경로로 승격한다.
 
 ### 1. 사전 조회와 비밀 없는 bootstrap 업로드
 
