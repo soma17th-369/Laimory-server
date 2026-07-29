@@ -15,5 +15,6 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
+      - run: .github/scripts/test-monitoring-deploy-contract.sh
       # test 태스크가 integration 태그를 제외하므로 MySQL/Redis 없이 단위테스트만 실행된다.
       - run: ./gradlew build

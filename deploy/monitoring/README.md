@@ -38,11 +38,35 @@ provisioning YAML을 직접 편집하지 않는다.
 # repository에서 매 변경마다 실행
 deploy/monitoring/scripts/validate-alert-rules.sh
 deploy/monitoring/tests/test-alert-rule-scripts.sh
+.github/scripts/test-monitoring-deploy-contract.sh
 ```
 
-검증과 review가 끝난 commit에서 운영자 로컬이 immutable S3 release를 발행한다. script는 alert 자산이
-commit되지 않았으면 거부하고, 각 파일을 commit SHA prefix에 올린 뒤 checksum manifest를 마지막에
-업로드한다.
+PR CI는 위 검증을 수행한다. alert manifest, `*-rules.yml`, publish/deploy/validate script 또는
+`deploy-monitoring.yml`이 `dev`에 merge되면 `Deploy monitoring alert rules` workflow가 실행된다.
+workflow는 commit SHA prefix에 각 파일을 올리고 checksum manifest를 마지막에 업로드한 뒤 monitoring
+EC2에 SSM command를 보낸다. 다른 path만 바뀐 merge에는 monitoring workflow가 실행되지 않는다.
+
+repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. Terraform은
+재구축 recipe일 뿐이므로 살아 있는 인프라에는 apply하지 않고 Console 또는 동등한 검토된 CLI 변경으로
+같은 권한을 반영한다.
+
+| Repository Variable | 값 |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | GitHub OIDC deploy role ARN |
+| `MONITORING_INSTANCE_ID` | dev monitoring EC2 instance ID |
+| `MONITORING_BACKUP_BUCKET` | monitoring bootstrap을 가진 backup bucket 이름 |
+
+- GitHub deploy role: alert release prefix `s3:PutObject`, monitoring EC2와
+  `AWS-RunShellScript` document의 `ssm:SendCommand`, SSM command read
+- monitoring EC2 role: `bootstrap/monitoring/*`의 `s3:GetObject`와 SSM Core
+
+자동 배포는 release에 포함된 deploy/validate 도구를 checksum 검증한 뒤 `/opt/laimory-monitoring/scripts`
+에 교체하고, host의 root-only `secrets/grafana_admin_password`로 Grafana provisioning hot reload를
+호출한다. credential은 GitHub secret, workflow env, S3 release, SSM command와 process argument에
+전달하지 않는다.
+
+운영자 로컬 publish는 자동 workflow 장애 진단이나 과거 release를 명시적으로 만들 때만 사용한다.
+script는 alert 자산이 commit되지 않았으면 거부한다.
 
 ```bash
 BACKUP_BUCKET='<backup bucket>'
@@ -53,27 +77,8 @@ RELEASE_URI=$(
 printf '%s\n' "$RELEASE_URI"
 ```
 
-기존 live monitoring host에는 배포 도구를 한 번 설치하고, 이후 도구 자체가 바뀐 release에서만 다시
-설치한다. root 실행 파일도 같은 commit SHA release에서 받고 checksum을 먼저 확인한다.
-
-```bash
-# monitoring host의 SSM session
-RELEASE_URI='s3://<backup-bucket>/bootstrap/monitoring/releases/alert-rules/<commit-sha>'
-TOOL_STAGE=$(mktemp -d)
-sudo aws s3 cp "$RELEASE_URI/tools/SHA256SUMS" "$TOOL_STAGE/SHA256SUMS" \
-  --region ap-northeast-2 --only-show-errors
-for tool in deploy-alert-rules.sh validate-alert-rules.sh; do
-  sudo aws s3 cp \
-    "$RELEASE_URI/tools/$tool" "$TOOL_STAGE/$tool" \
-    --region ap-northeast-2 --only-show-errors
-done
-(cd "$TOOL_STAGE" && sudo sha256sum --check --strict SHA256SUMS)
-sudo install -m 0750 "$TOOL_STAGE/deploy-alert-rules.sh" \
-  "$TOOL_STAGE/validate-alert-rules.sh" /opt/laimory-monitoring/scripts/
-rm -rf "$TOOL_STAGE"
-```
-
-release 반영은 monitoring host에서 한 명령과 Grafana admin password 입력으로 끝난다.
+자동 workflow를 우회해 이미 게시된 release를 수동 반영하거나 rollback할 때는 monitoring host에서
+같은 deployer에 원하는 URI를 넘긴다. 비밀번호 입력은 없으며 host secret을 사용한다.
 
 ```bash
 RELEASE_URI='s3://<backup-bucket>/bootstrap/monitoring/releases/alert-rules/<commit-sha>'

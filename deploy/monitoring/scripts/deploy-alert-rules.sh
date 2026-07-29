@@ -29,10 +29,17 @@ LOCK_FILE="$MONITORING_ROOT/.deploy-alert-rules.lock"
 DELETE_FILE="$ALERT_DIR/laimory-alert-rule-deletes.yml"
 GRAFANA_RELOAD_URL=${GRAFANA_RELOAD_URL:-http://localhost:3000/grafana/api/admin/provisioning/alerting/reload}
 GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+GRAFANA_ADMIN_PASSWORD_FILE=${GRAFANA_ADMIN_PASSWORD_FILE:-$MONITORING_ROOT/secrets/grafana_admin_password}
 AWS_REGION=${AWS_REGION:-ap-northeast-2}
 
 [[ -x $VALIDATOR ]] || { echo "missing executable validator: $VALIDATOR" >&2; exit 1; }
 [[ -d $ALERT_DIR ]] || { echo "missing alert provisioning directory: $ALERT_DIR" >&2; exit 1; }
+[[ $GRAFANA_ADMIN_USER =~ ^[A-Za-z0-9._-]+$ ]] ||
+  { echo "invalid Grafana admin username" >&2; exit 1; }
+[[ -f $GRAFANA_ADMIN_PASSWORD_FILE && -s $GRAFANA_ADMIN_PASSWORD_FILE ]] ||
+  { echo "missing or empty Grafana admin password file" >&2; exit 1; }
+[[ -r $GRAFANA_ADMIN_PASSWORD_FILE ]] ||
+  { echo "Grafana admin password file is not readable" >&2; exit 1; }
 [[ ! -e $DELETE_FILE ]] || {
   echo "stale deleteRules file requires manual inspection: $DELETE_FILE" >&2
   exit 1
@@ -46,8 +53,37 @@ exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "another alert rule deployment is running" >&2; exit 1; }
 
 STAGE_DIR=$(mktemp -d "$MONITORING_ROOT/.alert-rules-stage.XXXXXX")
+trap 'rm -rf "$STAGE_DIR"' EXIT
 BACKUP_DIR=
 APPLIED=false
+CURL_CONFIG="$STAGE_DIR/curl.conf"
+
+write_curl_config_value() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '%s' "$value"
+}
+
+GRAFANA_ADMIN_PASSWORD=$(<"$GRAFANA_ADMIN_PASSWORD_FILE")
+[[ -n $GRAFANA_ADMIN_PASSWORD ]] ||
+  { echo "empty Grafana admin password" >&2; exit 1; }
+[[ $(wc -l < "$GRAFANA_ADMIN_PASSWORD_FILE") -eq 0 &&
+  $GRAFANA_ADMIN_PASSWORD != *$'\n'* && $GRAFANA_ADMIN_PASSWORD != *$'\r'* ]] ||
+  { echo "Grafana admin password must be a single line" >&2; exit 1; }
+{
+  printf 'user = "'
+  write_curl_config_value "$GRAFANA_ADMIN_USER"
+  printf ':'
+  write_curl_config_value "$GRAFANA_ADMIN_PASSWORD"
+  printf '"\n'
+} > "$CURL_CONFIG"
+chmod 0600 "$CURL_CONFIG"
+unset GRAFANA_ADMIN_PASSWORD
+
+reload_grafana_alerting() {
+  curl --config "$CURL_CONFIG" -fsS -X POST "$GRAFANA_RELOAD_URL"
+}
 
 collect_uids() {
   local directory=$1
@@ -149,11 +185,11 @@ write_delete_file "$STAGE_DIR/removed-uids" "$DELETE_FILE"
 
 "$VALIDATOR" "$ALERT_DIR" "$MANIFEST"
 
-if ! curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST "$GRAFANA_RELOAD_URL"; then
+if ! reload_grafana_alerting; then
   restore_files
   write_delete_file "$STAGE_DIR/added-uids" "$DELETE_FILE"
-  echo "new rules were rejected; enter the Grafana password again to reload the restored files" >&2
-  if ! curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST "$GRAFANA_RELOAD_URL"; then
+  echo "new rules were rejected; reloading the restored files" >&2
+  if ! reload_grafana_alerting; then
     echo "restored files could not be reloaded; Grafana requires manual inspection" >&2
   fi
   rm -f "$DELETE_FILE"

@@ -41,7 +41,9 @@ terraform apply
 ```
 
 apply 후 `terraform output` 으로 새 인스턴스ID·CloudFront 도메인·버킷명을 확인하고,
-`deploy.yml` 과 앱 `.env` 반영에 사용한다. 배포의 현재 계약은
+deploy workflow의 repository Variables와 앱 `.env` 반영에 사용한다. application은
+`DEV_INSTANCE_ID`, monitoring alert rule은 `MONITORING_INSTANCE_ID`와
+`MONITORING_BACKUP_BUCKET`을 사용하며 두 workflow 모두 `AWS_DEPLOY_ROLE_ARN`을 사용한다. 배포의 현재 계약은
 [deployment knowledge](../.agents/knowledge/codebase/operations/deployment.md)를,
 Terraform 운용 원칙은 [infra recipe mode](../.agents/skills/infra-recipe-mode/SKILL.md)를 따른다.
 
@@ -655,6 +657,12 @@ blanket/target `terraform apply`를 하지 않는다. Console/SSM으로 같은 �
 - secret을 쓰는 Grafana/MySQL/Redis exporter의 시작은 systemd가 소유하고 process 실패만 Docker
   `on-failure`로 복구
 - `grafana_allowed_cidrs=[]`이면 dev nginx에 `/grafana/`를 만들지 않고 SSM-only
+
+alert rule은 별도 `deploy-monitoring.yml`이 관련 path의 `dev` merge에만 반응해 S3 release publish와
+monitoring EC2 SSM 적용을 자동화한다. 새 계정에서는 `MONITORING_INSTANCE_ID`,
+`MONITORING_BACKUP_BUCKET`, `AWS_DEPLOY_ROLE_ARN` repository Variable을 설정한다. 살아 있는 계정에는
+Terraform apply 대신 Console 또는 동등한 검토된 CLI 변경으로 `github-actions-deploy` role에
+alert release prefix `s3:PutObject`와 monitoring EC2 대상 `ssm:SendCommand`를 반영해야 한다.
 
 ### 1. 사전 조회와 비밀 없는 bootstrap 업로드
 

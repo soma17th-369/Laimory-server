@@ -13,7 +13,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 
 - `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpAccessLog`
 - `GlobalExceptionHandler`, `ExceptionType`, `logback-spring.xml`
-- `.github/workflows/deploy.yml`
+- `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`
 - `deploy/elk/*`
 - `deploy/monitoring/*`
 - `terraform/README.md`, `terraform/user_data/was.sh.tftpl`
@@ -199,8 +199,9 @@ alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관�
 root-only backup, 파일 집합·UID 검증, hot reload를 수행한다. release 사이에서 사라진 UID는 임시
 `deleteRules`로 Grafana DB에서도 지우며 reload 실패 시 이전 파일과 새 UID를 함께 복구한다. 일반 host
 memory는 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10% 미만이 각각 10분 지속될 때
-경고한다. operational 보강은 기존 Prometheus `node` job/target을 바꾸지 않으므로 rollback에서도 해당
-target을 제거하지 않는다.
+경고한다. alert 관련 `dev` merge는 별도 GitHub workflow가 commit SHA release publish와 monitoring EC2
+SSM 적용을 자동화하며, credential은 host의 root-only file에서만 읽는다. operational 보강은 기존
+Prometheus `node` job/target을 바꾸지 않으므로 rollback에서도 해당 target을 제거하지 않는다.
 
 ## Runbook: access log field 추가 롤아웃
 
@@ -263,8 +264,9 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 ## Known Gaps
 
-- provisioning 자산은 live rollout 완료를 뜻하지 않는다. application metric change와 infra recipe가
-  dev에 합쳐진 뒤 SSM identity/secret 구성, Discord firing/resolved, 24시간 soak가 별도로 필요하다.
+- alert rule 파일은 관련 `dev` merge에서 자동 rollout되지만 dashboard·collector·target·contact point 등
+  다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
+  Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
 
 ## Update When

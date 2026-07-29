@@ -11,7 +11,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 ## Authoritative Sources
 
 - `build.gradle`
-- `.github/workflows/ci.yml`
+- `.github/workflows/ci.yml`, `.github/scripts/test-monitoring-deploy-contract.sh`
 - `Dockerfile`
 - tests의 `@Tag("integration")`, `@ActiveProfiles("docker")`
 
@@ -28,7 +28,8 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - integration tests는 `docker` profile로 실제 local MySQL·Redis에 연결한다.
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, callback의 실제
   MySQL·Redis 계약은 `TimelineCallbackTokenIntegrationTest`(integration)가 검증한다.
-- `dev`, `main` 대상 PR CI는 `./gradlew build`만 실행한다.
+- `dev`, `main` 대상 PR CI는 alert rule shell 배포·monitoring workflow 계약을 먼저 검사한 뒤
+  `./gradlew build`를 실행한다.
 - integration test는 CI에 포함되지 않는다.
 - Docker image build는 `-x test`라 test 결과는 CI/local verification에 의존한다.
 - repository에 별도 lint/format Gradle task는 없다.

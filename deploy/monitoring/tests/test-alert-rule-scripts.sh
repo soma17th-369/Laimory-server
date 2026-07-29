@@ -13,6 +13,7 @@ CURL_CALL_DIR="$TEST_DIR/curl-calls"
 mkdir -p \
   "$MONITORING_ROOT/grafana/provisioning/alerting" \
   "$MONITORING_ROOT/grafana" \
+  "$MONITORING_ROOT/secrets" \
   "$MONITORING_ROOT/scripts" \
   "$FAKE_S3_ROOT" \
   "$FAKE_BIN" \
@@ -34,6 +35,28 @@ SCRIPT
 cat > "$FAKE_BIN/curl" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
+config_file=
+expect_config=false
+for argument in "$@"; do
+  [[ $argument != *"$GRAFANA_TEST_PASSWORD"* ]] || {
+    echo "Grafana password leaked in curl arguments" >&2
+    exit 1
+  }
+  if [[ $expect_config == true ]]; then
+    config_file=$argument
+    expect_config=false
+  elif [[ $argument == --config ]]; then
+    expect_config=true
+  fi
+done
+[[ -n $config_file && -f $config_file ]] || {
+  echo "curl config file missing" >&2
+  exit 1
+}
+grep -Fq "$GRAFANA_TEST_PASSWORD" "$config_file" || {
+  echo "Grafana credential missing from protected curl config" >&2
+  exit 1
+}
 count_file="$CURL_CALL_DIR/count"
 count=0
 [[ -f $count_file ]] && count=$(cat "$count_file")
@@ -52,6 +75,11 @@ exit 0
 SCRIPT
 
 chmod 0755 "$FAKE_BIN/aws" "$FAKE_BIN/curl" "$FAKE_BIN/flock"
+
+GRAFANA_TEST_PASSWORD=alert-deploy-secret-sentinel
+printf '%s' "$GRAFANA_TEST_PASSWORD" \
+  > "$MONITORING_ROOT/secrets/grafana_admin_password"
+chmod 0400 "$MONITORING_ROOT/secrets/grafana_admin_password"
 
 write_rule() {
   local directory=$1
@@ -92,6 +120,7 @@ run_deploy() {
     MONITORING_ROOT="$MONITORING_ROOT" \
     FAKE_S3_ROOT="$FAKE_S3_ROOT" \
     CURL_CALL_DIR="$CURL_CALL_DIR" \
+    GRAFANA_TEST_PASSWORD="$GRAFANA_TEST_PASSWORD" \
     GRAFANA_RELOAD_URL=http://localhost/reload \
     "$MONITORING_DIR/scripts/deploy-alert-rules.sh" \
     "s3://test-bucket/bootstrap/monitoring/releases/alert-rules/$release_id"
@@ -141,6 +170,7 @@ cat > "$PUBLISH_BIN/aws" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $1 == s3 && $2 == cp ]]
+printf '%s\n' "$*" >> "$PUBLISH_AWS_LOG"
 source_path=$3
 destination_uri=$4
 relative=${destination_uri#s3://test-bucket/}
@@ -149,12 +179,22 @@ cp "$source_path" "$PUBLISH_ROOT/$relative"
 SCRIPT
 chmod 0755 "$PUBLISH_BIN/git" "$PUBLISH_BIN/aws"
 
+PUBLISH_AWS_LOG="$TEST_DIR/publish-aws.log"
 PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" \
-  "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket sandbox >/dev/null
+  PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
+  "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null
 PUBLISHED_PREFIX="$PUBLISH_ROOT/bootstrap/monitoring/releases/alert-rules/$PUBLISH_RELEASE"
 test "$(wc -l < "$PUBLISHED_PREFIX/SHA256SUMS" | tr -d ' ')" = "8"
 test "$(wc -l < "$PUBLISHED_PREFIX/tools/SHA256SUMS" | tr -d ' ')" = "2"
 test -f "$PUBLISHED_PREFIX/infrastructure-rules.yml"
 test -f "$PUBLISHED_PREFIX/tools/deploy-alert-rules.sh"
+! grep -q -- '--profile' "$PUBLISH_AWS_LOG"
+
+# 운영자 로컬 fallback은 명시한 profile을 계속 전달한다.
+: > "$PUBLISH_AWS_LOG"
+PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" \
+  PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
+  "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket sandbox >/dev/null
+grep -q -- '--profile sandbox' "$PUBLISH_AWS_LOG"
 
 echo "alert rule script tests passed"

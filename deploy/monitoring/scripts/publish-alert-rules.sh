@@ -9,7 +9,7 @@ usage() {
 [[ $# -ge 1 && $# -le 2 ]] || usage
 
 BACKUP_BUCKET=$1
-AWS_PROFILE=${2:-sandbox}
+AWS_PROFILE=${2:-}
 AWS_REGION=${AWS_REGION:-ap-northeast-2}
 [[ $BACKUP_BUCKET =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] ||
   { echo "invalid S3 bucket name: $BACKUP_BUCKET" >&2; exit 1; }
@@ -39,6 +39,10 @@ RELEASE_ID=$(git -C "$REPO_ROOT" rev-parse --verify HEAD)
 RELEASE_URI="s3://$BACKUP_BUCKET/bootstrap/monitoring/releases/alert-rules/$RELEASE_ID"
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
+AWS_ARGS=(--region "$AWS_REGION" --only-show-errors)
+if [[ -n $AWS_PROFILE ]]; then
+  AWS_ARGS+=(--profile "$AWS_PROFILE")
+fi
 
 checksum() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -53,21 +57,21 @@ while IFS= read -r name || [[ -n $name ]]; do
   digest=$(checksum "$ALERT_DIR/$name")
   printf '%s  %s\n' "$digest" "$name" >> "$TEMP_DIR/SHA256SUMS"
   aws s3 cp "$ALERT_DIR/$name" "$RELEASE_URI/$name" \
-    --profile "$AWS_PROFILE" --region "$AWS_REGION" --only-show-errors
+    "${AWS_ARGS[@]}"
 done < "$MANIFEST"
 
 for tool in deploy-alert-rules.sh validate-alert-rules.sh; do
   digest=$(checksum "$SCRIPT_DIR/$tool")
   printf '%s  %s\n' "$digest" "$tool" >> "$TEMP_DIR/TOOL_SHA256SUMS"
   aws s3 cp "$SCRIPT_DIR/$tool" "$RELEASE_URI/tools/$tool" \
-    --profile "$AWS_PROFILE" --region "$AWS_REGION" --only-show-errors
+    "${AWS_ARGS[@]}"
 done
 
 # The checksum manifest is uploaded last. Its presence means every referenced object upload completed.
 aws s3 cp "$TEMP_DIR/SHA256SUMS" "$RELEASE_URI/SHA256SUMS" \
-  --profile "$AWS_PROFILE" --region "$AWS_REGION" --only-show-errors
+  "${AWS_ARGS[@]}"
 aws s3 cp "$TEMP_DIR/TOOL_SHA256SUMS" "$RELEASE_URI/tools/SHA256SUMS" \
-  --profile "$AWS_PROFILE" --region "$AWS_REGION" --only-show-errors
+  "${AWS_ARGS[@]}"
 
 echo "published immutable alert rule release:"
 echo "$RELEASE_URI"
