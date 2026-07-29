@@ -199,7 +199,7 @@ Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev
 private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live
 rollout 완료를 의미하지 않는다.
 
-Grafana admin username의 repository 기본값은 `Laimory`이며 compose 최초 생성과 alert provisioning
+Grafana admin username의 repository 기본값은 `laimory`이며 compose 최초 생성과 alert provisioning
 reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
 MySQL/Redis exporter credential은 Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret
 file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
