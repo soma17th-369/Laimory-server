@@ -35,7 +35,9 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 - 허용된 JSON request/response body만 64 KiB 제한 캡처 후 text preview로 log에 남긴다.
   query string, 민감 header, token·credential·presigned URL 원문은 남기지 않는다.
 - Docker image build는 test를 제외하며 PR CI가 `./gradlew build`를 담당한다.
-- 자동 애플리케이션 배포는 dev만 있고 health failure 자동 rollback은 없다.
+- 자동 애플리케이션 배포는 dev의 image/deploy 관련 path에만 실행되며 health failure 자동 rollback은 없다.
+- dev monitoring alert rule은 관련 path merge에서만 S3 release와 SSM 적용이 자동 실행되며,
+  dashboard·collector 등 나머지 monitoring 자산은 이 자동 배포 범위가 아니다.
 - 기존 WAS/MySQL/ELK EC2의 `user_data` 변경은 lifecycle ignore 때문에 live 반영되지 않는다.
 - Terraform state는 local이며 secret을 포함할 수 있어 commit하지 않는다.
 - AWS Sandbox의 Terraform은 재구성 recipe다. live 환경에 blanket apply하지 않고 plan을 사람이 검토한다.
@@ -50,7 +52,7 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 Terra
 
 ## Known Gaps
 
-- migration framework, production deploy workflow, automatic rollback, distributed tracing과 완성된
+- migration framework, production deploy workflow, application automatic rollback, distributed tracing과 완성된
   live monitoring/alerting rollout이 없다.
 
 ## Update When

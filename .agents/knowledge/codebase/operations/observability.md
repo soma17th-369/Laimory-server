@@ -13,7 +13,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 
 - `TransactionIdFilter`, `TransactionIds`, `RequestLogAttributes`, `HttpAccessLog`
 - `GlobalExceptionHandler`, `ExceptionType`, `logback-spring.xml`
-- `.github/workflows/deploy.yml`
+- `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`
 - `deploy/elk/*`
 - `deploy/monitoring/*`
 - `terraform/README.md`, `terraform/user_data/was.sh.tftpl`
@@ -184,6 +184,16 @@ contact point는 firing/resolved를 모두 보낸다. alert message에는 raw lo
 user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrape 성공과 backend 연결·인증
 성공은 별도로 판단해 `mysql_up`/`redis_up` 실패도 alert한다.
 
+Elasticsearch의 `service=laimory AND environment=dev AND level=ERROR` count를 1분 histogram으로
+평가해 최근 5분 합계가 1 이상이면 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
+않으며, notification의 runbook URL은 현재 dev Kibana data view에서 최근 15분 ERROR 문서와
+`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
+notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
+target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
+Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
+5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
+`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
+
 Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS user data에서
 활성화된다. 빈 목록은 SSM port forwarding 전용이다. Prometheus target file은 Terraform이 실제 dev
 private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live
@@ -195,12 +205,16 @@ Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret file �
 proxy는 Grafana 전용 nginx include로 관리해 기존 Kibana location을 보존하며, allowlist 밖에서는 slash
 유무와 관계없이 `/grafana` 경로를 차단한다.
 alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지
-않는다. commit SHA별 immutable S3 release는 checksum manifest를 마지막에 publish하고, host deployer가
-root-only backup, 파일 집합·UID 검증, hot reload를 수행한다. release 사이에서 사라진 UID는 임시
-`deleteRules`로 Grafana DB에서도 지우며 reload 실패 시 이전 파일과 새 UID를 함께 복구한다. 일반 host
-memory는 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10% 미만이 각각 10분 지속될 때
-경고한다. operational 보강은 기존 Prometheus `node` job/target을 바꾸지 않으므로 rollback에서도 해당
-target을 제거하지 않는다.
+않는다. commit SHA별 immutable S3 release는 conditional create로만 쓰고 checksum manifest를 마지막에
+publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한다. host deployer는 root-only backup,
+파일 집합·UID 검증, hot reload를 수행하고, release 도구는 성공 후에만 active 경로로 승격한다. release
+사이에서 사라진 UID는 임시 `deleteRules`로 Grafana DB에서도 지우며 reload 실패 시 이전 파일과 새 UID를
+함께 복구한다. 일반 host memory는 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10%
+미만이 각각 10분 지속될 때 경고한다. alert 관련 `dev` merge는 별도 GitHub workflow가 commit SHA
+release publish와 monitoring EC2 SSM 적용을 자동화하며, SSM 직전 `dev` HEAD 재확인으로 stale push의
+host 적용을 막는다. 명시적으로 선택한 `workflow_dispatch` release는 허용한다. credential은 host의
+root-only file에서만 읽는다. operational 보강은 기존 Prometheus `node` job/target을 바꾸지 않으므로
+rollback에서도 해당 target을 제거하지 않는다.
 
 ## Runbook: access log field 추가 롤아웃
 
@@ -263,8 +277,9 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 ## Known Gaps
 
-- provisioning 자산은 live rollout 완료를 뜻하지 않는다. application metric change와 infra recipe가
-  dev에 합쳐진 뒤 SSM identity/secret 구성, Discord firing/resolved, 24시간 soak가 별도로 필요하다.
+- alert rule 파일은 관련 `dev` merge에서 자동 rollout되지만 dashboard·collector·target·contact point 등
+  다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
+  Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
 
 ## Update When

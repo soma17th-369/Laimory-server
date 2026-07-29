@@ -81,7 +81,7 @@ output "ecr_repository_url" {
 }
 
 output "gha_deploy_role_arn" {
-  description = "deploy.yml role-to-assume (GitHub repo Variable AWS_DEPLOY_ROLE_ARN 로 설정)"
+  description = "deploy workflows role-to-assume (GitHub repo Variable AWS_DEPLOY_ROLE_ARN 로 설정)"
   value       = aws_iam_role.gha_deploy.arn
 }
 
@@ -89,13 +89,15 @@ output "github_oidc_provider_arn" {
   value = aws_iam_openid_connect_provider.github.arn
 }
 
-# deploy.yml / GitHub repo Variables 세팅용 요약
+# deploy workflows / GitHub repo Variables 세팅용 요약
 output "deploy_values" {
   value = {
-    dev_instance_id = aws_instance.was["dev"].id
-    role_to_assume  = aws_iam_role.gha_deploy.arn
-    ecr_registry    = "${local.account_id}.dkr.ecr.${var.region}.amazonaws.com"
-    ecr_repository  = aws_ecr_repository.laimory.name
-    region          = var.region
+    dev_instance_id          = aws_instance.was["dev"].id
+    monitoring_instance_id   = aws_instance.monitoring.id
+    monitoring_backup_bucket = aws_s3_bucket.backup.bucket
+    role_to_assume           = aws_iam_role.gha_deploy.arn
+    ecr_registry             = "${local.account_id}.dkr.ecr.${var.region}.amazonaws.com"
+    ecr_repository           = aws_ecr_repository.laimory.name
+    region                   = var.region
   }
 }

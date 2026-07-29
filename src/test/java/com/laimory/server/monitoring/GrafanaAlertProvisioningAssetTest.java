@@ -67,9 +67,10 @@ class GrafanaAlertProvisioningAssetTest {
         }
 
         assertThat(groupNames).hasSize(9);
-        assertThat(ruleUids).hasSize(23);
+        assertThat(ruleUids).hasSize(24);
         assertMemoryRule(rulesByUid.get("laimory_host_memory_low"), "host!=\"elk\"", 0.15);
         assertMemoryRule(rulesByUid.get("laimory_elk_memory_low"), "host=\"elk\"", 0.1);
+        assertApplicationErrorRule(rulesByUid.get("laimory_application_error_log"));
     }
 
     private static void assertMemoryRule(
@@ -92,6 +93,62 @@ class GrafanaAlertProvisioningAssetTest {
                 listOfMaps(map(threshold.get("model")).get("conditions")).getFirst();
         List<?> params = (List<?>) map(condition.get("evaluator")).get("params");
         assertThat(((Number) params.getFirst()).doubleValue()).isEqualTo(expectedThreshold);
+    }
+
+    private static void assertApplicationErrorRule(Map<String, Object> rule) {
+        assertThat(rule).isNotNull();
+        assertThat(rule.get("for")).isEqualTo("0s");
+        assertThat(rule.get("noDataState")).isEqualTo("OK");
+        assertThat(map(rule.get("labels")).get("severity")).isEqualTo("warning");
+
+        List<Map<String, Object>> data = listOfMaps(rule.get("data"));
+        Map<String, Object> query = data.stream()
+                .filter(item -> "A".equals(item.get("refId")))
+                .findFirst()
+                .orElseThrow();
+        assertThat(query.get("datasourceUid")).isEqualTo("elasticsearch-dev");
+        Map<String, Object> queryModel = map(query.get("model"));
+        assertThat(queryModel.get("query"))
+                .isEqualTo("service:laimory AND environment:dev AND level:ERROR");
+        assertThat(listOfMaps(queryModel.get("metrics")))
+                .singleElement()
+                .satisfies(metric -> assertThat(metric)
+                        .containsEntry("id", "1")
+                        .containsEntry("type", "count"));
+        assertThat(listOfMaps(queryModel.get("bucketAggs")))
+                .singleElement()
+                .satisfies(histogram -> {
+                    assertThat(histogram)
+                            .containsEntry("field", "@timestamp")
+                            .containsEntry("id", "2")
+                            .containsEntry("type", "date_histogram");
+                    assertThat(map(histogram.get("settings")))
+                            .containsEntry("interval", "1m")
+                            .containsEntry("min_doc_count", 0);
+                });
+
+        Map<String, Object> reduce = data.stream()
+                .filter(item -> "B".equals(item.get("refId")))
+                .findFirst()
+                .orElseThrow();
+        assertThat(map(reduce.get("model")).get("reducer")).isEqualTo("sum");
+
+        Map<String, Object> threshold = data.stream()
+                .filter(item -> "C".equals(item.get("refId")))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> condition =
+                listOfMaps(map(threshold.get("model")).get("conditions")).getFirst();
+        assertThat(map(condition.get("evaluator")))
+                .containsEntry("type", "gt")
+                .containsEntry("params", List.of(0));
+
+        Map<String, Object> annotations = map(rule.get("annotations"));
+        assertThat((String) annotations.get("runbook_url"))
+                .startsWith("https://dev.laimory.app/kibana/app/discover#/")
+                .contains("level%3A%22ERROR%22");
+        assertThat((String) annotations.get("summary")).doesNotContain("{{");
+        assertThat((String) annotations.get("description")).doesNotContain("{{");
     }
 
     private static Map<String, Object> loadMap(Yaml yaml, Path path) throws IOException {
