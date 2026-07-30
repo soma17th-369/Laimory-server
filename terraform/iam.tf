@@ -2,7 +2,8 @@
 # IAM — EC2 인스턴스 role/profile + GitHub Actions OIDC role/provider
 #   인스턴스 role: SSM코어 + ECR읽기 + scoped 인라인(photos put/delete + 백업 put)
 #                  (기존의 AmazonS3FullAccess 는 제거)
-#   gha role:      OIDC(dev 브랜치), ECR push + SSM SendCommand(새 dev WAS) + SSM read
+#   gha role:      OIDC(dev 브랜치), ECR push + alert release publish
+#                  + SSM SendCommand(dev WAS/monitoring) + SSM read
 # ============================================================================
 
 # ---------- EC2 인스턴스 role ----------
@@ -187,13 +188,38 @@ data "aws_iam_policy_document" "gha_deploy" {
     resources = [aws_ecr_repository.laimory.arn]
   }
 
-  # dev WAS 인스턴스로만 배포 명령. prod 배포는 후속(트러스트/타깃 확장 필요).
+  statement {
+    sid     = "MonitoringAlertReleasePublish"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.backup.arn}/bootstrap/monitoring/releases/alert-rules/*",
+    ]
+
+    condition {
+      test     = "Null"
+      variable = "s3:if-none-match"
+      values   = ["false"]
+    }
+  }
+
+  statement {
+    sid     = "MonitoringAlertReleaseVerify"
+    effect  = "Allow"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.backup.arn}/bootstrap/monitoring/releases/alert-rules/*",
+    ]
+  }
+
+  # dev WAS와 monitoring 인스턴스로만 배포 명령. prod 배포는 후속(트러스트/타깃 확장 필요).
   statement {
     sid     = "SsmSend"
     effect  = "Allow"
     actions = ["ssm:SendCommand"]
     resources = [
       aws_instance.was["dev"].arn,
+      aws_instance.monitoring.arn,
       "arn:aws:ssm:${local.region}::document/AWS-RunShellScript",
     ]
   }

@@ -1,0 +1,124 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-log-pipeline
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_log_pipeline_unhealthy
+        title: Log pipeline unhealthy
+        dashboardUid: laimory-logs
+        panelId: 8
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(1 - laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) or (time() - laimory_filebeat_last_attempt_unixtime_seconds{job="node",environment="dev",host="dev-was"} > 180) or (absent(laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) and on(job,environment,host) (up{job="node",environment="dev",host="dev-was"} == 1)) or (1 - laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) or (time() - laimory_elasticsearch_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 180) or (absent(laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1)) or laimory_elasticsearch_cluster_status{job="node",environment="dev",host="monitoring",status="red"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Filebeat stats, Elasticsearch health collection, or the Elasticsearch cluster is unhealthy.'
+          description: 'A node target-down alert covers missing node_exporter series; this alert covers a reachable collector reporting failure.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
+        labels:
+          environment: dev
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_filebeat_output_failures
+        title: Filebeat output failures detected
+        dashboardUid: laimory-logs
+        panelId: 10
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(increase(laimory_filebeat_output_events_total{job="node",environment="dev",host="dev-was",result=~"failed|dropped"}[10m]))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'Filebeat reported failed or dropped output events in the last ten minutes.'
+          description: 'Inspect Filebeat container logs, queue pressure, Elasticsearch availability, and credentials.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
+        labels:
+          environment: dev
+          host: dev-was
+          service: laimory
+          severity: warning
+        isPaused: false

@@ -27,7 +27,6 @@ install -d -m 0755 \
   /opt/laimory-monitoring/blackbox \
   /opt/laimory-monitoring/node-exporter \
   /opt/laimory-monitoring/scripts \
-  /opt/laimory-monitoring/grafana/rollback \
   /opt/laimory-monitoring/grafana/smoke \
   /opt/laimory-monitoring/grafana/provisioning/datasources \
   /opt/laimory-monitoring/grafana/provisioning/dashboards/json \
@@ -69,12 +68,18 @@ download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-overview.j
 download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-jvm-spring.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json
 download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-infrastructure.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json
 download_bootstrap_asset grafana/provisioning/dashboards/json/laimory-logs.json /opt/laimory-monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
+download_bootstrap_asset grafana/alert-rule-files.txt /opt/laimory-monitoring/grafana/alert-rule-files.txt
 download_bootstrap_asset grafana/provisioning/alerting/contact-points.yml /opt/laimory-monitoring/grafana/provisioning/alerting/contact-points.yml
 download_bootstrap_asset grafana/provisioning/alerting/notification-policy.yml /opt/laimory-monitoring/grafana/provisioning/alerting/notification-policy.yml
-download_bootstrap_asset grafana/provisioning/alerting/rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/rules.yml
-download_bootstrap_asset grafana/provisioning/alerting/operational-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/operational-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/application-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/application-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/availability-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/availability-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/extended-infrastructure-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/extended-infrastructure-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/infrastructure-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/infrastructure-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/lifecycle-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/lifecycle-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/log-pipeline-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/log-pipeline-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/prometheus-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/prometheus-rules.yml
+download_bootstrap_asset grafana/provisioning/alerting/tls-rules.yml /opt/laimory-monitoring/grafana/provisioning/alerting/tls-rules.yml
 download_bootstrap_asset grafana/provisioning/alerting/templates.yml /opt/laimory-monitoring/grafana/provisioning/alerting/templates.yml
-download_bootstrap_asset grafana/rollback/operational-rules.delete.yml /opt/laimory-monitoring/grafana/rollback/operational-rules.delete.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.firing.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.firing.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.resolved.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.resolved.yml
 download_bootstrap_asset grafana/smoke/smoke-rule.delete.yml /opt/laimory-monitoring/grafana/smoke/smoke-rule.delete.yml
@@ -82,6 +87,8 @@ download_bootstrap_asset scripts/install-secret.sh /opt/laimory-monitoring/scrip
 download_bootstrap_asset scripts/validate-secrets.sh /opt/laimory-monitoring/scripts/validate-secrets.sh
 download_bootstrap_asset scripts/collect-aws-metrics.sh /opt/laimory-monitoring/scripts/collect-aws-metrics.sh
 download_bootstrap_asset scripts/collect-elasticsearch-metrics.sh /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
+download_bootstrap_asset scripts/deploy-alert-rules.sh /opt/laimory-monitoring/scripts/deploy-alert-rules.sh
+download_bootstrap_asset scripts/validate-alert-rules.sh /opt/laimory-monitoring/scripts/validate-alert-rules.sh
 download_bootstrap_asset systemd/laimory-monitoring.service /etc/systemd/system/laimory-monitoring.service
 download_bootstrap_asset systemd/laimory-aws-metrics.service /etc/systemd/system/laimory-aws-metrics.service
 download_bootstrap_asset systemd/laimory-aws-metrics.timer /etc/systemd/system/laimory-aws-metrics.timer
@@ -113,7 +120,9 @@ chmod 0750 \
   /opt/laimory-monitoring/scripts/install-secret.sh \
   /opt/laimory-monitoring/scripts/validate-secrets.sh \
   /opt/laimory-monitoring/scripts/collect-aws-metrics.sh \
-  /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
+  /opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh \
+  /opt/laimory-monitoring/scripts/deploy-alert-rules.sh \
+  /opt/laimory-monitoring/scripts/validate-alert-rules.sh
 
 # Host에서는 parent 0700으로 일반 사용자를 차단하고 container UID별 파일 read만 허용한다.
 # 값은 SSM으로 수동 주입한다. 빈 placeholder는 Git/S3/Terraform/user_data에 secret을 남기지 않는다.

@@ -1,0 +1,143 @@
+name: Deploy monitoring alert rules
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/deploy-monitoring.yml
+      - deploy/monitoring/grafana/alert-rule-files.txt
+      - deploy/monitoring/grafana/provisioning/alerting/*-rules.yml
+      - deploy/monitoring/scripts/deploy-alert-rules.sh
+      - deploy/monitoring/scripts/publish-alert-rules.sh
+      - deploy/monitoring/scripts/validate-alert-rules.sh
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# concurrency는 host 적용을 직렬화한다. 실행 순서는 보장하지 않으므로 SSM 전 freshness guard가
+# 현재 dev HEAD가 아닌 SHA의 host 적용을 건너뛴다.
+concurrency:
+  group: deploy-monitoring-alert-rules-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  BACKUP_BUCKET: ${{ vars.MONITORING_BACKUP_BUCKET }}
+  INSTANCE_ID: ${{ vars.MONITORING_INSTANCE_ID }}
+
+jobs:
+  deploy-alert-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment variables
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "$AWS_ROLE_ARN" || { echo "missing repository variable: AWS_DEPLOY_ROLE_ARN" >&2; exit 1; }
+          test -n "$BACKUP_BUCKET" || { echo "missing repository variable: MONITORING_BACKUP_BUCKET" >&2; exit 1; }
+          test -n "$INSTANCE_ID" || { echo "missing repository variable: MONITORING_INSTANCE_ID" >&2; exit 1; }
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish immutable alert rule release
+        id: publish
+        run: |
+          RELEASE_URI=$(
+            deploy/monitoring/scripts/publish-alert-rules.sh "$BACKUP_BUCKET" |
+              tail -n 1
+          )
+          EXPECTED_URI="s3://$BACKUP_BUCKET/bootstrap/monitoring/releases/alert-rules/$GITHUB_SHA"
+          [ "$RELEASE_URI" = "$EXPECTED_URI" ] || {
+            echo "unexpected release URI from publisher" >&2
+            exit 1
+          }
+          echo "release_uri=$RELEASE_URI" >> "$GITHUB_OUTPUT"
+          echo "Published alert rule release for $GITHUB_SHA"
+
+      - name: Check release is still dev HEAD
+        id: freshness
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "push" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch explicitly selected release $GITHUB_SHA"
+            exit 0
+          fi
+          DEV_HEAD=$(git ls-remote origin refs/heads/dev | awk 'NR == 1 { print $1 }')
+          [[ "$DEV_HEAD" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "could not resolve current refs/heads/dev" >&2
+            exit 1
+          }
+          if [ "$DEV_HEAD" != "$GITHUB_SHA" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale release $GITHUB_SHA; current dev HEAD is $DEV_HEAD"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy alert rules via SSM
+        id: ssm
+        if: steps.freshness.outputs.deploy == 'true'
+        env:
+          RELEASE_URI: ${{ steps.publish.outputs.release_uri }}
+        run: |
+          # SSM command에는 secret이 없다. Grafana credential은 monitoring host의 root-only 파일을
+          # deploy-alert-rules.sh가 직접 읽는다. release 도구는 checksum 검증 후 staged 경로에서
+          # 실행하고 배포가 성공한 뒤에만 active 경로로 교체한다.
+          read -r -d '' SCRIPT <<EOF || true
+          set -eu
+          RELEASE_URI="$RELEASE_URI"
+          TOOL_STAGE=\$(mktemp -d)
+          trap 'rm -rf "\$TOOL_STAGE"' EXIT
+
+          aws s3 cp "\$RELEASE_URI/tools/SHA256SUMS" "\$TOOL_STAGE/SHA256SUMS" \
+            --region "$AWS_REGION" --only-show-errors
+          for tool in deploy-alert-rules.sh validate-alert-rules.sh; do
+            aws s3 cp "\$RELEASE_URI/tools/\$tool" "\$TOOL_STAGE/\$tool" \
+              --region "$AWS_REGION" --only-show-errors
+          done
+          (cd "\$TOOL_STAGE" && sha256sum --check --strict SHA256SUMS)
+          chmod 0750 "\$TOOL_STAGE/deploy-alert-rules.sh" \
+            "\$TOOL_STAGE/validate-alert-rules.sh"
+          ALERT_RULE_VALIDATOR="\$TOOL_STAGE/validate-alert-rules.sh" \
+            "\$TOOL_STAGE/deploy-alert-rules.sh" "\$RELEASE_URI"
+          install -m 0750 "\$TOOL_STAGE/deploy-alert-rules.sh" \
+            "\$TOOL_STAGE/validate-alert-rules.sh" /opt/laimory-monitoring/scripts/
+          EOF
+
+          jq -n --arg script "$SCRIPT" '{commands: [$script]}' > params.json
+          CMD_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "$INSTANCE_ID" \
+            --comment "Deploy monitoring alert rules $GITHUB_SHA" \
+            --parameters file://params.json \
+            --query "Command.CommandId" --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "Sent monitoring SSM command: $CMD_ID"
+
+      - name: Wait for deployment and fetch logs
+        if: steps.freshness.outputs.deploy == 'true'
+        run: |
+          CMD_ID=${{ steps.ssm.outputs.command_id }}
+          sleep 5
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" || true
+          echo "----- stdout -----"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text
+          echo "----- stderr -----"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardErrorContent --output text
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query Status --output text)
+          echo "Status: $STATUS"
+          [ "$STATUS" = "Success" ] || exit 1

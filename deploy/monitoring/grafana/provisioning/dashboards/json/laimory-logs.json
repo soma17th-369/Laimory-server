@@ -93,7 +93,7 @@
       "title": "Kibana",
       "tooltip": "Kibana에서 전체 로그를 탐색합니다.",
       "type": "link",
-      "url": "/kibana/"
+      "url": "https://dev.laimory.app/kibana/"
     },
     {
       "asDropdown": false,
@@ -128,7 +128,7 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "[Kibana에서 상세 로그 열기](/kibana/) · 이 대시보드는 원문 로그를 표시할 수 있습니다. 원문 로그나 개인정보 필드는 알림 메시지에 포함하지 않습니다.",
+        "content": "[Kibana에서 상세 로그 열기](https://dev.laimory.app/kibana/) · 이 대시보드는 원문 로그를 표시할 수 있습니다. 원문 로그나 개인정보 필드는 알림 메시지에 포함하지 않습니다.",
         "mode": "markdown"
       },
       "pluginVersion": "13.1.1",
@@ -194,9 +194,16 @@
         "type": "elasticsearch",
         "uid": "elasticsearch-dev"
       },
-      "description": "Elasticsearch의 구조화 로그 level 필드로 ERROR/WARN 건수를 집계합니다.",
+      "description": "Elasticsearch의 구조화 로그 level 필드로 ERROR/WARN 건수를 집계합니다. 데이터 포인트를 클릭하면 해당 시각 전후 5분의 같은 level 로그를 Kibana에서 엽니다.",
       "fieldConfig": {
         "defaults": {
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Kibana에서 ${__series.name} 로그 보기",
+              "url": "https://dev.laimory.app/kibana/app/discover#/?_g=(filters%3A!()%2CrefreshInterval%3A(pause%3A!t%2Cvalue%3A60000)%2Ctime%3A(from%3A'${__value.time:date:iso}%7C%7C-5m'%2Cto%3A'${__value.time:date:iso}%7C%7C%2B5m'))&_a=(columns%3A!(message%2Clevel%2CerrorCode%2Cpath%2CexceptionType)%2CdataSource%3A(dataViewId%3A'8e3c574e-45cc-430f-ae74-b91c277b8249'%2Ctype%3AdataView)%2Cfilters%3A!()%2Cinterval%3Aauto%2Cquery%3A(language%3Akuery%2Cquery%3A'service%3A%22laimory%22%20and%20environment%3A%22${environment}%22%20and%20level%3A%22${__series.name}%22')%2Csort%3A!(!('%40timestamp'%2Cdesc)))"
+            }
+          ],
           "unit": "short"
         },
         "overrides": []
