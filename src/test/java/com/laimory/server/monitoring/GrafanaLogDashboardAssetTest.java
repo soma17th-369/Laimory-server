@@ -25,18 +25,32 @@ class GrafanaLogDashboardAssetTest {
     @Test
     void errorAndWarnPanelLinksClickedPointToFilteredKibanaWindow() throws IOException {
         JsonNode dashboard = objectMapper.readTree(DASHBOARD.toFile());
+        JsonNode kibanaNavigationLink = StreamSupport.stream(dashboard.path("links").spliterator(), false)
+                .filter(candidate -> "Kibana".equals(candidate.path("title").asText()))
+                .findFirst()
+                .orElseThrow();
+        JsonNode kibanaGuidePanel = StreamSupport.stream(dashboard.path("panels").spliterator(), false)
+                .filter(candidate -> candidate.path("options").path("content").asText()
+                        .contains("Kibana에서 상세 로그 열기"))
+                .findFirst()
+                .orElseThrow();
         JsonNode panel = StreamSupport.stream(dashboard.path("panels").spliterator(), false)
                 .filter(candidate -> "ERROR & WARN Logs".equals(candidate.path("title").asText()))
                 .findFirst()
                 .orElseThrow();
         JsonNode links = panel.path("fieldConfig").path("defaults").path("links");
 
+        assertThat(kibanaNavigationLink.path("url").asText())
+                .isEqualTo("https://dev.laimory.app/kibana/");
+        assertThat(kibanaGuidePanel.path("options").path("content").asText())
+                .contains("[Kibana에서 상세 로그 열기](https://dev.laimory.app/kibana/)");
         assertThat(links).hasSize(1);
         JsonNode link = links.get(0);
         assertThat(link.path("targetBlank").asBoolean()).isTrue();
         assertThat(link.path("title").asText()).isEqualTo("Kibana에서 ${__series.name} 로그 보기");
         assertThat(link.path("url").asText())
-                .startsWith("/kibana/app/discover#/")
+                .startsWith("https://dev.laimory.app/kibana/app/discover#/")
+                .doesNotContain("/grafana/kibana/")
                 .contains("${__value.time:date:iso}%7C%7C-5m")
                 .contains("${__value.time:date:iso}%7C%7C%2B5m")
                 .contains("environment%3A%22${environment}%22")
