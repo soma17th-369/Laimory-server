@@ -74,16 +74,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### AI 서버간 계약
 
 - AI는 MySQL·Redis에 직접 접근하지 않는다 — 입력은 서버간 입력 조회 API로 받고 결과는 결과 저장 API로 보낸다.
-- AI dispatch body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`다. 입력 조회·결과 저장·
-  콜백은 그 `taskToken` 원문 하나를 공통으로 쓴다. 서버는 원문 대신 SHA-256 hash만 Redis task에
-  저장하고 모든 요청에서 다시 검증한다.
-- 호출 순서는 PROCESSING task의 내부 stage
-  (`INPUT_PENDING → RESULT_PENDING → RESULT_WRITING → CALLBACK_PENDING`)가 제한한다.
-- stage와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua CAS다.
+- AI dispatch body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`다. 입력 조회와 결과 저장 성공
+  응답은 후속 단계가 사용할 새 `taskToken`을 body로 반환한다. 서버는 현재 token 원문 대신 SHA-256
+  hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
+- 호출 순서는 PROCESSING task의 내부 `ProcessStage`
+  (`INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`)가 제한한다.
+- token hash+stage 교체와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua
+  CAS다.
 - 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
-- 결과 저장은 `RESULT_PENDING → RESULT_WRITING` CAS를 선점한 요청 하나만 실행한다. MySQL 실패가 호출부로
-  돌아오면 가능한 경우 RESULT_PENDING으로 복구하고, 성공하면 CALLBACK_PENDING으로 전이한다.
+- 결과 저장은 새 callback token hash와 `CALLBACK_PENDING`을 CAS로 선점한 요청 하나만 실행한다. MySQL
+  실패가 호출부로 돌아오면 가능한 경우 이전 result token hash와 RESULT_PENDING으로 복구한다.
 - 결과 저장 endpoint는 graph를 쓰고 내부 stage를 CALLBACK_PENDING까지 전이한다. 외부 task 상태를
   SUCCESS/FAILED로 종결하는 책임은 콜백만 가진다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
@@ -92,10 +93,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
 - 결과 저장 commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 저장된 graph는
   남는다 — 자동 복구(redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 3분이며 입력 조회·stage 전이마다 다시 확보한다(`processingStartedAt`은 보존).
+- `PROCESSING` TTL은 3분이며 token/stage 교체마다 다시 확보한다(`processingStartedAt`은 보존).
   terminal task TTL은 24시간, staging retention은 7일이다.
-- Redis와 MySQL은 분산 transaction으로 묶지 않는다. RESULT_WRITING 중 장애 또는 MySQL commit 뒤
-  CALLBACK_PENDING 전이 전 장애는 graph가 남고 task가 TTL 만료될 수 있으며 자동 reconciliation은 없다.
+- Redis와 MySQL은 분산 transaction으로 묶지 않는다. token 교체 뒤 프로세스 종료 또는 MySQL commit 뒤
+  result 응답 유실 시 AI가 callback token을 얻지 못하고 task가 TTL 만료될 수 있으며 자동 reconciliation은 없다.
 - PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
   폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
   않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를

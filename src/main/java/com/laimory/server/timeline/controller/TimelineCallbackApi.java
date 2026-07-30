@@ -16,20 +16,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
  * AI 타임라인 이벤트 생성 콜백(서버간 통신)의 문서·계약(구현은 {@link TimelineCallbackController}).
- * dispatch가 전달한 단일 task token을 Task-Token 헤더로 검증한다. 결과 데이터 저장은 이 API가 아니라
+ * 현재 단계의 task token을 Task-Token 헤더로 검증한다. 결과 데이터 저장은 이 API가 아니라
  * {@link TimelineAiTaskApi}가 담당한다.
  *
  * <p>공개 API와 prefix가 다르므로(/s/api vs /api) 별도 컨트롤러로 두고 클래스 레벨 {@code @RequestMapping}을 쓴다.
  */
 @Tag(name = "Timeline Callback (서버간)",
-        description = "AI 서버 → API 서버 콜백(/s/api) — 단일 Task-Token으로 인증")
+        description = "AI 서버 → API 서버 콜백(/s/api) — 현재 Task-Token으로 인증")
 @RequestMapping(ApiUrls.SERVER_API_URL + "/timeline/drafts")
 public interface TimelineCallbackApi {
 
     @Operation(summary = "AI draft 생성 결과 콜백",
             description = "AI 서버가 결과 저장을 마친 뒤(또는 실패했을 때) 작업 상태(status/errorCode/error)를 알린다. "
                     + "서버는 Redis 상태 전이와 완료 푸시만 수행하며 결과 graph는 body로 받지 않는다. "
-                    + "입력·결과 API와 같은 Task-Token을 사용한다. "
+                    + "SUCCESS는 결과 저장 응답의 taskToken을, FAILED는 현재 input/result taskToken을 사용한다. "
                     + "SUCCESS는 결과 저장 완료 단계에서만, FAILED는 결과 저장 전 단계에서만 받는다. "
                     + "같은 결과의 재전송은 그대로 성공 응답한다(재시도 안전).")
     @ApiResponses({

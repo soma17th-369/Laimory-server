@@ -1,7 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
  * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
  *
- * <p>단일 task token은 hash로 검증하고, PROCESSING 내부 단계는 task JSON 전체 CAS로 전이한다.
+ * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 task JSON 전체 CAS로 교체한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -67,20 +67,19 @@ public class TimelineTaskService {
      * <p>AI가 입력을 조회한 시점부터 추론이 시작되고, 결과 저장 뒤에도 콜백이 남는다 — 최초 3분을
      * dispatch 시점부터 소진시키면 정상 처리가 마지막 단계에서 만료로 잘릴 수 있다.
      */
-    public boolean refreshProcessing(String taskId, TimelineDraftTask task) {
-        if (task.status() != TaskStatus.PROCESSING) {
-            throw new IllegalStateException("PROCESSING task만 TTL을 갱신할 수 있습니다: " + task.status());
+    public boolean replaceProcessing(String taskId, TimelineDraftTask expected, TimelineDraftTask replacement) {
+        if (expected.status() != TaskStatus.PROCESSING || replacement.status() != TaskStatus.PROCESSING) {
+            throw new IllegalStateException("PROCESSING task만 교체할 수 있습니다");
         }
-        return timelineTaskStore.replaceIfUnchanged(taskId, task, task, PROCESSING_TTL);
+        return timelineTaskStore.replaceIfUnchanged(taskId, expected, replacement, PROCESSING_TTL);
     }
 
-    /** 현재 PROCESSING task가 바뀌지 않았을 때만 내부 단계를 전이하고 TTL을 다시 확보한다. */
-    public boolean transitionStage(String taskId, TimelineDraftTask task, TaskStage nextStage) {
+    public boolean rotateTokenAndStage(String taskId, TimelineDraftTask task,
+                                       String nextTokenHash, ProcessStage nextStage) {
         if (task.status() != TaskStatus.PROCESSING) {
-            throw new IllegalStateException("PROCESSING task만 stage를 전이할 수 있습니다: " + task.status());
+            throw new IllegalStateException("PROCESSING task만 token과 stage를 변경할 수 있습니다: " + task.status());
         }
-        return timelineTaskStore.replaceIfUnchanged(
-                taskId, task, task.withStage(nextStage), PROCESSING_TTL);
+        return replaceProcessing(taskId, task, task.withTokenAndStage(nextTokenHash, nextStage));
     }
 
     /** callback이 읽은 PROCESSING task가 그대로일 때만 SUCCESS로 종결한다. */

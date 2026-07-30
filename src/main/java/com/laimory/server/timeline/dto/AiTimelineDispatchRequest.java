@@ -10,8 +10,8 @@ import java.time.OffsetDateTime;
  * <p>source item은 body에 싣지 않고 AI가 서버간 입력 조회 API로 가져간다. 기존 dispatch 계약의
  * {@code dailyRecordId}와 {@code window}는 그대로 유지한다.
  *
- * <p>{@code taskToken}은 입력 조회·결과 저장·콜백이 공통으로 쓰는 단일 bearer token이며,
- * 서버는 Redis에 hash만 보관한다.
+ * <p>{@code taskToken}은 입력 조회에 사용하는 최초 opaque bearer token이다. 이후 입력·결과 성공 응답이
+ * 후속 요청용 token을 새로 반환하며 서버는 Redis에 현재 token의 hash만 보관한다.
  */
 public record AiTimelineDispatchRequest(
         String taskId,

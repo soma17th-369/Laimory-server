@@ -14,7 +14,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 
 import com.laimory.server.common.redis.RedisGateway;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -119,7 +119,8 @@ class TimelineTaskStoreTest {
     @Test
     void replaceIfUnchanged_processingStage_usesAtomicCasWithBothIndexes() throws Exception {
         TimelineDraftTask expected = processingTask();
-        TimelineDraftTask replacement = expected.withStage(TaskStage.RESULT_PENDING);
+        TimelineDraftTask replacement =
+                expected.withTokenAndStage(expected.tokenHash(), ProcessStage.RESULT_PENDING);
         when(redis.compareAndSetAndAddToSortedSets(
                 anyString(), anyString(), anyString(), any(),
                 anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong()))

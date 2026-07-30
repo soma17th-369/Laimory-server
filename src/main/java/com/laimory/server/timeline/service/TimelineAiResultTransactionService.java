@@ -56,7 +56,7 @@ public class TimelineAiResultTransactionService {
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
 
-    /** AI 결과를 final graph에 반영한다. Redis RESULT_WRITING 선점은 호출부가 transaction 전에 수행한다. */
+    /** AI 결과를 final graph에 반영한다. Redis token CAS 선점은 호출부가 transaction 전에 수행한다. */
     @Transactional
     public void store(String taskId, long dailyRecordId, AiTimelineResultRequest request) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)

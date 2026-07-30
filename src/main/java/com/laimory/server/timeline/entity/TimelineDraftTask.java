@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.laimory.server.common.error.StrictErrorCodeDeserializer;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
@@ -22,8 +22,8 @@ import java.util.Objects;
  * <p>{@code dailyRecordId}는 선생성된 DailyRecord의 ID로 <b>세 상태 모두</b> 보존된다 — 폴링은 이 ID로만
  * 결과를 조회해, record 삭제 후 같은 날짜가 재생성돼도 과거 task가 새 기록을 반환하지 않는다.
  *
- * <p>error는 FAILED일 때만 채워진다. {@code tokenHash}는 입력 조회·결과 저장·콜백에 공통으로 쓰는 단일
- * task token의 SHA-256 hash이며 terminal 재요청 검증을 위해 종결 뒤에도 보존한다. {@code stage}는
+ * <p>error는 FAILED일 때만 채워진다. {@code tokenHash}는 현재 처리 단계가 사용하는 opaque task token의
+ * SHA-256 hash이며 terminal 재요청 검증을 위해 종결 뒤에도 보존한다. {@code stage}는
  * PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태이며 terminal에는 보존하지 않는다.
  *
  * <p>{@code timelineWindow}는 클라이언트가 요청에 지정한 AI 이벤트 생성 범위의 local 원본이다(서버는
@@ -42,7 +42,7 @@ public record TimelineDraftTask(
         @JsonDeserialize(using = StrictErrorCodeDeserializer.class)
         Integer error,
         String tokenHash,
-        @JsonInclude(JsonInclude.Include.NON_NULL) TaskStage stage,
+        @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
         long userId
@@ -68,7 +68,7 @@ public record TimelineDraftTask(
         }
     }
 
-    /** 입력 조회·결과 저장·콜백 공통 task token 검증. */
+    /** 현재 처리 단계의 task token 검증. */
     public boolean matchesToken(String token) {
         return TaskTokens.matches(token, tokenHash);
     }
@@ -83,15 +83,16 @@ public record TimelineDraftTask(
     public static TimelineDraftTask processing(long userId, long dailyRecordId, TimelineWindow timelineWindow,
                                                String tokenHash, Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, dailyRecordId, timelineWindow, null,
-                tokenHash, TaskStage.INPUT_PENDING, processingStartedAt, userId);
+                tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, userId);
     }
 
-    public TimelineDraftTask withStage(TaskStage nextStage) {
+    public TimelineDraftTask withTokenAndStage(String nextTokenHash, ProcessStage nextStage) {
         if (status != TaskStatus.PROCESSING) {
-            throw new IllegalStateException("PROCESSING task만 stage를 변경할 수 있습니다: " + status);
+            throw new IllegalStateException("PROCESSING task만 token과 stage를 변경할 수 있습니다: " + status);
         }
         return new TimelineDraftTask(status, dailyRecordId, timelineWindow, error,
-                tokenHash, Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, userId);
+                Objects.requireNonNull(nextTokenHash, "nextTokenHash"),
+                Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, userId);
     }
 
     public static TimelineDraftTask success(long userId, long dailyRecordId, String tokenHash) {

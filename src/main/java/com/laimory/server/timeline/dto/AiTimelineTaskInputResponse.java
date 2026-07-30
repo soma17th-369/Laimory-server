@@ -23,7 +23,8 @@ public record AiTimelineTaskInputResponse(
         LocalDate recordDate,
         @Schema(example = "Asia/Seoul") String recordTimeZone,
         @Schema(description = "AI가 이번 task에서 이벤트를 만들 시간 범위") Window window,
-        List<SourceItem> sourceItems
+        List<SourceItem> sourceItems,
+        String taskToken
 ) {
 
     public record Window(

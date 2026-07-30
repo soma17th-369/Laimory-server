@@ -23,8 +23,8 @@ import org.springframework.web.client.RestClient;
 
 /**
  * fake AI 디스패처 단위 검증: 실 AI와 같은 순서(입력 조회 → 결과 저장 → 콜백)로 자기 서버의 서버간
- * 엔드포인트를 호출하는 계약을 실제 HTTP 형태(MockRestServiceServer)로 고정한다. 단일 task token이
- * 세 요청에 공통으로 쓰이는지도 함께 본다.
+ * 엔드포인트를 호출하는 계약을 실제 HTTP 형태(MockRestServiceServer)로 고정한다. 각 성공 응답에서 받은
+ * 다음 task token을 후속 요청에 사용하는지도 함께 본다.
  * delay는 ZERO 주입으로 무력화하고 dispatch를 직접 호출한다(@Async 프록시는 배선 테스트가 검증).
  */
 class FakeTimelineAiDispatcherTest {
@@ -40,10 +40,13 @@ class FakeTimelineAiDispatcherTest {
     private static final String CALLBACK_URL = BASE_URL + "/callback";
 
     private static final String INPUT_TOKEN = "raw-input-token";
+    private static final String RESULT_TOKEN = "raw-result-token";
+    private static final String CALLBACK_TOKEN = "raw-callback-token";
 
     private static final String INPUT_BODY = """
             {
               "taskId": "task-1",
+              "taskToken": "raw-result-token",
               "recordDate": "2026-06-17",
               "recordTimeZone": "Asia/Seoul",
               "window": {"startAt": "2026-06-17T00:00:00+09:00", "endAt": "2026-06-18T00:00:00+09:00"},
@@ -87,10 +90,10 @@ class FakeTimelineAiDispatcherTest {
     @Test
     void dispatch_storesResultThenPostsSuccessCallback() {
         expectInput();
-        // 조회한 source 전부가 Event 하나로 묶이고 dispatch와 같은 token을 쓴다.
+        // 조회한 source 전부가 Event 하나로 묶이고 input 응답의 다음 token을 쓴다.
         server.expect(requestTo(RESULT_URL))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(header("Task-Token", INPUT_TOKEN))
+                .andExpect(header("Task-Token", RESULT_TOKEN))
                 .andExpect(jsonPath("$.events.length()").value(1))
                 .andExpect(jsonPath("$.events[0].eventType").value("UNKNOWN"))
                 // fake는 조회한 시각을 그대로 되돌려 보낸다. Jackson 역직렬화가 offset을 UTC로 옮기므로
@@ -99,11 +102,12 @@ class FakeTimelineAiDispatcherTest {
                 .andExpect(jsonPath("$.events[0].endAt").value("2026-06-17T01:00:00Z"))
                 .andExpect(jsonPath("$.events[0].sourceRawIds[0]").value("raw-1"))
                 .andExpect(jsonPath("$.events[0].sourceRawIds[1]").value("raw-2"))
-                .andRespond(withSuccess());
-        // 콜백도 같은 task token을 쓴다.
+                .andRespond(withSuccess(
+                        "{\"taskToken\":\"" + CALLBACK_TOKEN + "\"}", MediaType.APPLICATION_JSON));
+        // 콜백은 result 응답의 다음 token을 쓴다.
         server.expect(requestTo(CALLBACK_URL))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(header("Task-Token", INPUT_TOKEN))
+                .andExpect(header("Task-Token", CALLBACK_TOKEN))
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andRespond(withSuccess());
 
@@ -130,6 +134,7 @@ class FakeTimelineAiDispatcherTest {
         expectInput();
         server.expect(requestTo(RESULT_URL)).andRespond(withServerError());
         server.expect(requestTo(CALLBACK_URL))
+                .andExpect(header("Task-Token", RESULT_TOKEN))
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andRespond(withSuccess());
 
@@ -141,7 +146,8 @@ class FakeTimelineAiDispatcherTest {
     void dispatch_callbackHttpFailure_isSwallowed() {
         // 콜백 실패는 삼킨다(재시도 없음 — dev 도구). task는 PROCESSING TTL로 소멸하고 저장된 graph는 남는다.
         expectInput();
-        server.expect(requestTo(RESULT_URL)).andRespond(withSuccess());
+        server.expect(requestTo(RESULT_URL)).andRespond(withSuccess(
+                "{\"taskToken\":\"" + CALLBACK_TOKEN + "\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(CALLBACK_URL)).andRespond(withServerError());
 
         Assertions.assertThatCode(() -> dispatcher.dispatch(request())).doesNotThrowAnyException();
@@ -151,7 +157,8 @@ class FakeTimelineAiDispatcherTest {
     @Test
     void dispatch_httpMetricDoesNotUseTaskIdAsTag() {
         expectInput();
-        server.expect(requestTo(RESULT_URL)).andRespond(withSuccess());
+        server.expect(requestTo(RESULT_URL)).andRespond(withSuccess(
+                "{\"taskToken\":\"" + CALLBACK_TOKEN + "\"}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(CALLBACK_URL)).andRespond(withSuccess());
 
         dispatcher.dispatch(request());

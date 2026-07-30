@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
@@ -23,7 +23,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 단일 task token과 Redis stage 기반 callback 전이를 검증한다. */
+/** 현재 task token과 Redis ProcessStage 기반 callback 전이를 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class TimelineCallbackServiceTest {
 
@@ -43,10 +43,10 @@ class TimelineCallbackServiceTest {
     private static final String TASK_TOKEN = "raw-task-token";
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);
 
-    private TimelineDraftTask taskAt(TaskStage stage) {
+    private TimelineDraftTask taskAt(ProcessStage stage) {
         return TimelineDraftTask.processing(USER_ID, RECORD_ID, null, TOKEN_HASH,
                         Instant.parse("2026-06-17T03:05:00Z"))
-                .withStage(stage);
+                .withTokenAndStage(TOKEN_HASH, stage);
     }
 
     private static DraftTaskCallbackRequest success() {
@@ -59,7 +59,7 @@ class TimelineCallbackServiceTest {
 
     @Test
     void successAtCallbackPending_marksTerminalAndPushes() {
-        TimelineDraftTask task = taskAt(TaskStage.CALLBACK_PENDING);
+        TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         when(timelineTaskService.markSuccessIfCurrent(TASK_ID, task)).thenReturn(true);
 
@@ -72,7 +72,7 @@ class TimelineCallbackServiceTest {
     @Test
     void successBeforeResultStored_returns409() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.RESULT_PENDING)));
+                .thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -83,7 +83,7 @@ class TimelineCallbackServiceTest {
 
     @Test
     void failedBeforeResult_marksTerminalAndPushes() {
-        TimelineDraftTask task = taskAt(TaskStage.RESULT_PENDING);
+        TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         when(timelineTaskService.markFailedIfCurrent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
@@ -98,7 +98,7 @@ class TimelineCallbackServiceTest {
     @Test
     void failedAfterResultStored_returns409() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.CALLBACK_PENDING)));
+                .thenReturn(Optional.of(taskAt(ProcessStage.CALLBACK_PENDING)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -108,7 +108,7 @@ class TimelineCallbackServiceTest {
     @Test
     void wrongToken_returns401BeforeStateTransition() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.CALLBACK_PENDING)));
+                .thenReturn(Optional.of(taskAt(ProcessStage.CALLBACK_PENDING)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, "wrong", success()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -139,7 +139,7 @@ class TimelineCallbackServiceTest {
 
     @Test
     void concurrentSameSuccess_isResolvedAsReplayWithoutSecondPush() {
-        TimelineDraftTask task = taskAt(TaskStage.CALLBACK_PENDING);
+        TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(task),
                         Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));

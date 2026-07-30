@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,10 +13,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -25,11 +27,12 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** Redis 결과 단계 선점·rollback·재시도와 단일 task token 검증을 다룬다. */
+/** RESULT → CALLBACK token/stage 선점과 DB 실패 rollback을 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class TimelineAiResultServiceTest {
 
@@ -49,10 +52,10 @@ class TimelineAiResultServiceTest {
     private static final String TASK_TOKEN = "raw-task-token";
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);
 
-    private TimelineDraftTask taskAt(TaskStage stage) {
+    private TimelineDraftTask taskAt(ProcessStage stage) {
         return TimelineDraftTask.processing(USER_ID, RECORD_ID, null, TOKEN_HASH,
                         Instant.parse("2026-06-17T03:05:00Z"))
-                .withStage(stage);
+                .withTokenAndStage(TOKEN_HASH, stage);
     }
 
     private AiTimelineResultRequest result() {
@@ -64,37 +67,27 @@ class TimelineAiResultServiceTest {
     }
 
     @Test
-    void storeResult_claimsWriting_stores_andAdvancesCallbackStage() {
-        TimelineDraftTask pending = taskAt(TaskStage.RESULT_PENDING);
-        TimelineDraftTask writing = pending.withStage(TaskStage.RESULT_WRITING);
+    void storeResult_rotatesToCallbackToken_thenStores() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.transitionStage(TASK_ID, pending, TaskStage.RESULT_WRITING)).thenReturn(true);
-        when(timelineTaskService.transitionStage(TASK_ID, writing, TaskStage.CALLBACK_PENDING)).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
 
-        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
+        AiTimelineResultResponse response = service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
 
+        ArgumentCaptor<TimelineDraftTask> claimed = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), eq(pending), claimed.capture());
+        assertThat(claimed.getValue().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
+        assertThat(claimed.getValue().matchesToken(response.taskToken())).isTrue();
+        assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
         verify(timelineAiResultTransactionService).store(TASK_ID, RECORD_ID, result());
-        verify(timelineTaskService).transitionStage(TASK_ID, writing, TaskStage.CALLBACK_PENDING);
     }
 
     @Test
-    void storeResult_replayAtCallbackPending_isBodilessSuccessWithoutWrite() {
-        when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.CALLBACK_PENDING)));
-
-        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
-
-        verifyNoInteractions(timelineAiResultTransactionService);
-        verify(timelineTaskService, never()).transitionStage(anyString(), any(), any());
-    }
-
-    @Test
-    void storeResult_storageFailure_revertsToResultPending() {
-        TimelineDraftTask pending = taskAt(TaskStage.RESULT_PENDING);
-        TimelineDraftTask writing = pending.withStage(TaskStage.RESULT_WRITING);
+    void storeResult_storageFailure_restoresResultTokenAndStage() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.transitionStage(TASK_ID, pending, TaskStage.RESULT_WRITING)).thenReturn(true);
-        when(timelineTaskService.transitionStage(TASK_ID, writing, TaskStage.RESULT_PENDING)).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), eq(pending))).thenReturn(true);
         doThrow(new RuntimeException("db down"))
                 .when(timelineAiResultTransactionService).store(anyString(), anyLong(), any());
 
@@ -102,27 +95,16 @@ class TimelineAiResultServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
-        verify(timelineTaskService).transitionStage(TASK_ID, writing, TaskStage.RESULT_PENDING);
+        ArgumentCaptor<TimelineDraftTask> claimed = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), claimed.capture(), eq(pending));
+        assertThat(claimed.getValue().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
     }
 
     @Test
-    void storeResult_concurrentClaimAlreadyCompleted_isReplaySuccess() {
-        TimelineDraftTask pending = taskAt(TaskStage.RESULT_PENDING);
-        when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(pending), Optional.of(taskAt(TaskStage.CALLBACK_PENDING)));
-        when(timelineTaskService.transitionStage(TASK_ID, pending, TaskStage.RESULT_WRITING)).thenReturn(false);
-
-        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
-
-        verifyNoInteractions(timelineAiResultTransactionService);
-    }
-
-    @Test
-    void storeResult_concurrentWriting_returns409() {
-        TimelineDraftTask pending = taskAt(TaskStage.RESULT_PENDING);
-        when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(pending), Optional.of(taskAt(TaskStage.RESULT_WRITING)));
-        when(timelineTaskService.transitionStage(TASK_ID, pending, TaskStage.RESULT_WRITING)).thenReturn(false);
+    void storeResult_concurrentClaim_returns409() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(false);
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -133,7 +115,7 @@ class TimelineAiResultServiceTest {
     @Test
     void storeResult_wrongToken_rejectedBeforeTransaction() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.RESULT_PENDING)));
+                .thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, "wrong", result()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -144,7 +126,7 @@ class TimelineAiResultServiceTest {
     @Test
     void storeResult_beforeInput_rejectedByStage() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(taskAt(TaskStage.INPUT_PENDING)));
+                .thenReturn(Optional.of(taskAt(ProcessStage.INPUT_PENDING)));
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -153,14 +135,14 @@ class TimelineAiResultServiceTest {
     }
 
     @Test
-    void storeResult_emptyEvents_rejectedBeforeStageClaim() {
-        TimelineDraftTask pending = taskAt(TaskStage.RESULT_PENDING);
+    void storeResult_emptyEvents_rejectedBeforeClaim() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
 
         assertThatThrownBy(() -> service.storeResult(
                 VERSION, TASK_ID, TASK_TOKEN, new AiTimelineResultRequest(List.of())))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).transitionStage(anyString(), any(), any());
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 }

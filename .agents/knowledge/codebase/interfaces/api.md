@@ -68,10 +68,10 @@ Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit�
 
 `/s/api/{version}/timeline/drafts/{taskId}`에는 AI 서버간 endpoint 셋이 있다 — `GET .../input`(정규 AI 입력
 반환), `POST .../result`(Event/Item/junction 저장 + 채택 source 삭제), `POST .../callback`(작업 상태 전이).
-세 endpoint 모두 dispatch가 전달한 같은 `Task-Token` header를 검증하고 Redis 내부 stage가 호출 순서를
-제한한다. 토큰 불일치는 401 `-1002`, 작업 없음·만료는 404 `-1001`, 현재 stage와 맞지 않는 입력·결과·
-callback 또는 상충 terminal callback은 409 `-1017`다. CALLBACK_PENDING 결과 재요청은 graph를 건드리지
-않고 body 없는 200이다.
+세 endpoint 모두 현재 단계에서 받은 `Task-Token` header를 검증하고 Redis 내부 `ProcessStage`가 호출
+순서를 제한한다. 입력·결과 성공 응답은 후속 요청용 `taskToken`을 body로 반환한다. 토큰 불일치는
+401 `-1002`, 작업 없음·만료는 404 `-1001`, 현재 stage와 맞지 않는 입력·결과·callback 또는 상충
+terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 재요청은 401이다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌

@@ -2,7 +2,7 @@ package com.laimory.server.testsupport;
 
 import com.laimory.server.timeline.TaskTokens;
 
-/** 단일 task token hash 픽스처. */
+/** 현재 task token hash 픽스처. */
 public final class TaskTokenFixtures {
 
     private TaskTokenFixtures() {

@@ -106,8 +106,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
 | AI 작성 콜백 | AI Draft Callback | 현재 구현 | 결과 저장을 마친 뒤(또는 실패했을 때) 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 `errorCode`는 음수 JSON integer다. 서버는 Redis terminal CAS와 완료 푸시만 한다. SUCCESS는 `CALLBACK_PENDING`, FAILED는 결과 저장 전 stage에서만 받으며 같은 terminal 재전송은 200·상충은 `-1017`이다. |
-| 작업 토큰 | Task Token | 현재 구현 | dispatch가 AI에 전달하고 입력 조회·결과 저장·콜백이 공통으로 쓰는 256-bit bearer token이다. 원문은 저장·로그하지 않고 Redis task에 SHA-256 hash만 보존해 매 요청 검증한다. |
-| 작업 단계 | Task Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → RESULT_WRITING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. 현재 task JSON 전체 CAS로 전이한다. |
+| 작업 토큰 | Task Token | 현재 구현 | 서버간 각 단계가 현재 요청을 인증하는 opaque 256-bit bearer token이다. dispatch가 최초 token을 전달하고 입력·결과 성공 응답이 다음 token을 body로 반환한다. 원문은 저장·로그하지 않고 Redis task에 현재 SHA-256 hash만 보존해 매 요청 검증한다. |
+| 처리 단계 | Process Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. token hash와 함께 현재 task JSON 전체 CAS로 전이한다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI 입력 조회 응답에서 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 내보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | 사용자별 진행 작업 index | User Processing Index | 현재 구현 | 사용자별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{userId}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 목록 API가 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 PROCESSING 저장마다 3분으로 갱신되는 inactivity cleanup이다. |
@@ -121,7 +121,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
-| AI 결과 단일 트랜잭션 | 현재 구현 | Redis `RESULT_WRITING`을 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 성공 뒤 `CALLBACK_PENDING`으로 전이한다. |
+| AI 결과 단일 트랜잭션 | 현재 구현 | 새 callback token hash와 Redis `CALLBACK_PENDING`을 CAS로 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 실패하면 가능한 경우 이전 result token hash와 `RESULT_PENDING`으로 복구한다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |

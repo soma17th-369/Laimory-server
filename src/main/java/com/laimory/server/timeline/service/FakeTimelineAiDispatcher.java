@@ -6,6 +6,7 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import java.time.Duration;
@@ -77,10 +78,12 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         }
 
         String taskId = request.taskId();
+        String currentToken = request.taskToken();
         DraftTaskCallbackRequest result;
         try {
-            AiTimelineTaskInputResponse input = getInput(taskId, request.taskToken());
-            postResult(taskId, request.taskToken(), toResult(input));
+            AiTimelineTaskInputResponse input = getInput(taskId, currentToken);
+            currentToken = input.taskToken();
+            currentToken = postResult(taskId, currentToken, toResult(input)).taskToken();
             result = new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
         } catch (RuntimeException e) {
             log.warn("fake AI result flow failed: taskId={}", taskId, e);
@@ -88,7 +91,7 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
             result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
                     "fake result flow failed");
         }
-        postCallback(taskId, request.taskToken(), result);
+        postCallback(taskId, currentToken, result);
     }
 
     private AiTimelineTaskInputResponse getInput(String taskId, String taskToken) {
@@ -104,14 +107,18 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         return input;
     }
 
-    private void postResult(String taskId, String taskToken, AiTimelineResultRequest body) {
-        restClient.post()
+    private AiTimelineResultResponse postResult(String taskId, String taskToken, AiTimelineResultRequest body) {
+        AiTimelineResultResponse response = restClient.post()
                 .uri(RESULT_URL_TEMPLATE, taskId)
                 .header(TASK_TOKEN_HEADER, taskToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
-                .toBodilessEntity();
+                .body(AiTimelineResultResponse.class);
+        if (response == null || response.taskToken() == null) {
+            throw new IllegalStateException("fake AI got no callback token: taskId=" + taskId);
+        }
+        return response;
     }
 
     private void postCallback(String taskId, String taskToken, DraftTaskCallbackRequest body) {

@@ -8,11 +8,12 @@ import static org.mockito.Mockito.verify;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -45,10 +46,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
  * 서버간 AI 작업 흐름 end-to-end 검증(실 MySQL+Redis): dispatch → 입력 조회 → 결과 저장 → 콜백.
- * 토큰은 불투명하므로 디스패처를 spy해 dispatch body의 단일 task token을 캡처한다.
+ * 토큰은 불투명하므로 디스패처를 spy해 dispatch body의 최초 task token을 캡처한다.
  *
- * <p>여기서 고정하는 계약: 단일 task token, Redis stage, 결과 저장 transaction,
- * 재시도 no-op, 실패 시 graph rollback, 저장 전 SUCCESS 콜백 거절.
+ * <p>여기서 고정하는 계약: 단계별 task token 회전, Redis process stage, 결과 저장 transaction,
+ * 실패 시 graph/token rollback, 저장 전 SUCCESS 콜백 거절.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -141,12 +142,13 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(rawJson).doesNotContain(inputToken);
         TimelineDraftTask stored = taskService.find(taskId).orElseThrow();
         assertThat(stored.matchesToken(inputToken)).isTrue();
-        assertThat(stored.stage()).isEqualTo(TaskStage.INPUT_PENDING);
+        assertThat(stored.stage()).isEqualTo(ProcessStage.INPUT_PENDING);
         assertThat(stored.userId()).isEqualTo(USER_ID);
         assertThat(stored.dailyRecordId()).isEqualTo(record.getDailyRecordId());
 
         // 1단계: 입력 조회 — DB 식별자 없이 정규 입력이 나오고 RESULT_PENDING으로 전이한다.
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, inputToken);
+        String resultToken = input.taskToken();
         assertThat(input.taskId()).isEqualTo(taskId);
         assertThat(input.recordDate()).isEqualTo(DATE);
         assertThat(input.recordTimeZone()).isEqualTo(ZONE);
@@ -159,13 +161,17 @@ class TimelineAiTaskFlowIntegrationTest {
             assertThat(item.startAt()).isEqualTo(OffsetDateTime.of(DATE.atTime(9, 0), KST));
             assertThat(item.payload().get("filename").asText()).isNotBlank();
         });
-        assertThat(inputService.getInput(VERSION, taskId, inputToken).sourceItems())
-                .isEqualTo(input.sourceItems());
-        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(TaskStage.RESULT_PENDING);
+        assertThat(resultToken).isNotEqualTo(inputToken);
+        assertThat(taskService.find(taskId).orElseThrow().matchesToken(resultToken)).isTrue();
+        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
 
-        // 2단계: 같은 token으로 결과 저장 — graph transaction 뒤 CALLBACK_PENDING으로 전이한다.
-        resultService.storeResult(VERSION, taskId, inputToken, resultFrom(input));
-        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(TaskStage.CALLBACK_PENDING);
+        // 2단계: input 응답 token으로 결과 저장 — graph transaction 뒤 callback token을 받는다.
+        AiTimelineResultResponse result =
+                resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+        String callbackToken = result.taskToken();
+        assertThat(callbackToken).isNotEqualTo(resultToken);
+        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
+        assertThat(taskService.find(taskId).orElseThrow().matchesToken(callbackToken)).isTrue();
 
         List<TimelineEvent> events = timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
@@ -179,7 +185,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
 
         // 3단계: 콜백 — 상태 전이만 한다.
-        callbackService.handleCallback(VERSION, taskId, inputToken, success());
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
 
         DraftTaskStatusResponse status = pollingService.poll(VERSION, USER_ID, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
@@ -187,20 +193,22 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(status.result().events().get(0).items()).hasSize(1);
 
         // 같은 결과의 콜백 재전송은 그대로 성공한다(재시도 안전 — 상태는 그대로 SUCCESS).
-        callbackService.handleCallback(VERSION, taskId, inputToken, success());
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
         assertThat(pollingService.poll(VERSION, USER_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
     }
 
     @Test
-    void resultRetry_afterLostResponse_doesNotDuplicateGraph() {
+    void resultRetry_afterTokenRotation_isRejectedWithoutDuplicatingGraph() {
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
         String taskToken = capturedRequest().taskToken();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = input.taskToken();
 
-        resultService.storeResult(VERSION, taskId, taskToken, resultFrom(input));
-        // 응답 유실 시나리오: AI가 같은 결과를 다시 보낸다.
-        resultService.storeResult(VERSION, taskId, taskToken, resultFrom(input));
+        resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
 
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
@@ -215,31 +223,32 @@ class TimelineAiTaskFlowIntegrationTest {
         DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
         String taskToken = capturedRequest().taskToken();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = input.taskToken();
         AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.UNKNOWN, "아침", null,
                 OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
 
-        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, taskToken, invalid))
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, invalid))
                 .isInstanceOf(IllegalArgumentException.class);
 
         // graph는 롤백되고 Redis stage가 RESULT_PENDING으로 복구돼 올바른 결과를 재시도할 수 있다.
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
-        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(TaskStage.RESULT_PENDING);
+        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
 
         // 같은 task로 올바른 결과를 다시 보내면 정상 저장된다.
-        resultService.storeResult(VERSION, taskId, taskToken, resultFrom(input));
-        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(TaskStage.CALLBACK_PENDING);
+        resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
     }
 
     @Test
     void successCallbackWithoutStoredResult_isRejected1017() {
         String taskId = createDraft(sources());
         String taskToken = capturedRequest().taskToken();
-        inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = inputService.getInput(VERSION, taskId, taskToken).taskToken();
 
-        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, taskToken, success()))
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, resultToken, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.PROCESSING);
@@ -262,9 +271,9 @@ class TimelineAiTaskFlowIntegrationTest {
     void failedCallbackWithResultStageToken_keepsEmptyDraftAndSources() {
         String taskId = createDraft(sources());
         String taskToken = capturedRequest().taskToken();
-        inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = inputService.getInput(VERSION, taskId, taskToken).taskToken();
 
-        callbackService.handleCallback(VERSION, taskId, taskToken,
+        callbackService.handleCallback(VERSION, taskId, resultToken,
                 new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "inference failed"));
 
         DraftTaskStatusResponse status = pollingService.poll(VERSION, USER_ID, taskId);
@@ -275,9 +284,9 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
 
         // 같은 FAILED 재전송은 성공, 상충 결과(SUCCESS)는 -1017이다.
-        callbackService.handleCallback(VERSION, taskId, taskToken,
+        callbackService.handleCallback(VERSION, taskId, resultToken,
                 new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "retry"));
-        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, taskToken, success()))
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, resultToken, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
         assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.FAILED);

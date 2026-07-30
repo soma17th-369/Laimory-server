@@ -12,7 +12,7 @@ import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
@@ -59,38 +59,21 @@ class TimelineTaskServiceTest {
     }
 
     @Test
-    void refreshProcessing_resavesSameTaskWithProcessingTtl() {
-        // AI 단계(입력 조회·결과 저장)마다 3분을 다시 확보하되 시작 시각은 보존한다 —
-        // 폴링 elapsedSeconds가 갱신 때문에 되감기면 안 된다.
+    void rotateTokenAndStage_usesProcessingCasAndTtl() {
         TimelineDraftTask task = TimelineDraftTask.processing(
                 USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
+        TimelineDraftTask replacement = task.withTokenAndStage(
+                tokenHashes("next"), ProcessStage.RESULT_PENDING);
+        when(timelineTaskStore.replaceIfUnchanged(
+                "t", task, replacement, Duration.ofMinutes(3))).thenReturn(true);
 
-        service.refreshProcessing("t", task);
+        assertThat(service.rotateTokenAndStage(
+                "t", task, replacement.tokenHash(), ProcessStage.RESULT_PENDING)).isTrue();
 
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
-        verify(timelineTaskStore).replaceIfUnchanged(eq("t"), eq(task), eq(task), ttl.capture());
+        verify(timelineTaskStore).replaceIfUnchanged(eq("t"), eq(task), eq(replacement), ttl.capture());
         assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
         assertThat(task.processingStartedAt()).isEqualTo(STARTED_AT);
-    }
-
-    @Test
-    void refreshProcessing_terminalTask_isRejected() {
-        TimelineDraftTask terminal = TimelineDraftTask.success(USER_ID, RECORD_ID, tokenHashes("hash"));
-
-        assertThatThrownBy(() -> service.refreshProcessing("t", terminal))
-                .isInstanceOf(IllegalStateException.class);
-        verify(timelineTaskStore, never()).replaceIfUnchanged(any(), any(), any(), any());
-    }
-
-    @Test
-    void transitionStage_usesProcessingCasAndTtl() {
-        TimelineDraftTask task = TimelineDraftTask.processing(
-                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
-        when(timelineTaskStore.replaceIfUnchanged(
-                "t", task, task.withStage(TaskStage.RESULT_PENDING), Duration.ofMinutes(3)))
-                .thenReturn(true);
-
-        assertThat(service.transitionStage("t", task, TaskStage.RESULT_PENDING)).isTrue();
     }
 
     @Test
@@ -138,7 +121,7 @@ class TimelineTaskServiceTest {
     void terminalMetric_isNotIncrementedWhenStoreFails() {
         TimelineDraftTask task = TimelineDraftTask.processing(
                 USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
-                .withStage(TaskStage.CALLBACK_PENDING);
+                .withTokenAndStage(tokenHashes("hash"), ProcessStage.CALLBACK_PENDING);
         doThrow(new RuntimeException("redis down")).when(timelineTaskStore)
                 .replaceIfUnchanged(eq("t"), eq(task), any(), any());
 

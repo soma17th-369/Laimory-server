@@ -31,8 +31,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 편집·�
 4. UUIDv7 `taskId`를 만들고, SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 256-bit `taskToken` 하나를 만들고 dispatch로
-   전달하며 Redis에는 SHA-256 hash만 저장한다.
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 최초 입력 조회용 256-bit `taskToken`을 만들고
+   dispatch로 전달하며 Redis에는 SHA-256 hash만 저장한다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
@@ -68,21 +68,21 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ### AI input, result and callback
 
-1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/stage
-   확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 최초 성공은 `INPUT_PENDING →
-   RESULT_PENDING`, 재조회는 RESULT_PENDING에서 TTL만 갱신한다.
-2. **결과 저장**(`POST .../result`, 같은 `Task-Token`): `RESULT_PENDING → RESULT_WRITING` CAS를 선점한
-   요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction INSERT·채택 source DELETE를 하나의
-   MySQL transaction으로 commit한다. 성공하면 CALLBACK_PENDING, 저장 예외면 가능한 경우 RESULT_PENDING으로
-   복구한다. CALLBACK_PENDING 재요청은 graph를 다시 쓰지 않고 200이다.
-3. **콜백**(`POST .../callback`, 같은 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과 저장 전
-   stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal 재전송은 200,
-   상충은 409 `-1017`이다.
-4. terminal 저장 실패는 전파된다. 같은 token으로 다시 콜백할 수 있다.
+1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
+   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 성공하면 새 token hash와
+   `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다.
+2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): 새 callback token hash와
+   `CALLBACK_PENDING`을 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction
+   INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. 저장 예외면 가능한 경우 이전
+   result token hash와 RESULT_PENDING으로 복구한다. 성공하면 callback token 원문을 응답 body에 반환한다.
+3. **콜백**(`POST .../callback`, 결과 응답의 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과
+   저장 전 stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal
+   재전송은 200, 상충은 409 `-1017`이다.
+4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
 
-**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. RESULT_WRITING 중 장애 또는 MySQL commit
-뒤 CALLBACK_PENDING 전이 전 장애면 task는 PROCESSING TTL로 만료되고 graph는 남을 수 있다. receipt,
-reconciliation, 자동 callback은 두지 않는다.
+**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. token 교체 뒤 응답 유실 또는 프로세스
+종료 시 AI가 다음 token을 얻지 못해 task가 PROCESSING TTL로 만료될 수 있다. MySQL commit 뒤 result 응답
+유실이면 graph도 남는다. receipt, reconciliation, 자동 callback은 두지 않는다.
 
 ### Polling and read
 
@@ -164,7 +164,8 @@ reconciliation, 자동 callback은 두지 않는다.
 - Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
   서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
-- 단일 task token은 매 요청 hash 비교로 검증하고 Redis stage/CAS가 호출 순서와 동시 writer를 제한한다.
+- 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고 Redis `ProcessStage`/CAS가 호출 순서와
+  동시 writer를 제한한다.
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps

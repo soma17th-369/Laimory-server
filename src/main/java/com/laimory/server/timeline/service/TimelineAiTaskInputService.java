@@ -2,8 +2,9 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.TaskStage;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
+import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
@@ -17,17 +18,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
- * AI 입력 조회 오케스트레이터 — 서버가 소유하는 정규 AI 입력을 조립한다.
+ * AI 입력 조회 오케스트레이터 — 서버가 소유하는 정규 AI 입력을 조립하고 다음 RESULT token을 발급한다.
  *
- * <p>순서가 load-bearing이다: task 조회 → <b>task token 검증</b> → PROCESSING/단계 확인 <b>다음에야</b> 개인
- * 데이터(record·source)를 읽는다. 이 endpoint는 {@code /s/api}라 request principal이 없고 토큰만이
- * 인증 수단이므로, 검증 전에 데이터를 읽지 않는 것이 유출 방지선이다.
+ * <p>순서가 load-bearing이다: task 조회 → <b>현재 task token 검증</b> → PROCESSING/INPUT_PENDING 확인
+ * <b>다음에야</b> 개인 데이터(record·source)를 읽는다. 이 endpoint는 {@code /s/api}라 request
+ * principal이 없고 token만이 인증 수단이다.
  *
  * <p>응답에는 DB 식별자를 담지 않는다({@code userId}·{@code dailyRecordId}·행 PK 없음). 시각은 staging의
  * wall-clock에 record timezone을 붙인 offset 값으로 나가며, 결과 저장이 같은 규칙으로 되돌린다.
- *
- * <p>검증을 통과하면 PROCESSING TTL을 다시 확보한다 — AI 추론은 이 응답 이후에 시작되므로, dispatch
- * 시점부터 3분을 소진시키면 정상 처리가 뒤 단계에서 만료로 잘릴 수 있다.
+ * 응답 조립 뒤 token hash와 ProcessStage를 CAS로 함께 교체하면서 PROCESSING TTL을 다시 확보한다.
  */
 @Slf4j
 @Service
@@ -50,7 +49,7 @@ public class TimelineAiTaskInputService {
             log.warn("ai task input on terminal task: taskId={} status={}", taskId, task.status());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
-        if (task.stage() != TaskStage.INPUT_PENDING && task.stage() != TaskStage.RESULT_PENDING) {
+        if (task.stage() != ProcessStage.INPUT_PENDING) {
             log.warn("ai task input on invalid stage: taskId={} stage={}", taskId, task.stage());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
@@ -59,34 +58,25 @@ public class TimelineAiTaskInputService {
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         ZoneId recordZone = ZoneId.of(record.getRecordTimezone());
         List<TimelineDraftSourceItem> sources = timelineDraftSourceItemService.findByTaskId(taskId);
+        String resultToken = TaskTokens.generate();
 
         AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(
                 taskId,
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
-                sources.stream().map(source -> toSourceItem(source, recordZone)).toList());
+                sources.stream().map(source -> toSourceItem(source, recordZone)).toList(),
+                resultToken);
 
-        // 응답 조립 성공 뒤 최초 조회는 다음 단계로 전이하고, 재조회는 같은 단계에서 TTL만 갱신한다.
-        boolean updated = task.stage() == TaskStage.INPUT_PENDING
-                ? timelineTaskService.transitionStage(taskId, task, TaskStage.RESULT_PENDING)
-                : timelineTaskService.refreshProcessing(taskId, task);
-        if (!updated) {
-            TimelineDraftTask latest = timelineTaskService.find(taskId)
-                    .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
-            if (latest.status() != TaskStatus.PROCESSING || latest.stage() != TaskStage.RESULT_PENDING) {
-                log.warn("ai task input lost stage race: taskId={} status={} stage={}",
-                        taskId, latest.status(), latest.stage());
-                throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
-            }
+        if (!timelineTaskService.rotateTokenAndStage(
+                taskId, task, TaskTokens.hash(resultToken), ProcessStage.RESULT_PENDING)) {
+            log.warn("ai task input token rotation lost race: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
         return response;
     }
 
-    /**
-     * Redis에 보존된 local window(클라이언트 원본)에 record timezone을 붙여 offset 값으로 변환한다.
-     * 구 계약 task에는 window가 없을 수 있어 null을 그대로 통과시킨다.
-     */
+    /** Redis에 보존된 local window에 record timezone을 붙여 offset 값으로 변환한다. */
     private static AiTimelineTaskInputResponse.Window toOffsetWindow(
             TimelineDraftTask.TimelineWindow window, ZoneId recordZone) {
         if (window == null) {
