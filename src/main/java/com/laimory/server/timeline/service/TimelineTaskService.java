@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.TaskStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
@@ -23,9 +24,7 @@ import org.springframework.stereotype.Service;
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
  * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
  *
- * <p>단계별 토큰은 hash 비교로만 검증하며 one-time 소비 marker를 두지 않는다 — 응답 유실 후 같은 단계
- * 재시도를 허용해야 하기 때문이다. 결과 중복 저장을 막는 권위는 DB 영수증
- * ({@code timeline_ai_result_receipts})이다.
+ * <p>단일 task token은 hash로 검증하고, PROCESSING 내부 단계는 task JSON 전체 CAS로 전이한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -53,10 +52,10 @@ public class TimelineTaskService {
      */
     public void createProcessing(String taskId, long userId, long dailyRecordId,
                                  TimelineDraftTask.TimelineWindow timelineWindow,
-                                 TimelineDraftTask.TokenHashes tokenHashes, Instant processingStartedAt) {
+                                 String tokenHash, Instant processingStartedAt) {
         timelineTaskStore.save(taskId,
                 TimelineDraftTask.processing(userId, dailyRecordId, timelineWindow,
-                        tokenHashes, processingStartedAt),
+                        tokenHash, processingStartedAt),
                 PROCESSING_TTL);
         timelineMetrics.recordDraftCreated();
     }
@@ -68,18 +67,30 @@ public class TimelineTaskService {
      * <p>AI가 입력을 조회한 시점부터 추론이 시작되고, 결과 저장 뒤에도 콜백이 남는다 — 최초 3분을
      * dispatch 시점부터 소진시키면 정상 처리가 마지막 단계에서 만료로 잘릴 수 있다.
      */
-    public void refreshProcessing(String taskId, TimelineDraftTask task) {
+    public boolean refreshProcessing(String taskId, TimelineDraftTask task) {
         if (task.status() != TaskStatus.PROCESSING) {
             throw new IllegalStateException("PROCESSING task만 TTL을 갱신할 수 있습니다: " + task.status());
         }
-        timelineTaskStore.save(taskId, task, PROCESSING_TTL);
+        return timelineTaskStore.replaceIfUnchanged(taskId, task, task, PROCESSING_TTL);
     }
 
-    public void markSuccess(String taskId, long userId, long dailyRecordId,
-                            TimelineDraftTask.TokenHashes tokenHashes) {
-        timelineTaskStore.save(taskId,
-                TimelineDraftTask.success(userId, dailyRecordId, tokenHashes), TERMINAL_TTL);
-        timelineMetrics.recordTerminalSuccess();
+    /** 현재 PROCESSING task가 바뀌지 않았을 때만 내부 단계를 전이하고 TTL을 다시 확보한다. */
+    public boolean transitionStage(String taskId, TimelineDraftTask task, TaskStage nextStage) {
+        if (task.status() != TaskStatus.PROCESSING) {
+            throw new IllegalStateException("PROCESSING task만 stage를 전이할 수 있습니다: " + task.status());
+        }
+        return timelineTaskStore.replaceIfUnchanged(
+                taskId, task, task.withStage(nextStage), PROCESSING_TTL);
+    }
+
+    /** callback이 읽은 PROCESSING task가 그대로일 때만 SUCCESS로 종결한다. */
+    public boolean markSuccessIfCurrent(String taskId, TimelineDraftTask task) {
+        boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
+                TimelineDraftTask.success(task.userId(), task.dailyRecordId(), task.tokenHash()), TERMINAL_TTL);
+        if (saved) {
+            timelineMetrics.recordTerminalSuccess();
+        }
+        return saved;
     }
 
     /**
@@ -88,14 +99,28 @@ public class TimelineTaskService {
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */
     public void markFailed(String taskId, long userId, long dailyRecordId, ExceptionType failureType,
-                           TimelineDraftTask.TokenHashes tokenHashes) {
+                           String tokenHash) {
         if (!TASK_FAILURE_TYPES.contains(failureType)) {
             throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), tokenHashes),
+                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), tokenHash),
                 TERMINAL_TTL);
         timelineMetrics.recordTerminalFailed();
+    }
+
+    /** callback이 읽은 PROCESSING task가 그대로일 때만 FAILED로 종결한다. */
+    public boolean markFailedIfCurrent(String taskId, TimelineDraftTask task, ExceptionType failureType) {
+        if (!TASK_FAILURE_TYPES.contains(failureType)) {
+            throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
+        }
+        boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
+                TimelineDraftTask.failed(task.userId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
+                TERMINAL_TTL);
+        if (saved) {
+            timelineMetrics.recordTerminalFailed();
+        }
+        return saved;
     }
 
     /** Redis task의 numeric code를 task-local 타입으로 제한해 해석한다. */

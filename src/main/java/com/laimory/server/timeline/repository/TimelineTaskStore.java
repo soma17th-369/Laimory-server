@@ -24,7 +24,8 @@ import org.springframework.stereotype.Component;
  * <p><b>불변식:</b> task JSON의 status/owner가 유일한 권위다. 전역/사용자 index는 각각 관측·조회
  * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. PROCESSING 저장은 task JSON+전역 index ZADD+
  * 사용자 index ZADD(+key TTL 갱신)를, terminal 저장은 task JSON+두 index ZREM을 각각 한 Lua 실행
- * 경계로 수행한다 — {@link #save}가 모든 lifecycle 전이의 단일 write 지점이다.
+ * 경계로 수행한다. 서버간 stage와 callback terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는
+ * {@link #replaceIfUnchanged} CAS를 사용한다.
  */
 @Slf4j
 @Component
@@ -71,6 +72,34 @@ public class TimelineTaskStore {
             return Optional.empty();
         }
         return Optional.of(deserialize(taskId, json));
+    }
+
+    /**
+     * Redis의 현재 task JSON이 {@code expected}와 같을 때만 {@code replacement}로 바꾼다.
+     * PROCESSING replacement는 index를 유지·갱신하고 terminal replacement는 두 processing index에서
+     * 제거한다.
+     */
+    public boolean replaceIfUnchanged(String taskId, TimelineDraftTask expected,
+                                      TimelineDraftTask replacement, Duration ttl) {
+        try {
+            String expectedJson = objectMapper.writeValueAsString(expected);
+            String replacementJson = objectMapper.writeValueAsString(replacement);
+            String userIndexKey = userProcessingIndexKey(replacement.userId());
+            if (replacement.status() == TaskStatus.PROCESSING) {
+                if (replacement.processingStartedAt() == null) {
+                    throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
+                }
+                return redis.compareAndSetAndAddToSortedSets(
+                        KEY_PREFIX + taskId, expectedJson, replacementJson, ttl,
+                        PROCESSING_INDEX_KEY, userIndexKey, taskId,
+                        replacement.processingStartedAt().toEpochMilli());
+            }
+            return redis.compareAndSetAndRemoveFromSortedSets(
+                    KEY_PREFIX + taskId, expectedJson, replacementJson, ttl,
+                    PROCESSING_INDEX_KEY, userIndexKey, taskId);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
+        }
     }
 
     /**

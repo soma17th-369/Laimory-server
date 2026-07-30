@@ -5,7 +5,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
-import com.laimory.server.timeline.entity.TimelineAiResultReceipt;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
@@ -31,18 +30,14 @@ import org.springframework.transaction.annotation.Transactional;
  * AI 결과 저장 트랜잭션 경계 전담 빈 — 과거 AI가 direct-write하던 final transaction을 서버가 이어받은 것이다.
  * {@link TimelineAiResultService}가 Spring 프록시를 통해 호출한다(self-invocation 회피).
  *
- * <p>순서가 load-bearing이다:
+ * <p>저장 순서:
  * <ol>
- *   <li><b>receipt INSERT + flush를 가장 먼저</b> 한다. 같은 task의 재시도·동시 중복 요청은 여기서 duplicate
- *       key로 갈리며(호출부가 "이미 반영"으로 변환), 이후 검증·write를 헛돌지 않는다. PK 하나가 직렬화를
- *       담당하므로 DailyRecord pessimistic lock은 두지 않는다 — 기존 writer(Event PATCH·삭제) 중 어느 것도
- *       그 lock을 잡지 않아 조합되지 않기 때문이다.</li>
  *   <li>DB 사실 기반 검증(record 상태, source 소유, 기존 final rawId 중복)</li>
  *   <li>record timezone wall-clock 정규화 → startAt 충돌 nudge/endAt clamp</li>
  *   <li>Item(distinct rawId당 1행)·Event·junction INSERT</li>
  *   <li>채택된 staging source만 DELETE</li>
  * </ol>
- * 어느 단계에서 실패하든 receipt를 포함한 전부가 함께 롤백된다 — 부분 반영된 graph가 남지 않는다.
+ * 어느 단계에서 실패하든 graph와 staging 변경이 함께 롤백된다.
  *
  * <p>append-only 계약을 유지한다: 기존 Event/Item/junction/memo를 수정·삭제하지 않는다. startAt 충돌
  * +10분 nudge와 endAt clamp는 AI writer가 소유하던 규칙을 그대로 이어받은 것이다(정확히 겹칠 때만 적용).
@@ -60,24 +55,17 @@ public class TimelineAiResultTransactionService {
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
-    private final TimelineAiResultReceiptService timelineAiResultReceiptService;
 
-    /**
-     * AI 결과를 final graph에 반영한다. 리턴 = 커밋 예정(호출 트랜잭션 종료 시 commit).
-     * 같은 taskId 영수증이 이미 있으면 duplicate key 예외가 전파된다 — 호출부가 "이미 반영"으로 변환한다.
-     */
+    /** AI 결과를 final graph에 반영한다. Redis RESULT_WRITING 선점은 호출부가 transaction 전에 수행한다. */
     @Transactional
     public void store(String taskId, long dailyRecordId, AiTimelineResultRequest request) {
-        // 1. 멱등성 게이트. 이후 어떤 검증·write보다 먼저 자리를 선점한다.
-        timelineAiResultReceiptService.saveNew(TimelineAiResultReceipt.of(taskId, dailyRecordId));
-
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         if (record.getStatus() != DailyRecordStatus.DRAFT) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
 
-        // 2. 결과가 참조하는 rawId가 이 task의 staging source인지 확인한다(타 task·임의 값 차단).
+        // 1. 결과가 참조하는 rawId가 이 task의 staging source인지 확인한다(타 task·임의 값 차단).
         Map<String, TimelineDraftSourceItem> sourcesByRawId = timelineDraftSourceItemService.findByTaskId(taskId)
                 .stream()
                 .collect(Collectors.toMap(TimelineDraftSourceItem::getRawId, Function.identity(),
@@ -92,7 +80,7 @@ public class TimelineAiResultTransactionService {
                     "result references source items outside this task: count=" + unknownRawIds.size());
         }
 
-        // 3. 이 record의 기존 final Item과 rawId가 겹치면 거절한다(draft POST 사전 제외와 이중 방어).
+        // 2. 이 record의 기존 final Item과 rawId가 겹치면 거절한다(draft POST 사전 제외와 이중 방어).
         List<TimelineEvent> existingEvents = timelineEventService.findByDailyRecordId(dailyRecordId);
         List<Long> existingItemIds = timelineEventItemService.findByTimelineEventIds(
                         existingEvents.stream().map(TimelineEvent::getTimelineEventId).toList()).stream()
@@ -105,7 +93,7 @@ public class TimelineAiResultTransactionService {
                     "result references already saved rawIds: count=" + alreadySavedRawIds.size());
         }
 
-        // 4. 채택 source마다 final Item 한 행(여러 Event가 공유해도 1행 — junction으로만 연결).
+        // 3. 채택 source마다 final Item 한 행(여러 Event가 공유해도 1행 — junction으로만 연결).
         ZoneId recordZone = ZoneId.of(record.getRecordTimezone());
         Map<String, Long> itemIdsByRawId = new LinkedHashMap<>();
         for (String rawId : adoptedRawIds) {
@@ -116,7 +104,7 @@ public class TimelineAiResultTransactionService {
             itemIdsByRawId.put(rawId, item.getTimelineItemId());
         }
 
-        // 5. Event append. startAt 충돌 회피는 기존 Event와 이번에 배정한 Event를 함께 본다.
+        // 4. Event append. startAt 충돌 회피는 기존 Event와 이번에 배정한 Event를 함께 본다.
         Set<LocalDateTime> occupiedStartAts = existingEvents.stream()
                 .map(TimelineEvent::getStartAt)
                 .collect(Collectors.toCollection(HashSet::new));
@@ -134,7 +122,7 @@ public class TimelineAiResultTransactionService {
         }
         timelineEventItemService.saveAll(links);
 
-        // 6. 채택된 staging만 삭제한다(누락 source는 retention cleanup 대상으로 남긴다).
+        // 5. 채택된 staging만 삭제한다(누락 source는 retention cleanup 대상으로 남긴다).
         timelineDraftSourceItemService.deleteAdopted(taskId, adoptedRawIds);
     }
 

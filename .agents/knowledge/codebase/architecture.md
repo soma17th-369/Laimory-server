@@ -44,11 +44,12 @@ timeline draft의 큰 흐름은 다음과 같다.
 
 ```text
 DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
-→ AI dispatch (POST /v1/timeline — taskId·입력 토큰만)
-→ AI가 GET /s/api/{v}/timeline/drafts/{taskId}/input 으로 정규 입력 조회(다음 토큰 발급)
-→ AI가 POST .../result 로 결과 전달 → 서버가 영수증 + Event/Item/junction INSERT + accepted source DELETE를
-  한 트랜잭션으로 commit(다음 토큰 발급)
-→ status-only callback → 서버가 영수증을 확인하고 Redis terminal 전이 + 완료 푸시
+→ AI dispatch (POST /v1/timeline — taskId·단일 task token)
+→ AI가 같은 token으로 GET /s/api/{v}/timeline/drafts/{taskId}/input 호출
+→ Redis stage가 RESULT_PENDING을 거쳐 RESULT_WRITING을 CAS 선점
+→ AI가 POST .../result 로 결과 전달 → 서버가 Event/Item/junction INSERT + accepted source DELETE를
+  한 MySQL transaction으로 commit → Redis CALLBACK_PENDING
+→ 같은 token의 status-only callback → Redis terminal CAS + 완료 푸시
 ```
 
 Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 Event/memo transaction을 실행한다.

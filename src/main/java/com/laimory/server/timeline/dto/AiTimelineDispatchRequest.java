@@ -8,7 +8,7 @@ package com.laimory.server.timeline.dto;
  * 호출해 받아간다. {@code dailyRecordId}·{@code window}를 보내지 않는 이유이기도 하다(AI는 DB 식별자를
  * 알 필요가 없고, window는 입력 응답에 있다).
  *
- * <p>{@code taskToken}은 단계별 토큰 chain의 첫 토큰(T1) 원문으로 이 body로만 한 번 전달된다
+ * <p>{@code taskToken}은 입력 조회·결과 저장·콜백이 공통으로 쓰는 단일 bearer token 원문이다
  * (로그·MySQL·Redis 저장 금지 — 서버는 hash만 보관).
  */
 public record AiTimelineDispatchRequest(

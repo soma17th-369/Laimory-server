@@ -17,8 +17,8 @@ public class TimelineCallbackController implements TimelineCallbackApi {
 
     @Override
     public ResponseEntity<Void> callback(String applicationVersion, String taskId,
-                                         String callbackToken, DraftTaskCallbackRequest request) {
-        timelineCallbackService.handleCallback(applicationVersion, taskId, callbackToken, request);
+                                         String taskToken, DraftTaskCallbackRequest request) {
+        timelineCallbackService.handleCallback(applicationVersion, taskId, taskToken, request);
         return ResponseEntity.ok().build();
     }
 }

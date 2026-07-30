@@ -2,8 +2,8 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.TaskStage;
 import com.laimory.server.timeline.TaskStatus;
-import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 /**
  * AI 입력 조회 오케스트레이터 — 서버가 소유하는 정규 AI 입력을 조립한다.
  *
- * <p>순서가 load-bearing이다: task 조회 → <b>입력 토큰 검증</b> → PROCESSING 확인 <b>다음에야</b> 개인
+ * <p>순서가 load-bearing이다: task 조회 → <b>task token 검증</b> → PROCESSING/단계 확인 <b>다음에야</b> 개인
  * 데이터(record·source)를 읽는다. 이 endpoint는 {@code /s/api}라 request principal이 없고 토큰만이
  * 인증 수단이므로, 검증 전에 데이터를 읽지 않는 것이 유출 방지선이다.
  *
@@ -42,13 +42,16 @@ public class TimelineAiTaskInputService {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
-        if (!task.matchesInputToken(taskToken)) {
-            // 어느 단계 토큰이 틀렸는지는 응답으로 구분해 주지 않는다(로그로만).
+        if (!task.matchesToken(taskToken)) {
             log.warn("ai task input token mismatch: taskId={}", taskId);
             throw new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH);
         }
         if (task.status() != TaskStatus.PROCESSING) {
             log.warn("ai task input on terminal task: taskId={} status={}", taskId, task.status());
+            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+        }
+        if (task.stage() != TaskStage.INPUT_PENDING && task.stage() != TaskStage.RESULT_PENDING) {
+            log.warn("ai task input on invalid stage: taskId={} stage={}", taskId, task.stage());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
 
@@ -57,16 +60,27 @@ public class TimelineAiTaskInputService {
         ZoneId recordZone = ZoneId.of(record.getRecordTimezone());
         List<TimelineDraftSourceItem> sources = timelineDraftSourceItemService.findByTaskId(taskId);
 
-        // TTL 갱신은 응답 조립 성공 뒤에 한다 — 조회가 실패하는 task의 수명을 연장하지 않는다.
-        timelineTaskService.refreshProcessing(taskId, task);
-
-        return new AiTimelineTaskInputResponse(
+        AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(
                 taskId,
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
-                sources.stream().map(source -> toSourceItem(source, recordZone)).toList(),
-                TaskTokens.deriveResultToken(taskToken, taskId));
+                sources.stream().map(source -> toSourceItem(source, recordZone)).toList());
+
+        // 응답 조립 성공 뒤 최초 조회는 다음 단계로 전이하고, 재조회는 같은 단계에서 TTL만 갱신한다.
+        boolean updated = task.stage() == TaskStage.INPUT_PENDING
+                ? timelineTaskService.transitionStage(taskId, task, TaskStage.RESULT_PENDING)
+                : timelineTaskService.refreshProcessing(taskId, task);
+        if (!updated) {
+            TimelineDraftTask latest = timelineTaskService.find(taskId)
+                    .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
+            if (latest.status() != TaskStatus.PROCESSING || latest.stage() != TaskStage.RESULT_PENDING) {
+                log.warn("ai task input lost stage race: taskId={} status={} stage={}",
+                        taskId, latest.status(), latest.stage());
+                throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+            }
+        }
+        return response;
     }
 
     /**

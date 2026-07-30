@@ -33,7 +33,6 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
   성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
-- `timeline_ai_result_receipts` (AI 결과 반영 영수증, PK=`task_id`, `daily_record_id` FK CASCADE)
 - `users`, `refresh_tokens`
 - `push_registrations`
 
@@ -52,12 +51,6 @@ final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나�
 transaction이 쓰고, Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가도 같은 계층이 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다.
-
-`timeline_ai_result_receipts`는 task 하나가 final graph에 반영됐다는 사실만 기록하는 멱등성 테이블이다.
-PK가 `task_id`(assigned ID — entity가 `Persistable`로 항상 persist를 강제해 중복이 duplicate key로 드러난다)이며
-결과 내용은 저장하지 않는다. 결과 저장 transaction의 **첫 write**가 이 INSERT라 재시도·동시 중복 요청이
-여기서 직렬화되고, 이후 단계가 실패하면 영수증까지 함께 롤백된다. `daily_record_id`는 CASCADE FK이고
-`created_at` index는 cleanup 스캔용이다(staging과 같은 보관기간에 일괄 삭제).
 
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
@@ -95,7 +88,9 @@ application-owned access는 `RedisGateway`를 거친다.
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
 Timeline task는 값 PSETEX와 전역·사용자별 index ZADD/ZREM(+사용자 index PEXPIRE)을 Lua 한 경계에서
 수행하고, 목록 조회용 ZREVRANGE·후보 순서 정렬 MGET·batch ZREM primitive도 gateway가 제공한다
-(Lua 안에서 task JSON은 decode하지 않는다).
+(Lua 안에서 task JSON은 decode하지 않는다). 서버간 처리 stage는 현재 task JSON 전체를 기대값으로
+비교하는 Lua CAS로 전이하며, PROCESSING replacement는 index를 유지하고 terminal replacement는 index에서
+제거한다.
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
 dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.
@@ -138,8 +133,7 @@ apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 �
   dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
-- staging retention은 PROCESSING TTL보다 충분히 길어야 한다. AI 결과 영수증도 같은 보관기간을 쓴다 —
-  재시도 주체인 task 토큰이 늦어도 terminal TTL(24h)에 만료되므로 그 뒤 재처리 가능성은 없다.
+- staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
 - Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard
   delete를 같은 transaction으로 commit한다.

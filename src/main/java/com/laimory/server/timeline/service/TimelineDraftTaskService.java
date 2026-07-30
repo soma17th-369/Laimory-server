@@ -110,14 +110,10 @@ public class TimelineDraftTaskService {
 
         String taskId = UuidV7.randomUuidV7().toString();
 
-        // 단계별 토큰 chain: T1 원문만 AI dispatch body로 전달하고, T2·T3는 이전 토큰에서 결정적으로
-        // 파생해 각 단계 응답에서 발급한다. 서버는 세 hash만 보관한다(원문 미저장).
-        String inputToken = TaskTokens.generate();
-        String resultToken = TaskTokens.deriveResultToken(inputToken, taskId);
-        TimelineDraftTask.TokenHashes tokenHashes = new TimelineDraftTask.TokenHashes(
-                TaskTokens.hash(inputToken),
-                TaskTokens.hash(resultToken),
-                TaskTokens.hash(TaskTokens.deriveCallbackToken(resultToken, taskId)));
+        // 입력 조회·결과 저장·콜백이 함께 쓰는 task token. 원문은 dispatch body에만 싣고 Redis에는
+        // SHA-256 hash만 저장한다.
+        String taskToken = TaskTokens.generate();
+        String tokenHash = TaskTokens.hash(taskToken);
 
         Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
         existingRecord
@@ -156,26 +152,26 @@ public class TimelineDraftTaskService {
         try {
             timelineTaskService.createProcessing(taskId, userId, dailyRecordId,
                     new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
-                    tokenHashes, processingStartedAt);
+                    tokenHash, processingStartedAt);
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
             throw e;
         }
 
-        // 3. AI dispatch — 접수 body에 taskId와 첫 단계 토큰(T1) 원문만 싣는다. 나머지 입력(record 메타데이터·
+        // 3. AI dispatch — 접수 body에 taskId와 task token 원문만 싣는다. 나머지 입력(record 메타데이터·
         //    window·source item)은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
         //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
         //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
         //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
         try {
-            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(taskId, inputToken));
+            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(taskId, taskToken));
         } catch (TimelineAiDispatchRejectedException e) {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
             try {
                 timelineTaskService.markFailed(
-                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHashes);
+                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
             } catch (RuntimeException saveFailure) {
                 // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
                 // PROCESSING으로 남았다면 최초 3분 TTL이 회수한다.

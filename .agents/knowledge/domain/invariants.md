@@ -37,10 +37,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
 - same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
   Event에만 연결하고, Event PATCH는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
-- draft 결과 저장(영수증 + Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
+- draft 결과 저장(Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
   transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가도 서버가
   별도의 하나의 DB transaction으로 commit한다. AI는 어떤 테이블도 직접 쓰지 않는다.
-- Redis `SUCCESS` 전이는 해당 task의 결과 영수증이 있을 때만 한다(저장 없는 SUCCESS 차단).
+- Redis `SUCCESS` 전이는 결과 transaction 뒤 task가 `CALLBACK_PENDING`일 때만 한다.
 - event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 서버 결과 저장 transaction).
   DB unique invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
 - final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
@@ -74,24 +74,26 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### AI 서버간 계약
 
 - AI는 MySQL·Redis에 직접 접근하지 않는다 — 입력은 서버간 입력 조회 API로 받고 결과는 결과 저장 API로 보낸다.
-- 단계별 토큰은 chain이며 이전 토큰에서 결정적으로 파생한다(T1 난수 → T2 = HMAC(T1) → T3 = HMAC(T2)).
-  서버는 세 hash만 저장하고 원문은 저장하지 않으며, 다음 토큰은 제시된 토큰에서 재계산해 응답에 싣는다.
-  같은 단계 재시도는 항상 같은 다음 토큰을 받는다(응답 유실이 task를 고립시키지 않음).
-- 파생 chain은 호출 순서를 강제하지 못한다 — 저장 없는 SUCCESS를 막는 권위는 DB 영수증
-  (`timeline_ai_result_receipts`)이다. SUCCESS 콜백은 영수증이 있을 때만 받는다.
+- 입력 조회·결과 저장·콜백은 dispatch가 전달한 단일 task token을 공통으로 쓴다. 서버는 원문 대신
+  SHA-256 hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
+- 호출 순서는 PROCESSING task의 내부 stage
+  (`INPUT_PENDING → RESULT_PENDING → RESULT_WRITING → CALLBACK_PENDING`)가 제한한다.
+- stage와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua CAS다.
 - 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
-- 결과 저장 transaction의 첫 write는 `task_id` PK 영수증 INSERT다 — 재시도·동시 중복 요청이 duplicate
-  key로 직렬화되며, 실패 시 영수증까지 함께 롤백돼 부분 반영이 남지 않는다.
+- 결과 저장은 `RESULT_PENDING → RESULT_WRITING` CAS를 선점한 요청 하나만 실행한다. MySQL 실패가 호출부로
+  돌아오면 가능한 경우 RESULT_PENDING으로 복구하고, 성공하면 CALLBACK_PENDING으로 전이한다.
 - 결과 저장 endpoint는 graph만 쓰고 task 상태를 전이하지 않는다. 전이는 콜백만 한다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
-- SUCCESS 콜백은 콜백 토큰(T3)만 허용하고, FAILED는 결과 저장 단계를 거치지 않으므로 T2도 허용한다.
+- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.
 - terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
 - 결과 저장 commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 저장된 graph는
   남는다 — 자동 복구(redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 3분이며 입력 조회·결과 저장 성공마다 다시 확보한다(`processingStartedAt`은 보존).
-  terminal task TTL은 24시간, staging retention과 결과 영수증 retention은 7일이다.
+- `PROCESSING` TTL은 3분이며 입력 조회·stage 전이마다 다시 확보한다(`processingStartedAt`은 보존).
+  terminal task TTL은 24시간, staging retention은 7일이다.
+- Redis와 MySQL은 분산 transaction으로 묶지 않는다. RESULT_WRITING 중 장애 또는 MySQL commit 뒤
+  CALLBACK_PENDING 전이 전 장애는 graph가 남고 task가 TTL 만료될 수 있으며 자동 reconciliation은 없다.
 - PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
   폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
   않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를

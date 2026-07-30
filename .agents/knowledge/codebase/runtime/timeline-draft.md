@@ -31,13 +31,13 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 편집·�
 4. UUIDv7 `taskId`를 만들고, SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 단계별 토큰 chain을 만든다(T1 난수 → T2·T3 파생 —
-   원문은 저장하지 않고 세 hash만 보관, T1만 dispatch body로 나간다).
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 256-bit task token 하나를 만들고 원문은 dispatch
+   body에만 싣고 Redis에는 SHA-256 hash만 저장한다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
-7. Redis task를 `PROCESSING`으로 저장한다(`dailyRecordId`·owner·local window·token hash·
-   `processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
+7. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
+   hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
@@ -67,24 +67,21 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ### AI input, result and callback
 
-1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token: T1`): task 조회 → 토큰 검증 →
-   PROCESSING 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다(DB 식별자 미노출, 시각은 record
-   timezone offset). 성공 시 PROCESSING TTL을 다시 확보하고 응답 `resultToken`으로 T2를 준다.
-2. **결과 저장**(`POST .../result`, `Task-Token: T2`): 토큰·PROCESSING 확인 → 형식 검증(transaction 밖) →
-   영수증 INSERT를 첫 write로 하는 하나의 transaction에서 DB 검증·시각 정규화·+10분 nudge/clamp·
-   Event/Item/junction INSERT·채택 source DELETE를 commit한다. 실패는 영수증까지 전부 롤백이다.
-   같은 task의 재시도는 duplicate key로 갈려 graph를 건드리지 않고 성공한다. 응답 `callbackToken`은 T3다.
-   **이 단계는 task 상태를 전이하지 않는다.**
-3. **콜백**(`POST .../callback`, `Callback-Token: T3`, FAILED는 T2 허용): 토큰 검증 → terminal이면 같은
-   결과만 멱등 성공·상충은 409 `-1017` → SUCCESS는 영수증 존재 확인(없으면 409 `-1017`) → Redis terminal
-   전이 → 완료 푸시 비동기 예약.
-4. one-time 토큰 소비 marker는 없다 — 단계별 재시도를 허용해야 하기 때문이며, 중복 저장 차단의 권위는
-   DB 영수증이다.
-5. terminal 저장 실패는 전파된다. 같은 토큰으로 다시 콜백할 수 있으므로 재시도가 막히지 않는다.
+1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/stage
+   확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 최초 성공은 `INPUT_PENDING →
+   RESULT_PENDING`, 재조회는 RESULT_PENDING에서 TTL만 갱신한다.
+2. **결과 저장**(`POST .../result`, 같은 `Task-Token`): `RESULT_PENDING → RESULT_WRITING` CAS를 선점한
+   요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction INSERT·채택 source DELETE를 하나의
+   MySQL transaction으로 commit한다. 성공하면 CALLBACK_PENDING, 저장 예외면 가능한 경우 RESULT_PENDING으로
+   복구한다. CALLBACK_PENDING 재요청은 graph를 다시 쓰지 않고 200이다.
+3. **콜백**(`POST .../callback`, 같은 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과 저장 전
+   stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal 재전송은 200,
+   상충은 409 `-1017`이다.
+4. terminal 저장 실패는 전파된다. 같은 token으로 다시 콜백할 수 있다.
 
-**수용된 MVP 한계**: 결과 저장 commit 후 콜백 전 AI process가 종료되면 T3 보유 주체가 사라진다 — 원 task는
-PROCESSING TTL로 만료되고 저장된 graph는 남는다. 동일 source 전량 재시도는 `-1013`이며,
-일부 신규 source가 섞인 재시도의 SUCCESS 폴링이 기존 커밋분까지 반환해 실질 복구 경로가 된다.
+**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. RESULT_WRITING 중 장애 또는 MySQL commit
+뒤 CALLBACK_PENDING 전이 전 장애면 task는 PROCESSING TTL로 만료되고 graph는 남을 수 있다. receipt,
+reconciliation, 자동 callback은 두지 않는다.
 
 ### Polling and read
 
@@ -146,8 +143,8 @@ PROCESSING TTL로 만료되고 저장된 graph는 남는다. 동일 source 전�
 
 ### Retention and cleanup
 
-- PROCESSING TTL: 3분(입력 조회·결과 저장 성공마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
-  source staging retention: 7일 / AI 결과 영수증 retention: staging과 동일(7일)
+- PROCESSING TTL: 3분(입력 조회·stage 전이마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
+  source staging retention: 7일
 - PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이
   404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
 - PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 3분(PROCESSING TTL)보다 오래된 고아
@@ -156,20 +153,17 @@ PROCESSING TTL로 만료되고 저장된 graph는 남는다. 동일 source 전�
   inactivity면 통째로 만료한다(key TTL은 member별 TTL이 아님). member 회수는 terminal ZREM과 목록 조회
   lazy prune이 담당하며 별도 sweep은 없다 — 3분 미만 간격 생성이 terminal·조회 없이 계속되면 만료
   member가 누적될 수 있다(수용된 MVP trade-off).
-- cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)과 보관기간을 넘긴 AI 결과 영수증이다 —
-  채택된 source는 결과 저장 transaction에서 이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
-  영수증은 S3 부수효과가 없어 일괄 삭제하며, 재시도 주체인 task 토큰이 늦어도 24시간에 만료되므로
-  보관기간 뒤 재처리 가능성은 없다.
+- cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)이다. 채택된 source는 결과 저장 transaction에서
+  이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
 - 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.
 
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
-- Redis SUCCESS는 결과 저장 commit보다 먼저 기록되지 않는다 — 콜백이 영수증을 확인한 뒤에만 전이한다.
+- Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
   서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
-- 단계별 토큰은 hash 비교로만 검증하며 소비 marker가 없다 — 같은 단계 재시도가 항상 같은 다음 토큰을
-  받는다. 중복 저장 차단은 DB 영수증이 담당한다.
+- 단일 task token은 매 요청 hash 비교로 검증하고 Redis stage/CAS가 호출 순서와 동시 writer를 제한한다.
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps

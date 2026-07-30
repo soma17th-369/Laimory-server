@@ -3,11 +3,9 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
-import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
-import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import java.time.Duration;
@@ -32,7 +30,7 @@ import org.springframework.web.client.RestClient;
  * PROCESSING인 채 TTL로 소멸한다. 서버가 8080이 아닌 포트로 떠 있으면 호출이 유실된다(고정 URL 전제).
  * inference가 없으므로 분류는 {@code UNKNOWN} 고정이고 조회한 source 전부를 Event 하나로 묶는다.
  *
- * <p>⚠️ 단계별 토큰은 비밀 — 어떤 로그에도 포함하지 않는다(헤더로만 전송).
+ * <p>⚠️ task token은 비밀 — 어떤 로그에도 포함하지 않는다(헤더로만 전송).
  */
 @Slf4j
 @Component
@@ -51,7 +49,6 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
     private static final String RESULT_URL_TEMPLATE = SERVER_API_BASE + "/result";
     private static final String CALLBACK_URL_TEMPLATE = SERVER_API_BASE + "/callback";
     private static final String TASK_TOKEN_HEADER = "Task-Token";
-    private static final String CALLBACK_TOKEN_HEADER = "Callback-Token";
 
     private final RestClient restClient;
     private final Duration callbackDelay;
@@ -80,22 +77,18 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         }
 
         String taskId = request.taskId();
-        String callbackToken;
         DraftTaskCallbackRequest result;
         try {
             AiTimelineTaskInputResponse input = getInput(taskId, request.taskToken());
-            AiTimelineResultResponse stored = postResult(taskId, input.resultToken(), toResult(input));
-            callbackToken = stored.callbackToken();
+            postResult(taskId, request.taskToken(), toResult(input));
             result = new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
         } catch (RuntimeException e) {
             log.warn("fake AI result flow failed: taskId={}", taskId, e);
-            // 결과 저장에 실패했으므로 콜백 토큰이 없다 — FAILED는 결과 저장 단계 토큰으로도 보고할 수 있다.
-            callbackToken = deriveResultTokenQuietly(taskId, request.taskToken());
             // 상세 예외는 위 로그에만 — 콜백 서비스가 error를 또 로깅하므로 고정 문구로 이중 노출을 피한다.
             result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
                     "fake result flow failed");
         }
-        postCallback(taskId, callbackToken, result);
+        postCallback(taskId, request.taskToken(), result);
     }
 
     private AiTimelineTaskInputResponse getInput(String taskId, String taskToken) {
@@ -111,26 +104,21 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         return input;
     }
 
-    private AiTimelineResultResponse postResult(String taskId, String resultToken,
-                                                AiTimelineResultRequest body) {
-        AiTimelineResultResponse response = restClient.post()
+    private void postResult(String taskId, String taskToken, AiTimelineResultRequest body) {
+        restClient.post()
                 .uri(RESULT_URL_TEMPLATE, taskId)
-                .header(TASK_TOKEN_HEADER, resultToken)
+                .header(TASK_TOKEN_HEADER, taskToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
-                .body(AiTimelineResultResponse.class);
-        if (response == null || response.callbackToken() == null) {
-            throw new IllegalStateException("fake AI got no callback token: taskId=" + taskId);
-        }
-        return response;
+                .toBodilessEntity();
     }
 
-    private void postCallback(String taskId, String callbackToken, DraftTaskCallbackRequest body) {
+    private void postCallback(String taskId, String taskToken, DraftTaskCallbackRequest body) {
         try {
-            restClient.post()
+                    restClient.post()
                     .uri(CALLBACK_URL_TEMPLATE, taskId)
-                    .header(CALLBACK_TOKEN_HEADER, callbackToken)
+                    .header(TASK_TOKEN_HEADER, taskToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
                     .retrieve()
@@ -166,11 +154,4 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
                         .orElseGet(OffsetDateTime::now));
     }
 
-    /**
-     * 실패 보고용 토큰. 입력 조회 응답을 못 받았을 수 있으므로 dispatch 토큰에서 직접 파생한다 —
-     * fake는 서버와 같은 프로세스라 파생 규칙을 그대로 쓸 수 있다(실 AI는 응답으로 받은 토큰을 쓴다).
-     */
-    private static String deriveResultTokenQuietly(String taskId, String taskToken) {
-        return TaskTokens.deriveResultToken(taskToken, taskId);
-    }
 }

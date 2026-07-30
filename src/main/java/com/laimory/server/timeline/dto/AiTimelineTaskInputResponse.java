@@ -17,17 +17,13 @@ import java.util.List;
  * <p>모든 시각은 record timezone 기준 offset 포함 ISO-8601이다 — staging은 wall-clock으로 저장돼 있어
  * 서버가 {@code recordTimeZone}을 붙여 내보내고, 결과 저장 시 같은 규칙으로 되돌린다.
  *
- * <p>{@code resultToken}은 다음 단계(결과 저장) 인증 토큰이다. 같은 입력 토큰으로 몇 번 재조회해도 같은
- * 값이 나오므로 응답 유실이 task를 고립시키지 않는다. access log는 이름에 {@code token}이 들어간 필드를
- * 마스킹한다.
  */
 public record AiTimelineTaskInputResponse(
         String taskId,
         LocalDate recordDate,
         @Schema(example = "Asia/Seoul") String recordTimeZone,
         @Schema(description = "AI가 이번 task에서 이벤트를 만들 시간 범위") Window window,
-        List<SourceItem> sourceItems,
-        @Schema(description = "결과 저장 단계 인증 토큰") String resultToken
+        List<SourceItem> sourceItems
 ) {
 
     public record Window(

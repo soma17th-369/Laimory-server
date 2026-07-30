@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.controller;
 
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
-import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.service.TimelineAiResultService;
 import com.laimory.server.timeline.service.TimelineAiTaskInputService;
@@ -26,9 +25,9 @@ public class TimelineAiTaskController implements TimelineAiTaskApi {
     }
 
     @Override
-    public ResponseEntity<AiTimelineResultResponse> result(String applicationVersion, String taskId,
-                                                           String taskToken, AiTimelineResultRequest request) {
-        return ResponseEntity.ok(
-                timelineAiResultService.storeResult(applicationVersion, taskId, taskToken, request));
+    public ResponseEntity<Void> result(String applicationVersion, String taskId,
+                                       String taskToken, AiTimelineResultRequest request) {
+        timelineAiResultService.storeResult(applicationVersion, taskId, taskToken, request);
+        return ResponseEntity.ok().build();
     }
 }

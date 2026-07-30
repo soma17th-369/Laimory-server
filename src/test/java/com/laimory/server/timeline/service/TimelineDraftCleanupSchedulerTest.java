@@ -40,8 +40,6 @@ class TimelineDraftCleanupSchedulerTest {
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
     @Mock
-    private TimelineAiResultReceiptService timelineAiResultReceiptService;
-    @Mock
     private S3PhotoStorageService s3PhotoStorageService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -53,7 +51,7 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {
         TimelineDraftCleanupScheduler scheduler = new TimelineDraftCleanupScheduler(
-                timelineDraftSourceItemService, timelineAiResultReceiptService, s3PhotoStorageService,
+                timelineDraftSourceItemService, s3PhotoStorageService,
                 MAPPER, FIXED);
         ReflectionTestUtils.setField(scheduler, "retentionDays", retentionDays);
         return scheduler;

@@ -2,22 +2,21 @@
 
 ## Scope
 
-API server와 AI 측 사이의 draft task 계약이다. dispatch(HTTP) → 입력 조회 → 결과 저장 → 상태 콜백
-네 단계이며, 네 경계 모두 HTTP다. AI는 MySQL·Redis에 직접 접근하지 않는다.
+API 서버와 AI 사이의 dispatch → 입력 조회 → 결과 저장 → 상태 callback HTTP 계약이다. AI는 MySQL·Redis에
+직접 접근하지 않는다.
 
 ## Read When
 
-AI dispatcher, 서버간 입력·결과 endpoint, 단계별 토큰, 결과 저장 transaction 또는 callback body를 바꿀 때 읽는다.
+AI dispatcher, 서버간 입력·결과 endpoint, task token, Redis task stage, 결과 저장 transaction 또는
+callback body를 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
-- `TimelineAiDispatcher` implementations (`NoOp`/`Fake`/`Http`) and `AiTimelineDispatchRequest`/`Response`
-- `TimelineAiTaskApi`, `AiTimelineTaskInputResponse`, `AiTimelineResultRequest`/`Response`
-- `TimelineAiTaskInputService`, `TimelineAiResultService`, `TimelineAiResultTransactionService`
-- `TaskTokens`, `TimelineDraftTask`(단계별 hash), `TimelineAiResultReceipt`
-- `TimelineCallbackApi`, `DraftTaskCallbackRequest`, `TimelineCallbackService`
-- `HttpTimelineAiDispatcherTest`(dispatch fixture), `FakeTimelineAiDispatcherTest`(단계 순서 fixture),
-  `TimelineAiTaskFlowIntegrationTest`
+- `TimelineAiDispatcher` implementations와 dispatch DTO
+- `TimelineAiTaskApi`, 입력·결과 DTO와 service
+- `TimelineCallbackApi`, callback DTO와 service
+- `TaskTokens`, `TaskStage`, `TimelineDraftTask`, `TimelineTaskStore`
+- `TimelineAiTaskFlowIntegrationTest`
 
 ## Contract
 
@@ -32,161 +31,144 @@ Content-Type: application/json
 {"taskId": "...", "taskToken": "..."}
 ```
 
-- 두 필드만 있으며 입력 데이터는 싣지 않는다 — AI가 `taskToken`으로 입력 조회 API를 호출해 받아간다.
-  `dailyRecordId`·`window`는 계약에서 제외한다(AI는 DB 식별자를 알지 않는다).
-- `taskToken`은 단계별 토큰 chain의 첫 토큰(T1) 원문으로 이 body로만 한 번 전달된다
-  (로그·MySQL·Redis 저장 금지 — 서버는 hash만 보관).
-- 접수 성공은 `202 Accepted` + body `{"taskId": <동일>, "status": "PROCESSING"}` — final 성공이 아니다.
-  dispatcher는 202·동일 taskId·PROCESSING을 검증한다. 4xx 거절만 미접수 확정으로 task FAILED(`-1009`)
-  종결을 시도하고, 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명(UNKNOWN)이라 PROCESSING을
-  유지한다. 어느 실패든 draft POST는 502(`-1009`)로 끝나고 taskId를 반환하지 않는다.
-- 현재 AI endpoint는 무인증이다(private network 전제) — production 전 service authentication 추가 시
-  request header와 fixture를 양 저장소에서 함께 갱신한다.
+- 입력 데이터·DB 식별자·window는 싣지 않는다. AI가 입력 조회 API로 가져간다.
+- `taskToken`은 256-bit 난수 bearer token이다. 원문은 이 body로 전달하고 API 서버는 Redis task에
+  SHA-256 hash만 저장한다.
+- 접수 성공은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
+- dispatcher는 4xx만 미접수 확정으로 분류한다. 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명이라
+  PROCESSING을 유지하고 draft POST는 502 `-1009`로 끝난다.
+- AI endpoint 자체 service authentication은 아직 없다(private network 전제).
 
-### 2. 단계별 토큰 chain
+### 2. 단일 Task Token과 Redis Stage
 
-토큰은 단계마다 다르며 이전 단계 토큰에서 **결정적으로 파생**한다.
+입력 조회·결과 저장·callback은 모두 같은 header를 쓴다.
 
-```text
-T1 = 256-bit 난수(dispatch body 전용)
-T2 = HMAC-SHA256(key=T1, "timeline-task-token:v1:{taskId}:result")
-T3 = HMAC-SHA256(key=T2, "timeline-task-token:v1:{taskId}:callback")
+```http
+Task-Token: <dispatch가 받은 taskToken>
 ```
 
-- task 생성 시 세 hash를 모두 계산해 Redis task JSON에 저장한다. 원문은 어느 단계도 저장하지 않으므로,
-  다음 토큰 원문은 AI가 제시한 현재 토큰에서 그때 재계산해 응답에 싣는다.
-- 검증은 단계별 저장 hash와의 constant-time 비교이며 불일치는 401 `-1002`다. 어느 단계 토큰이 틀렸는지는
-  응답으로 구분해 주지 않는다(로그로만).
-- 같은 단계를 몇 번 재시도해도 같은 다음 토큰이 나온다 — 응답 유실이 task를 고립시키지 않는다.
-- one-time 소비 marker는 없다. 이전 단계 토큰의 재사용도 무해하므로(T1 재사용은 읽기 전용 재조회,
-  T2 재사용은 영수증 히트 no-op) 단계 진행 시 이전 토큰을 무효화하지 않는다.
-- **파생 chain은 호출 순서를 강제하지 않는다** — T1 보유자는 T2·T3를 계산할 수 있다. 토큰은 "dispatch를
-  받은 AI임"을 인증할 뿐이고, 저장 없는 SUCCESS 콜백을 막는 권위는 DB 영수증이다(§5).
+- 매 요청은 task 조회 직후 제시 token의 hash와 Redis `tokenHash`를 constant-time 비교한다.
+- `/s/api`에는 request principal이 없다. token 소유가 해당 task에 대한 capability다.
+- 원문 token은 저장·로그하지 않는다.
+- 별도 소비 marker나 token rotation은 없다. 호출 순서는 PROCESSING task의 내부 `TaskStage`가 제한한다.
+
+```text
+INPUT_PENDING
+  → RESULT_PENDING
+  → RESULT_WRITING
+  → CALLBACK_PENDING
+  → SUCCESS
+```
+
+- stage 전이와 terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는 Redis Lua CAS다.
+- 외부 polling 상태는 계속 `PROCESSING`/`SUCCESS`/`FAILED`만 노출한다.
 
 ### 3. 입력 조회 (AI → API)
 
 ```http
 GET /s/api/{version}/timeline/drafts/{taskId}/input
-Task-Token: <T1>
+Task-Token: <taskToken>
 ```
 
-응답은 JPA entity·DB 식별자를 노출하지 않는 전용 DTO다.
+응답:
 
 - `taskId`, `recordDate`, `recordTimeZone`
-- `window.startAt`/`endAt` — record timezone 기준 offset ISO-8601(`yyyy-MM-dd'T'HH:mm:ssXXX`)
-- `sourceItems[]` — `rawId`, `itemType`, offset `startAt`/`endAt`(시간 미상은 null), `payload`
-  (staging JSON 그대로 통과 — 타입 권위는 payload 밖 `itemType`)
-- `resultToken` — 다음 단계(T2)
+- `window.startAt`/`endAt`
+- `sourceItems[]`: `rawId`, `itemType`, nullable `startAt`/`endAt`, `payload`
+
+`userId`·`dailyRecordId`·행 PK와 다음 token은 응답하지 않는다.
 
 처리 규칙:
 
-- 토큰 검증과 PROCESSING 확인이 **개인 데이터 조회보다 먼저**다(`/s/api`엔 principal이 없어 토큰만이
-  인증 수단이다). terminal task 조회는 409 `-1017`, 없음·만료는 404 `-1001`이다.
-- 응답 조립에 성공하면 PROCESSING TTL을 다시 확보한다 — AI 추론이 이 응답 이후에 시작되기 때문이다.
-  `processingStartedAt`은 보존하므로 폴링 `elapsedSeconds` 의미는 바뀌지 않는다.
-- `userId`·`dailyRecordId`·table/entity 구조는 전달하지 않는다.
+- token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
+- `INPUT_PENDING`과 응답 유실 재시도를 위한 `RESULT_PENDING`에서만 허용한다.
+- 최초 응답 조립 뒤 `INPUT_PENDING → RESULT_PENDING`, 재조회는 같은 stage에서 TTL만 갱신한다.
+- 시각은 record timezone 기준 offset ISO-8601이다.
 
 ### 4. 결과 저장 (AI → API)
 
 ```http
 POST /s/api/{version}/timeline/drafts/{taskId}/result
-Task-Token: <T2>
+Task-Token: <taskToken>
 ```
 
 ```json
-{"events": [{"eventType": "MEAL", "title": "...", "subtitle": null,
-             "startAt": "...", "endAt": null, "sourceRawIds": ["..."]}]}
+{"events":[{"eventType":"MEAL","title":"...","subtitle":null,
+            "startAt":"...","endAt":null,"sourceRawIds":["..."]}]}
 ```
 
-- 응답은 `{"callbackToken": "<T3>"}`다. 실패 보고는 이 endpoint가 아니라 콜백이 담당하므로 body에
-  조건부 필드가 없다.
-- confidence·추론 설명·질문·address/tag 등 현재 DB에 저장하지 않는 AI 내부 출력은 계약에 넣지 않는다.
-- 이 endpoint는 graph만 저장하고 **task 상태를 전이하지 않는다**(전이는 콜백 책임).
+- body 없는 200이다. 다음 callback token을 반환하지 않는다.
+- `RESULT_PENDING` 요청 하나만 CAS로 `RESULT_WRITING`을 선점해 MySQL transaction을 실행한다.
+- 저장 성공 뒤 `CALLBACK_PENDING`으로 전이한다.
+- `CALLBACK_PENDING` 재요청은 graph를 다시 쓰지 않고 200이다.
+- `RESULT_WRITING` 중복 요청과 다른 stage 요청은 409 `-1017`이다.
 
-검증(위반 시 아무것도 저장하지 않고 400 `-400`):
+검증:
 
-- event 1건 이상, event마다 `sourceRawIds` 1건 이상
-- `eventType` allowlist(판별 불가는 `UNKNOWN` 명시), non-blank `title`, `startAt` 필수, `endAt >= startAt`
-- DB column 길이(`title`/`subtitle` 255)
-- 모든 `sourceRawId`가 이 task의 staging source에 존재
-- 이 record의 기존 final Item(Event→junction 경유)에 같은 rawId가 없음
+- event와 event별 source가 각각 1건 이상
+- `eventType`, non-blank `title`, `startAt`, `endAt >= startAt`, DB 문자열 길이
+- 모든 `sourceRawId`가 이 task staging source에 존재
+- 같은 record final graph에 채택 rawId가 아직 없음
 
-### 5. 결과 저장 transaction과 멱등성
+MySQL transaction은 DB 검증, Event/Item/junction INSERT와 채택 source DELETE를 함께 commit한다.
+offset 시각은 record timezone wall-clock으로 정규화하고 start 충돌은 +10분 nudge, end는 start 이상으로
+clamp한다.
 
-서버가 다음 순서를 하나의 transaction으로 commit한다.
+저장 예외가 호출부까지 돌아오면 가능한 경우 `RESULT_WRITING → RESULT_PENDING`으로 복구한다.
 
-1. `timeline_ai_result_receipts`에 `task_id` PK로 영수증 INSERT + flush. duplicate key면 롤백 후
-   "이미 반영"으로 200 응답한다(재시도·동시 중복 요청이 여기서 직렬화되므로 record lock을 두지 않는다).
-2. DailyRecord 상태(DRAFT) 확인과 위 §4 DB 검증
-3. offset 시각을 `record_timezone` wall-clock으로 정규화(MySQL `DATETIME`은 offset 미보존)
-4. 기존 Event `start_at`과 정확히 겹치면 +10분씩 nudge, `end_at < start_at`이면 start로 clamp
-5. distinct `rawId`마다 `timeline_items` 1행, 새 `timeline_events`, junction INSERT(append-only —
-   기존 Event/Item/junction/memo는 수정·삭제하지 않는다)
-6. 채택된 staging source만 DELETE(누락 source는 retention cleanup)
-
-어느 단계에서 실패하든 영수증까지 함께 롤백되므로 부분 반영이 남지 않고, 올바른 결과의 재시도가 막히지
-않는다. 영수증은 결과 내용을 저장하지 않는다 — 존재 자체가 "이미 반영"이다.
-
-### 6. 상태 콜백 (AI → API)
+### 5. 상태 Callback (AI → API)
 
 ```http
 POST /s/api/{version}/timeline/drafts/{taskId}/callback
-Callback-Token: <T3>   # FAILED는 T2도 허용
+Task-Token: <taskToken>
 ```
 
-- body는 `status`, `errorCode`, `error`뿐이며 결과 graph는 없다(서버는 상태 전이만 기록).
-- **SUCCESS는 T3만 허용**하고, 해당 task의 영수증이 있을 때만 받는다 — 없으면 409 `-1017`(저장 없는
-  SUCCESS 차단). FAILED는 결과 저장 단계를 거치지 않아 T3를 받을 수 없으므로 T2도 허용한다.
-- terminal task에 **같은 결과**가 다시 오면 그대로 200이고(재시도 안전), SUCCESS↔FAILED 상충은 409 `-1017`다.
-- AI writer는 FAILED `errorCode`를 JSON integer(현재 `-1008`)로 보낸다. 문자열 코드는 허용하지 않으며,
-  null·미지 integer 값은 `-1008`로 수렴한다. SUCCESS의 `errorCode`는 사용하지 않는다.
-- 성공은 body 없는 HTTP 200이며 400/401/404/409는 `GlobalExceptionHandler` envelope를 사용한다.
+- body는 `status`, `errorCode`, `error`뿐이다.
+- SUCCESS는 `CALLBACK_PENDING`에서만 허용한다.
+- FAILED는 결과 저장 전인 `INPUT_PENDING`/`RESULT_PENDING`에서만 허용한다.
+- terminal task의 같은 callback 재전송은 200, 상충 결과는 409 `-1017`이다.
+- terminal CAS에 처음 성공한 요청만 완료 push를 예약한다.
+- FAILED `errorCode`는 음수 JSON integer이며 미지 값은 `-1008`로 수렴한다. 자유 text `error`는 로그로만
+  남긴다.
 
 ## Failure Semantics
 
-- AI가 FAILED를 알리면 허용된 public numeric code(현재 `-1008`)만 task state에 기록한다.
-  자유 text `error`는 진단 log에만 남기고 polling 응답에는 저장·노출하지 않는다.
-- 결과 저장 commit 후 콜백 전에 AI process가 종료되면 T3를 들고 있는 주체가 사라진다 — 원 task는
-  PROCESSING TTL로 만료되고 저장된 graph는 남는다(수용된 MVP 한계 — 동일 source 전량 재시도는 `-1013`,
-  일부 신규 source 재시도가 실질 복구 경로).
-- 결과 저장은 성공했지만 응답이 유실된 경우는 재시도가 안전하다(영수증 멱등).
-- task 만료 뒤 도착한 어떤 단계 요청도 404 `-1001`이며 task를 부활시키지 않는다.
+- Redis와 MySQL을 분산 transaction으로 묶지 않는다.
+- `RESULT_WRITING` 선점 뒤 프로세스가 종료되면 task는 그 stage에서 PROCESSING TTL로 만료될 수 있다.
+- MySQL commit 뒤 `CALLBACK_PENDING` 전이 전 장애면 graph는 남지만 task 완료 상태는 잃을 수 있다.
+- 이 경로의 receipt, reconciliation, 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
+- task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다.
+- PROCESSING TTL은 3분이고 입력 조회·stage 전이마다 다시 확보한다. terminal TTL은 24시간이다.
 
 ## Current Implementations
 
-- `noop`(기본): dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
-- `fake`(dev): 실 AI와 같은 순서로 자기 서버의 세 endpoint를 실제 HTTP로 호출한다. 추론이 없으므로
-  분류는 `UNKNOWN` 고정이고 조회한 source 전부를 Event 하나로 묶는다. 재시도는 없다.
-- `http`: 실 AI 연동 — `app.ai.http.base-url` 필수, 접수 타임아웃(connect 2s/read 5s 기본) 초과는
-  접수 불명(UNKNOWN)으로 PROCESSING을 유지한 채 POST 502다. connect+read 합은 PROCESSING TTL(3m)의
-  절반 미만이어야 기동한다.
+- `noop`: dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
+- `fake`: 동일 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
+- `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
 
 ## Invariants
 
-- dispatch body 필드명은 AI 규격이 명명 권위인 공개 계약이다 — `HttpTimelineAiDispatcherTest`가 fixture로 고정한다.
-- 서버간 응답의 시각은 record timezone offset ISO-8601이고, 저장은 항상 record timezone wall-clock이다.
-- 결과 graph 저장과 채택 source 삭제, 영수증 기록은 하나의 transaction이다.
-- 콜백 body에 결과 graph를 추가하지 않는다.
-- SUCCESS 상태 전이는 영수증 확인 뒤에만 한다(토큰 소유가 저장을 증명하지 못한다).
-- 실제 credential이나 단계별 토큰 값을 문서·log에 기록하지 않는다.
+- dispatch body 필드명은 AI 규격이 권위다.
+- 서버간 모든 단계는 같은 task token을 쓰고 Redis에는 hash만 저장한다.
+- 입력과 결과의 stage 전이는 Redis task JSON CAS다.
+- 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
+- callback body에 graph를 추가하지 않는다.
+- 실제 token 값을 문서·로그에 기록하지 않는다.
 
 ## Known Gaps
 
-- AI endpoint service authentication 미구현(production 전 필수 — 이슈 #181).
-- 결과 저장 후 콜백 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계).
+- AI endpoint service authentication 미구현(이슈 #181).
+- `RESULT_WRITING` 장애 task의 reconciliation과 자동 복구가 없다.
 
 ## Update When
 
-dispatch shape/endpoint, 입력·결과 DTO, 단계별 토큰 규칙, 결과 저장 transaction 계약, callback header/body,
-인증 또는 failure semantics가 바뀔 때 갱신한다.
+dispatch shape, 입력·결과 DTO, token/header, Redis stage, 결과 transaction, callback 또는 failure semantics가
+바뀔 때 갱신한다.
 
 ## Validation
 
 ```bash
-./gradlew test --tests 'com.laimory.server.timeline.service.HttpTimelineAiDispatcherTest' \
-  --tests 'com.laimory.server.timeline.service.AiDispatcherWiringTest' \
-  --tests 'com.laimory.server.timeline.service.Fake*' \
-  --tests 'com.laimory.server.timeline.service.TimelineAi*'
+./gradlew test
 docker compose up -d
 ./gradlew integrationTest --tests 'com.laimory.server.timeline.service.TimelineAiTaskFlowIntegrationTest'
 ```

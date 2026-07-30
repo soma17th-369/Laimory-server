@@ -21,7 +21,6 @@ import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
-import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.service.TimelineAiResultService;
 import com.laimory.server.timeline.service.TimelineAiTaskInputService;
@@ -73,8 +72,7 @@ class TimelineAiTaskControllerTest {
                         OffsetDateTime.of(DATE.plusDays(1).atStartOfDay(), KST)),
                 List.of(new AiTimelineTaskInputResponse.SourceItem("raw-1", ItemType.CALENDAR,
                         OffsetDateTime.of(DATE.atTime(9, 0), KST), null,
-                        JsonNodeFactory.instance.objectNode().put("title", "스탠드업"))),
-                "next-token");
+                        JsonNodeFactory.instance.objectNode().put("title", "스탠드업"))));
     }
 
     @Test
@@ -93,7 +91,7 @@ class TimelineAiTaskControllerTest {
                 .andExpect(jsonPath("$.sourceItems[0].itemType").value("CALENDAR"))
                 .andExpect(jsonPath("$.sourceItems[0].startAt").value("2026-06-17T09:00:00+09:00"))
                 .andExpect(jsonPath("$.sourceItems[0].payload.title").value("스탠드업"))
-                .andExpect(jsonPath("$.resultToken").value("next-token"))
+                .andExpect(jsonPath("$.resultToken").doesNotExist())
                 // DB 식별자·사용자 ID는 응답에 없다.
                 .andExpect(jsonPath("$.dailyRecordId").doesNotExist())
                 .andExpect(jsonPath("$.userId").doesNotExist());
@@ -132,16 +130,13 @@ class TimelineAiTaskControllerTest {
     }
 
     @Test
-    void result_forwardsTokenHeaderAndBody_andReturnsNextToken() throws Exception {
-        when(timelineAiResultService.storeResult(anyString(), eq("t-1"), eq("tok-2"), any()))
-                .thenReturn(new AiTimelineResultResponse("callback-token"));
-
+    void result_forwardsTokenHeaderAndBody_andReturnsBodiless200() throws Exception {
         mockMvc.perform(post(RESULT)
                         .header("Task-Token", "tok-2")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(RESULT_BODY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.callbackToken").value("callback-token"));
+                .andExpect(jsonPath("$").doesNotExist());
 
         ArgumentCaptor<AiTimelineResultRequest> request =
                 ArgumentCaptor.forClass(AiTimelineResultRequest.class);

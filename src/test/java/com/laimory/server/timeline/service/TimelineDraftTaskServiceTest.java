@@ -190,26 +190,19 @@ class TimelineDraftTaskServiceTest {
 
         String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
-        // Redis에 저장되는 값(createProcessing 인자)은 세 단계 hash, AI에 전달되는 값(dispatch body)은 T1 원문이어야 한다.
-        ArgumentCaptor<TimelineDraftTask.TokenHashes> hashCaptor =
-                ArgumentCaptor.forClass(TimelineDraftTask.TokenHashes.class);
+        // Redis에는 단일 token hash, AI dispatch body에는 원문이 전달돼야 한다.
+        ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
         verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(),
                 hashCaptor.capture(), any());
         ArgumentCaptor<AiTimelineDispatchRequest> requestCaptor =
                 ArgumentCaptor.forClass(AiTimelineDispatchRequest.class);
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
 
-        TimelineDraftTask.TokenHashes stored = hashCaptor.getValue();
+        String stored = hashCaptor.getValue();
         String dispatchedToken = requestCaptor.getValue().taskToken();
         assertThat(dispatchedToken).isNotBlank();
-        assertThat(stored.inputTokenHash()).isEqualTo(TaskTokens.hash(dispatchedToken));
-        assertThat(stored.inputTokenHash()).isNotEqualTo(dispatchedToken);
-
-        // 다음 단계 hash는 파생 chain을 따른다 — 서버는 어느 단계 원문도 저장하지 않는다.
-        String resultToken = TaskTokens.deriveResultToken(dispatchedToken, taskId);
-        assertThat(stored.resultTokenHash()).isEqualTo(TaskTokens.hash(resultToken));
-        assertThat(stored.callbackTokenHash())
-                .isEqualTo(TaskTokens.hash(TaskTokens.deriveCallbackToken(resultToken, taskId)));
+        assertThat(stored).isEqualTo(TaskTokens.hash(dispatchedToken));
+        assertThat(stored).isNotEqualTo(dispatchedToken);
     }
 
     @Test

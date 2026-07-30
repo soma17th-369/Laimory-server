@@ -14,6 +14,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.timeline.TaskStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -116,6 +117,33 @@ class TimelineTaskStoreTest {
     }
 
     @Test
+    void replaceIfUnchanged_processingStage_usesAtomicCasWithBothIndexes() throws Exception {
+        TimelineDraftTask expected = processingTask();
+        TimelineDraftTask replacement = expected.withStage(TaskStage.RESULT_PENDING);
+        when(redis.compareAndSetAndAddToSortedSets(
+                anyString(), anyString(), anyString(), any(),
+                anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(true);
+
+        assertThat(store.replaceIfUnchanged(
+                "abc", expected, replacement, Duration.ofMinutes(3))).isTrue();
+
+        ArgumentCaptor<String> expectedJson = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> replacementJson = ArgumentCaptor.forClass(String.class);
+        verify(redis).compareAndSetAndAddToSortedSets(
+                org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
+                expectedJson.capture(), replacementJson.capture(),
+                org.mockito.ArgumentMatchers.eq(Duration.ofMinutes(3)),
+                org.mockito.ArgumentMatchers.eq(TimelineTaskStore.PROCESSING_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq(USER_INDEX_KEY),
+                org.mockito.ArgumentMatchers.eq("abc"),
+                org.mockito.ArgumentMatchers.eq(STARTED_AT.toEpochMilli()));
+        assertThat(objectMapper.readValue(expectedJson.getValue(), TimelineDraftTask.class)).isEqualTo(expected);
+        assertThat(objectMapper.readValue(replacementJson.getValue(), TimelineDraftTask.class))
+                .isEqualTo(replacement);
+    }
+
+    @Test
     void save_terminalTasks_omitProcessingStartedAtAndWindow() throws Exception {
         // PROCESSING 전용 lifecycle: 종결 JSON에는 key 자체가 없다(NON_NULL — terminal shape 불변).
         store.save("s", TimelineDraftTask.success(7L, 42L, tokenHashes("h")), Duration.ofHours(24));
@@ -146,7 +174,7 @@ class TimelineTaskStoreTest {
         for (String value : java.util.List.of("ERROR_1009", "-1009")) {
             when(redis.get("timeline:draft-task:string-error")).thenReturn(
                     "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"" + value + "\","
-                            + "\"callbackTokenHash\":\"h\",\"userId\":7}");
+                            + "\"tokenHash\":\"h\",\"userId\":7}");
 
             assertThatThrownBy(() -> store.find("string-error"))
                     .isInstanceOf(IllegalStateException.class);
@@ -233,7 +261,7 @@ class TimelineTaskStoreTest {
         when(redis.get("timeline:draft-task:invalid")).thenReturn(
                 "{\"status\":\"PROCESSING\",\"recordDate\":\"2026-05-08\",\"recordAt\":\"2026-05-08T22:41:00\","
                         + "\"recordTimezone\":\"Asia/Seoul\",\"userMemory\":{\"usersCharacter\":null},"
-                        + "\"timelineWindow\":null,\"error\":null,\"callbackTokenHash\":\"h\"}");
+                        + "\"timelineWindow\":null,\"error\":null,\"tokenHash\":\"h\"}");
 
         assertThatThrownBy(() -> store.find("invalid"))
                 .isInstanceOf(IllegalStateException.class);
@@ -251,7 +279,7 @@ class TimelineTaskStoreTest {
         assertThat(found.get().dailyRecordId()).isEqualTo(42L);
         assertThat(found.get().timelineWindow().startTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(18, 30));
         assertThat(found.get().timelineWindow().endTime()).isEqualTo(LocalDate.of(2026, 5, 8).atTime(22, 41));
-        assertThat(found.get().callbackTokenHash()).isEqualTo("token-hash");
+        assertThat(found.get().tokenHash()).isEqualTo("token-hash");
         assertThat(found.get()).isEqualTo(task);
     }
 
@@ -360,11 +388,11 @@ class TimelineTaskStoreTest {
         // T12: owner 누락·null·0 등 역직렬화 불가 JSON은 안전 판정이 불가하므로 500이며,
         // 같은 조회의 어떤 member도 자동 삭제하지 않는다(수동 조사 가능성 보존).
         for (String malformed : java.util.List.of(
-                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"tokenHash\":\"h\",\"stage\":\"INPUT_PENDING\","
                         + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\"}",
-                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"tokenHash\":\"h\",\"stage\":\"INPUT_PENDING\","
                         + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\",\"userId\":null}",
-                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"callbackTokenHash\":\"h\","
+                "{\"status\":\"PROCESSING\",\"dailyRecordId\":42,\"tokenHash\":\"h\",\"stage\":\"INPUT_PENDING\","
                         + "\"processingStartedAt\":\"2026-05-08T13:41:07Z\",\"userId\":0}",
                 "not-json")) {
             when(redis.getSortedSetReverseRange(USER_INDEX_KEY)).thenReturn(List.of("bad", "gone"));

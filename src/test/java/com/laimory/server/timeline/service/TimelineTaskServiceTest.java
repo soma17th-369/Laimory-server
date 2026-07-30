@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.TaskStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
@@ -67,7 +68,7 @@ class TimelineTaskServiceTest {
         service.refreshProcessing("t", task);
 
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
-        verify(timelineTaskStore).save(eq("t"), eq(task), ttl.capture());
+        verify(timelineTaskStore).replaceIfUnchanged(eq("t"), eq(task), eq(task), ttl.capture());
         assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
         assertThat(task.processingStartedAt()).isEqualTo(STARTED_AT);
     }
@@ -78,24 +79,18 @@ class TimelineTaskServiceTest {
 
         assertThatThrownBy(() -> service.refreshProcessing("t", terminal))
                 .isInstanceOf(IllegalStateException.class);
-        verify(timelineTaskStore, never()).save(any(), any(), any());
+        verify(timelineTaskStore, never()).replaceIfUnchanged(any(), any(), any(), any());
     }
 
     @Test
-    void markSuccess_discardsProcessingStartedAt_withTerminalTtl() {
-        // PROCESSING 전용 lifecycle: terminal에는 시각·window를 보존하지 않는다(의도적 폐기) + terminal TTL 24시간.
-        service.markSuccess("t", USER_ID, RECORD_ID, tokenHashes("hash"));
+    void transitionStage_usesProcessingCasAndTtl() {
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
+        when(timelineTaskStore.replaceIfUnchanged(
+                "t", task, task.withStage(TaskStage.RESULT_PENDING), Duration.ofMinutes(3)))
+                .thenReturn(true);
 
-        ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
-        verify(timelineTaskStore).save(eq("t"), task.capture(), ttl.capture());
-        assertThat(task.getValue().processingStartedAt()).isNull();
-        assertThat(task.getValue().timelineWindow()).isNull();
-        // owner·dailyRecordId는 terminal에도 보존된다(폴링 소유권 대조·결과 조회용).
-        assertThat(task.getValue().userId()).isEqualTo(USER_ID);
-        assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
-        assertThat(ttl.getValue()).isEqualTo(Duration.ofHours(24));
-        verify(timelineMetrics).recordTerminalSuccess();
+        assertThat(service.transitionStage("t", task, TaskStage.RESULT_PENDING)).isTrue();
     }
 
     @Test
@@ -141,9 +136,13 @@ class TimelineTaskServiceTest {
 
     @Test
     void terminalMetric_isNotIncrementedWhenStoreFails() {
-        doThrow(new RuntimeException("redis down")).when(timelineTaskStore).save(any(), any(), any());
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
+                .withStage(TaskStage.CALLBACK_PENDING);
+        doThrow(new RuntimeException("redis down")).when(timelineTaskStore)
+                .replaceIfUnchanged(eq("t"), eq(task), any(), any());
 
-        assertThatThrownBy(() -> service.markSuccess("t", USER_ID, RECORD_ID, tokenHashes("hash")))
+        assertThatThrownBy(() -> service.markSuccessIfCurrent("t", task))
                 .isInstanceOf(RuntimeException.class);
 
         verify(timelineMetrics, never()).recordTerminalSuccess();
