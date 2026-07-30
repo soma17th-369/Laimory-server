@@ -1,5 +1,6 @@
 plugins {
 	id 'java'
+	id 'jacoco'
 	id 'org.springframework.boot' version '3.5.8'
 	id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -11,6 +12,10 @@ java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(21)
 	}
+}
+
+jacoco {
+	toolVersion = '0.8.15'
 }
 
 repositories {
@@ -69,8 +74,17 @@ tasks.named('test') {
 	}
 }
 
+tasks.named('jacocoTestReport') {
+	dependsOn tasks.named('test')
+	reports {
+		xml.required = true
+		html.required = true
+		csv.required = false
+	}
+}
+
 // 통합 테스트(실 MySQL/Redis 필요). 로컬: docker compose up -d 후 ./gradlew integrationTest
-tasks.register('integrationTest', Test) {
+def integrationTest = tasks.register('integrationTest', Test) {
 	description = 'Runs @Tag("integration") tests (requires local MySQL/Redis).'
 	group = 'verification'
 	useJUnitPlatform {
@@ -79,4 +93,19 @@ tasks.register('integrationTest', Test) {
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 	shouldRunAfter('test')
+}
+
+tasks.register('jacocoAllTestReport', JacocoReport) {
+	description = 'Generates combined JaCoCo coverage for test and integrationTest.'
+	group = 'verification'
+	dependsOn tasks.named('test'), integrationTest
+	executionData tasks.named('test').get(), integrationTest.get()
+	sourceSets sourceSets.main
+	reports {
+		xml.required = true
+		xml.outputLocation = layout.buildDirectory.file('reports/jacoco/allTests/jacocoAllTestReport.xml')
+		html.required = true
+		html.outputLocation = layout.buildDirectory.dir('reports/jacoco/allTests/html')
+		csv.required = false
+	}
 }
