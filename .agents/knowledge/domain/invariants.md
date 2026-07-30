@@ -74,8 +74,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### AI 서버간 계약
 
 - AI는 MySQL·Redis에 직접 접근하지 않는다 — 입력은 서버간 입력 조회 API로 받고 결과는 결과 저장 API로 보낸다.
-- 입력 조회·결과 저장·콜백은 dispatch가 전달한 단일 task token을 공통으로 쓴다. 서버는 원문 대신
-  SHA-256 hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
+- AI dispatch body는 기존 `taskId`·`callbackToken`·`dailyRecordId`·offset `window` 계약을 유지한다.
+  입력 조회·결과 저장·콜백은 그 `callbackToken` 원문 하나를 공통으로 쓴다. 서버는 원문 대신 SHA-256
+  hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
 - 호출 순서는 PROCESSING task의 내부 stage
   (`INPUT_PENDING → RESULT_PENDING → RESULT_WRITING → CALLBACK_PENDING`)가 제한한다.
 - stage와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua CAS다.
@@ -83,7 +84,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
 - 결과 저장은 `RESULT_PENDING → RESULT_WRITING` CAS를 선점한 요청 하나만 실행한다. MySQL 실패가 호출부로
   돌아오면 가능한 경우 RESULT_PENDING으로 복구하고, 성공하면 CALLBACK_PENDING으로 전이한다.
-- 결과 저장 endpoint는 graph만 쓰고 task 상태를 전이하지 않는다. 전이는 콜백만 한다.
+- 결과 저장 endpoint는 graph를 쓰고 내부 stage를 CALLBACK_PENDING까지 전이한다. 외부 task 상태를
+  SUCCESS/FAILED로 종결하는 책임은 콜백만 가진다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
 - SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.

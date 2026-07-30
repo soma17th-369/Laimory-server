@@ -28,12 +28,21 @@ Content-Type: application/json
 ```
 
 ```json
-{"taskId": "...", "taskToken": "..."}
+{
+  "taskId": "...",
+  "callbackToken": "...",
+  "dailyRecordId": 42,
+  "window": {
+    "startAt": "2026-07-22T00:00:00+09:00",
+    "endAt": "2026-07-23T00:00:00+09:00"
+  }
+}
 ```
 
-- 입력 데이터·DB 식별자·window는 싣지 않는다. AI가 입력 조회 API로 가져간다.
-- `taskToken`은 256-bit 난수 bearer token이다. 원문은 이 body로 전달하고 API 서버는 Redis task에
-  SHA-256 hash만 저장한다.
+- 기존 AI dispatch 계약의 네 필드와 offset ISO-8601 포맷을 유지한다. source item은 싣지 않고 AI가 입력
+  조회 API로 가져간다.
+- `callbackToken`은 외부 계약의 기존 필드명이며, 내부에서는 세 서버간 단계를 모두 인증하는 256-bit
+  난수 bearer token이다. API 서버는 Redis task에 SHA-256 hash만 저장한다.
 - 접수 성공은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - dispatcher는 4xx만 미접수 확정으로 분류한다. 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명이라
   PROCESSING을 유지하고 draft POST는 502 `-1009`로 끝난다.
@@ -44,7 +53,7 @@ Content-Type: application/json
 입력 조회·결과 저장·callback은 모두 같은 header를 쓴다.
 
 ```http
-Task-Token: <dispatch가 받은 taskToken>
+Task-Token: <dispatch가 받은 callbackToken>
 ```
 
 - 매 요청은 task 조회 직후 제시 token의 hash와 Redis `tokenHash`를 constant-time 비교한다.

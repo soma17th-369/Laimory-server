@@ -27,6 +27,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,8 +46,8 @@ import org.springframework.stereotype.Service;
  * 파생하지 않는다. 세 값 사이의 날짜 정합성도 검증하지 않는다(독립 계약).
  *
  * <p>⚠️ 단계 순서가 load-bearing이다: DailyRecord 선생성 + source 저장을 <b>먼저 커밋</b>한 뒤 Redis에
- * PROCESSING을 기록하고, 마지막에 AI에 dispatch한다 — AI는 body의 dailyRecordId·taskId로 DB를 직접 읽으므로
- * dispatch 시점에 두 데이터가 모두 commit돼 있어야 한다. Redis 저장 실패 시 source rows는 보상 삭제하되
+ * PROCESSING을 기록하고, 마지막에 AI에 dispatch한다 — AI의 서버간 입력 조회가 선생성 record와 source를
+ * 읽으므로 dispatch 시점에 두 데이터가 모두 commit돼 있어야 한다. Redis 저장 실패 시 source rows는 보상 삭제하되
  * DailyRecord는 지우지 않는다 — 이번 task가 처음 만든 record인지 durable하게 알 수 없고, 같은 날짜 기존
  * DRAFT를 잘못 지우는 것보다 empty DRAFT를 재사용하는 것이 안전하다(실패 task의 empty DRAFT는 같은 날짜
  * 재시도가 재사용하며 자동 cleanup하지 않는다).
@@ -110,10 +111,10 @@ public class TimelineDraftTaskService {
 
         String taskId = UuidV7.randomUuidV7().toString();
 
-        // 입력 조회·결과 저장·콜백이 함께 쓰는 task token. 원문은 dispatch body에만 싣고 Redis에는
-        // SHA-256 hash만 저장한다.
-        String taskToken = TaskTokens.generate();
-        String tokenHash = TaskTokens.hash(taskToken);
+        // 외부 dispatch 계약에서는 callbackToken이라는 기존 이름을 유지한다. 내부에서는 입력 조회·결과
+        // 저장·콜백이 함께 쓰며, 원문은 AI에 전달하고 Redis에는 SHA-256 hash만 저장한다.
+        String callbackToken = TaskTokens.generate();
+        String tokenHash = TaskTokens.hash(callbackToken);
 
         Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
         existingRecord
@@ -130,7 +131,7 @@ public class TimelineDraftTaskService {
         }
 
         // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
-        // AI가 taskId로 DB에서 직접 읽으므로 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
+        // AI 입력 조회가 이 값을 반환하므로 source 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
         // BusinessException(-1014 전이 / -1015 영구)를 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
         List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
 
@@ -158,13 +159,14 @@ public class TimelineDraftTaskService {
             throw e;
         }
 
-        // 3. AI dispatch — 접수 body에 taskId와 task token 원문만 싣는다. 나머지 입력(record 메타데이터·
-        //    window·source item)은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
+        // 3. AI dispatch — 기존 body 계약(taskId·callbackToken·dailyRecordId·offset window)을 유지한다.
+        //    source item은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
         //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
         //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
         //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
         try {
-            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(taskId, taskToken));
+            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
+                    taskId, callbackToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
         } catch (TimelineAiDispatchRejectedException e) {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
@@ -189,6 +191,18 @@ public class TimelineDraftTaskService {
         }
 
         return taskId;
+    }
+
+    /**
+     * Android local window를 검증된 recordTimeZone 기반 offset ISO-8601로 변환한다.
+     * Redis에는 local 원본을 유지하고 AI dispatch에는 기존 transport 사본을 전달한다.
+     */
+    private static AiTimelineDispatchRequest.Window toOffsetWindow(
+            TimelineWindowDto window, String recordTimeZone) {
+        ZoneId zone = ZoneId.of(recordTimeZone);
+        return new AiTimelineDispatchRequest.Window(
+                window.startTime().atZone(zone).toOffsetDateTime(),
+                window.endTime().atZone(zone).toOffsetDateTime());
     }
 
     /** 요청 배치 내 중복 rawId를 제거한다(첫 항목 유지). 유출 방지로 로그엔 개수만 남긴다(rawId는 클라 입력값). */

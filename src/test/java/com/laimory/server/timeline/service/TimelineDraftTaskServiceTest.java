@@ -41,6 +41,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -180,8 +182,13 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
         AiTimelineDispatchRequest request = requestCaptor.getValue();
         assertThat(request.taskId()).isEqualTo(taskId);
-        // 입력 데이터는 body에 싣지 않는다 — AI가 이 토큰으로 입력 조회 API를 호출해 받아간다.
-        assertThat(request.taskToken()).isNotBlank();
+        assertThat(request.callbackToken()).isNotBlank();
+        assertThat(request.dailyRecordId()).isEqualTo(RECORD_ID);
+        // Asia/Seoul(+09:00) 변환 — wall-clock은 유지되고 offset만 붙는다.
+        assertThat(request.window().startAt())
+                .isEqualTo(OffsetDateTime.of(WINDOW.startTime(), ZoneOffset.ofHours(9)));
+        assertThat(request.window().endAt())
+                .isEqualTo(OffsetDateTime.of(WINDOW.endTime(), ZoneOffset.ofHours(9)));
     }
 
     @Test
@@ -199,7 +206,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
 
         String stored = hashCaptor.getValue();
-        String dispatchedToken = requestCaptor.getValue().taskToken();
+        String dispatchedToken = requestCaptor.getValue().callbackToken();
         assertThat(dispatchedToken).isNotBlank();
         assertThat(stored).isEqualTo(TaskTokens.hash(dispatchedToken));
         assertThat(stored).isNotEqualTo(dispatchedToken);

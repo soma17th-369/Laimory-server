@@ -12,6 +12,7 @@ import io.micrometer.core.instrument.observation.DefaultMeterObservationHandler;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -69,7 +70,11 @@ class FakeTimelineAiDispatcherTest {
     }
 
     private AiTimelineDispatchRequest request() {
-        return new AiTimelineDispatchRequest(TASK_ID, INPUT_TOKEN);
+        return new AiTimelineDispatchRequest(
+                TASK_ID, INPUT_TOKEN, 42L,
+                new AiTimelineDispatchRequest.Window(
+                        OffsetDateTime.parse("2026-06-17T00:00:00+09:00"),
+                        OffsetDateTime.parse("2026-06-18T00:00:00+09:00")));
     }
 
     private void expectInput() {
