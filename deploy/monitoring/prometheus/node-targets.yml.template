@@ -1,3 +1,4 @@
+# Rendered by render-prometheus-targets.py; do not edit generated output.
 - targets:
     - "${monitoring_private_ip}:9100"
   labels:

@@ -1,0 +1,64 @@
+# kind|repository source|S3 key or exclusion reason
+static|src/main/resources/db/schema.sql|bootstrap/schema.sql
+
+static|deploy/elk/docker-compose.yml|bootstrap/elk/docker-compose.yml
+static|deploy/elk/filebeat.yml|bootstrap/elk/filebeat.yml
+static|deploy/elk/ilm-policy.json|bootstrap/elk/ilm-policy.json
+static|deploy/elk/index-template.json|bootstrap/elk/index-template.json
+exclude|deploy/elk/.env.example|local non-secret compose defaults; not a host bootstrap input
+exclude|deploy/elk/README.md|operator documentation
+
+static|deploy/monitoring/blackbox/blackbox.yml|bootstrap/monitoring/blackbox/blackbox.yml
+static|deploy/monitoring/docker-compose.yml|bootstrap/monitoring/docker-compose.yml
+static|deploy/monitoring/grafana/alert-rule-files.txt|bootstrap/monitoring/grafana/alert-rule-files.txt
+static|deploy/monitoring/grafana/provisioning/alerting/application-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/application-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/availability-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/availability-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/contact-points.yml|bootstrap/monitoring/grafana/provisioning/alerting/contact-points.yml
+static|deploy/monitoring/grafana/provisioning/alerting/extended-infrastructure-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/extended-infrastructure-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/infrastructure-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/infrastructure-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/lifecycle-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/lifecycle-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/log-pipeline-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/log-pipeline-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/notification-policy.yml|bootstrap/monitoring/grafana/provisioning/alerting/notification-policy.yml
+static|deploy/monitoring/grafana/provisioning/alerting/prometheus-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/prometheus-rules.yml
+static|deploy/monitoring/grafana/provisioning/alerting/templates.yml|bootstrap/monitoring/grafana/provisioning/alerting/templates.yml
+static|deploy/monitoring/grafana/provisioning/alerting/tls-rules.yml|bootstrap/monitoring/grafana/provisioning/alerting/tls-rules.yml
+static|deploy/monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json|bootstrap/monitoring/grafana/provisioning/dashboards/json/laimory-infrastructure.json
+static|deploy/monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json|bootstrap/monitoring/grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+static|deploy/monitoring/grafana/provisioning/dashboards/json/laimory-logs.json|bootstrap/monitoring/grafana/provisioning/dashboards/json/laimory-logs.json
+static|deploy/monitoring/grafana/provisioning/dashboards/json/laimory-overview.json|bootstrap/monitoring/grafana/provisioning/dashboards/json/laimory-overview.json
+static|deploy/monitoring/grafana/provisioning/dashboards/provider.yml|bootstrap/monitoring/grafana/provisioning/dashboards/provider.yml
+static|deploy/monitoring/grafana/provisioning/datasources/elasticsearch.yml|bootstrap/monitoring/grafana/provisioning/datasources/elasticsearch.yml
+static|deploy/monitoring/grafana/provisioning/datasources/prometheus.yml|bootstrap/monitoring/grafana/provisioning/datasources/prometheus.yml
+static|deploy/monitoring/grafana/smoke/smoke-rule.delete.yml|bootstrap/monitoring/grafana/smoke/smoke-rule.delete.yml
+static|deploy/monitoring/grafana/smoke/smoke-rule.firing.yml|bootstrap/monitoring/grafana/smoke/smoke-rule.firing.yml
+static|deploy/monitoring/grafana/smoke/smoke-rule.resolved.yml|bootstrap/monitoring/grafana/smoke/smoke-rule.resolved.yml
+static|deploy/monitoring/nginx/manage-grafana-proxy.sh|bootstrap/monitoring/nginx/manage-grafana-proxy.sh
+static|deploy/monitoring/node-exporter/install.sh|bootstrap/monitoring/node-exporter/install.sh
+static|deploy/monitoring/node-exporter/uninstall.sh|bootstrap/monitoring/node-exporter/uninstall.sh
+generated|deploy/monitoring/prometheus/application-targets.yml.template|bootstrap/monitoring/prometheus/targets/application.yml
+generated|deploy/monitoring/prometheus/node-targets.yml.template|bootstrap/monitoring/prometheus/targets/node.yml
+generated|deploy/monitoring/prometheus/probe-targets.yml.template|bootstrap/monitoring/prometheus/targets/probe.yml
+static|deploy/monitoring/prometheus/prometheus.yml|bootstrap/monitoring/prometheus/prometheus.yml
+static|deploy/monitoring/scripts/collect-aws-metrics.sh|bootstrap/monitoring/scripts/collect-aws-metrics.sh
+static|deploy/monitoring/scripts/collect-elasticsearch-metrics.sh|bootstrap/monitoring/scripts/collect-elasticsearch-metrics.sh
+static|deploy/monitoring/scripts/collect-filebeat-metrics.sh|bootstrap/monitoring/scripts/collect-filebeat-metrics.sh
+static|deploy/monitoring/scripts/configure-mysql-exporter-user.sh|bootstrap/monitoring/scripts/configure-mysql-exporter-user.sh
+static|deploy/monitoring/scripts/configure-redis-exporter-user.sh|bootstrap/monitoring/scripts/configure-redis-exporter-user.sh
+static|deploy/monitoring/scripts/deploy-alert-rules.sh|bootstrap/monitoring/scripts/deploy-alert-rules.sh
+static|deploy/monitoring/scripts/install-secret.sh|bootstrap/monitoring/scripts/install-secret.sh
+static|deploy/monitoring/scripts/publish-alert-rules.sh|bootstrap/monitoring/scripts/publish-alert-rules.sh
+static|deploy/monitoring/scripts/validate-alert-rules.sh|bootstrap/monitoring/scripts/validate-alert-rules.sh
+static|deploy/monitoring/scripts/validate-secrets.sh|bootstrap/monitoring/scripts/validate-secrets.sh
+exclude|deploy/monitoring/scripts/render-prometheus-targets.py|local target renderer; generated files are uploaded instead
+static|deploy/monitoring/systemd/laimory-aws-metrics.service|bootstrap/monitoring/systemd/laimory-aws-metrics.service
+static|deploy/monitoring/systemd/laimory-aws-metrics.timer|bootstrap/monitoring/systemd/laimory-aws-metrics.timer
+static|deploy/monitoring/systemd/laimory-elasticsearch-metrics.service|bootstrap/monitoring/systemd/laimory-elasticsearch-metrics.service
+static|deploy/monitoring/systemd/laimory-elasticsearch-metrics.timer|bootstrap/monitoring/systemd/laimory-elasticsearch-metrics.timer
+static|deploy/monitoring/systemd/laimory-filebeat-metrics.service|bootstrap/monitoring/systemd/laimory-filebeat-metrics.service
+static|deploy/monitoring/systemd/laimory-filebeat-metrics.timer|bootstrap/monitoring/systemd/laimory-filebeat-metrics.timer
+static|deploy/monitoring/systemd/laimory-monitoring.service|bootstrap/monitoring/systemd/laimory-monitoring.service
+exclude|deploy/monitoring/README.md|operator documentation
+exclude|deploy/monitoring/tests/test-alert-rule-scripts.sh|repository test
+exclude|deploy/monitoring/tests/test-render-prometheus-targets.py|repository test
+
+static|deploy/was/patch_trusted_edge_nginx.py|bootstrap/was/patch_trusted_edge_nginx.py

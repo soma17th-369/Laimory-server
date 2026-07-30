@@ -11,9 +11,9 @@ import textwrap
 import unittest
 
 
-TERRAFORM_DIR = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = TERRAFORM_DIR.parent
-PATCHER_PATH = TERRAFORM_DIR / "scripts" / "patch_trusted_edge_nginx.py"
+WAS_DIR = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = WAS_DIR.parents[1]
+PATCHER_PATH = WAS_DIR / "patch_trusted_edge_nginx.py"
 SPEC = importlib.util.spec_from_file_location("patch_trusted_edge_nginx", PATCHER_PATH)
 PATCHER = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -159,25 +159,8 @@ class TrustedEdgeNginxPatcherTest(unittest.TestCase):
         with self.assertRaises(PATCHER.LayoutError):
             PATCHER.patch_text(source)
 
-    def test_readme_embeds_the_tested_patcher_verbatim(self) -> None:
-        readme = (TERRAFORM_DIR / "README.md").read_text()
-        start_marker = "cat > \"$PATCHER\" <<'TRUSTED_EDGE_PATCHER'\n"
-        end_marker = "\nTRUSTED_EDGE_PATCHER\n"
-        start = readme.index(start_marker) + len(start_marker)
-        end = readme.index(end_marker, start)
-
-        self.assertEqual(readme[start:end] + "\n", PATCHER_PATH.read_text())
-
-    def test_rebuild_recipe_application_location_passes_semantic_check(self) -> None:
-        recipe = (TERRAFORM_DIR / "user_data" / "was.sh.tftpl").read_text()
-        start_marker = "cat > /etc/nginx/sites-available/laimory <<'NGINX'\n"
-        start = recipe.index(start_marker) + len(start_marker)
-        nginx_site = recipe[start : recipe.index("\nNGINX\n", start)]
-
-        PATCHER.validate_text(nginx_site)
-
     def test_runbook_restores_every_post_mutation_failure(self) -> None:
-        readme = (TERRAFORM_DIR / "README.md").read_text()
+        readme = (WAS_DIR / "README.md").read_text()
         runbook = readme[
             readme.index("restore_and_fail() {") : readme.index('echo "backup=$BACKUP"')
         ]
@@ -204,7 +187,7 @@ class TrustedEdgeNginxPatcherTest(unittest.TestCase):
         )
 
     def test_embedded_ssm_shell_is_valid_bash(self) -> None:
-        readme = (TERRAFORM_DIR / "README.md").read_text()
+        readme = (WAS_DIR / "README.md").read_text()
         start = readme.index("sudo bash <<'ROOT'\n")
         end = readme.index("\nROOT\n", start) + len("\nROOT\n")
 

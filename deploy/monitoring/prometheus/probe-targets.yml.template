@@ -1,3 +1,4 @@
+# Rendered by render-prometheus-targets.py; do not edit generated output.
 - targets:
     - "https://${dev_api_domain}/status"
   labels:

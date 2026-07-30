@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed patcher for the Laimory application nginx location."""
+"""Fail-closed patcher for the Laimory application nginx trusted edge."""
 
 from __future__ import annotations
 

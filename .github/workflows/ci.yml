@@ -14,8 +14,14 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+      - run: bash .github/scripts/test-deploy-contract.sh
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
       - run: .github/scripts/test-monitoring-deploy-contract.sh
+      - name: Test operational assets
+        run: |
+          python3 deploy/was/tests/test_patch_trusted_edge_nginx.py
+          python3 deploy/monitoring/tests/test-render-prometheus-targets.py
+          deploy/tests/test-bootstrap-assets.sh
       - name: Start integration test infrastructure
         run: docker compose up -d --wait --wait-timeout 120
       - name: Run build, integration tests, and coverage

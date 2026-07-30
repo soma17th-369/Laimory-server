@@ -15,7 +15,7 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
 - `geo/**` providers and tests
 - `timeline/photo/**`, S3/CDN config and tests
 - `push/**` sender/config and tests
-- `terraform/storage_cdn.tf`, IAM and deploy workflow
+- `deploy/**`, live IAM and deploy workflow
 
 ## Current Implementation
 
@@ -89,7 +89,7 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - 무효 등록 삭제는 발송 대상 조회 snapshot 시각 기준 **조건부**다(`last_registered_at <= snapshot`) —
   지연 도착한 무효 응답이 snapshot 이후 같은 FID로 갱신된 정상 재등록을 지우지 않는다.
 - credential은 ADC로만 읽는다 — `GOOGLE_APPLICATION_CREDENTIALS`에 컨테이너 내부 read-only
-  service-account JSON **파일 경로**만 두고, JSON 원문을 property/Git/이미지/Terraform에 넣지 않는다.
+  service-account JSON **파일 경로**만 두고, JSON 원문을 property/Git/이미지/S3 bootstrap에 넣지 않는다.
   파일은 컨테이너 runtime user(appuser, UID 1001)가 읽을 수 있어야 한다(chown 1001·0400).
   firebase 모드에서 ADC/초기화 실패는 기동 실패다(fail-fast). Admin SDK HTTP timeout은
   기본 0(무한)이라 `FirebasePushConfig`가 connect/read/write 유한값을 강제한다.
