@@ -87,6 +87,7 @@ public class TimelineDraftCleanupScheduler {
             }
         }
         log.info("draft cleanup 완료: deleted={}, failed={}", deleted, failed);
+
     }
 
     /**

@@ -43,10 +43,14 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 timeline draft의 큰 흐름은 다음과 같다.
 
 ```text
-DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING
-→ AI dispatch (POST /v1/timeline — taskId·callbackToken·dailyRecordId·offset window)
-→ AI가 validation + final Event/Item/junction INSERT + accepted source DELETE를 direct-write commit
-→ status-only callback → 서버는 token을 원자 소비한 최초 요청만 Redis terminal 전이
+DailyRecord 선생성 + source staging(한 트랜잭션) + Redis PROCESSING/INPUT_PENDING
+→ AI dispatch (POST /v1/timeline — taskId·최초 task token)
+→ AI가 최초 token으로 GET /s/api/{v}/timeline/drafts/{taskId}/input 호출
+→ 새 result token hash + Redis RESULT_PENDING CAS, 응답 body로 result token 전달
+→ AI가 result token으로 POST .../result 호출
+→ 새 callback token hash + Redis CALLBACK_PENDING CAS 선점
+→ Event/Item/junction INSERT + accepted source DELETE를 한 MySQL transaction으로 commit
+→ 응답 body로 callback token 전달 → status-only callback → Redis terminal CAS + 완료 푸시
 ```
 
 Event 편집은 별도 동기 흐름이다. `photosToAdd`가 없거나 빈 PATCH는 Event/memo transaction을 실행한다.
@@ -72,8 +76,8 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 ## Known Gaps
 
 - API chain의 JWT authentication filter와 principal-to-userId 전달이 아직 없다.
-- 실 AI writer(Laimory-AI)의 draft direct-write 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
-  Event PATCH 수동 PHOTO writer는 구현됨).
+- 실 AI(Laimory-AI)의 서버간 입력·결과 호출 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
+  입력·결과 endpoint는 구현됨).
 - schema migration framework가 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제의 교차 작업 concurrency control은 미구현이다.
 

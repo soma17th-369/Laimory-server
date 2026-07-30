@@ -25,7 +25,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 | Prefix | Contract | Current enforcement |
 |---|---|---|
 | `/api/{version}` | 인증 없는 app-facing public API | public |
-| `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | callback token 등 endpoint가 강제 |
+| `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | 단계별 task token을 endpoint가 강제 |
 | `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `-2001` |
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
@@ -66,6 +66,14 @@ Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit�
 반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 같은 날짜 작업 중이라는 이유로
 `-1016`을 반환하지 않는다.
 
+`/s/api/{version}/timeline/drafts/{taskId}`에는 AI 서버간 endpoint 셋이 있다 — `GET .../input`(정규 AI 입력
+반환), `POST .../result`(Event/Item/junction 저장 + 채택 source 삭제), `POST .../callback`(작업 상태 전이).
+세 endpoint 모두 현재 단계에서 받은 `Task-Token` header를 검증하고 Redis 내부 `ProcessStage`가 호출
+순서를 제한한다. 입력·결과 성공 응답은 후속 요청용 `taskToken`을 body로 반환한다. 토큰 불일치는
+401 `-1002`, 작업 없음·만료는 404 `-1001`, 현재 stage와 맞지 않는 입력·결과·callback 또는 상충
+terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 재요청은 401이다.
+계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
+
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
@@ -101,6 +109,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - error code는 기존 번호를 음수화한 JSON integer이고 `body=null`이다.
 - `/status`는 infrastructure probe를 위한 plain JSON으로 envelope 밖이다.
 - AI callback은 성공 시 body 없는 HTTP 200을 반환한다. callback `errorCode`는 JSON integer다.
+- 서버간 AI endpoint(`/s/api`)는 app envelope를 쓰지 않고 typed JSON을 직접 반환한다(에러만 envelope).
 - Entity를 직접 반환하지 않고 response DTO를 사용한다.
 
 ### Errors
@@ -117,7 +126,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
   `ExceptionType.fromStatus` 폴백으로 정한다(406이 `-400`과 함께 나갈 수 있음).
 - 새 code block을 할당할 때 기존 번호 블록을 보존한다. domain block 숫자는 HTTP status와 무관하며
-  status는 enum field가 결정한다. `1006`, `1010`, `1016` 번호는 재사용하지 않는다.
+  status는 enum field가 결정한다. `1006`, `1010`, `1012`, `1016` 번호는 재사용하지 않는다.
 - 새 error는 `ExceptionType`에 code/status/logLevel을 추가하고 기본·ko·en message bundle을 함께 추가한다.
   같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.

@@ -18,7 +18,7 @@ public class NoOpTimelineAiDispatcher implements TimelineAiDispatcher {
 
     @Override
     public void dispatch(AiTimelineDispatchRequest request) {
-        // callbackToken은 의도적으로 로그에서 제외한다.
+        // taskToken은 의도적으로 로그에서 제외한다.
         log.info("no-op timeline ai dispatch: taskId={}", request.taskId());
     }
 }

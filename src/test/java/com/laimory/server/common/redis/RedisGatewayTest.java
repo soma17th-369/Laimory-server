@@ -64,34 +64,6 @@ class RedisGatewayTest {
     }
 
     @Test
-    void setIfAbsent_prependsPrefix_andReturnsAcquisition() {
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
-        when(valueOps.setIfAbsent("dev_" + LOGICAL_KEY, "holder", Duration.ofHours(1))).thenReturn(true);
-
-        assertThat(redis.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1))).isTrue();
-    }
-
-    @Test
-    void setIfAbsent_existingKey_returnsFalse() {
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "");
-        when(valueOps.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1))).thenReturn(false);
-
-        assertThat(redis.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1))).isFalse();
-    }
-
-    @Test
-    void setIfAbsent_nullFromTemplate_throwsIllegalState() {
-        when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "");
-        when(valueOps.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1))).thenReturn(null);
-
-        assertThatThrownBy(() -> redis.setIfAbsent(LOGICAL_KEY, "holder", Duration.ofHours(1)))
-                .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
     void setAndAddToSortedSets_prefixesAllThreeKeys_andPassesAtomicScriptArguments() {
         // 책임 경계 고정(T13): 값 key + 두 index key가 전부 prefix된 채 script 한 번의 execute로 전달되고,
         // TTL은 한 인자로 값 PSETEX와 만료 대상 index PEXPIRE에 함께 쓰인다(script 내부 계약).
@@ -121,6 +93,34 @@ class RedisGatewayTest {
         redis.setAndRemoveFromSortedSets(LOGICAL_KEY, "{\"status\":\"SUCCESS\"}",
                 Duration.ofHours(24), "timeline:draft-task:processing-index",
                 "timeline:draft-task:user:7:processing", "abc");
+    }
+
+    @Test
+    void compareAndSetAndAddToSortedSets_returnsScriptDecision() {
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of("dev_timeline:draft-task:abc",
+                        "dev_timeline:draft-task:processing-index",
+                        "dev_timeline:draft-task:user:7:processing")),
+                eq("old-json"), eq("180000"), eq("new-json"),
+                eq("1780000000000"), eq("abc"))).thenReturn(1L);
+
+        assertThat(redis.compareAndSetAndAddToSortedSets(
+                LOGICAL_KEY, "old-json", "new-json", Duration.ofMinutes(3),
+                "timeline:draft-task:processing-index",
+                "timeline:draft-task:user:7:processing", "abc", 1_780_000_000_000L)).isTrue();
+    }
+
+    @Test
+    void compareAndSetAndRemoveFromSortedSets_returnsFalseOnValueMismatch() {
+        RedisGateway redis = new RedisGateway(template, "");
+        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
+                eq(List.of(LOGICAL_KEY, "processing-index", "user-index")),
+                eq("old-json"), eq("86400000"), eq("terminal-json"), eq("abc"))).thenReturn(0L);
+
+        assertThat(redis.compareAndSetAndRemoveFromSortedSets(
+                LOGICAL_KEY, "old-json", "terminal-json", Duration.ofHours(24),
+                "processing-index", "user-index", "abc")).isFalse();
     }
 
     @Test

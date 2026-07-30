@@ -2,6 +2,7 @@ package com.laimory.server.timeline.repository;
 
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -15,6 +16,14 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
     @Modifying
     @Transactional
     void deleteByTaskId(String taskId);
+
+    /**
+     * task의 staging 행 중 rawId가 채택 목록에 든 행만 삭제한다(결과 저장 transaction 전용).
+     * 채택되지 않은 행은 남겨 retention cleanup이 정리한다.
+     */
+    @Modifying
+    @Transactional
+    void deleteByTaskIdAndRawIdIn(String taskId, Collection<String> rawIds);
 
     /**
      * 보관기간 초과(created_at < cutoff) 행을 조회한다(cleanup 스케줄러용). 행마다 S3 사진 객체를 먼저 지운 뒤

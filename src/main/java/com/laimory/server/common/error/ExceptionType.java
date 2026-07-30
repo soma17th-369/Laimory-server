@@ -32,8 +32,8 @@ public enum ExceptionType {
     // ── timeline ──
     DRAFT_TASK_NOT_FOUND(-1001, HttpStatus.NOT_FOUND, Level.INFO),
     DRAFT_RESULT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
-    CALLBACK_TOKEN_MISMATCH(-1002, HttpStatus.UNAUTHORIZED, Level.WARN),
-    CALLBACK_TOKEN_ALREADY_CONSUMED(-1012, HttpStatus.UNAUTHORIZED, Level.WARN),
+    TASK_TOKEN_MISMATCH(-1002, HttpStatus.UNAUTHORIZED, Level.WARN),
+    // -1012: 결번 — 재사용 금지(one-time callback token 소비 계약 제거로 폐기)
     DAILY_RECORD_ALREADY_SAVED(-1003, HttpStatus.CONFLICT, Level.INFO),
     PHOTO_COUNT_EXCEEDED(-1004, HttpStatus.BAD_REQUEST, Level.INFO),
     PHOTO_SIZE_EXCEEDED(-1005, HttpStatus.BAD_REQUEST, Level.INFO),
@@ -47,6 +47,8 @@ public enum ExceptionType {
     GEOCODING_TRANSIENT_FAILURE(-1014, HttpStatus.BAD_GATEWAY, Level.WARN),
     GEOCODING_PERMANENT_FAILURE(-1015, HttpStatus.BAD_GATEWAY, Level.ERROR),
     // -1016: 결번 — 재사용 금지
+    /** 서버간 AI 단계 요청이 task의 현재 상태와 맞지 않음(terminal task 입력 조회·결과 저장, 상충 콜백, 저장 없는 SUCCESS 콜백). */
+    DRAFT_TASK_STATE_CONFLICT(-1017, HttpStatus.CONFLICT, Level.WARN),
     TIMELINE_EVENT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     DAILY_RECORD_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
 

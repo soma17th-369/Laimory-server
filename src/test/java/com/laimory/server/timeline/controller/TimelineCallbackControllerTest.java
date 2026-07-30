@@ -28,7 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.mockito.ArgumentCaptor;
 
 /**
- * 서버간 콜백 컨트롤러 슬라이스 테스트(MockMvc). Callback-Token 헤더 전달과 401/404 매핑
+ * 서버간 콜백 컨트롤러 슬라이스 테스트(MockMvc). Task-Token 헤더 전달과 401/404 매핑
  * (envelope 에러 코드 포함)을 검증한다. 인프라 0.
  * (토큰 검증 자체의 정/오답 로직은 TimelineCallbackServiceTest에서 단위 검증.)
  */
@@ -49,7 +49,7 @@ class TimelineCallbackControllerTest {
     @Test
     void callback_forwardsTokenHeader_andReturns200() throws Exception {
         mockMvc.perform(post(CALLBACK)
-                        .header("Callback-Token", "tok-123")
+                        .header("Task-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
                 .andExpect(status().isOk());
@@ -60,7 +60,7 @@ class TimelineCallbackControllerTest {
     @Test
     void callback_acceptsNumericErrorCode() throws Exception {
         mockMvc.perform(post(CALLBACK)
-                        .header("Callback-Token", "tok-123")
+                        .header("Task-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"FAILED\",\"errorCode\":-1008}"))
                 .andExpect(status().isOk());
@@ -78,7 +78,7 @@ class TimelineCallbackControllerTest {
                 "{\"status\":\"FAILED\",\"errorCode\":\"-1008\"}"
         }) {
             mockMvc.perform(post(CALLBACK)
-                            .header("Callback-Token", "tok-123")
+                            .header("Task-Token", "tok-123")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(body))
                     .andExpect(status().isBadRequest());
@@ -89,7 +89,7 @@ class TimelineCallbackControllerTest {
 
     @Test
     void callback_serviceUnauthorized_returns401WithErrorCode() throws Exception {
-        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_MISMATCH))
+        doThrow(new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
@@ -102,16 +102,16 @@ class TimelineCallbackControllerTest {
     }
 
     @Test
-    void callback_consumedToken_returns401WithError1012() throws Exception {
-        doThrow(new BusinessException(ExceptionType.CALLBACK_TOKEN_ALREADY_CONSUMED))
+    void callback_conflictingTerminalResult_returns409WithError1017() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT))
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
-                        .header("Callback-Token", "tok-123")
+                        .header("Task-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(BODY))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value(-1012))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1017))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
@@ -122,7 +122,7 @@ class TimelineCallbackControllerTest {
                 .when(timelineCallbackService).handleCallback(anyString(), anyString(), any(), any());
 
         mockMvc.perform(post(CALLBACK)
-                        .header("Callback-Token", "tok-123")
+                        .header("Task-Token", "tok-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"SUCCESS\"}"))
                 .andExpect(status().isNotFound())

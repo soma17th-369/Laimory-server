@@ -2,17 +2,18 @@
 
 ## Scope
 
-timeline draft 생성 요청부터 AI dispatch, direct-write, callback, polling, Event 편집과 cleanup까지의 runtime
-sequence다.
+timeline draft 생성 요청부터 AI dispatch, 서버간 입력 조회·결과 저장, callback, polling, Event 편집과
+cleanup까지의 runtime sequence다.
 
 ## Read When
 
-draft POST·polling·callback·append·Event 편집·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
+draft POST·polling·서버간 입력/결과·callback·append·Event 편집·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
 - `TimelineDraftTaskService`, `TimelineDraftPreparationService`, `TimelineDraftTaskPollingService`
-- `TimelineAiDispatcher`(+`AiTimelineDispatchRequest`), `TimelineCallbackService`, `TimelineTaskService`
+- `TimelineAiDispatcher`(+`AiTimelineDispatchRequest`), `TimelineAiTaskInputService`,
+  `TimelineAiResultService`/`TimelineAiResultTransactionService`, `TimelineCallbackService`, `TimelineTaskService`
 - `TimelineEventEditService`와 Event 편집 transaction service
 - `DailyTimelineService`(읽기), `TimelineDeletionService`/`TimelineDeletionTransactionService`
 - timeline entities(junction 포함), repositories, Redis stores and integration tests
@@ -30,13 +31,13 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
 4. UUIDv7 `taskId`를 만들고, SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. callback token을 만든다(원문은 dispatch body 전용,
-   서버는 hash만 보관).
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 최초 입력 조회용 256-bit `taskToken`을 만들고
+   dispatch로 전달하며 Redis에는 SHA-256 hash만 저장한다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
-7. Redis task를 `PROCESSING`으로 저장한다(`dailyRecordId`·owner·local window·token hash·
-   `processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
+7. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
+   hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
@@ -44,8 +45,9 @@ draft POST·polling·callback·append·Event 편집·삭제·Redis state·stagin
    key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
    90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
    callback 계약의 권위는 기존 JSON이다.
-8. AI dispatcher를 호출한다 — body는 `taskId`·원문 `callbackToken`·`dailyRecordId`·record timezone 기반
-   offset 변환 window다(계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
+8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
+   기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
+   (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
    접수가 확인된 경우에만 POST가 202와 `taskId`를 반환한다.
    **실패는 "미접수 확정 vs UNKNOWN"으로 내부 상태만 구분하고, 밖으로는 모두 502(`-1009`)다** —
    실패 응답에 taskId는 없고 자동 재전송도 없다. 4xx 응답(미접수 확정,
@@ -60,30 +62,27 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 작업을 막지 않고 기존 TTL로 자연 만료한다. 따라서 409 `-1016`으로 같은 날짜 작업을 선거절하지 않는다.
 공통 admission과 대체 DB lock·retry·upsert가 모두 없으며, 실제 동시 경합의 graph 정합성은 별도 과제다.
 
-`app.ai.mode=noop`은 아무 callback도 만들지 않아 task가 만료된다.
-`fake`는 in-process로 final direct-write 후 실제 HTTP callback 경로를 호출하며 retry하지 않는다.
+`app.ai.mode=noop`은 아무 요청도 만들지 않아 task가 만료된다.
+`fake`는 실 AI와 같은 순서로 자기 서버의 입력·결과·콜백 endpoint를 실제 HTTP로 호출하며 retry하지 않는다.
 `http`는 실 AI 연동이다.
 
-### AI direct-write and callback
+### AI input, result and callback
 
-1. AI가 validation → final Event/Item/junction INSERT + 채택 source DELETE를 한 transaction으로 commit한다
-   (append-only — 기존 graph 불변, +10분 startAt nudge/end clamp 포함. 계약 상세는 ai-contract).
-2. commit 이후에만 `Callback-Token` header + body `{status,errorCode,error}`로 알린다. 결과 graph는 body에 없다.
-3. 서버 콜백은 task 조회 → token hash constant-time 검증(불일치 401 `-1002`) → Redis
-   `timeline:callback-token-uses:{taskId}` marker 원자 소비 순서다. 이미 소비된 token과 terminal 재콜백은
-   401 `-1012`이며 marker를 선점한 요청 하나만 이후 처리로 진행한다.
-4. 소비 뒤 body status가 불량이면 400이며 terminal 저장 실패와 마찬가지로 marker를 환불하지 않는다.
-   정상 요청은 Redis terminal 전이만
-   기록한다(SUCCESS든 FAILED든 결과 조립·검증·저장 없음).
-5. terminal 저장 성공 직후 완료 푸시를 비동기 best-effort로 예약한다(token 거절·terminal 저장 실패
-   경로엔 알림 없음).
-6. terminal 저장 실패는 전파된다. token은 이미 소비됐으므로 같은 token 재시도는 `-1012`이며
-   PROCESSING task는 3분 TTL로 만료한다.
+1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
+   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 성공하면 새 token hash와
+   `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다.
+2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): 새 callback token hash와
+   `CALLBACK_PENDING`을 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction
+   INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. 저장 예외면 가능한 경우 이전
+   result token hash와 RESULT_PENDING으로 복구한다. 성공하면 callback token 원문을 응답 body에 반환한다.
+3. **콜백**(`POST .../callback`, 결과 응답의 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과
+   저장 전 stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal
+   재전송은 200, 상충은 409 `-1017`이다.
+4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
 
-**수용된 MVP 한계**: commit 후 callback 전 AI process가 종료되면 살아있는 재시도 주체가 없다 — 원 task는
-PROCESSING TTL로 만료되고 final graph는 commit대로 남는다. 동일 source 전량 재시도는 `-1013`이며,
-일부 신규 source가 섞인 재시도의 SUCCESS 폴링이 기존 커밋분까지 반환해 실질 복구 경로가 된다.
-durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 시점에 설계한다.
+**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. token 교체 뒤 응답 유실 또는 프로세스
+종료 시 AI가 다음 token을 얻지 못해 task가 PROCESSING TTL로 만료될 수 있다. MySQL commit 뒤 result 응답
+유실이면 graph도 남는다. receipt, reconciliation, 자동 callback은 두지 않는다.
 
 ### Polling and read
 
@@ -145,7 +144,7 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ### Retention and cleanup
 
-- PROCESSING TTL: 3분 / SUCCESS·FAILED TTL: 24시간 / callback token 소비 marker TTL: 25시간 /
+- PROCESSING TTL: 3분(입력 조회·stage 전이마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
   source staging retention: 7일
 - PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이
   404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
@@ -155,23 +154,23 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
   inactivity면 통째로 만료한다(key TTL은 member별 TTL이 아님). member 회수는 terminal ZREM과 목록 조회
   lazy prune이 담당하며 별도 sweep은 없다 — 3분 미만 간격 생성이 terminal·조회 없이 계속되면 만료
   member가 누적될 수 있다(수용된 MVP trade-off).
-- cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)뿐이다 — AI가 채택한 source는 final
-  transaction에서 이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
+- cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)이다. 채택된 source는 결과 저장 transaction에서
+  이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
 - 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.
 
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
-- Redis SUCCESS는 AI final commit보다 먼저 기록되지 않는다(commit-then-callback + 서버는 상태 전이만).
-- 서버 callback은 AI 결과 Event/Item/junction을 쓰지 않는다 — draft final write는 AI(fake 포함)가 소유한다.
-  별도로 Event PATCH는 수동 PHOTO Item/junction을 서버 transaction에서 쓴다.
-- callback token은 hash 검증 직후 원자 소비하고 환불하지 않는다. 최초 요청만 terminal 처리로 진행하며
-  같은 token 재사용은 401 `-1012`다(at-most-once admission).
+- Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
+- draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
+  서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
+- 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고 Redis `ProcessStage`/CAS가 호출 순서와
+  동시 writer를 제한한다.
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps
 
-- commit 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
+- 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
 - DRAFT→SAVED, emotion 설정 API가 없다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.
 - 실패 task가 남긴 empty DRAFT의 자동 cleanup은 없다(같은 날짜 재시도가 재사용).
@@ -180,8 +179,8 @@ durable receipt·redispatch는 운영 빈도가 허용 불가로 확인되는 �
 
 ## Update When
 
-단계 순서, compensation, dispatch/callback 계약, junction 조회·삭제 규칙, TTL, append 또는 cleanup이
-바뀔 때 갱신한다.
+단계 순서, compensation, dispatch/입력/결과/callback 계약, junction 조회·삭제 규칙, TTL, append 또는
+cleanup이 바뀔 때 갱신한다.
 
 ## Validation
 

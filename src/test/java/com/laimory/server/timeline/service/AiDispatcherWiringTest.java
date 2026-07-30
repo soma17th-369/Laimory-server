@@ -50,7 +50,6 @@ class AiDispatcherWiringTest {
                     NoOpTimelineAiDispatcher.class,
                     FakeTimelineAiDispatcher.class,
                     HttpTimelineAiDispatcher.class,
-                    FakeAiTimelineAppendService.class,
                     DispatcherConsumer.class);
 
     /** dispatcher 인터페이스를 생성자에서 요구하는 test-only consumer(production {@code TimelineDraftTaskService} 대역). */
@@ -66,7 +65,6 @@ class AiDispatcherWiringTest {
             assertThat(context).hasNotFailed().hasSingleBean(TimelineAiDispatcher.class);
             assertThat(context.getBean(TimelineAiDispatcher.class))
                     .isInstanceOf(NoOpTimelineAiDispatcher.class);
-            assertThat(context).doesNotHaveBean(FakeAiTimelineAppendService.class);
         });
     }
 
@@ -76,12 +74,11 @@ class AiDispatcherWiringTest {
             assertThat(context).hasNotFailed().hasSingleBean(TimelineAiDispatcher.class);
             assertThat(context.getBean(TimelineAiDispatcher.class))
                     .isInstanceOf(NoOpTimelineAiDispatcher.class);
-            assertThat(context).doesNotHaveBean(FakeAiTimelineAppendService.class);
         });
     }
 
     @Test
-    void fakeMode_wiresFakeDispatcherWithAsyncProxyAndAppendService() {
+    void fakeMode_wiresFakeDispatcherWithAsyncProxy() {
         // production property 이름(spring.http.client.*)이 자동설정을 거쳐 builder에 적용되는 경로 그대로
         // fake dispatcher 생성자가 충족되어야 한다.
         runner.withPropertyValues(
@@ -90,8 +87,7 @@ class AiDispatcherWiringTest {
                         "spring.http.client.read-timeout=2s")
                 .run(context -> {
                     assertThat(context).hasNotFailed()
-                            .hasSingleBean(TimelineAiDispatcher.class)
-                            .hasSingleBean(FakeAiTimelineAppendService.class);
+                            .hasSingleBean(TimelineAiDispatcher.class);
                     TimelineAiDispatcher dispatcher = context.getBean(TimelineAiDispatcher.class);
                     // @Async 배선 회귀 가드 — proxy가 빠지면 dev POST가 callback delay만큼 블로킹된다.
                     // 실제 thread 전환·delay timing은 검증하지 않는다.
@@ -110,7 +106,6 @@ class AiDispatcherWiringTest {
                     assertThat(context).hasNotFailed().hasSingleBean(TimelineAiDispatcher.class);
                     assertThat(context.getBean(TimelineAiDispatcher.class))
                             .isInstanceOf(HttpTimelineAiDispatcher.class);
-                    assertThat(context).doesNotHaveBean(FakeAiTimelineAppendService.class);
                 });
     }
 

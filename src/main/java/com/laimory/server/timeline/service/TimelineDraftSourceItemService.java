@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemRepository;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,17 @@ public class TimelineDraftSourceItemService {
 
     public void deleteByTaskId(String taskId) {
         timelineDraftSourceItemRepository.deleteByTaskId(taskId);
+    }
+
+    /**
+     * AI가 채택한 rawId의 staging 행만 삭제한다(결과 저장 transaction 안에서 호출). 채택되지 않은 행은
+     * 남겨 retention cleanup이 정리한다. 빈 입력이면 아무것도 하지 않는다(빈 IN 쿼리 회피).
+     */
+    public void deleteAdopted(String taskId, Collection<String> rawIds) {
+        if (rawIds.isEmpty()) {
+            return;
+        }
+        timelineDraftSourceItemRepository.deleteByTaskIdAndRawIdIn(taskId, rawIds);
     }
 
     /** 보관기간 초과(created_at < cutoff) draft 행을 조회한다(cleanup 스케줄러가 행별 S3 삭제 후 개별 삭제). */

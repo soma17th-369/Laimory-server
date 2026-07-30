@@ -40,6 +40,27 @@ public class RedisGateway {
             return redis.call('zrem', KEYS[3], ARGV[3])
             """, Long.class);
 
+    private static final RedisScript<Long> COMPARE_AND_SET_AND_SORTED_SETS_ADD = new DefaultRedisScript<>("""
+            if redis.call('get', KEYS[1]) ~= ARGV[1] then
+                return 0
+            end
+            redis.call('psetex', KEYS[1], ARGV[2], ARGV[3])
+            redis.call('zadd', KEYS[2], ARGV[4], ARGV[5])
+            redis.call('zadd', KEYS[3], ARGV[4], ARGV[5])
+            redis.call('pexpire', KEYS[3], ARGV[2])
+            return 1
+            """, Long.class);
+
+    private static final RedisScript<Long> COMPARE_AND_SET_AND_SORTED_SETS_REMOVE = new DefaultRedisScript<>("""
+            if redis.call('get', KEYS[1]) ~= ARGV[1] then
+                return 0
+            end
+            redis.call('psetex', KEYS[1], ARGV[2], ARGV[3])
+            redis.call('zrem', KEYS[2], ARGV[4])
+            redis.call('zrem', KEYS[3], ARGV[4])
+            return 1
+            """, Long.class);
+
     // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
     // member 수를 한 번의 Redis 왕복으로 센다.
     private static final RedisScript<Long> PRUNE_AND_COUNT_SORTED_SET = new DefaultRedisScript<>("""
@@ -77,19 +98,6 @@ public class RedisGateway {
     }
 
     /**
-     * 키가 없을 때만 값을 원자적으로 저장한다(SET NX + TTL). 저장했으면 true, 이미 있으면 false.
-     * callback token 같은 일회성 admission marker에서 동시 호출 중 정확히 하나만 true를 받게 한다.
-     */
-    public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
-        Boolean acquired = template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl);
-        if (acquired == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
-            throw new IllegalStateException("Redis setIfAbsent가 null을 반환했습니다: " + logicalKey);
-        }
-        return acquired;
-    }
-
-    /**
      * TTL 값 저장과 두 sorted set의 같은 member/score 추가를 한 Lua 실행으로 원자 수행한다.
      * {@code logicalExpiringSortedSetKey}에는 값과 같은 TTL을 매번 PEXPIRE로 갱신한다 — 마지막 추가 뒤
      * TTL 동안 비활성인 key만 자연 소멸한다(member별 TTL이 아니다).
@@ -115,6 +123,33 @@ public class RedisGateway {
                         prefix + logicalSecondSortedSetKey),
                 String.valueOf(ttl.toMillis()), value, member);
         requireScriptResult(result, logicalValueKey);
+    }
+
+    /**
+     * 현재 값이 {@code expectedValue}와 같을 때만 새 PROCESSING 값과 두 index를 한 Lua 실행으로 갱신한다.
+     * task 단계 전이의 optimistic CAS 경계다.
+     */
+    public boolean compareAndSetAndAddToSortedSets(
+            String logicalValueKey, String expectedValue, String newValue, Duration ttl,
+            String logicalSortedSetKey, String logicalExpiringSortedSetKey, String member, long score) {
+        Long result = template.execute(COMPARE_AND_SET_AND_SORTED_SETS_ADD,
+                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey,
+                        prefix + logicalExpiringSortedSetKey),
+                expectedValue, String.valueOf(ttl.toMillis()), newValue, String.valueOf(score), member);
+        return requireScriptResult(result, logicalValueKey) == 1;
+    }
+
+    /**
+     * 현재 값이 {@code expectedValue}와 같을 때만 terminal 값을 저장하고 두 processing index에서 제거한다.
+     */
+    public boolean compareAndSetAndRemoveFromSortedSets(
+            String logicalValueKey, String expectedValue, String newValue, Duration ttl,
+            String logicalFirstSortedSetKey, String logicalSecondSortedSetKey, String member) {
+        Long result = template.execute(COMPARE_AND_SET_AND_SORTED_SETS_REMOVE,
+                List.of(prefix + logicalValueKey, prefix + logicalFirstSortedSetKey,
+                        prefix + logicalSecondSortedSetKey),
+                expectedValue, String.valueOf(ttl.toMillis()), newValue, member);
+        return requireScriptResult(result, logicalValueKey) == 1;
     }
 
     /**

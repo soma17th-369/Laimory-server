@@ -28,7 +28,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   삭제하고 DailyRecord는 유지한다(empty DRAFT는 같은 날짜 재시도가 재사용, 자동 cleanup 없음).
 - `SAVED` record에는 새 draft source를 append하지 않는다.
 - 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
-  중복도 한 번만 취급한다. AI도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
+  중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
   race/legacy 중복 행 허용). Event PATCH의 PHOTO 추가는 request rawId 중복을 첫 항목 우선으로 접고,
   같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다. 같은 rawId의
   non-PHOTO Item이 있으면 입력 전체를 거절한다.
@@ -37,14 +37,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
 - same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
   Event에만 연결하고, Event PATCH는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
-- draft final write(Event/Item/junction 저장 + accepted source 삭제)는 AI가 하나의 DB transaction으로
-  commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가는 서버가 별도의 하나의 DB
-  transaction으로 commit한다.
-- AI final commit 이후에만 callback이 오고, 서버는 그때 Redis를 `SUCCESS`로 바꾼다.
-- event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 AI writer). DB unique
-  invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
+- draft 결과 저장(Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
+  transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가도 서버가
+  별도의 하나의 DB transaction으로 commit한다. AI는 어떤 테이블도 직접 쓰지 않는다.
+- Redis `SUCCESS` 전이는 결과 transaction 뒤 task가 `CALLBACK_PENDING`일 때만 한다.
+- event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 서버 결과 저장 transaction).
+  DB unique invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
 - final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
-  미지원 literal은 AI validation FAILED다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
+  미지원 literal은 결과 저장 400이다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
 
 ### Deletion
 
@@ -71,33 +71,45 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   junction 스냅샷 기준이다. 같은 날짜 graph 쓰기를 직렬화하는 공통 guard가 없으므로 경합 정합성은
   보장하지 않는다.
 
-### AI callback
+### AI 서버간 계약
 
-- AI는 final direct-write commit 이후에만 알린다(commit-then-callback).
+- AI는 MySQL·Redis에 직접 접근하지 않는다 — 입력은 서버간 입력 조회 API로 받고 결과는 결과 저장 API로 보낸다.
+- AI dispatch body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`다. 입력 조회와 결과 저장 성공
+  응답은 후속 단계가 사용할 새 `taskToken`을 body로 반환한다. 서버는 현재 token 원문 대신 SHA-256
+  hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
+- 호출 순서는 PROCESSING task의 내부 `ProcessStage`
+  (`INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`)가 제한한다.
+- token hash+stage 교체와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua
+  CAS다.
+- 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
+  행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
+- 결과 저장은 새 callback token hash와 `CALLBACK_PENDING`을 CAS로 선점한 요청 하나만 실행한다. MySQL
+  실패가 호출부로 돌아오면 가능한 경우 이전 result token hash와 RESULT_PENDING으로 복구한다.
+- 결과 저장 endpoint는 graph를 쓰고 내부 stage를 CALLBACK_PENDING까지 전이한다. 외부 task 상태를
+  SUCCESS/FAILED로 종결하는 책임은 콜백만 가진다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
-- 서버는 callback에서 결과를 조립·검증·저장하지 않고 Redis terminal 전이만 기록한다.
-- raw callback token은 dispatch body로 AI에만 전달한다. Redis에는 SHA-256 hash를 저장한다.
-- callback token은 constant-time 비교 직후 Redis `SET NX` marker로 원자 소비한다. 최초 요청 하나만
-  terminal 처리로 진행하고 같은 token 재사용은 401 `-1012`다. 소비 뒤 검증·저장 실패에도 marker를
-  환불하지 않는다(at-most-once admission).
-- commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 final graph는 남는다 —
-  자동 복구(durable receipt·redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 3분, terminal task TTL은 24시간, callback token 소비 marker TTL은 25시간이며
-  staging retention은 7일이다.
+- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.
+- terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
+- 결과 저장 commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 저장된 graph는
+  남는다 — 자동 복구(redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
+- `PROCESSING` TTL은 3분이며 token/stage 교체마다 다시 확보한다(`processingStartedAt`은 보존).
+  terminal task TTL은 24시간, staging retention은 7일이다.
+- Redis와 MySQL은 분산 transaction으로 묶지 않는다. token 교체 뒤 프로세스 종료 또는 MySQL commit 뒤
+  result 응답 유실 시 AI가 callback token을 얻지 못하고 task가 TTL 만료될 수 있으며 자동 reconciliation은 없다.
 - PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
-  폴링·콜백은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
-  않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI callback이 3분 안에 도착하면 terminal 전이는
-  유효하다 — 502를 미접수 증명으로 삼아 자동 재전송하지 않는다.
+  폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
+  않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를
+  미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
-  전용이다 — terminal 전이 시 보존하지 않고 폐기한다(terminal에 경과 시간을 제공하지 않음, TTL 불변).
+  전용이다 — TTL 재확보에도 바뀌지 않고 terminal 전이 시 폐기한다.
 - 사용자별 진행 작업 index(`timeline:draft-task:user:{userId}:processing`)는 조회 후보일 뿐이다 —
   task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
   소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
   요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
 - PROCESSING 저장은 task JSON+전역 index+사용자 index(+사용자 index key TTL 갱신)를, terminal 저장은
   task JSON+두 index ZREM을 각각 한 Lua 실행 경계로 쓴다 — `TimelineTaskStore#save`가 모든 lifecycle
-  전이의 단일 write 지점이다. 사용자 index key TTL은 마지막 PROCESSING 생성 뒤 3분 inactivity cleanup
+  전이의 단일 write 지점이다. 사용자 index key TTL은 마지막 PROCESSING 저장 뒤 3분 inactivity cleanup
   이며 member별 TTL이 아니다.
 - PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
   timestamp는 0 clamp). PROCESSING task에는 기준 시각이 항상 존재한다.
@@ -143,13 +155,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   (지점 분기 금지).
 - Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에
   owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
-- callback은 request principal이 아니라 task 저장 owner를 쓴다. source owner와 record owner의 일치는
-  AI validation이 검증한다.
+- 서버간 요청(입력·결과·콜백)은 request principal이 아니라 task 저장 owner를 쓴다. 결과가 참조하는
+  source가 이 task 소유인지는 결과 저장 transaction이 검증한다.
 
 ## Known Gaps
 
 - DRAFT→SAVED 사용자 전이, emotion 입력 API가 없다.
-- 실 AI writer(Laimory-AI)의 direct-write 구현은 별도 저장소 진행분이다.
+- 실 AI(Laimory-AI)의 서버간 입력·결과 호출 구현은 별도 저장소 진행분이다.
 - photo orphan cleanup과 automatic deployment rollback이 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제가 겹칠 때의 graph 정합성 보장은 미구현이다. 공통 Redis
   admission guard와 대체 DB lock·retry·upsert가 모두 없다.

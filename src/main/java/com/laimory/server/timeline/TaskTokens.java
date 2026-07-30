@@ -7,26 +7,27 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * AI 콜백 검증용 one-time Callback-Token 유틸. 원문 토큰은 발급 시 AI에만 전달하고, 서버는 해시만 보관한다.
+ * AI draft task bearer token utility.
  *
- * <p>발급(generate)은 256-bit cryptographic random, 보관은 SHA-256 해시, 검증(matches)은 상수시간 비교다.
+ * <p>The raw token is an opaque random value without state or purpose information. Redis stores
+ * only the SHA-256 hash of the current token.
  */
-public final class CallbackTokens {
+public final class TaskTokens {
 
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int TOKEN_BYTES = 32; // 256-bit
 
-    private CallbackTokens() {
+    private TaskTokens() {
     }
 
-    /** URL/헤더-safe one-time 토큰(Base64 URL-safe, no padding)을 발급한다. */
+    /** Issues an opaque URL/header-safe token. */
     public static String generate() {
         byte[] bytes = new byte[TOKEN_BYTES];
         RANDOM.nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    /** 토큰의 SHA-256 해시(Base64). Redis에는 이 값만 저장한다. */
+    /** Returns the token SHA-256 hash encoded as Base64. Redis stores this value only. */
     public static String hash(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
@@ -37,7 +38,7 @@ public final class CallbackTokens {
         }
     }
 
-    /** 제시된 토큰의 해시가 저장된 해시와 일치하는지 상수시간 비교한다. 둘 중 하나라도 null이면 false. */
+    /** Compares a raw token with a stored hash in constant time. */
     public static boolean matches(String token, String expectedHash) {
         if (token == null || expectedHash == null) {
             return false;

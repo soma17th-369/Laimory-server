@@ -36,7 +36,7 @@ import org.springframework.web.client.RestClient;
  * <p>현재 AI endpoint는 무인증이다(private network 전제) — production 전 service authentication을 추가할 때
  * request header와 contract fixture를 양 저장소에서 함께 갱신한다.
  *
- * <p>⚠️ {@code callbackToken}은 비밀 — 어떤 로그에도 포함하지 않는다(접수 body로만 전송).
+ * <p>⚠️ {@code taskToken}은 비밀 — 어떤 로그에도 포함하지 않는다(접수 body로만 전송).
  */
 @Slf4j
 @Component
