@@ -128,13 +128,13 @@ class TimelineAiTaskFlowIntegrationTest {
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
 
-        // AI dispatch의 기존 계약(taskId·callbackToken·dailyRecordId·window)을 유지한다.
+        // AI dispatch는 taskToken 명칭을 쓰고 dailyRecordId·window를 유지한다.
         AiTimelineDispatchRequest dispatched = capturedRequest();
         assertThat(dispatched.taskId()).isEqualTo(taskId);
         assertThat(dispatched.dailyRecordId()).isEqualTo(record.getDailyRecordId());
         assertThat(dispatched.window().startAt()).isEqualTo(OffsetDateTime.of(WINDOW.startTime(), KST));
         assertThat(dispatched.window().endAt()).isEqualTo(OffsetDateTime.of(WINDOW.endTime(), KST));
-        String inputToken = dispatched.callbackToken();
+        String inputToken = dispatched.taskToken();
 
         // Redis에는 원문 토큰 없이 단일 hash와 내부 stage만 보관된다.
         String rawJson = redis.get("timeline:draft-task:" + taskId);
@@ -195,7 +195,7 @@ class TimelineAiTaskFlowIntegrationTest {
     void resultRetry_afterLostResponse_doesNotDuplicateGraph() {
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
-        String taskToken = capturedRequest().callbackToken();
+        String taskToken = capturedRequest().taskToken();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
 
         resultService.storeResult(VERSION, taskId, taskToken, resultFrom(input));
@@ -213,7 +213,7 @@ class TimelineAiTaskFlowIntegrationTest {
     void resultWithUnknownRawId_rollsBackEverything() {
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
-        String taskToken = capturedRequest().callbackToken();
+        String taskToken = capturedRequest().taskToken();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
         AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.UNKNOWN, "아침", null,
@@ -236,7 +236,7 @@ class TimelineAiTaskFlowIntegrationTest {
     @Test
     void successCallbackWithoutStoredResult_isRejected1017() {
         String taskId = createDraft(sources());
-        String taskToken = capturedRequest().callbackToken();
+        String taskToken = capturedRequest().taskToken();
         inputService.getInput(VERSION, taskId, taskToken);
 
         assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, taskToken, success()))
@@ -261,7 +261,7 @@ class TimelineAiTaskFlowIntegrationTest {
     @Test
     void failedCallbackWithResultStageToken_keepsEmptyDraftAndSources() {
         String taskId = createDraft(sources());
-        String taskToken = capturedRequest().callbackToken();
+        String taskToken = capturedRequest().taskToken();
         inputService.getInput(VERSION, taskId, taskToken);
 
         callbackService.handleCallback(VERSION, taskId, taskToken,
@@ -288,7 +288,7 @@ class TimelineAiTaskFlowIntegrationTest {
         // task 만료(=key 소멸) 뒤 도착한 유효-토큰 요청은 404(-1001)로 끝난다(부활 금지).
         // 만료는 실제 TTL 대기 대신 key 삭제로 재현한다(의미 동일).
         String taskId = createDraft(sources());
-        String inputToken = capturedRequest().callbackToken();
+        String inputToken = capturedRequest().taskToken();
 
         redis.delete("timeline:draft-task:" + taskId);
 

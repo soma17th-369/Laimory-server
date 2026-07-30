@@ -74,9 +74,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### AI 서버간 계약
 
 - AI는 MySQL·Redis에 직접 접근하지 않는다 — 입력은 서버간 입력 조회 API로 받고 결과는 결과 저장 API로 보낸다.
-- AI dispatch body는 기존 `taskId`·`callbackToken`·`dailyRecordId`·offset `window` 계약을 유지한다.
-  입력 조회·결과 저장·콜백은 그 `callbackToken` 원문 하나를 공통으로 쓴다. 서버는 원문 대신 SHA-256
-  hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
+- AI dispatch body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`다. 입력 조회·결과 저장·
+  콜백은 그 `taskToken` 원문 하나를 공통으로 쓴다. 서버는 원문 대신 SHA-256 hash만 Redis task에
+  저장하고 모든 요청에서 다시 검증한다.
 - 호출 순서는 PROCESSING task의 내부 stage
   (`INPUT_PENDING → RESULT_PENDING → RESULT_WRITING → CALLBACK_PENDING`)가 제한한다.
 - stage와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua CAS다.

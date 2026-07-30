@@ -31,8 +31,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 편집·�
 4. UUIDv7 `taskId`를 만들고, SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 256-bit token 하나를 만들고 기존 dispatch 필드
-   `callbackToken`으로 전달하며 Redis에는 SHA-256 hash만 저장한다.
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 256-bit `taskToken` 하나를 만들고 dispatch로
+   전달하며 Redis에는 SHA-256 hash만 저장한다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
@@ -45,8 +45,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 편집·�
    key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
    90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
    callback 계약의 권위는 기존 JSON이다.
-8. AI dispatcher를 호출한다 — 기존 body 계약인 `taskId`·`callbackToken`·`dailyRecordId`·offset
-   `window`를 유지한다. source item은 싣지 않는다
+8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
+   기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
    (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
    접수가 확인된 경우에만 POST가 202와 `taskId`를 반환한다.
    **실패는 "미접수 확정 vs UNKNOWN"으로 내부 상태만 구분하고, 밖으로는 모두 502(`-1009`)다** —

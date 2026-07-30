@@ -49,7 +49,7 @@ class HttpTimelineAiDispatcherTest {
 
     private AiTimelineDispatchRequest request() {
         ZoneOffset kst = ZoneOffset.ofHours(9);
-        return new AiTimelineDispatchRequest("task-20260722-001", "callback-token-001", 42L,
+        return new AiTimelineDispatchRequest("task-20260722-001", "task-token-001", 42L,
                 new AiTimelineDispatchRequest.Window(
                         OffsetDateTime.of(2026, 7, 22, 0, 0, 0, 0, kst),
                         OffsetDateTime.of(2026, 7, 23, 0, 0, 0, 0, kst)));
@@ -110,7 +110,7 @@ class HttpTimelineAiDispatcherTest {
         // contract fixture: 기존 필드명·offset ISO-8601 초 포함 포맷을 정확히 고정한다.
         JsonNode body = MAPPER.readTree(recorded.getBody().readUtf8());
         assertThat(body.get("taskId").asText()).isEqualTo("task-20260722-001");
-        assertThat(body.get("callbackToken").asText()).isEqualTo("callback-token-001");
+        assertThat(body.get("taskToken").asText()).isEqualTo("task-token-001");
         assertThat(body.get("dailyRecordId").asLong()).isEqualTo(42L);
         assertThat(body.get("window").get("startAt").asText()).isEqualTo("2026-07-22T00:00:00+09:00");
         assertThat(body.get("window").get("endAt").asText()).isEqualTo("2026-07-23T00:00:00+09:00");

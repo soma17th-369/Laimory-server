@@ -79,8 +79,8 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         String taskId = request.taskId();
         DraftTaskCallbackRequest result;
         try {
-            AiTimelineTaskInputResponse input = getInput(taskId, request.callbackToken());
-            postResult(taskId, request.callbackToken(), toResult(input));
+            AiTimelineTaskInputResponse input = getInput(taskId, request.taskToken());
+            postResult(taskId, request.taskToken(), toResult(input));
             result = new DraftTaskCallbackRequest(TaskStatus.SUCCESS, null, null);
         } catch (RuntimeException e) {
             log.warn("fake AI result flow failed: taskId={}", taskId, e);
@@ -88,7 +88,7 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
             result = new DraftTaskCallbackRequest(TaskStatus.FAILED, ExceptionType.AI_REPORTED_FAILURE.code(),
                     "fake result flow failed");
         }
-        postCallback(taskId, request.callbackToken(), result);
+        postCallback(taskId, request.taskToken(), result);
     }
 
     private AiTimelineTaskInputResponse getInput(String taskId, String taskToken) {

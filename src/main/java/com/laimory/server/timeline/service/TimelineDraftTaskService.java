@@ -111,10 +111,10 @@ public class TimelineDraftTaskService {
 
         String taskId = UuidV7.randomUuidV7().toString();
 
-        // 외부 dispatch 계약에서는 callbackToken이라는 기존 이름을 유지한다. 내부에서는 입력 조회·결과
-        // 저장·콜백이 함께 쓰며, 원문은 AI에 전달하고 Redis에는 SHA-256 hash만 저장한다.
-        String callbackToken = TaskTokens.generate();
-        String tokenHash = TaskTokens.hash(callbackToken);
+        // 입력 조회·결과 저장·콜백이 함께 쓰는 taskToken. 원문은 AI에 전달하고 Redis에는
+        // SHA-256 hash만 저장한다.
+        String taskToken = TaskTokens.generate();
+        String tokenHash = TaskTokens.hash(taskToken);
 
         Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
         existingRecord
@@ -159,14 +159,14 @@ public class TimelineDraftTaskService {
             throw e;
         }
 
-        // 3. AI dispatch — 기존 body 계약(taskId·callbackToken·dailyRecordId·offset window)을 유지한다.
+        // 3. AI dispatch — dailyRecordId·offset window는 유지하고 토큰 필드는 taskToken으로 통일한다.
         //    source item은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
         //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
         //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
         //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
         try {
             timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
-                    taskId, callbackToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
+                    taskId, taskToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
         } catch (TimelineAiDispatchRejectedException e) {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.

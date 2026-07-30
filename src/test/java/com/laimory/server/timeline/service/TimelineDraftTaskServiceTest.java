@@ -182,7 +182,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
         AiTimelineDispatchRequest request = requestCaptor.getValue();
         assertThat(request.taskId()).isEqualTo(taskId);
-        assertThat(request.callbackToken()).isNotBlank();
+        assertThat(request.taskToken()).isNotBlank();
         assertThat(request.dailyRecordId()).isEqualTo(RECORD_ID);
         // Asia/Seoul(+09:00) 변환 — wall-clock은 유지되고 offset만 붙는다.
         assertThat(request.window().startAt())
@@ -206,7 +206,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineAiDispatcher).dispatch(requestCaptor.capture());
 
         String stored = hashCaptor.getValue();
-        String dispatchedToken = requestCaptor.getValue().callbackToken();
+        String dispatchedToken = requestCaptor.getValue().taskToken();
         assertThat(dispatchedToken).isNotBlank();
         assertThat(stored).isEqualTo(TaskTokens.hash(dispatchedToken));
         assertThat(stored).isNotEqualTo(dispatchedToken);

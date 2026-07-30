@@ -14,7 +14,7 @@ import java.util.Objects;
 /**
  * timeline draft 비동기 작업의 상태 모델. Redis에 JSON으로 저장된다(JPA 엔티티 아님).
  *
- * <p>AI는 이 JSON을 읽지 않는다 — 기존 dispatch HTTP body(taskId·callbackToken·dailyRecordId·window)로
+ * <p>AI는 이 JSON을 읽지 않는다 — dispatch HTTP body(taskId·taskToken·dailyRecordId·window)로
  * task를 받고 source 등 정규 입력은 서버간 입력 조회 API로 가져가므로 이 shape는 서버 내부 계약이다.
  * record 메타데이터(recordDate/recordAt/
  * recordTimezone)는 draft 요청 시점에 DailyRecord로 먼저 확정되므로 여기 저장하지 않는다.
