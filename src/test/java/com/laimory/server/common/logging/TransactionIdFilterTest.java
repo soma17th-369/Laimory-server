@@ -178,7 +178,7 @@ class TransactionIdFilterTest {
     @Test
     void completionLog_levelComesFromExceptionTypeAttribute() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/s/api/v1/timeline/callback");
-        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.CALLBACK_TOKEN_MISMATCH);
+        request.setAttribute(RequestLogAttributes.EXCEPTION_TYPE, ExceptionType.TASK_TOKEN_MISMATCH);
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setStatus(401);
 
@@ -188,7 +188,7 @@ class TransactionIdFilterTest {
         assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.WARN); // 401이라서가 아니라 타입 레벨이 WARN이라서
         JsonNode json = encoded(accessLog.list.get(0));
         assertThat(json.get("errorCode").asText()).isEqualTo("-1002");
-        assertThat(json.get("exceptionType").asText()).isEqualTo("CALLBACK_TOKEN_MISMATCH");
+        assertThat(json.get("exceptionType").asText()).isEqualTo("TASK_TOKEN_MISMATCH");
     }
 
     @Test

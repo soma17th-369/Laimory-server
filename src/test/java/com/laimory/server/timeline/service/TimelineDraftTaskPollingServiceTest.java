@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
+
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
@@ -50,7 +52,7 @@ class TimelineDraftTaskPollingServiceTest {
     private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");
 
     private static TimelineDraftTask processingTask(Instant processingStartedAt) {
-        return TimelineDraftTask.processing(USER_ID, 42L, null, "hash", processingStartedAt);
+        return TimelineDraftTask.processing(USER_ID, 42L, null, tokenHashes("hash"), processingStartedAt);
     }
 
     @Test
@@ -103,7 +105,7 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_failed_returnsFailureCode() {
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, -1009, "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, -1009, tokenHashes("h"))));
 
         DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
@@ -119,7 +121,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_failed_unknownNumericError_isReplacedNotLeaked() {
         // 오염되거나 미지인 numeric code는 그대로 내보내지 않고 -1011로 대체한다(read-side 유출 방어).
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, 1234, "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.failed(USER_ID, 42L, 1234, tokenHashes("h"))));
 
         DraftTaskStatusResponse res = service.poll("v1", USER_ID, "t");
 
@@ -128,7 +130,7 @@ class TimelineDraftTaskPollingServiceTest {
 
     @Test
     void poll_success_assemblesTimelineByStoredDailyRecordId() {
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, tokenHashes("h"))));
         DailyRecord record = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
@@ -149,7 +151,7 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_resultRecordDeleted_throws0404() {
         // 결과 record가 삭제된 SUCCESS task → "task 없음"(1001)과 구분되는 0404(결과 소멸).
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, tokenHashes("h"))));
         when(dailyRecordService.findById(42L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
@@ -160,7 +162,7 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_resultDeletedAfterOwnershipCheck_stillThrows0404() {
         // polling 선검증 직후 삭제돼 조립 service의 권위 재조회가 miss여도 catch-all 500이 아니라 결과 없음 0404다.
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, tokenHashes("h"))));
         DailyRecord record = DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
@@ -175,7 +177,7 @@ class TimelineDraftTaskPollingServiceTest {
     @Test
     void poll_success_foreignUsersRecord_hiddenAs0404() {
         // 소유권 은닉: task가 남의 record ID를 담고 있어도 존재를 드러내지 않고 0404.
-        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, "h")));
+        when(timelineTaskService.find("t")).thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, 42L, tokenHashes("h"))));
         DailyRecord foreign = DailyRecord.createDraft(999L, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(foreign, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(foreign));
@@ -198,7 +200,7 @@ class TimelineDraftTaskPollingServiceTest {
     void poll_foreignUsersTask_hiddenAs1001_beforeAnyDbLookup() {
         // 타 사용자의 task는 상태(SUCCESS 포함)와 무관하게 1001 — DB 조회 전에 끊는다(존재 여부 비노출).
         when(timelineTaskService.find("t"))
-                .thenReturn(Optional.of(TimelineDraftTask.success(999L, 42L, "h")));
+                .thenReturn(Optional.of(TimelineDraftTask.success(999L, 42L, tokenHashes("h"))));
 
         assertThatThrownBy(() -> service.poll("v1", USER_ID, "t"))
                 .isInstanceOfSatisfying(BusinessException.class,

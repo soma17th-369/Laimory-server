@@ -6,12 +6,11 @@ import com.laimory.server.timeline.TaskStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
- * AI 작성 콜백 바디. {@code status}로 결과 전달(SUCCESS)인지 AI측 실패 보고(FAILED)인지 구분한다.
+ * AI 작성 콜백 바디. {@code status}로 완료 보고(SUCCESS)인지 AI측 실패 보고(FAILED)인지 구분한다.
  *
- * <p>결과물(이벤트 제안)은 바디로 오지 않는다 — AI가 콜백 전 DB({@code timeline_draft_event_suggestions} +
- * {@code timeline_draft_source_items}의 event FK)에 write-then-notify로 저장하고, 서버가 경로의 taskId로 로드한다
- * (app↔AI 데이터 교환은 입력·출력 모두 DB 경유). taskId·recordDate도 바디에 없다 — taskId는 URL path variable,
- * recordDate는 task가 보관한 값을 쓴다.
+ * <p>결과물(Event·채택 source)은 바디로 오지 않는다 — AI가 콜백 전에 결과 저장 endpoint
+ * ({@code POST /s/api/{v}/timeline/drafts/{taskId}/result})로 커밋하고, 이 콜백은 작업 상태 전이만
+ * 트리거한다. taskId도 바디에 없다(URL path variable).
  *
  * <p>FAILED 보고 시:
  * <ul>

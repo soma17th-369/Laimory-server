@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS daily_records (
     UNIQUE KEY uq_daily_records_user_date (user_id, record_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 감사 컬럼 default: final 테이블은 API JPA와 AI raw INSERT 두 writer가 쓴다. AI는 timestamp를 생략하고
--- DB default가 채우며, modified_by는 AI가 INSERT에 'AI'를 명시한다(§AI raw insert 계약).
+-- 감사 컬럼 default: final 테이블 writer는 API JPA 하나뿐이다(AI 결과도 서버 transaction이 저장한다).
+-- timestamp DB default는 과거 AI raw INSERT 계약의 잔재로 남겨 둔다(live DDL 변경 없이 무해).
 CREATE TABLE IF NOT EXISTS timeline_events (
     timeline_event_id BIGINT NOT NULL AUTO_INCREMENT,
     daily_record_id BIGINT NOT NULL,

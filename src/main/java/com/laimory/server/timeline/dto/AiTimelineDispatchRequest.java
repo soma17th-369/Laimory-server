@@ -7,14 +7,15 @@ import java.time.OffsetDateTime;
  * API→AI {@code POST /v1/timeline} 접수 body — 양 저장소가 contract fixture로 고정하는 공개 계약이다.
  * 필드명·시각 포맷을 임의로 바꾸지 않는다(명명 권위는 AI 규격).
  *
- * <p>source item은 body로 중복 전송하지 않는다 — AI가 {@code taskId}로 MySQL staging에서 직접 읽는다.
- * {@code callbackToken}은 task별 one-time 원문으로 이 body로만 한 번 전달된다(로그·MySQL·Redis 저장 금지,
- * 서버는 hash만 보관). {@code window}는 Android local window를 DailyRecord의 검증된 record_timezone으로
- * offset ISO-8601 변환한 값이다(MySQL 저장 시 AI가 다시 record timezone의 wall-clock으로 정규화).
+ * <p>source item은 body에 싣지 않고 AI가 서버간 입력 조회 API로 가져간다. 기존 dispatch 계약의
+ * {@code dailyRecordId}와 {@code window}는 그대로 유지한다.
+ *
+ * <p>{@code taskToken}은 입력 조회에 사용하는 최초 opaque bearer token이다. 이후 입력·결과 성공 응답이
+ * 후속 요청용 token을 새로 반환하며 서버는 Redis에 현재 token의 hash만 보관한다.
  */
 public record AiTimelineDispatchRequest(
         String taskId,
-        String callbackToken,
+        String taskToken,
         long dailyRecordId,
         Window window
 ) {

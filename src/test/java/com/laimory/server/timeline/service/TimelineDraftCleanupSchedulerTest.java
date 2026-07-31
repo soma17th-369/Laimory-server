@@ -51,7 +51,8 @@ class TimelineDraftCleanupSchedulerTest {
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {
         TimelineDraftCleanupScheduler scheduler = new TimelineDraftCleanupScheduler(
-                timelineDraftSourceItemService, s3PhotoStorageService, MAPPER, FIXED);
+                timelineDraftSourceItemService, s3PhotoStorageService,
+                MAPPER, FIXED);
         ReflectionTestUtils.setField(scheduler, "retentionDays", retentionDays);
         return scheduler;
     }
