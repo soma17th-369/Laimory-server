@@ -6,14 +6,14 @@
 
 ## Read When
 
-dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS 운영 자산을 바꿀 때 읽는다.
+dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS 운영 경계를 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
 - `build.gradle`, `application*.properties`, `schema.sql`
 - `docker-compose.yml`, `Dockerfile`
 - `.github/workflows/*.yml`
-- `deploy/**`, `deploy/bootstrap-assets.txt`
+- live AWS, GitHub repository Variables와 host 상태
 - architecture and integration tests
 
 ## Current Constraints
@@ -38,10 +38,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - 자동 애플리케이션 배포는 dev의 image/deploy 관련 path에만 실행되며 health failure 자동 rollback은 없다.
 - dev monitoring alert rule은 관련 path merge에서만 S3 release와 SSM 적용이 자동 실행되며,
   dashboard·collector 등 나머지 monitoring 자산은 이 자동 배포 범위가 아니다.
-- 저장소는 전체 AWS topology나 one-command rebuild를 소유하지 않는다. live AWS/GitHub/host가 실제
-  구성의 권위 원천이다.
-- `deploy/**` 변경은 S3나 host에 자동 반영되지 않는다. bootstrap 게시와 SSM 작업은 별도 승인과
-  runbook 실행이 필요하다.
+- 저장소는 전체 AWS topology나 신규 host 초기화를 자동화하지 않는다.
+- live AWS, GitHub repository Variables와 실제 host 상태가 운영 구성의 권위 원천이다.
 - AWS 작업은 먼저 `sandbox` SSO, 조회와 SSM 비변경 진단으로 제한하고 수정은 별도 승인받는다.
 - monitoring bootstrap S3에는 비밀 없는 자산만 두며 Grafana/exporter/datasource/Discord secret은
   Session Manager로 host의 보호된 파일에만 주입한다.
@@ -66,5 +64,4 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 ```bash
 ./gradlew test
 docker compose config --quiet
-deploy/scripts/publish-bootstrap-assets.sh --check
 ```

@@ -2,7 +2,7 @@
 # Filebeat는 로그를 생산하는 WAS 박스에서 별도로 돈다(deploy/elk/filebeat.yml).
 #
 # 비밀(ELASTIC/KIBANA/FILEBEAT_PASSWORD)·버전·힙은 전부 같은 디렉터리의 .env 에서 온다
-# (deploy/elk/README.md 절차로 준비하고 chmod 600). 이 파일 자체엔 비밀이 없다.
+# (user_data 가 시드, chmod 600). 이 파일 자체엔 비밀이 없다.
 #
 # 운용: persistent Spot EC2 상시 가동. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작되며,
 # es/kibana 는 restart:unless-stopped 라 함께 복구된다. setup 은 restart:"no" 라 최초 up 1회만

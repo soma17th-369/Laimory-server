@@ -27,8 +27,8 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: laimory
-  # Sandbox 실측값은 검토 후 repo Variables로 주입한다(하드코딩 금지).
-  # 필요한 변수와 OIDC/SSM 계약은 deploy/README.md가 설명한다.
+  # 확인한 Sandbox 실측값은 repo Variables로 주입한다(하드코딩 금지).
+  # 필수 변수: DEV_INSTANCE_ID, AWS_DEPLOY_ROLE_ARN
   INSTANCE_ID: ${{ vars.DEV_INSTANCE_ID }}
 
 jobs:
@@ -121,8 +121,8 @@ jobs:
           # FCM push pre-flight: APP_PUSH_MODE가 credential mount 여부의 명시적 SSOT다. firebase면 ADC
           # 경로(GOOGLE_APPLICATION_CREDENTIALS, 고정 컨테이너 경로)도 .env가 정확히 한 줄로 소유해야 하고
           # host의 service account JSON이 있어야 배포를 진행한다(역시 구 컨테이너 중지 전 검사 — 앱은 ADC
-          # 실패 시 fail-fast). noop이면 credential·mount 없이 기동한다. 파일은 SSM runbook으로 수동
-          # 배치(deploy/was/README.md) — credential 원문은 Git/이미지/S3 bootstrap/env 값에 두지 않고
+          # 실패 시 fail-fast). noop이면 credential·mount 없이 기동한다. 파일은 승인된 SSM 절차로 수동
+          # 배치한다. credential 원문은 Git/이미지/env 값에 두지 않고
           # read-only 파일 mount로만 전달한다.
           PUSH_COUNT=\$(grep -c '^APP_PUSH_MODE=' "\$ENV_FILE" || true)
           [ "\$PUSH_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_PUSH_MODE must appear exactly once (found \$PUSH_COUNT)"; exit 1; }
@@ -134,8 +134,8 @@ jobs:
             PUSH_ARGS="-v \$CRED_FILE:/run/secrets/firebase-service-account.json:ro"
           fi
           # nginx access log query 제거(멱등 가드) — 이 앱 버전부터 로그인 code(/auth/app?code=, IdP 콜백 ?code=)가
-          # 쿼리로 나가므로, 배포보다 먼저 no-query log_format을 보장한다. 새 박스도 WAS runbook으로 구성하고,
-          # 기존 박스에 runbook이 수동 적용되지 않은 채 배포되는 것을 여기서 구조적으로 막는다(누락 시 자동 보정).
+          # 쿼리로 나가므로, 배포보다 먼저 no-query log_format을 보장한다. 신규·기존 host 모두
+          # 누락된 상태로 배포되지 않도록 여기서 구조적으로 막는다(누락 시 자동 보정).
           # \$가 붙은 nginx 변수들은 호스트에서 quoted heredoc('NGINXLOG')으로 쓰이므로 원문 그대로 파일에 들어간다.
           if [ ! -f /etc/nginx/conf.d/log_format_noquery.conf ]; then
             tee /etc/nginx/conf.d/log_format_noquery.conf > /dev/null <<'NGINXLOG'
@@ -153,7 +153,7 @@ jobs:
           # ubuntu:0600)를 못 잡는다. 방금 pull한 image를 그대로 사용해 동일 조건(test -r)으로 확인한다.
           # (일회성 docker run --rm은 장기 실행 컨테이너가 아니므로 -e 금지 대상이 아니다.)
           if [ -n "\$PUSH_ARGS" ]; then
-            docker run --rm -v "\$CRED_FILE":/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400 (deploy/was/README.md FCM runbook)"; exit 1; }
+            docker run --rm -v "\$CRED_FILE":/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400"; exit 1; }
           fi
           # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
           # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
@@ -171,7 +171,7 @@ jobs:
           # 장기 실행 컨테이너의 runtime env source는 --env-file(.env) 하나다 — -e/--env 없음(.env가 SSOT).
           # dev 고정값(REDIS_KEY_PREFIX=dev_·APP_ENV=dev·APP_GEO_MODE=kakao·SWAGGER_ENABLED=true)과
           # AI/push mode는 위 pre-flight가 exact-one으로 fail-closed 보장한다. prod는 자체 배포에서 자기
-          # .env로 같은 계약을 따른다(신규 박스 준비와 값 전환은 deploy/was/README.md SSM runbook).
+          # .env로 같은 계약을 따른다(신규 host 준비와 값 전환은 별도 승인된 운영 절차).
           # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
           # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount(ADC 경로는 .env가 소유).
           docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}

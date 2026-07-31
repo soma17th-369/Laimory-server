@@ -1,9 +1,8 @@
 # Laimory dev monitoring
 
 Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev monitoring EC2 한 대에서
-실행하는 운영 자산이다. 실제 AWS/host 상태가 권위 원천이며, 저장소는 전체 topology의 자동 재구축을
-보장하지 않는다. 변경 전 `sandbox` SSO와 대상 상태를 조회하고 SSM 비변경 진단을 먼저 하며, AWS와
-host 수정은 대상·영향·rollback을 설명한 뒤 별도 승인받는다.
+실행하는 운영 자산이다. 실제 AWS·host 상태가 권위 원천이며, 이 저장소는 전체 인프라의 자동 재구축을
+보장하지 않는다.
 
 ## 구성과 범위
 
@@ -29,24 +28,6 @@ duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 �
 별도 변경으로 검토한다. monitoring EC2의 CPU credit과 root EBS 지표는 5분마다 CloudWatch에서 읽어
 Infrastructure dashboard에 표시한다.
 
-## Bootstrap과 scrape targets
-
-비밀 없는 monitoring 자산의 S3 key는 [`../bootstrap-assets.txt`](../bootstrap-assets.txt)가 소유한다.
-Prometheus file_sd target은 실제 private IP와 dev API hostname을 Git에 넣지 않고 명시적 JSON에서
-생성한다.
-
-```bash
-deploy/scripts/publish-bootstrap-assets.sh --check
-deploy/monitoring/scripts/render-prometheus-targets.py \
-  --values /secure/path/monitoring-targets.json \
-  --output-dir /tmp/laimory-monitoring-targets
-```
-
-renderer는 여섯 입력 key가 정확히 존재하는지, private IPv4와 DNS hostname 형식인지 확인하며
-`application.yml`, `node.yml`, `probe.yml`만 만든다. 실제 S3 게시는
-[`../README.md`](../README.md)의 dry-run과 AWS write 승인 절차를 따른다. monitoring host는 생성된
-세 파일을 `/opt/laimory-monitoring/prometheus/targets/`에 배치하고 promtool 검사 후 reload한다.
-
 ## Alert rule source와 release
 
 alert rule은 `grafana/alert-rule-files.txt`가 소유하는 책임별 `*-rules.yml` 8개로 관리한다. 파일 하나에는
@@ -70,7 +51,7 @@ workflow는 commit SHA prefix에 `If-None-Match: *` 조건으로 각 파일을 �
 workflow가 실행되지 않는다.
 
 repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. 권한 변경은
-조회 결과와 rollback을 검토하고 별도 승인을 받은 Console 또는 승인된 CLI 작업으로 반영한다.
+조회 결과와 영향을 검토하고 별도 승인받은 Console 또는 CLI 작업으로 반영한다.
 
 | Repository Variable | 값 |
 |---|---|
@@ -204,7 +185,7 @@ sudo aws s3 cp \
   --region ap-northeast-2 --only-show-errors
 sudo chmod 0750 /usr/local/sbin/configure-laimory-mysql-exporter-user
 sudo /usr/local/sbin/configure-laimory-mysql-exporter-user \
-  '<monitoring-private-ip>' laimory_exporter
+  10.0.32.14 laimory_exporter
 ```
 
 동일한 exporter password를 monitoring host의 hidden prompt에 넣는다.
@@ -262,7 +243,7 @@ container environment/argument에 넣지 않는다.
 ```bash
 read -rsp 'Redis exporter password: ' SECRET_VALUE; echo
 jq -cn --arg password "$SECRET_VALUE" \
-  '{"redis://laimory_monitoring@<redis-private-ip>:6379":$password}' |
+  '{"redis://laimory_monitoring@10.0.32.11:6379":$password}' |
   sudo /opt/laimory-monitoring/scripts/install-secret.sh redis_exporter_password.json
 unset SECRET_VALUE
 ```
@@ -274,7 +255,7 @@ monitoring host에서 Elasticsearch superuser password를 curl의 interactive pr
 
 ```bash
 curl -fsS -u elastic \
-  -X POST "http://<elk-private-ip>:9200/_security/api_key" \
+  -X POST http://10.0.32.13:9200/_security/api_key \
   -H 'Content-Type: application/json' \
   -d '{
     "name":"grafana-laimory-dev-logs",
@@ -299,7 +280,7 @@ curl -fsS -u elastic \
 API_KEY=$(sudo cat /opt/laimory-monitoring/secrets/elasticsearch_api_key | tr -d '\r\n')
 printf 'header = "Authorization: ApiKey %s"\n' "$API_KEY" |
   curl -fsS --config - \
-    -X POST "http://<elk-private-ip>:9200/_security/user/_has_privileges" \
+    -X POST http://10.0.32.13:9200/_security/user/_has_privileges \
     -H 'Content-Type: application/json' \
     -d '{
       "index":[{
@@ -313,20 +294,52 @@ unset API_KEY
 
 ## Existing live rollout
 
-이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. 먼저 AWS 조회와 SSM 비변경
-진단으로 현재 상태와 rollback packet 위치를 확인한다. 다음 S3 게시와 host 명령은 각각 대상·영향·
-rollback을 설명하고 수정 승인을 받은 뒤에만 수행한다.
+이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. 자동 provisioning은 하지 않는다.
+먼저 운영자 로컬에서 비밀 없는 변경 자산을 exact S3 key로 올린다.
 
 ```bash
+set -euo pipefail
 BACKUP_BUCKET='<backup bucket>'
-TARGET_VALUES=/secure/path/monitoring-targets.json
-deploy/scripts/publish-bootstrap-assets.sh \
-  --bucket "$BACKUP_BUCKET" --values "$TARGET_VALUES" --profile sandbox
-# dry-run 검토와 명시적 승인 후에만 위 명령에 --apply 추가
+ROLLBACK_PREFIX="bootstrap/rollback/monitoring/$(date -u +%Y%m%dT%H%M%SZ)"
+while IFS= read -r asset; do
+  if aws s3api head-object --bucket "$BACKUP_BUCKET" \
+    --key "bootstrap/monitoring/$asset" --profile sandbox >/dev/null 2>&1; then
+    aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
+      "s3://$BACKUP_BUCKET/$ROLLBACK_PREFIX/$asset" \
+      --profile sandbox --region ap-northeast-2 --only-show-errors
+  fi
+  aws s3 cp "deploy/monitoring/$asset" \
+    "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
+    --profile sandbox --region ap-northeast-2 --only-show-errors
+done <<'ASSETS'
+node-exporter/install.sh
+grafana/provisioning/dashboards/json/laimory-overview.json
+grafana/provisioning/dashboards/json/laimory-jvm-spring.json
+grafana/provisioning/dashboards/json/laimory-infrastructure.json
+grafana/provisioning/dashboards/json/laimory-logs.json
+scripts/collect-aws-metrics.sh
+scripts/collect-elasticsearch-metrics.sh
+scripts/collect-filebeat-metrics.sh
+systemd/laimory-aws-metrics.service
+systemd/laimory-aws-metrics.timer
+systemd/laimory-elasticsearch-metrics.service
+systemd/laimory-elasticsearch-metrics.timer
+systemd/laimory-filebeat-metrics.service
+systemd/laimory-filebeat-metrics.timer
+ASSETS
+if aws s3api head-object --bucket "$BACKUP_BUCKET" \
+  --key bootstrap/elk/filebeat.yml --profile sandbox >/dev/null 2>&1; then
+  aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
+    "s3://$BACKUP_BUCKET/$ROLLBACK_PREFIX/elk/filebeat.yml" \
+    --profile sandbox --region ap-northeast-2 --only-show-errors
+fi
+aws s3 cp deploy/elk/filebeat.yml \
+  "s3://$BACKUP_BUCKET/bootstrap/elk/filebeat.yml" \
+  --profile sandbox --region ap-northeast-2 --only-show-errors
 ```
 
-backup bucket은 versioning을 전제로 하지 않는다. 게시 전 기존 object의 version 또는 별도
-root-only rollback snapshot을 확보하고, rollback 시 검증된 이전 bytes를 같은 key에 다시 게시한다.
+backup bucket은 versioning을 전제로 하지 않으므로 기존 object snapshot이 성공한 뒤에만 원래 key를
+덮어쓴다. rollback 시에는 기록한 `ROLLBACK_PREFIX`의 object를 원래 key로 복원한다.
 
 monitoring role에는 아래 read-only inline policy를 Console 또는 동등한 검토된 CLI 변경으로 추가한다.
 resource write 권한과 CloudWatch wildcard action은 추가하지 않는다.

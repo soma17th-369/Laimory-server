@@ -67,13 +67,6 @@ application-secret.properties
 .env
 .env.*
 /deploy/monitoring/secrets/
-!/deploy/elk/.env.example
-
-### Retired Terraform local artifacts ###
-.terraform/
-*.tfstate*
-*.tfplan
-*.auto.tfvars
 
 ### Agent Local Plans ###
 /.agents/plans/
