@@ -43,6 +43,47 @@ class BoundedResponseCaptureWrapperTest {
     }
 
     @Test
+    void writer_stringWrite_keepsEmojiAcrossInternalChunkBoundary() throws Exception {
+        MockHttpServletResponse original = new MockHttpServletResponse();
+        original.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        BoundedResponseCaptureWrapper wrapper = new BoundedResponseCaptureWrapper(original, LIMIT);
+        // high surrogate가 index 1023, low surrogate가 1024 — 내부 1024-char 인코딩 chunk 경계에 정확히 걸친다.
+        // 경계에서 pair를 가르면 각 반쪽이 U+FFFD로 인코딩돼 capture가 원문과 달라진다.
+        String body = "a".repeat(1023) + "😀" + "tail";
+        assertThat(Character.isHighSurrogate(body.charAt(1023))).isTrue();
+        assertThat(Character.isLowSurrogate(body.charAt(1024))).isTrue();
+
+        wrapper.getWriter().write(body);
+
+        assertThat(original.getContentAsString()).isEqualTo(body);
+        String captured = new String(wrapper.getCapturedBytes(), StandardCharsets.UTF_8);
+        assertThat(captured).isEqualTo(body);
+        assertThat(captured).doesNotContain("�");
+        assertThat(wrapper.getObservedByteCount()).isEqualTo(body.getBytes(StandardCharsets.UTF_8).length);
+        assertThat(wrapper.isOverflowed()).isFalse();
+    }
+
+    @Test
+    void writer_charArrayWrite_keepsEmojiAcrossInternalChunkBoundary() throws Exception {
+        // String write와 char[] write는 chunk 분할 branch가 별개 구현이라 각각 고정한다.
+        MockHttpServletResponse original = new MockHttpServletResponse();
+        original.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        BoundedResponseCaptureWrapper wrapper = new BoundedResponseCaptureWrapper(original, LIMIT);
+        String body = "a".repeat(1023) + "😀" + "tail";
+        assertThat(Character.isHighSurrogate(body.charAt(1023))).isTrue();
+        assertThat(Character.isLowSurrogate(body.charAt(1024))).isTrue();
+
+        wrapper.getWriter().write(body.toCharArray());
+
+        assertThat(original.getContentAsString()).isEqualTo(body);
+        String captured = new String(wrapper.getCapturedBytes(), StandardCharsets.UTF_8);
+        assertThat(captured).isEqualTo(body);
+        assertThat(captured).doesNotContain("�");
+        assertThat(wrapper.getObservedByteCount()).isEqualTo(body.getBytes(StandardCharsets.UTF_8).length);
+        assertThat(wrapper.isOverflowed()).isFalse();
+    }
+
+    @Test
     void writerAndOutputStream_areMutuallyExclusive() throws Exception {
         BoundedResponseCaptureWrapper writerFirst =
                 new BoundedResponseCaptureWrapper(new MockHttpServletResponse(), LIMIT);

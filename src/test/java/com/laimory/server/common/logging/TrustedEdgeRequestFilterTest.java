@@ -46,6 +46,15 @@ class TrustedEdgeRequestFilterTest {
     }
 
     @ParameterizedTest
+    @MethodSource("canonicalIpv6")
+    void trustedLoopback_canonicalizesValidIpv6GroupBoundaries(String header, String expected) throws Exception {
+        MockHttpServletRequest request = trustedRequest();
+        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, header);
+
+        assertThat(run(request).getRemoteAddr()).isEqualTo(expected);
+    }
+
+    @ParameterizedTest
     @MethodSource("invalidIpHeaders")
     void malformedOrMissingClientIp_fallsBackToSocketPeer(List<String> values) throws Exception {
         MockHttpServletRequest request = trustedRequest();
@@ -143,7 +152,21 @@ class TrustedEdgeRequestFilterTest {
                 Arguments.of(List.of("256.0.0.1")),
                 Arguments.of(List.of("2001:db8::1::2")),
                 Arguments.of(List.of("2001:db8::g")),
-                Arguments.of(List.of("2001:db8:: 1")));
+                Arguments.of(List.of("2001:db8:: 1")),
+                // group 수 경계: 압축 없는 7-group/9-group, ::가 채울 group이 없는 8-group+압축은 전부 무효다.
+                Arguments.of(List.of("1:2:3:4:5:6:7")),
+                Arguments.of(List.of("1:2:3:4:5:6:7:8:9")),
+                Arguments.of(List.of("1:2:3:4:5:6:7:8::")));
+    }
+
+    private static Stream<Arguments> canonicalIpv6() {
+        return Stream.of(
+                // full 8-group 비압축(대문자·leading zero) 입력 → 최장 zero-run 압축 + 소문자(RFC 5952 출력).
+                Arguments.of("2001:0DB8:0000:0000:0000:FF00:0042:8329", "2001:db8::ff00:42:8329"),
+                // 단일 zero group은 ::로 압축하지 않는다(RFC 5952 §4.2.2).
+                Arguments.of("2001:db8:0:1:2:3:4:5", "2001:db8:0:1:2:3:4:5"),
+                // 길이가 같은 zero-run이 여럿이면 첫 run을 압축한다(RFC 5952 §4.2.3).
+                Arguments.of("2001:0:0:1:0:0:1:1", "2001::1:0:0:1:1"));
     }
 
     private static Stream<String> untrustedPeers() {
