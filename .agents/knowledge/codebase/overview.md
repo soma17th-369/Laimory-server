@@ -14,7 +14,7 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 - `src/main/java/com/laimory/server` package tree
 - `src/main/resources/application*.properties`
 - `docker-compose.yml`, `Dockerfile`
-- `.github/workflows/*.yml`, `terraform/*.tf`
+- `.github/workflows/*.yml`, `deploy/monitoring/*`
 
 ## Current Implementation
 
@@ -40,7 +40,7 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 AI dispatcher는 현재 `noop`과 dev/test용 `fake`만 존재한다.
 
 dev 배포는 `dev` push에서 GitHub Actions가 ECR image를 만들고 SSM으로 EC2에 배포한다.
-Terraform은 AWS 인프라를 재현하는 recipe를 소유한다.
+저장소는 전체 AWS topology나 신규 host 초기화를 정의하지 않으며, live AWS와 host 상태가 권위다.
 
 ## Invariants
 

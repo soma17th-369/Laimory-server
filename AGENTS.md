@@ -16,6 +16,11 @@ Laimory는 Android 앱이 사용하는 Spring Boot REST 백엔드다.
 - 코드·설정·스키마·워크플로가 권위 원천이다. 문서가 다르면 현재 구현을 확인해 문서를 고친다.
 - secret, credential, 실제 토큰·키 값을 문서·로그·예시에 복제하지 않는다.
 
+## AWS Access
+
+- AWS 작업은 먼저 `sandbox` SSO 로그인을 요청·확인하고, 1차 조사는 AWS 조회와 SSM 비변경 진단으로 제한한다.
+- AWS·host 수정은 대상·영향·rollback을 설명한 뒤 사용자의 명시적 승인을 받아 실행한다. 인증·조회 승인은 수정 승인이 아니다.
+
 ## Knowledge Workflow
 
 1. 구현 전에 [knowledge index](.agents/knowledge/README.md)에서 변경과 관련된 문서만 찾고 읽는다.

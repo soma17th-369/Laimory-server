@@ -1,8 +1,8 @@
 # Laimory dev monitoring
 
 Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev monitoring EC2 한 대에서
-실행하는 재구축 자산이다. 실제 AWS 반영은 `terraform/README.md`의 Console/SSM runbook을 따른다.
-Terraform은 recipe이며 살아 있는 dev에 blanket/target `terraform apply`를 하지 않는다.
+실행하는 운영 자산이다. 실제 AWS·host 상태가 권위 원천이며, 이 저장소는 전체 인프라의 자동 재구축을
+보장하지 않는다.
 
 ## 구성과 범위
 
@@ -50,9 +50,8 @@ workflow는 commit SHA prefix에 `If-None-Match: *` 조건으로 각 파일을 �
 `workflow_dispatch` release는 이 자동 최신성 검사를 우회한다. 다른 path만 바뀐 merge에는 monitoring
 workflow가 실행되지 않는다.
 
-repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. Terraform은
-재구축 recipe일 뿐이므로 살아 있는 인프라에는 apply하지 않고 Console 또는 동등한 검토된 CLI 변경으로
-같은 권한을 반영한다.
+repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. 권한 변경은
+조회 결과와 영향을 검토하고 별도 승인받은 Console 또는 CLI 작업으로 반영한다.
 
 | Repository Variable | 값 |
 |---|---|
@@ -100,7 +99,7 @@ UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-ru
 
 ## Secret gate
 
-다음 파일은 Git, Terraform, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
+다음 파일은 Git, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
 Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장애만 Docker가 복구한다.
 비밀이 없는 Prometheus와 blackbox는 `unless-stopped`를 유지한다. host boot는 systemd가 전체 stack을
 시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 여섯 secret을
@@ -295,7 +294,7 @@ unset API_KEY
 
 ## Existing live rollout
 
-이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. Terraform apply는 하지 않는다.
+이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. 자동 provisioning은 하지 않는다.
 먼저 운영자 로컬에서 비밀 없는 변경 자산을 exact S3 key로 올린다.
 
 ```bash

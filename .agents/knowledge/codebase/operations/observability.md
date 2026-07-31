@@ -16,7 +16,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`
 - `deploy/elk/*`
 - `deploy/monitoring/*`
-- `terraform/README.md`, `terraform/user_data/was.sh.tftpl`
+- live ELK, monitoring과 WAS host 상태
 
 ## Current Request Tracing
 
@@ -162,10 +162,10 @@ Spring JSON stdout
   관측한다. pending job마다 원문 PHOTO Item도 보존돼 있다. gauge DB 조회 실패는 scrape 전체 실패 대신
   NaN이고 empty queue의 두 값은 0이다.
 
-## Dev Metrics Rebuild Recipe
+## Dev Metrics Assets
 
-repository에는 private On-Demand t3.medium 한 대에서 Prometheus, Grafana, blackbox와 central
-MySQL/Redis exporter를 실행하는 재구축 recipe가 있다. Prometheus는 30초 scrape, 7일 또는 12GB
+repository에는 Prometheus, Grafana, blackbox와 central MySQL/Redis exporter의 구성 자산이 있다.
+Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
@@ -194,14 +194,13 @@ Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
 
-Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS user data에서
-활성화된다. 빈 목록은 SSM port forwarding 전용이다. Prometheus target file은 Terraform이 실제 dev
-private IP로 렌더하지만 live 반영은 Console/SSM runbook을 따르며 현재 repository 상태만으로 live
-rollout 완료를 의미하지 않는다.
+Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS에서 활성화된다.
+빈 목록은 SSM port forwarding 전용이다. Prometheus target file의 실제 IP와 적용 상태는 live host가
+소유하며 현재 repository 상태만으로 rollout 완료를 의미하지 않는다.
 
 Grafana admin username의 repository 기본값은 `laimory`이며 compose 최초 생성과 alert provisioning
 reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
-MySQL/Redis exporter credential은 Git/S3/Terraform에 두지 않는다. host의 여섯 UID별 `0400` secret
+MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 여섯 UID별 `0400` secret
 file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
 Prometheus/blackbox만 먼저 기동할 수 있다. live proxy는 Grafana 전용 nginx include로 관리해 기존
 Kibana location을 보존하며, allowlist 밖에서는 slash
@@ -228,15 +227,17 @@ setup 컨테이너는 최초 부팅 1회만 실행되므로 살아있는 ELK에�
 **순서: 레포 template 수정(PR) → 아래 수동 적용 → dev 머지(=자동 배포).**
 
 ```bash
-# 0) S3 부트스트랩 사본 동기화(신규 박스 재현용 — terraform apply 금지, 레시피 모드)
+# 0) 조회로 확인한 대상에 S3 부트스트랩 사본 동기화
+BACKUP_BUCKET='<confirmed backup bucket>'
+ELK_INSTANCE_ID='<confirmed ELK instance ID>'
 aws s3 cp deploy/elk/index-template.json \
-  "s3://$(terraform -chdir=terraform output -raw backup_bucket)/bootstrap/elk/index-template.json" \
+  "s3://$BACKUP_BUCKET/bootstrap/elk/index-template.json" \
   --profile sandbox
 
 # 1) 상시 가동 중인 ELK 박스에 SSM 접속(Spot interruption 중이면 자동 재시작을 기다린다)
-aws ssm start-session --profile sandbox --target "$(terraform -chdir=terraform output -raw elk_instance_id)"
+aws ssm start-session --profile sandbox --target "$ELK_INSTANCE_ID"
 
-# 2) 박스 안에서: template PUT(이후 생성되는 index용). 비번은 secrets.auto.tfvars의 elk_elastic_password
+# 2) 박스 안에서: template PUT(이후 생성되는 index용). 비밀번호는 승인된 secret 경로로 확인한다.
 ES=http://localhost:9200; PW='<elk_elastic_password>'
 sudo aws s3 cp "s3://<backup_bucket>/bootstrap/elk/index-template.json" /home/ubuntu/elk/index-template.json
 curl -sf -u "elastic:$PW" -X PUT "$ES/_index_template/laimory" \

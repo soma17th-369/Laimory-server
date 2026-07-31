@@ -17,18 +17,18 @@
 | Change | Check together | Minimum validation |
 |---|---|---|
 | Entity, column, index, FK | Entity, `schema.sql`, repository, running DB rollout, persistence knowledge | unit + integration |
-| `schema.sql` | Compose first-init, Terraform S3 bootstrap, MySQL user data, manual DDL | fresh-volume integration when needed |
+| `schema.sql` | Compose first-init, running DB rollout, manual DDL | fresh-volume integration when needed |
 | Redis key, value, TTL | store/service, `RedisGateway`, live compatibility, session namespace | Redis unit + integration |
-| property or env name | both properties, deploy env/preflight/`-e`, Terraform user data, environments knowledge | context boot + targeted tests |
-| auth secret name | properties, deploy preflight, WAS `.env` docs, Terraform docs | build + workflow review |
+| property or env name | both properties, deploy env/preflight, host `.env`, environments knowledge | context boot + targeted tests |
+| auth secret name | properties, deploy preflight, host secret placement | build + workflow review |
 | AI 서버간 계약(dispatch/입력/결과/콜백) | source staging, dispatcher(+fixture), 회전 task token, Redis `ProcessStage`/CAS, fake dispatcher, glossary | focused contract tests + `TimelineAiTaskFlowIntegrationTest` |
-| photo storage | S3 service, object key, payload, CDN, cleanup, IAM/Terraform | photo + persistence tests |
+| photo storage | S3 service, object key, payload, CDN, cleanup, live IAM | photo + persistence tests |
 | cleanup or retention | scheduler, repositories, S3 delete ordering, properties | scheduler tests |
 | response or transaction ID | filter, envelope, OpenAPI, controller/error tests, API/observability knowledge | focused MockMvc tests |
 | log field or index | filter/logback, Filebeat, index template, ILM, Kibana query | logging tests + JSON validation |
 | runtime dependency | `build.gradle`, Dockerfile, CI, deployment knowledge | `./gradlew build` + image build |
 | deploy flow or health path | workflow, System/AppConfig API, preflight/rollback docs | build + workflow review |
-| Terraform user data | `ec2.tf` lifecycle ignore, manual SSM runbook, README | fmt + validate + reviewed plan |
+| host or bootstrap setup | workflow/runtime prerequisites, live AWS/host state | reviewed operational plan |
 | test tag or task | `build.gradle`, CI, annotations, testing knowledge | test + integration task |
 
 ## Invariants
@@ -49,5 +49,5 @@
 
 ```bash
 git diff --check
-rg -n '<changed-symbol-or-property>' src .github terraform
+rg -n '<changed-symbol-or-property>' src .github deploy
 ```
