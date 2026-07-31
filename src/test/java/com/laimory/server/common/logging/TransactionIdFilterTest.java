@@ -272,7 +272,7 @@ class TransactionIdFilterTest {
 
     @Test
     void responseLogPreviewIsTruncated_butClientReceivesFullBody() throws Exception {
-        String responseJson = "{\"safe\":\"" + "가".repeat(9000) + "\"}";
+        String responseJson = "{\"safe\":\"" + "가".repeat(AccessLogBodyMasker.MAX_LOGGED_CHARS + 1000) + "\"}";
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         filter.doFilter(new MockHttpServletRequest("GET", "/api/v1/test"), response,
@@ -287,7 +287,7 @@ class TransactionIdFilterTest {
 
         assertThat(response.getContentAsString()).isEqualTo(responseJson);
         assertThat(encoded(accessLog.list.get(0)).get("responseBody").asText())
-                .hasSize(8192)
+                .hasSize(65536)
                 .endsWith("…");
     }
 
@@ -298,19 +298,27 @@ class TransactionIdFilterTest {
                  "body":{"status":"PROCESSING","result":null,"error":null}}
                 """;
         String success = representativeSuccessPollingBody();
+        // preview 상한을 실제로 포화시켜야 worst case다 — escape 확장을 감안해 상한보다 넉넉히 만든다.
         String escapeHeavy = objectMapper.writeValueAsString(Map.of(
-                "preview", "가\"\\\t".repeat(2500)));
+                "preview", "가\"\\\t".repeat(20000)));
 
         int processingBytes = encodedSizeForJsonResponse(processing);
         int successBytes = encodedSizeForJsonResponse(success);
         int escapeHeavyBytes = encodedSizeForJsonResponse(escapeHeavy);
 
-        // 2026-07-16 실측: PROCESSING 652B, 12 events × 4 items SUCCESS 10,387B,
-        // escape-heavy 8,192자 preview 16,899B(서비스/환경 공통 field 포함).
+        // 2026-07-16 실측(preview 8,192자): PROCESSING 652B, 대표 SUCCESS 10,387B, escape-heavy 16,899B.
+        // 2026-07-31(#237) preview 상한 8,192→65,536자: 대표 SUCCESS 23,370B, escape-heavy 131,600B.
+        //
+        // 대표 SUCCESS(12 events × 4 items)의 전체 JSON이 약 20,000자라 이전 상한에서 절단되고 있었다.
+        // 따라서 preview를 조금이라도 올리면 이 body가 온전히 남는 대신 30 MiB rotation 안의 backfill
+        // 건수가 반드시 줄어든다 — "본문을 더 남긴다"와 "backfill 여유 3,000건"은 양립하지 않는다.
+        // #237은 진단 가능성을 택해 기준선을 3,028건 → 1,346건으로 내렸다. 근거는 dev 전용·실사용자
+        // 미도입이고 직전 관측에서 polling GET이 7일간 2건이라 절대 건수가 제약이 아니라는 점이다.
+        // 실사용자 도입이나 polling 트래픽 증가 시 preview 상한과 함께 재검토한다.
         assertThat(processingBytes).isLessThan(2 * 1024);
         assertThat(successBytes).isLessThan(32 * 1024);
-        assertThat(escapeHeavyBytes).isLessThan(64 * 1024);
-        assertThat(30 * 1024 * 1024 / successBytes).isGreaterThan(2500);
+        assertThat(escapeHeavyBytes).isLessThan(192 * 1024);
+        assertThat(30 * 1024 * 1024 / successBytes).isGreaterThan(1200);
     }
 
     @Test
@@ -321,6 +329,25 @@ class TransactionIdFilterTest {
         filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
         assertThat(encoded(accessLog.list.get(0)).get("clientIp").asText()).isEqualTo("203.0.113.7");
+    }
+
+    @Test
+    void completionLog_recordsUserIdPlantedByAuthenticationFilter() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/a/api/v1/timeline/daily-records");
+        request.setAttribute(RequestLogAttributes.USER_ID, 42L);
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(encoded(accessLog.list.get(0)).get("userId").asLong()).isEqualTo(42L);
+    }
+
+    @Test
+    void completionLog_recordsNullUserIdWhenRequestIsNotAuthenticated() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/intro");
+
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+        assertThat(encoded(accessLog.list.get(0)).get("userId").isNull()).isTrue();
     }
 
     @Test

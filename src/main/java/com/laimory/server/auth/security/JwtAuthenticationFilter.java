@@ -2,6 +2,7 @@ package com.laimory.server.auth.security;
 
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.common.logging.RequestLogAttributes;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,7 +23,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *
  * <p>principal은 별도 래퍼 없이 {@code Long} userId 그대로다 — 컨트롤러의
  * {@code @AuthenticationPrincipal Long userId}와 1:1로 맞춘다. token 원문은 credentials나
- * request attribute에 보존하지 않는다(유출면 최소화).
+ * request attribute에 보존하지 않는다(유출면 최소화). 다만 userId는
+ * {@code RequestLogAttributes.USER_ID} attribute에도 심어 access 로그가 인증 주체를 남길 수 있게 한다 —
+ * 완료 로그 시점에는 {@code SecurityContextHolder}가 이미 비워져 있기 때문이다.
  */
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -53,6 +56,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 context.setAuthentication(
                         UsernamePasswordAuthenticationToken.authenticated(userId, null, List.of()));
                 SecurityContextHolder.setContext(context);
+                // access 로그용 사본 — 완료 로그는 context가 비워진 뒤 찍히므로 SecurityContext로는 못 읽는다.
+                request.setAttribute(RequestLogAttributes.USER_ID, userId);
             });
         }
         chain.doFilter(request, response);

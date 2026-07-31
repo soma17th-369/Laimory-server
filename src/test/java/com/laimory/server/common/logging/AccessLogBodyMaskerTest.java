@@ -122,7 +122,7 @@ class AccessLogBodyMaskerTest {
         response.setContentType("application/json");
 
         assertThat(masker.maskResponse(response, bytes("{}"), true))
-                .isEqualTo("[too large: body exceeds 65536 bytes]");
+                .isEqualTo("[too large: body exceeds 524288 bytes]");
     }
 
     @Test
@@ -137,11 +137,11 @@ class AccessLogBodyMaskerTest {
 
     @Test
     void compactJsonIsSanitizedToBoundedTextPreview() {
-        String body = "{\"safe\":\"" + "가".repeat(9000) + "\"}";
+        String body = "{\"safe\":\"" + "가".repeat(AccessLogBodyMasker.MAX_LOGGED_CHARS + 1000) + "\"}";
 
         String masked = maskRequest("/api/v1/test", body);
 
-        assertThat(masked).hasSize(8192).endsWith("…");
+        assertThat(masked).hasSize(65536).endsWith("…");
     }
 
     private String maskRequest(String path, String body) {

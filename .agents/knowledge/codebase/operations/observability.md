@@ -33,7 +33,11 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
   `errorCode`(공개 numeric code의 10진 문자열 projection), `exceptionType`(내부 실패 사유),
   `errorDetail`(예외 클래스명·검증 메시지),
-  `clientIp`, `requestBody`, `responseBody`. field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
+  `clientIp`, `userId`, `requestBody`, `responseBody`. field 추가는 record 한 곳이며 null field도 명시적으로 출력한다.
+- `userId`는 인증에 성공한 요청에만 있고 public endpoint·401은 null이다. 값은 `JwtAuthenticationFilter`가
+  `RequestLogAttributes.USER_ID` request attribute에 심은 사본에서 온다 — 완료 로그는 security chain
+  바깥의 `finally`에서 찍혀 그 시점 `SecurityContextHolder`는 이미 비워져 있으므로 attribute가 유일한
+  전달 경로다. mapping은 `long`이다(template `dynamic: true`의 자동 매핑과 타입을 맞춰 인덱스 간 충돌 방지).
 - REST의 code는 JSON integer지만 access log `errorCode`는 기존 Elasticsearch `keyword` mapping을
   유지하기 위해 `"-1008"` 같은 문자열로 기록한다. live index field type과 template은 바꾸지 않는다.
 - query string은 포함하지 않는다.
@@ -59,8 +63,12 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 `Location`의 `app_code`도 기록하지 않는다. 향후 header 로깅은 별도 마스킹·보안 검토 없이는 추가하지 않는다.
 금지 대상을 예외 메시지에도 넣지 않는다.
 
-JSON request와 정상 반환한 JSON response는 body마다 앞 64 KiB까지만 캡처하고 access log의
-`requestBody`/`responseBody`에 최대 8,192자 text preview로 남긴다. 두 필드는 compact JSON,
+JSON request와 정상 반환한 JSON response는 body마다 앞 512 KiB까지만 캡처하고 access log의
+`requestBody`/`responseBody`에 최대 65,536자 text preview로 남긴다. 두 상한은 성격이 다르다 —
+캡처 상한을 넘으면 body를 파싱·마스킹하지 못해 preview를 통째로 버리고(`[too large: ...]`,
+문구의 바이트 수는 상한 상수에서 파생한다), preview 상한은 이미 마스킹이 끝난 문자열을 자르므로
+절단되어도 원문이 새지 않는다. 캡처 상한의 비용은 요청당 힙(request+response 2벌)이고
+preview 상한의 비용은 ES 저장과 rotation 안의 backfill 건수다. 두 필드는 compact JSON,
 `…`로 끝나는 절단 preview 또는 고정 placeholder를 담는 Elasticsearch `text`이며 object/nested field가
 아니다. body 내부 key별 구조화 검색이나 JSON 재파싱을 계약하지 않는다. 이 경계는 임의 client key로 인한
 dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
@@ -81,7 +89,8 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `[unavailable: unhandled exception]`로 남긴다. 이후 container `/error` body는 현재 한 줄 access log에서
   관찰하지 않는다.
 
-body에는 위치·건강·알림 본문·기기 사진 URI 등 개인정보가 들어갈 수 있고 `clientIp`와 결합된다.
+body에는 위치·건강·알림 본문·기기 사진 URI 등 개인정보가 들어갈 수 있고 `clientIp`·`userId`와 결합된다
+(`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
 개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
@@ -93,10 +102,17 @@ dev 전용·실사용자 미도입 상태라 전체 response body 기록을 유�
 polling 트래픽이 유의미하게 증가하면 client interval·terminal 중단·동시 task 수를 다시 확보해 제외 여부를
 재검토한다.
 
-2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함)는 `PROCESSING` 652 B,
-12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy 8,192자 preview 16,899 B였다.
-다른 로그를 무시한 상한 계산으로 30 MiB에는 대표 SUCCESS 약 3,028건이 들어간다. 이 수치는 단일 line
-크기 여유를 확인하는 dev rollout 판단 근거이며, 실사용자 규모의 장기 보존 용량을 보장하지는 않는다.
+2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함, preview 8,192자)는
+`PROCESSING` 652 B, 12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy preview
+16,899 B였고 30 MiB에 대표 SUCCESS 약 3,028건이었다.
+
+2026-07-31 preview 상한을 65,536자로 올린 뒤 같은 fixture는 대표 `SUCCESS` 23,370 B,
+escape-heavy 131,600 B이고 30 MiB에 약 1,346건이다. 대표 SUCCESS의 전체 JSON이 약 20,000자라
+이전 상한에서 절단되고 있었기 때문이다 — **preview를 올리면 body가 온전히 남는 대신 rotation 안의
+backfill 건수는 반드시 줄어든다. 두 목표는 양립하지 않는다.** dev 전용이고 직전 관측에서 polling GET이
+7일간 2건이라 절대 건수가 제약이 아니라고 보아 진단 가능성을 택했다. 이 수치는 단일 line 크기 여유와
+ELK 중단 시 backfill 범위를 확인하는 dev 판단 근거이며, 실사용자 규모의 장기 보존 용량을 보장하지 않는다.
+실사용자 도입이나 polling 트래픽 증가 시 preview 상한과 함께 재검토한다.
 
 외부에서 유입된 자유 문자열(요청 필드·예외 메시지·외부 시스템 출력)을 log에 넣을 때는
 `LogSanitizer`를 통과시킨다 — CR/LF 제거(텍스트 로그 라인 위조 방지) + 길이 상한(keyword 색인 값이

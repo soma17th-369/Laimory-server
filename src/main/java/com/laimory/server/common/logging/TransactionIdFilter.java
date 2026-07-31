@@ -101,13 +101,15 @@ public class TransactionIdFilter extends OncePerRequestFilter {
         long latencyMs = (System.nanoTime() - start) / 1_000_000;
         int status = caught != null ? 500 : response.getStatus(); // 예외 전파 시 아직 200인 status 오기록 방지
         String errorDetail = (String) request.getAttribute(RequestLogAttributes.ERROR_DETAIL);
+        // 인증 필터가 심어둔 사본을 읽는다 — 이 시점 SecurityContextHolder는 이미 비워져 있다.
+        Long userId = (Long) request.getAttribute(RequestLogAttributes.USER_ID);
         String requestBody = bodyMasker.maskRequest(request, request.getContentAsByteArray(), request.isOverflowed());
         String responseBody = caught != null
                 ? AccessLogBodyMasker.UNHANDLED_EXCEPTION_BODY
                 : bodyMasker.maskResponse(response, response.getCapturedBytes(), response.isOverflowed());
 
         HttpAccessLog entry = HttpAccessLog.of(request.getMethod(), path, status, latencyMs, type, errorDetail,
-                request.getRemoteAddr(), requestBody, responseBody);
+                request.getRemoteAddr(), userId, requestBody, responseBody);
         log.atLevel(resolveLevel(caught, type))
                 .addMarker(Markers.appendFields(entry))
                 .setCause(caught)

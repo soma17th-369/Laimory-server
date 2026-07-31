@@ -19,13 +19,14 @@ import org.springframework.http.MediaType;
 /** 제한된 JSON body를 access log용 text preview로 만들고 비밀 필드를 재귀적으로 제거한다. */
 final class AccessLogBodyMasker {
 
-    static final int CAPTURE_LIMIT_BYTES = 64 * 1024;
+    static final int CAPTURE_LIMIT_BYTES = 512 * 1024;
     static final String MASKED_AUTH_BODY = "[masked auth body]";
     static final String UNHANDLED_EXCEPTION_BODY = "[unavailable: unhandled exception]";
 
-    private static final int MAX_LOGGED_CHARS = 8192;
+    static final int MAX_LOGGED_CHARS = 65536;
     private static final String MASK = "***";
-    private static final String TOO_LARGE = "[too large: body exceeds 65536 bytes]";
+    // 상한을 바꿔도 문구가 거짓이 되지 않도록 상수에서 파생한다(하드코딩 금지).
+    private static final String TOO_LARGE = "[too large: body exceeds " + CAPTURE_LIMIT_BYTES + " bytes]";
     private static final String UNAVAILABLE_JSON = "[unavailable: invalid or unmaskable JSON]";
 
     private static final Pattern AUTH_BODY_PATH =
