@@ -199,4 +199,16 @@ class HttpTimelineAiDispatcherTest {
                 .isInstanceOf(IllegalStateException.class)
                 .isNotInstanceOf(TimelineAiDispatchRejectedException.class);
     }
+
+    @Test
+    void dispatch_emptyBody202_isUnknown_notRejected() {
+        // 202이지만 body가 없으면 taskId/PROCESSING 에코를 확인할 수 없다 = 접수 여부 불명(UNKNOWN).
+        // 미접수 확정(Rejected)으로 던지면 호출부가 PROCESSING을 FAILED로 잘못 덮는다.
+        server.enqueue(new MockResponse().setResponseCode(202));
+
+        assertThatThrownBy(() -> dispatcher.dispatch(request()))
+                .isInstanceOf(IllegalStateException.class)
+                .isNotInstanceOf(TimelineAiDispatchRejectedException.class)
+                .hasMessageContaining("AI 접수 계약 불일치");
+    }
 }
