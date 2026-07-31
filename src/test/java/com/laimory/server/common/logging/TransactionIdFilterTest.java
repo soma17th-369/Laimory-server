@@ -310,8 +310,8 @@ class TransactionIdFilterTest {
         // 2026-07-31(#237) preview 상한 8,192→65,536자: 대표 SUCCESS 23,370B, escape-heavy 131,600B.
         //
         // 대표 SUCCESS(12 events × 4 items)의 전체 JSON이 약 20,000자라 이전 상한에서 절단되고 있었다.
-        // 따라서 preview를 조금이라도 올리면 이 body가 온전히 남는 대신 30 MiB rotation 안의 backfill
-        // 건수가 반드시 줄어든다 — "본문을 더 남긴다"와 "backfill 여유 3,000건"은 양립하지 않는다.
+        // 이 body 전체를 남길 만큼 preview를 올리면 30 MiB rotation 안의 backfill 건수가 줄어든다 —
+        // "대표 body 전체를 남긴다"와 "backfill 여유 3,000건"은 양립하지 않는다.
         // #237은 진단 가능성을 택해 기준선을 3,028건 → 1,346건으로 내렸다. 근거는 dev 전용·실사용자
         // 미도입이고 직전 관측에서 polling GET이 7일간 2건이라 절대 건수가 제약이 아니라는 점이다.
         // 실사용자 도입이나 polling 트래픽 증가 시 preview 상한과 함께 재검토한다.

@@ -108,8 +108,8 @@ polling 트래픽이 유의미하게 증가하면 client interval·terminal 중�
 
 2026-07-31 preview 상한을 65,536자로 올린 뒤 같은 fixture는 대표 `SUCCESS` 23,370 B,
 escape-heavy 131,600 B이고 30 MiB에 약 1,346건이다. 대표 SUCCESS의 전체 JSON이 약 20,000자라
-이전 상한에서 절단되고 있었기 때문이다 — **preview를 올리면 body가 온전히 남는 대신 rotation 안의
-backfill 건수는 반드시 줄어든다. 두 목표는 양립하지 않는다.** dev 전용이고 직전 관측에서 polling GET이
+이전 상한에서 절단되고 있었기 때문이다 — **대표 body 전체를 남길 만큼 preview를 올리면 rotation 안의
+backfill 건수가 줄어 두 목표는 양립하지 않는다.** dev 전용이고 직전 관측에서 polling GET이
 7일간 2건이라 절대 건수가 제약이 아니라고 보아 진단 가능성을 택했다. 이 수치는 단일 line 크기 여유와
 ELK 중단 시 backfill 범위를 확인하는 dev 판단 근거이며, 실사용자 규모의 장기 보존 용량을 보장하지 않는다.
 실사용자 도입이나 polling 트래픽 증가 시 preview 상한과 함께 재검토한다.
@@ -262,9 +262,9 @@ curl -sf -u "elastic:$PW" -X PUT "$ES/_index_template/laimory" \
 # 3) 현재 열린 index에도 _mapping PUT(template은 기존 index에 소급되지 않음) — 추가한 field만 명시
 #    ignore_above는 기존 field에도 갱신 가능한 파라미터다
 curl -sf -u "elastic:$PW" -X PUT "$ES/laimory-dev-*/_mapping" -H 'Content-Type: application/json' \
-  -d '{"properties":{"clientIp":{"type":"ip","ignore_malformed":true},"requestBody":{"type":"text"},"responseBody":{"type":"text"}}}'
+  -d '{"properties":{"clientIp":{"type":"ip","ignore_malformed":true},"userId":{"type":"long"},"requestBody":{"type":"text"},"responseBody":{"type":"text"}}}'
 
-# 4) 확인: body에 keyword subfield가 없고 clientIp가 ip인지
+# 4) 확인: body에 keyword subfield가 없고 clientIp가 ip, userId가 long인지
 curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 ```
 

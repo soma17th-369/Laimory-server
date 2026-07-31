@@ -8,11 +8,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.auth.controller.AuthHandoffPageController;
-import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
+import com.laimory.server.common.logging.TransactionIds;
+import com.laimory.server.testsupport.AuthTestSupport;
+import net.logstash.logback.encoder.LogstashEncoder;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -37,14 +48,32 @@ class SecurityConfigTest {
 
     private static final String VALID_CHALLENGE = AuthTokens.challenge("any-verifier");
 
+    private final ListAppender<ILoggingEvent> accessLog = new ListAppender<>();
+
     @Autowired
     private MockMvc mockMvc;
 
     @Autowired
     private com.laimory.server.auth.token.JwtTokens jwtTokens;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @MockitoBean
     private SocialLoginService socialLoginService;
+
+    @BeforeEach
+    void attachAccessLogAppender() {
+        Logger logger = (Logger) LoggerFactory.getLogger("http.access");
+        accessLog.start();
+        logger.addAppender(accessLog);
+    }
+
+    @AfterEach
+    void detachAccessLogAppender() {
+        Logger logger = (Logger) LoggerFactory.getLogger("http.access");
+        logger.detachAppender(accessLog);
+    }
 
     @TestConfiguration
     static class DummyClientRegistrations {
@@ -143,10 +172,15 @@ class SecurityConfigTest {
         // 유효 토큰은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
         String token = jwtTokens.issueAccessToken(42L);
 
-        mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
+        MvcResult result = mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.header.code").value(-404));
+                .andExpect(jsonPath("$.header.code").value(-404))
+                .andReturn();
+
+        JsonNode accessEvent = encoded(findAccessEvent(result));
+        assertThat(accessEvent.get("userId").isIntegralNumber()).isTrue();
+        assertThat(accessEvent.get("userId").asLong()).isEqualTo(42L);
     }
 
     @Test
@@ -166,5 +200,26 @@ class SecurityConfigTest {
         mockMvc.perform(get("/a/apiary"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    private ILoggingEvent findAccessEvent(MvcResult result) {
+        String transactionId = result.getResponse().getHeader(TransactionIds.HEADER_NAME);
+        assertThat(transactionId).isNotBlank();
+        return accessLog.list.stream()
+                .filter(event -> transactionId.equals(
+                        event.getMDCPropertyMap().get(TransactionIds.MDC_KEY)))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private JsonNode encoded(ILoggingEvent event) throws Exception {
+        LogstashEncoder encoder = new LogstashEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.start();
+        try {
+            return objectMapper.readTree(encoder.encode(event));
+        } finally {
+            encoder.stop();
+        }
     }
 }
