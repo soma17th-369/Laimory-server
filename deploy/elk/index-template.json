@@ -28,6 +28,7 @@
         "exceptionType": { "type": "keyword" },
         "errorDetail": { "type": "keyword", "ignore_above": 256 },
         "clientIp": { "type": "ip", "ignore_malformed": true },
+        "userId": { "type": "long" },
         "requestBody": { "type": "text" },
         "responseBody": { "type": "text" },
         "stack_trace": { "type": "text" }

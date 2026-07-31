@@ -3,6 +3,7 @@ package com.laimory.server.auth.security;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.auth.token.JwtTokens;
+import com.laimory.server.common.logging.RequestLogAttributes;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -72,6 +73,28 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void validBearer_alsoExposesUserIdAsRequestAttributeForAccessLog() throws Exception {
+        // access 완료 로그는 SecurityContext가 비워진 뒤 찍히므로 request attribute가 유일한 전달 경로다.
+        MockHttpServletRequest request = request("Bearer " + jwtTokens.issueAccessToken(42L));
+
+        runFilter(request);
+
+        assertThat(request.getAttribute(RequestLogAttributes.USER_ID)).isEqualTo(42L);
+    }
+
+    @Test
+    void unauthenticatedRequest_leavesUserIdAttributeUnset() throws Exception {
+        MockHttpServletRequest missingHeader = request(null);
+        MockHttpServletRequest tampered = request("Bearer " + tamper(jwtTokens.issueAccessToken(42L)));
+
+        runFilter(missingHeader);
+        runFilter(tampered);
+
+        assertThat(missingHeader.getAttribute(RequestLogAttributes.USER_ID)).isNull();
+        assertThat(tampered.getAttribute(RequestLogAttributes.USER_ID)).isNull();
+    }
+
+    @Test
     void bearerScheme_isCaseInsensitive() throws Exception {
         String token = jwtTokens.issueAccessToken(42L);
 
@@ -94,10 +117,11 @@ class JwtAuthenticationFilterTest {
 
     @Test
     void tamperedToken_leavesContextEmpty() throws Exception {
-        String token = jwtTokens.issueAccessToken(42L);
-        String tampered = token.substring(0, token.length() - 4) + "AAAA";
+        assertThat(runFilter(request("Bearer " + tamper(jwtTokens.issueAccessToken(42L))))).isNull();
+    }
 
-        assertThat(runFilter(request("Bearer " + tampered))).isNull();
+    private String tamper(String token) {
+        return token.substring(0, token.length() - 4) + "AAAA";
     }
 
     @Test

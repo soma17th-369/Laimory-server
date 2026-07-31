@@ -10,21 +10,23 @@ import com.laimory.server.common.error.ExceptionType;
  * <p>{@code errorCode}는 공개 numeric code의 10진 문자열 projection, {@code exceptionType}은 서버 내부
  * 실패 타입이다. null 필드도 명시적으로 출력한다(현행 Elasticsearch keyword 스키마 연속성 —
  * ES는 null을 미색인 처리하므로 동작 차이 없음).
+ *
+ * <p>{@code userId}는 인증에 성공한 요청에만 있다 — public endpoint와 401은 null이다.
  */
 record HttpAccessLog(String event, String method, String path, int status, long latencyMs,
                      String errorCode, String exceptionType, String errorDetail,
-                     String clientIp, String requestBody, String responseBody) {
+                     String clientIp, Long userId, String requestBody, String responseBody) {
 
     /**
      * 필터가 수집한 원재료로 완료 로그 한 줄을 조립한다. 타입→코드/이름 파생 규칙(없으면 null)은
      * 호출부가 아니라 스키마 곁인 여기가 소유한다.
      */
     static HttpAccessLog of(String method, String path, int status, long latencyMs,
-                            ExceptionType type, String errorDetail, String clientIp,
+                            ExceptionType type, String errorDetail, String clientIp, Long userId,
                             String requestBody, String responseBody) {
         return new HttpAccessLog("http_request_completed", method, path, status, latencyMs,
                 type != null ? Integer.toString(type.code()) : null,
                 type != null ? type.name() : null,
-                errorDetail, clientIp, requestBody, responseBody);
+                errorDetail, clientIp, userId, requestBody, responseBody);
     }
 }
