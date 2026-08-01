@@ -102,7 +102,8 @@ public class TimelineDraftCleanupScheduler {
             log.warn("PHOTO payload 파싱 실패, S3 삭제 건너뜀: id={}", row.getTimelineDraftSourceItemId(), e);
             return;
         }
-        if (photo.filename() == null || photo.filename().isBlank()) {
+        // JSON null payload는 treeToValue가 예외 없이 null을 반환한다 — malformed와 같은 의미로 취급.
+        if (photo == null || photo.filename() == null || photo.filename().isBlank()) {
             log.warn("PHOTO payload filename 없음, S3 삭제 건너뜀: id={}", row.getTimelineDraftSourceItemId());
             return;
         }

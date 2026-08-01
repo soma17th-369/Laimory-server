@@ -10,7 +10,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.NullNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -62,6 +64,13 @@ class TimelineDraftCleanupSchedulerTest {
                 // photoUrl이 payload에 있어도 S3 삭제 key는 계속 filename+userId에서 파생된다(URL 파싱 안 함).
                 MAPPER.valueToTree(new PhotoPayload(filename, "content://x", 1.0, 2.0, null,
                         "https://cdn.example/hash/photos/" + filename)));
+        ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
+        return row;
+    }
+
+    private TimelineDraftSourceItem photoRow(long id, JsonNode payload) {
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
+                payload);
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }
@@ -148,6 +157,30 @@ class TimelineDraftCleanupSchedulerTest {
         // filename을 못 만들면 S3 삭제는 건너뛰되 만료 행은 정리한다(객체는 orphan 인정).
         verify(s3PhotoStorageService, never()).delete(any());
         verify(timelineDraftSourceItemService).deleteById(30L);
+    }
+
+    @Test
+    void cleanup_photoWithNullPayload_skipsS3ButStillDeletesRow() {
+        when(timelineDraftSourceItemService.findCreatedBefore(any()))
+                .thenReturn(List.of(photoRow(31L, NullNode.getInstance())));
+
+        scheduler(7L).cleanupExpiredDrafts();
+
+        // JSON null payload는 역직렬화 결과가 null — malformed와 같은 의미로 S3만 건너뛰고 만료 행은 정리한다.
+        verify(s3PhotoStorageService, never()).delete(any());
+        verify(timelineDraftSourceItemService).deleteById(31L);
+    }
+
+    @Test
+    void cleanup_photoWithMalformedPayload_skipsS3ButStillDeletesRow() {
+        when(timelineDraftSourceItemService.findCreatedBefore(any()))
+                .thenReturn(List.of(photoRow(32L, MAPPER.createArrayNode())));
+
+        scheduler(7L).cleanupExpiredDrafts();
+
+        // PhotoPayload로 역직렬화 불가능한 payload는 S3만 건너뛰고 만료 행은 정리한다.
+        verify(s3PhotoStorageService, never()).delete(any());
+        verify(timelineDraftSourceItemService).deleteById(32L);
     }
 
     @Test
