@@ -81,17 +81,17 @@ class KakaoMapPlaceProviderTest {
     }
 
     /** 빠른 결정적 실행용 기본 설정 — jitter 0, 짧은 backoff. 구조는 production 기본값과 동일하다. */
-    private GeoProperties properties(Duration responseTimeout) {
-        return new GeoProperties(20,
-                new GeoProperties.Http(Duration.ofSeconds(1), responseTimeout, Duration.ofSeconds(9),
-                        new GeoProperties.Http.Pool(20, 20, Duration.ofSeconds(1),
+    private KakaoGeoProperties properties(Duration responseTimeout) {
+        return new KakaoGeoProperties(20,
+                new KakaoGeoProperties.Http(Duration.ofSeconds(1), responseTimeout, Duration.ofSeconds(9),
+                        new KakaoGeoProperties.Http.Pool(20, 20, Duration.ofSeconds(1),
                                 Duration.ofSeconds(20), Duration.ofMinutes(5), Duration.ofSeconds(10))),
-                new GeoProperties.Retry(2, Duration.ofMillis(50), Duration.ofMillis(100), 0.0),
-                new GeoProperties.Circuit(20, 10, 50, Duration.ofSeconds(30), 3));
+                new KakaoGeoProperties.Retry(2, Duration.ofMillis(50), Duration.ofMillis(100), 0.0),
+                new KakaoGeoProperties.Circuit(20, 10, 50, Duration.ofSeconds(30), 3));
     }
 
     /** production 배선({@link KakaoGeoHttpConfiguration}) 그대로 provider를 조립한다. */
-    private KakaoMapPlaceProvider provider(GeoProperties properties) {
+    private KakaoMapPlaceProvider provider(KakaoGeoProperties properties) {
         String baseUrl = server.url("/").toString();
         pool = configuration.kakaoGeoConnectionProvider(properties);
         circuitBreaker = configuration.kakaoGeoCircuitBreaker(properties, meterRegistry, geoMetrics);
@@ -462,7 +462,7 @@ class KakaoMapPlaceProviderTest {
         WebClient buggyClient = WebClient.builder()
                 .exchangeFunction(request -> Mono.error(bug))
                 .build();
-        GeoProperties bugProperties = properties(Duration.ofSeconds(2));
+        KakaoGeoProperties bugProperties = properties(Duration.ofSeconds(2));
         // production ignoreException 정책까지 포함해 조립한다. ofDefaults는 모든 RuntimeException을
         // failure로 세므로 D14 계약을 검증할 수 없다.
         CircuitBreaker bugCircuit = configuration.kakaoGeoCircuitBreaker(

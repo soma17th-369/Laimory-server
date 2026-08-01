@@ -13,9 +13,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 명시해 운영 override 오류를 바로 찾게 한다.
  */
 @ConfigurationProperties(prefix = "app.geo")
-public record GeoProperties(int lookupConcurrency, Http http, Retry retry, Circuit circuit) {
+public record KakaoGeoProperties(int lookupConcurrency, Http http, Retry retry, Circuit circuit) {
 
-    public GeoProperties {
+    public KakaoGeoProperties {
         require(lookupConcurrency >= 1, "app.geo.lookup-concurrency must be >= 1");
         require(http != null, "app.geo.http.* is required");
         require(retry != null, "app.geo.retry.* is required");

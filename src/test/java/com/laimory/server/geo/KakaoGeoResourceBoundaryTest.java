@@ -64,25 +64,25 @@ class KakaoGeoResourceBoundaryTest {
         server.shutdown();
     }
 
-    private static GeoProperties properties(int lookupConcurrency, int maxConnections, int pendingMax,
+    private static KakaoGeoProperties properties(int lookupConcurrency, int maxConnections, int pendingMax,
             Duration pendingTimeout, Duration maxIdle, Duration maxLife, Duration evictionInterval,
-            GeoProperties.Circuit circuit) {
+            KakaoGeoProperties.Circuit circuit) {
         // deadline은 validation formula(2×(acquire+connect+response)+maxBackoff)를 만족하는 최솟값 이상으로.
         Duration deadline = pendingTimeout.plus(Duration.ofSeconds(3)).multipliedBy(2).plusSeconds(1);
-        return new GeoProperties(lookupConcurrency,
-                new GeoProperties.Http(Duration.ofSeconds(1), Duration.ofSeconds(2), deadline,
-                        new GeoProperties.Http.Pool(maxConnections, pendingMax, pendingTimeout,
+        return new KakaoGeoProperties(lookupConcurrency,
+                new KakaoGeoProperties.Http(Duration.ofSeconds(1), Duration.ofSeconds(2), deadline,
+                        new KakaoGeoProperties.Http.Pool(maxConnections, pendingMax, pendingTimeout,
                                 maxIdle, maxLife, evictionInterval)),
-                new GeoProperties.Retry(2, Duration.ofMillis(50), Duration.ofMillis(100), 0.0),
+                new KakaoGeoProperties.Retry(2, Duration.ofMillis(50), Duration.ofMillis(100), 0.0),
                 circuit);
     }
 
-    private static GeoProperties.Circuit quietCircuit() {
+    private static KakaoGeoProperties.Circuit quietCircuit() {
         // 자원 경계 테스트에서 circuit이 개입하지 않도록 window를 크게 둔다.
-        return new GeoProperties.Circuit(20, 10, 50, Duration.ofSeconds(30), 3);
+        return new KakaoGeoProperties.Circuit(20, 10, 50, Duration.ofSeconds(30), 3);
     }
 
-    private KakaoMapPlaceProvider provider(GeoProperties properties) {
+    private KakaoMapPlaceProvider provider(KakaoGeoProperties properties) {
         String baseUrl = server.url("/").toString();
         pool = configuration.kakaoGeoConnectionProvider(properties);
         circuitBreaker = configuration.kakaoGeoCircuitBreaker(properties, meterRegistry, geoMetrics);
@@ -203,9 +203,9 @@ class KakaoGeoResourceBoundaryTest {
 
     // ── R5/T23/T24/T31: circuit — 경계·open 차단·half-open 회복 ──
 
-    private static GeoProperties.Circuit smallCircuit(Duration openWait) {
+    private static KakaoGeoProperties.Circuit smallCircuit(Duration openWait) {
         // window 4·minimum 2·rate 50% — 2연속 실패로 open. half-open probe는 1개.
-        return new GeoProperties.Circuit(4, 2, 50, openWait, 1);
+        return new KakaoGeoProperties.Circuit(4, 2, 50, openWait, 1);
     }
 
     private void enqueueJson(String body) {

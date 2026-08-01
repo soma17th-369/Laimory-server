@@ -158,7 +158,7 @@ class RetryHelperTest {
     @Test
     void callable_expiresDuringBackoff_withoutStartingNewAttempt() {
         AtomicInteger evaluations = new AtomicInteger();
-        // 짧은 deadline(validation은 helper가 아니라 GeoProperties 몫 — policy 자체는 양수만 요구)으로
+        // 짧은 deadline(validation은 helper가 아니라 KakaoGeoProperties 몫 — policy 자체는 양수만 요구)으로
         // 첫 실패 뒤 backoff(200ms) 중 만료를 재현한다.
         RetryHelper.RetryPolicy shortDeadline = new RetryHelper.RetryPolicy(
                 2, Duration.ofMillis(200), Duration.ofMillis(500), 0.0, Duration.ofMillis(100));

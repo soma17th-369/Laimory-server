@@ -10,11 +10,11 @@ import org.springframework.boot.autoconfigure.web.reactive.function.client.WebCl
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 /**
- * {@link GeoProperties} startup validation(T32) — 잘못된 값은 컨텍스트 기동 실패여야 하고, 실패 메시지에
+ * {@link KakaoGeoProperties} startup validation(T32) — 잘못된 값은 컨텍스트 기동 실패여야 하고, 실패 메시지에
  * property 이름이 있어 운영 override 오류를 바로 찾을 수 있어야 한다. 실제 바인딩 경로
  * ({@code @EnableConfigurationProperties} + relaxed binding + Duration 변환)를 그대로 태운다.
  */
-class GeoPropertiesTest {
+class KakaoGeoPropertiesTest {
 
     private ApplicationContextRunner kakaoRunner() {
         return new ApplicationContextRunner()
@@ -29,7 +29,7 @@ class GeoPropertiesTest {
     void bindsCheckedInDefaults_successfully() {
         kakaoRunner().run(context -> {
             assertThat(context).hasNotFailed();
-            GeoProperties properties = context.getBean(GeoProperties.class);
+            KakaoGeoProperties properties = context.getBean(KakaoGeoProperties.class);
             assertThat(properties.lookupConcurrency()).isEqualTo(20);
             assertThat(properties.http().pool().maxConnections()).isEqualTo(20);
             assertThat(properties.http().pool().pendingAcquireMaxCount()).isEqualTo(20);

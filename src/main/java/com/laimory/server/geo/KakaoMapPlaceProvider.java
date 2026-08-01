@@ -86,7 +86,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     public KakaoMapPlaceProvider(
             @Qualifier("kakaoGeoWebClient") WebClient kakaoGeoWebClient,
             CircuitBreaker kakaoGeoCircuitBreaker,
-            GeoProperties properties,
+            KakaoGeoProperties properties,
             GeoMetrics geoMetrics) {
         this.webClient = kakaoGeoWebClient;
         this.circuitBreaker = kakaoGeoCircuitBreaker;

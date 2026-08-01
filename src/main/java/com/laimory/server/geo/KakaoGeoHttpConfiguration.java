@@ -37,7 +37,7 @@ import reactor.netty.resources.ConnectionProvider;
 @Slf4j
 @Configuration
 @ConditionalOnProperty(name = "app.geo.mode", havingValue = "kakao")
-@EnableConfigurationProperties(GeoProperties.class)
+@EnableConfigurationProperties(KakaoGeoProperties.class)
 public class KakaoGeoHttpConfiguration {
 
     static final String POOL_NAME = "kakao-local";
@@ -48,8 +48,8 @@ public class KakaoGeoHttpConfiguration {
      * context 종료 시 {@code dispose()}로 socket/thread를 회수한다.
      */
     @Bean(destroyMethod = "dispose")
-    ConnectionProvider kakaoGeoConnectionProvider(GeoProperties properties) {
-        GeoProperties.Http.Pool pool = properties.http().pool();
+    ConnectionProvider kakaoGeoConnectionProvider(KakaoGeoProperties properties) {
+        KakaoGeoProperties.Http.Pool pool = properties.http().pool();
         return ConnectionProvider.builder(POOL_NAME)
                 .maxConnections(pool.maxConnections())
                 .pendingAcquireMaxCount(pool.pendingAcquireMaxCount())
@@ -70,7 +70,7 @@ public class KakaoGeoHttpConfiguration {
     WebClient kakaoGeoWebClient(
             WebClient.Builder webClientBuilder,
             ConnectionProvider kakaoGeoConnectionProvider,
-            GeoProperties properties,
+            KakaoGeoProperties properties,
             @Value("${app.geo.kakao-rest-api-key}") String kakaoRestApiKey,
             @Value("${app.geo.kakao-base-url:https://dapi.kakao.com}") String kakaoBaseUrl) {
         if (kakaoRestApiKey == null || kakaoRestApiKey.isBlank()) {
@@ -99,9 +99,9 @@ public class KakaoGeoHttpConfiguration {
      * deadline보다 길게 둬 비활성화한다(모든 호출이 deadline 안에 끝나므로 결코 발동하지 않는다).
      */
     @Bean
-    CircuitBreaker kakaoGeoCircuitBreaker(GeoProperties properties, MeterRegistry meterRegistry,
+    CircuitBreaker kakaoGeoCircuitBreaker(KakaoGeoProperties properties, MeterRegistry meterRegistry,
             GeoMetrics geoMetrics) {
-        GeoProperties.Circuit circuit = properties.circuit();
+        KakaoGeoProperties.Circuit circuit = properties.circuit();
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
                 .slidingWindowSize(circuit.slidingWindowSize())
