@@ -60,10 +60,13 @@ import org.springframework.test.web.servlet.MockMvc;
 class TimelineRecordControllerTest {
 
     private static final long USER_ID = 7L;
+    private static final LocalDate RECORD_DATE = LocalDate.parse("2026-07-08");
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
     private static final String DAILY_RECORDS_PATH = "/a/api/v1/timeline/daily-records";
-    private static final String DAILY_RECORD_PATH = "/a/api/v1/timeline/daily-records/77";
+    private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/77";
+    private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/by-date/" + RECORD_DATE;
+    private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/by-date/not-a-date";
 
     private static final String PATCH_BODY = """
             {
@@ -105,7 +108,7 @@ class TimelineRecordControllerTest {
                 77L, LocalDate.parse("2026-07-08"), EmotionType.HAPPY, List.of(updatedEvent()));
     }
 
-    // --- getDailyTimelines / getDailyTimeline ---
+    // --- getDailyTimelines / getDailyTimeline / getTimelineEvent ---
 
     @Test
     void getDailyTimelines_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
@@ -146,11 +149,11 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void getDailyTimeline_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
+    void getDailyTimelineById_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
         when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
                 .thenReturn(dailyTimeline());
 
-        mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(get(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
@@ -164,11 +167,77 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void getDailyTimeline_mapsNotFoundTo404() throws Exception {
+    void getDailyTimelineById_mapsNotFoundTo404() throws Exception {
         when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
 
-        mockMvc.perform(get(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(get(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void getDailyTimelineByDate_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
+        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), any(LocalDate.class)))
+                .thenReturn(dailyTimeline());
+
+        mockMvc.perform(get(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.dailyRecordId").value(77))
+                .andExpect(jsonPath("$.body.recordDate").value("2026-07-08"))
+                .andExpect(jsonPath("$.body.events[0].timelineEventId").value(11))
+                .andExpect(jsonPath("$.body.events[0].items[0].timelineItemId").value(21));
+
+        verify(dailyTimelineService).getDailyTimeline("v1", USER_ID, RECORD_DATE);
+    }
+
+    @Test
+    void getDailyTimelineByDate_mapsNotFoundTo404() throws Exception {
+        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), any(LocalDate.class)))
+                .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
+
+        mockMvc.perform(get(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void getDailyTimelineByDate_withInvalidDateReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(get(INVALID_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(dailyTimelineService);
+    }
+
+    @Test
+    void getTimelineEvent_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
+        when(dailyTimelineService.getTimelineEvent(any(), anyLong(), anyLong()))
+                .thenReturn(updatedEvent());
+
+        mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.timelineEventId").value(11))
+                .andExpect(jsonPath("$.body.eventType").value("REST"))
+                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
+                .andExpect(jsonPath("$.body.items[0].payload.filename").value("u.jpg"));
+
+        verify(dailyTimelineService).getTimelineEvent("v1", USER_ID, 11L);
+    }
+
+    @Test
+    void getTimelineEvent_mapsNotFoundTo404() throws Exception {
+        when(dailyTimelineService.getTimelineEvent(any(), anyLong(), anyLong()))
+                .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+
+        mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -180,7 +249,13 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
-        mockMvc.perform(get(DAILY_RECORD_PATH))
+        mockMvc.perform(get(DAILY_RECORD_ID_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001));
+        mockMvc.perform(get(DAILY_RECORD_DATE_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001));
+        mockMvc.perform(get(EVENT_PATH))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001));
 
@@ -514,11 +589,11 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value(-500));
     }
 
-    // --- deleteDailyRecord ---
+    // --- deleteDailyRecord / deleteDailyRecordByDate ---
 
     @Test
-    void deleteDailyRecord_returns200WithEmptyBody() throws Exception {
-        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+    void deleteDailyRecordById_returns200WithEmptyBody() throws Exception {
+        mockMvc.perform(delete(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
@@ -528,23 +603,74 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void deleteDailyRecord_mapsNotFoundTo404() throws Exception {
+    void deleteDailyRecordById_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
-        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(delete(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
     }
 
     @Test
-    void deleteDailyRecord_mapsUnexpectedTransactionFailureTo500() throws Exception {
+    void deleteDailyRecordById_mapsUnexpectedTransactionFailureTo500() throws Exception {
         doThrow(new RuntimeException("db down"))
                 .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
 
-        mockMvc.perform(delete(DAILY_RECORD_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(delete(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.header.code").value(-500));
+    }
+
+    @Test
+    void deleteDailyRecordByDate_returns200WithEmptyBody() throws Exception {
+        mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(this::assertBodyIsExplicitNull);
+
+        verify(timelineDeletionService).deleteDailyRecordByDate("v1", USER_ID, RECORD_DATE);
+    }
+
+    @Test
+    void deleteDailyRecordByDate_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
+                .when(timelineDeletionService).deleteDailyRecordByDate(any(), anyLong(), any(LocalDate.class));
+
+        mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void deleteDailyRecordByDate_mapsSavedConflictTo409() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineDeletionService).deleteDailyRecordByDate(any(), anyLong(), any(LocalDate.class));
+
+        mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1003));
+    }
+
+    @Test
+    void deleteDailyRecordByDate_withInvalidDateReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(delete(INVALID_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineDeletionService);
+    }
+
+    @Test
+    void deleteDailyRecordByDate_withoutAuthenticationReturns401WithoutCallingService() throws Exception {
+        mockMvc.perform(delete(DAILY_RECORD_DATE_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineDeletionService);
     }
 
     private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {

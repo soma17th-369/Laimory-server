@@ -128,6 +128,138 @@ class DailyTimelineServiceTest {
     }
 
     @Test
+    void getDailyTimeline_ownedDate_returnsRecordGraph() {
+        DailyRecord record = record(300L, RECORD_DATE);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(record));
+        when(timelineEventService.findByDailyRecordIds(List.of(300L))).thenReturn(List.of());
+        when(timelineEventItemService.findByTimelineEventIds(List.of())).thenReturn(List.of());
+        when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
+
+        DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", USER_ID, RECORD_DATE);
+
+        assertThat(result.dailyRecordId()).isEqualTo(300L);
+        assertThat(result.recordDate()).isEqualTo(RECORD_DATE);
+        assertThat(result.events()).isEmpty();
+        verify(dailyRecordService).findByUserIdAndRecordDate(USER_ID, RECORD_DATE);
+    }
+
+    @Test
+    void getDailyTimeline_dateMissing_throwsDailyRecordNotFoundWithoutLoadingGraph() {
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> dailyTimelineService.getDailyTimeline("v1", USER_ID, RECORD_DATE))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND));
+
+        verifyNoInteractions(timelineEventService, timelineEventItemService, timelineItemService);
+    }
+
+    @Test
+    void getTimelineEvent_ownedDraft_assemblesItemsWithNullFirstTimeAndIdOrdering() {
+        DailyRecord record = record(300L, RECORD_DATE);
+        LocalDateTime eventStart = RECORD_DATE.atTime(9, 0);
+        TimelineEvent event = TimelineEvent.of(
+                300L, TimelineEventType.WORK, eventStart, eventStart.plusHours(2), "업무", "오전");
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        ReflectionTestUtils.setField(event, "memo", "중요 메모");
+        when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
+
+        // junction/Item 반환 순서와 무관하게 null startAt이 먼저, 동시간은 ID 오름차순이다.
+        when(timelineEventItemService.findByTimelineEventIds(List.of(11L)))
+                .thenReturn(List.of(
+                        TimelineEventItem.of(11L, 22L),
+                        TimelineEventItem.of(11L, 23L),
+                        TimelineEventItem.of(11L, 21L)));
+        LocalDateTime itemStart = RECORD_DATE.atTime(10, 0);
+        TimelineItem laterId = item(22L, ItemType.NOTIFICATION, "raw-22", itemStart,
+                MAPPER.createObjectNode().put("title", "later-id"));
+        TimelineItem untimed = item(23L, ItemType.NOTIFICATION, "raw-23", null,
+                MAPPER.createObjectNode().put("title", "untimed"));
+        TimelineItem earlierId = item(21L, ItemType.NOTIFICATION, "raw-21", itemStart,
+                MAPPER.createObjectNode().put("title", "earlier-id"));
+        when(timelineItemService.findByIds(List.of(22L, 23L, 21L)))
+                .thenReturn(List.of(laterId, untimed, earlierId));
+
+        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L);
+
+        assertThat(result.timelineEventId()).isEqualTo(11L);
+        assertThat(result.eventType()).isEqualTo(TimelineEventType.WORK);
+        assertThat(result.startAt()).isEqualTo(eventStart);
+        assertThat(result.endAt()).isEqualTo(eventStart.plusHours(2));
+        assertThat(result.title()).isEqualTo("업무");
+        assertThat(result.subtitle()).isEqualTo("오전");
+        assertThat(result.memo()).isEqualTo("중요 메모");
+        assertThat(result.items()).extracting(TimelineItemResponse::timelineItemId)
+                .containsExactly(23L, 21L, 22L);
+        assertThat(result.items().get(0).payload().get("title").asText()).isEqualTo("untimed");
+    }
+
+    @Test
+    void getTimelineEvent_ownedSavedRecord_isReadableWithEmptyItems() {
+        DailyRecord saved = record(300L, RECORD_DATE);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        TimelineEvent event = TimelineEvent.of(
+                300L, TimelineEventType.REST, RECORD_DATE.atTime(13, 0), null, "휴식", null);
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(300L)).thenReturn(Optional.of(saved));
+        when(timelineEventItemService.findByTimelineEventIds(List.of(11L))).thenReturn(List.of());
+        when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
+
+        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L);
+
+        assertThat(result.timelineEventId()).isEqualTo(11L);
+        assertThat(result.items()).isEmpty();
+    }
+
+    @Test
+    void getTimelineEvent_missingEvent_throwsEventNotFoundWithoutLoadingParentOrItems() {
+        when(timelineEventService.findById(11L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+
+        verifyNoInteractions(dailyRecordService, timelineEventItemService, timelineItemService);
+    }
+
+    @Test
+    void getTimelineEvent_parentMissing_throwsEventNotFoundWithoutLoadingItems() {
+        TimelineEvent event = TimelineEvent.of(
+                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null);
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(300L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+
+        verifyNoInteractions(timelineEventItemService, timelineItemService);
+    }
+
+    @Test
+    void getTimelineEvent_foreignParent_throwsEventNotFoundWithoutLoadingItems() {
+        TimelineEvent event = TimelineEvent.of(
+                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null);
+        ReflectionTestUtils.setField(event, "timelineEventId", 11L);
+        DailyRecord foreign = DailyRecord.createDraft(
+                999L, RECORD_DATE, RECORD_AT, ZONE);
+        ReflectionTestUtils.setField(foreign, "dailyRecordId", 300L);
+        when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(300L)).thenReturn(Optional.of(foreign));
+
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+
+        verifyNoInteractions(timelineEventItemService, timelineItemService);
+    }
+
+    @Test
     void getDailyTimelines_preservesRecordOrderAndLoadsWholeGraphInBulk() {
         DailyRecord recent = record(301L, RECORD_DATE.plusDays(1));
         DailyRecord saved = record(300L, RECORD_DATE);

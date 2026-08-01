@@ -69,8 +69,8 @@ handoff를 그대로 사용한다.
 
 ## userId Propagation
 
-- 10개 timeline 보호 API(`draft 생성/photo presign/polling/진행 작업 목록` + `DailyRecord 전체/단건
-  조회` + `Event 수정/메모/삭제/DailyRecord 삭제`)의
+- 13개 timeline 보호 API(`draft 생성/photo presign/polling/진행 작업 목록` + `DailyRecord 전체/날짜 단건/
+  deprecated ID 단건 조회` + `Event 조회/수정/메모/삭제` + `DailyRecord 날짜/deprecated ID 삭제`)의
   controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/S3 key/
   polling·직접 조회 결과가 전부 같은 userId에 귀속된다.
 - Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.

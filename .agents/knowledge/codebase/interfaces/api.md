@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 12개(timeline 10 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 15개(timeline 13 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -50,9 +50,18 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 (`GET .../drafts/{taskId}`)이 권위다. Redis 권위 read·task JSON 해석 실패는 catch-all 500 `-500`이다.
 
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
-`recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`이며,
-`GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 없음·비소유를 같은 404 `-404`로
-은닉한다. 두 응답 모두 Event별 연결 Item을 `events[].items[]`에 포함한다.
+`recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`다.
+하루 단건의 날짜 기반 공개 계약은
+`GET /a/api/{version}/timeline/daily-records/by-date/{recordDate}`이며 `(principal userId, recordDate)`가
+일치하는 DRAFT/SAVED record를 반환한다. 기존
+`GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`도 같은 응답·소유권 계약으로 동작하지만
+Android 전환 동안만 유지하는 deprecated 호환 API다. 없음·비소유는 두 경로 모두 같은 404 `-404`로
+은닉하며 `DailyTimelineResponse.dailyRecordId`는 응답에 계속 포함한다. 전체·단건 응답 모두 Event별 연결
+Item을 `events[].items[]`에 포함한다.
+
+`GET /a/api/{version}/timeline/events/{timelineEventId}`는 인증 사용자가 소유한 DRAFT/SAVED record의
+Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. Event·부모 record 없음과 부모 비소유는
+같은 404 `-404`로 은닉하고, Item이 없으면 `items=[]`다.
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
 `title`·`subtitle`·`startAt`·`endAt`(네 key 모두 필수), 선택적 `eventType`, 선택적 `memo`와 선택적
@@ -61,17 +70,18 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 `description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
-`200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 DailyRecord 단건 GET으로
+`200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
-`DELETE /a/api/{version}/timeline/events/{timelineEventId}`와
-`DELETE /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 필요한 PHOTO S3 삭제 작업·원문 PHOTO
-Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. S3 완료는
-비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를 동기 502로
-반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 같은 날짜 작업 중이라는 이유로
-`-1016`을 반환하지 않는다.
+`DELETE /a/api/{version}/timeline/events/{timelineEventId}`와 날짜 기반
+`DELETE /a/api/{version}/timeline/daily-records/by-date/{recordDate}`는 필요한 PHOTO S3 삭제 작업·원문
+PHOTO Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. 기존
+`DELETE /a/api/{version}/timeline/daily-records/{dailyRecordId}`도 같은 의미로 동작하는 deprecated 호환
+API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를
+동기 502로 반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 잘못된 날짜 형식은 400이며,
+같은 날짜 작업 중이라는 이유로 `-1016`을 반환하지 않는다.
 
 `/s/api/{version}/timeline/drafts/{taskId}`에는 AI 서버간 endpoint 셋이 있다 — `GET .../input`(정규 AI 입력
 반환), `POST .../result`(Event/Item/junction 저장 + 채택 source 삭제), `POST .../callback`(작업 상태 전이).

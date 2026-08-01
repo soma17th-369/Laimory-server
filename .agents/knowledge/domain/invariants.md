@@ -63,6 +63,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - Event·DailyRecord 삭제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에 거절하고
   없음·비소유는 404로 은닉한다.
+- 날짜 기반 DailyRecord 삭제는 `(principal userId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
+  transaction이 그 정확한 ID의 owner/DRAFT를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
+  record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.
 - 삭제 transaction은 다른 Event가 참조하지 않아 association 0이 될 orphan Item을 계산하고, orphan PHOTO의
   full object key와 원문 Item PK를 `timeline_photo_delete_jobs`에 insert한다. 같은 commit에서
   root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
@@ -164,7 +167,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 요청 하나의 principal userId가 draft record 조회·enrich photo key·staging row·
-  Redis task owner·polling·DailyRecord 전체/단건 조회·편집/삭제 소유권 검사까지 전부 동일해야 한다
+  Redis task owner·polling·DailyRecord 전체/ID·날짜 단건 조회·ID·날짜 삭제·Event 단건 조회·편집·삭제
+  소유권 검사까지 전부 동일해야 한다
   (지점 분기 금지).
 - Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에
   owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
