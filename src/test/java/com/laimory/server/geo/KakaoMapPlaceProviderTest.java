@@ -342,6 +342,31 @@ class KakaoMapPlaceProviderTest {
     }
 
     @Test
+    void lookup_retriesAsTransient_whenBodyStallsAfterSuccessfulHeaders() {
+        // 2xx headers 뒤 body read timeout은 WebClientResponseException(200)으로 감싸질 수 있다.
+        // outer status만 보고 영구 실패로 오분류하지 않고 cause의 I/O를 따라 전이 실패로 재시도해야 한다.
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"documents\":[]}")
+                .setBodyDelay(1, TimeUnit.SECONDS));
+        server.enqueue(new MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("{\"documents\":[]}")
+                .setBodyDelay(1, TimeUnit.SECONDS));
+        KakaoMapPlaceProvider provider = provider(properties(Duration.ofMillis(250)));
+
+        assertThatThrownBy(() -> provider.lookup(LATITUDE, LONGITUDE).block())
+                .isInstanceOfSatisfying(MapPlaceLookupException.class, e -> {
+                    assertThat(e.category()).isEqualTo(MapPlaceLookupException.Category.REMOTE);
+                    assertThat(e.retryThisCall()).isTrue();
+                    assertThat(e.clientMayRetryLater()).isTrue();
+                });
+        assertThat(server.getRequestCount()).isEqualTo(2);
+        assertThat(attemptCount("coord2address", "first")).isEqualTo(1);
+        assertThat(attemptCount("coord2address", "retry")).isEqualTo(1);
+    }
+
+    @Test
     void lookup_failsFastAsTransient_whenConnectionRefused_withoutHiddenLongWait() throws IOException {
         // T26: 연결 거절은 45s 숨은 대기 없이 빠르게 전이 실패로 분류돼야 한다(전용 pool acquire 45s 기본 제거).
         server.shutdown();

@@ -256,6 +256,12 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
             return MapPlaceLookupException.localRejected(endpoint + " pool acquire rejected", e);
         }
         if (e instanceof WebClientResponseException http) {
+            // 2xx headers 뒤 body read timeout/disconnect는 WebClient가 원인을 cause로 둔
+            // WebClientResponseException(2xx)으로 감쌀 수 있다. status만 보면 영구 응답 오류로
+            // 오분류되므로 이 경우에는 실제 I/O 원인을 우선한다. non-2xx는 받은 status가 권위다.
+            if (http.getStatusCode().is2xxSuccessful() && hasRemoteIoCause(http)) {
+                return MapPlaceLookupException.remoteTransient(endpoint + " io error", e);
+            }
             // HTTP status를 받은 4xx/5xx. 5xx만 전이적으로 본다(429·401·403·기타 4xx는 영구).
             boolean transientStatus = http.getStatusCode().is5xxServerError();
             String message = endpoint + " http " + http.getStatusCode().value();
@@ -275,6 +281,21 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
         // 호출자는 isExpectedFailure로 거른다. 이 분기는 새 expected failure 타입을 predicate에만 추가하는
         // 실수를 조용히 영구 실패로 만들지 않도록 programming error로 남긴다.
         throw new IllegalArgumentException("unclassified kakao failure", e);
+    }
+
+    /** 2xx 응답 body 단계에서 WebClientResponseException 안에 감싸진 remote I/O 원인이 있는지. */
+    private static boolean hasRemoteIoCause(Throwable e) {
+        for (Throwable current = e.getCause(); current != null; current = current.getCause()) {
+            if (current instanceof WebClientRequestException
+                    || current instanceof ReadTimeoutException
+                    || current instanceof IOException) {
+                return true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return false;
     }
 
     /** cause 체인에 전용 pool acquire 거절(pending 초과)·timeout이 있는지 — WebClient 래핑과 무관하게 탐지. */
