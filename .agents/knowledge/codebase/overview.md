@@ -21,7 +21,9 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 - Java 21, Spring Boot 3.5.8, Gradle 8.14.3 Wrapper 기반 단일 Spring Boot 배포물이다.
 - Spring MVC, JPA/Hibernate, MySQL 8, Redis 7, Spring Security OAuth2 Client,
   Spring Session Redis, Actuator/Micrometer와 springdoc-openapi를 사용한다. 외부 API 병렬 호출(지오코딩)에는
-  WebClient/Reactor를 쓴다(webflux 의존성 공존, 서블릿 MVC 유지).
+  WebClient/Reactor를 쓴다(webflux 의존성 공존, 서블릿 MVC 유지). Kakao 지오코딩 process-wide circuit
+  breaker에는 Resilience4j 2.4.0 세 모듈(circuitbreaker/reactor/micrometer)을 코드 조립으로만 쓴다
+  (Spring aspect starter·Resilience4j Retry 미사용 — retry는 자체 `RetryHelper`).
 - MySQL은 영속 데이터와 AI 입력 staging을, Redis는 draft task·app code·
   OAuth session을 저장한다. 사진 본문은 S3, 공개 URL은 CloudFront를 사용한다.
 

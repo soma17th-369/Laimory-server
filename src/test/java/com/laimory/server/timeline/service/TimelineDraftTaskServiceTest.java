@@ -137,7 +137,7 @@ class TimelineDraftTaskServiceTest {
         verify(timelineTaskService).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
 
-        // 순서 불변식: enrich(저장 전 — AI가 DB에서 직접 읽음) → 선생성+source 저장 커밋 → Redis PROCESSING → dispatch.
+        // 순서 불변식: enrich(저장 전 — AI 입력 조회가 저장본을 반환) → 선생성+source 저장 커밋 → Redis PROCESSING → dispatch.
         InOrder order = inOrder(sourceItemEnrichmentService, timelineDraftPreparationService,
                 timelineTaskService, timelineAiDispatcher);
         order.verify(sourceItemEnrichmentService).enrich(anyList(), anyLong());
@@ -469,6 +469,23 @@ class TimelineDraftTaskServiceTest {
         List<SourceItemDto> sources = java.util.Collections.singletonList(null);
         assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void createDraftTask_rejectsMissingStartAt_beforeEnrichSaveAndDispatch() {
+        // T38: 원래 계약대로 startAt은 전 타입 필수 — AI 입력 계약도 필수라 dispatch 뒤 실패를 이 경계의
+        // 400으로 앞당긴다. lookup/저장/디스패치 어느 것도 시작되지 않아야 한다. nullable endAt은 그대로 허용.
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.PHOTO, "raw-photo-1", null, null,
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("startAt");
+        verify(sourceItemEnrichmentService, never()).enrich(anyList(), anyLong());
+        verify(timelineDraftPreparationService, never()).prepareDraft(anyLong(), any(), any(), anyString(), anyList());
+        verify(timelineTaskService, never()).createProcessing(anyString(), anyLong(), anyLong(), any(), any(), any());
+        verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
     @Test

@@ -22,6 +22,7 @@
 | property or env name | both properties, deploy env/preflight, host `.env`, environments knowledge | context boot + targeted tests |
 | auth secret name | properties, deploy preflight, host secret placement | build + workflow review |
 | AI 서버간 계약(dispatch/입력/결과/콜백) | source staging, dispatcher(+fixture), 회전 task token, Redis `ProcessStage`/CAS, fake dispatcher, glossary | focused contract tests + `TimelineAiTaskFlowIntegrationTest` |
+| geo HTTP·품질 정책(pool/retry/circuit/cap/partial) | `GeoProperties`+`application.properties`, `KakaoGeoHttpConfiguration`, provider/`GeocodingService`/`GeoEnrichmentPolicy`/enrichment, draft OpenAPI, external-integrations/observability/invariants knowledge | `RetryHelperTest`+`geo.*`+`GeoEnrichmentPolicyTest`+enrichment/draft/controller tests(경계는 `KakaoGeoResourceBoundaryTest`) |
 | photo storage | S3 service, object key, payload, CDN, cleanup, live IAM | photo + persistence tests |
 | cleanup or retention | scheduler, repositories, S3 delete ordering, properties | scheduler tests |
 | response or transaction ID | filter, envelope, OpenAPI, controller/error tests, API/observability knowledge | focused MockMvc tests |

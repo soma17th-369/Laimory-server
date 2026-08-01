@@ -167,7 +167,20 @@ Spring JSON stdout
     root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
-- custom label은 고정 `result`와 전용 build info의 `commit`만 사용한다. userId/taskId/transactionId/FID/좌표/raw URL·query/
+  - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
+    unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회
+  - `laimory.geo.http.logical{endpoint=coord2address|keyword, outcome=success|exhausted|local_rejected|not_permitted, failure_kind}`:
+    retry·deadline 포함 logical HTTP call timer
+  - `laimory.geo.http.attempts{endpoint, attempt=first|retry}`: 실제 구독된 wire attempt 수
+    (circuit open 거절은 세지 않음)
+  - `laimory.geo.http.retries{endpoint, failure_kind}`: 실제 schedule된 retry 수(직전 실패 분류 tag).
+    logical deadline이 backoff 중 만료되면 다음 wire attempt가 시작되지 않아도 schedule 자체는 계수된다.
+  - `laimory.geo.circuit.transitions{from, to}`: `kakao-local` circuit state transition 수
+    (Resilience4j binder의 state/calls gauge와 별도, 의미 중복 계수 없음)
+- Reactor Netty native `reactor.netty.connection.provider.*`(total/active/idle/pending/max/max.pending)는
+  전용 pool 이름 `kakao-local`로 활성화돼 있다(kakao mode 한정).
+- custom label은 고정 `result`, build info의 `commit`, geo 전용 `outcome`/`failure_kind`/`endpoint`/
+  `attempt`/`from`/`to`만 사용한다. userId/taskId/transactionId/FID/좌표/주소/raw URL·query/
   자유 입력/exception message는 tag로 쓰지 않는다.
 - Fake AI callback은 URI template을 보존하며, Kakao WebClient의 URI function도 좌표·주소 query를
   low-cardinality tag로 만들지 않는다.

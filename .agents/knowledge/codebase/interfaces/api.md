@@ -36,6 +36,13 @@ version별 동작은 service가 결정한다.
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
+`POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
+timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). 지오코딩 대상 고유 좌표
+(rawId dedupe·기존 저장 item 제외 뒤 STAY 1개·MOVEMENT 최대 2개 좌표를 dedupe한 수)는 최대 30개이며
+초과는 외부 지도 API 호출 없이 400/`-400`이다 — `sourceItems` 배열 길이 제약(`maxItems`)이 아니라
+runtime 파생 계산이라 OpenAPI에는 description과 400 응답으로만 표현한다. 지오코딩 부분 실패 허용/거절
+경계는 [timeline draft runtime](../runtime/timeline-draft.md)이 소유한다.
+
 `GET /a/api/{version}/timeline/drafts`는 인증 사용자가 소유한 현재 진행 중(`PROCESSING`) draft 작업의
 taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 작업이 없으면 404가 아니라 200과
 `taskIds=[]`다. 완료·실패·만료 작업과 타 사용자 작업은 개별 오류 없이 목록에서 제외한다(존재 비노출).

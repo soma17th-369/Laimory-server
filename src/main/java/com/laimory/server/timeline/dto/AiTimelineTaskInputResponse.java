@@ -42,7 +42,8 @@ public record AiTimelineTaskInputResponse(
     public record SourceItem(
             String rawId,
             ItemType itemType,
-            @Schema(description = "시간 미상 아이템이면 생략(null)", nullable = true)
+            @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
+                    description = "아이템 시작(record timezone offset ISO-8601). 필수 — draft 입력 경계가 보장한다.")
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
             OffsetDateTime startAt,
             @Schema(nullable = true)

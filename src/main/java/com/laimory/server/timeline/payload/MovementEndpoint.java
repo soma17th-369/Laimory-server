@@ -11,7 +11,8 @@ import java.util.List;
  * 서버 지오코딩 enrich 필드다 — 요청에 실려와도 무시하고 서버가 재구성 시 채운다(nullable).
  *
  * <p>{@code places}(좌표 주변 장소명, 거리순 — 건물명 역할 포함)는 null=지오코딩 미연동(noop, JSON 키 생략),
- * 빈 배열=정상 조회했으나 주변 장소 없음으로 구분한다 — 지오코딩 실패는 draft 생성을 502로 실패시키므로 저장된 payload엔 남지 않는다.
+ * 빈 배열=정상 조회했으나 주변 장소 없음 <b>또는 허용된 지오코딩 실패 좌표</b>다(wire 구분 없음 — 실패 marker 필드를
+ * 두지 않는다). 품질 기준(고유 좌표 실패 20% 초과·시간순 연속 3개)을 넘는 실패만 draft 생성을 502로 거절한다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record MovementEndpoint(

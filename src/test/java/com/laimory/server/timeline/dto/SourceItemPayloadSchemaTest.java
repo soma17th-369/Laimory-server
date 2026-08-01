@@ -5,6 +5,7 @@ import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.media.Schema;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,5 +38,35 @@ class SourceItemPayloadSchemaTest {
         Map<String, Schema> props = schemas.get("PhotoPayload").getProperties();
         assertThat(props.get("photoUrl").getReadOnly()).isTrue();
         assertThat(props.get("filename").getReadOnly()).isNull();
+    }
+
+    @Test
+    void draft_입력은_startAt만_필수이고_sourceItems_배열길이에_좌표상한을_씌우지_않는다() {
+        Map<String, Schema> sourceSchemas = ModelConverters.getInstance().readAll(SourceItemDto.class);
+        List<String> required = sourceSchemas.get("SourceItemDto").getRequired();
+        assertThat(required).contains("startAt");
+        assertThat(required).doesNotContain("endAt");
+
+        Map<String, Schema> requestSchemas = ModelConverters.getInstance().readAll(CreateDraftTaskRequest.class);
+        Schema sourceItems = (Schema) requestSchemas.get("CreateDraftTaskRequest")
+                .getProperties().get("sourceItems");
+        // 30은 rawId/기존 저장 item 필터 뒤 unique geo coordinate 수의 runtime 상한이다.
+        // sourceItems 배열 길이와 같지 않으므로 schema maxItems를 만들면 정상 요청을 잘못 거절한다.
+        assertThat(sourceItems.getMaxItems()).isNull();
+    }
+
+    @Test
+    void ai_입력도_startAt만_필수로_노출한다() {
+        Map<String, Schema> schemas = ModelConverters.getInstance()
+                .readAll(AiTimelineTaskInputResponse.SourceItem.class);
+        Schema sourceItem = schemas.values().stream()
+                .filter(schema -> schema.getProperties() != null
+                        && schema.getProperties().keySet().containsAll(
+                                List.of("rawId", "itemType", "startAt", "endAt", "payload")))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(sourceItem.getRequired()).contains("startAt");
+        assertThat(sourceItem.getRequired()).doesNotContain("endAt");
     }
 }

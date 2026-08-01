@@ -31,8 +31,9 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름
   (dispatch→입력→결과→콜백)의 실제 MySQL·Redis 계약은 `TimelineAiTaskFlowIntegrationTest`(integration)가
   검증한다.
-- `dev`, `main` 대상 PR CI는 `./gradlew build`만 실행한다.
-- integration test는 CI에 포함되지 않는다.
+- Kakao 지오코딩의 자원·장애 경계(pool/pending/retry/circuit/lifecycle)는 별도 load task가 아니라
+  일반 `test`의 결정적 loopback 테스트(`KakaoGeoResourceBoundaryTest` 등 — MockWebServer, 실 Kakao
+  key·network 불필요)가 production 배선 그대로 검증한다. 통계적 부하/p95 게이트는 없다.
 - `dev`, `main` 대상 PR CI는 alert rule shell 배포·monitoring workflow 계약을 먼저 검사한 뒤
   Compose의 MySQL·Redis healthcheck를 기다리고
   `./gradlew build integrationTest jacocoAllTestReport`를 실행한다.
