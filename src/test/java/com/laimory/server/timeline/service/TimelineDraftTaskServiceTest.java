@@ -31,6 +31,7 @@ import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.HealthPayload;
 import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
@@ -235,6 +236,33 @@ class TimelineDraftTaskServiceTest {
         assertThat(row.getPayload().get("filename").asText()).isEqualTo(VALID_FILENAME);
         assertThat(row.getPayload().get("clientPhotoUri").asText()).isEqualTo("content://x");
         assertThat(row.getPayload().has("itemType")).isFalse();
+    }
+
+    @Test
+    void createDraftTask_validCalendarPayload_stagesAndDispatches() {
+        // CALENDAR는 모든 payload 필드가 선택이라 itemType 일치만으로 검증을 통과해야 한다.
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(new SourceItemDto(
+                ItemType.CALENDAR, "raw-cal-1", LocalDateTime.of(2026, 6, 17, 10, 0), null,
+                new CalendarPayload("회의", null, null, null)));
+
+        String taskId = service.createDraftTask(VERSION, USER_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftPreparationService).prepareDraft(eq(USER_ID), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                rowsCaptor.capture());
+        assertThat(rowsCaptor.getValue()).hasSize(1);
+        TimelineDraftSourceItem row = rowsCaptor.getValue().get(0);
+        assertThat(row.getItemType()).isEqualTo(ItemType.CALENDAR);
+        assertThat(row.getRawId()).isEqualTo("raw-cal-1");
+        // NON_NULL 직렬화 — 채워진 필드만 남고 비운 optional 필드는 payload에 없어야 한다.
+        assertThat(row.getPayload().get("title").asText()).isEqualTo("회의");
+        assertThat(row.getPayload().has("locationText")).isFalse();
+        assertThat(row.getPayload().has("allDay")).isFalse();
+        verify(timelineTaskService, times(1)).createProcessing(eq(taskId), eq(USER_ID), eq(RECORD_ID), any(), any(),
+                eq(PROCESSING_STARTED_AT));
+        verify(timelineAiDispatcher, times(1)).dispatch(any(AiTimelineDispatchRequest.class));
     }
 
     @Test

@@ -1,6 +1,9 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doThrow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
@@ -29,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /** Event PATCH PHOTO append의 실제 MySQL transaction과 과거 guard 키 무시 계약 검증. */
 @SpringBootTest
@@ -54,6 +58,9 @@ class TimelineEventPhotoAddIntegrationTest {
     private RedisGateway redisGateway;
     @Autowired
     private ObjectMapper objectMapper;
+    // junction 저장 실패 주입용 spy — 나머지 테스트에서는 pass-through라 기존 계약에 영향이 없다.
+    @MockitoSpyBean
+    private TimelineEventItemService timelineEventItemService;
 
     private long userId;
     private Long recordId;
@@ -125,6 +132,27 @@ class TimelineEventPhotoAddIntegrationTest {
         assertThat(updated.getTitle()).isEqualTo("사진 제목");
         assertThat(updated.getMemo()).isEqualTo("사진 메모");
         assertThat(redisGateway.get(legacyGuardKey())).isEqualTo("task:legacy-photo");
+    }
+
+    @Test
+    void junctionSaveFailureRollsBackEventMutationAndNewItem() {
+        long itemCountBefore = timelineItemRepository.count();
+        doThrow(new RuntimeException("junction save 강제 실패"))
+                .when(timelineEventItemService).saveAll(anyList());
+
+        assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", userId, eventId,
+                request("새 제목", "새 메모", List.of(photo("raw-photo")))))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("junction save 강제 실패");
+
+        // 단일 transaction 계약: Event 상세·memo 변경과 새 Item 저장이 junction 실패와 함께 전부 원복된다.
+        TimelineEvent event = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(event.getTitle()).isEqualTo("기존 제목");
+        assertThat(event.getSubtitle()).isEqualTo("기존 부제");
+        assertThat(event.getMemo()).isNull();
+        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
+        assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).isEmpty();
+        assertThat(dailyRecordRepository.findById(recordId)).isPresent();
     }
 
     private UpdateTimelineEventRequest request(String title, String memo,

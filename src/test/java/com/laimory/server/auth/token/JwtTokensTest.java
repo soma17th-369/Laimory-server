@@ -96,18 +96,46 @@ class JwtTokensTest {
         // 발급 경로가 막혀 있으므로 서명만 유효한 0·음수 sub 토큰을 직접 만들어 검증한다.
         JwtTokens tokens = tokensAt(NOW);
 
-        assertThat(tokens.parseUserId(signedTokenWithSubject("0"))).isEmpty();
-        assertThat(tokens.parseUserId(signedTokenWithSubject("-42"))).isEmpty();
+        assertThat(tokens.parseUserId(signedToken(validClaims().subject("0").build()))).isEmpty();
+        assertThat(tokens.parseUserId(signedToken(validClaims().subject("-42").build()))).isEmpty();
     }
 
-    /** 검증 대상과 같은 시크릿·클레임으로 서명하되 subject만 임의 지정한 토큰(우회 시나리오 재현용). */
-    private String signedTokenWithSubject(String subject) throws Exception {
-        com.nimbusds.jwt.JWTClaimsSet claims = new com.nimbusds.jwt.JWTClaimsSet.Builder()
+    @Test
+    void parse_helperBaselineToken_isValid() throws Exception {
+        // 아래 single-fault 테스트의 전제: helper 기본 클레임은 전부 유효해야 한다 — 그래야 각 테스트의
+        // 거절 사유가 정확히 그 한 클레임 때문임이 보장된다(다른 결함으로 우연히 empty가 되는 거짓 양성 방지).
+        assertThat(tokensAt(NOW).parseUserId(signedToken(validClaims().build()))).contains(USER_ID);
+    }
+
+    @Test
+    void parse_wrongIssuer_returnsEmpty_evenWithValidSignature() throws Exception {
+        // 같은 시크릿으로 정상 서명했지만 다른 발급자를 주장하는 토큰(single-fault: issuer만 결함).
+        String token = signedToken(validClaims().issuer("not-laimory").build());
+
+        assertThat(tokensAt(NOW).parseUserId(token)).isEmpty();
+    }
+
+    @Test
+    void parse_missingExpiration_returnsEmpty_evenWithValidSignature() throws Exception {
+        // exp 없는 토큰은 무기한 유효가 아니라 즉시 무효다(single-fault: exp 부재만 결함).
+        String token = signedToken(validClaims().expirationTime(null).build());
+
+        // fixture 자가 검증: exp 클레임이 실제로 제거됐는지 확인(null 지정은 클레임 삭제다).
+        assertThat(com.nimbusds.jwt.SignedJWT.parse(token).getJWTClaimsSet().getExpirationTime()).isNull();
+        assertThat(tokensAt(NOW).parseUserId(token)).isEmpty();
+    }
+
+    /** 검증 대상과 같은 시크릿·발급 클레임과 동일한 유효 기본값 — 테스트가 필요한 클레임만 덮어쓴다. */
+    private com.nimbusds.jwt.JWTClaimsSet.Builder validClaims() {
+        return new com.nimbusds.jwt.JWTClaimsSet.Builder()
                 .issuer("laimory")
-                .subject(subject)
+                .subject(Long.toString(USER_ID))
                 .issueTime(java.util.Date.from(NOW))
-                .expirationTime(java.util.Date.from(NOW.plus(ACCESS_TTL)))
-                .build();
+                .expirationTime(java.util.Date.from(NOW.plus(ACCESS_TTL)));
+    }
+
+    /** 주어진 클레임을 검증 대상과 같은 시크릿·HS256으로 서명한 토큰(우회 시나리오 재현용). */
+    private String signedToken(com.nimbusds.jwt.JWTClaimsSet claims) throws Exception {
         com.nimbusds.jwt.SignedJWT jwt = new com.nimbusds.jwt.SignedJWT(
                 new com.nimbusds.jose.JWSHeader(com.nimbusds.jose.JWSAlgorithm.HS256), claims);
         jwt.sign(new com.nimbusds.jose.crypto.MACSigner(
