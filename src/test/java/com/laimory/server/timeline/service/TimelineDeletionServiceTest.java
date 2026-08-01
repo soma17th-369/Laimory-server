@@ -84,6 +84,26 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
+    void deleteDailyRecordByDate_resolvesSnapshotIdAndRecordsCommittedEnqueueMetrics() {
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(3, 2, 1));
+
+        service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE);
+
+        InOrder order = inOrder(
+                dailyRecordService,
+                timelineDeletionTransactionService,
+                timelinePhotoDeleteMetrics);
+        order.verify(dailyRecordService).findByUserIdAndRecordDate(USER_ID, RECORD_DATE);
+        order.verify(timelineDeletionTransactionService).deleteDailyRecord(USER_ID, RECORD_ID);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(3);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(2);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(1);
+    }
+
+    @Test
     void deleteEvent_dbFailurePropagatesAndDoesNotRecordMetrics() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
@@ -104,6 +124,20 @@ class TimelineDeletionServiceTest {
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verifyNoInteractions(timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void deleteDailyRecordByDate_dbFailurePropagatesAndDoesNotRecordMetrics() {
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
@@ -186,6 +220,36 @@ class TimelineDeletionServiceTest {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
+                });
+
+        verifyNoInteractions(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void deleteDailyRecordByDate_hidesUnknownRecordBeforeTransaction() {
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
+                });
+
+        verifyNoInteractions(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void deleteDailyRecordByDate_rejectsSavedRecordBeforeTransaction() {
+        DailyRecord saved = draftRecordOf(USER_ID);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+                .thenReturn(Optional.of(saved));
+
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);

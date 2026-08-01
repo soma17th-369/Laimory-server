@@ -3,11 +3,13 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
+import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -41,6 +43,20 @@ public class TimelineRecordController implements TimelineRecordApi {
     }
 
     @Override
+    public ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimelineByDate(
+            String applicationVersion, Long userId, LocalDate recordDate) {
+        return ResponseEntity.ok(ApiResponse.success(
+                dailyTimelineService.getDailyTimeline(applicationVersion, userId, recordDate)));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<TimelineEventResponse>> getTimelineEvent(
+            String applicationVersion, Long userId, Long timelineEventId) {
+        return ResponseEntity.ok(ApiResponse.success(
+                dailyTimelineService.getTimelineEvent(applicationVersion, userId, timelineEventId)));
+    }
+
+    @Override
     public ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
             String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventRequest request) {
         timelineEventEditService.updateEvent(applicationVersion, userId, timelineEventId, request);
@@ -65,6 +81,13 @@ public class TimelineRecordController implements TimelineRecordApi {
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
             String applicationVersion, Long userId, Long dailyRecordId) {
         timelineDeletionService.deleteDailyRecord(applicationVersion, userId, dailyRecordId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
+            String applicationVersion, Long userId, LocalDate recordDate) {
+        timelineDeletionService.deleteDailyRecordByDate(applicationVersion, userId, recordDate);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

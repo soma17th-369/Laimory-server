@@ -6,6 +6,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,6 +57,17 @@ public class TimelineDeletionService {
                 () -> timelineDeletionTransactionService.deleteDailyRecord(userId, dailyRecordId));
     }
 
+    /** 날짜로 찾은 Record·Events/non-PHOTO orphan을 삭제하고 PHOTO orphan Item과 삭제 job을 남긴다. */
+    public void deleteDailyRecordByDate(String applicationVersion, long userId, LocalDate recordDate) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
+                .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
+        requireDraftRecord(record);
+        Long dailyRecordId = record.getDailyRecordId();
+        executeDelete("dailyRecord", dailyRecordId,
+                () -> timelineDeletionTransactionService.deleteDailyRecord(userId, dailyRecordId));
+    }
+
     /** PHOTO job enqueue + hard delete transaction 결과를 metric과 안전한 구조화 로그에 반영한다. */
     private void executeDelete(String target, Long targetId,
                                Supplier<TimelineDeletionTransactionService.DeletionResult> dbDelete) {
@@ -74,6 +86,11 @@ public class TimelineDeletionService {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getUserId() == userId)
                 .orElseThrow(() -> new BusinessException(notFoundType));
+        requireDraftRecord(record);
+    }
+
+    /** SAVED record는 모든 삭제 부수효과 전에 거절한다. */
+    private void requireDraftRecord(DailyRecord record) {
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }

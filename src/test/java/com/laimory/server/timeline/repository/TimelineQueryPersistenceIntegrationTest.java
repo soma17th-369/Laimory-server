@@ -41,9 +41,10 @@ class TimelineQueryPersistenceIntegrationTest {
     void dailyRecordQueries_filterByOwnerAndOrderNewestFirst() {
         DailyRecord older = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 7, 20)));
         DailyRecord newer = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 7, 22)));
-        DailyRecord other = dailyRecordRepository.save(record(OTHER_USER_ID, LocalDate.of(2026, 7, 23)));
+        DailyRecord other = dailyRecordRepository.save(record(OTHER_USER_ID, LocalDate.of(2026, 7, 22)));
         Long olderId = older.getDailyRecordId();
         Long newerId = newer.getDailyRecordId();
+        Long otherId = other.getDailyRecordId();
 
         em.flush();
         em.clear();
@@ -55,7 +56,15 @@ class TimelineQueryPersistenceIntegrationTest {
                 .get()
                 .extracting(DailyRecord::getDailyRecordId)
                 .isEqualTo(newerId);
-        assertThat(dailyRecordRepository.findByDailyRecordIdAndUserId(other.getDailyRecordId(), OWNER_ID)).isEmpty();
+        assertThat(dailyRecordRepository.findByDailyRecordIdAndUserId(otherId, OWNER_ID)).isEmpty();
+        assertThat(dailyRecordRepository.findByUserIdAndRecordDate(OWNER_ID, LocalDate.of(2026, 7, 22)))
+                .get()
+                .extracting(DailyRecord::getDailyRecordId)
+                .isEqualTo(newerId);
+        assertThat(dailyRecordRepository.findByUserIdAndRecordDate(OTHER_USER_ID, LocalDate.of(2026, 7, 22)))
+                .get()
+                .extracting(DailyRecord::getDailyRecordId)
+                .isEqualTo(otherId);
     }
 
     @Test

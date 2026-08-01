@@ -2,12 +2,12 @@
 
 ## Scope
 
-timeline draft 생성 요청부터 AI dispatch, 서버간 입력 조회·결과 저장, callback, polling, Event 편집과
+timeline draft 생성 요청부터 AI dispatch, 서버간 입력 조회·결과 저장, callback, polling, Event 조회·편집과
 cleanup까지의 runtime sequence다.
 
 ## Read When
 
-draft POST·polling·서버간 입력/결과·callback·append·Event 편집·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
+draft POST·polling·서버간 입력/결과·callback·append·Event 조회·편집·삭제·Redis state·staging cleanup을 바꿀 때 읽는다.
 
 ## Authoritative Sources
 
@@ -94,9 +94,14 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 - `GET /a/api/{version}/timeline/daily-records`는 principal userId의 DRAFT/SAVED DailyRecord 전체를
   최신 날짜·ID 내림차순으로 반환한다(빈 record 포함, 없으면 200 `timelines=[]`).
-  `GET /a/api/{version}/timeline/daily-records/{dailyRecordId}`는 `(dailyRecordId, userId)`가 일치하는
-  한 건만 반환하며 없음·비소유는 404 `-404`로 은닉한다. 두 경로 모두 record→Event→junction→Item을
-  한 read-only transaction에서 bulk 조회하고 Event별 `items`까지 조립한다.
+  외부 하루 단건의 날짜 기반 공개 경로는
+  `GET /a/api/{version}/timeline/daily-records/by-date/{recordDate}`이며 `(userId, recordDate)`가 일치하는
+  한 건만 반환한다. 기존 `GET .../daily-records/{dailyRecordId}`는 같은 응답을 반환하는 deprecated 호환
+  경로다. 없음·비소유는 두 경로 모두 404 `-404`로 은닉하며, record→Event→junction→Item을 한 read-only
+  transaction에서 읽어 Event별 `items`까지 조립한다.
+- `GET /a/api/{version}/timeline/events/{timelineEventId}`는 Event의 부모 record를 통해 principal 소유권을
+  확인하고 DRAFT/SAVED Event와 연결 Item을 반환한다. Event·부모 record 없음과 부모 비소유는 Event 404로
+  은닉하며 Item이 없으면 `items=[]`다.
 - `GET /a/api/{version}/timeline/drafts`는 principal 사용자가 소유한 현재 PROCESSING taskId만 생성
   최신순(score 내림차순, 동일 ms score는 member 역 lexicographic)으로 반환한다 — 없으면 `taskIds=[]`.
   사용자 index는 후보일 뿐이며 매 조회가 후보 task JSON을 batch로 읽어 status/owner를 검증한다.
@@ -114,8 +119,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   terminal은 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`)만
   나간다. Redis writer와 reader는 JSON number만 사용한다. 누락·양수·allowlist 밖 numeric 값은
   `-1011`로 수렴하고 문자열 값은 역직렬화를 거부한다.
-- 하루 타임라인 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건 반복 없이
-  record/Event/junction/Item 4단계 bulk SELECT로 읽는다. Event별 Item을 junction으로 로드해
+- 하루 타임라인 및 Event 단건 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건
+  반복 없이 record/Event/junction/Item 4단계 bulk SELECT로 읽는다. Event별 Item을 junction으로 로드해
   startAt(null 먼저)·id 순으로 정렬한다. 같은 Item이 여러 Event에 연결되면 같은 `timelineItemId`가 여러
   Event의 `items`에 반복된다(응답 shape 유지 — Android 수용 확인됨).
 - append 진행 중 기존 Event 상세/memo 편집은 허용한다(AI가 기존 graph를 건드리지 않기 때문).
@@ -140,11 +145,17 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
-- DailyRecord 삭제: record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문 PHOTO
-  Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
+- DailyRecord 삭제의 날짜 기반 공개 경로는 `(principal userId, recordDate)`로 record를 찾는
+  `DELETE .../daily-records/by-date/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
+  삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner/DRAFT를 재확인한다. lookup 뒤 같은
+  날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/{dailyRecordId}`는
+  같은 transaction을 호출하는 deprecated 호환 경로다.
+- DailyRecord 삭제 transaction은 record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문
+  PHOTO Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
   Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
-- 두 DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 현재 REST 프로세스의 환경당 단일
-  worker가 oldest job 최대 1,000개를 verbose `DeleteObjects`로 처리하고 `Deleted` job과 원문 PHOTO
+- Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 현재 REST
+  프로세스의 환경당 단일 worker가 oldest job 최대 1,000개를 verbose `DeleteObjects`로 처리하고
+  `Deleted` job과 원문 PHOTO
   Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외는 두 행을 남겨 다음 fixed delay에
   재시도한다.
 

@@ -4,6 +4,7 @@ import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -11,6 +12,8 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -33,7 +36,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Record", description = "확정 타임라인 기록 조회·편집 — DailyRecord 조회·삭제, Event 수정·메모·삭제")
+@Tag(name = "Timeline Record", description = "확정 타임라인 기록 조회·편집 — DailyRecord 조회·삭제, Event 조회·수정·메모·삭제")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline")
 public interface TimelineRecordApi {
@@ -53,9 +56,10 @@ public interface TimelineRecordApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
 
-    @Operation(summary = "하루 타임라인 단건 조회",
-            description = "인증 사용자가 소유한 하루 기록과 Event·Item graph를 반환한다. "
-                    + "기록이 없거나 다른 사용자 소유이면 존재 여부를 구분하지 않고 404로 응답한다.")
+    @Operation(summary = "하루 타임라인 단건 조회(ID, deprecated)", deprecated = true,
+            description = "호환을 위해 한시적으로 유지하는 ID 기반 조회다. 신규 클라이언트는 "
+                    + "GET /daily-records/by-date/{recordDate}를 사용한다. 인증 사용자가 소유한 하루 기록과 "
+                    + "Event·Item graph를 반환하며, 기록이 없거나 다른 사용자 소유이면 404로 응답한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "단건 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
@@ -69,6 +73,43 @@ public interface TimelineRecordApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "조회할 하루 기록 ID") @PathVariable Long dailyRecordId);
+
+    @Operation(summary = "하루 타임라인 날짜 조회",
+            description = "인증 사용자가 선택한 날짜의 하루 기록과 Event·Item graph를 반환한다. recordDate는 "
+                    + "yyyy-MM-dd 형식이며 서버에서 계산·timezone 보정하지 않는다. 기록이 없으면 404로 응답한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "날짜 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음")
+    })
+    @GetMapping("/daily-records/by-date/{recordDate}")
+    ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimelineByDate(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "조회할 기록 날짜", example = "2026-07-08")
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
+
+    @Operation(summary = "타임라인 Event 단건 조회",
+            description = "인증 사용자가 소유한 Event와 연결 Item을 반환한다. DRAFT/SAVED 모두 조회할 수 있으며, "
+                    + "Event가 없거나 부모 DailyRecord가 없거나 다른 사용자 소유이면 모두 404로 응답한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "Event 단건 조회 성공 — 연결 Item 포함", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
+    })
+    @GetMapping("/events/{timelineEventId}")
+    ResponseEntity<ApiResponse<TimelineEventResponse>> getTimelineEvent(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "조회할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
     @Operation(summary = "타임라인 Event 수정",
             description = "title·subtitle·startAt·endAt 4개 필드를 요청 값으로 전체 교체하고 optional memo와 PHOTO 추가를 함께 처리한다. "
@@ -149,8 +190,10 @@ public interface TimelineRecordApi {
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "삭제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
-    @Operation(summary = "하루 기록(DailyRecord) 삭제",
-            description = "하루 전체 Record·Events와 마지막 참조가 사라지는 non-PHOTO Items를 DB에서 삭제한다. "
+    @Operation(summary = "하루 기록(DailyRecord) 삭제(ID, deprecated)", deprecated = true,
+            description = "호환을 위해 한시적으로 유지하는 ID 기반 삭제다. 신규 클라이언트는 "
+                    + "DELETE /daily-records/by-date/{recordDate}를 사용한다. 하루 전체 Record·Events와 마지막 "
+                    + "참조가 사라지는 non-PHOTO Items를 DB에서 삭제한다. "
                     + "마지막 참조가 사라지는 PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 "
                     + "worker가 S3 성공 시 Item과 작업을 최종 삭제한다. 따라서 200은 root 삭제와 PHOTO "
                     + "정리 작업 등록 성공을 뜻하고 S3 삭제 완료를 기다리지 않는다.")
@@ -169,4 +212,29 @@ public interface TimelineRecordApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "삭제할 하루 기록 ID") @PathVariable Long dailyRecordId);
+
+    @Operation(summary = "하루 기록(DailyRecord) 날짜 삭제",
+            description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 삭제한다. recordDate는 yyyy-MM-dd "
+                    + "형식이며 서버에서 계산·timezone 보정하지 않는다. 하루 전체 Record·Events와 마지막 참조가 "
+                    + "사라지는 non-PHOTO Items를 DB에서 삭제한다. 마지막 참조가 사라지는 PHOTO Item은 S3 삭제 "
+                    + "작업과 함께 보존하며, commit 뒤 별도 worker가 S3 성공 시 Item과 작업을 최종 삭제한다. "
+                    + "따라서 200은 root 삭제와 PHOTO 정리 작업 등록 성공을 뜻한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료)")
+    })
+    @DeleteMapping("/daily-records/by-date/{recordDate}")
+    ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "삭제할 기록 날짜", example = "2026-07-08")
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 }
