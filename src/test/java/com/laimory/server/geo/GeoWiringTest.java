@@ -1,121 +1,120 @@
 package com.laimory.server.geo;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.IOException;
-import java.util.concurrent.TimeUnit;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.http.client.reactive.ClientHttpConnectorAutoConfiguration;
 import org.springframework.boot.autoconfigure.web.reactive.function.client.WebClientAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.resources.ConnectionProvider;
 
 /**
- * {@code app.geo.mode} 배선 검증({@link ApplicationContextRunner}) — noop/kakao provider 선택과 fail-fast를
- * 실제 Spring 컨텍스트 기동으로 확인한다.
+ * {@code app.geo.mode} 배선 검증({@link ApplicationContextRunner}) — noop/kakao provider 선택,
+ * kakao 전용 자원 빈(pool·circuit·WebClient)의 조건부 생성/미생성(T33), context 종료 시 pool dispose(D20)와
+ * fail-fast를 실제 Spring 컨텍스트 기동으로 확인한다.
  *
  * <p>{@link GeocodingService}를 <b>required consumer</b>로 함께 등록하는 것이 핵심이다 — 이게 있어야
  * 매칭 provider 빈이 없을 때(오타·미배선) GeocodingService 주입이 실패해 컨텍스트가 실제로 실패한다.
- * consumer 없이 provider 빈만 등록하면 매칭 빈 0개여도 빈 컨텍스트가 정상 기동해 "오타→실패" 단언이 거짓이 된다.
- * kakao provider 생성자용 {@link WebClient.Builder} 빈도 제공한다.
+ * runner는 {@code application.properties}를 로드하지 않으므로 kakao mode 테스트는 {@code app.geo.*}
+ * 전체 값을 명시한다(기본값 자체는 {@code application.properties}가 소유).
  */
 class GeoWiringTest {
 
+    /** kakao mode 기동에 필요한 전체 geo property(초기 기본값과 동일 구조). */
+    static final String[] GEO_KAKAO_PROPERTIES = {
+            "app.geo.mode=kakao",
+            "app.geo.kakao-rest-api-key=test-key",
+            "app.geo.lookup-concurrency=20",
+            "app.geo.http.pool.max-connections=20",
+            "app.geo.http.pool.pending-acquire-max-count=20",
+            "app.geo.http.pool.pending-acquire-timeout=2s",
+            "app.geo.http.connect-timeout=2s",
+            "app.geo.http.response-timeout=2s",
+            "app.geo.http.logical-call-timeout=13s",
+            "app.geo.http.pool.max-idle-time=20s",
+            "app.geo.http.pool.max-life-time=5m",
+            "app.geo.http.pool.eviction-interval=10s",
+            "app.geo.retry.max-attempts=2",
+            "app.geo.retry.first-backoff=200ms",
+            "app.geo.retry.max-backoff=500ms",
+            "app.geo.retry.jitter=0.5",
+            "app.geo.circuit.sliding-window-size=20",
+            "app.geo.circuit.minimum-number-of-calls=10",
+            "app.geo.circuit.failure-rate-threshold=50",
+            "app.geo.circuit.wait-duration-in-open-state=30s",
+            "app.geo.circuit.permitted-calls-in-half-open=3"
+    };
+
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withBean(WebClient.Builder.class, WebClient::builder)
-            .withUserConfiguration(
+            .withConfiguration(AutoConfigurations.of(WebClientAutoConfiguration.class))
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withUserConfiguration(GeoMetrics.class, KakaoGeoHttpConfiguration.class,
                     GeocodingService.class, KakaoMapPlaceProvider.class, NoOpMapPlaceProvider.class);
 
     @Test
-    void noopMode_wiresNoOpProvider() {
+    void noopMode_wiresNoOpProvider_withoutKakaoResources() {
+        // T33: noop context는 Kakao pool/WebClient/circuit 빈을 만들지 않는다 — key/설정 독립성.
         runner.withPropertyValues("app.geo.mode=noop")
-                .run(context -> assertThat(context)
-                        .hasNotFailed()
-                        .hasSingleBean(MapPlaceProvider.class)
-                        .getBean(MapPlaceProvider.class).isInstanceOf(NoOpMapPlaceProvider.class));
+                .run(context -> {
+                    assertThat(context).hasNotFailed()
+                            .hasSingleBean(MapPlaceProvider.class)
+                            .doesNotHaveBean(ConnectionProvider.class)
+                            .doesNotHaveBean(CircuitBreaker.class)
+                            .doesNotHaveBean(WebClient.class);
+                    assertThat(context.getBean(MapPlaceProvider.class)).isInstanceOf(NoOpMapPlaceProvider.class);
+                });
     }
 
     @Test
     void modeMissing_defaultsToNoOpProvider() {
         // matchIfMissing=true — app.geo.mode 미설정 시 NoOp이 기본.
-        runner.run(context -> assertThat(context)
-                .hasNotFailed()
-                .hasSingleBean(MapPlaceProvider.class)
-                .getBean(MapPlaceProvider.class).isInstanceOf(NoOpMapPlaceProvider.class));
+        runner.run(context -> {
+            assertThat(context).hasNotFailed()
+                    .hasSingleBean(MapPlaceProvider.class)
+                    .doesNotHaveBean(ConnectionProvider.class);
+            assertThat(context.getBean(MapPlaceProvider.class)).isInstanceOf(NoOpMapPlaceProvider.class);
+        });
     }
 
     @Test
-    void kakaoModeWithKey_wiresKakaoProvider() {
-        runner.withPropertyValues("app.geo.mode=kakao", "app.geo.kakao-rest-api-key=test-key")
-                .run(context -> assertThat(context)
-                        .hasNotFailed()
-                        .hasSingleBean(MapPlaceProvider.class)
-                        .getBean(MapPlaceProvider.class).isInstanceOf(KakaoMapPlaceProvider.class));
+    void kakaoMode_wiresKakaoProvider_withDedicatedPoolCircuitAndWebClient() {
+        runner.withPropertyValues(GEO_KAKAO_PROPERTIES)
+                .run(context -> {
+                    assertThat(context).hasNotFailed()
+                            .hasSingleBean(MapPlaceProvider.class)
+                            .hasSingleBean(ConnectionProvider.class)
+                            .hasSingleBean(CircuitBreaker.class)
+                            .hasBean("kakaoGeoWebClient");
+                    assertThat(context.getBean(MapPlaceProvider.class)).isInstanceOf(KakaoMapPlaceProvider.class);
+                    assertThat(context.getBean(CircuitBreaker.class).getName()).isEqualTo("kakao-local");
+                });
     }
 
     @Test
-    void kakaoMode_withAutoConfiguredWebClientBuilder_wiresKakaoProvider() {
-        // 수동 withBean이 아니라 Boot WebClientAutoConfiguration이 제공하는 prototype WebClient.Builder가
-        // 실제 생성자 주입을 만족하는지 검증 — E2E는 geo.mode=noop이라 Kakao provider를 만들지 않아
-        // full-context에서는 이 주입 경로가 커버되지 않는다. (프로퍼티→커넥터 적용 경로는 아래
-        // read-timeout 테스트가 별도로 고정한다.)
-        new ApplicationContextRunner()
-                .withConfiguration(AutoConfigurations.of(WebClientAutoConfiguration.class))
-                .withUserConfiguration(
-                        GeocodingService.class, KakaoMapPlaceProvider.class, NoOpMapPlaceProvider.class)
-                .withPropertyValues("app.geo.mode=kakao", "app.geo.kakao-rest-api-key=test-key")
-                .run(context -> assertThat(context)
-                        .hasNotFailed()
-                        .hasSingleBean(MapPlaceProvider.class)
-                        .getBean(MapPlaceProvider.class).isInstanceOf(KakaoMapPlaceProvider.class));
-    }
-
-    @Test
-    void kakaoMode_appliesReactiveClientReadTimeout_throughAutoConfiguredConnector() throws IOException {
-        // 배선 회귀 가드: 새 SSOT인 spring.http.reactiveclient.read-timeout이 auto-config 커넥터를 거쳐
-        // provider의 WebClient에 실제로 적용되는 경로를 고정한다 — provider가 주입 builder 대신 raw
-        // WebClient.builder()를 쓰게 되거나 Boot 버전업으로 프로퍼티 이름이 삭는 회귀를 잡는다.
-        // 지연 응답(read-timeout 초과)이 전이(io) 실패로 분류돼 콜 단위 재시도(MAX_ATTEMPTS=2) 후
-        // retryable=true로 끝나는 것까지 검증한다. 타임아웃이 적용되지 않으면 지연 응답이 그냥 성공해 깨진다.
-        MockWebServer server = new MockWebServer();
-        try {
-            server.start();
-            server.enqueue(new MockResponse().setHeadersDelay(2, TimeUnit.SECONDS));
-            server.enqueue(new MockResponse().setHeadersDelay(2, TimeUnit.SECONDS));
-            String baseUrl = server.url("/").toString();
-            new ApplicationContextRunner()
-                    .withConfiguration(AutoConfigurations.of(
-                            WebClientAutoConfiguration.class, ClientHttpConnectorAutoConfiguration.class))
-                    .withUserConfiguration(
-                            GeocodingService.class, KakaoMapPlaceProvider.class, NoOpMapPlaceProvider.class)
-                    .withPropertyValues(
-                            "app.geo.mode=kakao",
-                            "app.geo.kakao-rest-api-key=test-key",
-                            "app.geo.kakao-base-url=" + baseUrl.substring(0, baseUrl.length() - 1),
-                            "spring.http.reactiveclient.connect-timeout=1s",
-                            "spring.http.reactiveclient.read-timeout=250ms")
-                    .run(context -> {
-                        MapPlaceProvider provider = context.getBean(MapPlaceProvider.class);
-                        assertThatThrownBy(() -> provider.lookup(37.5340, 126.9668).block())
-                                .isInstanceOfSatisfying(MapPlaceLookupException.class,
-                                        e -> assertThat(e.isRetryable()).isTrue());
-                        assertThat(server.getRequestCount()).isEqualTo(2);
-                    });
-        } finally {
-            server.shutdown();
-        }
+    void kakaoMode_disposesDedicatedPool_onContextClose() {
+        // D20/R6: context 종료가 전용 pool을 dispose해 socket/thread를 회수한다(test·redeploy 자원 회수).
+        // isDisposed()는 활성 pool이 없으면 참이라 신뢰할 수 없어 bean definition의 destroy method로 단언한다
+        // (실제 dispose 동작 자체는 KakaoGeoResourceBoundaryTest가 활성 connection으로 검증).
+        runner.withPropertyValues(GEO_KAKAO_PROPERTIES)
+                .run(context -> {
+                    assertThat(context).hasSingleBean(ConnectionProvider.class);
+                    String destroyMethod = context.getSourceApplicationContext().getBeanFactory()
+                            .getBeanDefinition("kakaoGeoConnectionProvider").getDestroyMethodName();
+                    assertThat(destroyMethod).isEqualTo("dispose");
+                });
     }
 
     @Test
     void kakaoModeWithBlankKey_failsContext() {
-        // fail-fast 경로 고정: kakao provider 생성자의 키 자기검증(IllegalStateException)이 root cause여야 한다
+        // fail-fast 경로 고정: 키 자기검증(IllegalStateException)이 root cause여야 한다
         // — hasFailed()만 보면 무관한 컨텍스트 오류도 통과하므로 원인 타입·메시지까지 단언.
-        runner.withPropertyValues("app.geo.mode=kakao", "app.geo.kakao-rest-api-key=")
+        runner.withPropertyValues(GEO_KAKAO_PROPERTIES)
+                .withPropertyValues("app.geo.kakao-rest-api-key=")
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(IllegalStateException.class)

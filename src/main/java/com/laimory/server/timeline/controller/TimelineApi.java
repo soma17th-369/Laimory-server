@@ -137,13 +137,20 @@ public interface TimelineApi {
             description = "sourceItems(하루 기록 원천: 머문 곳·이동·사진·건강·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
                     + "AI 접수가 확인된 경우에만 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
                     + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
-                    + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시).")
+                    + "각 sourceItem의 startAt은 필수이고 endAt은 nullable이다. "
+                    + "지오코딩 대상 고유 좌표(rawId 중복 제거·이미 저장된 item 제외 뒤 STAY 좌표와 MOVEMENT "
+                    + "start/end를 dedupe한 수)는 최대 30개다 — sourceItems 배열 길이 제한이 아니라 파생 계산이며, "
+                    + "초과하면 외부 지도 API 호출 없이 400(-400)으로 거절한다. "
+                    + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시). "
+                    + "지오코딩이 일부 실패해도 품질 기준(고유 좌표 실패 20% 이하이고 시간순 연속 실패 3개 미만) 안이면 "
+                    + "작업은 계속되고, 실패 좌표는 address 없이(places는 빈 배열) 저장된다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "작업 접수 — body.taskId로 폴링", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
-                            + "timelineWindow/sourceItems 등, window의 `startTime >= endTime` 포함)"),
+                            + "timelineWindow/sourceItems 등, 각 sourceItem의 startAt 누락, "
+                            + "window의 `startTime >= endTime`, 지오코딩 대상 고유 좌표 30개 초과 포함)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
@@ -151,9 +158,10 @@ public interface TimelineApi {
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
                     description = "`-1009`(AI 접수 실패 — AI가 거절했거나 접수 확인 불가. 응답에 taskId 없음) · "
-                            + "지오코딩(지도 API) 호출 실패는 재시도 가능성으로 코드가 나뉜다 — "
-                            + "`-1014`(전이적 실패 — 재시도로 해결될 수 있음) · "
-                            + "`-1015`(영구적 실패 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
+                            + "지오코딩 품질 기준 미달(고유 좌표 실패 20% 초과 또는 시간순 연속 실패 3개)이면 "
+                            + "재시도 가능성으로 코드가 나뉜다 — "
+                            + "`-1014`(전이적 실패 — 잠시 뒤 재시도로 해결될 수 있음) · "
+                            + "`-1015`(영구 실패 포함 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(

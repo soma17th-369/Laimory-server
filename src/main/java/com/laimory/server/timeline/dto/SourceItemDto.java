@@ -30,11 +30,12 @@ public record SourceItemDto(
                 example = "0190a1b2-0001-7000-8000-000000000001",
                 description = "클라 기기 원본 데이터 식별자(UUIDv7 관례). 필수·최대 36자 — 형식은 검증하지 않고 그대로 저장/echo.")
         String rawId,
-        @Schema(example = "2026-07-08T09:05:00",
-                description = "아이템 시작(벽시계 LocalDateTime, offset 없음). 선택 — AI 시간창·durationText 계산에 쓰인다.")
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "2026-07-08T09:05:00",
+                description = "아이템 시작(벽시계 LocalDateTime, offset 없음). 필수 — 누락 시 400/-400. "
+                        + "AI 시간창·durationText 계산과 지오코딩 시간순 품질 판정에 쓰인다.")
         LocalDateTime startAt,
-        @Schema(example = "2026-07-08T09:05:00",
-                description = "아이템 종료(벽시계 LocalDateTime, offset 없음). 선택.")
+        @Schema(nullable = true, example = "2026-07-08T09:05:00",
+                description = "아이템 종료(벽시계 LocalDateTime, offset 없음). 선택(단일 시점이면 null).")
         LocalDateTime endAt,
         @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.EXTERNAL_PROPERTY, property = "itemType", visible = true)
         @JsonSubTypes({

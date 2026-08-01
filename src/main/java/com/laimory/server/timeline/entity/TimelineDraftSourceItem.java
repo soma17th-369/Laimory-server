@@ -18,7 +18,8 @@ import org.hibernate.type.SqlTypes;
 
 /**
  * AI draft 작업의 원본 source item(app이 보낸 그대로 MySQL에 보존). API→AI 입력 staging 전용이다 —
- * AI가 taskId로 읽어 final Event/Item/junction을 직접 write하고, 채택한 행만 같은 AI transaction에서
+ * AI는 서버간 입력 조회 API(`GET /s/api/{v}/timeline/drafts/{taskId}/input`)로 이 행을 받아가고,
+ * 서버 결과 저장 transaction이 채택 행을 final Event/Item/junction으로 옮기며 같은 transaction에서
  * DELETE한다(omitted 행은 retention cleanup이 정리). {@code (task_id, raw_id)} unique가 task 안
  * rawId 중복을 DB에서 차단한다.
  *

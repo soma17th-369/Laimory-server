@@ -131,8 +131,9 @@ public class TimelineDraftTaskService {
         }
 
         // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
-        // AI 입력 조회가 이 값을 반환하므로 source 저장 전에 완료돼야 한다. 지오코딩이 끝내 실패하면 enrich가
-        // BusinessException(-1014 전이 / -1015 영구)를 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
+        // AI 입력 조회가 이 값을 반환하므로 source 저장 전에 완료돼야 한다. 지오코딩 최종 실패가 품질 한도
+        // (unique 20% 초과 또는 시간순 연속 3개)를 넘으면 enrich가 BusinessException(-1014 전이 /
+        // -1015 영구 포함)을 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
         List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
 
         // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
@@ -270,6 +271,11 @@ public class TimelineDraftTaskService {
             }
             if (src.rawId().length() > 36) {
                 throw new IllegalArgumentException("sourceItem rawId is too long: index=" + i);
+            }
+            // 원래 계약: startAt 필수·endAt nullable(모든 itemType 공통). AI 입력 계약(CollectedSourceItem)도
+            // startAt을 필수로 요구하므로 누락은 dispatch 뒤 실패가 아니라 이 경계에서 400으로 앞당긴다.
+            if (src.startAt() == null) {
+                throw new IllegalArgumentException("sourceItem requires startAt: index=" + i);
             }
             if (src.payload() == null) {
                 throw new IllegalArgumentException("sourceItem has null payload: index=" + i);

@@ -45,6 +45,12 @@ dependencies {
 	// Firebase Admin SDK — AI 타임라인 완료 FCM 푸시(FID target 발송; 9.10.0에서 fid 추가·token target deprecated).
 	// Spring BOM 비관리 → 버전 명시. 새 코드에서 deprecated token API(setToken/addToken/addAllTokens) 금지.
 	implementation 'com.google.firebase:firebase-admin:9.10.0'
+	// Kakao 지오코딩 process-wide circuit breaker(코드 조립 전용). Spring BOM 비관리 → 버전 명시(세 모듈 동일 버전).
+	// core type을 직접 import하므로 circuitbreaker가 compile classpath에 필요. Spring aspect/annotation starter와
+	// Resilience4j Retry는 도입 금지(retry SSOT는 자체 RetryHelper+Reactor).
+	implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
+	implementation 'io.github.resilience4j:resilience4j-reactor:2.4.0'
+	implementation 'io.github.resilience4j:resilience4j-micrometer:2.4.0'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

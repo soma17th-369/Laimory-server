@@ -24,13 +24,14 @@ import reactor.core.publisher.Sinks;
 import reactor.test.publisher.PublisherProbe;
 
 /**
- * 지오코딩 domain의 blocking 경계·병렬 fan-out 검증. 좌표별 {@link Sinks.One}으로 완료·실패 시점을 테스트가
- * 직접 제어해 sleep 없이 결정론으로 단언한다:
+ * 지오코딩 domain의 blocking 경계·병렬 fan-out·outcome materialize 검증. 좌표별 {@link Sinks.One}으로
+ * 완료·실패 시점을 테스트가 직접 제어해 sleep 없이 결정론으로 단언한다:
  * <ul>
  *   <li>병렬 구독: concurrency 안에서는 여러 좌표가 동시에 in-flight.
- *   <li>bounded: concurrency를 넘는 좌표는 슬롯이 빌 때까지 미구독.
- *   <li>first-observed 실패: 실패 순서를 테스트가 제어 — 먼저 발생시킨 실패 <b>인스턴스</b>가 그대로 전파되고
- *       나머지 in-flight는 취소된다(전이·영구 각각 고정 — "둘 중 하나" 단언은 한쪽만 고르는 구현도 통과하므로 배제).
+ *   <li>bounded(T28): concurrency를 넘는 좌표는 슬롯이 빌 때까지 미구독.
+ *   <li>materialize(D4/T11): 예상된 실패({@link MapPlaceLookupException})는 해당 좌표의
+ *       {@link GeoLookupOutcome.Failure}가 되고 <b>다른 in-flight를 취소하지 않는다</b>.
+ *   <li>bug fail-fast(D4/T12): 그 외 예외는 materialize하지 않고 그대로 전파한다(in-flight 취소).
  * </ul>
  * 어떤 provider가 배선되는지는 {@link GeoWiringTest}가, 실 카카오 계약은 {@link KakaoMapPlaceProviderTest}가 검증한다.
  */
@@ -76,6 +77,13 @@ class GeocodingServiceTest {
         return new LinkedHashSet<>(List.of(coordinates));
     }
 
+    private static GeoPlace place(GeoLookupOutcome outcome) {
+        assertThat(outcome).isInstanceOf(GeoLookupOutcome.Success.class);
+        return ((GeoLookupOutcome.Success) outcome).place();
+    }
+
+    // ── T1: 빈 입력 — provider 미구독 ──
+
     @Test
     void lookupAll_returnsEmptyMap_withoutSubscribing_whenNoCoordinates() {
         ControllableProvider provider = new ControllableProvider();
@@ -85,12 +93,14 @@ class GeocodingServiceTest {
         assertThat(provider.subscribeCount(C1)).isZero();
     }
 
+    // ── T2: 전 좌표 성공 — 완료 순서 역전에도 모든 실제 값 보존 ──
+
     @Test
-    void lookupAll_subscribesInParallel_andCollectsResultsByCoordinate() throws Exception {
+    void lookupAll_collectsAllSuccessOutcomes_evenWhenCompletionOrderReversed() throws Exception {
         ControllableProvider provider = new ControllableProvider();
         GeocodingService service = new GeocodingService(provider, 5);
 
-        CompletableFuture<Map<Coordinate, GeoPlace>> result =
+        CompletableFuture<Map<Coordinate, GeoLookupOutcome>> result =
                 CompletableFuture.supplyAsync(() -> service.lookupAll(orderedSet(C1, C2)));
 
         // 첫 좌표가 완료되기 전에 두 좌표가 모두 구독됨 = 순차가 아니라 병렬.
@@ -98,12 +108,17 @@ class GeocodingServiceTest {
             assertThat(provider.subscribeCount(C1)).isEqualTo(1);
             assertThat(provider.subscribeCount(C2)).isEqualTo(1);
         });
-        provider.sink(C1).tryEmitValue(P1);
+        // 구독 순서(C1→C2)와 반대로 완료시켜도 좌표별 결과 매핑이 보존된다.
         provider.sink(C2).tryEmitValue(P2);
+        provider.sink(C1).tryEmitValue(P1);
 
-        assertThat(result.get(5, TimeUnit.SECONDS))
-                .containsExactlyInAnyOrderEntriesOf(Map.of(C1, P1, C2, P2));
+        Map<Coordinate, GeoLookupOutcome> outcomes = result.get(5, TimeUnit.SECONDS);
+        assertThat(outcomes).hasSize(2);
+        assertThat(place(outcomes.get(C1))).isEqualTo(P1);
+        assertThat(place(outcomes.get(C2))).isEqualTo(P2);
     }
+
+    // ── T28: bounded concurrency — 슬롯이 빌 때까지 미구독, 누락 없음 ──
 
     @Test
     void lookupAll_boundsConcurrentSubscriptions_toConfiguredLimit() throws Exception {
@@ -111,7 +126,7 @@ class GeocodingServiceTest {
         ControllableProvider provider = new ControllableProvider();
         GeocodingService service = new GeocodingService(provider, 2);
 
-        CompletableFuture<Map<Coordinate, GeoPlace>> result =
+        CompletableFuture<Map<Coordinate, GeoLookupOutcome>> result =
                 CompletableFuture.supplyAsync(() -> service.lookupAll(orderedSet(C1, C2, C3)));
 
         await().untilAsserted(() -> {
@@ -128,52 +143,59 @@ class GeocodingServiceTest {
         assertThat(result.get(5, TimeUnit.SECONDS)).hasSize(3);
     }
 
+    // ── T11/D4: 예상된 실패 materialize — in-flight 비취소, 전부 집계 ──
+
     @Test
-    void lookupAll_propagatesFirstObservedTransientFailure_asIs_andCancelsInFlight() {
+    void lookupAll_materializesExpectedFailure_withoutCancellingInFlight() throws Exception {
         ControllableProvider provider = new ControllableProvider();
         GeocodingService service = new GeocodingService(provider, 5);
         MapPlaceLookupException transientFailure =
-                new MapPlaceLookupException("coord2address http 500", true, null);
+                MapPlaceLookupException.remoteTransient("coord2address http 500", null);
 
-        CompletableFuture<Map<Coordinate, GeoPlace>> result =
+        CompletableFuture<Map<Coordinate, GeoLookupOutcome>> result =
                 CompletableFuture.supplyAsync(() -> service.lookupAll(orderedSet(C1, C2)));
         await().untilAsserted(() -> {
             assertThat(provider.subscribeCount(C1)).isEqualTo(1);
             assertThat(provider.subscribeCount(C2)).isEqualTo(1);
         });
 
-        // 두 좌표가 모두 in-flight인 상태에서 전이 실패를 먼저 발생 → 그 인스턴스가 원본 그대로 전파(래핑 없음 —
-        // retryable 분류가 502 코드 분기에 쓰인다)되고 나머지 in-flight는 취소된다.
+        // 한 좌표의 예상된 실패가 다른 in-flight 조회를 취소하지 않고, 실패도 성공도 모두 집계된다.
         provider.sink(C1).tryEmitError(transientFailure);
+        assertThat(provider.probe(C2).wasCancelled()).isFalse();
+        provider.sink(C2).tryEmitValue(P2);
+
+        Map<Coordinate, GeoLookupOutcome> outcomes = result.get(5, TimeUnit.SECONDS);
+        assertThat(outcomes).hasSize(2);
+        assertThat(outcomes.get(C1)).isInstanceOfSatisfying(GeoLookupOutcome.Failure.class,
+                failure -> assertThat(failure.failure()).isSameAs(transientFailure));
+        assertThat(place(outcomes.get(C2))).isEqualTo(P2);
+        assertThat(provider.probe(C2).wasCancelled()).isFalse();
+    }
+
+    // ── T12/D4: programming error — materialize하지 않고 그대로 전파(in-flight 취소) ──
+
+    @Test
+    void lookupAll_propagatesProgrammingError_asIs_andCancelsInFlight() {
+        ControllableProvider provider = new ControllableProvider();
+        GeocodingService service = new GeocodingService(provider, 5);
+        IllegalStateException bug = new IllegalStateException("provider bug");
+
+        CompletableFuture<Map<Coordinate, GeoLookupOutcome>> result =
+                CompletableFuture.supplyAsync(() -> service.lookupAll(orderedSet(C1, C2)));
+        await().untilAsserted(() -> {
+            assertThat(provider.subscribeCount(C1)).isEqualTo(1);
+            assertThat(provider.subscribeCount(C2)).isEqualTo(1);
+        });
+
+        provider.sink(C1).tryEmitError(bug);
 
         assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS))
                 .isInstanceOf(ExecutionException.class)
-                .cause().isSameAs(transientFailure);
+                .cause().isSameAs(bug);
         await().untilAsserted(() -> assertThat(provider.probe(C2).wasCancelled()).isTrue());
     }
 
-    @Test
-    void lookupAll_propagatesFirstObservedPermanentFailure_asIs_andCancelsInFlight() {
-        // 거울 케이스: 영구 실패를 먼저 발생시키면 그쪽 인스턴스가 이긴다 — first-observed 계약을 양방향으로 고정.
-        ControllableProvider provider = new ControllableProvider();
-        GeocodingService service = new GeocodingService(provider, 5);
-        MapPlaceLookupException permanentFailure =
-                new MapPlaceLookupException("keyword http 401", false, null);
-
-        CompletableFuture<Map<Coordinate, GeoPlace>> result =
-                CompletableFuture.supplyAsync(() -> service.lookupAll(orderedSet(C1, C2)));
-        await().untilAsserted(() -> {
-            assertThat(provider.subscribeCount(C1)).isEqualTo(1);
-            assertThat(provider.subscribeCount(C2)).isEqualTo(1);
-        });
-
-        provider.sink(C2).tryEmitError(permanentFailure);
-
-        assertThatThrownBy(() -> result.get(5, TimeUnit.SECONDS))
-                .isInstanceOf(ExecutionException.class)
-                .cause().isSameAs(permanentFailure);
-        await().untilAsserted(() -> assertThat(provider.probe(C1).wasCancelled()).isTrue());
-    }
+    // ── tx context 전파(회귀) ──
 
     @Test
     void lookupAll_propagatesTransactionId_intoReactorContext() {

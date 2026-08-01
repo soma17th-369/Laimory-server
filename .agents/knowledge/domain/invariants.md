@@ -23,6 +23,19 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을
   보존하며 AI transport에는 record timezone 기반 offset ISO로 변환해 전달한다. `recordDate`·`recordAt`·
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
+- draft source item의 `startAt`은 전 타입 필수이고 `endAt`은 nullable이다(누락 `startAt`은 저장·외부
+  호출 전 400).
+- 지오코딩 부분 실패 품질 판정은 materialize된 unique coordinate 최종 outcome 기준이다 — `U>0`에서
+  `5F > U`(실패 20% 초과, 정수 교차곱·정확히 20%는 허용) 또는 시간순 coordinate observation
+  (STAY·MOVEMENT START는 `startAt`, MOVEMENT END는 `endAt`-or-`startAt`; `observationAt→rawId→START<END`
+  안정 정렬) 연속 실패 3개면 저장 전 502로 거절한다. 같은 좌표 반복은 비율에서 1회, 연속 판정에서
+  반복 횟수대로 센다. 판정은 request 배열·완료 순서와 무관하다(같은 outcome map → 같은 결과).
+- 거절된 geo batch의 오류 코드는 materialized 실패 aggregate로 결정적이다 — 영구 실패가 하나라도 있으면
+  `-1015`, 아니면 `-1014`. circuit 때문에 호출하지 못한 좌표의 가상 응답은 판정하지 않는다.
+- 허용된 geo batch의 lookup map에는 모든 unique 입력 좌표 key가 있다 — 성공은 실제 값, 실패는
+  `address=null`·`places=[]` fallback(실패 marker 필드 없음).
+- rawId dedupe·기존 저장 item 제외 뒤 지오코딩 대상 unique coordinate는 최대 30개다(공개 제품 상한 —
+  초과는 외부 호출 전 400, 운영 tuning으로 낮추지 않음).
 - draft POST는 DailyRecord 선생성(find-or-create + `recordAt/recordTimezone` 갱신 + SAVED 재확인)과
   source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. Redis 저장 실패 시 source rows만 보상
   삭제하고 DailyRecord는 유지한다(empty DRAFT는 같은 날짜 재시도가 재사용, 자동 cleanup 없음).

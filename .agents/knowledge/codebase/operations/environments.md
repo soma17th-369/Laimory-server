@@ -52,7 +52,19 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 
 - DB/Redis connection and `REDIS_KEY_PREFIX`
 - `JWT_SECRET`, Google/Kakao OAuth client names
-- `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`
+- `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`,
+  `APP_GEO_MAX_UNIQUE_COORDINATES`(공개 제품 상한 — 운영 tuning으로 낮추지 않음)
+- Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
+  upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):
+  `APP_GEO_HTTP_POOL_MAX_CONNECTIONS`, `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT`,
+  `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_TIMEOUT`, `APP_GEO_HTTP_CONNECT_TIMEOUT`,
+  `APP_GEO_HTTP_RESPONSE_TIMEOUT`, `APP_GEO_HTTP_LOGICAL_CALL_TIMEOUT`,
+  `APP_GEO_HTTP_POOL_MAX_IDLE_TIME`, `APP_GEO_HTTP_POOL_MAX_LIFE_TIME`,
+  `APP_GEO_HTTP_POOL_EVICTION_INTERVAL`, `APP_GEO_RETRY_MAX_ATTEMPTS`(1 또는 2),
+  `APP_GEO_RETRY_FIRST_BACKOFF`, `APP_GEO_RETRY_MAX_BACKOFF`, `APP_GEO_RETRY_JITTER`,
+  `APP_GEO_CIRCUIT_SLIDING_WINDOW_SIZE`, `APP_GEO_CIRCUIT_MINIMUM_NUMBER_OF_CALLS`,
+  `APP_GEO_CIRCUIT_FAILURE_RATE_THRESHOLD`, `APP_GEO_CIRCUIT_WAIT_DURATION_IN_OPEN_STATE`,
+  `APP_GEO_CIRCUIT_PERMITTED_CALLS_IN_HALF_OPEN`
 - `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
 - `SWAGGER_ENABLED`
 - `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
@@ -62,6 +74,12 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 - `APP_ENV`
 
 정확한 property mapping과 default는 `application*.properties`가 권위다.
+
+Kakao 전용 HTTP 자원 경계의 checked-in default는 connection pool 20, lookup concurrency 20,
+pending acquire queue 20이다. `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT=0`도 명시적 fail-fast
+override로는 유효하지만, 서로 겹친 정상 draft에서 먼저 시작한 batch가 pool을 점유하면 후행 batch가
+healthy Kakao provider에서도 local rejection과 지오코딩 품질 502를 받을 수 있다. 따라서 0은 기본값이
+아니며 이 제품 결과를 수용하는 환경에서만 사용한다.
 
 ## Invariants
 

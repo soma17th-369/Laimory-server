@@ -38,16 +38,35 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
   keyword place search 1회, 정상 2회 외부 호출한다(주소가 없는 좌표는 keyword search를 생략해 1회).
 - keyword search 결과는 "같은 주소(건물)의 입주 장소" 보장이 아니라 주소 질의어 + 반경 50m 매칭의
   실측 관찰 기반 휴리스틱이다.
-- transient failure만 콜당 최대 2회 시도하고(좌표당 최대 4회 요청), 최종 실패는 draft 생성을 실패시킨다.
-- transport는 WebClient(reactive)이고 타임아웃은 `spring.http.reactiveclient.*`가 SSOT다
-  (`spring.http.client.*`는 블로킹 클라이언트용으로 별개).
-- 좌표 간 병렬 fan-out: unique coordinate들을 동시 최대 `APP_GEO_LOOKUP_CONCURRENCY`(기본 20)개까지
+- **HTTP 실행과 품질 판정 분리**: 외부 호출은 unique coordinate로 dedupe하고, 예상된 실패는 error가
+  아니라 좌표별 최종 outcome으로 materialize해 나머지 조회를 계속한다(`GeoLookupOutcome`).
+  부분 실패 허용/거절은 timeline 계층의 품질 판정(`GeoEnrichmentPolicy`)이 aggregate로 정한다 —
+  unique 실패 20% 초과(`5F > U`) 또는 시간순 연속 실패 3개면 502로 거절, 그 외에는 성공 좌표를
+  보존하고 실패 좌표만 `address` 생략·`places=[]`로 계속한다.
+- 오류 코드: 거절된 batch의 materialized 실패 중 영구(`clientMayRetryLater=false` — 429·401·403·기타
+  non-2xx·decode/shape)가 하나라도 있으면 `-1015`, 아니면 `-1014`다(first-observed 경쟁 제거).
+- retry는 멱등 Kakao GET 한정, 전이 실패(`retryThisCall=true` — 5xx·I/O·connect/response timeout)만
+  콜당 최대 2회(`RetryHelper` — exponential backoff+jitter, 좌표당 최대 4회 요청). local pool 거절·
+  circuit open·logical deadline은 즉시 재시도하지 않는다(두 축 분류는 `MapPlaceLookupException`).
+- transport는 전용 WebClient(reactive)다 — `app.geo.http.*`가 timeout SSOT이고 Kakao 전용
+  `ConnectionProvider`(pool `kakao-local`: active/pending 유계, acquire timeout, idle/lifetime eviction),
+  connect/response timeout, retry·backoff 포함 logical call deadline, Reactor Netty 숨은 retry
+  비활성화(`disableRetry`)를 `KakaoGeoHttpConfiguration`이 배선한다(kakao mode 한정 생성, context
+  종료 시 dispose).
+- process-wide circuit breaker(`kakao-local`, Resilience4j count-based)가 두 endpoint의 remote attempt를
+  함께 계수한다. 성공은 유효 2xx(`documents=[]` 포함), 실패는 429 포함 non-2xx·I/O·timeout·decode/shape다.
+  local pool 거절·logical deadline·open 거절은 통계에서 ignore한다(local saturation이 remote 건강도를
+  오염시키지 않음). open이면 wire 구독 전에 차단되고 automatic half-open transition은 꺼져 있다
+  (open wait 경과 뒤 다음 호출이 probe).
+- 좌표 간 병렬 fan-out: unique coordinate들을 요청당 동시 최대 `APP_GEO_LOOKUP_CONCURRENCY`(기본 20)개까지
   병렬 조회한다. 카카오 일 쿼터는 엔드포인트당 100,000건이지만 초당 한도는 존재하되 수치 비공개라
-  무제한 대신 상한을 둔다(429 관측 시 값을 낮추는 것이 즉시 완화책). 병렬화로 실패 코드(1014/1015)는
-  배치 종합이 아니라 "가장 먼저 관측된 실패"의 분류다 — 전이·영구가 경쟁하면 비결정(둘 다 502, 수용된
-  트레이드오프).
+  무제한 대신 상한을 둔다. process 전체 상한은 전용 pool(기본 active 20·pending 20)이 담당한다.
+- 공개 입력 상한: rawId dedupe·기존 저장 item 제외 뒤 unique coordinate 최대 30개
+  (`app.geo.max-unique-coordinates`) — 초과는 외부 호출 전 400/`-400`. 제품 계약이라 운영 tuning으로
+  낮추지 않는다.
 - `app.geo.kakao-base-url`은 운영 endpoint 변경용이 아니라 MockWebServer용 test seam이다.
-- 좌표, request URL/query, response body를 log하지 않는다.
+- 좌표, request URL/query, response body를 log/metric tag에 넣지 않는다(관측 계약은
+  [observability](../operations/observability.md)).
 - `address`, `places`, `durationText`는 server-derived이며 client 값을 무시한다.
 
 credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.

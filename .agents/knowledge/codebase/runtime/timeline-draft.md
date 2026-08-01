@@ -27,12 +27,18 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 편집·�
 2. 인증 principal userId 하나가 record 조회·enrich photo key·staging row·Redis task owner에
    동일하게 흐른다. task는 owner를 세 상태 모두 보존한다.
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
-   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through).
-4. UUIDv7 `taskId`를 만들고, SAVED record를 거부하며 기존 final `rawId`(record의
+   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). source item도
+   같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
+4. UUIDv7 `taskId`와 최초 입력 조회용 256-bit `taskToken`을 만들고(token 원문은 dispatch, SHA-256 hash는
+   Redis용), SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 최초 입력 조회용 256-bit `taskToken`을 만들고
-   dispatch로 전달하며 Redis에는 SHA-256 hash만 저장한다.
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 필터 뒤 지오코딩 대상 unique coordinate가 30개
+   (`app.geo.max-unique-coordinates`)를 넘으면 외부 호출 전에 400 `-400`으로 거절한다. 지오코딩은 좌표별
+   최종 outcome을 materialize해 품질 판정한다 — unique 실패 20% 초과(`5F > U`) 또는 시간순(observation
+   `startAt`/MOVEMENT END는 `endAt`-or-`startAt`, `rawId`·START<END tie-break) 연속 실패 3개면 저장 전
+   502(영구 실패 포함 `-1015`, 아니면 `-1014`)로 거절하고, 허용되면 실패 좌표만 `address` 생략·
+   `places=[]`로 계속한다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.

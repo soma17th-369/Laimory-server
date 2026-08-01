@@ -72,8 +72,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
 | 이동 끝점 | Movement Endpoint | 현재 구현 | 출발·도착의 필수 좌표와 서버 파생 주소·주변 장소를 담는 중첩 값이다. |
 | 이동수단 | transports | 현재 구현 | 단일 문자열 이동수단 분류다. |
-| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. |
-| 주변 장소 목록 | places | 현재 구현 | 거리순 장소명 배열이다. NULL은 noop으로 JSON key 생략, 빈 배열은 장소 없음이다. client 값은 무시한다. |
+| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
+| 주변 장소 목록 | places | 현재 구현 | 거리순 장소명 배열이다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
 | 머문 시간 텍스트 | durationText | 현재 구현 | 서버가 `startAt/endAt`으로 계산한 텍스트다. client 값은 받지 않는다. |
 | 건강 페이로드 | Health Payload | 현재 구현 | 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
 | 건강 지표 | Health Metric | 현재 구현 | `STEPS`, `DISTANCE`, `SLEEP` 중 하나다. |

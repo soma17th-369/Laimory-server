@@ -84,7 +84,12 @@ Task-Token: <taskToken>
 
 - `taskId`, `taskToken`(결과 저장용 다음 token), `recordDate`, `recordTimeZone`
 - `window.startAt`/`endAt`
-- `sourceItems[]`: `rawId`, `itemType`, nullable `startAt`/`endAt`, `payload`
+- `sourceItems[]`: `rawId`, `itemType`, 필수 `startAt`·nullable `endAt`, `payload` —
+  `startAt` 필수는 draft 입력 경계(400)가 보장하며 AI 입력 계약(`CollectedSourceItem`)과 정렬된다.
+  지오코딩이 허용 범위에서 부분 실패한 STAY/MOVEMENT payload는 `address` key가 생략되고
+  `places: []`다(NON_NULL 직렬화 — 정상 "주소 없음"과 같은 wire shape, 실패 marker 필드는 없음).
+  품질 guard(고유 좌표 실패 20% 이하·시간순 연속 실패 3개 미만)를 넘는 batch는 draft 생성 자체가
+  502로 거절돼 이 API에 도달하지 않는다.
 
 `userId`·`dailyRecordId`·행 PK는 응답하지 않는다.
 

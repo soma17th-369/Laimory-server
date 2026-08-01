@@ -1,18 +1,23 @@
 package com.laimory.server.geo;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.laimory.server.common.http.RetryHelper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
 import io.netty.handler.timeout.ReadTimeoutException;
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.codec.CodecException;
-import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -20,7 +25,10 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import org.springframework.web.util.UriBuilder;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Signal;
-import reactor.util.retry.Retry;
+// Reactor Netty는 reactor-pool을 shaded로 내장한다 — 전용 pool의 acquire 거절·timeout이 실제로 던지는
+// runtime 타입이 이 shaded 클래스라 문자열 매칭 대신 직접 참조한다(버전 업그레이드 시 경로 재확인).
+import reactor.netty.internal.shaded.reactor.pool.PoolAcquirePendingLimitException;
+import reactor.netty.internal.shaded.reactor.pool.PoolAcquireTimeoutException;
 
 /**
  * 카카오 로컬 API {@link MapPlaceProvider} 구현 — 좌표당 정상 2콜(coord2address 1 + 주소 keyword 검색 1,
@@ -35,24 +43,24 @@ import reactor.util.retry.Retry;
  *
  * <p>카카오 요청 파라미터는 {@code x}=경도, {@code y}=위도로 순서가 뒤집힌다.
  * transport는 reactive({@link WebClient})다 — 좌표 간 병렬 조회를 위해 {@link Mono}를 반환하고, blocking
- * 경계는 {@link GeocodingService}가 전담한다. 타임아웃은 {@code spring.http.reactiveclient.*} 프로퍼티가
- * SSOT다 — 코드에서 {@code ClientHttpConnector}를 직접 만들지 않는다. base URL은
- * {@code app.geo.kakao-base-url}로 주입받는다(운영 endpoint 변경용이 아니라 MockWebServer용 test seam).
+ * 경계는 {@link GeocodingService}가 전담한다. 전용 pool·connect/response timeout·logical deadline은
+ * {@code app.geo.http.*}({@link KakaoGeoHttpConfiguration})가 SSOT다. base URL은 config의
+ * {@code app.geo.kakao-base-url}이 주입한다(운영 endpoint 변경용이 아니라 MockWebServer용 test seam).
  *
- * <p><b>실패 처리(strict)</b>: 2콜 중 하나라도 최종 실패하면 {@link MapPlaceLookupException}을 error 신호로
- * 전달한다(조용한 null degrade 없음 — 저품질 타임라인을 굽지 않는다). 재시도는 <b>단일 HTTP 콜 단위</b>로 건다 —
- * lookup 전체에 걸면 늦은 콜(keyword)의 실패가 성공한 앞 콜(coord2address)까지 재실행하므로.
- * 전이적 실패(5xx·타임아웃)는 단일 콜을 최대 {@link #MAX_ATTEMPTS}회 시도하고, 영구적 실패(429·401·403·4xx·파싱)는 즉시 던진다.
+ * <p><b>단일 HTTP 콜의 실행 순서(안쪽→바깥)</b>: wire 호출 + 2xx/body shape 분류 → attempt circuit
+ * ({@code kakao-local} — remote outcome만 계수) → {@link RetryHelper}(전이 실패만 backoff retry) →
+ * logical deadline 분류. circuit open이면 wire 구독 전에 차단되고 retry 대상이 아니다. 재시도는
+ * <b>단일 HTTP 콜 단위</b>로 건다 — lookup 전체에 걸면 늦은 콜(keyword)의 실패가 성공한 앞 콜
+ * (coord2address)까지 재실행하므로.
  *
- * <p>외부 호출·응답 해석 실패는 <b>전부</b> {@link MapPlaceLookupException}으로 감싼다 — HTTP 에러뿐 아니라
- * JSON 파싱 실패·빈 body·예상 밖 응답 shape(4xx 포함)까지. 안 그러면 raw RuntimeException이 새서 catch-all 500이 된다.
+ * <p><b>실패 처리</b>: 콜이 최종 실패하면 {@link MapPlaceLookupException}을 error 신호로 전달한다(조용한
+ * null degrade 없음). 부분 실패 허용·거절은 상위 정책(D1/D2)이 materialize된 좌표별 outcome으로 판정한다.
  *
  * <p>{@code app.geo.mode=kakao}일 때만 빈으로 등록된다({@code @ConditionalOnProperty}). {@code noop}이거나
  * 미설정이면 {@link NoOpMapPlaceProvider}가 대신 선택되고, 그 외 값(오타)이면 어느 provider도 매칭되지 않아
- * 컨텍스트가 기동 실패한다(암시적 fail-fast). 이 클래스가 kakao 모드에서만 생성되므로 생성자에서 키를 자기검증한다
- * (키가 비면 기동 실패, fail-fast).
+ * 컨텍스트가 기동 실패한다(암시적 fail-fast). API key 자기검증은 {@link KakaoGeoHttpConfiguration}이 수행한다.
  *
- * <p>⚠️ 좌표는 위치 민감정보다 — 로그엔 endpoint 종류·retryable·시도 횟수·분류 사유만 남기고 좌표·요청 URL·응답
+ * <p>⚠️ 좌표는 위치 민감정보다 — 로그엔 endpoint 종류·분류·시도 횟수·분류 사유만 남기고 좌표·요청 URL·응답
  * 본문은 금지한다. signal 로그는 이벤트루프 스레드에서 실행되므로 tx는 {@link TxContextLogging}으로 복원한다.
  */
 @Slf4j
@@ -67,26 +75,28 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     private static final int PLACES_RADIUS_METERS = 50;
     private static final int PLACES_MAX_COUNT = 10;
 
-    private static final String ENDPOINT_COORD2ADDRESS = "coord2address";
-    private static final String ENDPOINT_KEYWORD = "keyword";
-
-    /** 전이적 실패 시 단일 콜 최대 시도 횟수(최초 1 + 재시도 1). 영구적 실패는 재시도하지 않는다. */
-    private static final int MAX_ATTEMPTS = 2;
-    private static final Duration BACKOFF = Duration.ofMillis(200);
+    static final String ENDPOINT_COORD2ADDRESS = "coord2address";
+    static final String ENDPOINT_KEYWORD = "keyword";
 
     private final WebClient webClient;
+    private final CircuitBreaker circuitBreaker;
+    private final GeoMetrics geoMetrics;
+    private final RetryHelper.RetryPolicy retryPolicy;
 
     public KakaoMapPlaceProvider(
-            @Value("${app.geo.kakao-rest-api-key}") String kakaoRestApiKey,
-            @Value("${app.geo.kakao-base-url:https://dapi.kakao.com}") String kakaoBaseUrl,
-            WebClient.Builder webClientBuilder) {
-        if (kakaoRestApiKey == null || kakaoRestApiKey.isBlank()) {
-            throw new IllegalStateException("KAKAO_REST_API_KEY is required when app.geo.mode=kakao");
-        }
-        this.webClient = webClientBuilder
-                .baseUrl(kakaoBaseUrl)
-                .defaultHeader(HttpHeaders.AUTHORIZATION, "KakaoAK " + kakaoRestApiKey)
-                .build();
+            @Qualifier("kakaoGeoWebClient") WebClient kakaoGeoWebClient,
+            CircuitBreaker kakaoGeoCircuitBreaker,
+            KakaoGeoProperties properties,
+            GeoMetrics geoMetrics) {
+        this.webClient = kakaoGeoWebClient;
+        this.circuitBreaker = kakaoGeoCircuitBreaker;
+        this.geoMetrics = geoMetrics;
+        this.retryPolicy = new RetryHelper.RetryPolicy(
+                properties.retry().maxAttempts(),
+                properties.retry().firstBackoff(),
+                properties.retry().maxBackoff(),
+                properties.retry().jitter(),
+                properties.http().logicalCallTimeout());
     }
 
     /**
@@ -165,51 +175,140 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     }
 
     /**
-     * 단일 카카오 HTTP 콜 + 응답 shape 검증을 재시도로 감싼다. 전이적 실패(5xx·타임아웃)는 최대 {@link #MAX_ATTEMPTS}회
-     * 시도하고, 영구적 실패(4xx·파싱·shape)는 즉시 error 신호로 전달한다. 외부 호출·해석 실패는 전부
-     * {@link MapPlaceLookupException}으로 감싼다.
+     * 단일 카카오 HTTP 콜 하나의 <b>logical call</b> — 분류된 wire attempt에 circuit을 적용하고 그 바깥에서
+     * {@code retryThisCall} 실패만 제한적으로 재시도하며, 전체를 logical deadline으로 유계화한다.
+     * per-call 상태(attempt 수·직전 실패)는 {@code Mono.defer} 안에서 만들어 재구독에 안전하다.
      */
     private Mono<JsonNode> fetchDocuments(String endpoint, AtomicInteger calls, Function<UriBuilder, URI> uriFunction) {
-        AtomicInteger attempts = new AtomicInteger();
         return Mono.defer(() -> {
-                    calls.incrementAndGet();
-                    attempts.incrementAndGet();
-                    return webClient.get().uri(uriFunction).retrieve().bodyToMono(JsonNode.class);
-                })
+            long startNanos = System.nanoTime();
+            AtomicInteger attempts = new AtomicInteger();
+            return RetryHelper.callable(
+                            "kakao-geo-" + endpoint,
+                            () -> wireAttempt(endpoint, uriFunction, calls, attempts),
+                            retryPolicy,
+                            e -> e instanceof MapPlaceLookupException failure && failure.retryThisCall())
+                    // helper deadline 만료(TimeoutException)를 typed transient outcome으로 분류한다. wire의
+                    // pool acquire/response timeout은 이미 안쪽에서 분류돼 여기 도달하지 않는다.
+                    .onErrorMap(TimeoutException.class, e ->
+                            MapPlaceLookupException.logicalDeadline(endpoint + " logical deadline exceeded", e))
+                    .doOnEach(signal -> recordLogicalCall(signal, endpoint, startNanos))
+                    .doOnEach(signal -> logCallFailure(signal, endpoint, attempts));
+        });
+    }
+
+    /**
+     * 실제 wire attempt 하나 — 안쪽에서 바깥 순서로 (1) HTTP 호출·2xx/body shape 검증·오류 분류,
+     * (2) attempt circuit(open이면 wire 구독 자체가 없음 — attempt 계수도 없음), (3) open 거절 분류.
+     * attempt counter는 wire가 실제 구독될 때, retry counter는 직전 실패 뒤 retry가 schedule될 때 증가한다.
+     */
+    private Mono<JsonNode> wireAttempt(String endpoint, Function<UriBuilder, URI> uriFunction,
+            AtomicInteger calls, AtomicInteger attempts) {
+        return webClient.get().uri(uriFunction).retrieve()
+                // retrieve 기본 오류 처리는 4xx/5xx만 포함한다. D8/D14의 "모든 non-2xx 실패" 계약을
+                // 지키기 위해 3xx도 명시적으로 WebClientResponseException으로 변환한다.
+                .onStatus(status -> !status.is2xxSuccessful(), response -> response.createException())
+                .bodyToMono(JsonNode.class)
                 // WebClient는 빈 body를 null이 아니라 empty 신호로 준다 → 기존 null-body 계약(영구 실패)으로 변환.
-                .switchIfEmpty(Mono.error(() -> new MapPlaceLookupException(endpoint + " null body", false, null)))
+                .switchIfEmpty(Mono.error(() -> MapPlaceLookupException.remotePermanent(endpoint + " null body", null)))
                 .map(body -> requireDocuments(body, endpoint))
-                .onErrorMap(e -> classify(e, endpoint))
-                .retryWhen(Retry.fixedDelay(MAX_ATTEMPTS - 1, BACKOFF)
-                        .filter(e -> e instanceof MapPlaceLookupException failure && failure.isRetryable())
-                        // 재시도 소진 시 RetryExhaustedException 래핑 대신 마지막 원본 예외를 그대로 전달한다.
-                        .onRetryExhaustedThrow((spec, retrySignal) -> retrySignal.failure()))
-                .doOnEach(signal -> logCallFailure(signal, endpoint, attempts));
+                // transport/응답 계약 실패만 typed outcome으로 바꾼다. 예상 밖 RuntimeException은
+                // circuit 통계에서도 ignore된 채 원본 그대로 전파해 상위 catch-all 500이 되게 한다(D4).
+                .onErrorMap(KakaoMapPlaceProvider::isExpectedFailure, e -> classify(e, endpoint))
+                .doOnSubscribe(subscription -> {
+                    int attempt = attempts.incrementAndGet();
+                    calls.incrementAndGet();
+                    geoMetrics.countAttempt(endpoint, attempt == 1);
+                })
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .onErrorMap(CallNotPermittedException.class, e ->
+                        MapPlaceLookupException.notPermitted(endpoint + " circuit open", e))
+                // retry가 실제 schedule되는 시점(직전 attempt 실패 직후)에 1회. logical deadline이
+                // backoff 중 만료돼 다음 wire가 시작되지 않아도 scheduled retry는 관측된다.
+                .doOnError(MapPlaceLookupException.class, failure -> {
+                    if (failure.retryThisCall() && attempts.get() < retryPolicy.maxAttempts()) {
+                        geoMetrics.countRetry(endpoint, GeoMetrics.failureKind(failure));
+                    }
+                });
+    }
+
+    /** provider 계약상 분류할 수 있는 transport/응답 실패인지 — 그 밖의 예외는 programming error다. */
+    private static boolean isExpectedFailure(Throwable e) {
+        return e instanceof MapPlaceLookupException
+                || isPoolAcquireFailure(e)
+                || e instanceof WebClientResponseException
+                || e instanceof WebClientRequestException
+                || e instanceof ReadTimeoutException
+                || e instanceof IOException
+                || e instanceof CodecException;
     }
 
     /**
      * WebClient 예외를 {@link MapPlaceLookupException}으로 분류한다. 이미 분류된 예외(requireDocuments의
-     * shape·switchIfEmpty의 null body)는 그대로 통과시켜 endpoint별 메시지·영구 분류를 보존한다(재래핑 금지).
+     * shape·switchIfEmpty의 null body)는 그대로 통과시켜 endpoint별 메시지·분류를 보존한다(재래핑 금지).
      */
     private static MapPlaceLookupException classify(Throwable e, String endpoint) {
         if (e instanceof MapPlaceLookupException already) {
             return already;
         }
-        if (e instanceof WebClientResponseException http) {
-            // HTTP status를 받은 4xx/5xx. 5xx만 전이적으로 본다(429·401·403·기타 4xx는 영구).
-            boolean retryable = http.getStatusCode().is5xxServerError();
-            return new MapPlaceLookupException(endpoint + " http " + http.getStatusCode().value(), retryable, e);
+        if (isPoolAcquireFailure(e)) {
+            // 전용 pool의 acquire 거절(pending 초과)·timeout — remote에 도달하지 않은 local 압력.
+            return MapPlaceLookupException.localRejected(endpoint + " pool acquire rejected", e);
         }
-        if (e instanceof WebClientRequestException || e instanceof ReadTimeoutException) {
-            // I/O(연결 실패·읽기 타임아웃 등) — 전이적. 읽기 타임아웃은 응답 단계라 netty 예외가 그대로 올 수 있다.
-            return new MapPlaceLookupException(endpoint + " io error", true, e);
+        if (e instanceof WebClientResponseException http) {
+            // 2xx headers 뒤 body read timeout/disconnect는 WebClient가 원인을 cause로 둔
+            // WebClientResponseException(2xx)으로 감쌀 수 있다. status만 보면 영구 응답 오류로
+            // 오분류되므로 이 경우에는 실제 I/O 원인을 우선한다. non-2xx는 받은 status가 권위다.
+            if (http.getStatusCode().is2xxSuccessful() && hasRemoteIoCause(http)) {
+                return MapPlaceLookupException.remoteTransient(endpoint + " io error", e);
+            }
+            // HTTP status를 받은 4xx/5xx. 5xx만 전이적으로 본다(429·401·403·기타 4xx는 영구).
+            boolean transientStatus = http.getStatusCode().is5xxServerError();
+            String message = endpoint + " http " + http.getStatusCode().value();
+            return transientStatus
+                    ? MapPlaceLookupException.remoteTransient(message, e)
+                    : MapPlaceLookupException.remotePermanent(message, e);
+        }
+        if (e instanceof WebClientRequestException || e instanceof ReadTimeoutException || e instanceof IOException) {
+            // I/O(연결 실패·connect timeout·DNS·disconnect·읽기 타임아웃 등) — 전이적. 응답 단계 오류는
+            // netty/reactor 예외(ReadTimeoutException·PrematureCloseException 등)가 그대로 올 수 있다.
+            return MapPlaceLookupException.remoteTransient(endpoint + " io error", e);
         }
         if (e instanceof CodecException) {
             // 응답 디코딩/파싱 실패(HTTP status 없음) — 영구적.
-            return new MapPlaceLookupException(endpoint + " parse error", false, e);
+            return MapPlaceLookupException.remotePermanent(endpoint + " parse error", e);
         }
-        // 그 외 전부 감싸 raw RuntimeException이 새는 것을 막는다(catch-all 500 방지) — 영구적.
-        return new MapPlaceLookupException(endpoint + " unexpected error", false, e);
+        // 호출자는 isExpectedFailure로 거른다. 이 분기는 새 expected failure 타입을 predicate에만 추가하는
+        // 실수를 조용히 영구 실패로 만들지 않도록 programming error로 남긴다.
+        throw new IllegalArgumentException("unclassified kakao failure", e);
+    }
+
+    /** 2xx 응답 body 단계에서 WebClientResponseException 안에 감싸진 remote I/O 원인이 있는지. */
+    private static boolean hasRemoteIoCause(Throwable e) {
+        for (Throwable current = e.getCause(); current != null; current = current.getCause()) {
+            if (current instanceof WebClientRequestException
+                    || current instanceof ReadTimeoutException
+                    || current instanceof IOException) {
+                return true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /** cause 체인에 전용 pool acquire 거절(pending 초과)·timeout이 있는지 — WebClient 래핑과 무관하게 탐지. */
+    private static boolean isPoolAcquireFailure(Throwable e) {
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof PoolAcquireTimeoutException || current instanceof PoolAcquirePendingLimitException) {
+                return true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -219,9 +318,22 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     private static JsonNode requireDocuments(JsonNode body, String endpoint) {
         JsonNode documents = body.get("documents");
         if (documents == null || !documents.isArray()) {
-            throw new MapPlaceLookupException(endpoint + " missing documents array", false, null);
+            throw MapPlaceLookupException.remotePermanent(endpoint + " missing documents array", null);
         }
         return documents;
+    }
+
+    private void recordLogicalCall(Signal<JsonNode> signal, String endpoint, long startNanos) {
+        // Mono는 onNext 뒤 onComplete가 또 오므로 onNext/onError에서만 기록해 정확히 1회를 보장한다.
+        Duration took = Duration.ofNanos(System.nanoTime() - startNanos);
+        if (signal.isOnNext()) {
+            geoMetrics.recordLogicalCall(endpoint, "success", "none", took);
+            return;
+        }
+        if (signal.isOnError() && signal.getThrowable() instanceof MapPlaceLookupException failure) {
+            geoMetrics.recordLogicalCall(endpoint,
+                    GeoMetrics.logicalOutcome(failure), GeoMetrics.failureKind(failure), took);
+        }
     }
 
     private void logLookupSuccess(Signal<GeoPlace> signal, AtomicInteger calls, long startNanos) {
@@ -238,11 +350,13 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
         if (!signal.isOnError() || !(signal.getThrowable() instanceof MapPlaceLookupException failure)) {
             return;
         }
-        // retryWhen 뒤라 최종 실패만 1회 기록된다(재시도 중간 실패는 warn 없음).
-        // 좌표·URL·응답 body 금지 — endpoint 종류·retryable·시도 횟수·분류 사유(메시지)만.
+        // retry 소진 뒤라 최종 실패만 1회 기록된다(재시도 중간 실패는 warn 없음).
+        // 좌표·URL·응답 body 금지 — endpoint 종류·분류·시도 횟수·분류 사유(메시지)만.
         TxContextLogging.runWithTx(signal.getContextView(), () ->
-                log.warn("kakao geocoding call failed: endpoint={} retryable={} attempts={} reason={}",
-                        endpoint, failure.isRetryable(), attempts.get(), failure.getMessage()));
+                log.warn("kakao geocoding call failed: endpoint={} category={} retryThisCall={} "
+                                + "clientMayRetryLater={} attempts={} reason={}",
+                        endpoint, failure.category(), failure.retryThisCall(),
+                        failure.clientMayRetryLater(), attempts.get(), failure.getMessage()));
     }
 
     /** 건물명은 좌표 위치 그 자체라 places 맨 앞에 둔다. */
