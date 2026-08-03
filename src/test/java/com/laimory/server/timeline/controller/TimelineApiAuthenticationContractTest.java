@@ -90,7 +90,7 @@ class TimelineApiAuthenticationContractTest {
         for (Method method : List.of(getById, deleteById)) {
             Operation operation = method.getAnnotation(Operation.class);
             assertThat(operation.deprecated()).isTrue();
-            assertThat(operation.description()).contains("/daily-records/by-date/{recordDate}");
+            assertThat(operation.description()).contains("/daily-records/{recordDate}");
         }
     }
 

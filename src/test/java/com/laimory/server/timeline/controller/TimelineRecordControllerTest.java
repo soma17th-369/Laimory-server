@@ -64,9 +64,9 @@ class TimelineRecordControllerTest {
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
     private static final String DAILY_RECORDS_PATH = "/a/api/v1/timeline/daily-records";
-    private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/77";
-    private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/by-date/" + RECORD_DATE;
-    private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/by-date/not-a-date";
+    private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/by-id/77";
+    private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/" + RECORD_DATE;
+    private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/not-a-date";
 
     private static final String PATCH_BODY = """
             {
