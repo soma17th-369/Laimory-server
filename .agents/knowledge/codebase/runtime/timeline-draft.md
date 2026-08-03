@@ -95,8 +95,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - `GET /a/api/{version}/timeline/daily-records`는 principal userId의 DRAFT/SAVED DailyRecord 전체를
   최신 날짜·ID 내림차순으로 반환한다(빈 record 포함, 없으면 200 `timelines=[]`).
   외부 하루 단건의 날짜 기반 공개 경로는
-  `GET /a/api/{version}/timeline/daily-records/by-date/{recordDate}`이며 `(userId, recordDate)`가 일치하는
-  한 건만 반환한다. 기존 `GET .../daily-records/{dailyRecordId}`는 같은 응답을 반환하는 deprecated 호환
+  `GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(userId, recordDate)`가 일치하는
+  한 건만 반환한다. 기존 `GET .../daily-records/by-id/{dailyRecordId}`는 같은 응답을 반환하는 deprecated 호환
   경로다. 없음·비소유는 두 경로 모두 404 `-404`로 은닉하며, record→Event→junction→Item을 한 read-only
   transaction에서 읽어 Event별 `items`까지 조립한다.
 - `GET /a/api/{version}/timeline/events/{timelineEventId}`는 Event의 부모 record를 통해 principal 소유권을
@@ -146,9 +146,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
 - DailyRecord 삭제의 날짜 기반 공개 경로는 `(principal userId, recordDate)`로 record를 찾는
-  `DELETE .../daily-records/by-date/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
+  `DELETE .../daily-records/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
   삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner/DRAFT를 재확인한다. lookup 뒤 같은
-  날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/{dailyRecordId}`는
+  날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/by-id/{dailyRecordId}`는
   같은 transaction을 호출하는 deprecated 호환 경로다.
 - DailyRecord 삭제 transaction은 record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문
   PHOTO Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
