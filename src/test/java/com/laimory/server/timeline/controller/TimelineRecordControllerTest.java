@@ -63,6 +63,7 @@ class TimelineRecordControllerTest {
     private static final LocalDate RECORD_DATE = LocalDate.parse("2026-07-08");
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
+    private static final String EVENT_ITEM_PATH = EVENT_PATH + "/items/21";
     private static final String DAILY_RECORDS_PATH = "/a/api/v1/timeline/daily-records";
     private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/by-id/77";
     private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/" + RECORD_DATE;
@@ -587,6 +588,50 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.header.code").value(-500));
+    }
+
+    // --- detachTimelineEventItem ---
+
+    @Test
+    void detachTimelineEventItem_returns200WithEmptyBody() throws Exception {
+        mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(this::assertBodyIsExplicitNull);
+
+        // userId는 클라 입력이 아니라 인증 principal이다.
+        verify(timelineDeletionService).detachEventItem(eq("v1"), eq(USER_ID), eq(11L), eq(21L));
+    }
+
+    @Test
+    void detachTimelineEventItem_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND))
+                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+
+        mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void detachTimelineEventItem_mapsNonPhotoRejectionTo400() throws Exception {
+        doThrow(new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_PHOTO))
+                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+
+        mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-1018));
+    }
+
+    @Test
+    void detachTimelineEventItem_mapsSavedConflictTo409() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+
+        mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     // --- deleteDailyRecord / deleteDailyRecordByDate ---

@@ -190,6 +190,33 @@ public interface TimelineRecordApi {
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "삭제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
+    @Operation(summary = "타임라인 Event에서 사진(PHOTO Item) 삭제",
+            description = "Event와 PHOTO Item의 연결(junction)만 해제한다 — 사진 자체 삭제가 아니라서 같은 "
+                    + "사진이 다른 Event에도 연결돼 있으면 그쪽에는 그대로 남는다. 마지막 Event 참조가 사라지는 "
+                    + "PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 worker가 S3 성공 시 Item과 "
+                    + "작업을 최종 삭제한다. 따라서 200은 연결 해제와 PHOTO 정리 작업 등록 성공을 뜻하고 S3 삭제 "
+                    + "완료를 기다리지 않는다. 현재 정책상 PHOTO Item만 해제할 수 있다(제한은 URL이 아니라 서버 "
+                    + "정책 — non-PHOTO는 400). Event의 마지막 Item을 해제해도 Event는 유지된다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "연결 해제 성공(body 없음)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-1018` — 대상 Item이 PHOTO가 아님(연결된 Item에만 해당 — 미연결은 404)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아니거나, Item이 없거나 해당 이벤트에 "
+                            + "연결돼 있지 않음(존재 여부는 구분해 주지 않는다)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료)")
+    })
+    @DeleteMapping("/events/{timelineEventId}/items/{timelineItemId}")
+    ResponseEntity<ApiResponse<Void>> detachTimelineEventItem(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "연결을 해제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
+            @Parameter(description = "연결을 해제할 타임라인 아이템 ID") @PathVariable Long timelineItemId);
+
     @Operation(summary = "하루 기록(DailyRecord) 삭제(ID, deprecated)", deprecated = true,
             description = "호환을 위해 한시적으로 유지하는 ID 기반 삭제다. 신규 클라이언트는 "
                     + "DELETE /daily-records/{recordDate}를 사용한다. 하루 전체 Record·Events와 마지막 "

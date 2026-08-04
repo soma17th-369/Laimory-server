@@ -77,6 +77,47 @@ public class TimelineDeletionTransactionService {
     }
 
     /**
+     * Event에서 PHOTO Item 연결 한 줄을 해제한다. Item 행 잠금(직렬화 지점) 뒤 junction을 current-read
+     * 잠금 조회로 읽어 target 존재와 잔여 association을 원자적으로 판정한다 — 잠금 전 일반 읽기 junction
+     * 조회는 두지 않는다(스냅숏 stale 행을 잠금 뒤 삭제하면 0-row DELETE로 500, 동시 커밋된 해제를 못 보면
+     * 마지막 참조를 shared로 오판해 job 없는 orphan이 남는다). 미연결·비소유는 404 은닉이 non-PHOTO 거절보다
+     * 우선이다. 마지막 참조였으면 기존 orphan 경로(PHOTO job 보존·손상분 즉시 삭제)를 같은 commit으로 묶는다.
+     */
+    @Transactional
+    public DeletionResult detachEventItem(long userId, Long timelineEventId, Long timelineItemId) {
+        TimelineEvent event = timelineEventService.findById(timelineEventId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+        requireOwnedDraftRecord(userId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+
+        TimelineItem item = timelineItemService.findByIdForUpdate(timelineItemId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
+        List<TimelineEventItem> associations =
+                timelineEventItemService.findByTimelineItemIdForUpdate(timelineItemId);
+        TimelineEventItem target = associations.stream()
+                .filter(link -> link.getTimelineEventId().equals(timelineEventId))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
+        if (item.getItemType() != ItemType.PHOTO) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_PHOTO);
+        }
+
+        if (associations.size() > 1) {
+            timelineEventItemService.delete(target);
+            return new DeletionResult(0, 1, 0);
+        }
+        OrphanPreparation preparation = prepareOrphanItems(List.of(item), userId);
+        if (preparation.immediateDeleteItemIds().isEmpty()) {
+            // valid PHOTO(job 보존) 또는 기존 job 재사용: Item은 남으므로 junction만 명시 해제한다.
+            timelineEventItemService.delete(target);
+        } else {
+            // 손상 PHOTO: Item hard delete가 junction을 DB FK cascade로 지운다. 명시 junction delete를
+            // 겹치면 즉시 실행되는 batch delete가 cascade로 행을 먼저 지워 commit flush가 0-row DELETE가 된다.
+            timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
+        }
+        return new DeletionResult(preparation.scheduled(), 0, preparation.invalidSkipped());
+    }
+
+    /**
      * 삭제될 Event 집합에<b>만</b> 연결된 Item들(= 삭제 후 association 0이 될 orphan)을 계산한다.
      * 삭제 대상 밖 Event에도 연결된 Item은 shared로 보고 유지한다 — 정상 write 경로에선 same-record 규칙으로
      * cross-record 후보가 없어야 하지만, 있어도 방어적으로 유지된다.

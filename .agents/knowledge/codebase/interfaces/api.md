@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 15개(timeline 13 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 16개(timeline 14 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -82,6 +82,12 @@ PHOTO Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 c
 API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를
 동기 502로 반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 잘못된 날짜 형식은 400이며,
 같은 날짜 작업 중이라는 이유로 `-1016`을 반환하지 않는다.
+
+`DELETE /a/api/{version}/timeline/events/{timelineEventId}/items/{timelineItemId}`는 Event-Item junction
+한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 위
+삭제 API들과 같은 PHOTO 삭제 작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
+허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
+404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED 409 계약은 동일하다. 성공 응답은 `body=null`이다.
 
 `/s/api/{version}/timeline/drafts/{taskId}`에는 AI 서버간 endpoint 셋이 있다 — `GET .../input`(정규 AI 입력
 반환), `POST .../result`(Event/Item/junction 저장 + 채택 source 삭제), `POST .../callback`(작업 상태 전이).

@@ -5,6 +5,7 @@ import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,11 @@ public class TimelineItemService {
             return List.of();
         }
         return timelineItemRepository.findAllById(timelineItemIds);
+    }
+
+    /** Event-Item 연결 해제의 직렬화 지점 — Item 행을 PESSIMISTIC_WRITE로 잠근다(동시 해제의 마지막 참조 오판 방지). */
+    public Optional<TimelineItem> findByIdForUpdate(Long timelineItemId) {
+        return timelineItemRepository.findByIdForUpdate(timelineItemId);
     }
 
     /**

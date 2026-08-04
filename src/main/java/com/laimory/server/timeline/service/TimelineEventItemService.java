@@ -37,4 +37,17 @@ public class TimelineEventItemService {
         }
         return timelineEventItemRepository.findByTimelineItemIdIn(timelineItemIds);
     }
+
+    /**
+     * 연결 해제 트랜잭션의 current-read 잠금 조회 — Item 행 잠금 아래에서 target junction 존재와
+     * 잔여 association 판정의 단일 권위로 쓴다.
+     */
+    public List<TimelineEventItem> findByTimelineItemIdForUpdate(Long timelineItemId) {
+        return timelineEventItemRepository.findByTimelineItemIdForUpdate(timelineItemId);
+    }
+
+    /** 잠금 조회가 반환한 managed 행 삭제(연결 해제 전용 — root 삭제의 junction 정리는 DB FK cascade 담당). */
+    public void delete(TimelineEventItem link) {
+        timelineEventItemRepository.delete(link);
+    }
 }

@@ -78,6 +78,13 @@ public class TimelineRecordController implements TimelineRecordApi {
     }
 
     @Override
+    public ResponseEntity<ApiResponse<Void>> detachTimelineEventItem(
+            String applicationVersion, Long userId, Long timelineEventId, Long timelineItemId) {
+        timelineDeletionService.detachEventItem(applicationVersion, userId, timelineEventId, timelineItemId);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @Override
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
             String applicationVersion, Long userId, Long dailyRecordId) {
         timelineDeletionService.deleteDailyRecord(applicationVersion, userId, dailyRecordId);
