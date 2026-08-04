@@ -104,6 +104,79 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
+    void detachEventItem_runsTransactionAndRecordsCommittedEnqueueMetrics() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(timelineDeletionTransactionService.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
+
+        service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L);
+
+        InOrder order = inOrder(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+        order.verify(timelineDeletionTransactionService).detachEventItem(USER_ID, EVENT_ID, 21L);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(1);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(0);
+        order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(0);
+    }
+
+    @Test
+    void detachEventItem_hidesUnknownEventBeforeTransaction() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
+                });
+
+        verifyNoInteractions(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void detachEventItem_hidesForeignRecordBeforeTransaction() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
+                });
+
+        verifyNoInteractions(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void detachEventItem_rejectsSavedRecordBeforeTransaction() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
+        DailyRecord saved = draftRecordOf(USER_ID);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
+                });
+
+        verifyNoInteractions(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
+    }
+
+    @Test
+    void detachEventItem_dbFailurePropagatesAndDoesNotRecordMetrics() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(timelineDeletionTransactionService.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verifyNoInteractions(timelinePhotoDeleteMetrics);
+    }
+
+    @Test
     void deleteEvent_dbFailurePropagatesAndDoesNotRecordMetrics() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));

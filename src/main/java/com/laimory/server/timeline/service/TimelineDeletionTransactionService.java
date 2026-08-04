@@ -77,6 +77,40 @@ public class TimelineDeletionTransactionService {
     }
 
     /**
+     * Event에서 PHOTO Item 연결 한 줄을 해제한다. junction 삭제는 영향 행 수를 반환하는 직접 DELETE라
+     * 같은 junction 동시 해제의 후발 요청은 stale-state 500 없이 404로 수렴한다. 미연결·비소유는 404
+     * 은닉이 non-PHOTO 거절보다 우선이다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기
+     * best-effort다 — 서로 다른 junction의 동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는
+     * orphan Item이 남을 수 있고, 이 수렴은 orphan 스위퍼(후속)가 맡는다. 마지막 참조의 orphan 처리
+     * (유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙을 같은 commit으로 묶는다.
+     */
+    @Transactional
+    public DeletionResult detachEventItem(long userId, Long timelineEventId, Long timelineItemId) {
+        TimelineEvent event = timelineEventService.findById(timelineEventId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+        requireOwnedDraftRecord(userId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+
+        TimelineItem item = timelineItemService.findById(timelineItemId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
+        if (!timelineEventItemService.isLinked(timelineEventId, timelineItemId)) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND);
+        }
+        if (item.getItemType() != ItemType.PHOTO) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_PHOTO);
+        }
+
+        if (timelineEventItemService.deleteLink(timelineEventId, timelineItemId) == 0) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND);
+        }
+        if (!timelineEventItemService.findByTimelineItemIds(List.of(timelineItemId)).isEmpty()) {
+            return new DeletionResult(0, 1, 0);
+        }
+        OrphanPreparation preparation = prepareOrphanItems(List.of(item), userId);
+        timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
+        return new DeletionResult(preparation.scheduled(), 0, preparation.invalidSkipped());
+    }
+
+    /**
      * 삭제될 Event 집합에<b>만</b> 연결된 Item들(= 삭제 후 association 0이 될 orphan)을 계산한다.
      * 삭제 대상 밖 Event에도 연결된 Item은 shared로 보고 유지한다 — 정상 write 경로에선 same-record 규칙으로
      * cross-record 후보가 없어야 하지만, 있어도 방어적으로 유지된다.

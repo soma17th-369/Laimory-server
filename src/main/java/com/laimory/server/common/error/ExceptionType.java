@@ -51,6 +51,10 @@ public enum ExceptionType {
     DRAFT_TASK_STATE_CONFLICT(-1017, HttpStatus.CONFLICT, Level.WARN),
     TIMELINE_EVENT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     DAILY_RECORD_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
+    /** Item 없음·비소유·대상 Event 미연결을 구분 없이 은닉하는 404. */
+    TIMELINE_ITEM_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
+    /** Event-Item 연결 해제가 PHOTO 전용인 현재 정책의 non-PHOTO 거절. */
+    TIMELINE_ITEM_NOT_PHOTO(-1018, HttpStatus.BAD_REQUEST, Level.INFO),
 
     // ── auth ──
     API_AUTHENTICATION_REQUIRED(-2001, HttpStatus.UNAUTHORIZED, Level.INFO),

@@ -70,8 +70,8 @@ CREATE TABLE IF NOT EXISTS timeline_items (
 
 -- Event↔Item N:M junction. 같은 record 안에서만 Item을 공유한다는 규칙은 DB 제약이 아니라 writer 계약이다
 -- (AI는 새 Item을 현재 task의 새 Event에만 연결하고, Event PATCH는 같은 record PHOTO를 재사용할 수 있음).
--- Event/Item 행 삭제 시 자기 junction은 FK cascade로
--- 지워지고, association이 0이 된 Item은 삭제 흐름이 명시적으로 지운다(감사 컬럼 없음 — 순수 연결 행).
+-- Event/Item 행 삭제 시 자기 junction은 FK cascade로 지워지고, Event에서 PHOTO Item 연결 해제는
+-- junction 행만 명시적으로 지운다. association이 0이 된 Item은 삭제 흐름이 정리한다(감사 컬럼 없음 — 순수 연결 행).
 CREATE TABLE IF NOT EXISTS timeline_event_items (
     timeline_event_id BIGINT NOT NULL,
     timeline_item_id  BIGINT NOT NULL,

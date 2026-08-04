@@ -49,6 +49,22 @@ public class TimelineDeletionService {
                 () -> timelineDeletionTransactionService.deleteEvent(userId, timelineEventId));
     }
 
+    /**
+     * Event에서 PHOTO Item 연결만 해제한다. 마지막 참조였으면 PHOTO orphan Item과 삭제 job을 남긴다.
+     * 사전 guard는 event·record까지만이고 junction 존재·삭제 판정은 트랜잭션이 소유한다
+     * ({@link TimelineDeletionTransactionService#detachEventItem} — 직접 DELETE 영향 행 수 기반).
+     */
+    public void detachEventItem(String applicationVersion, long userId,
+                                Long timelineEventId, Long timelineItemId) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        TimelineEvent event = timelineEventService.findById(timelineEventId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
+        requireOwnedDraftRecord(userId, event.getDailyRecordId(),
+                ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+        executeDelete("eventItem", timelineItemId,
+                () -> timelineDeletionTransactionService.detachEventItem(userId, timelineEventId, timelineItemId));
+    }
+
     /** Record·Events/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
     public void deleteDailyRecord(String applicationVersion, long userId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).

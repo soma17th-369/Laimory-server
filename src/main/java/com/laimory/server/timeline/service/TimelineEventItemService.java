@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventItemId;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import java.util.Collection;
 import java.util.List;
@@ -36,5 +37,18 @@ public class TimelineEventItemService {
             return List.of();
         }
         return timelineEventItemRepository.findByTimelineItemIdIn(timelineItemIds);
+    }
+
+    /** 해당 Event-Item 연결 존재 여부(일반 읽기) — 연결 해제의 404 은닉/타입 거절 순서 판정용. */
+    public boolean isLinked(Long timelineEventId, Long timelineItemId) {
+        return timelineEventItemRepository.existsById(new TimelineEventItemId(timelineEventId, timelineItemId));
+    }
+
+    /**
+     * 연결 해제의 단건 junction 직접 DELETE — 영향 행 수를 반환한다.
+     * 0은 이미 지워진 행(같은 junction 동시 해제의 후발 요청)이며 예외가 아니다.
+     */
+    public int deleteLink(Long timelineEventId, Long timelineItemId) {
+        return timelineEventItemRepository.deleteByEventIdAndItemId(timelineEventId, timelineItemId);
     }
 }

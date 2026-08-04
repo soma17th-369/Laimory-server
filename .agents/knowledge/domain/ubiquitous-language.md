@@ -27,7 +27,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
-| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord) 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
+| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
 
 ## 타임라인 이벤트
 
@@ -120,6 +120,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(user_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
+| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | 새 callback token hash와 Redis `CALLBACK_PENDING`을 CAS로 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 실패하면 가능한 경우 이전 result token hash와 `RESULT_PENDING`으로 복구한다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |

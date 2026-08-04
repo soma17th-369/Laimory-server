@@ -5,6 +5,7 @@ import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,11 @@ public class TimelineItemService {
             return List.of();
         }
         return timelineItemRepository.findAllById(timelineItemIds);
+    }
+
+    /** 단건 Item 로드 — 연결 해제의 타입 검사·orphan 처리 입력용. */
+    public Optional<TimelineItem> findById(Long timelineItemId) {
+        return timelineItemRepository.findById(timelineItemId);
     }
 
     /**

@@ -356,6 +356,180 @@ class TimelineDeletionTransactionServiceTest {
     }
 
     @Test
+    void detachEventItem_sharedPhotoRemovesOnlyTargetJunctionWithoutJob() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(photoItem(21L, "shared.jpg")));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(21L)))
+                .thenReturn(List.of(TimelineEventItem.of(12L, 21L)));
+
+        TimelineDeletionTransactionService.DeletionResult result =
+                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+
+        assertThat(result).isEqualTo(
+                new TimelineDeletionTransactionService.DeletionResult(0, 1, 0));
+        verify(timelineEventItemService).deleteLink(EVENT_ID, 21L);
+        verify(timelineItemService, never()).deleteByIds(anyCollection());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_lastReferenceEnqueuesJobAndPreservesItem() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(photoItem(21L, "last.jpg")));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
+        String objectKey = PhotoObjectKeys.fullKey("last.jpg", USER_ID);
+        when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(true);
+
+        TimelineDeletionTransactionService.DeletionResult result =
+                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+
+        assertThat(result).isEqualTo(
+                new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
+        verify(timelinePhotoDeleteJobService).insertIfAbsent(21L, objectKey);
+        // valid PHOTO는 immediate delete 목록이 비어 Item이 보존된다.
+        verify(timelineItemService).deleteByIds(List.of());
+    }
+
+    @Test
+    void detachEventItem_lastReferenceBrokenPhotoSkipsJobAndHardDeletesItem() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(brokenPhotoItem(21L)));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
+
+        TimelineDeletionTransactionService.DeletionResult result =
+                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+
+        assertThat(result).isEqualTo(
+                new TimelineDeletionTransactionService.DeletionResult(0, 0, 1));
+        verify(timelineItemService).deleteByIds(List.of(21L));
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_existingDeleteJobStillRemovesJunctionAndPreservesItem() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(photoItem(21L, "dup.jpg")));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
+        String objectKey = PhotoObjectKeys.fullKey("dup.jpg", USER_ID);
+        when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(false);
+
+        TimelineDeletionTransactionService.DeletionResult result =
+                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+
+        assertThat(result).isEqualTo(
+                new TimelineDeletionTransactionService.DeletionResult(0, 0, 0));
+        verify(timelineEventItemService).deleteLink(EVENT_ID, 21L);
+        verify(timelineItemService).deleteByIds(List.of());
+    }
+
+    @Test
+    void detachEventItem_concurrentlyRemovedJunctionIs404WithoutOrphanHandling() {
+        stubOwnedDraftEvent();
+        // 스냅숏 존재 확인은 통과했지만 직접 DELETE가 0행 — 같은 junction 동시 해제의 후발 요청.
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(photoItem(21L, "race.jpg")));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        verify(timelineItemService, never()).deleteByIds(anyCollection());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_nonPhotoItemIsRejectedWithoutMutation() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(calendarItem(21L)));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1018));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verify(timelineItemService, never()).deleteByIds(anyCollection());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_unlinkedItemIs404BeforeTypeCheckWithoutMutation() {
+        stubOwnedDraftEvent();
+        // 미연결 non-PHOTO도 -1018이 아니라 404 은닉이 우선이다.
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(calendarItem(21L)));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_missingItemIs404WithoutMutation() {
+        stubOwnedDraftEvent();
+        when(timelineItemService.findById(21L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_missingEventIs404WithoutMutation() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_foreignRecordIs404WithoutMutation() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
+    void detachEventItem_savedRecordIsConflictWithoutMutation() {
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
+        DailyRecord saved = draftRecordOf(USER_ID);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+
+        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
+
+        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
+        verifyNoInteractions(timelinePhotoDeleteJobService);
+    }
+
+    @Test
     void deleteDailyRecord_missingRecordOnRecheckIs404WithoutMutation() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.empty());
 
