@@ -50,7 +50,7 @@ final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나�
 transaction이 쓰고, Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가도 같은 계층이 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
-FK cascade가 기본이고, Event-Item 연결 해제만 잠금 조회로 얻은 행을 명시 삭제한다.
+FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
 
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을

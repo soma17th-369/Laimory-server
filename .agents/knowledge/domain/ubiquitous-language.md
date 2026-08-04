@@ -120,7 +120,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(user_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
-| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 명시 삭제한다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉). transaction 안 Item 행 잠금 + junction current-read 잠금 조회가 target 존재·마지막 참조를 원자 판정하고, 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
+| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | 새 callback token hash와 Redis `CALLBACK_PENDING`을 CAS로 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 실패하면 가능한 경우 이전 result token hash와 `RESULT_PENDING`으로 복구한다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |

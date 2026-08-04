@@ -51,8 +51,8 @@ public class TimelineDeletionService {
 
     /**
      * Event에서 PHOTO Item 연결만 해제한다. 마지막 참조였으면 PHOTO orphan Item과 삭제 job을 남긴다.
-     * junction·Item 존재 확인은 일반 읽기 preflight로 두지 않는다 — target 존재 판정은 트랜잭션 안
-     * 잠금 읽기가 단일 권위다({@link TimelineDeletionTransactionService#detachEventItem}).
+     * 사전 guard는 event·record까지만이고 junction 존재·삭제 판정은 트랜잭션이 소유한다
+     * ({@link TimelineDeletionTransactionService#detachEventItem} — 직접 DELETE 영향 행 수 기반).
      */
     public void detachEventItem(String applicationVersion, long userId,
                                 Long timelineEventId, Long timelineItemId) {

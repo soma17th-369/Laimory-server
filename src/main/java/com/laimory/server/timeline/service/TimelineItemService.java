@@ -29,9 +29,9 @@ public class TimelineItemService {
         return timelineItemRepository.findAllById(timelineItemIds);
     }
 
-    /** Event-Item 연결 해제의 직렬화 지점 — Item 행을 PESSIMISTIC_WRITE로 잠근다(동시 해제의 마지막 참조 오판 방지). */
-    public Optional<TimelineItem> findByIdForUpdate(Long timelineItemId) {
-        return timelineItemRepository.findByIdForUpdate(timelineItemId);
+    /** 단건 Item 로드 — 연결 해제의 타입 검사·orphan 처리 입력용. */
+    public Optional<TimelineItem> findById(Long timelineItemId) {
+        return timelineItemRepository.findById(timelineItemId);
     }
 
     /**

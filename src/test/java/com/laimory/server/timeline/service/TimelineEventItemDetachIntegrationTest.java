@@ -40,9 +40,10 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * Event-Item 연결 해제 ↔ 실 MySQL 계약 검증(mockito론 못 잡음): junction 한 줄만 지워지고 shared Item은
- * 유지되며, 마지막 참조 해제는 PHOTO Item/job을 보존한다. 동시 해제는 Item 행 잠금 + current-read 잠금
- * 판정으로 직렬화되어 — 공유 PHOTO의 두 연결을 동시에 끊어도 job이 정확히 1개 생기고, 같은 junction을
- * 두 요청이 끊으면 하나만 성공하고 후발은 404다(stale-state 500 없음).
+ * 유지되며, 마지막 참조 해제는 PHOTO Item/job을 보존한다. junction 삭제는 영향 행 수를 반환하는 직접
+ * DELETE라 같은 junction을 두 요청이 동시에 끊어도 하나만 성공하고 후발은 404다(stale-state 500 없음).
+ * 서로 다른 junction의 동시 해제가 겹쳐 job 없는 orphan이 남는 드문 경합은 orphan 스위퍼(후속)가 수렴
+ * 대상으로 맡는다 — 여기서는 검증하지 않는다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -166,29 +167,6 @@ class TimelineEventItemDetachIntegrationTest {
     }
 
     @Test
-    void concurrentDetachOfSharedPhoto_createsExactlyOneJob() throws Exception {
-        Long eventA = saveEvent("동시 해제 A", 9);
-        Long eventB = saveEvent("동시 해제 B", 10);
-        Long itemId = savePhotoLinkedTo(
-                "raw-detach-race", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4c03.jpg",
-                9, eventA, eventB);
-
-        List<Outcome> outcomes = runConcurrently(
-                () -> timelineDeletionTransactionService.detachEventItem(userId, eventA, itemId),
-                () -> timelineDeletionTransactionService.detachEventItem(userId, eventB, itemId));
-
-        // 서로 다른 junction을 끊는 두 요청은 모두 성공하되, 마지막 참조 판정은 정확히 한 번만 참이어야 한다.
-        assertThat(outcomes).allSatisfy(outcome -> assertThat(outcome.error()).isNull());
-        assertThat(outcomes).extracting(Outcome::result)
-                .containsExactlyInAnyOrder(
-                        new TimelineDeletionTransactionService.DeletionResult(0, 1, 0),
-                        new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
-        assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(itemId))).isEmpty();
-        assertThat(timelineItemRepository.findById(itemId)).isPresent();
-        assertThat(findFixturePhotoDeleteJobs()).hasSize(1);
-    }
-
-    @Test
     void concurrentDetachOfSameJunction_oneSucceedsOtherIs404WithoutStaleStateError() throws Exception {
         Long eventId = saveEvent("같은 junction 동시 해제", 9);
         Long itemId = savePhotoLinkedTo(
@@ -198,7 +176,7 @@ class TimelineEventItemDetachIntegrationTest {
                 () -> timelineDeletionTransactionService.detachEventItem(userId, eventId, itemId),
                 () -> timelineDeletionTransactionService.detachEventItem(userId, eventId, itemId));
 
-        // 잠금 조회가 target 존재의 권위라 후발 요청은 500(stale-state)이 아니라 404 은닉으로 수렴한다.
+        // 직접 DELETE의 영향 행 수가 판정 기준이라 후발 요청은 500(stale-state)이 아니라 404 은닉으로 수렴한다.
         List<Outcome> succeeded = outcomes.stream().filter(outcome -> outcome.error() == null).toList();
         List<Outcome> failed = outcomes.stream().filter(outcome -> outcome.error() != null).toList();
         assertThat(succeeded).hasSize(1);

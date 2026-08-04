@@ -86,13 +86,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   PHOTO는 같은 transaction에서 명시 삭제하고, 유효한 PHOTO는 job과 함께 보존한다. orphan 판정은 삭제 전
   junction 스냅샷 기준이다. 같은 날짜 graph 쓰기를 직렬화하는 공통 guard가 없으므로 경합 정합성은
   보장하지 않는다.
-- Event-Item 연결 해제는 대상 junction 한 줄만 명시 삭제하고 Event·shared Item은 유지한다. 현재 정책상
-  연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). root 삭제와
-  달리 Item 행 `PESSIMISTIC_WRITE` 잠금 + junction current-read 잠금 조회가 target 존재와 마지막 참조를
-  원자 판정한다 — 같은 Item의 동시 해제가 직렬화되어 마지막 참조 PHOTO job이 정확히 한 번 만들어지고,
-  같은 junction의 후발 해제는 404로 수렴한다. 마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO
-  즉시 삭제)는 root 삭제와 같은 규칙을 따르되, 손상 PHOTO의 junction 정리는 Item hard delete의 FK
-  cascade에 맡긴다.
+- Event-Item 연결 해제는 대상 junction 한 줄만 직접 DELETE로 지우고 Event·shared Item은 유지한다. 현재
+  정책상 연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). 직접
+  DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
+  수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
+  동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
+  스냅샷 orphan 판정 경합과 같은 계열이며, 원인 불문 orphan을 수렴시키는 스위퍼는 후속 과제다).
+  마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
 
 ### AI 서버간 계약
 

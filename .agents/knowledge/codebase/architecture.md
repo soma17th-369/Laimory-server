@@ -60,9 +60,10 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 
 Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan PHOTO delete-job insert·원문
 PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. Event-Item
-연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 지운다 — transaction 안에서
-Item 행 `PESSIMISTIC_WRITE` 잠금과 junction current-read 잠금 조회로 target 존재·마지막 참조를 원자
-판정하고, 마지막 참조 PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
+연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 직접 DELETE로 지운다 —
+영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴하고, 마지막 참조 판정은 best-effort 일반
+읽기라 경합 시 job 없는 orphan Item이 남을 수 있다(orphan 스위퍼 후속 과제가 수렴 담당). 마지막 참조
+PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
 request transaction에 포함하지 않고 현재 REST 프로세스의 단일 scheduled worker가
 MySQL job을 oldest-first로 읽어, 성공 job과 원문 PHOTO Item을 별도 transaction에서 함께 제거한다.
 

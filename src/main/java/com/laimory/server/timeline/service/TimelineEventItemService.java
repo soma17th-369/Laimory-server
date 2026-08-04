@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventItemId;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import java.util.Collection;
 import java.util.List;
@@ -38,16 +39,16 @@ public class TimelineEventItemService {
         return timelineEventItemRepository.findByTimelineItemIdIn(timelineItemIds);
     }
 
-    /**
-     * 연결 해제 트랜잭션의 current-read 잠금 조회 — Item 행 잠금 아래에서 target junction 존재와
-     * 잔여 association 판정의 단일 권위로 쓴다.
-     */
-    public List<TimelineEventItem> findByTimelineItemIdForUpdate(Long timelineItemId) {
-        return timelineEventItemRepository.findByTimelineItemIdForUpdate(timelineItemId);
+    /** 해당 Event-Item 연결 존재 여부(일반 읽기) — 연결 해제의 404 은닉/타입 거절 순서 판정용. */
+    public boolean isLinked(Long timelineEventId, Long timelineItemId) {
+        return timelineEventItemRepository.existsById(new TimelineEventItemId(timelineEventId, timelineItemId));
     }
 
-    /** 잠금 조회가 반환한 managed 행 삭제(연결 해제 전용 — root 삭제의 junction 정리는 DB FK cascade 담당). */
-    public void delete(TimelineEventItem link) {
-        timelineEventItemRepository.delete(link);
+    /**
+     * 연결 해제의 단건 junction 직접 DELETE — 영향 행 수를 반환한다.
+     * 0은 이미 지워진 행(같은 junction 동시 해제의 후발 요청)이며 예외가 아니다.
+     */
+    public int deleteLink(Long timelineEventId, Long timelineItemId) {
+        return timelineEventItemRepository.deleteByEventIdAndItemId(timelineEventId, timelineItemId);
     }
 }

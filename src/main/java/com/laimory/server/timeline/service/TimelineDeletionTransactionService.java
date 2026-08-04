@@ -77,11 +77,12 @@ public class TimelineDeletionTransactionService {
     }
 
     /**
-     * Event에서 PHOTO Item 연결 한 줄을 해제한다. Item 행 잠금(직렬화 지점) 뒤 junction을 current-read
-     * 잠금 조회로 읽어 target 존재와 잔여 association을 원자적으로 판정한다 — 잠금 전 일반 읽기 junction
-     * 조회는 두지 않는다(스냅숏 stale 행을 잠금 뒤 삭제하면 0-row DELETE로 500, 동시 커밋된 해제를 못 보면
-     * 마지막 참조를 shared로 오판해 job 없는 orphan이 남는다). 미연결·비소유는 404 은닉이 non-PHOTO 거절보다
-     * 우선이다. 마지막 참조였으면 기존 orphan 경로(PHOTO job 보존·손상분 즉시 삭제)를 같은 commit으로 묶는다.
+     * Event에서 PHOTO Item 연결 한 줄을 해제한다. junction 삭제는 영향 행 수를 반환하는 직접 DELETE라
+     * 같은 junction 동시 해제의 후발 요청은 stale-state 500 없이 404로 수렴한다. 미연결·비소유는 404
+     * 은닉이 non-PHOTO 거절보다 우선이다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기
+     * best-effort다 — 서로 다른 junction의 동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는
+     * orphan Item이 남을 수 있고, 이 수렴은 orphan 스위퍼(후속)가 맡는다. 마지막 참조의 orphan 처리
+     * (유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙을 같은 commit으로 묶는다.
      */
     @Transactional
     public DeletionResult detachEventItem(long userId, Long timelineEventId, Long timelineItemId) {
@@ -89,31 +90,23 @@ public class TimelineDeletionTransactionService {
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         requireOwnedDraftRecord(userId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
-        TimelineItem item = timelineItemService.findByIdForUpdate(timelineItemId)
+        TimelineItem item = timelineItemService.findById(timelineItemId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
-        List<TimelineEventItem> associations =
-                timelineEventItemService.findByTimelineItemIdForUpdate(timelineItemId);
-        TimelineEventItem target = associations.stream()
-                .filter(link -> link.getTimelineEventId().equals(timelineEventId))
-                .findFirst()
-                .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
+        if (!timelineEventItemService.isLinked(timelineEventId, timelineItemId)) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND);
+        }
         if (item.getItemType() != ItemType.PHOTO) {
             throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_PHOTO);
         }
 
-        if (associations.size() > 1) {
-            timelineEventItemService.delete(target);
+        if (timelineEventItemService.deleteLink(timelineEventId, timelineItemId) == 0) {
+            throw new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND);
+        }
+        if (!timelineEventItemService.findByTimelineItemIds(List.of(timelineItemId)).isEmpty()) {
             return new DeletionResult(0, 1, 0);
         }
         OrphanPreparation preparation = prepareOrphanItems(List.of(item), userId);
-        if (preparation.immediateDeleteItemIds().isEmpty()) {
-            // valid PHOTO(job 보존) 또는 기존 job 재사용: Item은 남으므로 junction만 명시 해제한다.
-            timelineEventItemService.delete(target);
-        } else {
-            // 손상 PHOTO: Item hard delete가 junction을 DB FK cascade로 지운다. 명시 junction delete를
-            // 겹치면 즉시 실행되는 batch delete가 cascade로 행을 먼저 지워 commit flush가 0-row DELETE가 된다.
-            timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
-        }
+        timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
         return new DeletionResult(preparation.scheduled(), 0, preparation.invalidSkipped());
     }
 
