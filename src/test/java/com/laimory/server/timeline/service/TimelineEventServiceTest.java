@@ -30,7 +30,7 @@ class TimelineEventServiceTest {
     void findByDailyRecordIds_delegatesToOrderedRepositoryQuery() {
         List<Long> dailyRecordIds = List.of(10L, 20L);
         TimelineEvent event = TimelineEvent.of(10L, TimelineEventType.UNKNOWN,
-                LocalDateTime.of(2026, 5, 8, 9, 0), null, "아침", null);
+                LocalDateTime.of(2026, 5, 8, 9, 0), null, "아침", null, null);
         List<TimelineEvent> events = List.of(event);
         when(timelineEventRepository
                 .findByDailyRecordIdInOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds))

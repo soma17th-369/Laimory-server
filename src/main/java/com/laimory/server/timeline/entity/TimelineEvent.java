@@ -52,6 +52,9 @@ public class TimelineEvent extends BaseEntity {
 
     private String subtitle;
 
+    /** AI가 Event마다 생성한 질문. 사용자 편집 대상이 아니며 AI 결과 저장에서만 채워진다(없으면 null). */
+    private String question;
+
     @Column(columnDefinition = "TEXT")
     private String memo;
 
@@ -59,18 +62,19 @@ public class TimelineEvent extends BaseEntity {
     }
 
     private TimelineEvent(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
-                         LocalDateTime endAt, String title, String subtitle) {
+                         LocalDateTime endAt, String title, String subtitle, String question) {
         this.dailyRecordId = dailyRecordId;
         this.eventType = eventType;
         this.startAt = startAt;
         this.endAt = endAt;
         this.title = title;
         this.subtitle = subtitle;
+        this.question = question;
     }
 
     public static TimelineEvent of(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
-                                  LocalDateTime endAt, String title, String subtitle) {
-        return new TimelineEvent(dailyRecordId, eventType, startAt, endAt, title, subtitle);
+                                  LocalDateTime endAt, String title, String subtitle, String question) {
+        return new TimelineEvent(dailyRecordId, eventType, startAt, endAt, title, subtitle, question);
     }
 
     /**

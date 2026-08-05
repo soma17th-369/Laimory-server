@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -52,10 +53,23 @@ class TimelineAiTaskControllerTest {
     private static final String RESULT = "/s/api/v1/timeline/drafts/t-1/result";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
+    private static final String QUESTION = "그날 점심 자리에서 어떤 이야기가 가장 기억에 남았나요?";
+    // AI가 실제로 보내는 필드 구성과 key 순서를 그대로 둔다(question이 sourceRawIds 뒤).
     private static final String RESULT_BODY = """
+            {"events":[{"eventType":"MEAL","title":"점심","subtitle":"회사 근처에서 점심을 해결했어요.",
+              "startAt":"2026-06-17T12:00:00+09:00","endAt":"2026-06-17T13:00:00+09:00",
+              "sourceRawIds":["raw-1"],"question":"그날 점심 자리에서 어떤 이야기가 가장 기억에 남았나요?"}]}
+            """;
+    // question 도입 이전 형식 — 필드 자체가 없다.
+    private static final String RESULT_BODY_WITHOUT_QUESTION = """
             {"events":[{"eventType":"MEAL","title":"점심","subtitle":null,
               "startAt":"2026-06-17T12:00:00+09:00","endAt":"2026-06-17T13:00:00+09:00",
               "sourceRawIds":["raw-1"]}]}
+            """;
+    private static final String RESULT_BODY_NULL_QUESTION = """
+            {"events":[{"eventType":"MEAL","title":"점심","subtitle":null,
+              "startAt":"2026-06-17T12:00:00+09:00","endAt":"2026-06-17T13:00:00+09:00",
+              "sourceRawIds":["raw-1"],"question":null}]}
             """;
 
     @Autowired
@@ -149,9 +163,35 @@ class TimelineAiTaskControllerTest {
         AiTimelineResultRequest.Event event = request.getValue().events().get(0);
         org.assertj.core.api.Assertions.assertThat(event.eventType()).isEqualTo(TimelineEventType.MEAL);
         org.assertj.core.api.Assertions.assertThat(event.title()).isEqualTo("점심");
+        org.assertj.core.api.Assertions.assertThat(event.subtitle()).isEqualTo("회사 근처에서 점심을 해결했어요.");
         org.assertj.core.api.Assertions.assertThat(event.startAt().toInstant())
                 .isEqualTo(OffsetDateTime.of(DATE.atTime(12, 0), KST).toInstant());
         org.assertj.core.api.Assertions.assertThat(event.sourceRawIds()).containsExactly("raw-1");
+        org.assertj.core.api.Assertions.assertThat(event.question()).isEqualTo(QUESTION);
+    }
+
+    @Test
+    void result_questionAbsentOrNull_bindsNullWithoutError() throws Exception {
+        // question 도입 이전 형식과 명시적 null 모두 계약 위반이 아니라 "질문 없음"으로 수렴한다.
+        when(timelineAiResultService.storeResult(anyString(), anyString(), anyString(), any()))
+                .thenReturn(new AiTimelineResultResponse("tok-3"));
+
+        for (String body : List.of(RESULT_BODY_WITHOUT_QUESTION, RESULT_BODY_NULL_QUESTION)) {
+            mockMvc.perform(post(RESULT)
+                            .header("Task-Token", "tok-2")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.taskToken").value("tok-3"));
+        }
+
+        ArgumentCaptor<AiTimelineResultRequest> request =
+                ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultService, times(2))
+                .storeResult(anyString(), eq("t-1"), eq("tok-2"), request.capture());
+        org.assertj.core.api.Assertions.assertThat(request.getAllValues())
+                .allSatisfy(captured -> org.assertj.core.api.Assertions
+                        .assertThat(captured.events().get(0).question()).isNull());
     }
 
     @Test

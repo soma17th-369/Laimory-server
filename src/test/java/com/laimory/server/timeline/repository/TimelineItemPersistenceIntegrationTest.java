@@ -67,7 +67,7 @@ class TimelineItemPersistenceIntegrationTest {
                 TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
                         LocalDateTime.of(2026, 5, 8, 9, 10),
-                        "출근길", "강남역 -> 성수역 · 7호선"));
+                        "출근길", "강남역 -> 성수역 · 7호선", null));
 
         MovementPayload movement = new MovementPayload(
                 new MovementEndpoint(37.4979, 127.0276, null, null),
@@ -145,7 +145,7 @@ class TimelineItemPersistenceIntegrationTest {
                 LocalDateTime.of(2026, 5, 11, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,
-                        LocalDateTime.of(2026, 5, 11, 9, 0), null, "하루", null));
+                        LocalDateTime.of(2026, 5, 11, 9, 0), null, "하루", null, null));
         TimelineItem item = timelineItemRepository.save(TimelineItem.of(ItemType.CALENDAR, "raw-dup",
                 LocalDateTime.of(2026, 5, 11, 9, 0), null,
                 objectMapper.valueToTree(new CalendarPayload("t", null, null, false))));

@@ -128,7 +128,7 @@ class TimelineDeletionCascadeIntegrationTest {
 
     private Long saveEvent(String title, int hour) {
         return timelineEventRepository.save(
-                        TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(hour, 0), null, title, null))
+                        TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(hour, 0), null, title, null, null))
                 .getTimelineEventId();
     }
 

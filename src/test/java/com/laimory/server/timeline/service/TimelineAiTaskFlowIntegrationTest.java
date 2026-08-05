@@ -91,6 +91,7 @@ class TimelineAiTaskFlowIntegrationTest {
     private static final String VERSION = "v1";
     private static final long USER_ID = 7L;
     private static final String ZONE = "Asia/Seoul";
+    private static final String QUESTION = "그날 아침 기분은 어땠나요?";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
     // 다른 데이터와 충돌하지 않을 고정 날짜 — 클라 선택 날짜로 요청에 명시 전송한다(서버 파생 없음).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
@@ -178,6 +179,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(events).singleElement().satisfies(event -> {
             assertThat(event.getTitle()).isEqualTo("아침");
             assertThat(event.getEventType()).isEqualTo(TimelineEventType.UNKNOWN);
+            assertThat(event.getQuestion()).isEqualTo(QUESTION);
             // offset 입력이 record timezone wall-clock으로 정규화돼 저장된다.
             assertThat(event.getStartAt()).isEqualTo(DATE.atTime(9, 0));
         });
@@ -191,10 +193,26 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(status.status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(status.result().events()).hasSize(1);
         assertThat(status.result().events().get(0).items()).hasSize(1);
+        assertThat(status.result().events().get(0).question()).isEqualTo(QUESTION);
 
         // 같은 결과의 콜백 재전송은 그대로 성공한다(재시도 안전 — 상태는 그대로 SUCCESS).
         callbackService.handleCallback(VERSION, taskId, callbackToken, success());
         assertThat(pollingService.poll(VERSION, USER_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
+    }
+
+    /** question 없는 기존 형식과 공백 문자열은 모두 "질문 없음"(NULL)으로 저장된다. */
+    @Test
+    void result_blankQuestion_isStoredAsNull() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(USER_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input, "   "));
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
+                .singleElement()
+                .satisfies(event -> assertThat(event.getQuestion()).isNull());
     }
 
     @Test
@@ -225,7 +243,7 @@ class TimelineAiTaskFlowIntegrationTest {
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
         String resultToken = input.taskToken();
         AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null,
+                TimelineEventType.UNKNOWN, "아침", null, null,
                 OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, invalid))
@@ -319,8 +337,12 @@ class TimelineAiTaskFlowIntegrationTest {
 
     /** 조회한 입력 전부를 Event 하나로 묶는 최소 결과(실 AI 추론 대행). */
     private AiTimelineResultRequest resultFrom(AiTimelineTaskInputResponse input) {
+        return resultFrom(input, QUESTION);
+    }
+
+    private AiTimelineResultRequest resultFrom(AiTimelineTaskInputResponse input, String question) {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null,
+                TimelineEventType.UNKNOWN, "아침", null, question,
                 input.sourceItems().get(0).startAt(), null,
                 input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }

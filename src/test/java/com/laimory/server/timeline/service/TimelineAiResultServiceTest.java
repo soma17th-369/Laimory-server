@@ -60,7 +60,7 @@ class TimelineAiResultServiceTest {
 
     private AiTimelineResultRequest result() {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, "점심", null,
+                TimelineEventType.MEAL, "점심", null, "점심에 누구와 함께였나요?",
                 OffsetDateTime.of(DATE.atTime(12, 0), KST),
                 OffsetDateTime.of(DATE.atTime(13, 0), KST),
                 List.of("raw-1"))));
@@ -132,6 +132,39 @@ class TimelineAiResultServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
         verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    /** question은 선택 필드다 — 도입 이전 형식(null)도 그대로 저장 경로를 탄다. */
+    @Test
+    void storeResult_withoutQuestion_isStored() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+        AiTimelineResultRequest legacy = resultWithQuestion(null);
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, legacy);
+
+        verify(timelineAiResultTransactionService).store(TASK_ID, RECORD_ID, legacy);
+    }
+
+    @Test
+    void storeResult_questionTooLong_rejectedBeforeClaim() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+
+        assertThatThrownBy(() -> service.storeResult(
+                VERSION, TASK_ID, TASK_TOKEN, resultWithQuestion("질".repeat(256))))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    private AiTimelineResultRequest resultWithQuestion(String question) {
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심", null, question,
+                OffsetDateTime.of(DATE.atTime(12, 0), KST),
+                OffsetDateTime.of(DATE.atTime(13, 0), KST),
+                List.of("raw-1"))));
     }
 
     @Test

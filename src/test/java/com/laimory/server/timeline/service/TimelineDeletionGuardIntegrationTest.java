@@ -48,7 +48,7 @@ class TimelineDeletionGuardIntegrationTest {
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(
-                        TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "이벤트", null))
+                        TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "이벤트", null, null))
                 .getTimelineEventId();
     }
 

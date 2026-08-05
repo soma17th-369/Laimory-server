@@ -9,9 +9,10 @@ import java.util.List;
 /**
  * AI→API {@code POST /s/api/{v}/timeline/drafts/{taskId}/result} 결과 저장 body — 서버간 공개 계약이다.
  *
- * <p>AI가 만든 Event와 각 Event가 채택한 source의 {@code rawId}만 담는다. confidence·추론 설명·질문 등
- * 현재 DB에 저장하지 않는 AI 내부 출력은 계약에 넣지 않는다. 실패 보고는 이 endpoint가 아니라 기존
- * callback({@code status=FAILED})이 담당하므로 이 body는 항상 결과를 싣는다(조건부 필드 없음).
+ * <p>AI가 만든 Event, Event마다의 질문과 각 Event가 채택한 source의 {@code rawId}를 담는다.
+ * confidence·추론 설명 등 현재 DB에 저장하지 않는 AI 내부 출력은 계약에 넣지 않는다. 실패 보고는 이
+ * endpoint가 아니라 기존 callback({@code status=FAILED})이 담당하므로 이 body는 항상 결과를 싣는다
+ * (조건부 필드 없음).
  *
  * <p>시각은 dispatch window와 같은 offset 포함 ISO-8601이며, 서버가 DailyRecord의 {@code record_timezone}
  * wall-clock으로 정규화해 저장한다(MySQL {@code DATETIME}은 offset을 보존하지 않는다).
@@ -27,6 +28,9 @@ public record AiTimelineResultRequest(
             TimelineEventType eventType,
             String title,
             @Schema(nullable = true) String subtitle,
+            @Schema(description = "이 Event에 대해 AI가 생성한 질문. 필드 생략과 null 모두 질문 없음이다",
+                    nullable = true)
+            String question,
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
             OffsetDateTime startAt,
             @Schema(description = "단일 시점 이벤트면 생략(null)", nullable = true)
