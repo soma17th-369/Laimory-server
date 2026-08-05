@@ -76,7 +76,8 @@ class DailyTimelineServiceTest {
         when(dailyRecordService.findByDailyRecordIdAndUserId(300L, USER_ID)).thenReturn(Optional.of(record));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
-        TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.EXERCISE, t, t.plusHours(2), "제목", "부제목");
+        TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.EXERCISE, t, t.plusHours(2),
+                "제목", "부제목", "오늘 운동은 어땠나요?");
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         ReflectionTestUtils.setField(event, "memo", "내 메모");
         when(timelineEventService.findByDailyRecordIds(List.of(300L))).thenReturn(List.of(event));
@@ -106,6 +107,7 @@ class DailyTimelineServiceTest {
         assertThat(eventResponse.endAt()).isEqualTo(t.plusHours(2));
         assertThat(eventResponse.title()).isEqualTo("제목");
         assertThat(eventResponse.subtitle()).isEqualTo("부제목");
+        assertThat(eventResponse.question()).isEqualTo("오늘 운동은 어땠나요?");
         assertThat(eventResponse.memo()).isEqualTo("내 메모");
         assertThat(eventResponse.items()).hasSize(2);
 
@@ -161,7 +163,8 @@ class DailyTimelineServiceTest {
         DailyRecord record = record(300L, RECORD_DATE);
         LocalDateTime eventStart = RECORD_DATE.atTime(9, 0);
         TimelineEvent event = TimelineEvent.of(
-                300L, TimelineEventType.WORK, eventStart, eventStart.plusHours(2), "업무", "오전");
+                300L, TimelineEventType.WORK, eventStart, eventStart.plusHours(2), "업무", "오전",
+                "오전 업무 중 가장 집중된 순간은 언제였나요?");
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         ReflectionTestUtils.setField(event, "memo", "중요 메모");
         when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
@@ -191,6 +194,7 @@ class DailyTimelineServiceTest {
         assertThat(result.endAt()).isEqualTo(eventStart.plusHours(2));
         assertThat(result.title()).isEqualTo("업무");
         assertThat(result.subtitle()).isEqualTo("오전");
+        assertThat(result.question()).isEqualTo("오전 업무 중 가장 집중된 순간은 언제였나요?");
         assertThat(result.memo()).isEqualTo("중요 메모");
         assertThat(result.items()).extracting(TimelineItemResponse::timelineItemId)
                 .containsExactly(23L, 21L, 22L);
@@ -202,7 +206,7 @@ class DailyTimelineServiceTest {
         DailyRecord saved = record(300L, RECORD_DATE);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         TimelineEvent event = TimelineEvent.of(
-                300L, TimelineEventType.REST, RECORD_DATE.atTime(13, 0), null, "휴식", null);
+                300L, TimelineEventType.REST, RECORD_DATE.atTime(13, 0), null, "휴식", null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(saved));
@@ -229,7 +233,7 @@ class DailyTimelineServiceTest {
     @Test
     void getTimelineEvent_parentMissing_throwsEventNotFoundWithoutLoadingItems() {
         TimelineEvent event = TimelineEvent.of(
-                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null);
+                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(300L)).thenReturn(Optional.empty());
@@ -244,7 +248,7 @@ class DailyTimelineServiceTest {
     @Test
     void getTimelineEvent_foreignParent_throwsEventNotFoundWithoutLoadingItems() {
         TimelineEvent event = TimelineEvent.of(
-                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null);
+                300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         DailyRecord foreign = DailyRecord.createDraft(
                 999L, RECORD_DATE, RECORD_AT, ZONE);
@@ -269,10 +273,10 @@ class DailyTimelineServiceTest {
                 .thenReturn(List.of(recent, saved, empty));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
-        TimelineEvent savedEvent = TimelineEvent.of(300L, TimelineEventType.WORK, t, null, "saved", null);
+        TimelineEvent savedEvent = TimelineEvent.of(300L, TimelineEventType.WORK, t, null, "saved", null, null);
         ReflectionTestUtils.setField(savedEvent, "timelineEventId", 11L);
         TimelineEvent recentEvent = TimelineEvent.of(301L, TimelineEventType.REST, t.plusDays(1), null,
-                "recent", null);
+                "recent", null, null);
         ReflectionTestUtils.setField(recentEvent, "timelineEventId", 12L);
         when(timelineEventService.findByDailyRecordIds(List.of(301L, 300L, 299L)))
                 .thenReturn(List.of(savedEvent, recentEvent));
@@ -313,9 +317,9 @@ class DailyTimelineServiceTest {
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
-        TimelineEvent eventA = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t, null, "A", null);
+        TimelineEvent eventA = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t, null, "A", null, null);
         ReflectionTestUtils.setField(eventA, "timelineEventId", 11L);
-        TimelineEvent eventB = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t.plusHours(1), null, "B", null);
+        TimelineEvent eventB = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t.plusHours(1), null, "B", null, null);
         ReflectionTestUtils.setField(eventB, "timelineEventId", 12L);
         when(timelineEventService.findByDailyRecordIds(List.of(300L))).thenReturn(List.of(eventA, eventB));
 
@@ -342,7 +346,7 @@ class DailyTimelineServiceTest {
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
-        TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t, null, "A", null);
+        TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.UNKNOWN, t, null, "A", null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findByDailyRecordIds(List.of(300L))).thenReturn(List.of(event));
 

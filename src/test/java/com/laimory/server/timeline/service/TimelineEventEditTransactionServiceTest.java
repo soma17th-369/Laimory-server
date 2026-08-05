@@ -244,7 +244,7 @@ class TimelineEventEditTransactionServiceTest {
 
     private TimelineEvent event(Long eventId) {
         TimelineEvent event = TimelineEvent.of(
-                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제");
+                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제", null);
         ReflectionTestUtils.setField(event, "timelineEventId", eventId);
         return event;
     }

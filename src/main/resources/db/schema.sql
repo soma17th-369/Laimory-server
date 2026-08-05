@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     end_at DATETIME NULL,
     title VARCHAR(255) NOT NULL,                     -- 검증에서 title 필수
     subtitle VARCHAR(255) NULL,
+    question VARCHAR(255) NULL,                      -- AI가 Event마다 생성한 질문. 기존 행은 backfill하지 않고 NULL 유지
     memo TEXT NULL,
     -- 감사 컬럼 (BaseEntity + AI raw INSERT용 DB default)
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

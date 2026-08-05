@@ -19,6 +19,9 @@ public record TimelineEventResponse(
         LocalDateTime endAt,
         String title,
         String subtitle,
+        @Schema(description = "AI가 이 이벤트에 대해 생성한 질문. 없으면 null이며 편집 API로 바꿀 수 없다",
+                nullable = true)
+        String question,
         String memo,
         List<TimelineItemResponse> items
 ) {
@@ -31,6 +34,7 @@ public record TimelineEventResponse(
                 event.getEndAt(),
                 event.getTitle(),
                 event.getSubtitle(),
+                event.getQuestion(),
                 event.getMemo(),
                 items
         );

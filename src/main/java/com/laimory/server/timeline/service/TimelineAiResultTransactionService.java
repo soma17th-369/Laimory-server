@@ -49,6 +49,7 @@ public class TimelineAiResultTransactionService {
     private static final Duration START_AT_COLLISION_NUDGE = Duration.ofMinutes(10);
     private static final int TITLE_MAX_LENGTH = 255;
     private static final int SUBTITLE_MAX_LENGTH = 255;
+    private static final int QUESTION_MAX_LENGTH = 255;
 
     private final DailyRecordService dailyRecordService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
@@ -115,7 +116,7 @@ public class TimelineAiResultTransactionService {
             LocalDateTime endAt = clampEndAt(toRecordLocal(event.endAt(), recordZone), startAt);
             TimelineEvent savedEvent = timelineEventService.save(TimelineEvent.of(
                     dailyRecordId, event.eventType(), startAt, endAt,
-                    event.title().trim(), trimToNull(event.subtitle())));
+                    event.title().trim(), trimToNull(event.subtitle()), trimToNull(event.question())));
             for (String rawId : new LinkedHashSet<>(event.sourceRawIds())) {
                 links.add(TimelineEventItem.of(savedEvent.getTimelineEventId(), itemIdsByRawId.get(rawId)));
             }
@@ -150,6 +151,10 @@ public class TimelineAiResultTransactionService {
             }
             if (event.subtitle() != null && event.subtitle().trim().length() > SUBTITLE_MAX_LENGTH) {
                 throw new IllegalArgumentException("event subtitle is too long: index=" + i);
+            }
+            // question은 선택 필드다 — 누락·null·blank는 질문 없음이고 길이만 제한한다.
+            if (event.question() != null && event.question().trim().length() > QUESTION_MAX_LENGTH) {
+                throw new IllegalArgumentException("event question is too long: index=" + i);
             }
             if (event.startAt() == null) {
                 throw new IllegalArgumentException("event requires startAt: index=" + i);

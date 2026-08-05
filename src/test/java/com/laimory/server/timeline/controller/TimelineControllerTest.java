@@ -337,7 +337,7 @@ class TimelineControllerTest {
                         "https://cdn.example/u")));
         TimelineEventResponse event = new TimelineEventResponse(
                 1L, TimelineEventType.UNKNOWN, LocalDateTime.parse("2026-06-17T09:00:00"), null,
-                "title", "subtitle", "memo", List.of(item));
+                "title", "subtitle", "question", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
                 42L, LocalDate.parse("2026-06-17"), null, List.of(event));
         when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-ok")))
