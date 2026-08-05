@@ -32,7 +32,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
   성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
-- `users`, `refresh_tokens`
+- `users`, `refresh_tokens`, `user_memories` (사용자당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -68,13 +68,21 @@ soft-owner다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
 entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
 
-`users.user_memory`는 `JSON NULL`이다(#253). AI가 만드는 누적 요약을 서버가 해석하지 않고 그대로
-보존하는 opaque 문서이며, entity는 `@JdbcTypeCode(SqlTypes.JSON)` `JsonNode`다(`timeline_items.payload`와
-같은 매핑). 쓰기는 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. 기존 행은 backfill하지 않고
-NULL로 남는다. `User`는 이 컬럼 때문에 `@DynamicUpdate`다 — 로그인의 nickname 갱신과 memory 교체가
-서로 다른 필드 그룹이라, 기본 전체 컬럼 UPDATE면 재로그인이 방금 저장한 memory를 로드 시점 값으로
-되돌린다(`UserMemoryConcurrencyIntegrationTest`가 회귀 검증). 인증 filter는 JWT만 파싱하고 DB를 읽지
-않으므로 이 컬럼을 읽는 경로는 소셜 로그인의 사용자 조회와 memory 조회뿐이다.
+`user_memories`(#253)는 사용자별 User Memory 문서다. `user_id`가 PK인 사용자당 1행이고 `memory`는
+`JSON NOT NULL`이며, 행 존재 = 메모리 있음이고 제거는 행 삭제다. entity는 `@JdbcTypeCode(SqlTypes.JSON)`
+`JsonNode`(`timeline_items.payload`와 같은 매핑)이고 서버는 문서 내부를 해석·정규화하지 않는다.
+
+`users`의 컬럼이 아니라 별도 테이블인 이유는 문서 크기다 — JPA 엔티티 로드는 항상 전 컬럼을 SELECT하므로
+컬럼으로 두면 로그인의 `User` 조회가 매번 blob을 함께 읽는다. 테이블을 나눠 `User`를 읽는 어떤 경로도
+문서에 닿지 않게 한다. 두 entity 사이에 JPA 연관 매핑을 두지 않는 것이 이 분리의 전제다(저장소 전체
+방침과 동일 — `@OneToOne`은 기본 EAGER이고 역방향은 지연 로딩이 불가능해 분리 효과가 사라진다).
+접근은 `UserMemoryRepository.findById(userId)`뿐이며 `user_id`는 FK 없는 soft-owner다.
+
+쓰기는 repository의 native `INSERT ... ON DUPLICATE KEY UPDATE` upsert와 조건부 delete뿐이라(같은
+사용자 동시 저장의 PK 중복을 한 문장으로 원자화 — `push_registrations` 선례) JPA auditing이 돌지 않고
+감사 컬럼은 upsert SQL이 직접 채운다(`modified_by` NULL). entity는 조회·validate용 read model이다.
+갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
+삭제로 수렴한다.
 
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`

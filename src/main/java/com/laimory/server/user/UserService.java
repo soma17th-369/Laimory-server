@@ -1,7 +1,5 @@
 package com.laimory.server.user;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -37,29 +35,6 @@ public class UserService {
                                 .orElseThrow(() -> e);
                     }
                 });
-    }
-
-    /**
-     * 사용자의 User Memory 문서를 읽는다. 사용자가 없을 때와 메모리가 아직 없을 때를 구분하지 않고
-     * 모두 빈 {@link Optional}이다 — 현재 호출자에게 두 경우의 처리가 같기 때문이며, 구분이 필요해지면
-     * 그때 시그니처를 나눈다.
-     */
-    public Optional<JsonNode> findUserMemory(long userId) {
-        return userRepository.findById(userId).map(User::getUserMemory);
-    }
-
-    /**
-     * User Memory 문서를 통째로 교체한다({@code null}은 제거). 서버는 문서 내부를 해석·정규화하지 않고
-     * 받은 JSON을 그대로 보존한다. 사용자가 없으면 {@link IllegalArgumentException}이다.
-     *
-     * <p>{@code @DynamicUpdate} 엔티티라 실제로 바뀐 컬럼만 UPDATE에 실린다 — 로그인의 nickname 갱신과
-     * 서로를 되돌리지 않는다({@link User} 주석 참고).
-     */
-    public void replaceUserMemory(long userId, JsonNode userMemory) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("user not found: userId=" + userId));
-        user.replaceUserMemory(userMemory);
-        userRepository.saveAndFlush(user);
     }
 
     private User refreshKakaoNickname(User user, Provider provider, String nickname) {

@@ -7,8 +7,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,9 +18,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 /**
  * findOrCreate 계약: 기존 조회 우선, 미존재면 생성, 동시 최초 로그인(UNIQUE 위반)은 재조회로 수렴.
  * Kakao 기존 사용자는 non-null 닉네임만 갱신하고 누락 claim은 기존 값을 보존한다. 인프라 0.
- *
- * <p>User Memory 계약: 조회는 사용자 없음·메모리 없음을 구분하지 않고 빈 Optional이며, 교체는 병합이
- * 아닌 전체 대체다(null은 제거). 실제 JSON 왕복은 persistence 통합 테스트가 소유한다.
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
@@ -128,50 +123,6 @@ class UserServiceTest {
 
         assertThat(result).isSameAs(winnerRow);
         assertThat(result.getNickname()).isEqualTo("이번닉");
-    }
-
-    @Test
-    void findUserMemory_absentUserOrAbsentMemory_isEmpty() {
-        when(userRepository.findById(1L)).thenReturn(Optional.empty());
-        when(userRepository.findById(2L))
-                .thenReturn(Optional.of(User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick")));
-
-        assertThat(userService.findUserMemory(1L)).isEmpty();
-        assertThat(userService.findUserMemory(2L)).isEmpty();
-    }
-
-    @Test
-    void replaceUserMemory_replacesWholeDocument() {
-        User user = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
-        user.replaceUserMemory(new ObjectMapper().createObjectNode().put("before", 1));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
-        JsonNode next = new ObjectMapper().createObjectNode().put("after", 2);
-
-        userService.replaceUserMemory(7L, next);
-
-        // 병합이 아니라 교체다 — 이전 문서의 key는 남지 않는다.
-        assertThat(user.getUserMemory()).isSameAs(next);
-        verify(userRepository).saveAndFlush(user);
-    }
-
-    @Test
-    void replaceUserMemory_null_clearsMemory() {
-        User user = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
-        user.replaceUserMemory(new ObjectMapper().createObjectNode().put("before", 1));
-        when(userRepository.findById(7L)).thenReturn(Optional.of(user));
-
-        userService.replaceUserMemory(7L, null);
-
-        assertThat(user.getUserMemory()).isNull();
-    }
-
-    @Test
-    void replaceUserMemory_absentUser_rejects() {
-        when(userRepository.findById(9L)).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> userService.replaceUserMemory(9L, null))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
