@@ -68,6 +68,14 @@ soft-owner다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
 entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
 
+`users.user_memory`는 `JSON NULL`이다(#253). AI가 만드는 누적 요약을 서버가 해석하지 않고 그대로
+보존하는 opaque 문서이며, entity는 `@JdbcTypeCode(SqlTypes.JSON)` `JsonNode`다(`timeline_items.payload`와
+같은 매핑). 쓰기는 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. 기존 행은 backfill하지 않고
+NULL로 남는다. `User`는 이 컬럼 때문에 `@DynamicUpdate`다 — 로그인의 nickname 갱신과 memory 교체가
+서로 다른 필드 그룹이라, 기본 전체 컬럼 UPDATE면 재로그인이 방금 저장한 memory를 로드 시점 값으로
+되돌린다(`UserMemoryConcurrencyIntegrationTest`가 회귀 검증). 인증 filter는 JWT만 파싱하고 DB를 읽지
+않으므로 이 컬럼을 읽는 경로는 소셜 로그인의 사용자 조회와 memory 조회뿐이다.
+
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
 `TimelineEventType`이며, 결과 저장 transaction은 allowlist literal만 INSERT한다(미지원 literal은 결과 저장

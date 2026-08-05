@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS users (
     provider_user_id VARCHAR(255) NOT NULL,          -- OIDC id_token의 sub
     email VARCHAR(255) NULL,                         -- Kakao는 미동의 시 NULL
     nickname VARCHAR(100) NULL,
+    -- AI가 생성·갱신하는 누적 요약. 서버는 내부 구조를 해석하지 않는 opaque 문서로 저장한다(NULL=아직 없음)
+    user_memory JSON NULL,
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
