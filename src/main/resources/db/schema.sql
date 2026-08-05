@@ -141,6 +141,20 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 사용자별 User Memory. AI가 만드는 누적 요약을 서버가 해석하지 않고 그대로 보존하는 opaque 문서다.
+-- users의 컬럼이 아니라 별도 테이블인 이유: 문서가 커질 수 있어 users 엔티티 로드(로그인)가 blob을
+-- 끌고 오지 않게 분리한다. 행 존재 = 메모리 있음(제거는 행 삭제), user_id PK로 사용자당 1행.
+-- user_id는 기존 방침대로 FK 없는 soft-owner다.
+CREATE TABLE IF NOT EXISTS user_memories (
+    user_id BIGINT NOT NULL,
+    memory JSON NOT NULL,                            -- 서버는 내부 구조·버전을 해석하지 않는다(전체 교체만)
+    -- 감사 컬럼 (BaseEntity + native upsert용 직접 기입)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- refresh token(원문 미저장 — SHA-256 hex 해시만). FK 없음(기존 방침), parent_id는 회전 계보 감사용 soft ref.
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     refresh_token_id BIGINT NOT NULL AUTO_INCREMENT,

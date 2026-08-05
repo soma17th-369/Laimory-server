@@ -32,7 +32,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
   성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
-- `users`, `refresh_tokens`
+- `users`, `refresh_tokens`, `user_memories` (사용자당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -67,6 +67,22 @@ soft-owner다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭
 한 문장으로 원자화, read-then-insert+unique 예외 복구 금지)와 조건부 delete뿐이라 JPA auditing이
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
 entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
+
+`user_memories`(#253)는 사용자별 User Memory 문서다. `user_id`가 PK인 사용자당 1행이고 `memory`는
+`JSON NOT NULL`이며, 행 존재 = 메모리 있음이고 제거는 행 삭제다. entity는 `@JdbcTypeCode(SqlTypes.JSON)`
+`JsonNode`(`timeline_items.payload`와 같은 매핑)이고 서버는 문서 내부를 해석·정규화하지 않는다.
+
+`users`의 컬럼이 아니라 별도 테이블인 이유는 문서 크기다 — JPA 엔티티 로드는 항상 전 컬럼을 SELECT하므로
+컬럼으로 두면 로그인의 `User` 조회가 매번 blob을 함께 읽는다. 테이블을 나눠 `User`를 읽는 어떤 경로도
+문서에 닿지 않게 한다. 두 entity 사이에 JPA 연관 매핑을 두지 않는 것이 이 분리의 전제다(저장소 전체
+방침과 동일 — `@OneToOne`은 기본 EAGER이고 역방향은 지연 로딩이 불가능해 분리 효과가 사라진다).
+접근은 `UserMemoryRepository.findById(userId)`뿐이며 `user_id`는 FK 없는 soft-owner다.
+
+쓰기는 repository의 native `INSERT ... ON DUPLICATE KEY UPDATE` upsert와 조건부 delete뿐이라(같은
+사용자 동시 저장의 PK 중복을 한 문장으로 원자화 — `push_registrations` 선례) JPA auditing이 돌지 않고
+감사 컬럼은 upsert SQL이 직접 채운다(`modified_by` NULL). entity는 조회·validate용 read model이다.
+갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
+삭제로 수렴한다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
