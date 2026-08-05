@@ -39,6 +39,7 @@ import org.springframework.web.client.RestClient;
 public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
 
     static final String FAKE_TITLE = "[FAKE] 타임라인 이벤트 제안";
+    static final String FAKE_QUESTION = "[FAKE] 이 시간에 무엇을 하셨나요?";
 
     // 서버간 경로는 TimelineAiTaskController/TimelineCallbackController 매핑의 복제다(서비스가 컨트롤러 상수를
     // 참조하는 레이어 역류를 피함). URL 형태는 FakeTimelineAiDispatcherTest, 컨트롤러 매핑은 각 컨트롤러
@@ -147,7 +148,7 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
                 .filter(value -> !value.isBefore(startAt))
                 .orElse(null);
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, FAKE_TITLE, null, startAt, endAt,
+                TimelineEventType.UNKNOWN, FAKE_TITLE, null, FAKE_QUESTION, startAt, endAt,
                 sources.stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }
 

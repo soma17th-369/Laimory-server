@@ -100,7 +100,7 @@ class TimelineQueryPersistenceIntegrationTest {
 
     private TimelineEvent event(DailyRecord record, int hour, String title) {
         return TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,
-                LocalDateTime.of(2026, 7, 20, hour, 0), null, title, null);
+                LocalDateTime.of(2026, 7, 20, hour, 0), null, title, null, null);
     }
 
 }
