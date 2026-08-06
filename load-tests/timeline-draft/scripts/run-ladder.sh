@@ -10,7 +10,7 @@
 #     load-tests/timeline-draft/scripts/run-ladder.sh calendar-core
 #
 #   RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
-#     load-tests/timeline-draft/scripts/run-ladder.sh geo-1-stay
+#     load-tests/timeline-draft/scripts/run-ladder.sh geo-day
 #
 # 사다리 재정의: LADDER="1 10 50" ... run-ladder.sh calendar-core
 
@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCENARIO="${1:-}"
 if [ -z "$SCENARIO" ]; then
-    echo "사용법: run-ladder.sh <calendar-core|mixed-day|geo-1-stay|geo-18-stay>" >&2
+    echo "사용법: run-ladder.sh <calendar-core|mixed-day|geo-day>" >&2
     exit 2
 fi
 
@@ -37,20 +37,16 @@ fi
 ARTIFACT_DIR="${ARTIFACT_DIR:-load-tests/timeline-draft/.artifacts}"
 mkdir -p "$ARTIFACT_DIR"
 
-# 기본 사다리. core와 geo-1은 #251이 고정한 순서다.
-#
-# geo-18은 용량 사다리가 아니라 pool 포화 민감도다. 요청 하나가 좌표 18개를 동시에 구독하므로 VU 수가
-# 그대로 순간 동시 lookup 수(VUS × 18)가 되고, 전용 pool 용량(active 20 + pending 20 = 40)을 3 VU에서
-# 넘는다. 실측(로컬, 기본 설정)에서 1 VU는 완전 성공, 2 VU는 경계 실패가 허용 한도 안에서 발생, 3 VU 이상은
-# FAILURE_RATIO로 502다. 사다리를 길게 두는 의미가 없어 전이 구간만 훑는다.
+# 기본 사다리. geo-day는 요청 하나가 고유 좌표 37개를 만들고 요청별 병렬 조회 상한이 20이라,
+# 2 VU면 동시 lookup 40 = 전용 pool 용량(active 20 + pending 20)에 정확히 닿는다. 3 VU부터
+# LOCAL_REJECTED가 예상되므로 사다리는 전이 구간 위주로 짧게 잡았다.
 if [ -n "${LADDER:-}" ]; then
     STEPS="$LADDER"
 else
     case "$SCENARIO" in
         calendar-core) STEPS="1 10 50 100 300 500 1000" ;;
         mixed-day)     STEPS="1 10 50 100 300" ;;
-        geo-1-stay)    STEPS="1 10 20 40 50 100 300 500 1000" ;;
-        geo-18-stay)   STEPS="1 2 3" ;;
+        geo-day)       STEPS="1 2 3 5 10 20" ;;
     esac
 fi
 

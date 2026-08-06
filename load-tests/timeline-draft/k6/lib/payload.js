@@ -138,3 +138,55 @@ export function mixedDayBody(config, vu) {
   }
   return envelope(config, items);
 }
+
+/**
+ * geo-day — mixed-day와 같은 실측 하루 분포에서 체류·이동을 **실제 STAY/MOVEMENT(좌표 포함)**로 보낸다.
+ *
+ * 요청당 고유 좌표 37개(STAY 13 + MOVEMENT 양끝 24) → 정상 시 Kakao 74콜. 현재 공개 상한
+ * `app.geo.max-unique-coordinates`(기본 30)를 넘으므로, 실행 전 dev `.env`에
+ * `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상을 설정해야 400으로 거절되지 않는다.
+ *
+ * ⚠️ 반드시 #257 simulator로 전환된 상태에서만 실행한다 — 실제 Kakao면 요청 하나가 74콜이다.
+ */
+export function geoDayBody(config, vu) {
+  const COORDS_PER_REQUEST = 37;
+  const base = (vu - 1) * COORDS_PER_REQUEST;
+  const coord = (i) => ({
+    latitude: Number((LAT_ORIGIN + (base + i) * COORD_STEP).toFixed(6)),
+    longitude: Number((LON_ORIGIN + (base + i) * COORD_STEP).toFixed(6)),
+  });
+
+  const items = [];
+  let index = 0;
+  const startAt = () => `${config.recordDate}T${clockTime(index % 24, (index * 7) % 60, 0)}`;
+
+  for (let i = 0; i < MIXED_DAY.calendar; i += 1) {
+    items.push({ itemType: 'CALENDAR', rawId: rawId(config, vu, index), startAt: startAt(), endAt: null,
+      payload: { title: `k6 geo-day 일정 ${i + 1}`, description: 'issue #251 geo-day scenario', allDay: false } });
+    index += 1;
+  }
+  for (let i = 0; i < MIXED_DAY.notification; i += 1) {
+    items.push({ itemType: 'NOTIFICATION', rawId: rawId(config, vu, index), startAt: startAt(), endAt: null,
+      payload: { appName: '카카오톡', title: `k6 geo-day 알림 ${i + 1}`,
+        text: '부하 테스트용 합성 알림 본문 — 실제 알림 평균 크기 근사치의 텍스트.' } });
+    index += 1;
+  }
+  for (let i = 0; i < MIXED_DAY.stayStandin; i += 1) {
+    const c = coord(i);
+    items.push({ itemType: 'STAY', rawId: rawId(config, vu, index), startAt: startAt(),
+      endAt: `${config.recordDate}T${clockTime(index % 24, ((index * 7) + 30) % 60, 0)}`,
+      payload: { latitude: c.latitude, longitude: c.longitude } });
+    index += 1;
+  }
+  for (let i = 0; i < MIXED_DAY.movementStandin; i += 1) {
+    const s = coord(13 + i * 2);
+    const e = coord(13 + i * 2 + 1);
+    items.push({ itemType: 'MOVEMENT', rawId: rawId(config, vu, index), startAt: startAt(),
+      endAt: `${config.recordDate}T${clockTime(index % 24, ((index * 7) + 20) % 60, 0)}`,
+      payload: { start: { latitude: s.latitude, longitude: s.longitude },
+                 end: { latitude: e.latitude, longitude: e.longitude },
+                 transports: i % 3 === 0 ? 'IN_VEHICLE' : 'WALKING', distanceMeters: 800 + i * 120 } });
+    index += 1;
+  }
+  return envelope(config, items);
+}

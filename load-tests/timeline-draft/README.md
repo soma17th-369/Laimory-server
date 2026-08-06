@@ -25,9 +25,9 @@ load-tests/timeline-draft/
 ├── .gitignore                      # .artifacts/ 격리(anchored)
 ├── .artifacts/.gitkeep             # 격리 sentinel — 나머지는 전부 무시된다
 ├── k6/
-│   ├── calendar-core.js            # 접수 경로만
-│   ├── geo-1-stay.js               # 접수 + 동기 지오코딩 1좌표(representative)
-│   ├── geo-18-stay.js              # 좌표 18개(heavy sensitivity, representative 아님)
+│   ├── calendar-core.js            # 접수 경로만(최소 사례)
+│   ├── mixed-day.js                # 실측 분포 68행, 좌표 없음(DB 스케일링)
+│   ├── geo-day.js                  # 실측 분포 + 실제 좌표 37개(simulator 필수)
 │   └── lib/{config,payload,tokens,spike}.js
 ├── scripts/
 │   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
@@ -58,8 +58,7 @@ load-tests/timeline-draft/
 |---|---|---|---|
 | `calendar-core` | CALENDAR 1개(좌표 없음) | 0 | JWT, WAS, MySQL, Redis, AI noop 접수 — 최소 사례(용량 상한 측정) |
 | `mixed-day` | 실측 하루 분포 68개(일정 2·알림 41·체류/이동 크기 대역 25, 좌표 없음) | 0 | 대표 payload의 DB 쓰기 스케일링 — 커넥션 점유·풀 사이징 근거 |
-| `geo-1-stay` | STAY 1개(고유 좌표 1개) | 요청당 2 | core + WebClient pool/pending, timeout/retry/circuit, servlet worker 대기 |
-| `geo-18-stay` | STAY 18개(고유 좌표 18개) | 요청당 36 | 좌표 수 민감도(heavy) — representative 아님 |
+| `geo-day` | 실측 분포 68개 — 실제 STAY 13·MOVEMENT 12(고유 좌표 37) + 알림 41·일정 2 | 요청당 74 | 실환경 하루치의 지오코딩 경로 전체(WebClient pool/pending, timeout/retry/circuit, servlet worker 대기) |
 
 `mixed-day`의 분포는 실사용 하루 기록(2026-07-31: 이동 12·체류 13·알림 41·일정 2)에서 왔다.
 이동·체류는 좌표가 필수라 그대로 보내면 지오코딩 경로를 타므로, enrich 후 저장 payload와 비슷한 JSON
@@ -112,14 +111,14 @@ geo 단계는 다음 두 값을 함께 확인해야 유효하다.
 전용 pool 용량은 active 20 + pending 20 = **동시 40**이고(기본 설정), 요청 하나의 병렬 조회 상한은
 `app.geo.lookup-concurrency`(기본 20)다. 순간 동시 lookup 수는 `VUS × min(좌표수, 20)`이다.
 
-| 시나리오 | 요청당 동시 lookup | 포화가 시작되는 지점 |
-|---|---|---|
-| `geo-1-stay` | 1 | pool을 넘겨도 pending queue가 빠르게 빠져 즉시 거절이 잘 안 난다. VU가 늘면 대기가 p95로 나타난다 |
-| `geo-18-stay` | 18 | 요청 2개만 겹쳐도 36 동시. 3 VU(54)에서 용량 40을 넘어 `LOCAL_REJECTED` → 502 |
+`geo-day`는 요청 하나가 고유 좌표 37개를 만들고 요청별 병렬 조회 상한(`app.geo.lookup-concurrency`)이
+20이라, 순간 동시 lookup은 `VUS × 20`이다. 2 VU면 40 = 전용 pool 용량(active 20 + pending 20)에 정확히
+닿고, 3 VU부터 `LOCAL_REJECTED`가 예상된다. 초기 개발 중 합성 시나리오 실측(좌표 18개 요청, 로컬)에서도
+같은 경계에서 2 VU 경계 실패·3 VU 502를 확인했다 — "요청당 병렬도가 버스트 크기를 정한다"는 관계다.
 
-로컬 기본 설정 실측에서 `geo-18-stay`는 1 VU 완전 성공, 2 VU에서 허용 한도 안의 경계 실패, 3 VU 이상에서
-502였다. `geo-1-stay`는 60 VU까지 좌표 누락 없이 통과하고 p95만 증가했다. dev의 절대 수치는 다르겠지만
-"요청당 병렬도가 버스트 크기를 정한다"는 관계는 같다.
+또한 실측 분포의 고유 좌표 37개는 공개 상한 `app.geo.max-unique-coordinates`(기본 30)를 넘는다.
+geo-day 실행 전 dev `.env`에 `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상을 설정해야 하며(안 하면 외부
+호출 전 400/-400 거절), 상한 자체의 제품 계약 변경은 별도 이슈로 다룬다.
 
 사다리가 여기서 멈추는 것은 스크립트 실패가 아니라 **측정 결과**다. 멈춘 지점과 그때의 pool active/pending,
 `laimory.geo.http.logical` 분류를 함께 기록한다.
@@ -257,20 +256,12 @@ unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"�
 
 ```bash
 RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
-  load-tests/timeline-draft/scripts/run-ladder.sh geo-1-stay
+  load-tests/timeline-draft/scripts/run-ladder.sh geo-day
 ```
 
-geo 사다리는 `1 → 10 → 20 → 40 → 50 → 100 → 300 → 500 → 1000`이다. 20과 40은 각각 pool 상한과 그 2배로,
-pending acquire가 실제로 쌓이기 시작하는 지점을 보기 위한 단계다.
-
-heavy sensitivity는 별도로 돌리고 결과도 따로 기록한다(representative와 나란히 놓지 않는다).
-사다리는 `1 → 2 → 3`으로 짧다 — 위 "예상 포화 지점"대로 3 VU면 이미 pool 용량을 넘기 때문에 더 올려도
-같은 실패만 반복된다. 보고할 값은 최대 VU가 아니라 **좌표 누락 없이 통과한 마지막 VU**다.
-
-```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
-  load-tests/timeline-draft/scripts/run-ladder.sh geo-18-stay
-```
+geo-day 사다리는 `1 → 2 → 3 → 5 → 10 → 20`으로 짧다 — 2 VU에서 pool 용량(40)에 닿고 3 VU부터 거절이
+예상되어, 전이 구간 밖은 같은 실패의 반복이기 때문이다. 보고할 값은 최대 VU가 아니라
+**좌표 누락 없이 통과한 마지막 VU**다.
 
 **원복(사용자 직접 수행)** — 0단계에서 남긴 원본으로 되돌린다.
 
@@ -305,7 +296,7 @@ geo run은 추가로:
 
 ```bash
 # run 결과 검증 — 단계별로 확인한다.
-# @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|g1|g18) + 단계 번호다(예: geo-1-stay 4단계 → g13).
+# @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|m|gd) + 단계 번호다(예: geo-day 2단계 → gd1).
 sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/g13/" \
   load-tests/timeline-draft/sql/04-verify-run.sql \
   | mysql --defaults-extra-file=<config> <db>
@@ -375,7 +366,7 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 - core·geo k6 스크립트, SQL fixture, token generator와 runbook이 저장소에 있고 secret·runtime artifact가 없다.
 - 1,000개의 서로 다른 user/token 요청이 1초 start window 안에서 각각 정확히 한 번 시작됐음을 k6
   `request_start_offset_ms`와 `04-verify-run.sql`의 `distinct_users`로 함께 증명한다.
-- `calendar-core`와 `geo-1-stay` 결과가 분리돼 있고 `geo-18-stay`는 heavy sensitivity로 따로 기록된다.
+- `calendar-core`(최소)·`mixed-day`(실측 행 수)·`geo-day`(실측 + 좌표) 결과가 분리돼 기록된다.
 - 실제 Kakao·실제 AI로 대량 호출이 나가지 않았다(simulator journal count, `APP_AI_MODE=noop`).
 - 인스턴스·commit·DB 규모·simulator·runner 조건과 단계별 처리량, p95/p99, 오류율, resource 지표가 기록된다.
 - geo run 뒤 dev 설정 원복과 integration smoke를 확인한 다음 simulator를 중지했다.
