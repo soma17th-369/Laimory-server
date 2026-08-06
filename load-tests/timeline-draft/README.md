@@ -286,6 +286,17 @@ REDIS_HOST=<host> REDIS_PREFIX=dev_ \
 dry-run의 `timeline_items (orphan-to-be)`는 0이어야 한다. 0이 아니면 AI가 결과를 저장했다는 뜻이라
 noop 격리 전제가 깨진 것이므로 삭제를 진행하지 말고 원인을 먼저 확인한다.
 
+정리 범위에 대해 알아둘 것:
+
+- 삭제 기준은 **합성 사용자 집합 하나뿐**이다(`provider='KAKAO' AND provider_user_id LIKE 'k6-251-%'`).
+  날짜·rawId·user_id 범위는 기준이 아니므로, 실제 사용자가 같은 날짜에 기록을 갖고 있거나 `k6-`로 시작하는
+  rawId를 손으로 넣어 뒀어도 지워지지 않는다. 합성 event와 실제 event에 함께 연결된 item도 남는다
+  (모든 연결이 합성일 때만 삭제 대상이다).
+- run 단위 선택 삭제는 없다. 한 번 실행하면 `k6-251-` 사용자 전체와 그들의 데이터가 함께 사라진다.
+  여러 회차를 비교 중이라면 마지막에 한 번만 돌린다.
+- `refresh_tokens`·`push_registrations`는 dry-run이 세기만 하고 cleanup이 지우지 않는다. 합성 사용자는
+  로그인·푸시 등록을 하지 않으므로 0이어야 하며, 0이 아니면 전제가 깨진 것이라 사람이 직접 확인한다.
+
 Redis는 수동 삭제가 필요 없다. task 키와 사용자 index 키는 TTL 3분으로 사라지고, 전역 PROCESSING index는
 stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
 
