@@ -37,7 +37,7 @@ public record AiUserMemoryUpdateRequest(
 
     /**
      * 확정된 하루의 타임라인. 저장 직후 즉시 접수는 항상 1건이고, 하루 1회 재시도 배치는 한 사용자에게
-     * 밀린 날들을 여기에 함께 싣는다(AI 계약 상한 7건).
+     * 밀린 날들을 여기에 함께 싣는다(AI 계약 상한 5건).
      */
     public record DailyTimeline(
             LocalDate recordDate,

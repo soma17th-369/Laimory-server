@@ -26,6 +26,7 @@ import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.repository.UserMemoryUpdateTaskStore;
 import com.laimory.server.user.UserMemoryService;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -59,7 +60,11 @@ class UserMemoryUpdateWorkerTest {
     private static final long USER_ID = 7L;
     private static final long RECORD_ID = 42L;
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
-    private static final int BATCH_SIZE = 500;
+    private static final int BATCH_SIZE = 100;
+    // 결과 대기는 실제로 sleep하므로 테스트에서는 몇 ms로 줄인다(대기 로직 자체는 그대로 탄다).
+    private static final Duration RESULT_WAIT = Duration.ofMillis(6);
+    private static final Duration POLL_INTERVAL = Duration.ofMillis(2);
+    private static final Duration RUN_BUDGET = Duration.ofMinutes(30);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -81,7 +86,8 @@ class UserMemoryUpdateWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
-                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC), BATCH_SIZE);
+                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC), BATCH_SIZE,
+                RESULT_WAIT, POLL_INTERVAL, RUN_BUDGET);
     }
 
     // ── 즉시 접수 ──
@@ -234,7 +240,7 @@ class UserMemoryUpdateWorkerTest {
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         stubRecord(RECORD_ID + 1);
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        stubAppliedResult();
 
         worker.retryPendingUpdates();
 
@@ -243,31 +249,97 @@ class UserMemoryUpdateWorkerTest {
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
         assertThat(request.getValue().dailyTimelines()).hasSize(2);
-        // 접수로 넘어간 것만 큐에서 지운다.
         verify(pendingStore).remove(first);
         verify(pendingStore).remove(second);
     }
 
     @Test
-    void 배치는_한_요청에_최대_7일까지만_싣는다() {
+    void 배치는_한_요청에_최대_5일까지만_싣는다() {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, 10)
                 .mapToObj(index -> pending(RECORD_ID + index))
                 .toList();
         when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(pendings);
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
-        pendings.stream().limit(UserMemoryUpdateWorker.MAX_DIARIES)
+        pendings.stream().limit(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES)
                 .forEach(pending -> stubRecord(pending.dailyRecordId()));
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        stubAppliedResult();
 
         worker.retryPendingUpdates();
 
         ArgumentCaptor<AiUserMemoryUpdateRequest> request =
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
-        assertThat(request.getValue().dailyTimelines()).hasSize(UserMemoryUpdateWorker.MAX_DIARIES);
+        assertThat(request.getValue().dailyTimelines()).hasSize(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES);
         // 초과분은 큐에 남아 다음 배치가 가져간다.
-        verify(pendingStore, never()).remove(pendings.get(UserMemoryUpdateWorker.MAX_DIARIES));
+        verify(pendingStore, never()).remove(pendings.get(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES));
+    }
+
+    @Test
+    void 배치는_결과가_반영될_때까지_기다린_뒤에_큐에서_지운다() throws Exception {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        JsonNode updated = objectMapper.readTree("{\"schemaVersion\":\"1.0\",\"updatedAt\":\"2026-08-05\"}");
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubRecord(RECORD_ID);
+        // 접수 시점엔 문서가 없었고, 결과가 반영되면서 바뀐다.
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty(), Optional.of(updated));
+        when(taskStore.find(anyString())).thenReturn(Optional.empty());
+
+        worker.retryPendingUpdates();
+
+        InOrder inOrder = inOrder(dispatcher, taskStore, pendingStore);
+        inOrder.verify(dispatcher).dispatch(any());
+        inOrder.verify(taskStore).find(anyString());   // 반영 확인이 제거보다 먼저다
+        inOrder.verify(pendingStore).remove(pending);
+    }
+
+    @Test
+    void 결과가_반영되지_않으면_큐에_남겨_다음_배치가_다시_시도한다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubRecord(RECORD_ID);
+        // FAILED와 base 지문 불일치 폐기는 둘 다 DB를 건드리지 않는다 — 문서가 그대로다.
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        when(taskStore.find(anyString())).thenReturn(Optional.empty());
+
+        worker.retryPendingUpdates();
+
+        verify(dispatcher).dispatch(any());
+        verify(pendingStore, never()).remove(pending);
+    }
+
+    @Test
+    void 결과가_끝내_오지_않으면_큐에_남긴다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubRecord(RECORD_ID);
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        // task key가 계속 살아 있다 = AI가 응답하지 않았다.
+        when(taskStore.find(anyString())).thenReturn(Optional.of(liveTask()));
+
+        worker.retryPendingUpdates();
+
+        verify(pendingStore, never()).remove(pending);
+    }
+
+    @Test
+    void 배치에서_접수가_4xx로_거절되면_큐에서_걷어낸다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubRecord(RECORD_ID);
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchRejectedException("rejected", new RuntimeException()))
+                .when(dispatcher).dispatch(any());
+
+        worker.retryPendingUpdates();
+
+        // 같은 내용을 다시 보내도 결과가 같다 — deadline까지 매일 재시도할 이유가 없다.
+        verify(pendingStore).remove(pending);
+        verify(taskStore, never()).find(anyString());
     }
 
     @Test
@@ -305,6 +377,17 @@ class UserMemoryUpdateWorkerTest {
         worker.retryPendingUpdates();
 
         verifyNoInteractions(dispatcher, taskStore, userMemoryService, dailyRecordService);
+    }
+
+    /** 접수 직후 결과가 도착해 문서가 바뀐 상태(배치가 "반영됨"으로 판정하는 조건). */
+    private void stubAppliedResult() {
+        when(userMemoryService.find(USER_ID))
+                .thenReturn(Optional.empty(), Optional.of(objectMapper.createObjectNode().put("v", "1")));
+        when(taskStore.find(anyString())).thenReturn(Optional.empty());
+    }
+
+    private UserMemoryUpdateTask liveTask() {
+        return new UserMemoryUpdateTask(USER_ID, List.of(RECORD_ID), "hash", NOW, null);
     }
 
     private void stubClaimable(UserMemoryUpdatePending pending) {

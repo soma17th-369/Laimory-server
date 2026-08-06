@@ -190,7 +190,7 @@ POST {base-url}/v1/user-memory
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
   같은 규칙 — 상관관계는 `taskId`).
 - `dailyTimelines`는 저장 직후 즉시 접수에서는 항상 1건이고, **하루 1회 재시도 배치에서만 여러 건**이다
-  (한 사용자에게 밀린 날을 묶어 보낸다. AI 상한 7건).
+  (한 사용자에게 밀린 날을 묶어 보낸다. AI 상한 5건).
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - `emotionType`은 입력 경로가 없어 현재 항상 null이지만 nullable 필드를 미리 뒀다.
 
