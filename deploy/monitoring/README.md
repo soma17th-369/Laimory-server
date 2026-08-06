@@ -642,18 +642,21 @@ target alert가 원인을 알린다. index는 관측 전용이므로 task 상태
 ### Timeline PHOTO delete backlog
 
 Overview의 pending 수와 oldest age를 먼저 확인하고, enqueue 대비 attempt 성공/실패 발생률을 비교한다.
-worker가 꺼져 있어도 두 gauge는 MySQL job table에서 계속 관측된다. dev WAS에서는 전체 환경을 출력하지 말고
-현재 container의 `TIMELINE_PHOTO_DELETE_WORKER_ENABLED` 한 값만 확인한다.
+worker는 매일 03:00 KST에 oldest job을 한 batch, 최대 1,000개 처리한다. 정상 job도 다음 실행까지 최대
+약 24시간 대기할 수 있으므로 oldest age가 30시간을 초과한 상태가 15분 지속될 때 경고한다. 실패 job과
+1,000개를 넘은 초과분은 다음 날 실행으로 이월된다. worker가 꺼져 있어도 두 gauge는 MySQL job table에서
+계속 관측된다. dev WAS에서는 전체 환경을 출력하지 말고 현재 container의
+`TIMELINE_PHOTO_DELETE_WORKER_ENABLED` 한 값만 확인한다.
 
-worker flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를 다시 실행하거나 기존 container를
-stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야 한다. `docker restart`는 생성 당시
-환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
+worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를
+다시 실행하거나 기존 container를 stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야
+한다. `docker restart`는 생성 당시 환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
 
-flag가 true인데 backlog가 줄지 않으면 MySQL/Hikari 상태, S3/IAM 오류, delete attempt 실패와 batch duration을
-차례로 확인한다. 실패 job과 그 FK가 가리키는 원문 PHOTO Item은 다음 주기에 재시도되는 복구 권위이므로
-둘 중 하나를 수동 삭제하거나 object key를 로그·alert에 복사하지 않는다. monitoring 자산 변경은 앱 자동
-배포에 포함되지 않으므로 기존 provisioning 파일을 백업한 뒤 자산을 반영하고 Grafana provisioning
-reload/restart 절차를 따른다.
+flag가 true인데 backlog가 줄지 않으면 직전 03:00 KST에 app이 가용했는지, 하루 enqueue가 1,000개를
+넘었는지, MySQL/Hikari 상태, S3/IAM 오류, delete attempt 실패와 batch duration을 차례로 확인한다. 실패
+job과 그 FK가 가리키는 원문 PHOTO Item은 다음 날 재시도되는 복구 권위이므로 둘 중 하나를 수동 삭제하거나
+object key를 로그·alert에 복사하지 않는다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존
+provisioning 파일을 백업한 뒤 자산을 반영하고 Grafana provisioning reload/restart 절차를 따른다.
 
 ### AWS metric collection
 

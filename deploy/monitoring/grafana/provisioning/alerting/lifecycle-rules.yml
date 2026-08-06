@@ -104,7 +104,7 @@ groups:
             datasourceUid: __expr__
             model:
               conditions:
-                - evaluator: { params: [3600], type: gt }
+                - evaluator: { params: [108000], type: gt }
                   operator: { type: and }
                   query: { params: [C] }
                   reducer: { params: [], type: last }

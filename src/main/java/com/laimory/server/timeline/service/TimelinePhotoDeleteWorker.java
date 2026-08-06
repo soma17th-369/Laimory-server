@@ -16,7 +16,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * MySQL PHOTO delete-job을 oldest-first로 처리하는 현재 REST 애플리케이션의 단일 worker.
+ * MySQL PHOTO delete-job을 매일 oldest-first로 처리하는 현재 REST 애플리케이션의 단일 worker.
  *
  * <p>state/lease 없이 한 환경에서 worker-enabled 프로세스 하나만 실행한다. S3 호출은 DB transaction 밖이며
  * 성공이 확인된 job과 원문 PHOTO Item만 짧은 별도 transaction으로 최종 삭제한다.
@@ -35,7 +35,9 @@ public class TimelinePhotoDeleteWorker {
     private final TimelinePhotoDeleteWorkerProperties properties;
     private final TimelinePhotoDeleteMetrics metrics;
 
-    @Scheduled(fixedDelayString = "${app.timeline.photo-delete.fixed-delay:1m}")
+    @Scheduled(
+            cron = "${app.timeline.photo-delete.cron:0 0 3 * * *}",
+            zone = "${app.timeline.photo-delete.zone:Asia/Seoul}")
     public void deletePendingPhotoObjects() {
         if (!properties.isWorkerEnabled()) {
             return;
