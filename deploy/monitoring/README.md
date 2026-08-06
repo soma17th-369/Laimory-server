@@ -648,9 +648,9 @@ worker는 매일 03:00 KST에 oldest job을 한 batch, 최대 1,000개 처리한
 계속 관측된다. dev WAS에서는 전체 환경을 출력하지 말고 현재 container의
 `TIMELINE_PHOTO_DELETE_WORKER_ENABLED` 한 값만 확인한다.
 
-worker flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를 다시 실행하거나 기존 container를
-stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야 한다. `docker restart`는 생성 당시
-환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
+worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를
+다시 실행하거나 기존 container를 stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야
+한다. `docker restart`는 생성 당시 환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
 
 flag가 true인데 backlog가 줄지 않으면 직전 03:00 KST에 app이 가용했는지, 하루 enqueue가 1,000개를
 넘었는지, MySQL/Hikari 상태, S3/IAM 오류, delete attempt 실패와 batch duration을 차례로 확인한다. 실패

@@ -13,7 +13,7 @@ public class TimelinePhotoDeleteWorkerProperties {
     private final int batchSize;
 
     public TimelinePhotoDeleteWorkerProperties(
-            @Value("${app.timeline.photo-delete.worker-enabled:false}") boolean workerEnabled,
+            @Value("${app.timeline.photo-delete.worker-enabled:true}") boolean workerEnabled,
             @Value("${app.timeline.photo-delete.batch-size:1000}") int batchSize) {
         if (batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
             throw new IllegalStateException(
