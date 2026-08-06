@@ -61,10 +61,6 @@ class UserMemoryUpdateWorkerTest {
     private static final long RECORD_ID = 42L;
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
     private static final int BATCH_SIZE = 100;
-    // 결과 대기는 실제로 sleep하므로 테스트에서는 몇 ms로 줄인다(대기 로직 자체는 그대로 탄다).
-    private static final Duration RESULT_WAIT = Duration.ofMillis(6);
-    private static final Duration POLL_INTERVAL = Duration.ofMillis(2);
-    private static final Duration RUN_BUDGET = Duration.ofMinutes(30);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -86,8 +82,7 @@ class UserMemoryUpdateWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
-                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC), BATCH_SIZE,
-                RESULT_WAIT, POLL_INTERVAL, RUN_BUDGET);
+                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC), BATCH_SIZE);
     }
 
     // ── 즉시 접수 ──
@@ -240,7 +235,7 @@ class UserMemoryUpdateWorkerTest {
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         stubRecord(RECORD_ID + 1);
-        stubAppliedResult();
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
         worker.retryPendingUpdates();
 
@@ -249,8 +244,6 @@ class UserMemoryUpdateWorkerTest {
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
         assertThat(request.getValue().dailyTimelines()).hasSize(2);
-        verify(pendingStore).remove(first);
-        verify(pendingStore).remove(second);
     }
 
     @Test
@@ -263,7 +256,7 @@ class UserMemoryUpdateWorkerTest {
         // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
         pendings.stream().limit(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES)
                 .forEach(pending -> stubRecord(pending.dailyRecordId()));
-        stubAppliedResult();
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
         worker.retryPendingUpdates();
 
@@ -271,58 +264,21 @@ class UserMemoryUpdateWorkerTest {
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
         assertThat(request.getValue().dailyTimelines()).hasSize(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES);
-        // 초과분은 큐에 남아 다음 배치가 가져간다.
-        verify(pendingStore, never()).remove(pendings.get(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES));
     }
 
     @Test
-    void 배치는_결과가_반영될_때까지_기다린_뒤에_큐에서_지운다() throws Exception {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        JsonNode updated = objectMapper.readTree("{\"schemaVersion\":\"1.0\",\"updatedAt\":\"2026-08-05\"}");
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
-        // 접수 시점엔 문서가 없었고, 결과가 반영되면서 바뀐다.
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty(), Optional.of(updated));
-        when(taskStore.find(anyString())).thenReturn(Optional.empty());
-
-        worker.retryPendingUpdates();
-
-        InOrder inOrder = inOrder(dispatcher, taskStore, pendingStore);
-        inOrder.verify(dispatcher).dispatch(any());
-        inOrder.verify(taskStore).find(anyString());   // 반영 확인이 제거보다 먼저다
-        inOrder.verify(pendingStore).remove(pending);
-    }
-
-    @Test
-    void 결과가_반영되지_않으면_큐에_남겨_다음_배치가_다시_시도한다() {
+    void 배치는_접수만_하고_큐를_비우지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
-        // FAILED와 base 지문 불일치 폐기는 둘 다 DB를 건드리지 않는다 — 문서가 그대로다.
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
-        when(taskStore.find(anyString())).thenReturn(Optional.empty());
 
         worker.retryPendingUpdates();
 
+        // 성패는 접수 시점에 알 수 없다 — 결과 endpoint가 반영을 확인하고 정리한다.
         verify(dispatcher).dispatch(any());
-        verify(pendingStore, never()).remove(pending);
-    }
-
-    @Test
-    void 결과가_끝내_오지_않으면_큐에_남긴다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
-        // task key가 계속 살아 있다 = AI가 응답하지 않았다.
-        when(taskStore.find(anyString())).thenReturn(Optional.of(liveTask()));
-
-        worker.retryPendingUpdates();
-
-        verify(pendingStore, never()).remove(pending);
+        verify(pendingStore, never()).remove(any());
     }
 
     @Test
@@ -337,29 +293,28 @@ class UserMemoryUpdateWorkerTest {
 
         worker.retryPendingUpdates();
 
-        // 같은 내용을 다시 보내도 결과가 같다 — deadline까지 매일 재시도할 이유가 없다.
+        // 같은 내용을 다시 보내도 결과가 같다 — 매일 재시도할 이유가 없다.
         verify(pendingStore).remove(pending);
-        verify(taskStore, never()).find(anyString());
     }
 
     @Test
-    void 배치는_deadline을_넘긴_항목을_접수하지_않고_버린다() {
-        UserMemoryUpdatePending expired =
-                new UserMemoryUpdatePending(USER_ID, RECORD_ID, NOW.minusSeconds(1));
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(expired));
+    void 배치에서_하루_기록이_사라졌으면_큐에서_걷어낸다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
         worker.retryPendingUpdates();
 
-        verify(pendingStore).remove(expired);
-        verify(pendingStore, never()).acquireGuard(anyLong(), anyString(), any());
-        verifyNoInteractions(dispatcher, taskStore);
+        verify(pendingStore).remove(pending);
+        verifyNoInteractions(dispatcher);
     }
 
     @Test
     void 배치에서_한_사용자가_실패해도_나머지_사용자를_계속_처리한다() {
         UserMemoryUpdatePending failing = pending(RECORD_ID);
         UserMemoryUpdatePending healthy =
-                new UserMemoryUpdatePending(USER_ID + 1, RECORD_ID + 1, NOW.plusSeconds(300));
+                new UserMemoryUpdatePending(USER_ID + 1, RECORD_ID + 1);
         when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(failing, healthy));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
                 .thenThrow(new RuntimeException("redis down"));
@@ -379,17 +334,6 @@ class UserMemoryUpdateWorkerTest {
         verifyNoInteractions(dispatcher, taskStore, userMemoryService, dailyRecordService);
     }
 
-    /** 접수 직후 결과가 도착해 문서가 바뀐 상태(배치가 "반영됨"으로 판정하는 조건). */
-    private void stubAppliedResult() {
-        when(userMemoryService.find(USER_ID))
-                .thenReturn(Optional.empty(), Optional.of(objectMapper.createObjectNode().put("v", "1")));
-        when(taskStore.find(anyString())).thenReturn(Optional.empty());
-    }
-
-    private UserMemoryUpdateTask liveTask() {
-        return new UserMemoryUpdateTask(USER_ID, List.of(RECORD_ID), "hash", NOW, null);
-    }
-
     private void stubClaimable(UserMemoryUpdatePending pending) {
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(pending.dailyRecordId());
@@ -401,7 +345,7 @@ class UserMemoryUpdateWorkerTest {
     }
 
     private static UserMemoryUpdatePending pending(long dailyRecordId) {
-        return new UserMemoryUpdatePending(USER_ID, dailyRecordId, NOW.plusSeconds(300));
+        return new UserMemoryUpdatePending(USER_ID, dailyRecordId);
     }
 
     private static DailyRecord record(long dailyRecordId) {

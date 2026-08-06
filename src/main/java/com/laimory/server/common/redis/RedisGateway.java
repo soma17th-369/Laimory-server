@@ -187,9 +187,12 @@ public class RedisGateway {
         return Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
     }
 
-    /** sorted set에 member를 넣거나 이미 있으면 score를 갱신한다(ZADD). */
-    public void addToSortedSet(String logicalSortedSetKey, String member, long score) {
-        template.opsForZSet().add(prefix + logicalSortedSetKey, member, score);
+    /**
+     * sorted set에 member가 없을 때만 넣는다(ZADD NX). 이미 있으면 score를 <b>유지</b>한다 — 재기록으로
+     * 최초 기록 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
+     */
+    public void addToSortedSetIfAbsent(String logicalSortedSetKey, String member, long score) {
+        template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
     }
 
     /**

@@ -5,12 +5,8 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDate;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,20 +27,14 @@ public class TimelineSaveService {
     private final DailyRecordService dailyRecordService;
     private final TimelineSaveTransactionService timelineSaveTransactionService;
     private final UserMemoryUpdateWorker userMemoryUpdateWorker;
-    private final Clock clock;
-    private final Duration updateDeadline;
 
     public TimelineSaveService(
             DailyRecordService dailyRecordService,
             TimelineSaveTransactionService timelineSaveTransactionService,
-            UserMemoryUpdateWorker userMemoryUpdateWorker,
-            Clock clock,
-            @Value("${app.user-memory.update.deadline:7d}") Duration updateDeadline) {
+            UserMemoryUpdateWorker userMemoryUpdateWorker) {
         this.dailyRecordService = dailyRecordService;
         this.timelineSaveTransactionService = timelineSaveTransactionService;
         this.userMemoryUpdateWorker = userMemoryUpdateWorker;
-        this.clock = clock;
-        this.updateDeadline = updateDeadline;
     }
 
     /**
@@ -71,16 +61,12 @@ public class TimelineSaveService {
      * 배치가 그것만 처리한다. guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이라, 실패를
      * 기록할 지점이 거기 하나로 모인다.
      *
-     * <p>{@code deadline}은 여기서 계산한다 — 밀리기 시작하는 기준이 저장 시점이기 때문이다.
-     *
      * <p>실패해도 저장 응답을 깨지 않는다 — 그 날치 User Memory 반영만 누락되고 사용자의 저장은 이미
      * 커밋됐다. 누락 빈도를 판단할 수 있도록 식별자와 함께 남긴다.
      */
     private void requestUserMemoryUpdate(long userId, Long dailyRecordId) {
-        Instant now = clock.instant();
         try {
-            userMemoryUpdateWorker.dispatchNow(
-                    new UserMemoryUpdatePending(userId, dailyRecordId, now.plus(updateDeadline)));
+            userMemoryUpdateWorker.dispatchNow(new UserMemoryUpdatePending(userId, dailyRecordId));
         } catch (RuntimeException e) {
             // async 실행기 포화 등으로 거절되면 그 날치 갱신은 누락된다(저장은 이미 완료).
             log.error("User Memory 갱신 접수 트리거 실패(저장은 완료): userId={} dailyRecordId={}",

@@ -6,36 +6,48 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * User Memory 갱신의 사용자 단위 guard와 밀린 작업 큐의 Redis 데이터 접근 계층.
+ * User Memory 갱신의 사용자 단위 guard와 미반영 작업 큐의 Redis 데이터 접근 계층.
  *
  * <p>논리 키: guard는 {@code timeline:user-memory-update:user:{userId}}(SET NX, TTL),
- * 밀린 작업 큐는 sorted set {@code timeline:user-memory-update:pending}
- * (member: {@code userId:dailyRecordId:deadlineEpochMillis}, score: 기록 시각 epoch ms — 오래된 것부터
- * 드레인한다). 환경 prefix는 {@link RedisGateway}가 붙인다.
+ * 큐는 sorted set {@code timeline:user-memory-update:pending}
+ * (member: {@code userId:dailyRecordId}, score: <b>최초</b> 기록 시각 epoch ms). 환경 prefix는
+ * {@link RedisGateway}가 붙인다.
  *
- * <p><b>큐는 DLQ다.</b> 저장 직후 즉시 접수가 guard를 잡으면 큐는 아예 쓰이지 않는다 — 여기 쌓이는 것은
- * <b>guard 충돌로 넘어가지 못한 작업</b>뿐이고, 하루 1회 배치가 이들만 처리한다. guard 획득 자체가
- * "그 사용자의 갱신이 진행 중인가"를 판정하므로 별도의 진행 상태 저장이 필요 없다.
+ * <p><b>큐에 있는 것은 전부 "아직 반영 안 된 날"이다.</b> 경합 없이 접수돼 반영까지 끝난 날은 여기 들어오지
+ * 않는다. 넣는 지점은 둘이다 — 사용자 guard를 못 잡았을 때, 그리고 AI가 실패를 통보했을 때. 빼는 지점도
+ * 둘이다 — 반영이 확인됐을 때, 그리고 다시 보내도 소용없는 실패(4xx·재료 없음)일 때.
  *
- * <p>member는 JSON이 아니라 고정 형식 문자열이다 — 같은 작업을 두 번 기록하지 않으려면(ZADD가 member
- * 동일성으로 판정) 필드 순서가 흔들리는 직렬화를 쓸 수 없다.
+ * <p>재기록은 score를 <b>갱신하지 않는다</b>(ZADD NX). 최초 기록 시각이 밀리면 age 기반 포기 시한이
+ * 무한히 연장돼 영영 안 되는 날이 큐에 남는다.
+ *
+ * <p>member는 JSON이 아니라 고정 형식 문자열이다 — 같은 작업을 두 번 담지 않으려면(ZADD가 member
+ * 동일성으로 판정) 필드 순서가 흔들리는 직렬화를 쓸 수 없다. 식별자만으로 만들어지므로 결과 endpoint가
+ * task의 {@code dailyRecordIds}만으로 같은 member를 복원할 수 있다.
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class UserMemoryUpdatePendingStore {
 
     static final String PENDING_KEY = "timeline:user-memory-update:pending";
     private static final String GUARD_KEY_PREFIX = "timeline:user-memory-update:user:";
     private static final String MEMBER_DELIMITER = ":";
-    private static final int MEMBER_FIELD_COUNT = 3;
+    private static final int MEMBER_FIELD_COUNT = 2;
 
     private final RedisGateway redis;
+    private final Duration retention;
+
+    // retention 프로퍼티 주입이 있어 @RequiredArgsConstructor 대신 명시적 생성자를 쓴다.
+    public UserMemoryUpdatePendingStore(
+            RedisGateway redis,
+            @Value("${app.user-memory.update.retention:7d}") Duration retention) {
+        this.redis = redis;
+        this.retention = retention;
+    }
 
     /**
      * 사용자 갱신 guard를 잡는다. 실패는 <b>그 사용자의 다른 갱신이 진행 중</b>이라는 뜻이고, 호출부는
@@ -52,20 +64,34 @@ public class UserMemoryUpdatePendingStore {
         redis.delete(guardKey(userId));
     }
 
-    /** guard 충돌로 넘어가지 못한 작업을 큐에 남긴다. 같은 작업을 다시 넣으면 score만 갱신된다. */
+    /** 아직 반영되지 않은 날을 큐에 남긴다. 이미 있으면 최초 기록 시각을 유지한다. */
     public void enqueue(UserMemoryUpdatePending pending, Instant recordedAt) {
-        redis.addToSortedSet(PENDING_KEY, member(pending), recordedAt.toEpochMilli());
+        redis.addToSortedSetIfAbsent(PENDING_KEY, member(pending), recordedAt.toEpochMilli());
+    }
+
+    public void enqueueAll(long userId, List<Long> dailyRecordIds, Instant recordedAt) {
+        dailyRecordIds.forEach(dailyRecordId ->
+                enqueue(new UserMemoryUpdatePending(userId, dailyRecordId), recordedAt));
     }
 
     public void remove(UserMemoryUpdatePending pending) {
         redis.removeFromSortedSet(PENDING_KEY, List.of(member(pending)));
     }
 
+    public void removeAll(long userId, List<Long> dailyRecordIds) {
+        redis.removeFromSortedSet(PENDING_KEY, dailyRecordIds.stream()
+                .map(dailyRecordId -> member(new UserMemoryUpdatePending(userId, dailyRecordId)))
+                .toList());
+    }
+
     /**
-     * 밀린 작업을 오래된 것부터 최대 {@code limit}개 반환한다.
-     * 형식이 깨진 member는 되살아나지 않도록 즉시 제거하고 결과에서 제외한다.
+     * 아직 시한이 남은 작업을 오래된 것부터 최대 {@code limit}개 반환한다.
+     * 시한({@code retention})을 넘긴 항목과 형식이 깨진 member는 되살아나지 않도록 즉시 제거한다.
      */
     public List<UserMemoryUpdatePending> findPending(Instant now, int limit) {
+        long expiredBefore = now.minus(retention).toEpochMilli();
+        redis.pruneAndCountSortedSet(PENDING_KEY, expiredBefore, expiredBefore);
+
         List<String> members = redis.getSortedSetRangeByScore(PENDING_KEY, now.toEpochMilli(), limit);
         if (members.isEmpty()) {
             return List.of();
@@ -81,7 +107,7 @@ public class UserMemoryUpdatePendingStore {
             pending.add(parsed);
         }
         if (!malformed.isEmpty()) {
-            log.warn("User Memory 갱신 밀린 작업 형식 오류로 폐기: count={}", malformed.size());
+            log.warn("User Memory 갱신 미반영 작업 형식 오류로 폐기: count={}", malformed.size());
             redis.removeFromSortedSet(PENDING_KEY, malformed);
         }
         return List.copyOf(pending);
@@ -92,8 +118,7 @@ public class UserMemoryUpdatePendingStore {
     }
 
     private static String member(UserMemoryUpdatePending pending) {
-        return pending.userId() + MEMBER_DELIMITER + pending.dailyRecordId()
-                + MEMBER_DELIMITER + pending.deadline().toEpochMilli();
+        return pending.userId() + MEMBER_DELIMITER + pending.dailyRecordId();
     }
 
     private static UserMemoryUpdatePending parse(String member) {
@@ -102,10 +127,7 @@ public class UserMemoryUpdatePendingStore {
             return null;
         }
         try {
-            return new UserMemoryUpdatePending(
-                    Long.parseLong(fields[0]),
-                    Long.parseLong(fields[1]),
-                    Instant.ofEpochMilli(Long.parseLong(fields[2])));
+            return new UserMemoryUpdatePending(Long.parseLong(fields[0]), Long.parseLong(fields[1]));
         } catch (IllegalArgumentException e) {
             // 숫자 파싱 실패와 record compact 생성자의 범위 검증 실패를 함께 받는다.
             return null;

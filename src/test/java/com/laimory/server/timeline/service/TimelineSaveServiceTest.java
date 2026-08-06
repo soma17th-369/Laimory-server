@@ -15,12 +15,8 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,8 +40,6 @@ class TimelineSaveServiceTest {
     private static final long USER_ID = 7L;
     private static final Long RECORD_ID = 42L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
-    private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
-    private static final Duration DEADLINE = Duration.ofMinutes(5);
 
     @Mock
     private DailyRecordService dailyRecordService;
@@ -60,8 +54,7 @@ class TimelineSaveServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService,
-                worker, Clock.fixed(NOW, ZoneOffset.UTC), DEADLINE);
+        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService, worker);
     }
 
     @Test
@@ -89,17 +82,16 @@ class TimelineSaveServiceTest {
     }
 
     @Test
-    void 접수_요청은_식별자와_저장_시점_기준_deadline을_담는다() {
+    void 접수_요청은_식별자만_담는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
         service.save(VERSION, USER_ID, RECORD_DATE);
 
+        // 접수 body와 base 지문은 guard를 잡은 뒤 worker가 만든다 — 여기서 미리 조립하지 않는다.
         ArgumentCaptor<UserMemoryUpdatePending> pending = ArgumentCaptor.forClass(UserMemoryUpdatePending.class);
         verify(worker).dispatchNow(pending.capture());
-        assertThat(pending.getValue().userId()).isEqualTo(USER_ID);
-        assertThat(pending.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
-        assertThat(pending.getValue().deadline()).isEqualTo(NOW.plus(DEADLINE));
+        assertThat(pending.getValue()).isEqualTo(new UserMemoryUpdatePending(USER_ID, RECORD_ID));
     }
 
     @Test

@@ -143,7 +143,7 @@ class TimelineSaveFlowIntegrationTest {
                 .getDailyRecordId();
         // 앞선 날짜가 guard를 잡고 진행 중인 상태를 만든다.
         Instant now = clock.instant();
-        UserMemoryUpdatePending inFlight = new UserMemoryUpdatePending(userId, otherRecordId, now.plusSeconds(300));
+        UserMemoryUpdatePending inFlight = new UserMemoryUpdatePending(userId, otherRecordId);
         pendingStore.enqueue(inFlight, now);
         assertThat(pendingStore.acquireGuard(userId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
@@ -158,23 +158,43 @@ class TimelineSaveFlowIntegrationTest {
         pendingStore.releaseGuard(userId);
         userMemoryUpdateWorker.retryPendingUpdates();
 
-        // guard가 풀리자 배치가 접수로 넘겨 큐에서 사라졌다(noop dispatcher라 결과는 오지 않는다).
+        // 배치는 접수만 하고 큐를 비우지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
+        // noop dispatcher라 결과가 오지 않으므로 항목이 그대로 남아 있어야 한다.
+        assertThat(pendingEntriesOf(userId))
+                .extracting(UserMemoryUpdatePending::dailyRecordId)
+                .contains(recordId);
+    }
+
+    @Test
+    void 반영이_확인되면_결과_endpoint가_큐에서_지운다() throws Exception {
+        JsonNode updated = objectMapper.readTree("{\"schemaVersion\":\"1.0\"}");
+        pendingStore.enqueue(new UserMemoryUpdatePending(userId, recordId), clock.instant());
+
+        String taskId = UUID.randomUUID().toString();
+        String token = TaskTokens.generate();
+        taskStore.save(taskId, new UserMemoryUpdateTask(userId, List.of(recordId), TaskTokens.hash(token),
+                clock.instant(), UserMemoryDigest.of(Optional.empty())), Duration.ofMinutes(3));
+
+        userMemoryUpdateResultService.applyResult("v1", taskId, token,
+                new AiUserMemoryUpdateResultRequest("SUCCESS", updated, null, null));
+
         assertThat(pendingEntriesOf(userId)).isEmpty();
     }
 
     @Test
-    void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
-        Long otherRecordId = dailyRecordRepository
-                .save(DailyRecord.createDraft(userId, OTHER_DATE, OTHER_DATE.atTime(12, 0), ZONE))
-                .getDailyRecordId();
-        Instant now = clock.instant();
-        pendingStore.enqueue(new UserMemoryUpdatePending(userId, recordId, now.plusSeconds(300)), now);
-        pendingStore.enqueue(new UserMemoryUpdatePending(userId, otherRecordId, now.plusSeconds(300)), now);
+    void AI가_실패를_통보하면_결과_endpoint가_큐에_넣어_배치가_재시도하게_한다() {
+        String taskId = UUID.randomUUID().toString();
+        String token = TaskTokens.generate();
+        taskStore.save(taskId, new UserMemoryUpdateTask(userId, List.of(recordId), TaskTokens.hash(token),
+                clock.instant(), null), Duration.ofMinutes(3));
 
-        userMemoryUpdateWorker.retryPendingUpdates();
+        userMemoryUpdateResultService.applyResult("v1", taskId, token,
+                new AiUserMemoryUpdateResultRequest("FAILED", null, 1210, "budget exceeded"));
 
-        // 나눠 보내면 guard가 사용자당 하나라 하루에 한 건씩만 처리된다.
-        assertThat(pendingEntriesOf(userId)).isEmpty();
+        // 즉시 접수 경로였어도(큐에 없었어도) 여기서 들어간다 — 실패한 날이 조용히 사라지지 않는다.
+        assertThat(pendingEntriesOf(userId))
+                .extracting(UserMemoryUpdatePending::dailyRecordId)
+                .contains(recordId);
     }
 
     @Test
