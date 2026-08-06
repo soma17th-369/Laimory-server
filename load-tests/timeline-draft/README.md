@@ -1,0 +1,330 @@
+# 타임라인 생성 부하 테스트 (#251)
+
+Issue [#251](https://github.com/soma17th-369/Laimory-server/issues/251)의 k6 부하 테스트 자산이다.
+"서로 다른 사용자 1,000명이 1초 이내에 `POST /a/api/v1/timeline/drafts`를 각 1회 요청하는 one-shot spike"를
+재현 가능한 형태로 실행하고, 처리량·응답시간·오류율과 병목을 기록한다.
+
+순수 접수 경로와 동기 geo 경로를 한 결과에 섞지 않는다. 두 결과를 분리해야 "느린 원인이 WAS/DB인지
+Kakao WebClient pool인지"를 구분할 수 있다.
+
+## 안전 경계
+
+- 실제 Kakao Local API를 호출하지 않는다. geo 부하는 [#257 simulator](../kakao-simulator/README.md)만 쓴다.
+- 실제 AI service로 dispatch가 전파되지 않게 `APP_AI_MODE=noop`을 확인하고 실행한다.
+  localhost 외 대상에는 `CONFIRM_AI_NOOP=yes` 없이 k6가 실행되지 않는다.
+- 실제 사용자 데이터를 읽거나 쓰지 않는다. 사용자·좌표·주소·rawId는 전부 합성값이다.
+- access token, user manifest, k6 raw 결과는 `.artifacts/`에만 두고 커밋하지 않는다.
+- dev WAS `.env` 변경, container recreate, simulator EC2 조작과 원복은 **사용자가 직접 수행한다**.
+  이 저장소의 스크립트는 어떤 AWS 리소스도 만들거나 바꾸지 않는다.
+
+## 산출물
+
+```text
+load-tests/timeline-draft/
+├── README.md                       # 이 runbook
+├── .gitignore                      # .artifacts/ 격리(anchored)
+├── .artifacts/.gitkeep             # 격리 sentinel — 나머지는 전부 무시된다
+├── k6/
+│   ├── calendar-core.js            # 접수 경로만
+│   ├── geo-1-stay.js               # 접수 + 동기 지오코딩 1좌표(representative)
+│   ├── geo-18-stay.js              # 좌표 18개(heavy sensitivity, representative 아님)
+│   └── lib/{config,payload,tokens,spike}.js
+├── scripts/
+│   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
+│   ├── run-ladder.sh               # 단계 사다리 + 중단 gate
+│   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
+│   └── verify-redis-residue.sh     # Redis 잔여 확인
+└── sql/
+    ├── 01-seed-users.sql           # 합성 사용자 1,000명
+    ├── 02-export-user-ids.sql      # user_id 목록 추출
+    ├── 03-db-size-baseline.sql     # DB 규모·buffer pool 기준선
+    ├── 04-verify-run.sql           # run 결과 검증(고유 사용자·task 수)
+    ├── 05-cleanup-dry-run.sql      # 삭제 예정 행 수
+    ├── 06-cleanup.sql              # 실제 삭제
+    └── 07-verify-residue.sql       # 잔여 0 검증
+```
+
+## 선행 조건
+
+- k6 (검증 시점 `v2.1.0`), Python 3, `mysql` client, `redis-cli`, `git`
+- dev MySQL과 shared Redis 접근 경로(WAS SSH 터널 또는 SSM)
+- dev `JWT_SECRET` 값(토큰 발급용, 파일이나 환경변수로만 다룬다)
+- geo 시나리오에만: #257 simulator가 기동돼 있고 contract/preflight를 통과한 상태
+
+## 시나리오
+
+| 시나리오 | 요청 body | Kakao 호출 | 측정 대상 |
+|---|---|---|---|
+| `calendar-core` | CALENDAR 1개(좌표 없음) | 0 | JWT, WAS, MySQL, Redis, AI noop 접수 |
+| `geo-1-stay` | STAY 1개(고유 좌표 1개) | 요청당 2 | core + WebClient pool/pending, timeout/retry/circuit, servlet worker 대기 |
+| `geo-18-stay` | STAY 18개(고유 좌표 18개) | 요청당 36 | 좌표 수 민감도(heavy) — representative 아님 |
+
+CALENDAR가 Kakao를 호출하지 않는 근거는 서버 구현이다. 지오코딩 대상 좌표는 STAY 좌표와 MOVEMENT
+start/end에서만 수집하고, 수집 결과가 비면 조회 자체를 생략한다.
+
+좌표 18개는 서버 공개 상한(`app.geo.max-unique-coordinates`, 기본 30) 아래이면서 요청 하나로 전용
+connection pool(기본 20)을 거의 채우는 값이다.
+
+## 측정 설계
+
+**barrier로 동시성을 만든다.** VU마다 iteration 1회(`per-vu-iterations`)이고, 모든 VU는 `setup()`이 정한
+같은 절대 시각까지 기다렸다가 동시에 발사한다. barrier가 없으면 VU 기동 순서가 그대로 요청 분포가 되어
+"1초 스파이크"가 아니라 완만한 ramp가 된다.
+
+**`request_start_offset_ms`의 max가 request start window다.** 1초를 넘으면 서버 용량 문제가 아니라
+부하 생성기가 부하를 만들지 못한 것이므로 그 run은 무효로 처리하고 same-region runner로 옮긴다.
+
+**중단 gate는 전부 custom metric에 건다.** `setup()`의 `/status` preflight 요청이 내장 `http_req_*`에
+섞이기 때문에 내장 metric에 gate를 걸면 측정 대상이 오염된다.
+
+| metric | 기본 gate | 의미 |
+|---|---|---|
+| `draft_accepted` | `rate >= 0.99` | 202 + envelope `header.code=0` + `body.taskId` 존재 |
+| `draft_req_duration` | `p(95) < 3000ms` | 접수 요청 응답시간 |
+| `request_start_offset_ms` | `max < 1000ms` | 발사 분산(부하 생성기 건강도) |
+| `draft_requests` | `count == VUS` | 모든 VU가 실제로 발사했는지 |
+
+기본값은 SLO가 아니라 폭주를 멈추는 안전 상한이다. VU 1 calibration 결과를 보고 시나리오마다 조정한다.
+
+### geo 시나리오는 `draft_accepted`만으로 판정하지 않는다
+
+지오코딩이 일부 실패해도 서버는 draft를 거절하지 않는다. 품질 기준(고유 좌표 실패 20% 초과 또는 시간순
+연속 3개)을 넘을 때만 502이고, 그 아래 실패는 **허용**되어 해당 item이 `address=null`, `places=[]`로 저장된
+채 202가 나간다. 즉 `accepted 100%`인 run에도 좌표 일부가 조용히 지오코딩되지 않았을 수 있다.
+
+geo 단계는 다음 두 값을 함께 확인해야 유효하다.
+
+- simulator journal: `coord2address == keyword == VUS × 좌표수`, unmatched 0
+  (두 endpoint의 수가 다르면 그 차이가 곧 허용된 실패다 — coord2address가 실패한 좌표는 keyword를 건너뛴다)
+- `04-verify-run.sql` 4번 쿼리: `with_address == with_places == stay_items`
+
+어긋나면 그 단계는 "부분 지오코딩 실패"로 기록하고, 수치를 gate 통과로 취급하지 않는다.
+
+### 예상 포화 지점
+
+전용 pool 용량은 active 20 + pending 20 = **동시 40**이고(기본 설정), 요청 하나의 병렬 조회 상한은
+`app.geo.lookup-concurrency`(기본 20)다. 순간 동시 lookup 수는 `VUS × min(좌표수, 20)`이다.
+
+| 시나리오 | 요청당 동시 lookup | 포화가 시작되는 지점 |
+|---|---|---|
+| `geo-1-stay` | 1 | pool을 넘겨도 pending queue가 빠르게 빠져 즉시 거절이 잘 안 난다. VU가 늘면 대기가 p95로 나타난다 |
+| `geo-18-stay` | 18 | 요청 2개만 겹쳐도 36 동시. 3 VU(54)에서 용량 40을 넘어 `LOCAL_REJECTED` → 502 |
+
+로컬 기본 설정 실측에서 `geo-18-stay`는 1 VU 완전 성공, 2 VU에서 허용 한도 안의 경계 실패, 3 VU 이상에서
+502였다. `geo-1-stay`는 60 VU까지 좌표 누락 없이 통과하고 p95만 증가했다. dev의 절대 수치는 다르겠지만
+"요청당 병렬도가 버스트 크기를 정한다"는 관계는 같다.
+
+사다리가 여기서 멈추는 것은 스크립트 실패가 아니라 **측정 결과**다. 멈춘 지점과 그때의 pool active/pending,
+`laimory.geo.http.logical` 분류를 함께 기록한다.
+
+## 실행 절차
+
+모든 명령은 저장소 루트에서 실행한다.
+
+### 0. 실행 조건 확인·기록
+
+**대상의 `APP_AI_MODE`가 `noop`인지 먼저 확인한다.** draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를
+부르므로, `noop`이 아니면 요청 수만큼 실제 AI로 그대로 전파된다. `http`면 실 AI service가 1,000건을 받고,
+`fake`는 dispatch마다 2초 대기 후 자기 서버로 HTTP 3콜과 타임라인 저장을 수행하는데 실행기가 기본
+`applicationTaskExecutor`(스레드 8, 무제한 큐)라 뒤 단계 관측 구간까지 self-callback 부하가 번지고 정리
+범위도 커진다. `noop`은 로그만 남기고 task가 PROCESSING TTL 3분으로 소멸한다.
+
+localhost가 아닌 대상에는 k6가 `CONFIRM_AI_NOOP=yes` 없이는 실행을 거부한다. 이 확인 없이는 사다리를
+시작할 수 없다.
+
+```bash
+CONFIRM_AI_NOOP=yes   # APP_AI_MODE=noop을 눈으로 확인한 뒤에만 붙인다
+```
+
+`.env`는 컨테이너 기동 시점에만 읽히므로 값을 바꿨다면 container recreate가 필요하다(사용자 직접 수행).
+
+manifest에 남길 값:
+
+```text
+run-id
+배포 commit SHA (APP_COMMIT_SHA)
+WAS EC2 instance type / T3 credit mode / 시작 credit balance
+BASE_URL(대상)과 k6 실행기 위치·리전
+APP_AI_MODE / APP_GEO_MODE
+DB 규모 기준선(03-db-size-baseline.sql 출력)
+```
+
+### 1. 합성 사용자 seed
+
+```bash
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/01-seed-users.sql
+```
+
+재실행해도 안전하다(이미 있는 행은 건너뛴다). 마지막 SELECT의 `min_created_at`이 `seoul_now`와 같은
+대역인지 확인한다 — dev MySQL 호스트는 UTC이고 앱은 Asia/Seoul 벽시계로 저장하므로 시각을 그대로
+`NOW()`로 심으면 앱 기준 9시간 과거가 된다.
+
+### 2. user_id 목록 추출
+
+```bash
+mysql --defaults-extra-file=<config> -N -B <db> \
+  < load-tests/timeline-draft/sql/02-export-user-ids.sql \
+  > load-tests/timeline-draft/.artifacts/user-ids.txt
+```
+
+### 3. access token 발급
+
+```bash
+JWT_SECRET="$(cat ~/laimory-dev-jwt-secret)" \
+  python3 load-tests/timeline-draft/scripts/generate-tokens.py \
+    --user-ids load-tests/timeline-draft/.artifacts/user-ids.txt \
+    --run-id 20260806-01
+```
+
+서버는 access token을 저장하지 않고 서명·issuer·만료만 검증하므로(stateless) 로그인 흐름을 태우지 않고
+발급할 수 있다. 서버는 `exp`만 보고 발급 TTL 자체를 강제하지 않으므로 기본 2시간으로 만든다 — run이
+길어지면 `--ttl-seconds`로 늘리고, 끝나면 파일을 지운다.
+
+secret은 환경변수로만 전달한다(인자로 넘기면 프로세스 목록에 남는다).
+
+### 4. VU 1 calibration
+
+사다리를 올리기 전에 VU 1로 end-to-end median을 확인한다.
+
+```bash
+RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
+  k6 run load-tests/timeline-draft/k6/calendar-core.js
+```
+
+제공된 dev median 기준값은 `/status` 34ms, 1좌표 POST 163ms, 18좌표 POST 287ms다. geo 값이 이 범위를
+크게 벗어나면 #251에서 임의 지연을 만들지 않고 #257의 latency profile을 보정한다.
+
+### 5. calendar-core 사다리
+
+```bash
+RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
+  load-tests/timeline-draft/scripts/run-ladder.sh calendar-core
+```
+
+`1 → 10 → 50 → 100 → 300 → 500 → 1000` 순서로 올라가며, 한 단계라도 gate에 걸리면 거기서 멈춘다.
+단계마다 `recordDate`가 하루씩 밀린다 — `daily_records`가 `(user_id, record_date)` UNIQUE라 같은 날짜를
+재사용하면 두 번째 단계가 INSERT 대신 UPDATE가 되어 작업 성격이 달라지기 때문이다.
+
+단계 사이에는 PROCESSING TTL 3분이 지나도록 기본 190초 쉰다(`COOLDOWN_SECONDS`로 조정).
+
+### 6. geo 사다리
+
+**전환(사용자 직접 수행)** — dev WAS `.env`를 백업하고 다음 값으로 바꾼 뒤 container recreate:
+
+```text
+APP_GEO_MODE=kakao
+APP_GEO_KAKAO_BASE_URL=http://<SIMULATOR_PRIVATE_IP>:8080
+KAKAO_REST_API_KEY=k6-257-dummy
+APP_AI_MODE=noop
+```
+
+전환 직후 simulator journal을 reset하고 1좌표 요청 하나를 보내 **coord2address 1회 + keyword 1회,
+unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다 — k6는 애플리케이션이
+어느 base URL을 보는지 알 수 없다.
+
+```bash
+RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
+  load-tests/timeline-draft/scripts/run-ladder.sh geo-1-stay
+```
+
+geo 사다리는 `1 → 10 → 20 → 40 → 50 → 100 → 300 → 500 → 1000`이다. 20과 40은 각각 pool 상한과 그 2배로,
+pending acquire가 실제로 쌓이기 시작하는 지점을 보기 위한 단계다.
+
+heavy sensitivity는 별도로 돌리고 결과도 따로 기록한다(representative와 나란히 놓지 않는다).
+사다리는 `1 → 2 → 3`으로 짧다 — 위 "예상 포화 지점"대로 3 VU면 이미 pool 용량을 넘기 때문에 더 올려도
+같은 실패만 반복된다. 보고할 값은 최대 VU가 아니라 **좌표 누락 없이 통과한 마지막 VU**다.
+
+```bash
+RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
+  load-tests/timeline-draft/scripts/run-ladder.sh geo-18-stay
+```
+
+**원복(사용자 직접 수행)** — 백업한 `.env`로 되돌리고 container recreate 후 integration smoke를 확인한 다음
+simulator를 중지한다. WAS 원복 확인 전에 simulator를 먼저 내리지 않는다.
+
+### 7. 지표 대조
+
+k6 결과(`.artifacts/*-summary.json`)와 같은 시간대의 서버 지표를 나란히 본다.
+
+- HTTP: 요청률·상태코드 분포, servlet 처리 스레드
+- JVM: CPU, heap, GC pause
+- host: memory, CPU credit(T3)
+- Hikari: active/idle/pending, 획득 대기
+- MySQL: 연결 수, 느린 쿼리, InnoDB 대기
+- Redis: 명령률, 지연
+
+geo run은 추가로:
+
+- `laimory.geo.http.logical`(endpoint별 p50/p95/p99), `laimory.geo.http.attempts`,
+  `laimory.geo.http.retries`, `laimory.geo.circuit.transitions`
+- `reactor.netty.connection.provider.*`(pool 이름 `kakao-local`) — active/pending
+- simulator 측: WireMock endpoint count, unmatched, container CPU/memory/restart/OOM
+
+### 8. 검증과 정리
+
+```bash
+# run 결과 검증 — 단계별로 확인한다.
+# @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|g1|g18) + 단계 번호다(예: geo-1-stay 4단계 → g13).
+sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/g13/" \
+  load-tests/timeline-draft/sql/04-verify-run.sql \
+  | mysql --defaults-extra-file=<config> <db>
+
+# 삭제 예정 행 수 → manifest에 기록
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/05-cleanup-dry-run.sql
+
+# 실제 삭제
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/06-cleanup.sql
+
+# 잔여 0 확인(모든 residue_rows가 0)
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/07-verify-residue.sql
+
+# Redis 잔여 확인
+REDIS_HOST=<host> REDIS_PREFIX=dev_ \
+  load-tests/timeline-draft/scripts/verify-redis-residue.sh
+```
+
+dry-run의 `timeline_items (orphan-to-be)`는 0이어야 한다. 0이 아니면 AI가 결과를 저장했다는 뜻이라
+noop 격리 전제가 깨진 것이므로 삭제를 진행하지 말고 원인을 먼저 확인한다.
+
+Redis는 수동 삭제가 필요 없다. task 키와 사용자 index 키는 TTL 3분으로 사라지고, 전역 PROCESSING index는
+stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
+
+마지막으로 토큰과 artifact를 지우고 격리를 검증한다.
+
+```bash
+rm -f load-tests/timeline-draft/.artifacts/tokens.json \
+      load-tests/timeline-draft/.artifacts/user-ids.txt
+load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
+```
+
+## 환경변수
+
+| 이름 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `RUN_ID` | ✅ | — | run 식별자. 결과 파일명과 rawId에 들어간다 |
+| `BASE_URL` | ✅ | — | 대상(예: `https://dev.laimory.app`) |
+| `VUS` | ✅ | — | 이 단계의 VU 수(= 사용자 수). `run-ladder.sh`가 주입한다 |
+| `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
+| `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
+| `STEP_INDEX` | | `0` | 사다리 단계 번호. recordDate를 하루씩 민다 |
+| `RECORD_DATE_BASE` | | `2031-01-01` | 합성 날짜 대역의 시작 |
+| `TOKENS_FILE` | | `.artifacts/tokens.json` | token 파일 경로 |
+| `ARTIFACT_DIR` | | `load-tests/timeline-draft/.artifacts` | 결과 출력 경로 |
+| `START_DELAY_MS` | | `5000` | barrier까지의 대기(모든 VU가 도달할 시간) |
+| `REQUEST_BUDGET_MS` | | `60000` | barrier 이후 허용 시간 |
+| `MAX_ERROR_RATE` | | `0.01` | `draft_accepted` gate |
+| `MAX_P95_MS` | | `3000` | `draft_req_duration` p95 gate |
+| `MAX_START_WINDOW_MS` | | `1000` | request start window gate |
+| `LADDER` | | 시나리오별 | 사다리 재정의(공백 구분) |
+| `COOLDOWN_SECONDS` | | `190` | 단계 사이 대기 |
+
+## 완료 기준
+
+- core·geo k6 스크립트, SQL fixture, token generator와 runbook이 저장소에 있고 secret·runtime artifact가 없다.
+- 1,000개의 서로 다른 user/token 요청이 1초 start window 안에서 각각 정확히 한 번 시작됐음을 k6
+  `request_start_offset_ms`와 `04-verify-run.sql`의 `distinct_users`로 함께 증명한다.
+- `calendar-core`와 `geo-1-stay` 결과가 분리돼 있고 `geo-18-stay`는 heavy sensitivity로 따로 기록된다.
+- 실제 Kakao·실제 AI로 대량 호출이 나가지 않았다(simulator journal count, `APP_AI_MODE=noop`).
+- 인스턴스·commit·DB 규모·simulator·runner 조건과 단계별 처리량, p95/p99, 오류율, resource 지표가 기록된다.
+- geo run 뒤 dev 설정 원복과 integration smoke를 확인한 다음 simulator를 중지했다.
+- MySQL/Redis 잔여가 0이고 `.artifacts/`의 token이 삭제됐다.
