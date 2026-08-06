@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -130,7 +131,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal · "
-                            + "memo 10,000자 초과 · photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌 · "
+                            + "memo 500자 초과 · photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌 · "
                             + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
@@ -148,12 +149,12 @@ public interface TimelineRecordApi {
 
     @Operation(summary = "타임라인 Event 메모 작성·수정·제거",
             description = "메모를 요청 값으로 교체하는 단일 endpoint다. memo가 null·공백뿐이거나 필드가 없으면(`{}`) "
-                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 10,000자).")
+                    + "메모를 제거한다. 그 외 문자열은 trim 없이 원문 그대로 저장한다(String.length() 기준 최대 500자).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "반영 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — memo가 10,000자 초과"),
+                    description = "`-400` — memo가 500자 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -263,5 +264,31 @@ public interface TimelineRecordApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
             @Parameter(description = "삭제할 기록 날짜", example = "2026-07-08")
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
+
+    @Operation(summary = "하루 기록(DailyRecord) 저장(작성완료)",
+            description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 SAVED로 확정한다. request body는 없다. "
+                    + "**200이 곧 저장 완료다** — 전이가 커밋된 뒤 응답한다. 저장 후에는 Event 수정·메모·삭제, "
+                    + "Item 연결 해제, 같은 날짜 draft 추가가 모두 `-1003`으로 거절된다. "
+                    + "커밋 뒤 서버가 User Memory 갱신을 별도로 진행하지만 그 성패는 이 응답과 무관하며 "
+                    + "클라이언트가 기다리거나 조회할 대상이 아니다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "저장 성공(body=null)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료). 응답 유실 뒤 재시도한 "
+                            + "클라이언트에게는 \"앞선 저장이 성공했다\"는 뜻이다")
+    })
+    @PostMapping("/daily-records/{recordDate}/save")
+    ResponseEntity<ApiResponse<Void>> saveDailyRecord(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(description = "저장할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 }

@@ -192,7 +192,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_rejectsOversizedMemoBeforeWriter() {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, "m".repeat(10_001), true,
+                null, "제목", null, NEW_START, null, "m".repeat(501), true,
                 List.of(photo(RAW_ID_1, FILENAME_1, "content://first")));
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
@@ -306,24 +306,24 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
-    void updateMemo_blankCheckPrecedesLengthAndExactly10000NonBlankCharsAreAccepted() {
+    void updateMemo_blankCheckPrecedesLengthAndExactly500NonBlankCharsAreAccepted() {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
 
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, " ".repeat(10_001));
+        service.updateMemo(VERSION, USER_ID, EVENT_ID, " ".repeat(501));
         assertThat(event.getMemo()).isNull();
 
-        String maximumMemo = "가".repeat(10_000);
+        String maximumMemo = "가".repeat(500);
         service.updateMemo(VERSION, USER_ID, EVENT_ID, maximumMemo);
         assertThat(event.getMemo()).isEqualTo(maximumMemo);
     }
 
     @Test
-    void updateMemo_rejects10001CharsWithoutMutation() {
+    void updateMemo_rejects501CharsWithoutMutation() {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
 
-        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(10_001)))
+        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(501)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
@@ -338,7 +338,7 @@ class TimelineEventEditServiceTest {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(10_001)))
+        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(501)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
 

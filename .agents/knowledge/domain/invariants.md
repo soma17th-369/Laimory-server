@@ -58,6 +58,18 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   DB unique invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
 - final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
   미지원 literal은 결과 저장 400이다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
+- `DRAFT→SAVED` 전이는 조건부 UPDATE(`WHERE status='DRAFT'`)의 영향 행 수가 유일한 판정 기준이자 이
+  흐름의 유일한 직렬화 지점이다. 사전 검증을 통과한 요청 둘이 겹쳐도 하나만 1을 받고 나머지는 부수효과
+  없이 롤백된다(0행은 재조회로 이미 SAVED 409 / 없음·비소유 404로 분류).
+- **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
+  교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
+  사용자의 저장 완료를 좌우하지 않는다.
+- User Memory 갱신 접수 body와 base 문서 지문은 **사용자 guard를 잡은 뒤** 그 시점의 상태로 만든다.
+  대기 중에 앞선 날짜의 갱신이 문서를 바꾸므로, 미리 조립하면 낡은 문서를 base로 삼게 된다.
+- User Memory 결과 적용 여부는 base 문서 지문(SHA-256) 일치가 판정한다. 불일치는 그 사이 다른 날짜가
+  문서를 교체했다는 뜻이라 결과를 폐기한다(409) — 적용하면 그 날짜의 기여가 조용히 사라진다.
+- 사용자 단위 guard(`SET NX`) 점유는 실패가 아니라 정상 직렬화다 — 갱신을 스킵하지 않고 대기시킨다.
+  저장 자체는 guard와 무관하게 항상 성공한다.
 
 ### Deletion
 
@@ -184,7 +196,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ## Known Gaps
 
-- DRAFT→SAVED 사용자 전이, emotion 입력 API가 없다.
+- emotion 입력 API가 없다(저장 API 범위 밖 — `emotion_type`은 계속 null이다).
+- User Memory 갱신이 AI FAILED·deadline 초과로 끝내 안 된 날은 그 날의 내용이 memory에 반영되지 않는다.
+  guard 충돌 누락은 대기 재시도가 없앴고, 남은 구멍은 MQ 도입과 함께 다룬다(로그로만 관측).
 - 실 AI(Laimory-AI)의 서버간 입력·결과 호출 구현은 별도 저장소 진행분이다.
 - photo orphan cleanup과 automatic deployment rollback이 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제가 겹칠 때의 graph 정합성 보장은 미구현이다. 공통 Redis

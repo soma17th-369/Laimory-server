@@ -54,7 +54,7 @@ public record UpdateTimelineEventRequest(
                         + "허용값은 응답의 eventType과 같다(UNKNOWN 포함).")
         TimelineEventType eventType,
         @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true,
-                description = "이벤트 메모. 키 누락은 유지, null 또는 공백뿐이면 제거, 그 외 원문을 저장한다(최대 10,000자).")
+                description = "이벤트 메모. 키 누락은 유지, null 또는 공백뿐이면 제거, 그 외 원문을 저장한다(최대 500자).")
         String memo,
         @JsonIgnore
         @Schema(hidden = true)

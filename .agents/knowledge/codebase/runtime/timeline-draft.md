@@ -15,6 +15,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - `TimelineAiDispatcher`(+`AiTimelineDispatchRequest`), `TimelineAiTaskInputService`,
   `TimelineAiResultService`/`TimelineAiResultTransactionService`, `TimelineCallbackService`, `TimelineTaskService`
 - `TimelineEventEditService`와 Event 편집 transaction service
+- `TimelineSaveService`/`TimelineSaveTransactionService`, `UserMemoryUpdateWorker`,
+  `UserMemoryUpdateResultService`, `UserMemoryUpdatePendingStore`/`UserMemoryUpdateTaskStore`
 - `DailyTimelineService`(읽기), `TimelineDeletionService`/`TimelineDeletionTransactionService`
 - timeline entities(junction 포함), repositories, Redis stores and integration tests
 - `src/main/resources/db/schema.sql`, `application*.properties`
@@ -159,6 +161,36 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외는 두 행을 남겨 다음 fixed delay에
   재시도한다.
 
+### Save (DRAFT→SAVED)와 User Memory 갱신
+
+- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(body 없음). `(principal userId,
+  recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로 <b>부수효과 전에</b>
+  거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로 전이한다. 영향 행 수 0은
+  재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
+- **전이와 User Memory 교체는 서로 다른 API가 담당하는 서로 다른 transaction이다.** 저장 API는 전이만
+  commit하고 200을 반환하며, 교체는 10초+ 뒤 AI가 결과를 들고 왔을 때
+  `POST /s/api/{version}/user-memory/updates/{taskId}/result`가 수행한다. 그래서 사용자의 저장이 AI의
+  성패에 묶이지 않는다.
+- 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
+  시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
+- 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 `(userId, dailyRecordId, deadline)`만 Redis 대기
+  sorted set(`timeline:user-memory-update:pending`, score = 재시도 가능 시각)에 넣고 응답한다.
+  등록 실패는 로그만 남기고 200을 깨지 않는다.
+- `UserMemoryUpdateWorker`가 `@Scheduled` fixed delay(기본 15초)로 ready 항목을 드레인한다. 사용자
+  guard(`timeline:user-memory-update:user:{userId}`, SET NX, TTL 3분) 획득이 곧 큐에서의 claim이고
+  둘은 한 Lua 실행이다 — 나누면 인스턴스 둘이 같은 항목을 읽었을 때 같은 날짜가 두 번 접수될 수 있다.
+- **guard 점유는 스킵이 아니라 대기다.** 그 사용자의 다른 날짜가 진행 중이면 항목을 재시도 간격만큼
+  뒤로 밀고 큐에 남긴다. deadline(저장 +5분)을 넘긴 항목만 버린다. 사용자가 연속 저장하는 정상 패턴에서
+  하루치를 버리지 않기 위한 결정이다.
+- **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 대기 중에 앞선 날짜의 갱신이 문서를
+  바꾸므로, 등록 시점에 조립해 두면 낡은 문서를 base로 삼게 되고 대기가 무의미해진다.
+- 접수 body는 확정된 타임라인을 구조화한 `diaries[].events[]`다(`question`·`memo` 포함, `items[]`와 행 PK
+  제외, 시각은 record timezone offset). 접수 실패는 **재시도하지 않는다** — 저장은 이미 끝났고 그 날치
+  memory 반영만 누락된다. 그래서 AI를 두들기는 루프가 없고 circuit breaker도 두지 않는다.
+- 결과 적용은 token 검증 → base 지문 대조 → 문서 전체 교체 순이다. 지문이 다르면 그 사이 다른 날짜의
+  갱신이 문서를 교체했다는 뜻이라 409(`-1017`)로 폐기한다. 성공·실패 어느 쪽이든 task와 guard를 지우므로
+  중복·뒤늦은 결과는 404(`-1001`)가 된다. 이 경로는 `daily_records`를 건드리지 않는다.
+
 ### Retention and cleanup
 
 - PROCESSING TTL: 3분(입력 조회·stage 전이마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
@@ -178,6 +210,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
+- 저장 전이와 User Memory 교체는 하나의 transaction이 아니다 — 저장 API가 전이를, 결과 API가 교체를
+  각각 commit한다. User Memory는 저장 성패와 무관한 보조 데이터다.
+- User Memory 갱신 접수 body와 base 지문은 사용자 guard를 잡은 뒤에 만든다.
 - Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
   서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
@@ -188,7 +223,13 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Known Gaps
 
 - 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
-- DRAFT→SAVED, emotion 설정 API가 없다.
+- emotion 설정 API가 없다.
+- User Memory 갱신이 **끝내 안 된 날**(AI FAILED·deadline 5분 초과)은 그 날의 내용이 memory에 영영
+  반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
+  없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를
+  `userId`/`dailyRecordId`/`taskId` 로그로만 관측한다.
+- 대기 중인 두 날짜가 경합하면 memory에 병합되는 순서가 정해지지 않는다. 누락이 아니라 순서 문제라
+  수용한다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.
 - 실패 task가 남긴 empty DRAFT의 자동 cleanup은 없다(같은 날짜 재시도가 재사용).
 - 같은 날짜 draft·수동 PHOTO 추가·삭제가 겹칠 때의 graph 정합성 보장은 미구현이다. 현재는 공통

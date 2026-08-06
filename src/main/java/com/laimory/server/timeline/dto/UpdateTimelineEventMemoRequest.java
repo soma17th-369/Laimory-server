@@ -7,11 +7,11 @@ import io.swagger.v3.oas.annotations.media.Schema;
  *
  * <p><b>제거 규칙</b>: {@code memo}가 {@code null}이거나 공백뿐이거나 필드가 아예 없으면(body {@code {}})
  * 메모를 제거한다(null 저장). 그 외 문자열은 trim 없이 원문 그대로 저장하며,
- * {@code String.length()} 기준 최대 10,000자다(초과 시 400).
+ * {@code String.length()} 기준 최대 500자다(초과 시 400) — User Memory 갱신 접수 계약의 상한이다.
  */
 public record UpdateTimelineEventMemoRequest(
         @Schema(example = "오늘은 날씨가 좋아서 오래 걸었다.",
-                description = "이벤트 메모. null·공백뿐·필드 부재({})는 메모 제거. 그 외는 trim 없이 원문 저장, 최대 10,000자.")
+                description = "이벤트 메모. null·공백뿐·필드 부재({})는 메모 제거. 그 외는 trim 없이 원문 저장, 최대 500자.")
         String memo
 ) {
 }

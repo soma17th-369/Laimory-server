@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 16개(timeline 14 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 17개(timeline 15 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -91,6 +91,22 @@ API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item
 삭제 API들과 같은 PHOTO 삭제 작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED 409 계약은 동일하다. 성공 응답은 `body=null`이다.
+
+`POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 request body 없이 그 날짜의 DRAFT
+record를 SAVED로 확정한다. **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가 기다릴
+비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item 연결
+해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
+409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식은
+400 `-400`이다. **새 error code는 추가하지 않았다.** commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
+그 성패는 이 응답과 무관하며 클라이언트가 조회할 대상이 아니다. ID 기반 deprecated 경로는 만들지 않았다.
+
+`POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자
+문서 전체와 교체하는 서버간 endpoint다. 성공·실패가 같은 경로로 오며 `status`가 갈래를 정한다(FAILED도
+200 — DB는 바뀌지 않고 작업만 종결된다). draft 흐름과 달리 입력 조회·폴링·별도 callback이 없어 이
+호출 하나가 결과 전달과 종료 통보를 겸하고, 그래서 token 재발급 지점도 없다(작업당 token 하나).
+`Task-Token` 불일치는 401 `-1002`, 작업 없음·만료·이미 종결·중복 도착은 404 `-1001`, 접수 이후 다른
+날짜의 갱신이 문서를 교체했으면 409 `-1017`, 계약 위반(status 누락·SUCCESS인데 문서 없음)은 400 `-400`이다.
+**4xx는 전부 재시도해도 달라지지 않는 실패**이고 AI는 이를 재시도 중단 신호로 읽는다.
 
 `/s/api/{version}/timeline/drafts/{taskId}`에는 AI 서버간 endpoint 셋이 있다 — `GET .../input`(정규 AI 입력
 반환), `POST .../result`(Event/Item/junction 저장 + 채택 source 삭제), `POST .../callback`(작업 상태 전이).
