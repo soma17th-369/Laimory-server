@@ -32,6 +32,7 @@ load-tests/timeline-draft/
 ├── scripts/
 │   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
 │   ├── run-ladder.sh               # 단계 사다리 + 중단 gate
+│   ├── dev-env-swap.sh             # dev .env 변경 + 컨테이너 재생성(dev host에서 실행)
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
 │   └── verify-redis-residue.sh     # Redis 잔여 확인
 └── sql/
@@ -136,7 +137,24 @@ localhost가 아닌 대상에는 k6가 `CONFIRM_AI_NOOP=yes` 없이는 실행을
 CONFIRM_AI_NOOP=yes   # APP_AI_MODE=noop을 눈으로 확인한 뒤에만 붙인다
 ```
 
-`.env`는 컨테이너 기동 시점에만 읽히므로 값을 바꿨다면 container recreate가 필요하다(사용자 직접 수행).
+`.env`는 컨테이너 기동 시점에만 읽히므로 `docker restart`로는 반영되지 않는다. 컨테이너를 지우고
+같은 옵션으로 다시 만들어야 하며, 특히 `APP_PUSH_MODE=firebase`면 credential read-only mount가 빠지면
+앱이 기동에 실패한다. `scripts/dev-env-swap.sh`가 이미지·mount를 실행 중인 컨테이너에서 그대로 읽어
+재현하고, 배포 pre-flight와 같은 검증을 통과해야만 재생성한다.
+
+이 스크립트는 **dev host 위에서** 실행한다(SSM 세션 등). 저장소에서 host로 파일을 옮기거나 내용을
+붙여넣어 쓴다.
+
+```bash
+# 변경 전에 반드시 한 번 — 끝나고 이 이름으로 한 번에 원복한다
+sudo ./dev-env-swap.sh snapshot before-loadtest
+
+# AI 격리
+sudo ./dev-env-swap.sh set APP_AI_MODE=noop
+
+# 현재 상태 확인(민감값은 마스킹된다)
+sudo ./dev-env-swap.sh show
+```
 
 manifest에 남길 값:
 
@@ -209,14 +227,15 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
 
 ### 6. geo 사다리
 
-**전환(사용자 직접 수행)** — dev WAS `.env`를 백업하고 다음 값으로 바꾼 뒤 container recreate:
+**전환(사용자 직접 수행)** — dev host에서:
 
-```text
-APP_GEO_MODE=kakao
-APP_GEO_KAKAO_BASE_URL=http://<SIMULATOR_PRIVATE_IP>:8080
-KAKAO_REST_API_KEY=k6-257-dummy
-APP_AI_MODE=noop
+```bash
+sudo ./dev-env-swap.sh set \
+  APP_GEO_KAKAO_BASE_URL=http://<SIMULATOR_PRIVATE_IP>:8080 \
+  KAKAO_REST_API_KEY=k6-257-dummy
 ```
+
+`APP_GEO_MODE=kakao`와 `APP_AI_MODE=noop`은 이미 맞춰진 상태여야 하고, 스크립트의 검증이 이를 확인한다.
 
 전환 직후 simulator journal을 reset하고 1좌표 요청 하나를 보내 **coord2address 1회 + keyword 1회,
 unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다 — k6는 애플리케이션이
@@ -239,8 +258,16 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_
   load-tests/timeline-draft/scripts/run-ladder.sh geo-18-stay
 ```
 
-**원복(사용자 직접 수행)** — 백업한 `.env`로 되돌리고 container recreate 후 integration smoke를 확인한 다음
-simulator를 중지한다. WAS 원복 확인 전에 simulator를 먼저 내리지 않는다.
+**원복(사용자 직접 수행)** — 시작 전 스냅샷으로 한 번에 되돌린다. `set`이 남기는 자동 백업은 직전 한
+단계만 되돌리므로, 여러 번 바꾼 뒤에는 스냅샷 이름을 지정해야 원래 상태가 된다.
+
+```bash
+sudo ./dev-env-swap.sh restore before-loadtest
+sudo ./dev-env-swap.sh show     # AI/geo 값이 원래대로인지 눈으로 확인
+```
+
+재생성과 health check까지 스크립트가 수행한다. 이후 integration smoke를 확인한 다음 simulator를
+중지한다. WAS 원복 확인 전에 simulator를 먼저 내리지 않는다.
 
 ### 7. 지표 대조
 
