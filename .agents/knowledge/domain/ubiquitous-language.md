@@ -138,7 +138,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 갱신한다. Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다. `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장이 갱신을 유발하지만 저장과 **같은 transaction이 아니다** — 저장 API는 대기 큐에 넣고 끝나고, worker가 사용자 guard를 잡은 뒤 AI에 접수하며, AI가 결과를 들고 오면 별도 endpoint가 문서 전체를 교체한다. 부분 병합과 앱 노출 API는 여전히 없다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다. `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장이 갱신을 유발하지만 저장과 **같은 transaction이 아니다** — 저장 API는 대기 큐에 넣고 async로 접수를 깨운 뒤 끝나고(사용자 guard를 못 잡으면 하루 1회 배치가 다시 시도), AI가 결과를 들고 오면 별도 endpoint가 문서 전체를 교체한다. 부분 병합과 앱 노출 API는 여전히 없다. |
 | 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |

@@ -174,19 +174,24 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
   시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
 - 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 `(userId, dailyRecordId, deadline)`만 Redis 대기
-  sorted set(`timeline:user-memory-update:pending`, score = 재시도 가능 시각)에 넣고 응답한다.
-  등록 실패는 로그만 남기고 200을 깨지 않는다.
-- `UserMemoryUpdateWorker`가 `@Scheduled` fixed delay(기본 15초)로 ready 항목을 드레인한다. 사용자
-  guard(`timeline:user-memory-update:user:{userId}`, SET NX, TTL 3분) 획득이 곧 큐에서의 claim이고
+  sorted set(`timeline:user-memory-update:pending`)에 넣고, `@Async`로 즉시 접수를 깨운 뒤 응답한다.
+  **순서가 중요하다** — 큐 등록이 먼저여야 접수 스레드가 뜨기 전 종료에서도 그 날치가 남는다.
+  둘 중 무엇이 실패해도 로그만 남기고 200을 깨지 않는다.
+- 사용자 guard(`timeline:user-memory-update:user:{userId}`, SET NX, TTL 3분) 획득이 곧 큐에서의 claim이고
   둘은 한 Lua 실행이다 — 나누면 인스턴스 둘이 같은 항목을 읽었을 때 같은 날짜가 두 번 접수될 수 있다.
-- **guard 점유는 스킵이 아니라 대기다.** 그 사용자의 다른 날짜가 진행 중이면 항목을 재시도 간격만큼
-  뒤로 밀고 큐에 남긴다. deadline(저장 +5분)을 넘긴 항목만 버린다. 사용자가 연속 저장하는 정상 패턴에서
-  하루치를 버리지 않기 위한 결정이다.
+- **경합이 없는 대부분의 저장은 즉시 접수에서 끝나고 큐에 머무르지 않는다.** 큐에 남는 것은 guard를 못
+  잡은 항목(그 사용자의 다른 날짜가 진행 중)과 프로세스 종료로 즉시 접수가 유실된 항목뿐이다.
+  즉시 접수는 guard를 못 잡으면 대기·재시도하지 않고 그대로 물러난다(async 스레드를 붙잡지 않는다).
+- **재시도는 하루 1회 배치**(`retryPendingUpdates`, 기본 04:30 cron)다. 경합은 같은 사용자가 짧은 간격으로
+  두 날짜를 저장할 때만 생기는 드문 경우라, 그것 때문에 모든 저장을 폴링 주기에 태우지 않는다.
+  deadline(기본 7일 — 재시도 간격이 하루라 draft source retention과 맞췄다)을 넘긴 항목만 버린다.
+- **배치는 한 사용자의 밀린 날들을 한 요청으로 묶는다**(AI 계약 상한 7건). guard가 사용자당 하나라
+  나눠 보내면 N일이 밀렸을 때 N일이 걸린다. `claim`이 첫 항목만 큐에서 빼므로 나머지는 명시적으로 지운다.
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 대기 중에 앞선 날짜의 갱신이 문서를
   바꾸므로, 등록 시점에 조립해 두면 낡은 문서를 base로 삼게 되고 대기가 무의미해진다.
-- 접수 body는 확정된 타임라인을 구조화한 `diaries[].events[]`다(`question`·`memo` 포함, `items[]`와 행 PK
-  제외, 시각은 record timezone offset). 접수 실패는 **재시도하지 않는다** — 저장은 이미 끝났고 그 날치
-  memory 반영만 누락된다. 그래서 AI를 두들기는 루프가 없고 circuit breaker도 두지 않는다.
+- 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
+  행 PK 제외, 시각은 record timezone offset). 접수 실패는 **재시도하지 않는다** — 저장은 이미 끝났고 그
+  날치 memory 반영만 누락된다. 그래서 AI를 두들기는 루프가 없고 circuit breaker도 두지 않는다.
 - 결과 적용은 token 검증 → base 지문 대조 → 문서 전체 교체 순이다. 지문이 다르면 그 사이 다른 날짜의
   갱신이 문서를 교체했다는 뜻이라 409(`-1017`)로 폐기한다. 성공·실패 어느 쪽이든 task와 guard를 지우므로
   중복·뒤늦은 결과는 404(`-1001`)가 된다. 이 경로는 `daily_records`를 건드리지 않는다.
@@ -224,7 +229,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 - 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
 - emotion 설정 API가 없다.
-- User Memory 갱신이 **끝내 안 된 날**(AI FAILED·deadline 5분 초과)은 그 날의 내용이 memory에 영영
+- User Memory 갱신이 **끝내 안 된 날**(AI FAILED·deadline 7일 초과)은 그 날의 내용이 memory에 영영
   반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
   없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를
   `userId`/`dailyRecordId`/`taskId` 로그로만 관측한다.

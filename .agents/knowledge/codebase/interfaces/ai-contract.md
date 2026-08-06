@@ -168,24 +168,29 @@ POST {base-url}/v1/user-memory
 {
   "taskId": "...", "taskToken": "...",
   "userMemory": null,
-  "diaries": [{
-    "date": "2026-08-04", "recordTimeZone": "Asia/Seoul", "emotionType": null,
+  "dailyTimelines": [{
+    "recordDate": "2026-08-04", "recordTimeZone": "Asia/Seoul", "emotionType": null,
     "events": [{
-      "eventType": "MEAL", "title": "...", "subtitle": "...",
-      "question": "...", "memo": "...",
-      "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00"
+      "eventType": "MEAL", "title": "...", "subtitle": "...", "question": "...",
+      "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00",
+      "memo": "..."
     }]
   }]
 }
 ```
 
-- AI 규격 초안은 `diaries[{date, content}]`로 "일기 본문"을 기대했지만 **우리 도메인에 일기 본문이 없다**
-  — `DailyRecord`에 텍스트 필드가 없고 하루의 내용은 `TimelineEvent` 목록이다. 확정된 타임라인을
-  구조화한 `events[]`로 보내는 것으로 합의했다(2026-08-06).
+- AI 규격 초안은 `diaries[{date, content}]`로 "일기 본문"을 기대했지만 **우리 도메인에 일기 본문도,
+  diary라는 개념도 없다** — `DailyRecord`에 텍스트 필드가 없고 하루의 내용은 `TimelineEvent` 목록이다.
+  확정된 타임라인을 그대로 옮긴 `dailyTimelines[]`로 합의했다(2026-08-06).
+- **이름·필드 구성은 형제 계약을 따른다**: 하루 식별은 입력 조회 응답과 같은 `recordDate`/`recordTimeZone`,
+  Event는 공통 6개(`eventType`·`title`·`subtitle`·`question`·`startAt`·`endAt`)를 같은 순서로 두고
+  흐름별 추가 필드 하나를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`다.
 - `question`(우리 타임라인 AI가 쓴 문장)과 `memo`(그에 대한 사용자의 답)를 함께 보낸다 — 둘을 나누면
   `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
-  같은 규칙 — 상관관계는 `taskId`). `diaries`는 현재 항상 1건이고 배열은 확장 여지다.
+  같은 규칙 — 상관관계는 `taskId`).
+- `dailyTimelines`는 저장 직후 즉시 접수에서는 항상 1건이고, **하루 1회 재시도 배치에서만 여러 건**이다
+  (한 사용자에게 밀린 날을 묶어 보낸다. AI 상한 7건).
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - `emotionType`은 입력 경로가 없어 현재 항상 null이지만 nullable 필드를 미리 뒀다.
 
@@ -229,8 +234,8 @@ Task-Token: <접수 body로 준 token>
 
 User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
 필수 필드만 채운 결정적 stub 문서로 자기 서버의 결과 endpoint를 실제 호출, `http`는 실 AI 연동이다.
-`http` dispatch의 read timeout은 반드시 유한해야 한다 — 이 호출은 요청 스레드가 아니라 갱신 worker
-스레드에서 일어나므로 무한 대기는 다른 사용자의 재시도까지 정지시킨다.
+`http` dispatch의 read timeout은 반드시 유한해야 한다 — 이 호출은 요청 스레드가 아니라 async 실행기
+또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다.
 
 ## Invariants
 

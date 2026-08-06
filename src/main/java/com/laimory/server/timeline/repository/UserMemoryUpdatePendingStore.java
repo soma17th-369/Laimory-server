@@ -14,8 +14,12 @@ import org.springframework.stereotype.Component;
  * User Memory 갱신 대기 큐와 사용자 단위 guard의 Redis 데이터 접근 계층.
  *
  * <p>논리 키: 대기 큐는 sorted set {@code timeline:user-memory-update:pending}
- * (member: {@code userId:dailyRecordId:deadlineEpochMillis}, score: 재시도 가능 시각 epoch ms),
- * guard는 {@code timeline:user-memory-update:user:{userId}}. 환경 prefix는 {@link RedisGateway}가 붙인다.
+ * (member: {@code userId:dailyRecordId:deadlineEpochMillis}, score: 등록 시각 epoch ms — 오래된 것부터
+ * 드레인한다), guard는 {@code timeline:user-memory-update:user:{userId}}. 환경 prefix는
+ * {@link RedisGateway}가 붙인다.
+ *
+ * <p>저장 직후 즉시 접수가 guard를 잡으면 항목은 곧바로 큐에서 빠진다. 큐에 머무르는 것은 <b>경합으로
+ * 못 넘어간 항목</b>과 프로세스 종료로 즉시 접수가 유실된 항목뿐이고, 하루 1회 배치가 이들을 줍는다.
  *
  * <p><b>guard가 이 store에 있는 이유</b>: guard 획득이 곧 대기 큐에서의 claim이라 둘은 한 원자 경계여야
  * 한다. 나누면 인스턴스 둘이 같은 항목을 읽었을 때 진 쪽의 재배치가 이긴 쪽의 제거 뒤에 도착해 같은
@@ -41,17 +45,12 @@ public class UserMemoryUpdatePendingStore {
         redis.addToSortedSet(PENDING_KEY, member(pending), readyAt.toEpochMilli());
     }
 
-    /** guard를 못 잡은 항목을 뒤로 미룬다(=score 갱신). */
-    public void reschedule(UserMemoryUpdatePending pending, Instant readyAt) {
-        enqueue(pending, readyAt);
-    }
-
     public void remove(UserMemoryUpdatePending pending) {
         redis.removeFromSortedSet(PENDING_KEY, List.of(member(pending)));
     }
 
     /**
-     * 재시도 시각이 지난 항목을 오래된 것부터 최대 {@code limit}개 반환한다.
+     * 등록된 항목을 오래된 것부터 최대 {@code limit}개 반환한다.
      * 형식이 깨진 member는 되살아나지 않도록 즉시 제거하고 결과에서 제외한다.
      */
     public List<UserMemoryUpdatePending> findReady(Instant now, int limit) {
@@ -78,7 +77,7 @@ public class UserMemoryUpdatePendingStore {
 
     /**
      * 사용자 guard를 잡고 같은 실행에서 대기 큐의 항목을 가져간다. 이미 다른 날짜가 그 사용자의 갱신을
-     * 진행 중이면 {@code false}이고 대기 항목은 큐에 그대로 남는다(호출부가 뒤로 민다).
+     * 진행 중이면 {@code false}이고 대기 항목은 큐에 그대로 남는다(하루 1회 배치가 다시 시도한다).
      *
      * @param guardValue 진단용으로 guard에 남길 값 — 이 작업의 taskId를 쓴다
      */

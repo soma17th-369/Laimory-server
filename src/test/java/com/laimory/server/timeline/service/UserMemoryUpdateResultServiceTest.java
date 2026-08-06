@@ -24,6 +24,7 @@ import com.laimory.server.user.UserMemoryService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -169,7 +170,7 @@ class UserMemoryUpdateResultServiceTest {
     }
 
     private UserMemoryUpdateTask task(String baseMemoryHash) {
-        return new UserMemoryUpdateTask(USER_ID, RECORD_ID, TaskTokens.hash(token), STARTED_AT, baseMemoryHash);
+        return new UserMemoryUpdateTask(USER_ID, List.of(RECORD_ID), TaskTokens.hash(token), STARTED_AT, baseMemoryHash);
     }
 
     private static AiUserMemoryUpdateResultRequest success(JsonNode memory) {

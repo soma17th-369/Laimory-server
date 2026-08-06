@@ -131,7 +131,7 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     @Test
-    void 다른_날짜가_진행_중이면_갱신은_스킵이_아니라_대기했다가_접수된다() {
+    void 다른_날짜가_진행_중이면_갱신은_스킵이_아니라_큐에_남아_배치가_가져간다() {
         Long otherRecordId = dailyRecordRepository
                 .save(DailyRecord.createDraft(userId, OTHER_DATE, OTHER_DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
@@ -142,16 +142,29 @@ class TimelineSaveFlowIntegrationTest {
         assertThat(pendingStore.claim(inFlight, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
         timelineSaveService.save("v1", userId, DATE);
-        userMemoryUpdateWorker.dispatchPendingUpdates();
 
-        // 대기 항목이 사라지지 않았다 — 스킵됐다면 여기서 큐가 비어 있다.
+        // 즉시 접수가 guard를 못 잡았으므로 항목이 큐에 남아야 한다 — 스킵됐다면 여기서 비어 있다.
         assertThat(pendingEntriesOf(userId)).isNotEmpty();
 
         pendingStore.releaseGuard(userId);
-        pendingStore.enqueue(new UserMemoryUpdatePending(userId, recordId, now.plusSeconds(300)), now);
-        userMemoryUpdateWorker.dispatchPendingUpdates();
+        userMemoryUpdateWorker.retryPendingUpdates();
 
-        // guard가 풀리자 접수로 넘어가 큐에서 사라졌다(noop dispatcher라 결과는 오지 않는다).
+        // guard가 풀리자 배치가 접수로 넘겨 큐에서 사라졌다(noop dispatcher라 결과는 오지 않는다).
+        assertThat(pendingEntriesOf(userId)).isEmpty();
+    }
+
+    @Test
+    void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
+        Long otherRecordId = dailyRecordRepository
+                .save(DailyRecord.createDraft(userId, OTHER_DATE, OTHER_DATE.atTime(12, 0), ZONE))
+                .getDailyRecordId();
+        Instant now = clock.instant();
+        pendingStore.enqueue(new UserMemoryUpdatePending(userId, recordId, now.plusSeconds(300)), now);
+        pendingStore.enqueue(new UserMemoryUpdatePending(userId, otherRecordId, now.plusSeconds(300)), now);
+
+        userMemoryUpdateWorker.retryPendingUpdates();
+
+        // 나눠 보내면 guard가 사용자당 하나라 하루에 한 건씩만 처리된다.
         assertThat(pendingEntriesOf(userId)).isEmpty();
     }
 
@@ -160,7 +173,7 @@ class TimelineSaveFlowIntegrationTest {
         JsonNode updated = objectMapper.readTree("{\"schemaVersion\":\"1.0\",\"currentFocus\":\"이사 준비\"}");
         String taskId = UUID.randomUUID().toString();
         String token = TaskTokens.generate();
-        taskStore.save(taskId, new UserMemoryUpdateTask(userId, recordId, TaskTokens.hash(token),
+        taskStore.save(taskId, new UserMemoryUpdateTask(userId, List.of(recordId), TaskTokens.hash(token),
                 clock.instant(), UserMemoryDigest.of(Optional.empty())), Duration.ofMinutes(3));
 
         userMemoryUpdateResultService.applyResult("v1", taskId,
@@ -178,7 +191,7 @@ class TimelineSaveFlowIntegrationTest {
         String taskId = UUID.randomUUID().toString();
         String token = TaskTokens.generate();
         // 접수 시점엔 문서가 없었다고 기록한다 → 현재 문서와 지문이 다르다.
-        taskStore.save(taskId, new UserMemoryUpdateTask(userId, recordId, TaskTokens.hash(token),
+        taskStore.save(taskId, new UserMemoryUpdateTask(userId, List.of(recordId), TaskTokens.hash(token),
                 clock.instant(), null), Duration.ofMinutes(3));
 
         assertThatThrownBy(() -> userMemoryUpdateResultService.applyResult("v1", taskId, token,
@@ -198,7 +211,7 @@ class TimelineSaveFlowIntegrationTest {
 
         String taskId = UUID.randomUUID().toString();
         String token = TaskTokens.generate();
-        taskStore.save(taskId, new UserMemoryUpdateTask(userId, recordId, TaskTokens.hash(token),
+        taskStore.save(taskId, new UserMemoryUpdateTask(userId, List.of(recordId), TaskTokens.hash(token),
                 clock.instant(), UserMemoryDigest.of(Optional.of(existing))), Duration.ofMinutes(3));
 
         userMemoryUpdateResultService.applyResult("v1", taskId, token,

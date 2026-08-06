@@ -3,6 +3,7 @@ package com.laimory.server.timeline.entity;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -16,10 +17,14 @@ import java.util.Objects;
  * — 적용하면 그 날짜의 기여가 조용히 사라지기 때문이다.
  *
  * <p>{@code processingStartedAt}은 접수 직전 캡처한 서버 절대 시각이며 소요 시간 로그의 기준이다.
+ *
+ * <p>{@code dailyRecordIds}가 목록인 이유: 저장 직후 즉시 접수는 항상 1건이지만, 하루 1회 재시도 배치는
+ * 한 사용자에게 밀린 날들을 한 요청으로 묶어 보낸다(guard가 사용자당 하나라 나눠 보내면 하루에 한 건씩만
+ * 처리된다). 로그 상관관계 용도이며 외부 계약이 아니다.
  */
 public record UserMemoryUpdateTask(
         long userId,
-        long dailyRecordId,
+        List<Long> dailyRecordIds,
         String tokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant processingStartedAt,
         String baseMemoryHash
@@ -29,9 +34,10 @@ public record UserMemoryUpdateTask(
         if (userId <= 0) {
             throw new IllegalArgumentException("userId는 양수여야 합니다");
         }
-        if (dailyRecordId <= 0) {
-            throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
+        if (dailyRecordIds == null || dailyRecordIds.isEmpty()) {
+            throw new IllegalArgumentException("dailyRecordIds는 최소 1건이어야 합니다");
         }
+        dailyRecordIds = List.copyOf(dailyRecordIds);
         Objects.requireNonNull(tokenHash, "tokenHash");
         Objects.requireNonNull(processingStartedAt, "processingStartedAt");
     }

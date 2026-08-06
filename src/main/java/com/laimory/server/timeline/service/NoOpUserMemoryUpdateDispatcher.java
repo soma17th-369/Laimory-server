@@ -19,7 +19,7 @@ public class NoOpUserMemoryUpdateDispatcher implements UserMemoryUpdateDispatche
     @Override
     public void dispatch(AiUserMemoryUpdateRequest request) {
         // taskToken은 의도적으로 로그에서 제외한다.
-        log.info("no-op user memory update dispatch: taskId={} diaries={}",
-                request.taskId(), request.diaries().size());
+        log.info("no-op user memory update dispatch: taskId={} dailyTimelines={}",
+                request.taskId(), request.dailyTimelines().size());
     }
 }
