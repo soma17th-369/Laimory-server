@@ -31,6 +31,11 @@ public enum ExceptionType {
 
     // ── timeline ──
     DRAFT_TASK_NOT_FOUND(-1001, HttpStatus.NOT_FOUND, Level.INFO),
+    /**
+     * User Memory 갱신 작업 없음 — 만료·이미 종결·중복 도착. draft task와 code·status·message가 같지만
+     * 다른 흐름이라 타입을 나눈다. AI는 이 4xx를 재시도 중단 신호로 읽는다.
+     */
+    SAVE_TASK_NOT_FOUND(-1001, HttpStatus.NOT_FOUND, Level.INFO),
     DRAFT_RESULT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     TASK_TOKEN_MISMATCH(-1002, HttpStatus.UNAUTHORIZED, Level.WARN),
     // -1012: 결번 — 재사용 금지(one-time callback token 소비 계약 제거로 폐기)
@@ -49,6 +54,11 @@ public enum ExceptionType {
     // -1016: 결번 — 재사용 금지
     /** 서버간 AI 단계 요청이 task의 현재 상태와 맞지 않음(terminal task 입력 조회·결과 저장, 상충 콜백, 저장 없는 SUCCESS 콜백). */
     DRAFT_TASK_STATE_CONFLICT(-1017, HttpStatus.CONFLICT, Level.WARN),
+    /**
+     * User Memory 갱신 결과를 적용할 수 없음 — 접수 때 보낸 base 문서가 그 사이 다른 날짜의 갱신으로
+     * 교체됐다. 적용하면 그 날짜의 기여가 조용히 사라지므로 결과를 폐기한다.
+     */
+    SAVE_TASK_STATE_CONFLICT(-1017, HttpStatus.CONFLICT, Level.WARN),
     TIMELINE_EVENT_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     DAILY_RECORD_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     /** Item 없음·비소유·대상 Event 미연결을 구분 없이 은닉하는 404. */

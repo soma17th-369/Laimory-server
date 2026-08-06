@@ -27,7 +27,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
-| 작성완료 | Saved | 부분 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제 거부는 구현돼 있다. 사용자가 `DRAFT→SAVED`로 전환하는 API는 없다. |
+| 작성완료 | Saved | 현재 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제 거부, 그리고 사용자가 `DRAFT→SAVED`로 전환하는 `POST .../daily-records/{recordDate}/save`가 모두 있다. 전이는 동기 커밋이라 200이 곧 저장 완료이고, 뒤따르는 User Memory 갱신은 별개 흐름이다. |
 
 ## 타임라인 이벤트
 
@@ -38,7 +38,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
 | 질문 | Question | 현재 구현 | AI가 이벤트마다 생성해 사용자에게 되묻는 문장이다. AI 결과 저장에서만 채워지는 nullable 값(trim 후 최대 255자, 공백은 null)이며 일별·단건 조회 응답에 그대로 실린다. 사용자 편집 API와 답변 저장은 미구현이다. |
-| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재는 변경 없음, null·blank는 제거, 그 외는 trim 없이 원문 저장(최대 10,000자). PUT memo endpoint는 Event의 다른 필드 없이 memo만 교체하는 현재 지원 API다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
+| 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재는 변경 없음, null·blank는 제거, 그 외는 trim 없이 원문 저장(최대 500자 — User Memory 갱신 접수 계약의 상한). PUT memo endpoint는 Event의 다른 필드 없이 memo만 교체하는 현재 지원 API다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
 | 이벤트 종료 시각 | End At | 현재 구현 | 이벤트 시간 범위의 끝이다. 단일 시점이면 nullable이다. |
 
@@ -138,7 +138,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 갱신한다. Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다. `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 저장 경로(엔티티 매핑 + leaf service의 조회·전체 교체)만 구현돼 있으며, 갱신을 유발하는 `DRAFT→SAVED` 전이와 AI 호출, 부분 병합, 노출 API는 미구현이다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다. `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장이 갱신을 유발하지만 저장과 **같은 transaction이 아니다** — 저장 API는 async로 접수를 깨운 뒤 끝나고(사용자 guard를 못 잡으면 그때 대기 큐에 남겨 하루 1회 배치가 다시 시도), AI가 결과를 들고 오면 별도 endpoint가 문서 전체를 교체한다. 부분 병합과 앱 노출 API는 여전히 없다. |
 | 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |

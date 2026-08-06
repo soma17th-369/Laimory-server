@@ -35,7 +35,8 @@ public class TimelineEventEditService {
 
     private static final int MAX_TITLE_LENGTH = 255;
     private static final int MAX_SUBTITLE_LENGTH = 255;
-    private static final int MAX_MEMO_LENGTH = 10_000;
+    /** User Memory 갱신 접수 계약이 확정한 상한. 초과 memo는 AI가 422로 거절하므로 입력에서 막는다. */
+    private static final int MAX_MEMO_LENGTH = 500;
     private static final int MAX_RAW_ID_LENGTH = 36;
 
     private final TimelineEventService timelineEventService;

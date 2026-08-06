@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -37,6 +38,7 @@ import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
+import com.laimory.server.timeline.service.TimelineSaveService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -68,6 +70,7 @@ class TimelineRecordControllerTest {
     private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/by-id/77";
     private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/" + RECORD_DATE;
     private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/not-a-date";
+    private static final String SAVE_DAILY_RECORD_DATE_PATH = DAILY_RECORD_DATE_PATH + "/save";
 
     private static final String PATCH_BODY = """
             {
@@ -91,6 +94,9 @@ class TimelineRecordControllerTest {
 
     @MockitoBean
     private TimelineDeletionService timelineDeletionService;
+
+    @MockitoBean
+    private TimelineSaveService timelineSaveService;
 
     private TimelineEventResponse updatedEvent() {
         TimelineItemResponse item = new TimelineItemResponse(
@@ -510,7 +516,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void updateTimelineEventMemo_mapsIllegalArgumentTo400() throws Exception {
-        doThrow(new IllegalArgumentException("memo is too long: length=10001"))
+        doThrow(new IllegalArgumentException("memo is too long: length=501"))
                 .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
 
         String body = """
@@ -718,6 +724,57 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body").doesNotExist());
 
         verifyNoInteractions(timelineDeletionService);
+    }
+
+    @Test
+    void saveDailyRecord_returns200WithEmptyBodyAndPassesPrincipal() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(this::assertBodyIsExplicitNull);
+
+        verify(timelineSaveService).save("v1", USER_ID, RECORD_DATE);
+    }
+
+    @Test
+    void saveDailyRecord_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
+                .when(timelineSaveService).save(any(), anyLong(), any(LocalDate.class));
+
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void saveDailyRecord_mapsAlreadySavedTo409() throws Exception {
+        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
+                .when(timelineSaveService).save(any(), anyLong(), any(LocalDate.class));
+
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1003));
+    }
+
+    @Test
+    void saveDailyRecord_withInvalidDateReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(DAILY_RECORDS_PATH + "/not-a-date/save").with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_withoutAuthenticationReturns401WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
     }
 
     private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {

@@ -9,6 +9,7 @@ import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
+import com.laimory.server.timeline.service.TimelineSaveService;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +28,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     private final DailyTimelineService dailyTimelineService;
     private final TimelineEventEditService timelineEventEditService;
     private final TimelineDeletionService timelineDeletionService;
+    private final TimelineSaveService timelineSaveService;
 
     @Override
     public ResponseEntity<ApiResponse<DailyTimelinesResponse>> getDailyTimelines(
@@ -95,6 +97,13 @@ public class TimelineRecordController implements TimelineRecordApi {
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
             String applicationVersion, Long userId, LocalDate recordDate) {
         timelineDeletionService.deleteDailyRecordByDate(applicationVersion, userId, recordDate);
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> saveDailyRecord(
+            String applicationVersion, Long userId, LocalDate recordDate) {
+        timelineSaveService.save(applicationVersion, userId, recordDate);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

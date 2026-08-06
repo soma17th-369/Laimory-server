@@ -179,6 +179,36 @@ public class RedisGateway {
         return values;
     }
 
+    /**
+     * key가 없을 때만 값을 저장한다(SET NX PX). 상호 배제 lock 획득용으로, 반환값이 곧 획득 성공 여부다.
+     * TTL이 있어 소유자가 죽어도 자동으로 풀린다.
+     */
+    public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
+        return Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
+    }
+
+    /**
+     * sorted set에 member가 없을 때만 넣는다(ZADD NX). 이미 있으면 score를 <b>유지</b>한다 — 재기록으로
+     * 최초 기록 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
+     */
+    public void addToSortedSetIfAbsent(String logicalSortedSetKey, String member, long score) {
+        template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
+    }
+
+    /**
+     * {@code score <= inclusiveMaxScore}인 member를 score 오름차순으로 최대 {@code limit}개 반환한다.
+     * key가 없으면 빈 목록이다.
+     */
+    public List<String> getSortedSetRangeByScore(String logicalSortedSetKey, long inclusiveMaxScore, long limit) {
+        Set<String> members = template.opsForZSet()
+                .rangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore, 0, limit);
+        if (members == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis rangeByScore가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return List.copyOf(members);
+    }
+
     /** sorted set에서 여러 member를 한 명령으로 제거하고 실제 제거 수를 반환한다(missing member는 무시). */
     public long removeFromSortedSet(String logicalSortedSetKey, List<String> members) {
         Long removed = template.opsForZSet()

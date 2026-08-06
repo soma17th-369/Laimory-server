@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DailyRecordService {
 
     private final DailyRecordRepository dailyRecordRepository;
+    private final Clock clock;
 
     public Optional<DailyRecord> findByUserIdAndRecordDate(Long userId, LocalDate recordDate) {
         return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate);
@@ -42,6 +44,14 @@ public class DailyRecordService {
     /** 하루 기록 행을 삭제한다. 하위 timeline_events/timeline_items는 DB FK {@code ON DELETE CASCADE}가 지운다. */
     public void deleteById(Long dailyRecordId) {
         dailyRecordRepository.deleteById(dailyRecordId);
+    }
+
+    /**
+     * 소유 DRAFT record를 SAVED로 전이하고 실제로 옮긴 행 수를 반환한다(0 = 이미 SAVED·삭제됨·비소유).
+     * 호출부의 트랜잭션에 합류하는 조건부 UPDATE라 별도 lock 없이 동시 저장 중 하나만 성공한다.
+     */
+    public int markSaved(Long dailyRecordId, Long userId) {
+        return dailyRecordRepository.markSaved(dailyRecordId, userId, LocalDateTime.now(clock));
     }
 
     /**

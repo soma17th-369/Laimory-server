@@ -15,6 +15,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - `TimelineAiDispatcher`(+`AiTimelineDispatchRequest`), `TimelineAiTaskInputService`,
   `TimelineAiResultService`/`TimelineAiResultTransactionService`, `TimelineCallbackService`, `TimelineTaskService`
 - `TimelineEventEditService`와 Event 편집 transaction service
+- `TimelineSaveService`/`TimelineSaveTransactionService`, `UserMemoryUpdateWorker`,
+  `UserMemoryUpdateResultService`, `UserMemoryUpdatePendingStore`/`UserMemoryUpdateTaskStore`
 - `DailyTimelineService`(읽기), `TimelineDeletionService`/`TimelineDeletionTransactionService`
 - timeline entities(junction 포함), repositories, Redis stores and integration tests
 - `src/main/resources/db/schema.sql`, `application*.properties`
@@ -161,6 +163,52 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외는 두 행을 남겨 다음 fixed delay에
   재시도한다.
 
+### Save (DRAFT→SAVED)와 User Memory 갱신
+
+- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(body 없음). `(principal userId,
+  recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로 <b>부수효과 전에</b>
+  거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로 전이한다. 영향 행 수 0은
+  재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
+- **전이와 User Memory 교체는 서로 다른 API가 담당하는 서로 다른 transaction이다.** 저장 API는 전이만
+  commit하고 200을 반환하며, 교체는 10초+ 뒤 AI가 결과를 들고 왔을 때
+  `POST /s/api/{version}/user-memory/updates/{taskId}/result`가 수행한다. 그래서 사용자의 저장이 AI의
+  성패에 묶이지 않는다.
+- 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
+  시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
+- 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 `@Async`로 접수를 깨우고 곧바로 응답한다.
+  트리거 실패는 로그만 남기고 200을 깨지 않는다.
+- 사용자 guard는 `timeline:user-memory-update:user:{userId}`(SET NX, TTL 3분)이고, **획득 실패가 곧
+  "이 사용자의 갱신이 진행 중"이라는 판정**이다. 그래서 별도의 진행 상태 저장 없이 guard 하나가
+  직렬화와 실패 판정을 겸한다.
+- **경합이 없으면 Redis 큐를 아예 쓰지 않는다.** guard를 못 잡았을 때 **그때** 그 작업을 큐
+  (`timeline:user-memory-update:pending` sorted set, member `userId:dailyRecordId`)에 남긴다 —
+  DLQ다. 즉시 접수는 거기서 대기·재시도하지 않고 물러난다(재시도가 하루 간격이라 async 스레드를
+  며칠 붙잡게 된다).
+- **재시도는 하루 1회 배치**(`retryPendingUpdates`, 기본 04:30 cron)이고 큐에 쌓인 것만 처리한다.
+  경합은 같은 사용자가 짧은 간격으로 두 날짜를 저장할 때만 생기는 드문 경우라, 그것 때문에 모든 저장을
+  폴링 주기에 태우지 않는다. deadline(기본 7일 — 재시도 간격이 하루라 draft source retention과 맞췄다)을
+  넘긴 항목만 버린다(시한은 최초 기록 시각 기준).
+- 여러 인스턴스가 동시에 드레인해도 안전하다 — guard를 잡은 하나만 진행하고 못 잡은 쪽은 큐를 건드리지
+  않으므로 항목이 되살아나지 않는다.
+- **배치는 한 사용자의 밀린 날들을 한 요청으로 묶는다**(AI 계약 상한 5건). guard가 사용자당 하나라
+  나눠 보내면 N일이 밀렸을 때 N일이 걸린다.
+- **어느 경로도 결과를 기다리지 않는다.** AI 계약이 "202 접수 → 백그라운드 처리 → 완료 시 결과 API
+  호출"이라, 응답을 기다리는 척하려면 폴링을 얹어야 하고 그건 프로토콜과 싸우는 짓이다.
+- **반영 확인과 큐 정리는 결과 endpoint가 한다** — 성패를 아는 유일한 지점이다. 반영되면 그 날들을 큐에서
+  빼고, 반영하지 못하면(FAILED·지문 불일치·계약 위반) 큐에 넣어 다음 배치가 다시 시도하게 한다. 즉시
+  접수 경로에서 실패한 날도 이때 큐에 들어오므로 두 경로가 같은 안전망을 쓴다.
+- 배치는 접수만 하고 큐를 비우지 않는다. 다시 보내도 결과가 같은 경우(4xx 거절·재료 없음)만 걷어낸다.
+- 큐 항목은 **최초 기록 시각을 유지한다**(ZADD NX). 재시도로 다시 기록돼도 시한이 연장되지 않아야
+  영영 안 되는 날이 `retention`(기본 7일)에 걸려 정리된다.
+- **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 밀려 있는 동안 앞선 날짜의 갱신이 문서를
+  바꾸므로, 미리 조립해 두면 낡은 문서를 base로 삼게 되고 미루는 것 자체가 무의미해진다.
+- 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
+  행 PK 제외, 시각은 record timezone offset). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
+  없고 circuit breaker도 두지 않는다. 재시도는 다음날 배치가 담당한다.
+- 결과 적용은 token 검증 → base 지문 대조 → 문서 전체 교체 순이다. 지문이 다르면 그 사이 다른 날짜의
+  갱신이 문서를 교체했다는 뜻이라 409(`-1017`)로 폐기한다. 성공·실패 어느 쪽이든 task와 guard를 지우므로
+  중복·뒤늦은 결과는 404(`-1001`)가 된다. 이 경로는 `daily_records`를 건드리지 않는다.
+
 ### Retention and cleanup
 
 - PROCESSING TTL: 3분(입력 조회·stage 전이마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
@@ -180,6 +228,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
+- 저장 전이와 User Memory 교체는 하나의 transaction이 아니다 — 저장 API가 전이를, 결과 API가 교체를
+  각각 commit한다. User Memory는 저장 성패와 무관한 보조 데이터다.
+- User Memory 갱신 접수 body와 base 지문은 사용자 guard를 잡은 뒤에 만든다.
 - Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
   서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
@@ -190,7 +241,13 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Known Gaps
 
 - 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
-- DRAFT→SAVED, emotion 설정 API가 없다.
+- emotion 설정 API가 없다.
+- User Memory 갱신이 **끝내 안 된 날**(7일 retention 안에 반영 못 함)은 그 날의 내용이 memory에 영영
+  반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
+  없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를
+  `userId`/`dailyRecordId`/`taskId` 로그로만 관측한다.
+- 대기 중인 두 날짜가 경합하면 memory에 병합되는 순서가 정해지지 않는다. 누락이 아니라 순서 문제라
+  수용한다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.
 - 실패 task가 남긴 empty DRAFT의 자동 cleanup은 없다(같은 날짜 재시도가 재사용).
 - 같은 날짜 draft·수동 PHOTO 추가·삭제가 겹칠 때의 graph 정합성 보장은 미구현이다. 현재는 공통

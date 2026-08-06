@@ -2,8 +2,9 @@
 
 ## Scope
 
-API 서버와 AI 사이의 dispatch → 입력 조회 → 결과 저장 → 상태 callback HTTP 계약이다. AI는 MySQL·Redis에
-직접 접근하지 않는다.
+API 서버와 AI 사이의 HTTP 계약이다 — 타임라인 생성(dispatch → 입력 조회 → 결과 저장 → 상태 callback)과
+User Memory 갱신(접수 → 결과) 두 흐름을 담는다. 둘은 서로 다른 작업이고 task·token을 공유하지 않는다.
+AI는 MySQL·Redis에 직접 접근하지 않는다.
 
 ## Read When
 
@@ -17,6 +18,9 @@ callback body를 바꿀 때 읽는다.
 - `TimelineCallbackApi`, callback DTO와 service
 - `TaskTokens`, `ProcessStage`, `TimelineDraftTask`, `TimelineTaskStore`
 - `TimelineAiTaskFlowIntegrationTest`
+- `UserMemoryUpdateDispatcher` implementations, `AiUserMemoryUpdateRequest`/`AiUserMemoryUpdateResultRequest`,
+  `UserMemoryUpdateApi`, `UserMemoryUpdateResultService`, `UserMemoryUpdateWorker`,
+  `TimelineSaveFlowIntegrationTest`
 
 ## Contract
 
@@ -150,6 +154,69 @@ Task-Token: <taskToken>
 - FAILED `errorCode`는 음수 JSON integer이며 미지 값은 `-1008`로 수렴한다. 자유 text `error`는 로그로만
   남긴다.
 
+### 6. User Memory 갱신 (별도 흐름 — draft와 무관)
+
+타임라인 생성(1~5)과 **다른 작업**이다. 하루 기록 저장이 commit된 뒤 시작하고, endpoint는 접수와 결과
+둘뿐이다 — 입력 조회가 없고(접수 body에 전부 싣는다), 폴링이 없고(저장은 이미 동기로 끝났다), 별도
+callback도 없다(결과 호출이 종료 통보를 겸한다). 그래서 **token 재발급 지점이 없다**(작업당 token 하나).
+
+```http
+POST {base-url}/v1/user-memory
+```
+
+```json
+{
+  "taskId": "...", "taskToken": "...",
+  "userMemory": null,
+  "dailyTimelines": [{
+    "recordDate": "2026-08-04", "recordTimeZone": "Asia/Seoul", "emotionType": null,
+    "events": [{
+      "eventType": "MEAL", "title": "...", "subtitle": "...", "question": "...",
+      "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00",
+      "memo": "..."
+    }]
+  }]
+}
+```
+
+- AI 규격 초안은 `diaries[{date, content}]`로 "일기 본문"을 기대했지만 **우리 도메인에 일기 본문도,
+  diary라는 개념도 없다** — `DailyRecord`에 텍스트 필드가 없고 하루의 내용은 `TimelineEvent` 목록이다.
+  확정된 타임라인을 그대로 옮긴 `dailyTimelines[]`로 합의했다(2026-08-06).
+- **이름·필드 구성은 형제 계약을 따른다**: 하루 식별은 입력 조회 응답과 같은 `recordDate`/`recordTimeZone`,
+  Event는 공통 6개(`eventType`·`title`·`subtitle`·`question`·`startAt`·`endAt`)를 같은 순서로 두고
+  흐름별 추가 필드 하나를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`다.
+- `question`(우리 타임라인 AI가 쓴 문장)과 `memo`(그에 대한 사용자의 답)를 함께 보낸다 — 둘을 나누면
+  `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
+- `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
+  같은 규칙 — 상관관계는 `taskId`).
+- `dailyTimelines`는 저장 직후 즉시 접수에서는 항상 1건이고, **하루 1회 재시도 배치에서만 여러 건**이다
+  (한 사용자에게 밀린 날을 묶어 보낸다. AI 상한 5건).
+- 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
+- `emotionType`은 입력 경로가 없어 현재 항상 null이지만 nullable 필드를 미리 뒀다.
+
+```http
+POST /s/api/{version}/user-memory/updates/{taskId}/result
+Task-Token: <접수 body로 준 token>
+```
+
+```json
+{"status": "SUCCESS", "userMemory": { "schemaVersion": "1.0", ... }}
+{"status": "FAILED", "errorCode": 1210, "error": "..."}
+```
+
+- `userMemory`는 부분 병합이 아니라 **문서 전체**다. 서버는 파싱·정규화·검증 없이 그대로 저장한다 —
+  스키마를 소유하고 검증하는 쪽이 AI 서버라, 받은 것을 왕복시키면 항상 유효하다(#253 opaque 계약).
+- 적용 여부는 **base 문서 지문**(접수 때 보낸 문서의 SHA-256)이 판정한다. 불일치는 그 사이 다른 날짜의
+  갱신이 문서를 교체했다는 뜻이라 409 `-1017`로 폐기한다 — 적용하면 그 날짜의 기여가 조용히 사라진다.
+- FAILED는 DB 무변경 + 작업 종결이고 200이다. `errorCode`·자유 text `error`는 로그로만 남긴다.
+- 성공·실패 어느 쪽이든 task를 지우므로 **중복·뒤늦은 결과는 404 `-1001`**이다.
+- 이 경로는 `daily_records`를 건드리지 않는다 — 저장 API가 이미 SAVED로 commit했다.
+- AI 재시도 정책(합의): timeout·5xx는 같은 body로 재시도, **4xx는 재시도 없이 중단**. 우리가 4xx를 내는
+  경우는 전부 "재시도해도 달라지지 않음"이다. `400`도 계약 위반 시 나갈 수 있으므로 중단 대상이다.
+- 반대 방향(우리 → AI)은 **같은 접수를 즉시 재시도하지 않는다** — AI를 두들기는 루프가 없고 circuit
+  breaker도 두지 않는다. 재시도는 하루 1회 배치가 담당하며, 그 대상은 이 결과 호출이 "반영 못 함"으로
+  표시한 날들이다.
+
 ## Failure Semantics
 
 - Redis와 MySQL을 분산 transaction으로 묶지 않는다.
@@ -165,6 +232,11 @@ Task-Token: <taskToken>
 - `noop`: dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
+
+User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
+필수 필드만 채운 결정적 stub 문서로 자기 서버의 결과 endpoint를 실제 호출, `http`는 실 AI 연동이다.
+`http` dispatch의 read timeout은 반드시 유한해야 한다 — 이 호출은 요청 스레드가 아니라 async 실행기
+또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다.
 
 ## Invariants
 
