@@ -69,8 +69,9 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 - `SWAGGER_ENABLED`
 - `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
 - `AWS_REGION`, S3/CDN and photo upload limit names
-- `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_FIXED_DELAY`,
-  `TIMELINE_PHOTO_DELETE_BATCH_SIZE`
+- `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CRON`,
+  `TIMELINE_PHOTO_DELETE_ZONE`, `TIMELINE_PHOTO_DELETE_BATCH_SIZE` (checked-in default는 worker off,
+  매일 `03:00` `Asia/Seoul`, 1회 최대 1,000개)
 - `APP_ENV`
 
 정확한 property mapping과 default는 `application*.properties`가 권위다.

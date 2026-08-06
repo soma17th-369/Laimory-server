@@ -141,6 +141,10 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   우선하고 없으면 가장 작은 Item ID를 고른다. 신규 후보끼리 filename이 중복되면 400이다.
 - 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며,
   payload는 `filename`·`clientPhotoUri`·좌표만 받아 `description=null`과 server-derived `photoUrl`로 저장한다.
+- 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
+  응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 이미 업로드를 마친 **동일
+  pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있으며, 서버는 pending delete
+  key 재사용을 별도로 조회·차단하지 않는다.
 
 ### Delete
 
@@ -156,10 +160,11 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   PHOTO Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
   Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
 - Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 현재 REST
-  프로세스의 환경당 단일 worker가 oldest job 최대 1,000개를 verbose `DeleteObjects`로 처리하고
-  `Deleted` job과 원문 PHOTO
-  Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외는 두 행을 남겨 다음 fixed delay에
-  재시도한다.
+  프로세스의 환경당 단일 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override
+  가능)에 oldest job 최대 1,000개를 verbose `DeleteObjects`로 한 번 처리하고 `Deleted` job과 원문 PHOTO
+  Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외와 1,000개 초과분은 기본 cadence상
+  다음 날 실행에서 재시도·처리한다. 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은
+  다음 실행까지 MySQL에 남는다.
 
 ### Retention and cleanup
 

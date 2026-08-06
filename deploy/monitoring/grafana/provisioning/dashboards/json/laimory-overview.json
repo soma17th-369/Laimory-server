@@ -1440,7 +1440,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "가장 오래된 finalized PHOTO S3 삭제 작업의 대기 시간입니다. 1시간 초과가 15분 지속되면 경고합니다.",
+      "description": "가장 오래된 finalized PHOTO S3 삭제 작업의 대기 시간입니다. 30시간 초과가 15분 지속되면 경고합니다.",
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -1453,7 +1453,7 @@
               },
               {
                 "color": "red",
-                "value": 3600
+                "value": 108000
               }
             ]
           }

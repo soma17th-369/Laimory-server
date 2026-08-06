@@ -190,6 +190,11 @@ Spring JSON stdout
 - PHOTO delete worker가 꺼져 있어도 pending/oldest gauge는 등록돼 schema-first rollout 중 backlog를
   관측한다. pending job마다 원문 PHOTO Item도 보존돼 있다. gauge DB 조회 실패는 scrape 전체 실패 대신
   NaN이고 empty queue의 두 값은 0이다.
+- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`, oldest 최대 1,000개라 정상
+  job도 최대 약 24시간 대기한다. `laimory.timeline.photo.delete.oldest.age`가 108,000초(30시간)를 넘는
+  상태가 15분 지속되면 warning이며 Overview dashboard도 같은 30시간부터 red다. 이는 실패·일일 1,000개
+  초과 이월 또는 03:00 실행 누락을 조사하는 신호다. 스케줄은 missed run을 catch-up하지 않고 job을 다음
+  실행까지 MySQL에 보존한다. cron/zone override로 이 cadence를 바꾸면 임계치 의미도 함께 재검토한다.
 
 ## Dev Metrics Assets
 
