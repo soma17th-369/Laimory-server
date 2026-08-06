@@ -52,6 +52,12 @@ timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 �
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
 FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
 
+`timeline_draft_source_items`의 draft 준비 hot path INSERT는 생성 ID를 같은 transaction에서 사용하지 않으므로
+전용 `JdbcTemplate` batch writer가 입력 순서대로 저장한다. Connector/J가 batch를 multi-values INSERT로
+재작성하도록 기본/docker JDBC URL 모두 `rewriteBatchedStatements=true`를 사용한다. 이 native writer는 JPA
+auditing을 우회하므로 `created_at`/`updated_at`을 SQL `CURRENT_TIMESTAMP(6)`로 직접 채우고
+`modified_by`는 NULL로 둔다. task 단위 조회·채택 삭제·cleanup은 기존 JPA repository가 담당한다.
+
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
 가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접

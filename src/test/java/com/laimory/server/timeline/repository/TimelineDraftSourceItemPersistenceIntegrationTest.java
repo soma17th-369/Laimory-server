@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +36,10 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
 
     @Autowired
     private TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
+    @Autowired
+    private TimelineDraftSourceItemBatchRepository timelineDraftSourceItemBatchRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @PersistenceContext
     private EntityManager em;
@@ -77,6 +82,29 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
         assertThat(reloaded.getModifiedBy()).isNull();
+    }
+
+    @Test
+    void jdbcBatchPayloadMatchesJpaJsonRepresentation() {
+        String jpaTaskId = "44444444-4444-4444-4444-444444444444";
+        String batchTaskId = "55555555-5555-5555-5555-555555555555";
+        var payload = objectMapper.createObjectNode();
+        payload.put("title", "한글과 \\\"따옴표\\\"")
+                .put("count", 7);
+        payload.putArray("tags")
+                .add("첫째")
+                .add("둘째");
+
+        timelineDraftSourceItemRepository.saveAndFlush(TimelineDraftSourceItem.of(
+                jpaTaskId, 0L, ItemType.CALENDAR, "raw-jpa",
+                LocalDateTime.of(2026, 5, 8, 9, 0), null, payload));
+        timelineDraftSourceItemBatchRepository.insertAll(List.of(TimelineDraftSourceItem.of(
+                batchTaskId, 0L, ItemType.CALENDAR, "raw-batch",
+                LocalDateTime.of(2026, 5, 8, 9, 0), null, payload)));
+
+        String jpaJson = storedPayload(jpaTaskId);
+        String batchJson = storedPayload(batchTaskId);
+        assertThat(batchJson).isEqualTo(jpaJson);
     }
 
     @Test
@@ -133,6 +161,13 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 .setParameter("createdAt", createdAt)
                 .setParameter("id", timelineDraftSourceItemId)
                 .executeUpdate();
+    }
+
+    private String storedPayload(String taskId) {
+        return jdbcTemplate.queryForObject(
+                "select cast(payload as char) from timeline_draft_source_items where task_id = ?",
+                String.class,
+                taskId);
     }
 
     private TimelineDraftSourceItem sourceItem(String taskId, String rawId) {
