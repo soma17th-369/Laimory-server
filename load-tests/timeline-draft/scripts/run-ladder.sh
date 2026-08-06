@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCENARIO="${1:-}"
 if [ -z "$SCENARIO" ]; then
-    echo "사용법: run-ladder.sh <calendar-core|geo-1-stay|geo-18-stay>" >&2
+    echo "사용법: run-ladder.sh <calendar-core|mixed-day|geo-1-stay|geo-18-stay>" >&2
     exit 2
 fi
 
@@ -48,6 +48,7 @@ if [ -n "${LADDER:-}" ]; then
 else
     case "$SCENARIO" in
         calendar-core) STEPS="1 10 50 100 300 500 1000" ;;
+        mixed-day)     STEPS="1 10 50 100 300" ;;
         geo-1-stay)    STEPS="1 10 20 40 50 100 300 500 1000" ;;
         geo-18-stay)   STEPS="1 2 3" ;;
     esac

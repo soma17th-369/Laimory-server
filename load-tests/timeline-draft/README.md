@@ -56,11 +56,17 @@ load-tests/timeline-draft/
 
 | 시나리오 | 요청 body | Kakao 호출 | 측정 대상 |
 |---|---|---|---|
-| `calendar-core` | CALENDAR 1개(좌표 없음) | 0 | JWT, WAS, MySQL, Redis, AI noop 접수 |
+| `calendar-core` | CALENDAR 1개(좌표 없음) | 0 | JWT, WAS, MySQL, Redis, AI noop 접수 — 최소 사례(용량 상한 측정) |
+| `mixed-day` | 실측 하루 분포 68개(일정 2·알림 41·체류/이동 크기 대역 25, 좌표 없음) | 0 | 대표 payload의 DB 쓰기 스케일링 — 커넥션 점유·풀 사이징 근거 |
 | `geo-1-stay` | STAY 1개(고유 좌표 1개) | 요청당 2 | core + WebClient pool/pending, timeout/retry/circuit, servlet worker 대기 |
 | `geo-18-stay` | STAY 18개(고유 좌표 18개) | 요청당 36 | 좌표 수 민감도(heavy) — representative 아님 |
 
-CALENDAR가 Kakao를 호출하지 않는 근거는 서버 구현이다. 지오코딩 대상 좌표는 STAY 좌표와 MOVEMENT
+`mixed-day`의 분포는 실사용 하루 기록(2026-07-31: 이동 12·체류 13·알림 41·일정 2)에서 왔다.
+이동·체류는 좌표가 필수라 그대로 보내면 지오코딩 경로를 타므로, enrich 후 저장 payload와 비슷한 JSON
+크기의 NOTIFICATION 대역으로 대체한다 — DB 쓰기 비용은 행 수·payload 크기가 결정하고 item_type
+문자열은 무관하다. 지오코딩 포함 실측은 simulator 단계에서 한다.
+
+CALENDAR·NOTIFICATION이 Kakao를 호출하지 않는 근거는 서버 구현이다. 지오코딩 대상 좌표는 STAY 좌표와 MOVEMENT
 start/end에서만 수집하고, 수집 결과가 비면 조회 자체를 생략한다.
 
 좌표 18개는 서버 공개 상한(`app.geo.max-unique-coordinates`, 기본 30) 아래이면서 요청 하나로 전용

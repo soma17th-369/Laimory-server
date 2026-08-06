@@ -85,3 +85,56 @@ export function geoStayBody(config, vu, count) {
   }
   return envelope(config, items);
 }
+
+/**
+ * mixed-day — 실측 하루 분포(2026-07-31 실기록: 이동 12·체류 13·알림 41·일정 2 = 68개)의 DB 쓰기 재현.
+ *
+ * 이동·체류는 좌표가 필수라 그대로 보내면 지오코딩(실 Kakao) 경로를 탄다. 이 시나리오의 목적은
+ * 커넥션 점유 시간의 아이템 수 스케일링이므로, 두 타입은 **enrich 후 저장될 payload와 비슷한 JSON
+ * 크기의 NOTIFICATION 대역**으로 넣는다(체류 ~200B, 이동 ~400B). DB에 닿는 것은 행 수와 payload
+ * 크기다 — item_type 문자열 차이는 쓰기 비용에 영향이 없다. 지오코딩 포함 실측은 simulator 단계 몫.
+ */
+const MIXED_DAY = { calendar: 2, notification: 41, stayStandin: 13, movementStandin: 12 };
+
+const STAY_SIZED_TEXT = 'stay-standin '
+  + '서울특별시 테스트구 시뮬레이터로 251 Laimory 테스트빌딩 — 체류 enrich payload(주소+장소 3개+구간)와 '
+  + '유사한 크기를 맞추기 위한 채움 텍스트다. address places durationText 상당분.';
+const MOVEMENT_SIZED_TEXT = 'movement-standin '
+  + '출발 서울특별시 테스트구 시뮬레이터로 251 Laimory 테스트빌딩 인근 — 도착 서울특별시 테스트구 '
+  + '가상이동로 17 Laimory 테스트카페 인근 — 이동 enrich payload(양끝 주소+장소 목록+수단+거리)와 유사한 '
+  + '크기를 맞추기 위한 채움 텍스트다. start end address places transports distanceMeters 상당분을 담아 '
+  + '대략 사백 바이트 수준의 JSON이 되도록 길이를 조정했다. 실제 알림 본문이 아니라 부하 재현용 합성값이다.';
+
+export function mixedDayBody(config, vu) {
+  const items = [];
+  let index = 0;
+  const push = (payload) => {
+    const hour = index % 24;
+    const minute = (index * 7) % 60;
+    items.push({
+      itemType: 'CALENDAR' === payload.__t ? 'CALENDAR' : 'NOTIFICATION',
+      rawId: rawId(config, vu, index),
+      startAt: `${config.recordDate}T${clockTime(hour, minute, 0)}`,
+      endAt: null,
+      payload: payload.__t === 'CALENDAR'
+        ? { title: payload.title, description: payload.description, allDay: false }
+        : { appName: payload.appName, title: payload.title, text: payload.text },
+    });
+    index += 1;
+  };
+
+  for (let i = 0; i < MIXED_DAY.calendar; i += 1) {
+    push({ __t: 'CALENDAR', title: `k6 mixed 일정 ${i + 1}`, description: 'issue #251 mixed-day scenario' });
+  }
+  for (let i = 0; i < MIXED_DAY.notification; i += 1) {
+    push({ __t: 'NOTIFICATION', appName: '카카오톡', title: `k6 mixed 알림 ${i + 1}`,
+      text: '부하 테스트용 합성 알림 본문 — 실제 알림 평균 크기 근사치의 텍스트.' });
+  }
+  for (let i = 0; i < MIXED_DAY.stayStandin; i += 1) {
+    push({ __t: 'NOTIFICATION', appName: 'stay-standin', title: `k6 체류 대역 ${i + 1}`, text: STAY_SIZED_TEXT });
+  }
+  for (let i = 0; i < MIXED_DAY.movementStandin; i += 1) {
+    push({ __t: 'NOTIFICATION', appName: 'movement-standin', title: `k6 이동 대역 ${i + 1}`, text: MOVEMENT_SIZED_TEXT });
+  }
+  return envelope(config, items);
+}
