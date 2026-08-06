@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -88,6 +89,34 @@ class TimelineDraftPreparationIntegrationTest {
         assertThat(reloaded.getRecordAt()).isEqualTo(ORIGINAL_AT);
         assertThat(reloaded.getRecordTimezone()).isEqualTo(ORIGINAL_ZONE);
         assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
+    }
+
+    @Test
+    void savesSixtyEightSourcesInInputOrder_withPayloadAndAuditColumns() {
+        List<String> rawIds = IntStream.range(0, 68)
+                .mapToObj(index -> "raw-" + (67 - index))
+                .toList();
+        List<TimelineDraftSourceItem> rows = rawIds.stream().map(this::sourceRow).toList();
+
+        long dailyRecordId = timelineDraftPreparationService.prepareDraft(
+                userId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, rows);
+
+        assertThat(dailyRecordId).isPositive();
+        List<TimelineDraftSourceItem> saved = timelineDraftSourceItemRepository.findByTaskId(taskId);
+        assertThat(saved).hasSize(68);
+        assertThat(saved).extracting(TimelineDraftSourceItem::getRawId)
+                .containsExactlyElementsOf(rawIds);
+        assertThat(saved).extracting(TimelineDraftSourceItem::getTimelineDraftSourceItemId).isSorted();
+        assertThat(saved).allSatisfy(row -> {
+            assertThat(row.getUserId()).isEqualTo(userId);
+            assertThat(row.getItemType()).isEqualTo(ItemType.CALENDAR);
+            assertThat(row.getStartAt()).isEqualTo(DATE.atTime(9, 0));
+            assertThat(row.getEndAt()).isNull();
+            assertThat(row.getPayload().get("title").asText()).isEqualTo("회의");
+            assertThat(row.getCreatedAt()).isNotNull();
+            assertThat(row.getUpdatedAt()).isNotNull();
+            assertThat(row.getModifiedBy()).isNull();
+        });
     }
 
     @Test

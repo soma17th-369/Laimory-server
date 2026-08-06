@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import com.laimory.server.timeline.repository.TimelineDraftSourceItemBatchRepository;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemRepository;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -8,15 +9,16 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/** timeline_draft_source_items leaf 서비스. 자신과 1:1인 TimelineDraftSourceItemRepository에만 접근한다. */
+/** timeline_draft_source_items leaf 서비스. INSERT는 JDBC batch, 조회·삭제는 JPA repository를 사용한다. */
 @Service
 @RequiredArgsConstructor
 public class TimelineDraftSourceItemService {
 
     private final TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
+    private final TimelineDraftSourceItemBatchRepository timelineDraftSourceItemBatchRepository;
 
-    public List<TimelineDraftSourceItem> saveAll(List<TimelineDraftSourceItem> items) {
-        return timelineDraftSourceItemRepository.saveAll(items);
+    public void saveAll(List<TimelineDraftSourceItem> items) {
+        timelineDraftSourceItemBatchRepository.insertAll(items);
     }
 
     public List<TimelineDraftSourceItem> findByTaskId(String taskId) {

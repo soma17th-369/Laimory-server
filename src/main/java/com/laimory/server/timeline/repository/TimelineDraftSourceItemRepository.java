@@ -6,12 +6,16 @@ import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 /** timeline_draft_source_items 레포. task_id 단위 조회/삭제, 보관기간 초과 행 조회(cleanup용). */
 public interface TimelineDraftSourceItemRepository extends JpaRepository<TimelineDraftSourceItem, Long> {
 
-    List<TimelineDraftSourceItem> findByTaskId(String taskId);
+    @Query("select source from TimelineDraftSourceItem source "
+            + "where source.taskId = :taskId order by source.timelineDraftSourceItemId asc")
+    List<TimelineDraftSourceItem> findByTaskId(@Param("taskId") String taskId);
 
     @Modifying
     @Transactional
