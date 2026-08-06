@@ -148,8 +148,16 @@ export function mixedDayBody(config, vu) {
  *
  * ⚠️ 반드시 #257 simulator로 전환된 상태에서만 실행한다 — 실제 Kakao면 요청 하나가 74콜이다.
  */
+// geo-day 분포는 env로 바꿀 수 있다(기본 = 실측 2026-07-31). 예: GEO_STAY_COUNT=7 GEO_MOVEMENT_COUNT=6
+const GEO_DAY = {
+  calendar: Number(__ENV.GEO_CALENDAR_COUNT || MIXED_DAY.calendar),
+  notification: Number(__ENV.GEO_NOTIFICATION_COUNT || MIXED_DAY.notification),
+  stay: Number(__ENV.GEO_STAY_COUNT || MIXED_DAY.stayStandin),
+  movement: Number(__ENV.GEO_MOVEMENT_COUNT || MIXED_DAY.movementStandin),
+};
+
 export function geoDayBody(config, vu) {
-  const COORDS_PER_REQUEST = 37;
+  const COORDS_PER_REQUEST = GEO_DAY.stay + GEO_DAY.movement * 2;
   const base = (vu - 1) * COORDS_PER_REQUEST;
   const coord = (i) => ({
     latitude: Number((LAT_ORIGIN + (base + i) * COORD_STEP).toFixed(6)),
@@ -160,27 +168,27 @@ export function geoDayBody(config, vu) {
   let index = 0;
   const startAt = () => `${config.recordDate}T${clockTime(index % 24, (index * 7) % 60, 0)}`;
 
-  for (let i = 0; i < MIXED_DAY.calendar; i += 1) {
+  for (let i = 0; i < GEO_DAY.calendar; i += 1) {
     items.push({ itemType: 'CALENDAR', rawId: rawId(config, vu, index), startAt: startAt(), endAt: null,
       payload: { title: `k6 geo-day 일정 ${i + 1}`, description: 'issue #251 geo-day scenario', allDay: false } });
     index += 1;
   }
-  for (let i = 0; i < MIXED_DAY.notification; i += 1) {
+  for (let i = 0; i < GEO_DAY.notification; i += 1) {
     items.push({ itemType: 'NOTIFICATION', rawId: rawId(config, vu, index), startAt: startAt(), endAt: null,
       payload: { appName: '카카오톡', title: `k6 geo-day 알림 ${i + 1}`,
         text: '부하 테스트용 합성 알림 본문 — 실제 알림 평균 크기 근사치의 텍스트.' } });
     index += 1;
   }
-  for (let i = 0; i < MIXED_DAY.stayStandin; i += 1) {
+  for (let i = 0; i < GEO_DAY.stay; i += 1) {
     const c = coord(i);
     items.push({ itemType: 'STAY', rawId: rawId(config, vu, index), startAt: startAt(),
       endAt: `${config.recordDate}T${clockTime(index % 24, ((index * 7) + 30) % 60, 0)}`,
       payload: { latitude: c.latitude, longitude: c.longitude } });
     index += 1;
   }
-  for (let i = 0; i < MIXED_DAY.movementStandin; i += 1) {
-    const s = coord(13 + i * 2);
-    const e = coord(13 + i * 2 + 1);
+  for (let i = 0; i < GEO_DAY.movement; i += 1) {
+    const s = coord(GEO_DAY.stay + i * 2);
+    const e = coord(GEO_DAY.stay + i * 2 + 1);
     items.push({ itemType: 'MOVEMENT', rawId: rawId(config, vu, index), startAt: startAt(),
       endAt: `${config.recordDate}T${clockTime(index % 24, ((index * 7) + 20) % 60, 0)}`,
       payload: { start: { latitude: s.latitude, longitude: s.longitude },
