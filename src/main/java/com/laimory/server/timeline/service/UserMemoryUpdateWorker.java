@@ -32,23 +32,27 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>1. 저장 직후 즉시 접수({@link #dispatchNow})</b> — 경합이 없는 대부분의 저장이 여기서 끝난다.
  * 요청 스레드가 아니라 async 스레드에서 실행되므로 저장 응답은 기다리지 않는다.
+ * <b>guard 획득에 실패한 경우에만</b> 그 작업을 큐에 남긴다(DLQ).
  *
- * <p><b>2. 하루 1회 재시도 배치({@link #retryPendingUpdates})</b> — 1에서 사용자 guard를 못 잡아 대기 큐에
- * 남은 항목과, 프로세스가 죽어 즉시 접수가 유실된 항목을 줍는다. 폴링을 hot path에 두지 않으려는
- * 선택이다 — 경합은 같은 사용자가 짧은 간격으로 두 날짜를 저장할 때만 생기는 드문 경우인데, 그것 때문에
- * 모든 저장이 주기를 기다릴 이유가 없다.
+ * <p><b>2. 하루 1회 재시도 배치({@link #retryPendingUpdates})</b> — 큐에 쌓인 것, 즉 guard 충돌로
+ * 넘어가지 못한 작업만 처리한다. 폴링을 hot path에 두지 않으려는 선택이다 — 경합은 같은 사용자가 짧은
+ * 간격으로 두 날짜를 저장할 때만 생기는 드문 경우인데, 그것 때문에 모든 저장이 주기를 기다릴 이유가 없다.
  *
  * <p><b>왜 guard인가</b>: 사용자 하나의 User Memory는 문서 전체를 다시 쓰는 갱신이라, 다른 날짜의 갱신이
  * 진행 중일 때 같이 시작하면 둘 다 같은 base 문서를 읽고 나중에 도착한 쪽이 이겨 하루치가 통째로 사라진다.
- * guard 점유는 장애가 아니라 정상 직렬화이므로 스킵이 아니라 대기로 다룬다.
+ * guard 획득 실패가 곧 <b>"이 사용자의 갱신이 진행 중"</b>이라는 판정이고, 그래서 별도의 진행 상태 저장
+ * 없이 guard 하나가 직렬화와 실패 판정을 겸한다. 점유는 장애가 아니라 정상 직렬화라 버리지 않고 미룬다.
  *
  * <p><b>불변식(가장 중요)</b>: 접수 body와 {@code baseMemoryHash}는 <b>guard를 잡은 뒤</b> 그 시점의
  * 상태를 읽어 만든다. 대기 중에 앞선 날짜의 갱신이 문서를 바꾸므로, 대기 항목에 미리 조립해 두면 낡은
  * 문서를 base로 삼게 되고 대기 자체가 무의미해진다.
  *
  * <p>배치는 한 사용자의 밀린 날들을 <b>한 요청으로 묶는다</b>. guard가 사용자당 하나라 나눠 보내면 하루에
- * 한 건씩만 처리돼 N일이 밀리면 N일이 걸린다. {@code diaries[]}가 배열이고 AI가 최대 7건을 받는 것이
- * 이 자리다.
+ * 한 건씩만 처리돼 N일이 밀리면 N일이 걸린다. {@code dailyTimelines[]}가 배열이고 AI가 최대 7건을 받는
+ * 것이 이 자리다.
+ *
+ * <p>큐는 Redis에 있어 재배포·재시작을 견디고, 여러 인스턴스가 동시에 드레인해도 안전하다 — guard를
+ * 잡은 하나만 진행하고 못 잡은 쪽은 큐를 건드리지 않으므로 항목이 되살아나지 않는다.
  *
  * <p>접수 실패는 어느 경로도 재시도하지 않는다 — 사용자의 저장은 이미 커밋됐고 그 날치 memory 반영만
  * 누락된다. 그래서 AI를 두들기는 루프가 없고 circuit breaker도 두지 않는다.
@@ -96,23 +100,31 @@ public class UserMemoryUpdateWorker {
     }
 
     /**
-     * 저장 커밋 직후의 즉시 접수. guard를 못 잡으면 <b>아무것도 하지 않는다</b> — 대기 항목은 큐에 그대로
-     * 남고 하루 1회 배치가 가져간다. 여기서 대기·재시도하면 async 스레드를 붙잡게 된다.
+     * 저장 커밋 직후의 즉시 접수. 경합이 없으면 큐를 아예 거치지 않는다.
+     *
+     * <p>guard를 못 잡으면 <b>그때 큐에 남긴다</b>(DLQ) — guard 획득 실패가 곧 "이 사용자의 갱신이 진행
+     * 중"이라는 판정이라, 그 판정 지점이 실패를 기록할 유일한 지점이다. 여기서 대기·재시도하지 않는 것은
+     * 재시도가 하루 간격이라 async 스레드를 며칠 붙잡게 되기 때문이다.
      *
      * <p>실패를 밖으로 던지지 않는다. 호출부(저장 API)는 이미 응답을 냈고 되돌릴 것이 없다.
      */
     @Async
     public void dispatchNow(UserMemoryUpdatePending pending) {
+        Instant now = clock.instant();
         try {
-            process(pending.userId(), List.of(pending), clock.instant());
+            if (!process(pending.userId(), List.of(pending), now)) {
+                pendingStore.enqueue(pending, now);
+                log.info("User Memory 갱신 보류(다른 날짜 진행 중 — 배치가 처리): userId={} dailyRecordId={}",
+                        pending.userId(), pending.dailyRecordId());
+            }
         } catch (RuntimeException e) {
-            log.error("User Memory 갱신 즉시 접수 실패(대기 큐에 남김): userId={} dailyRecordId={}",
+            log.error("User Memory 갱신 즉시 접수 실패: userId={} dailyRecordId={}",
                     pending.userId(), pending.dailyRecordId(), e);
         }
     }
 
     /**
-     * 즉시 접수가 guard 경합으로 넘어가지 못했거나 프로세스 종료로 유실된 항목을 하루 1회 줍는다.
+     * guard 충돌로 넘어가지 못해 큐에 쌓인 작업을 하루 1회 처리한다.
      * 사용자별로 묶어 한 요청에 최대 {@link #MAX_DIARIES}일을 싣는다.
      */
     @Scheduled(cron = "${app.user-memory.update.retry-cron:0 30 4 * * *}")
@@ -124,8 +136,14 @@ public class UserMemoryUpdateWorker {
         }
         int dispatched = 0;
         for (Map.Entry<Long, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
+            // 상한 초과분은 큐에 남겨 다음 배치가 가져간다.
+            List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DIARIES).toList();
             try {
-                dispatched += process(entry.getKey(), entry.getValue(), now) ? 1 : 0;
+                if (process(entry.getKey(), batch, now)) {
+                    // 접수로 넘어간 것만 큐에서 지운다. 접수 실패는 재시도하지 않으므로 되돌리지 않는다.
+                    batch.forEach(pendingStore::remove);
+                    dispatched++;
+                }
             } catch (RuntimeException e) {
                 // 한 사용자의 실패가 나머지 드레인을 막지 않는다.
                 log.error("User Memory 갱신 재시도 실패: userId={} pendingDays={}",
@@ -136,11 +154,11 @@ public class UserMemoryUpdateWorker {
     }
 
     /**
-     * 대기 큐에서 아직 유효한 항목만 사용자별로 모은다(오래된 순 유지). deadline을 넘긴 항목은 여기서
+     * 큐에서 아직 유효한 작업만 사용자별로 모은다(오래된 순 유지). deadline을 넘긴 항목은 여기서
      * 버린다 — 그동안 계속 막혔다는 뜻이고 저장은 이미 끝났으므로 그 날치 memory 반영만 포기한다.
      */
     private Map<Long, List<UserMemoryUpdatePending>> livePendingByUser(Instant now) {
-        return pendingStore.findReady(now, batchSize).stream()
+        return pendingStore.findPending(now, batchSize).stream()
                 .filter(pending -> {
                     if (!pending.isExpired(now)) {
                         return true;
@@ -155,19 +173,18 @@ public class UserMemoryUpdateWorker {
     }
 
     /**
-     * 사용자 guard를 잡고 그 사용자의 대기분을 한 요청으로 접수한다.
+     * 사용자 guard를 잡고 그 사용자의 작업을 한 요청으로 접수한다. <b>큐는 건드리지 않는다</b> —
+     * 즉시 접수 경로에서는 애초에 큐에 없고, 배치 경로에서는 호출부가 지운다.
      *
+     * @param batch 이미 {@link #MAX_DIARIES} 이하로 잘린 목록
      * @return guard를 잡아 접수까지 갔으면 {@code true}. {@code false}는 그 사용자의 다른 갱신이 진행
-     *         중이라는 뜻이고, 대기 항목은 큐에 그대로 남아 다음 배치가 가져간다(실패가 아니다).
+     *         중이라는 뜻이다 — 실패가 아니라 정상 직렬화이고, 호출부가 큐에 남기거나 그대로 둔다.
      */
-    private boolean process(long userId, List<UserMemoryUpdatePending> pendings, Instant now) {
-        List<UserMemoryUpdatePending> batch = pendings.stream().limit(MAX_DIARIES).toList();
+    private boolean process(long userId, List<UserMemoryUpdatePending> batch, Instant now) {
         String taskId = UUID.randomUUID().toString();
-        if (!pendingStore.claim(batch.getFirst(), taskId, TASK_TTL)) {
+        if (!pendingStore.acquireGuard(userId, taskId, TASK_TTL)) {
             return false;
         }
-        // claim은 첫 항목만 큐에서 빼므로 같은 요청에 실을 나머지도 함께 정리한다.
-        batch.stream().skip(1).forEach(pendingStore::remove);
 
         try {
             dispatch(userId, batch, taskId, now);

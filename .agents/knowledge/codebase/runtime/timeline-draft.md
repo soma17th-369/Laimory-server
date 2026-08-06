@@ -173,18 +173,21 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   성패에 묶이지 않는다.
 - 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
   시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
-- 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 `(userId, dailyRecordId, deadline)`만 Redis 대기
-  sorted set(`timeline:user-memory-update:pending`)에 넣고, `@Async`로 즉시 접수를 깨운 뒤 응답한다.
-  **순서가 중요하다** — 큐 등록이 먼저여야 접수 스레드가 뜨기 전 종료에서도 그 날치가 남는다.
-  둘 중 무엇이 실패해도 로그만 남기고 200을 깨지 않는다.
-- 사용자 guard(`timeline:user-memory-update:user:{userId}`, SET NX, TTL 3분) 획득이 곧 큐에서의 claim이고
-  둘은 한 Lua 실행이다 — 나누면 인스턴스 둘이 같은 항목을 읽었을 때 같은 날짜가 두 번 접수될 수 있다.
-- **경합이 없는 대부분의 저장은 즉시 접수에서 끝나고 큐에 머무르지 않는다.** 큐에 남는 것은 guard를 못
-  잡은 항목(그 사용자의 다른 날짜가 진행 중)과 프로세스 종료로 즉시 접수가 유실된 항목뿐이다.
-  즉시 접수는 guard를 못 잡으면 대기·재시도하지 않고 그대로 물러난다(async 스레드를 붙잡지 않는다).
-- **재시도는 하루 1회 배치**(`retryPendingUpdates`, 기본 04:30 cron)다. 경합은 같은 사용자가 짧은 간격으로
-  두 날짜를 저장할 때만 생기는 드문 경우라, 그것 때문에 모든 저장을 폴링 주기에 태우지 않는다.
-  deadline(기본 7일 — 재시도 간격이 하루라 draft source retention과 맞췄다)을 넘긴 항목만 버린다.
+- 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 `@Async`로 접수를 깨우고 곧바로 응답한다.
+  트리거 실패는 로그만 남기고 200을 깨지 않는다.
+- 사용자 guard는 `timeline:user-memory-update:user:{userId}`(SET NX, TTL 3분)이고, **획득 실패가 곧
+  "이 사용자의 갱신이 진행 중"이라는 판정**이다. 그래서 별도의 진행 상태 저장 없이 guard 하나가
+  직렬화와 실패 판정을 겸한다.
+- **경합이 없으면 Redis 큐를 아예 쓰지 않는다.** guard를 못 잡았을 때 **그때** 그 작업을 큐
+  (`timeline:user-memory-update:pending` sorted set, member `userId:dailyRecordId:deadline`)에 남긴다 —
+  DLQ다. 즉시 접수는 거기서 대기·재시도하지 않고 물러난다(재시도가 하루 간격이라 async 스레드를
+  며칠 붙잡게 된다).
+- **재시도는 하루 1회 배치**(`retryPendingUpdates`, 기본 04:30 cron)이고 큐에 쌓인 것만 처리한다.
+  경합은 같은 사용자가 짧은 간격으로 두 날짜를 저장할 때만 생기는 드문 경우라, 그것 때문에 모든 저장을
+  폴링 주기에 태우지 않는다. deadline(기본 7일 — 재시도 간격이 하루라 draft source retention과 맞췄다)을
+  넘긴 항목만 버린다.
+- 여러 인스턴스가 동시에 드레인해도 안전하다 — guard를 잡은 하나만 진행하고 못 잡은 쪽은 큐를 건드리지
+  않으므로 항목이 되살아나지 않는다.
 - **배치는 한 사용자의 밀린 날들을 한 요청으로 묶는다**(AI 계약 상한 7건). guard가 사용자당 하나라
   나눠 보내면 N일이 밀렸을 때 N일이 걸린다. `claim`이 첫 항목만 큐에서 빼므로 나머지는 명시적으로 지운다.
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 대기 중에 앞선 날짜의 갱신이 문서를

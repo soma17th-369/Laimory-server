@@ -15,7 +15,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
-import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,8 +34,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 저장 오케스트레이션 단위 검증.
  *
- * <p>고정하는 계약: 부수효과 전에 404·409를 거절하고, 전이 커밋 <b>뒤에만</b> 갱신 대기를 등록하며,
- * 요청 스레드는 AI를 호출하지 않고, 대기 등록이 실패해도 저장 응답을 깨지 않는다.
+ * <p>고정하는 계약: 부수효과 전에 404·409를 거절하고, 전이 커밋 <b>뒤에만</b> 갱신 접수를 깨우며,
+ * 요청 스레드는 AI를 호출하지 않고, 접수 트리거가 실패해도 저장 응답을 깨지 않는다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineSaveServiceTest {
@@ -53,8 +52,6 @@ class TimelineSaveServiceTest {
     @Mock
     private TimelineSaveTransactionService timelineSaveTransactionService;
     @Mock
-    private UserMemoryUpdatePendingStore pendingStore;
-    @Mock
     private UserMemoryUpdateWorker worker;
     @Mock
     private UserMemoryUpdateDispatcher dispatcher;
@@ -63,61 +60,46 @@ class TimelineSaveServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService, pendingStore,
+        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService,
                 worker, Clock.fixed(NOW, ZoneOffset.UTC), DEADLINE);
     }
 
     @Test
-    void 전이_커밋_대기_등록_즉시_접수_순으로_진행한다() {
+    void 전이를_커밋한_뒤에_갱신_접수를_깨운다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
         service.save(VERSION, USER_ID, RECORD_DATE);
 
-        // durable 등록이 즉시 접수보다 먼저다 — 반대면 접수 스레드가 뜨기 전 종료에서 그 날치가 사라진다.
-        InOrder inOrder = inOrder(timelineSaveTransactionService, pendingStore, worker);
+        // 커밋 전에 깨우면 롤백된 저장이 갱신을 유발한다.
+        InOrder inOrder = inOrder(timelineSaveTransactionService, worker);
         inOrder.verify(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
-        inOrder.verify(pendingStore).enqueue(any(), any());
         inOrder.verify(worker).dispatchNow(any());
     }
 
     @Test
-    void 대기_등록에_실패하면_즉시_접수를_깨우지_않는다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(draftRecord()));
-        doThrow(new RuntimeException("redis down")).when(pendingStore).enqueue(any(), any());
-
-        assertThatCode(() -> service.save(VERSION, USER_ID, RECORD_DATE)).doesNotThrowAnyException();
-
-        // 큐에 없는 항목을 접수하면 재시도 배치가 주울 근거도 사라진다.
-        verifyNoInteractions(worker);
-    }
-
-    @Test
-    void 즉시_접수_트리거가_거절돼도_저장은_성공으로_끝난다() {
+    void 접수_트리거가_거절돼도_저장은_성공으로_끝난다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
         doThrow(new RuntimeException("executor saturated")).when(worker).dispatchNow(any());
 
         assertThatCode(() -> service.save(VERSION, USER_ID, RECORD_DATE)).doesNotThrowAnyException();
 
-        verify(pendingStore).enqueue(any(), any());
+        verify(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
     }
 
     @Test
-    void 대기_항목은_식별자와_deadline만_담는다() {
+    void 접수_요청은_식별자와_저장_시점_기준_deadline을_담는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
         service.save(VERSION, USER_ID, RECORD_DATE);
 
         ArgumentCaptor<UserMemoryUpdatePending> pending = ArgumentCaptor.forClass(UserMemoryUpdatePending.class);
-        ArgumentCaptor<Instant> readyAt = ArgumentCaptor.forClass(Instant.class);
-        verify(pendingStore).enqueue(pending.capture(), readyAt.capture());
+        verify(worker).dispatchNow(pending.capture());
         assertThat(pending.getValue().userId()).isEqualTo(USER_ID);
         assertThat(pending.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
         assertThat(pending.getValue().deadline()).isEqualTo(NOW.plus(DEADLINE));
-        assertThat(readyAt.getValue()).isEqualTo(NOW);
     }
 
     @Test
@@ -139,7 +121,7 @@ class TimelineSaveServiceTest {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
                 });
-        verifyNoInteractions(timelineSaveTransactionService, pendingStore, worker);
+        verifyNoInteractions(timelineSaveTransactionService, worker);
     }
 
     @Test
@@ -152,11 +134,11 @@ class TimelineSaveServiceTest {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
                 });
-        verifyNoInteractions(timelineSaveTransactionService, pendingStore, worker);
+        verifyNoInteractions(timelineSaveTransactionService, worker);
     }
 
     @Test
-    void 전이가_실패하면_갱신_대기를_등록하지_않는다() {
+    void 전이가_실패하면_갱신_접수를_깨우지_않는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
@@ -164,7 +146,7 @@ class TimelineSaveServiceTest {
 
         assertThatThrownBy(() -> service.save(VERSION, USER_ID, RECORD_DATE))
                 .isInstanceOf(BusinessException.class);
-        verifyNoInteractions(pendingStore, worker);
+        verifyNoInteractions(worker);
     }
 
     private DailyRecord draftRecord() {

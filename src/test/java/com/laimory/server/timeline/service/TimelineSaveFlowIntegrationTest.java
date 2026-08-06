@@ -30,6 +30,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -43,9 +44,10 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>고정하는 계약 넷:
  * <ul>
- *   <li>저장 API 반환 시점에 record가 이미 SAVED이고 갱신 대기가 등록돼 있다(동기 저장 + 비동기 갱신).</li>
+ *   <li>저장 API 반환 시점에 record가 이미 SAVED다(동기 저장). 경합이 없으면 갱신은 async로 끝나고
+ *       큐를 거치지 않는다.</li>
  *   <li>저장 후에는 편집 경로가 전부 {@code -1003}으로 거절된다(이슈 요구 회귀).</li>
- *   <li>같은 사용자의 다른 날짜가 진행 중이면 갱신은 <b>스킵이 아니라 대기</b>했다가 guard 해제 후 접수된다.</li>
+ *   <li>같은 사용자의 다른 날짜가 진행 중이면 <b>버리지 않고 그때 큐에 남겨</b> 배치가 가져간다.</li>
  *   <li>AI 결과는 base 지문이 일치할 때만 반영되고, FAILED는 문서를 바꾸지 않는다.</li>
  * </ul>
  */
@@ -110,12 +112,16 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     @Test
-    void 저장은_즉시_커밋되고_갱신은_대기_큐에_남는다() {
+    void 저장은_즉시_커밋되고_경합이_없으면_큐를_쓰지_않는다() {
         timelineSaveService.save("v1", userId, DATE);
 
+        // 반환 시점에 전이는 이미 커밋돼 있다(동기 저장).
         assertThat(dailyRecordRepository.findById(recordId).orElseThrow().getStatus())
                 .isEqualTo(DailyRecordStatus.SAVED);
-        assertThat(pendingEntriesOf(userId)).isNotEmpty();
+        // 갱신은 async로 넘어가 guard를 잡고 끝난다 — 큐를 거치지 않는다.
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(guardHeldBy(userId)).isTrue());
+        assertThat(pendingEntriesOf(userId)).isEmpty();
     }
 
     @Test
@@ -139,12 +145,15 @@ class TimelineSaveFlowIntegrationTest {
         Instant now = clock.instant();
         UserMemoryUpdatePending inFlight = new UserMemoryUpdatePending(userId, otherRecordId, now.plusSeconds(300));
         pendingStore.enqueue(inFlight, now);
-        assertThat(pendingStore.claim(inFlight, "in-flight-task", Duration.ofMinutes(3))).isTrue();
+        assertThat(pendingStore.acquireGuard(userId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
         timelineSaveService.save("v1", userId, DATE);
 
-        // 즉시 접수가 guard를 못 잡았으므로 항목이 큐에 남아야 한다 — 스킵됐다면 여기서 비어 있다.
-        assertThat(pendingEntriesOf(userId)).isNotEmpty();
+        // 즉시 접수가 guard를 못 잡았으므로 그때 큐에 남아야 한다 — 버려졌다면 여기가 비어 있다.
+        Awaitility.await().atMost(Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(pendingEntriesOf(userId))
+                        .extracting(UserMemoryUpdatePending::dailyRecordId)
+                        .contains(recordId));
 
         pendingStore.releaseGuard(userId);
         userMemoryUpdateWorker.retryPendingUpdates();
@@ -222,8 +231,17 @@ class TimelineSaveFlowIntegrationTest {
                 .isEqualTo(DailyRecordStatus.SAVED);
     }
 
+    /** guard는 획득 시도로만 관측한다 — 잡히면 비어 있었다는 뜻이라 곧바로 되돌린다. */
+    private boolean guardHeldBy(long ownerId) {
+        if (pendingStore.acquireGuard(ownerId, "probe", Duration.ofSeconds(5))) {
+            pendingStore.releaseGuard(ownerId);
+            return false;
+        }
+        return true;
+    }
+
     private List<UserMemoryUpdatePending> pendingEntriesOf(long ownerId) {
-        return pendingStore.findReady(clock.instant().plusSeconds(3600), 100).stream()
+        return pendingStore.findPending(clock.instant().plusSeconds(3600), 100).stream()
                 .filter(pending -> pending.userId() == ownerId)
                 .toList();
     }

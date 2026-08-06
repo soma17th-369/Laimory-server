@@ -5,7 +5,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
-import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -18,15 +17,12 @@ import org.springframework.stereotype.Service;
  * 하루 기록 저장 오케스트레이터. leaf 서비스를 합성한다(레포 직접 접근 금지).
  *
  * <p>순서가 load-bearing이다: 사전 검증(404 은닉·SAVED 409) → 별도 트랜잭션에서 조건부 UPDATE로
- * {@code DRAFT→SAVED} 커밋({@link TimelineSaveTransactionService}) → <b>커밋 뒤</b> User Memory 갱신 대기
- * 등록 → 200. 트랜잭션 안에서 대기 등록을 하면 롤백된 저장이 갱신을 유발할 수 있다.
+ * {@code DRAFT→SAVED} 커밋({@link TimelineSaveTransactionService}) → <b>커밋 뒤</b> User Memory 갱신 접수
+ * 요청 → 200. 트랜잭션 안에서 접수를 깨우면 롤백된 저장이 갱신을 유발할 수 있다.
  *
- * <p><b>200은 저장 완료다.</b> 대기 등록과 그 뒤의 AI 접수는 전부 best-effort이며 실패해도 저장을
- * 되돌리지 않는다 — User Memory는 다음 타임라인 품질을 높이는 보조 데이터이지 저장의 일부가 아니다.
- *
- * <p>대기 등록과 즉시 접수 트리거는 <b>순서가 중요하다</b>. 먼저 Redis 대기 큐에 넣어 durable하게 만든
- * 다음 async 접수를 깨운다 — 반대로 하면 접수 스레드가 뜨기 전에 프로세스가 죽었을 때 그 날치가 흔적
- * 없이 사라진다. 요청 스레드는 AI를 호출하지 않는다.
+ * <p><b>200은 저장 완료다.</b> 뒤따르는 갱신 접수는 best-effort이며 실패해도 저장을 되돌리지 않는다 —
+ * User Memory는 다음 타임라인 품질을 높이는 보조 데이터이지 저장의 일부가 아니다.
+ * 요청 스레드는 AI를 호출하지 않는다.
  */
 @Slf4j
 @Service
@@ -34,7 +30,6 @@ public class TimelineSaveService {
 
     private final DailyRecordService dailyRecordService;
     private final TimelineSaveTransactionService timelineSaveTransactionService;
-    private final UserMemoryUpdatePendingStore pendingStore;
     private final UserMemoryUpdateWorker userMemoryUpdateWorker;
     private final Clock clock;
     private final Duration updateDeadline;
@@ -42,13 +37,11 @@ public class TimelineSaveService {
     public TimelineSaveService(
             DailyRecordService dailyRecordService,
             TimelineSaveTransactionService timelineSaveTransactionService,
-            UserMemoryUpdatePendingStore pendingStore,
             UserMemoryUpdateWorker userMemoryUpdateWorker,
             Clock clock,
             @Value("${app.user-memory.update.deadline:7d}") Duration updateDeadline) {
         this.dailyRecordService = dailyRecordService;
         this.timelineSaveTransactionService = timelineSaveTransactionService;
-        this.pendingStore = pendingStore;
         this.userMemoryUpdateWorker = userMemoryUpdateWorker;
         this.clock = clock;
         this.updateDeadline = updateDeadline;
@@ -69,32 +62,28 @@ public class TimelineSaveService {
 
         Long dailyRecordId = record.getDailyRecordId();
         timelineSaveTransactionService.save(userId, dailyRecordId);
-        enqueueUserMemoryUpdate(userId, dailyRecordId);
+        requestUserMemoryUpdate(userId, dailyRecordId);
     }
 
     /**
-     * 갱신 대기 등록 후 즉시 접수를 깨운다. 경합이 없는 대부분의 저장은 곧바로 접수되고 대기 큐에
-     * 머무르지 않는다 — guard를 못 잡은 항목만 남아 하루 1회 재시도 배치가 가져간다.
+     * User Memory 갱신 접수를 async로 깨우고 곧바로 돌아온다. 경합이 없으면 이것으로 끝이고 Redis 큐는
+     * 아예 쓰이지 않는다 — 사용자 guard를 못 잡은 경우에만 worker가 그 작업을 큐에 남기고, 하루 1회
+     * 배치가 그것만 처리한다. guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이라, 실패를
+     * 기록할 지점이 거기 하나로 모인다.
+     *
+     * <p>{@code deadline}은 여기서 계산한다 — 밀리기 시작하는 기준이 저장 시점이기 때문이다.
      *
      * <p>실패해도 저장 응답을 깨지 않는다 — 그 날치 User Memory 반영만 누락되고 사용자의 저장은 이미
      * 커밋됐다. 누락 빈도를 판단할 수 있도록 식별자와 함께 남긴다.
      */
-    private void enqueueUserMemoryUpdate(long userId, Long dailyRecordId) {
+    private void requestUserMemoryUpdate(long userId, Long dailyRecordId) {
         Instant now = clock.instant();
-        UserMemoryUpdatePending pending =
-                new UserMemoryUpdatePending(userId, dailyRecordId, now.plus(updateDeadline));
         try {
-            pendingStore.enqueue(pending, now);
+            userMemoryUpdateWorker.dispatchNow(
+                    new UserMemoryUpdatePending(userId, dailyRecordId, now.plus(updateDeadline)));
         } catch (RuntimeException e) {
-            log.error("User Memory 갱신 대기 등록 실패(저장은 완료): userId={} dailyRecordId={}",
-                    userId, dailyRecordId, e);
-            return;
-        }
-        try {
-            userMemoryUpdateWorker.dispatchNow(pending);
-        } catch (RuntimeException e) {
-            // async 실행기 포화 등으로 거절돼도 항목은 큐에 남아 있다 — 재시도 배치가 줍는다.
-            log.warn("User Memory 갱신 즉시 접수 트리거 실패(배치가 재시도): userId={} dailyRecordId={}",
+            // async 실행기 포화 등으로 거절되면 그 날치 갱신은 누락된다(저장은 이미 완료).
+            log.error("User Memory 갱신 접수 트리거 실패(저장은 완료): userId={} dailyRecordId={}",
                     userId, dailyRecordId, e);
         }
     }

@@ -61,17 +61,6 @@ public class RedisGateway {
             return 1
             """, Long.class);
 
-    // guard 획득(SET NX PX)과 대기 큐에서의 claim(ZREM)을 한 원자 경계로 묶는다. 둘을 나누면 인스턴스
-    // 둘이 같은 member를 읽었을 때 진 쪽의 재배치(ZADD)가 이긴 쪽의 ZREM 뒤에 도착해 member가 되살아나고
-    // 같은 날짜가 두 번 접수될 수 있다. guard를 못 잡으면 큐는 손대지 않는다(호출부가 재배치한다).
-    private static final RedisScript<Long> SET_IF_ABSENT_AND_SORTED_SET_REMOVE = new DefaultRedisScript<>("""
-            if redis.call('set', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX') then
-                redis.call('zrem', KEYS[2], ARGV[3])
-                return 1
-            end
-            return 0
-            """, Long.class);
-
     // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
     // member 수를 한 번의 Redis 왕복으로 센다.
     private static final RedisScript<Long> PRUNE_AND_COUNT_SORTED_SET = new DefaultRedisScript<>("""
@@ -191,15 +180,11 @@ public class RedisGateway {
     }
 
     /**
-     * key가 없을 때만 값을 저장하고(SET NX PX) 성공 시 sorted set에서 member를 제거한다 — 한 Lua 실행이다.
-     * 저장에 실패하면 sorted set은 그대로 둔다. 반환값은 저장 성공 여부다.
+     * key가 없을 때만 값을 저장한다(SET NX PX). 상호 배제 lock 획득용으로, 반환값이 곧 획득 성공 여부다.
+     * TTL이 있어 소유자가 죽어도 자동으로 풀린다.
      */
-    public boolean setIfAbsentAndRemoveFromSortedSet(String logicalKey, String value, Duration ttl,
-                                                     String logicalSortedSetKey, String member) {
-        Long result = template.execute(SET_IF_ABSENT_AND_SORTED_SET_REMOVE,
-                List.of(prefix + logicalKey, prefix + logicalSortedSetKey),
-                value, String.valueOf(ttl.toMillis()), member);
-        return requireScriptResult(result, logicalKey) == 1;
+    public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
+        return Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
     }
 
     /** sorted set에 member를 넣거나 이미 있으면 score를 갱신한다(ZADD). */

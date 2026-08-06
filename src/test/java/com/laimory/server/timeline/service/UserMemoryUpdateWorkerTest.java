@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -48,9 +49,9 @@ import org.springframework.test.util.ReflectionTestUtils;
  * <p>가장 중요한 계약은 <b>조립이 guard 획득 뒤에 일어난다</b>는 것이다 — 대기 중에 앞선 날짜의 갱신이
  * User Memory를 바꾸므로, 미리 읽어 두면 낡은 문서를 base로 삼게 된다.
  *
- * <p>나머지는 진입점 둘의 역할 분담이다: 즉시 접수는 guard를 못 잡으면 <b>큐를 건드리지 않고</b> 물러나고,
- * 하루 1회 배치는 남은 항목을 사용자별로 묶어 한 요청으로 보낸다(나눠 보내면 guard가 사용자당 하나라
- * N일이 N일 걸린다).
+ * <p>나머지는 진입점 둘의 역할 분담이다: 즉시 접수는 <b>guard를 못 잡았을 때만</b> 큐에 남기고(경합이
+ * 없으면 큐를 아예 쓰지 않는다), 하루 1회 배치는 그렇게 쌓인 것을 사용자별로 묶어 한 요청으로 보낸다
+ * (나눠 보내면 guard가 사용자당 하나라 N일이 N일 걸린다).
  */
 @ExtendWith(MockitoExtension.class)
 class UserMemoryUpdateWorkerTest {
@@ -86,15 +87,28 @@ class UserMemoryUpdateWorkerTest {
     // ── 즉시 접수 ──
 
     @Test
-    void 즉시_접수는_guard를_못_잡으면_큐를_건드리지_않고_물러난다() {
+    void guard를_못_잡으면_그때_큐에_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.claim(eq(pending), anyString(), any())).thenReturn(false);
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(false);
 
         worker.dispatchNow(pending);
 
-        // 항목이 큐에 남아야 하루 1회 배치가 줍는다.
-        verify(pendingStore, never()).remove(any());
+        // guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이고, 실패를 기록할 유일한 지점이다.
+        verify(pendingStore).enqueue(pending, NOW);
         verifyNoInteractions(dispatcher, taskStore, userMemoryService);
+    }
+
+    @Test
+    void 경합이_없으면_큐를_아예_쓰지_않는다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubClaimable(pending);
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+
+        worker.dispatchNow(pending);
+
+        verify(pendingStore, never()).enqueue(any(), any());
+        verify(pendingStore, never()).remove(any());
+        verify(dispatcher).dispatch(any());
     }
 
     @Test
@@ -108,7 +122,7 @@ class UserMemoryUpdateWorkerTest {
 
         // 미리 읽어 두면 대기 동안 바뀐 문서를 놓친다 — 순서가 이 흐름의 핵심 불변식이다.
         InOrder inOrder = inOrder(pendingStore, userMemoryService, dispatcher);
-        inOrder.verify(pendingStore).claim(eq(pending), anyString(), any());
+        inOrder.verify(pendingStore).acquireGuard(eq(USER_ID), anyString(), any());
         inOrder.verify(userMemoryService).find(USER_ID);
         inOrder.verify(dispatcher).dispatch(any());
     }
@@ -160,7 +174,7 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 하루_기록이_사라졌으면_접수하지_않고_guard를_반납한다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.claim(eq(pending), anyString(), any())).thenReturn(true);
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
         worker.dispatchNow(pending);
@@ -202,7 +216,8 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 즉시_접수는_예외를_밖으로_던지지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.claim(eq(pending), anyString(), any())).thenThrow(new RuntimeException("redis down"));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
+                .thenThrow(new RuntimeException("redis down"));
 
         worker.dispatchNow(pending); // 저장 응답은 이미 나갔고 되돌릴 것이 없다.
 
@@ -215,8 +230,8 @@ class UserMemoryUpdateWorkerTest {
     void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
         UserMemoryUpdatePending first = pending(RECORD_ID);
         UserMemoryUpdatePending second = pending(RECORD_ID + 1);
-        when(pendingStore.findReady(NOW, BATCH_SIZE)).thenReturn(List.of(first, second));
-        when(pendingStore.claim(eq(first), anyString(), any())).thenReturn(true);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(first, second));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         stubRecord(RECORD_ID + 1);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -228,9 +243,9 @@ class UserMemoryUpdateWorkerTest {
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
         assertThat(request.getValue().dailyTimelines()).hasSize(2);
-        // claim이 첫 항목만 빼므로 나머지는 명시적으로 정리한다.
+        // 접수로 넘어간 것만 큐에서 지운다.
+        verify(pendingStore).remove(first);
         verify(pendingStore).remove(second);
-        verify(pendingStore, never()).remove(first);
     }
 
     @Test
@@ -238,8 +253,8 @@ class UserMemoryUpdateWorkerTest {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, 10)
                 .mapToObj(index -> pending(RECORD_ID + index))
                 .toList();
-        when(pendingStore.findReady(NOW, BATCH_SIZE)).thenReturn(pendings);
-        when(pendingStore.claim(eq(pendings.getFirst()), anyString(), any())).thenReturn(true);
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(pendings);
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
         pendings.stream().limit(UserMemoryUpdateWorker.MAX_DIARIES)
                 .forEach(pending -> stubRecord(pending.dailyRecordId()));
@@ -259,12 +274,12 @@ class UserMemoryUpdateWorkerTest {
     void 배치는_deadline을_넘긴_항목을_접수하지_않고_버린다() {
         UserMemoryUpdatePending expired =
                 new UserMemoryUpdatePending(USER_ID, RECORD_ID, NOW.minusSeconds(1));
-        when(pendingStore.findReady(NOW, BATCH_SIZE)).thenReturn(List.of(expired));
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(expired));
 
         worker.retryPendingUpdates();
 
         verify(pendingStore).remove(expired);
-        verify(pendingStore, never()).claim(any(), anyString(), any());
+        verify(pendingStore, never()).acquireGuard(anyLong(), anyString(), any());
         verifyNoInteractions(dispatcher, taskStore);
     }
 
@@ -273,19 +288,19 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending failing = pending(RECORD_ID);
         UserMemoryUpdatePending healthy =
                 new UserMemoryUpdatePending(USER_ID + 1, RECORD_ID + 1, NOW.plusSeconds(300));
-        when(pendingStore.findReady(NOW, BATCH_SIZE)).thenReturn(List.of(failing, healthy));
-        when(pendingStore.claim(eq(failing), anyString(), any()))
+        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(failing, healthy));
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
                 .thenThrow(new RuntimeException("redis down"));
-        when(pendingStore.claim(eq(healthy), anyString(), any())).thenReturn(false);
+        when(pendingStore.acquireGuard(eq(USER_ID + 1), anyString(), any())).thenReturn(false);
 
         worker.retryPendingUpdates();
 
-        verify(pendingStore).claim(eq(healthy), anyString(), any());
+        verify(pendingStore).acquireGuard(eq(USER_ID + 1), anyString(), any());
     }
 
     @Test
     void 대기_항목이_없으면_아무것도_하지_않는다() {
-        when(pendingStore.findReady(eq(NOW), anyInt())).thenReturn(List.of());
+        when(pendingStore.findPending(eq(NOW), anyInt())).thenReturn(List.of());
 
         worker.retryPendingUpdates();
 
@@ -293,7 +308,7 @@ class UserMemoryUpdateWorkerTest {
     }
 
     private void stubClaimable(UserMemoryUpdatePending pending) {
-        when(pendingStore.claim(eq(pending), anyString(), any())).thenReturn(true);
+        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(pending.dailyRecordId());
     }
 
