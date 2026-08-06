@@ -38,7 +38,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    최종 outcome을 materialize해 품질 판정한다 — unique 실패 20% 초과(`5F > U`) 또는 시간순(observation
    `startAt`/MOVEMENT END는 `endAt`-or-`startAt`, `rawId`·START<END tie-break) 연속 실패 3개면 저장 전
    502(영구 실패 포함 `-1015`, 아니면 `-1014`)로 거절하고, 허용되면 실패 좌표만 `address` 생략·
-   `places=[]`로 계속한다.
+   `places=[]`로 계속한다. 단 **`LOCAL_REJECTED`(자기 pool 혼잡)는 upstream 품질 신호가 아니므로
+   두 규칙 어디에도 계수하지 않고**(D2에서는 무정보 skip — reset 아님) 해당 좌표만 fallback으로
+   강등한다(#262). local 혼잡만으로는 502가 나지 않는다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.

@@ -50,6 +50,11 @@ class GeoEnrichmentPolicyTest {
                 MapPlaceLookupException.remotePermanent("coord2address http 429", null));
     }
 
+    private static GeoLookupOutcome localRejectedFailure() {
+        return new GeoLookupOutcome.Failure(
+                MapPlaceLookupException.localRejected("coord2address pool acquire rejected", null));
+    }
+
     /**
      * 좌표 0..count-1을 1분 간격 시간순 observation으로 만들고, {@code failedIndexes}만 실패 outcome을 준다.
      */
@@ -208,5 +213,70 @@ class GeoEnrichmentPolicyTest {
             assertThat(rejected.rule()).isEqualTo(Decision.Rule.CONSECUTIVE_FAILURES);
             assertThat(rejected.type()).isEqualTo(ExceptionType.GEOCODING_PERMANENT_FAILURE);
         });
+    }
+
+    // ── #262: LOCAL_REJECTED는 upstream 품질 신호가 아니다 — D1/D2 계수 제외 ──
+
+    @Test
+    void decide_allowsAllLocalRejected_evenAtFullFailureRatio() {
+        // 5/5 전부 local 거절(혼잡)이어도 upstream 실패 0 → 허용(partial). 예전엔 D1 100%로 502였다.
+        assertThat(decide(5, List.of(0, 1, 2, 3, 4), localRejectedFailure()))
+                .isInstanceOf(Decision.Allowed.class);
+    }
+
+    @Test
+    void decide_countsOnlyUpstreamFailures_forRatio() {
+        // 10개 중 upstream 실패 2(20% 허용선) + local 3 — local을 세면 50%로 거절되지만 제외하므로 허용.
+        List<CoordinateObservation> observations = new ArrayList<>();
+        Map<Coordinate, GeoLookupOutcome> outcomes = new HashMap<>();
+        for (int i = 0; i < 10; i++) {
+            observations.add(observation(i, i));
+            GeoLookupOutcome outcome = success();
+            if (i == 0 || i == 5) {
+                outcome = transientFailure();
+            } else if (i >= 7) {
+                outcome = localRejectedFailure();
+            }
+            outcomes.put(coordinate(i), outcome);
+        }
+        assertThat(GeoEnrichmentPolicy.decide(observations, outcomes)).isInstanceOf(Decision.Allowed.class);
+    }
+
+    @Test
+    void decide_localFailure_doesNotBreakConsecutiveUpstreamRun() {
+        // 시간순 [upstream, upstream, local, upstream]: local은 무정보(skip)라 연속 3으로 거절돼야 한다.
+        List<CoordinateObservation> observations = new ArrayList<>();
+        Map<Coordinate, GeoLookupOutcome> outcomes = new HashMap<>();
+        for (int i = 0; i < 15; i++) {
+            observations.add(observation(i, i));
+            GeoLookupOutcome outcome = success();
+            if (i == 5 || i == 6 || i == 8) {
+                outcome = transientFailure();
+            } else if (i == 7) {
+                outcome = localRejectedFailure();
+            }
+            outcomes.put(coordinate(i), outcome);
+        }
+        Decision decision = GeoEnrichmentPolicy.decide(observations, outcomes);
+        assertThat(decision).isInstanceOf(Decision.Rejected.class);
+        assertThat(((Decision.Rejected) decision).rule()).isEqualTo(Decision.Rule.CONSECUTIVE_FAILURES);
+    }
+
+    @Test
+    void decide_successStillResetsConsecutiveRun_withLocalNearby() {
+        // [upstream, upstream, 성공, local, upstream]: 성공이 reset하므로 연속 3 미달 → 허용.
+        List<CoordinateObservation> observations = new ArrayList<>();
+        Map<Coordinate, GeoLookupOutcome> outcomes = new HashMap<>();
+        for (int i = 0; i < 15; i++) {
+            observations.add(observation(i, i));
+            GeoLookupOutcome outcome = success();
+            if (i == 5 || i == 6 || i == 9) {
+                outcome = transientFailure();
+            } else if (i == 8) {
+                outcome = localRejectedFailure();
+            }
+            outcomes.put(coordinate(i), outcome);
+        }
+        assertThat(GeoEnrichmentPolicy.decide(observations, outcomes)).isInstanceOf(Decision.Allowed.class);
     }
 }

@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.geo.Coordinate;
 import com.laimory.server.geo.GeoLookupOutcome;
+import com.laimory.server.geo.MapPlaceLookupException;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -21,6 +22,13 @@ import java.util.Map;
  *   <li><b>D2(시간 축 guard)</b>: 시간순으로 안정 정렬된 observation에서 실패가 3개 연속하면 전체
  *       성공률과 무관하게 거절한다(“오전 이동정보 전체 손실” 방지). 같은 실패 좌표가 여러 시점에
  *       반복되면 반복 횟수대로 센다.</li>
+ *   <li><b>LOCAL_REJECTED 제외(#262)</b>: 이 판정의 목적은 "upstream(Kakao) 품질이 나쁠 때 반쪽짜리
+ *       타임라인 방지"다. {@link MapPlaceLookupException.Category#LOCAL_REJECTED}(자기 pool 혼잡 —
+ *       upstream에 도달하지 않음)는 그 신호가 아니므로 D1의 {@code F}와 D2의 연속 계수에서 제외하고
+ *       해당 좌표만 D5 fallback(partial)으로 강등한다. D2에서 local 실패 observation은 성공(카운터
+ *       reset)도 실패(카운터 증가)도 아닌 <b>무정보로 건너뛴다</b> — local 혼잡 하나가 사이에 끼었다고
+ *       upstream 연속 실패의 증거가 끊기지 않게 한다. circuit ignore 목록(local은 remote 건강도를
+ *       오염시키지 않는다)과 같은 원칙의 판정판 적용이다.</li>
  *   <li><b>D7(오류 우선순위)</b>: 거절 시 materialize된 실패 중 영구({@code clientMayRetryLater=false})가
  *       하나라도 있으면 {@code -1015}, 아니면 {@code -1014}다. circuit 때문에 호출하지 못한 좌표의 가상
  *       provider 응답은 판정하지 않는다.</li>
@@ -69,7 +77,7 @@ final class GeoEnrichmentPolicy {
     static Decision decide(List<CoordinateObservation> observations,
             Map<Coordinate, GeoLookupOutcome> outcomes) {
         long failedUnique = outcomes.values().stream()
-                .filter(GeoLookupOutcome.Failure.class::isInstance)
+                .filter(GeoEnrichmentPolicy::countsAsQualityFailure)
                 .count();
         if (failedUnique == 0) {
             return new Decision.Allowed();
@@ -78,19 +86,26 @@ final class GeoEnrichmentPolicy {
         if (5 * failedUnique > outcomes.size()) {
             return new Decision.Rejected(rejectionType(outcomes), Decision.Rule.FAILURE_RATIO);
         }
-        // D2: 시간순 연속 실패 3개.
+        // D2: 시간순 연속 실패 3개. local 실패는 무정보 — 증가도 reset도 하지 않는다(#262).
         int consecutive = 0;
         for (CoordinateObservation observation : sortChronologically(observations)) {
-            if (outcomes.get(observation.coordinate()) instanceof GeoLookupOutcome.Failure) {
+            GeoLookupOutcome outcome = outcomes.get(observation.coordinate());
+            if (countsAsQualityFailure(outcome)) {
                 consecutive++;
                 if (consecutive >= CONSECUTIVE_FAILURE_LIMIT) {
                     return new Decision.Rejected(rejectionType(outcomes), Decision.Rule.CONSECUTIVE_FAILURES);
                 }
-            } else {
+            } else if (!(outcome instanceof GeoLookupOutcome.Failure)) {
                 consecutive = 0;
             }
         }
         return new Decision.Allowed();
+    }
+
+    /** upstream 품질 실패만 D1/D2에 계수 — local pool 혼잡은 Kakao 품질 신호가 아니다(#262). */
+    private static boolean countsAsQualityFailure(GeoLookupOutcome outcome) {
+        return outcome instanceof GeoLookupOutcome.Failure failure
+                && failure.failure().category() != MapPlaceLookupException.Category.LOCAL_REJECTED;
     }
 
     /** D7: materialize된 실패 중 영구가 하나라도 있으면 {@code -1015}, 아니면 {@code -1014}. */

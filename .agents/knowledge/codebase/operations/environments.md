@@ -76,10 +76,11 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 정확한 property mapping과 default는 `application*.properties`가 권위다.
 
 Kakao 전용 HTTP 자원 경계의 checked-in default는 connection pool 20, lookup concurrency 20,
-pending acquire queue 20이다. `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT=0`도 명시적 fail-fast
+pending acquire queue 200이다(#262 — 지연 폭주 방지는 큐 길이가 아니라 acquire timeout 3s가 담당한다). `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT=0`도 명시적 fail-fast
 override로는 유효하지만, 서로 겹친 정상 draft에서 먼저 시작한 batch가 pool을 점유하면 후행 batch가
-healthy Kakao provider에서도 local rejection과 지오코딩 품질 502를 받을 수 있다. 따라서 0은 기본값이
-아니며 이 제품 결과를 수용하는 환경에서만 사용한다.
+healthy Kakao provider에서도 local rejection을 받는다. #262 이후 local rejection은 품질 판정에 계수되지
+않아 502가 아니라 해당 좌표만 fallback(partial)으로 강등된다 — 그래도 0은 좌표 누락을 크게 늘리므로
+기본값이 아니며 이 제품 결과를 수용하는 환경에서만 사용한다.
 
 ## Invariants
 
