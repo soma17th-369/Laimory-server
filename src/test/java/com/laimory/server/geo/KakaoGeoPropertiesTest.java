@@ -32,7 +32,7 @@ class KakaoGeoPropertiesTest {
             KakaoGeoProperties properties = context.getBean(KakaoGeoProperties.class);
             assertThat(properties.lookupConcurrency()).isEqualTo(20);
             assertThat(properties.http().pool().maxConnections()).isEqualTo(20);
-            assertThat(properties.http().pool().pendingAcquireMaxCount()).isEqualTo(20);
+            assertThat(properties.http().pool().pendingAcquireMaxCount()).isEqualTo(200);
             assertThat(properties.retry().maxAttempts()).isEqualTo(2);
             assertThat(properties.circuit().slidingWindowSize()).isEqualTo(20);
         });
