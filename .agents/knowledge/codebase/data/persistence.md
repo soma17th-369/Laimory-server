@@ -55,8 +55,9 @@ FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환
 `timeline_draft_source_items`의 draft 준비 hot path INSERT는 생성 ID를 같은 transaction에서 사용하지 않으므로
 전용 `JdbcTemplate` batch writer가 입력 순서대로 저장한다. Connector/J가 batch를 multi-values INSERT로
 재작성하도록 기본/docker JDBC URL 모두 `rewriteBatchedStatements=true`를 사용한다. 이 native writer는 JPA
-auditing을 우회하므로 `created_at`/`updated_at`을 SQL `CURRENT_TIMESTAMP(6)`로 직접 채우고
-`modified_by`는 NULL로 둔다. task 단위 조회·채택 삭제·cleanup은 기존 JPA repository가 담당한다.
+auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.now()`를 batch 시작 전에 한 번 캡처해
+`created_at`/`updated_at` 파라미터로 바인딩하고 `modified_by`는 NULL로 둔다. task 단위 조회·채택
+삭제·cleanup은 기존 JPA repository가 담당한다.
 
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을

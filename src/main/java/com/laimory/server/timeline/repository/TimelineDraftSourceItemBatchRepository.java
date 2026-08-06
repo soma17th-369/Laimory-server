@@ -21,7 +21,7 @@ public class TimelineDraftSourceItemBatchRepository {
 
     private static final String INSERT_SQL = "insert into timeline_draft_source_items "
             + "(task_id, user_id, item_type, raw_id, start_at, end_at, payload, created_at, updated_at) "
-            + "values (?, ?, ?, ?, ?, ?, ?, current_timestamp(6), current_timestamp(6))";
+            + "values (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -34,6 +34,7 @@ public class TimelineDraftSourceItemBatchRepository {
         List<String> payloads = items.stream()
                 .map(item -> serializePayload(item.getPayload()))
                 .toList();
+        LocalDateTime auditAt = LocalDateTime.now();
 
         jdbcTemplate.batchUpdate(INSERT_SQL, new BatchPreparedStatementSetter() {
             @Override
@@ -46,6 +47,8 @@ public class TimelineDraftSourceItemBatchRepository {
                 setTimestamp(statement, 5, item.getStartAt());
                 setTimestamp(statement, 6, item.getEndAt());
                 statement.setString(7, payloads.get(index));
+                setTimestamp(statement, 8, auditAt);
+                setTimestamp(statement, 9, auditAt);
             }
 
             @Override

@@ -10,6 +10,7 @@ import com.laimory.server.timeline.payload.MovementEndpoint;
 import com.laimory.server.timeline.payload.MovementPayload;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Tag;
@@ -85,7 +86,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
     }
 
     @Test
-    void jdbcBatchPayloadMatchesJpaJsonRepresentation() {
+    void jdbcBatchPayloadAndAuditMatchJpaRepresentation() {
         String jpaTaskId = "44444444-4444-4444-4444-444444444444";
         String batchTaskId = "55555555-5555-5555-5555-555555555555";
         var payload = objectMapper.createObjectNode();
@@ -95,7 +96,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 .add("첫째")
                 .add("둘째");
 
-        timelineDraftSourceItemRepository.saveAndFlush(TimelineDraftSourceItem.of(
+        TimelineDraftSourceItem jpaSaved = timelineDraftSourceItemRepository.saveAndFlush(TimelineDraftSourceItem.of(
                 jpaTaskId, 0L, ItemType.CALENDAR, "raw-jpa",
                 LocalDateTime.of(2026, 5, 8, 9, 0), null, payload));
         timelineDraftSourceItemBatchRepository.insertAll(List.of(TimelineDraftSourceItem.of(
@@ -105,6 +106,11 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         String jpaJson = storedPayload(jpaTaskId);
         String batchJson = storedPayload(batchTaskId);
         assertThat(batchJson).isEqualTo(jpaJson);
+
+        TimelineDraftSourceItem batchSaved = timelineDraftSourceItemRepository.findByTaskId(batchTaskId).getFirst();
+        assertThat(Duration.between(jpaSaved.getCreatedAt(), batchSaved.getCreatedAt()).abs())
+                .isLessThan(Duration.ofMinutes(1));
+        assertThat(batchSaved.getUpdatedAt()).isEqualTo(batchSaved.getCreatedAt());
     }
 
     @Test

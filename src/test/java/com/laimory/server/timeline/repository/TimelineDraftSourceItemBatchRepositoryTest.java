@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.sql.PreparedStatement;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -47,9 +48,11 @@ class TimelineDraftSourceItemBatchRepositoryTest {
 
         repository.insertAll(items);
 
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<BatchPreparedStatementSetter> setterCaptor =
                 ArgumentCaptor.forClass(BatchPreparedStatementSetter.class);
-        verify(jdbcTemplate).batchUpdate(anyString(), setterCaptor.capture());
+        verify(jdbcTemplate).batchUpdate(sqlCaptor.capture(), setterCaptor.capture());
+        assertThat(sqlCaptor.getValue()).doesNotContainIgnoringCase("current_timestamp");
         BatchPreparedStatementSetter setter = setterCaptor.getValue();
         assertThat(setter.getBatchSize()).isEqualTo(68);
 
@@ -64,6 +67,13 @@ class TimelineDraftSourceItemBatchRepositoryTest {
                 .containsExactlyElementsOf(items.stream().map(TimelineDraftSourceItem::getRawId).toList());
         verify(statement, times(68)).setNull(6, Types.TIMESTAMP);
         verify(statement, times(68)).setString(eq(7), anyString());
+
+        ArgumentCaptor<Timestamp> createdAtCaptor = ArgumentCaptor.forClass(Timestamp.class);
+        ArgumentCaptor<Timestamp> updatedAtCaptor = ArgumentCaptor.forClass(Timestamp.class);
+        verify(statement, times(68)).setTimestamp(eq(8), createdAtCaptor.capture());
+        verify(statement, times(68)).setTimestamp(eq(9), updatedAtCaptor.capture());
+        assertThat(createdAtCaptor.getAllValues()).containsOnly(createdAtCaptor.getValue());
+        assertThat(updatedAtCaptor.getAllValues()).containsExactlyElementsOf(createdAtCaptor.getAllValues());
     }
 
     @Test
