@@ -261,7 +261,7 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     private List<UserMemoryUpdatePending> pendingEntriesOf(long ownerId) {
-        return pendingStore.findPending(clock.instant().plusSeconds(3600), 100).stream()
+        return pendingStore.findPending(clock.instant().plusSeconds(3600)).stream()
                 .filter(pending -> pending.userId() == ownerId)
                 .toList();
     }

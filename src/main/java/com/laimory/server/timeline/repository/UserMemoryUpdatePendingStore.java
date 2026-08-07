@@ -85,14 +85,18 @@ public class UserMemoryUpdatePendingStore {
     }
 
     /**
-     * 아직 시한이 남은 작업을 오래된 것부터 최대 {@code limit}개 반환한다.
+     * 아직 시한이 남은 작업을 오래된 것부터 <b>전부</b> 반환한다.
      * 시한({@code retention})을 넘긴 항목과 형식이 깨진 member는 되살아나지 않도록 즉시 제거한다.
+     *
+     * <p>건수 상한을 두지 않는다 — 호출부가 사용자별로 묶어 사용자당 한 번만 접수하므로 1회 실행의 일감은
+     * 건수가 아니라 구별되는 사용자 수로 묶인다. 상한을 두면 잘려 나간 사용자가 이유 없이 다음 실행까지 밀린다.
      */
-    public List<UserMemoryUpdatePending> findPending(Instant now, int limit) {
+    public List<UserMemoryUpdatePending> findPending(Instant now) {
         long expiredBefore = now.minus(retention).toEpochMilli();
+        // count는 쓰지 않는다(만료분 prune 전용) — 상한 없이 전부 읽으므로 큐 크기는 조회 결과가 그대로 알려준다.
         redis.pruneAndCountSortedSet(PENDING_KEY, expiredBefore, expiredBefore);
 
-        List<String> members = redis.getSortedSetRangeByScore(PENDING_KEY, now.toEpochMilli(), limit);
+        List<String> members = redis.getSortedSetRangeByScore(PENDING_KEY, now.toEpochMilli());
         if (members.isEmpty()) {
             return List.of();
         }
