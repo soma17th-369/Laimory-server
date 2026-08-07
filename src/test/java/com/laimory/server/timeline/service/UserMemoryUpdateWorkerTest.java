@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -26,7 +27,6 @@ import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.repository.UserMemoryUpdateTaskStore;
 import com.laimory.server.user.UserMemoryService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,9 +50,9 @@ import org.springframework.test.util.ReflectionTestUtils;
  * <p>가장 중요한 계약은 <b>조립이 guard 획득 뒤에 일어난다</b>는 것이다 — 대기 중에 앞선 날짜의 갱신이
  * User Memory를 바꾸므로, 미리 읽어 두면 낡은 문서를 base로 삼게 된다.
  *
- * <p>나머지는 진입점 둘의 역할 분담이다: 즉시 접수는 <b>guard를 못 잡았을 때만</b> 큐에 남기고(경합이
- * 없으면 큐를 아예 쓰지 않는다), 하루 1회 배치는 그렇게 쌓인 것을 사용자별로 묶어 한 요청으로 보낸다
- * (나눠 보내면 guard가 사용자당 하나라 N일이 N일 걸린다).
+ * <p>그 다음은 <b>큐를 언제 비우느냐</b>다. 저장된 하루는 예외 없이 큐를 거치고 접수는 배치가 전담하므로,
+ * 접수 결과가 무엇이든 큐는 그대로 둔다 — 걷어내는 유일한 경우는 갱신할 재료(하루 기록)가 사라졌을 때이고
+ * 일부만 사라진 경우도 같다. 나머지는 결과 endpoint가 반영을 확인하고 정리한다.
  */
 @ExtendWith(MockitoExtension.class)
 class UserMemoryUpdateWorkerTest {
@@ -84,41 +84,30 @@ class UserMemoryUpdateWorkerTest {
                 userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
-    // ── 즉시 접수 ──
+    // ── 저장 직후 큐 적재 ──
 
     @Test
-    void guard를_못_잡으면_그때_큐에_남긴다() {
+    void 저장_직후에는_큐에_넣기만_하고_AI를_부르지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(false);
 
-        worker.dispatchNow(pending);
+        worker.enqueue(pending);
 
-        // guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이고, 실패를 기록할 유일한 지점이다.
+        // 접수 성공이 반영 성공이 아니라, 큐를 거치지 않고 보낸 날은 결과가 끝내 안 올 때 재시도할 근거가 없다.
         verify(pendingStore).enqueue(pending, NOW);
-        verifyNoInteractions(dispatcher, userMemoryService);
+        verifyNoInteractions(dispatcher, taskStore, userMemoryService, dailyRecordService);
     }
 
-    @Test
-    void 경합이_없으면_큐를_아예_쓰지_않는다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        stubClaimable(pending);
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
-
-        worker.dispatchNow(pending);
-
-        verify(pendingStore, never()).enqueue(any(), any());
-        verify(pendingStore, never()).remove(any());
-        verify(dispatcher).dispatch(any());
-    }
+    // ── 하루 1회 배치 ──
 
     @Test
     void 조립은_guard를_잡은_뒤에_그_시점의_User_Memory를_읽는다() throws Exception {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         JsonNode currentMemory = objectMapper.readTree("{\"schemaVersion\":\"1.0\"}");
+        stubPendingQueue(List.of(pending));
         stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.of(currentMemory));
 
-        worker.dispatchNow(pending);
+        worker.dispatchPendingUpdates();
 
         // 미리 읽어 두면 대기 동안 바뀐 문서를 놓친다 — 순서가 이 흐름의 핵심 불변식이다.
         InOrder inOrder = inOrder(taskStore, userMemoryService, dispatcher);
@@ -131,10 +120,11 @@ class UserMemoryUpdateWorkerTest {
     void 접수_body에_현재_문서와_그_지문을_함께_싣는다() throws Exception {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         JsonNode currentMemory = objectMapper.readTree("{\"schemaVersion\":\"1.0\"}");
+        stubPendingQueue(List.of(pending));
         stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.of(currentMemory));
 
-        worker.dispatchNow(pending);
+        worker.dispatchPendingUpdates();
 
         ArgumentCaptor<AiUserMemoryUpdateRequest> request =
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
@@ -151,11 +141,12 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 접수_body는_question과_memo를_담고_시각에_record_timezone_offset을_붙인다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
         stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
         when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(event()));
 
-        worker.dispatchNow(pending);
+        worker.dispatchPendingUpdates();
 
         ArgumentCaptor<AiUserMemoryUpdateRequest> request =
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
@@ -172,66 +163,6 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
-    void 하루_기록이_사라졌으면_접수하지_않고_guard를_반납한다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
-
-        worker.dispatchNow(pending);
-
-        verify(taskStore).delete(anyString());
-        verify(taskStore).releaseGuard(USER_ID);
-        // 갱신할 재료가 없으므로 다시 시도할 이유도 없다 — 유일하게 큐에 남기지 않는 실패다.
-        verify(pendingStore, never()).enqueue(any(), any());
-        verifyNoInteractions(dispatcher);
-    }
-
-    @Test
-    void 접수가_4xx로_거절되면_task와_guard를_정리하되_큐에는_남긴다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        stubClaimable(pending);
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
-        doThrow(new TimelineAiDispatchRejectedException("rejected", new RuntimeException()))
-                .when(dispatcher).dispatch(any());
-
-        worker.dispatchNow(pending);
-
-        verify(taskStore).delete(anyString());
-        verify(taskStore).releaseGuard(USER_ID);
-        // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 지우면 고친 뒤에도 그 날은 복구되지 않는다.
-        verify(pendingStore).enqueue(pending, NOW);
-    }
-
-    @Test
-    void 접수_결과가_불명이면_task와_guard를_남기고_큐에도_남긴다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        stubClaimable(pending);
-        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
-        doThrow(new RuntimeException("read timeout")).when(dispatcher).dispatch(any());
-
-        worker.dispatchNow(pending);
-
-        // AI가 이미 받아 처리 중일 수 있다 — 지우면 뒤늦게 온 결과가 404로 버려진다.
-        verify(taskStore, never()).delete(anyString());
-        verify(taskStore, never()).releaseGuard(USER_ID);
-        // 결과가 끝내 안 오면 이 항목이 유일한 재시도 근거다(task는 TTL 3분이면 사라진다).
-        verify(pendingStore).enqueue(pending, NOW);
-    }
-
-    @Test
-    void 즉시_접수는_예외를_밖으로_던지지_않는다() {
-        UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any()))
-                .thenThrow(new RuntimeException("redis down"));
-
-        worker.dispatchNow(pending); // 저장 응답은 이미 나갔고 되돌릴 것이 없다.
-
-        verifyNoInteractions(dispatcher);
-    }
-
-    // ── 하루 1회 재시도 배치 ──
-
-    @Test
     void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
         UserMemoryUpdatePending first = pending(RECORD_ID);
         UserMemoryUpdatePending second = pending(RECORD_ID + 1);
@@ -241,7 +172,7 @@ class UserMemoryUpdateWorkerTest {
         stubRecord(RECORD_ID + 1);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         // 나눠 보내면 guard가 사용자당 하나라 하루에 한 건씩만 처리된다.
         ArgumentCaptor<AiUserMemoryUpdateRequest> request =
@@ -262,7 +193,7 @@ class UserMemoryUpdateWorkerTest {
                 .forEach(pending -> stubRecord(pending.dailyRecordId()));
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         ArgumentCaptor<AiUserMemoryUpdateRequest> request =
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
@@ -272,7 +203,8 @@ class UserMemoryUpdateWorkerTest {
 
     @Test
     void 배치는_밀린_사용자를_건수_상한_없이_전부_접수한다() {
-        int users = UserMemoryUpdateWorker.MAX_DAILY_TIMELINES * 10;
+        // 제거한 상한이 100건이었다 — 그 아래로 잡으면 옛 코드로도 통과해 회귀를 못 잡는다.
+        int users = 150;
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, users)
                 .mapToObj(index -> new UserMemoryUpdatePending(USER_ID + index, RECORD_ID + index))
                 .toList();
@@ -284,7 +216,7 @@ class UserMemoryUpdateWorkerTest {
             when(userMemoryService.find(pending.userId())).thenReturn(Optional.empty());
         });
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         // 사용자당 접수가 한 건이라 건수 상한은 잘려 나간 사용자를 하루 더 기다리게 할 뿐이다.
         verify(dispatcher, times(users)).dispatch(any());
@@ -294,44 +226,96 @@ class UserMemoryUpdateWorkerTest {
     void 배치는_접수만_하고_큐를_비우지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubPendingQueue(List.of(pending));
-        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
+        stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         // 성패는 접수 시점에 알 수 없다 — 결과 endpoint가 반영을 확인하고 정리한다.
         verify(dispatcher).dispatch(any());
-        verify(pendingStore, never()).remove(any());
+        verify(pendingStore, never()).removeAll(anyLong(), anyList());
     }
 
     @Test
-    void 배치에서_접수가_4xx로_거절돼도_큐에_남긴다() {
+    void guard를_못_잡으면_접수하지_않고_큐를_그대로_둔다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubPendingQueue(List.of(pending));
-        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(false);
+
+        worker.dispatchPendingUpdates();
+
+        // 앞선 실행의 접수가 아직 진행 중이다 — 장애가 아니라 정상 직렬화라 다음 실행이 가져간다.
+        verify(pendingStore, never()).removeAll(anyLong(), anyList());
+        verifyNoInteractions(dispatcher, userMemoryService);
+    }
+
+    @Test
+    void 접수가_4xx로_거절돼도_task와_guard만_정리하고_큐에는_남긴다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
         doThrow(new TimelineAiDispatchRejectedException("rejected", new RuntimeException()))
                 .when(dispatcher).dispatch(any());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
-        // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 걷어내면 고친 뒤에도 복구되지 않는다.
-        verify(pendingStore, never()).remove(any());
+        verify(taskStore).delete(anyString());
+        verify(taskStore).releaseGuard(USER_ID);
+        // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 걷어내면 고친 뒤에도 그 날은 복구되지 않는다.
+        verify(pendingStore, never()).removeAll(anyLong(), anyList());
     }
 
     @Test
-    void 배치에서_하루_기록이_사라졌으면_큐에서_걷어낸다() {
+    void 접수_결과가_불명이면_task와_guard를_남기고_큐에도_남긴다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("read timeout")).when(dispatcher).dispatch(any());
+
+        worker.dispatchPendingUpdates();
+
+        // AI가 이미 받아 처리 중일 수 있다 — 지우면 뒤늦게 온 결과가 404로 버려진다.
+        verify(taskStore, never()).delete(anyString());
+        verify(taskStore, never()).releaseGuard(USER_ID);
+        verify(pendingStore, never()).removeAll(anyLong(), anyList());
+    }
+
+    @Test
+    void 하루_기록이_전부_사라졌으면_접수하지_않고_큐에서_걷어낸다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubPendingQueue(List.of(pending));
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
-        verify(pendingStore).remove(pending);
+        // 갱신할 재료가 없으므로 다시 시도할 이유도 없다 — 유일하게 큐에서 걷어내는 경우다.
+        verify(pendingStore).removeAll(USER_ID, List.of(RECORD_ID));
+        verify(taskStore).releaseGuard(USER_ID);
         verifyNoInteractions(dispatcher);
+    }
+
+    @Test
+    void 일부_하루_기록만_사라지면_그것만_걷어내고_나머지는_접수한다() {
+        UserMemoryUpdatePending alive = pending(RECORD_ID);
+        UserMemoryUpdatePending deleted = pending(RECORD_ID + 1);
+        stubPendingQueue(List.of(alive, deleted));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubRecord(RECORD_ID);
+        when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID + 1, USER_ID)).thenReturn(Optional.empty());
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+
+        worker.dispatchPendingUpdates();
+
+        // 사라진 날은 접수 body에서 빠지므로 결과 endpoint가 지울 근거를 잃는다 — 여기서 안 걷어내면
+        // retention까지 큐에 남아 매 실행 사용자당 상한을 갉아먹는다.
+        verify(pendingStore).removeAll(USER_ID, List.of(RECORD_ID + 1));
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        assertThat(request.getValue().dailyTimelines()).hasSize(1);
     }
 
     @Test
@@ -344,7 +328,7 @@ class UserMemoryUpdateWorkerTest {
                 .thenThrow(new RuntimeException("redis down"));
         when(taskStore.acquireGuard(eq(USER_ID + 1), anyString(), any())).thenReturn(false);
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         verify(taskStore).acquireGuard(eq(USER_ID + 1), anyString(), any());
     }
@@ -353,7 +337,7 @@ class UserMemoryUpdateWorkerTest {
     void 대기_항목이_없으면_아무것도_하지_않는다() {
         stubPendingQueue(List.of());
 
-        worker.retryPendingUpdates();
+        worker.dispatchPendingUpdates();
 
         verifyNoInteractions(dispatcher, taskStore, userMemoryService, dailyRecordService);
     }

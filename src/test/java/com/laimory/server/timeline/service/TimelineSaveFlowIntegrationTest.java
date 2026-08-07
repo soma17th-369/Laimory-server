@@ -30,7 +30,6 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -44,10 +43,10 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>고정하는 계약 넷:
  * <ul>
- *   <li>저장 API 반환 시점에 record가 이미 SAVED다(동기 저장). 경합이 없으면 갱신은 async로 끝나고
- *       큐를 거치지 않는다.</li>
+ *   <li>저장 API 반환 시점에 record가 이미 SAVED다(동기 저장). 그 하루는 <b>예외 없이</b> 갱신 대기
+ *       큐에 들어가고, 요청 경로는 AI를 부르지 않는다.</li>
  *   <li>저장 후에는 편집 경로가 전부 {@code -1003}으로 거절된다(이슈 요구 회귀).</li>
- *   <li>같은 사용자의 다른 날짜가 진행 중이면 <b>버리지 않고 그때 큐에 남겨</b> 배치가 가져간다.</li>
+ *   <li>배치가 접수하지 못하면(guard 점유 등) 항목이 큐에 그대로 남아 다음 실행이 가져간다.</li>
  *   <li>AI 결과는 base 지문이 일치할 때만 반영되고, FAILED는 문서를 바꾸지 않는다.</li>
  * </ul>
  */
@@ -108,20 +107,26 @@ class TimelineSaveFlowIntegrationTest {
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())));
         userMemoryRepository.deleteByUserId(userId);
         taskStore.releaseGuard(userId);
-        pendingEntriesOf(userId).forEach(pendingStore::remove);
+        List<Long> leftover = pendingEntriesOf(userId).stream()
+                .map(UserMemoryUpdatePending::dailyRecordId)
+                .toList();
+        if (!leftover.isEmpty()) {
+            pendingStore.removeAll(userId, leftover);
+        }
     }
 
     @Test
-    void 저장은_즉시_커밋되고_경합이_없으면_큐를_쓰지_않는다() {
+    void 저장은_즉시_커밋되고_그_하루는_큐에_들어간다() {
         timelineSaveService.save("v1", userId, DATE);
 
         // 반환 시점에 전이는 이미 커밋돼 있다(동기 저장).
         assertThat(dailyRecordRepository.findById(recordId).orElseThrow().getStatus())
                 .isEqualTo(DailyRecordStatus.SAVED);
-        // 갱신은 async로 넘어가 guard를 잡고 끝난다 — 큐를 거치지 않는다.
-        Awaitility.await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(() -> assertThat(guardHeldBy(userId)).isTrue());
-        assertThat(pendingEntriesOf(userId)).isEmpty();
+        // 접수는 배치가 전담한다 — 저장 경로는 큐에 넣기만 하고 guard도 잡지 않는다.
+        assertThat(pendingEntriesOf(userId))
+                .extracting(UserMemoryUpdatePending::dailyRecordId)
+                .contains(recordId);
+        assertThat(guardHeldBy(userId)).isFalse();
     }
 
     @Test
@@ -137,7 +142,7 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     @Test
-    void 다른_날짜가_진행_중이면_갱신은_스킵이_아니라_큐에_남아_배치가_가져간다() {
+    void 앞선_갱신이_진행_중이면_배치가_접수를_미루고_큐에_남긴다() {
         Long otherRecordId = dailyRecordRepository
                 .save(DailyRecord.createDraft(userId, OTHER_DATE, OTHER_DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
@@ -148,17 +153,17 @@ class TimelineSaveFlowIntegrationTest {
         assertThat(taskStore.acquireGuard(userId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
         timelineSaveService.save("v1", userId, DATE);
+        userMemoryUpdateWorker.dispatchPendingUpdates();
 
-        // 즉시 접수가 guard를 못 잡았으므로 그때 큐에 남아야 한다 — 버려졌다면 여기가 비어 있다.
-        Awaitility.await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(() -> assertThat(pendingEntriesOf(userId))
-                        .extracting(UserMemoryUpdatePending::dailyRecordId)
-                        .contains(recordId));
+        // guard를 못 잡았으니 접수를 미룬다 — 버렸다면 여기가 비어 있다.
+        assertThat(pendingEntriesOf(userId))
+                .extracting(UserMemoryUpdatePending::dailyRecordId)
+                .contains(recordId);
 
         taskStore.releaseGuard(userId);
-        userMemoryUpdateWorker.retryPendingUpdates();
+        userMemoryUpdateWorker.dispatchPendingUpdates();
 
-        // 배치는 접수만 하고 큐를 비우지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
+        // 접수한 뒤에도 큐를 비우지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
         // noop dispatcher라 결과가 오지 않으므로 항목이 그대로 남아 있어야 한다.
         assertThat(pendingEntriesOf(userId))
                 .extracting(UserMemoryUpdatePending::dailyRecordId)
@@ -191,7 +196,7 @@ class TimelineSaveFlowIntegrationTest {
         userMemoryUpdateResultService.applyResult("v1", taskId, token,
                 new AiUserMemoryUpdateResultRequest("FAILED", null, 1210, "budget exceeded"));
 
-        // 즉시 접수 경로였어도(큐에 없었어도) 여기서 들어간다 — 실패한 날이 조용히 사라지지 않는다.
+        // 반영 확인 전에 큐에서 빠질 길이 없지만, 실패 통보도 같은 안전망을 다시 건다.
         assertThat(pendingEntriesOf(userId))
                 .extracting(UserMemoryUpdatePending::dailyRecordId)
                 .contains(recordId);

@@ -13,10 +13,10 @@ import org.springframework.stereotype.Service;
  * 하루 기록 저장 오케스트레이터. leaf 서비스를 합성한다(레포 직접 접근 금지).
  *
  * <p>순서가 load-bearing이다: 사전 검증(404 은닉·SAVED 409) → 별도 트랜잭션에서 조건부 UPDATE로
- * {@code DRAFT→SAVED} 커밋({@link TimelineSaveTransactionService}) → <b>커밋 뒤</b> User Memory 갱신 접수
- * 요청 → 200. 트랜잭션 안에서 접수를 깨우면 롤백된 저장이 갱신을 유발할 수 있다.
+ * {@code DRAFT→SAVED} 커밋({@link TimelineSaveTransactionService}) → <b>커밋 뒤</b> User Memory 갱신 대기
+ * 등록 → 200. 트랜잭션 안에서 등록하면 롤백된 저장이 갱신을 유발할 수 있다.
  *
- * <p><b>200은 저장 완료다.</b> 뒤따르는 갱신 접수는 best-effort이며 실패해도 저장을 되돌리지 않는다 —
+ * <p><b>200은 저장 완료다.</b> 뒤따르는 갱신 등록은 best-effort이며 실패해도 저장을 되돌리지 않는다 —
  * User Memory는 다음 타임라인 품질을 높이는 보조 데이터이지 저장의 일부가 아니다.
  * 요청 스레드는 AI를 호출하지 않는다.
  */
@@ -56,20 +56,22 @@ public class TimelineSaveService {
     }
 
     /**
-     * User Memory 갱신 접수를 async로 깨우고 곧바로 돌아온다. 경합이 없으면 이것으로 끝이고 Redis 큐는
-     * 아예 쓰이지 않는다 — 사용자 guard를 못 잡은 경우에만 worker가 그 작업을 큐에 남기고, 하루 1회
-     * 배치가 그것만 처리한다. guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이라, 실패를
-     * 기록할 지점이 거기 하나로 모인다.
+     * 그 하루를 User Memory 갱신 대기 큐에 넣는다. <b>여기서 AI를 부르지 않는다</b> — 접수는 하루 1회
+     * 배치가 사용자별로 묶어 하고, 이 큐가 그 유일한 입력이다. 접수 성공이 반영 성공이 아니라(AI 계약이
+     * 202 뒤 결과 콜백), 큐를 거치지 않고 보낸 날은 결과가 끝내 오지 않을 때 재시도할 근거가 남지 않는다.
+     *
+     * <p>Redis 쓰기 한 번이라 요청 스레드에서 그대로 돌린다 — async로 넘기면 실행기 포화 시 그 하루가
+     * 유실될 뿐이다.
      *
      * <p>실패해도 저장 응답을 깨지 않는다 — 그 날치 User Memory 반영만 누락되고 사용자의 저장은 이미
      * 커밋됐다. 누락 빈도를 판단할 수 있도록 식별자와 함께 남긴다.
      */
     private void requestUserMemoryUpdate(long userId, Long dailyRecordId) {
         try {
-            userMemoryUpdateWorker.dispatchNow(new UserMemoryUpdatePending(userId, dailyRecordId));
+            userMemoryUpdateWorker.enqueue(new UserMemoryUpdatePending(userId, dailyRecordId));
         } catch (RuntimeException e) {
-            // async 실행기 포화 등으로 거절되면 그 날치 갱신은 누락된다(저장은 이미 완료).
-            log.error("User Memory 갱신 접수 트리거 실패(저장은 완료): userId={} dailyRecordId={}",
+            // Redis 장애 등으로 큐에 못 넣으면 그 날치 갱신은 누락된다(저장은 이미 완료).
+            log.error("User Memory 갱신 대기 등록 실패(저장은 완료): userId={} dailyRecordId={}",
                     userId, dailyRecordId, e);
         }
     }
