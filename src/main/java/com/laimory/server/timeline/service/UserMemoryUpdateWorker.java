@@ -181,8 +181,8 @@ public class UserMemoryUpdateWorker {
             return dispatch(userId, batch, taskId);
         } catch (TimelineAiDispatchRejectedException e) {
             // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
+            // guard는 TTL에 맡긴다(같은 실행에서 다시 보내 봐야 같은 payload라 또 4xx다).
             taskStore.delete(taskId);
-            taskStore.releaseGuard(userId);
             log.error("User Memory 갱신 접수 거절: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
             return Outcome.of(Status.REJECTED);
@@ -210,8 +210,7 @@ public class UserMemoryUpdateWorker {
             log.info("User Memory 갱신 재료 없음(큐에서 제거): userId={} days={}", userId, missing.size());
         }
         if (records.isEmpty()) {
-            // task는 아직 저장 전이라 guard만 반납하면 된다.
-            taskStore.releaseGuard(userId);
+            // task는 아직 저장 전이고, guard는 TTL이 반납한다(그 사용자에게 이번 실행에 할 일이 없다).
             return new Outcome(Status.NO_MATERIAL, 0, missing.size());
         }
 

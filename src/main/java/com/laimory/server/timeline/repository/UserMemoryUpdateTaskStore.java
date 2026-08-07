@@ -68,7 +68,19 @@ public class UserMemoryUpdateTaskStore {
         return redis.setIfAbsent(guardKey(userId), taskId, ttl);
     }
 
-    /** 작업 종결 시 guard 반납. 실패해도 TTL이 정리하므로 호출부는 best-effort로 다룬다. */
+    /**
+     * guard를 즉시 반납한다. <b>갱신 흐름은 이것을 호출하지 않는다</b> — 반납은 TTL에 맡긴다.
+     *
+     * <p>일찍 반납하는 이유는 "그 사용자의 <b>다음</b> 갱신이 TTL 동안 막히지 않게"였는데, 접수가 하루
+     * 1회 배치로 일원화되면서 다음 접수가 24시간 뒤가 됐다. TTL 3분이 남아 있든 말든 막는 것이 없다.
+     *
+     * <p>안 부르는 편이 더 안전하기도 하다. 이 삭제는 값(taskId)을 대조하지 않아 <b>남의 guard를 지울
+     * 수 있다</b> — guard가 task보다 먼저 만료되므로(guard 획득이 task 저장보다 앞선다) 그 틈에 다른
+     * 인스턴스가 새로 잡은 guard를 뒤늦은 결과가 지우는 창이 있다. 호출하지 않으면 그 창 자체가 없다.
+     *
+     * <p><b>cron 주기를 guard TTL 가까이 줄이거나 즉시 접수를 되살린다면 이 판단이 뒤집힌다</b> —
+     * 그때는 반납이 필요하고, 소유권을 대조하는 CAS(Lua)로 만들어야 한다.
+     */
     public void releaseGuard(long userId) {
         redis.delete(guardKey(userId));
     }
