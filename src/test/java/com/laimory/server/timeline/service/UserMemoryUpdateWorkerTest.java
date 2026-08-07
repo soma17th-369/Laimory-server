@@ -250,7 +250,7 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
-    void 접수가_4xx로_거절돼도_task와_guard만_정리하고_큐에는_남긴다() {
+    void 접수가_4xx로_거절되면_task만_지우고_guard도_큐도_그대로_둔다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubPendingQueue(List.of(pending));
         stubClaimable(pending);
@@ -261,7 +261,8 @@ class UserMemoryUpdateWorkerTest {
         worker.dispatchPendingUpdates();
 
         verify(taskStore).delete(anyString());
-        verify(taskStore).releaseGuard(USER_ID);
+        // guard 반납은 TTL에 맡긴다 — 같은 실행에서 다시 보내 봐야 같은 payload라 또 4xx다.
+        verify(taskStore, never()).releaseGuard(anyLong());
         // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 걷어내면 고친 뒤에도 그 날은 복구되지 않는다.
         verify(pendingStore, never()).removeAll(anyLong(), anyList());
     }
@@ -278,7 +279,7 @@ class UserMemoryUpdateWorkerTest {
 
         // AI가 이미 받아 처리 중일 수 있다 — 지우면 뒤늦게 온 결과가 404로 버려진다.
         verify(taskStore, never()).delete(anyString());
-        verify(taskStore, never()).releaseGuard(USER_ID);
+        verify(taskStore, never()).releaseGuard(anyLong());
         verify(pendingStore, never()).removeAll(anyLong(), anyList());
     }
 
@@ -293,7 +294,8 @@ class UserMemoryUpdateWorkerTest {
 
         // 갱신할 재료가 없으므로 다시 시도할 이유도 없다 — 유일하게 큐에서 걷어내는 경우다.
         verify(pendingStore).removeAll(USER_ID, List.of(RECORD_ID));
-        verify(taskStore).releaseGuard(USER_ID);
+        // task는 저장 전이고 guard는 TTL이 반납한다 — 그 사용자에게 이번 실행에 할 일이 없다.
+        verify(taskStore, never()).releaseGuard(anyLong());
         verifyNoInteractions(dispatcher);
     }
 
