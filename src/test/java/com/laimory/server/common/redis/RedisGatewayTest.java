@@ -191,6 +191,7 @@ class RedisGatewayTest {
         redis.expire("pending", Duration.ofDays(30));
 
         // 목록과 개수가 같은 상한(500)을 써야 "개수 > 읽어온 수"가 곧 "limit에 잘렸다"를 뜻한다.
+        // score의 도메인 의미(대기 시작 시각)는 store가 정한다 — gateway는 Redis 용어 그대로 둔다.
         assertThat(redis.getSortedSetRangeByScore("pending", 500L, 3)).containsExactly("7:42", "7:43");
         assertThat(redis.countSortedSetByScore("pending", 500L)).isEqualTo(9L);
 
