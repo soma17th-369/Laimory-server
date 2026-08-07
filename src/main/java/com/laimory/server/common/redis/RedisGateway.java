@@ -73,10 +73,12 @@ public class RedisGateway {
 
     // 만료분을 걷어낸 뒤 전체 개수와 상위 limit개를 한 왕복으로 돌려준다(첫 원소가 개수).
     // 개수는 적체 관측용이라 limit으로 잘린 뒤에도 "얼마나 밀려 있는지"를 알아야 한다.
+    // 개수도 zcount로 목록과 같은 score 범위를 센다 — zcard로 전체를 세면 실행 중에 들어온(score가
+    // 상한보다 큰) member까지 잡혀, 잘리지 않았는데도 "개수 > 읽어온 수"가 되어 상한 판정이 거짓말한다.
     private static final RedisScript<List> PRUNE_AND_READ_SORTED_SET = new DefaultRedisScript<>("""
             redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
             local members = redis.call('zrangebyscore', KEYS[1], '-inf', ARGV[2], 'LIMIT', 0, ARGV[3])
-            table.insert(members, 1, tostring(redis.call('zcard', KEYS[1])))
+            table.insert(members, 1, tostring(redis.call('zcount', KEYS[1], '-inf', ARGV[2])))
             return members
             """, List.class);
 
@@ -225,7 +227,11 @@ public class RedisGateway {
 
     /**
      * 만료분을 걷어낸 뒤 {@code score <= inclusiveMaxScore}인 member를 오름차순으로 최대 {@code limit}개
-     * 반환한다. <b>첫 원소는 잘라내기 전 전체 개수</b>이고 그 뒤가 member다. key가 없으면 {@code ["0"]}.
+     * 반환한다. <b>첫 원소는 {@code limit}으로 잘라내기 전 개수</b>이고 그 뒤가 member다. key가 없으면
+     * {@code ["0"]}.
+     *
+     * <p>개수의 score 범위는 목록과 같다 — 그래야 "개수 > 읽어온 수"가 곧 "{@code limit}에 잘렸다"를
+     * 뜻한다. 호출 이후 들어온 member는 어느 쪽에도 잡히지 않는다.
      */
     public List<String> pruneAndReadSortedSet(String logicalSortedSetKey, long expiredScore,
                                               long inclusiveMaxScore, long limit) {
