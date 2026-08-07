@@ -187,27 +187,63 @@ public class RedisGateway {
         return Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
     }
 
+    // ── 대기 큐용 sorted set 연산 ──
+    // 이름은 Redis 용어(score) 그대로 둔다. 도메인 의미(대기 시작 시각 등)는 호출부가 이름 붙인다.
+    //
+    // 다만 이 gateway를 거치는 sorted set은 score를 epoch milliseconds로만 쓴다는 것이 계약이다.
+    // Redis의 score는 double(가수 53비트)이라 정수는 2^53(≈9.0e15)까지만 정확한데, epoch ms는 그 한계에
+    // 서기 285,000년경 닿으므로 사실상 무한하다. microseconds면 서기 2255년, nanoseconds면 1970년 4개월
+    // 뒤부터 값이 뭉개진다 — 정밀도를 잃어도 예외가 나지 않고 순서만 조용히 어긋나므로 단위를 못 박는다.
+
     /**
-     * sorted set에 member가 없을 때만 넣는다(ZADD NX). 이미 있으면 score를 <b>유지</b>한다 — 재기록으로
-     * 최초 기록 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
+     * sorted set에 member가 없을 때만 넣는다(ZADD NX). 이미 있는 member는 score를 <b>유지한다</b> —
+     * 재기록으로 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
      */
     public void addToSortedSetIfAbsent(String logicalSortedSetKey, String member, long score) {
         template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
     }
 
+    /** {@code score <= expiredScore}인 member를 제거하고 제거 수를 반환한다(ZREMRANGEBYSCORE). */
+    public long pruneSortedSetByScore(String logicalSortedSetKey, long expiredScore) {
+        Long removed = template.opsForZSet()
+                .removeRangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, expiredScore);
+        if (removed == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis zremrangebyscore가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return removed;
+    }
+
     /**
-     * {@code score <= inclusiveMaxScore}인 member를 score 오름차순으로 최대 {@code limit}개 반환한다.
-     * key가 없으면 빈 목록이다.
+     * {@code score <= inclusiveMaxScore}인 member를 score <b>오름차순</b>으로 최대 {@code limit}개
+     * 반환한다. key가 없으면 빈 목록이다.
      */
     public List<String> getSortedSetRangeByScore(String logicalSortedSetKey, long inclusiveMaxScore, long limit) {
-        Set<String> members = template.opsForZSet()
-                .rangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore, 0, limit);
+        Set<String> members = template.opsForZSet().rangeByScore(
+                prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore, 0, limit);
         if (members == null) {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis rangeByScore가 null을 반환했습니다: " + logicalSortedSetKey);
         }
         return List.copyOf(members);
     }
+
+    /** {@code score <= inclusiveMaxScore}인 member 수를 센다(ZCOUNT). 조회와 같은 상한을 써야 비교가 성립한다. */
+    public long countSortedSetByScore(String logicalSortedSetKey, long inclusiveMaxScore) {
+        Long count = template.opsForZSet()
+                .count(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore);
+        if (count == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis zcount가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return count;
+    }
+
+    /** key에 TTL을 다시 건다(PEXPIRE). key가 없으면 아무 일도 일어나지 않는다. */
+    public void expire(String logicalKey, Duration ttl) {
+        template.expire(prefix + logicalKey, ttl);
+    }
+
 
     /** sorted set에서 여러 member를 한 명령으로 제거하고 실제 제거 수를 반환한다(missing member는 무시). */
     public long removeFromSortedSet(String logicalSortedSetKey, List<String> members) {

@@ -177,6 +177,46 @@ class RedisGatewayTest {
     }
 
     @Test
+    void pendingQueueOps_prefixKey_andUseNxAndScoreBounds() {
+        // 미반영 큐는 Lua 없이 평범한 명령만 쓴다 — 동시성 보장이 전부 단일 명령에서 나오기 때문이다.
+        when(template.opsForZSet()).thenReturn(zSetOps);
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(zSetOps.removeRangeByScore("dev_pending", Double.NEGATIVE_INFINITY, 100d)).thenReturn(2L);
+        when(zSetOps.rangeByScore("dev_pending", Double.NEGATIVE_INFINITY, 500d, 0, 3))
+                .thenReturn(new LinkedHashSet<>(List.of("7:42", "7:43")));
+        when(zSetOps.count("dev_pending", Double.NEGATIVE_INFINITY, 500d)).thenReturn(9L);
+
+        assertThat(redis.pruneSortedSetByScore("pending", 100L)).isEqualTo(2L);
+        redis.addToSortedSetIfAbsent("pending", "7:44", 400L);
+        redis.expire("pending", Duration.ofDays(30));
+
+        // 목록과 개수가 같은 상한(500)을 써야 "개수 > 읽어온 수"가 곧 "limit에 잘렸다"를 뜻한다.
+        // score의 도메인 의미(대기 시작 시각)는 store가 정한다 — gateway는 Redis 용어 그대로 둔다.
+        assertThat(redis.getSortedSetRangeByScore("pending", 500L, 3)).containsExactly("7:42", "7:43");
+        assertThat(redis.countSortedSetByScore("pending", 500L)).isEqualTo(9L);
+
+        // 이미 있는 member의 score를 덮으면 최초 진입 기준 시한이 무한 연장된다.
+        verify(zSetOps).addIfAbsent("dev_pending", "7:44", 400d);
+        verify(template).expire("dev_pending", Duration.ofDays(30));
+    }
+
+    @Test
+    void pendingQueueOps_nullFromTemplate_throwIllegalState() {
+        RedisGateway redis = new RedisGateway(template, "");
+        when(template.opsForZSet()).thenReturn(zSetOps);
+        when(zSetOps.removeRangeByScore("pending", Double.NEGATIVE_INFINITY, 1d)).thenReturn(null);
+        when(zSetOps.rangeByScore("pending", Double.NEGATIVE_INFINITY, 2d, 0, 5)).thenReturn(null);
+        when(zSetOps.count("pending", Double.NEGATIVE_INFINITY, 2d)).thenReturn(null);
+
+        assertThatThrownBy(() -> redis.pruneSortedSetByScore("pending", 1L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> redis.getSortedSetRangeByScore("pending", 2L, 5))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> redis.countSortedSetByScore("pending", 2L))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void atomicSortedSetOps_nullFromTemplate_throwIllegalState() {
         RedisGateway redis = new RedisGateway(template, "");
         when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(), any(), any(Object[].class)))

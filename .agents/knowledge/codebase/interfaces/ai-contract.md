@@ -189,8 +189,10 @@ POST {base-url}/v1/user-memory
   `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
   같은 규칙 — 상관관계는 `taskId`).
-- `dailyTimelines`는 저장 직후 즉시 접수에서는 항상 1건이고, **하루 1회 재시도 배치에서만 여러 건**이다
-  (한 사용자에게 밀린 날을 묶어 보낸다. AI 상한 5건).
+- `dailyTimelines`는 **여러 건일 수 있고 `recordDate` 오름차순이다** — 접수는 하루 1회 배치가 전담하고,
+  한 사용자에게 밀린 날을 묶어 보낸다(AI 상한 5건). 갱신이 "기존 문서 + 날들 → 새 문서" 접기라 날짜
+  순서가 의미를 가지므로, 큐 진입 순서가 아니라 기록 날짜 순으로 싣고 초과분(=더 나중 날짜)이 다음
+  실행 몫이 된다.
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - `emotionType`은 입력 경로가 없어 현재 항상 null이지만 nullable 필드를 미리 뒀다.
 

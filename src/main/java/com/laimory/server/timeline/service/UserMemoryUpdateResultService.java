@@ -25,8 +25,9 @@ import org.springframework.stereotype.Service;
  * 접수 이후 다른 날짜의 갱신이 문서를 교체했으면 결과를 폐기한다(409) — 적용하면 그 날짜의 기여가
  * 조용히 사라진다.
  *
- * <p>성공·실패 어느 쪽이든 task와 사용자 guard를 지운다. 그래서 중복·뒤늦은 결과는 404가 되고 AI는
- * 4xx를 재시도 중단 신호로 읽는다.
+ * <p>성공·실패 어느 쪽이든 task를 지운다. 그래서 중복·뒤늦은 결과는 404가 되고 AI는 4xx를 재시도 중단
+ * 신호로 읽는다. 사용자 guard는 지우지 않고 TTL에 맡긴다 — 그 사용자의 다음 접수는 다음 배치(24시간
+ * 뒤)라 일찍 반납해 봐야 막는 것이 없고, 대조 없는 삭제는 남의 guard를 지울 위험만 남긴다.
  *
  * <p><b>미반영 작업 큐를 정리하는 곳도 여기다.</b> 접수 시점에는 성패를 알 수 없고 AI 계약이 "202 뒤
  * 백그라운드 처리 → 결과 API 호출"이라, 성패를 아는 유일한 지점이 이 호출이다 — 반영되면 그 날들을 큐에서
@@ -88,15 +89,13 @@ public class UserMemoryUpdateResultService {
     }
 
     /**
-     * 종결 = task 삭제 + guard 반납 + 미반영 큐 정리. guard를 남기면 그 사용자의 다음 갱신이 TTL 동안
-     * 대기한다.
+     * 종결 = task 삭제 + 미반영 큐 정리. guard는 건드리지 않는다(TTL이 반납한다).
      *
      * @param applied 문서가 실제로 교체됐으면 그 날들을 큐에서 뺀다. 아니면 넣어 다음 배치가 다시 시도한다
      *                — 접수 시점에는 알 수 없던 성패가 확정되는 지점이 여기다
      */
     private void finish(UserMemoryUpdateTask task, String taskId, boolean applied) {
         taskStore.delete(taskId);
-        pendingStore.releaseGuard(task.userId());
         if (applied) {
             pendingStore.removeAll(task.userId(), task.dailyRecordIds());
         } else {

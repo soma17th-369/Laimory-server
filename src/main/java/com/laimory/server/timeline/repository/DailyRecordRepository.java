@@ -3,6 +3,7 @@ package com.laimory.server.timeline.repository;
 import com.laimory.server.timeline.entity.DailyRecord;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -17,6 +18,16 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     List<DailyRecord> findByUserIdOrderByRecordDateDescDailyRecordIdDesc(Long userId);
 
     Optional<DailyRecord> findByDailyRecordIdAndUserId(Long dailyRecordId, Long userId);
+
+    /**
+     * 소유 record만 골라 {@code record_date} 오름차순으로 반환한다. 없는 id는 결과에서 빠지므로,
+     * 요청 목록과의 차집합이 곧 "그 사이 삭제된 하루"다.
+     *
+     * <p>정렬을 DB가 하는 이유: User Memory 갱신은 접기라 <b>기록 날짜 순서로</b> 접어야 한다.
+     * 큐 진입 순서(과거 날짜를 나중에 저장할 수 있다)와 다르다.
+     */
+    List<DailyRecord> findByUserIdAndDailyRecordIdInOrderByRecordDateAsc(
+            Long userId, Collection<Long> dailyRecordIds);
 
     /**
      * 소유 DRAFT record만 SAVED로 옮기는 조건부 UPDATE. 영향 행 수가 전이 성공 판정 기준이라 같은

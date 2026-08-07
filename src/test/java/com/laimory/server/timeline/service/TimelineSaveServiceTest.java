@@ -30,8 +30,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 저장 오케스트레이션 단위 검증.
  *
- * <p>고정하는 계약: 부수효과 전에 404·409를 거절하고, 전이 커밋 <b>뒤에만</b> 갱신 접수를 깨우며,
- * 요청 스레드는 AI를 호출하지 않고, 접수 트리거가 실패해도 저장 응답을 깨지 않는다.
+ * <p>고정하는 계약: 부수효과 전에 404·409를 거절하고, 전이 커밋 <b>뒤에만</b> 갱신 대기 큐에 넣으며,
+ * 요청 스레드는 AI를 호출하지 않고, 큐 등록이 실패해도 저장 응답을 깨지 않는다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineSaveServiceTest {
@@ -58,23 +58,23 @@ class TimelineSaveServiceTest {
     }
 
     @Test
-    void 전이를_커밋한_뒤에_갱신_접수를_깨운다() {
+    void 전이를_커밋한_뒤에_갱신_대기_큐에_넣는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
         service.save(VERSION, USER_ID, RECORD_DATE);
 
-        // 커밋 전에 깨우면 롤백된 저장이 갱신을 유발한다.
+        // 커밋 전에 넣으면 롤백된 저장이 갱신을 유발한다.
         InOrder inOrder = inOrder(timelineSaveTransactionService, worker);
         inOrder.verify(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
-        inOrder.verify(worker).dispatchNow(any());
+        inOrder.verify(worker).enqueue(any());
     }
 
     @Test
-    void 접수_트리거가_거절돼도_저장은_성공으로_끝난다() {
+    void 큐_등록이_실패해도_저장은_성공으로_끝난다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
-        doThrow(new RuntimeException("executor saturated")).when(worker).dispatchNow(any());
+        doThrow(new RuntimeException("redis down")).when(worker).enqueue(any());
 
         assertThatCode(() -> service.save(VERSION, USER_ID, RECORD_DATE)).doesNotThrowAnyException();
 
@@ -82,15 +82,15 @@ class TimelineSaveServiceTest {
     }
 
     @Test
-    void 접수_요청은_식별자만_담는다() {
+    void 큐에는_식별자만_담는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
         service.save(VERSION, USER_ID, RECORD_DATE);
 
-        // 접수 body와 base 지문은 guard를 잡은 뒤 worker가 만든다 — 여기서 미리 조립하지 않는다.
+        // 접수 body와 base 지문은 배치가 guard를 잡은 뒤 만든다 — 여기서 미리 조립하지 않는다.
         ArgumentCaptor<UserMemoryUpdatePending> pending = ArgumentCaptor.forClass(UserMemoryUpdatePending.class);
-        verify(worker).dispatchNow(pending.capture());
+        verify(worker).enqueue(pending.capture());
         assertThat(pending.getValue()).isEqualTo(new UserMemoryUpdatePending(USER_ID, RECORD_ID));
     }
 
@@ -130,7 +130,7 @@ class TimelineSaveServiceTest {
     }
 
     @Test
-    void 전이가_실패하면_갱신_접수를_깨우지_않는다() {
+    void 전이가_실패하면_큐에_넣지_않는다() {
         when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
