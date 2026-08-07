@@ -181,11 +181,13 @@ class UserMemoryUpdateWorkerTest {
 
         verify(taskStore).delete(anyString());
         verify(pendingStore).releaseGuard(USER_ID);
+        // 갱신할 재료가 없으므로 다시 시도할 이유도 없다 — 유일하게 큐에 남기지 않는 실패다.
+        verify(pendingStore, never()).enqueue(any(), any());
         verifyNoInteractions(dispatcher);
     }
 
     @Test
-    void 접수가_4xx로_거절되면_task와_guard를_정리하고_재시도하지_않는다() {
+    void 접수가_4xx로_거절되면_task와_guard를_정리하되_큐에는_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -196,11 +198,12 @@ class UserMemoryUpdateWorkerTest {
 
         verify(taskStore).delete(anyString());
         verify(pendingStore).releaseGuard(USER_ID);
-        verify(dispatcher).dispatch(any());
+        // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 지우면 고친 뒤에도 그 날은 복구되지 않는다.
+        verify(pendingStore).enqueue(pending, NOW);
     }
 
     @Test
-    void 접수_결과가_불명이면_task와_guard를_남긴다() {
+    void 접수_결과가_불명이면_task와_guard를_남기고_큐에도_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubClaimable(pending);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -211,6 +214,8 @@ class UserMemoryUpdateWorkerTest {
         // AI가 이미 받아 처리 중일 수 있다 — 지우면 뒤늦게 온 결과가 404로 버려진다.
         verify(taskStore, never()).delete(anyString());
         verify(pendingStore, never()).releaseGuard(USER_ID);
+        // 결과가 끝내 안 오면 이 항목이 유일한 재시도 근거다(task는 TTL 3분이면 사라진다).
+        verify(pendingStore).enqueue(pending, NOW);
     }
 
     @Test
@@ -301,7 +306,7 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
-    void 배치에서_접수가_4xx로_거절되면_큐에서_걷어낸다() {
+    void 배치에서_접수가_4xx로_거절돼도_큐에_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
@@ -312,8 +317,8 @@ class UserMemoryUpdateWorkerTest {
 
         worker.retryPendingUpdates();
 
-        // 같은 내용을 다시 보내도 결과가 같다 — 매일 재시도할 이유가 없다.
-        verify(pendingStore).remove(pending);
+        // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 걷어내면 고친 뒤에도 복구되지 않는다.
+        verify(pendingStore, never()).remove(any());
     }
 
     @Test

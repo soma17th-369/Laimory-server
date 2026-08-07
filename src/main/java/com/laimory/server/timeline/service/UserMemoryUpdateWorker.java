@@ -81,10 +81,15 @@ public class UserMemoryUpdateWorker {
     private final Clock clock;
 
     /**
-     * 저장 커밋 직후의 즉시 접수. 경합이 없으면 큐를 아예 거치지 않는다.
+     * 저장 커밋 직후의 즉시 접수. AI가 202로 받으면 큐를 아예 거치지 않는다.
      *
-     * <p>guard를 못 잡으면 <b>그때 큐에 남긴다</b>(DLQ) — guard 획득 실패가 곧 "이 사용자의 갱신이 진행
-     * 중"이라는 판정이라, 그 판정 지점이 실패를 기록할 유일한 지점이다.
+     * <p><b>접수되지 못한 날은 전부 큐에 남긴다</b>(DLQ) — guard 점유든, 4xx 거절이든, 5xx·timeout이든
+     * 공통점은 "아직 반영되지 않았다"이고 그게 큐의 정의다. 여기서 안 남기면 이 경로에는 재시도 근거가
+     * 아무 데도 없다(task는 TTL 3분이면 사라진다). 큐 항목은 접수 실패 시각을 score로 새로 받으므로
+     * 그 시점부터 {@code retention}만큼 다시 기회를 갖는다.
+     *
+     * <p>접수에 성공(202)했을 때만 큐를 건드리지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
+     * 접수할 하루 기록이 사라진 경우도 남기지 않는다(갱신할 재료가 없다).
      *
      * <p>실패를 밖으로 던지지 않는다. 호출부(저장 API)는 되돌릴 것이 없다.
      */
@@ -92,10 +97,11 @@ public class UserMemoryUpdateWorker {
     public void dispatchNow(UserMemoryUpdatePending pending) {
         Instant now = clock.instant();
         try {
-            if (process(pending.userId(), List.of(pending), now) == Status.GUARD_BUSY) {
+            Status status = process(pending.userId(), List.of(pending), now);
+            if (status.requeues()) {
                 pendingStore.enqueue(pending, now);
-                log.info("User Memory 갱신 보류(다른 날짜 진행 중 — 배치가 처리): userId={} dailyRecordId={}",
-                        pending.userId(), pending.dailyRecordId());
+                log.info("User Memory 갱신 보류(배치가 재시도): userId={} dailyRecordId={} status={}",
+                        pending.userId(), pending.dailyRecordId(), status);
             }
         } catch (RuntimeException e) {
             log.error("User Memory 갱신 즉시 접수 실패: userId={} dailyRecordId={}",
@@ -118,7 +124,8 @@ public class UserMemoryUpdateWorker {
      *
      * <p><b>여기서도 결과를 기다리지 않고 큐도 비우지 않는다.</b> 반영이 확인되면 결과 endpoint가 큐에서
      * 뺀다 — 그래서 AI가 FAILED를 주거나 아예 응답하지 않으면 항목이 그대로 남아 다음 실행이 다시 시도한다.
-     * 다시 보내도 결과가 같은 경우(4xx 거절·재료 없음)만 여기서 걷어낸다.
+     * 걷어내는 경우는 <b>갱신할 재료가 사라졌을 때 하나뿐이다</b>. 4xx 거절도 남긴다 — 계약 불일치처럼
+     * 우리 쪽 수정으로 풀리는 4xx가 있고, 그걸 지우면 고친 뒤에도 그 날은 복구되지 않는다.
      */
     @Scheduled(cron = "${app.user-memory.update.retry-cron:0 30 4 * * *}")
     public void retryPendingUpdates() {
@@ -138,10 +145,10 @@ public class UserMemoryUpdateWorker {
             List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DAILY_TIMELINES).toList();
             try {
                 Status status = process(entry.getKey(), batch, now);
-                if (status == Status.ABANDONED) {
+                if (status == Status.NO_MATERIAL) {
                     batch.forEach(pendingStore::remove);
                     abandonedDays += batch.size();
-                } else if (status == Status.DISPATCHED) {
+                } else if (status == Status.ACCEPTED) {
                     dispatchedUsers++;
                     dispatchedDays += batch.size();
                 }
@@ -160,7 +167,7 @@ public class UserMemoryUpdateWorker {
 
     /**
      * 사용자 guard를 잡고 그 사용자의 작업을 한 요청으로 접수한다. <b>큐는 건드리지 않는다</b> —
-     * 즉시 접수 경로에서는 애초에 큐에 없고, 배치 경로에서는 호출부가 결과를 보고 지운다.
+     * 반환한 {@link Status}를 보고 호출부가 넣거나(즉시 접수) 지운다(배치).
      *
      * @param batch 이미 {@link #MAX_DAILY_TIMELINES} 이하로 잘린 목록
      */
@@ -173,17 +180,17 @@ public class UserMemoryUpdateWorker {
         try {
             return dispatch(userId, batch, taskId, now);
         } catch (TimelineAiDispatchRejectedException e) {
-            // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다.
+            // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
             taskStore.delete(taskId);
             pendingStore.releaseGuard(userId);
-            log.error("User Memory 갱신 접수 거절(재시도 없음): userId={} days={} taskId={}",
+            log.error("User Memory 갱신 접수 거절: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
-            return Status.ABANDONED;
+            return Status.REJECTED;
         } catch (RuntimeException e) {
-            // UNKNOWN — AI가 이미 받았을 수 있으므로 task와 guard를 남긴다(결과가 오면 정상 종결된다).
+            // AI가 이미 받았을 수 있으므로 task와 guard를 남긴다(결과가 오면 정상 종결된다).
             log.error("User Memory 갱신 접수 결과 불명: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
-            return Status.DISPATCHED;
+            return Status.UNKNOWN;
         }
     }
 
@@ -199,7 +206,7 @@ public class UserMemoryUpdateWorker {
             taskStore.delete(taskId);
             pendingStore.releaseGuard(userId);
             log.info("User Memory 갱신 취소(하루 기록 없음): userId={} days={}", userId, batch.size());
-            return Status.ABANDONED;
+            return Status.NO_MATERIAL;
         }
 
         String taskToken = TaskTokens.generate();
@@ -211,7 +218,7 @@ public class UserMemoryUpdateWorker {
         dispatcher.dispatch(new AiUserMemoryUpdateRequest(taskId, taskToken, baseMemory.orElse(null),
                 records.stream().map(this::toDailyTimeline).toList()));
         log.info("User Memory 갱신 접수 요청: userId={} days={} taskId={}", userId, records.size(), taskId);
-        return Status.DISPATCHED;
+        return Status.ACCEPTED;
     }
 
     /**
@@ -241,11 +248,20 @@ public class UserMemoryUpdateWorker {
 
     /** 접수 시도의 결과. 호출부가 큐를 어떻게 할지 이 값 하나로 정한다. */
     private enum Status {
-        /** 그 사용자의 다른 갱신이 진행 중 — 실패가 아니라 정상 직렬화다. 큐에 남긴다. */
+        /** 그 사용자의 다른 갱신이 진행 중 — 실패가 아니라 정상 직렬화다. */
         GUARD_BUSY,
-        /** 미접수 확정(4xx)이거나 접수할 재료가 없다 — 다시 보내도 결과가 같으므로 큐에서 걷어낸다. */
-        ABANDONED,
-        /** AI가 받았거나 받았을 수 있다 — 큐 정리는 결과 endpoint가 한다. */
-        DISPATCHED
+        /** AI가 202로 접수했다. 반영 확인과 큐 정리는 결과 endpoint가 한다. */
+        ACCEPTED,
+        /** 미접수 확정(4xx). 이 payload로는 결과가 같지만 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다. */
+        REJECTED,
+        /** 5xx·timeout·접수 계약 불일치 — AI가 받았을 수도 있다. 결과가 안 오면 다음 배치가 다시 보낸다. */
+        UNKNOWN,
+        /** 접수할 하루 기록이 사라졌다 — 갱신할 재료가 없으므로 큐에서 걷어낸다. */
+        NO_MATERIAL;
+
+        /** 아직 반영되지 않았고 다시 시도할 수 있다 = 큐에 있어야 한다. */
+        boolean requeues() {
+            return this == GUARD_BUSY || this == REJECTED || this == UNKNOWN;
+        }
     }
 }
