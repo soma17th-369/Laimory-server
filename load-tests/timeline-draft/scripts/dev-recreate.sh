@@ -44,6 +44,19 @@ precheck() {
     # AI mode는 이번 작업의 핵심이라 오타를 여기서 잡는다(앱은 노출되지 않은 값이면 noop로 조용히 뜬다).
     grep -qxE 'APP_AI_MODE=(noop|fake|http)' "$ENV_FILE" \
         || die ".env의 APP_AI_MODE가 noop|fake|http 중 하나가 아니다."
+
+    # 지오코딩 대상 전환은 (base URL, key) 쌍으로만 유효하다. 반쪽 전환은 fail-closed지만
+    # (시뮬레이터+실키 = 매칭 거절, 실카카오+더미키 = 401) 지오코딩 전멸이므로 재생성 전에 잡는다.
+    local geo_url geo_key
+    geo_url="$(grep -E '^APP_GEO_KAKAO_BASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+    geo_key="$(grep -E '^KAKAO_REST_API_KEY=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+    if [ -z "$geo_url" ] || [ "$geo_url" = "https://dapi.kakao.com" ]; then
+        [ "$geo_key" != "k6-257-dummy" ] \
+            || die "실 Kakao 대상인데 KAKAO_REST_API_KEY가 더미다. 실제 키로 되돌린다(.env.before-loadtest 참조)."
+    else
+        [ "$geo_key" = "k6-257-dummy" ] \
+            || die "simulator 대상(${geo_url})인데 KAKAO_REST_API_KEY가 더미가 아니다. k6-257-dummy로 바꾼다."
+    fi
 }
 
 [ -f "$ENV_FILE" ] || die ".env를 찾을 수 없다: $ENV_FILE"
