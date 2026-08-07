@@ -80,7 +80,7 @@ class UserMemoryUpdateResultServiceTest {
 
         verify(userMemoryService).replace(USER_ID, updated);
         verify(taskStore).delete(TASK_ID);
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 반영됐으니 미반영 큐에서 뺀다(즉시 접수 경로였으면 애초에 없어 no-op).
         verify(pendingStore).removeAll(USER_ID, List.of(RECORD_ID));
         verifyNoInteractions(dailyRecordService);
@@ -113,7 +113,7 @@ class UserMemoryUpdateResultServiceTest {
 
         verify(userMemoryService, never()).replace(anyLong(), any());
         verify(taskStore).delete(TASK_ID);
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 반영 못 했으니 큐에 넣어 다음 배치가 다시 시도한다.
         verify(pendingStore).enqueueAll(USER_ID, List.of(RECORD_ID), NOW);
     }
@@ -128,7 +128,7 @@ class UserMemoryUpdateResultServiceTest {
 
         verify(userMemoryService, never()).replace(anyLong(), any());
         verify(taskStore).delete(TASK_ID);
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 반영 못 했으니 큐에 넣어 다음 배치가 다시 시도한다.
         verify(pendingStore).enqueueAll(USER_ID, List.of(RECORD_ID), NOW);
     }
@@ -172,7 +172,7 @@ class UserMemoryUpdateResultServiceTest {
 
         verify(userMemoryService, never()).replace(anyLong(), any());
         verify(taskStore).delete(TASK_ID);
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 반영 못 했으니 큐에 넣어 다음 배치가 다시 시도한다.
         verify(pendingStore).enqueueAll(USER_ID, List.of(RECORD_ID), NOW);
     }

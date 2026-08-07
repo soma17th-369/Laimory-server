@@ -31,8 +31,8 @@ import org.springframework.stereotype.Component;
 /**
  * User Memory 갱신 접수를 담당한다. 진입점이 둘이고 역할이 다르다.
  *
- * <p><b>1. 저장 직후 즉시 접수({@link #dispatchNow})</b> — 경합이 없는 대부분의 저장이 여기서 끝난다.
- * async 스레드에서 실행된다. guard를 못 잡았을 때만 그 작업을 큐에 남긴다.
+ * <p><b>1. 저장 직후 즉시 접수({@link #dispatchNow})</b> — 접수에 성공하는 대부분의 저장이 여기서 끝난다.
+ * async 스레드에서 실행된다. 접수되지 못한 날만 그 작업을 큐에 남긴다.
  *
  * <p><b>2. 하루 1회 재시도 배치({@link #retryPendingUpdates})</b> — 큐에 쌓인 것, 즉 아직 반영되지 않은
  * 작업만 다시 접수한다.
@@ -71,6 +71,12 @@ public class UserMemoryUpdateWorker {
 
     /** 한 요청에 실을 수 있는 하루 수(AI 계약 상한). 초과분은 다음 배치가 가져간다. */
     static final int MAX_DAILY_TIMELINES = 5;
+
+    /**
+     * 1회 실행이 큐에서 읽어오는 최대 건수. <b>처리량 제한이 아니라 단일 Redis 응답 크기의 안전선</b>이라
+     * 평상시엔 걸리지 않을 만큼 크게 잡는다. 걸리면 그만큼의 사용자가 다음 실행으로 밀리므로 경고한다.
+     */
+    static final int SCAN_LIMIT = 10_000;
 
     private final UserMemoryUpdatePendingStore pendingStore;
     private final UserMemoryUpdateTaskStore taskStore;
@@ -113,9 +119,10 @@ public class UserMemoryUpdateWorker {
      * 아직 반영되지 않아 큐에 쌓인 작업을 하루 1회 다시 접수한다. 사용자별로 묶어 한 요청에 최대
      * {@link #MAX_DAILY_TIMELINES}일을 싣는다.
      *
-     * <p><b>큐 전체를 읽는다 — 건수 상한이 없다.</b> 사용자당 접수가 한 건이라 1회 실행의 일감은 건수가
-     * 아니라 구별되는 사용자 수로 묶인다. 건수 상한을 두면 잘려 나간 사용자가 이유 없이 하루를 더 기다린다.
-     * 대신 실행 시간이 사용자 수 × HTTP 왕복에 비례하므로, 완료 로그의 {@code users}가 그 비용을 보여준다.
+     * <p><b>밀린 사용자를 전부 돈다 — 처리량 상한이 없다.</b> 사용자당 접수가 한 건이라 1회 실행의 일감은
+     * 건수가 아니라 구별되는 사용자 수로 묶인다. 처리량을 건수로 자르면 잘려 나간 사용자가 이유 없이 하루를
+     * 더 기다린다. 실행 시간은 사용자 수 × HTTP 왕복에 비례하므로 완료 로그의 {@code users}가 그 비용을
+     * 보여준다. {@link #SCAN_LIMIT}은 처리량이 아니라 단일 Redis 응답 크기의 안전선이다.
      *
      * <p><b>한 사용자에게 연달아 보내지는 않는다.</b> 갱신이 "기존 문서 + 날들 → 새 문서"라 두 번째 요청의
      * base는 첫 번째의 결과여야 한다. 결과를 기다리지 않고 이어 보내면 둘 다 같은 base로 만들어져 나중에
@@ -130,18 +137,23 @@ public class UserMemoryUpdateWorker {
     @Scheduled(cron = "${app.user-memory.update.retry-cron:0 30 4 * * *}")
     public void retryPendingUpdates() {
         Instant now = clock.instant();
-        List<UserMemoryUpdatePending> pending = pendingStore.findPending(now);
-        if (pending.isEmpty()) {
+        UserMemoryUpdatePendingStore.PendingScan scan = pendingStore.findPending(now, SCAN_LIMIT);
+        if (scan.scanned().isEmpty()) {
             return;
         }
-        Map<Long, List<UserMemoryUpdatePending>> byUser = pending.stream()
+        if (scan.total() > scan.scanned().size()) {
+            // 안전선에 걸렸다 = 그만큼의 사용자가 조회조차 되지 못하고 다음 실행으로 밀렸다.
+            log.warn("User Memory 갱신 대기 큐가 조회 상한을 넘었습니다: pendingDays={} scanned={} limit={}",
+                    scan.total(), scan.scanned().size(), SCAN_LIMIT);
+        }
+        Map<Long, List<UserMemoryUpdatePending>> byUser = scan.scanned().stream()
                 .collect(Collectors.groupingBy(UserMemoryUpdatePending::userId,
                         LinkedHashMap::new, Collectors.toList()));
         int dispatchedUsers = 0;
         int dispatchedDays = 0;
         int abandonedDays = 0;
         for (Map.Entry<Long, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
-            // 상한 초과분은 큐에 남겨 다음 실행이 가져간다.
+            // 사용자당 상한 초과분은 큐에 남겨 다음 실행이 가져간다.
             List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DAILY_TIMELINES).toList();
             try {
                 Status status = process(entry.getKey(), batch, now);
@@ -161,8 +173,8 @@ public class UserMemoryUpdateWorker {
         // pendingDays가 곧 큐 적체다. deferredDays가 계속 남으면 하루 1회 주기가 부족하다는 신호다.
         log.info("User Memory 갱신 재시도 배치 완료: pendingDays={} users={} dispatchedUsers={} "
                         + "dispatchedDays={} abandonedDays={} deferredDays={}",
-                pending.size(), byUser.size(), dispatchedUsers, dispatchedDays, abandonedDays,
-                pending.size() - dispatchedDays - abandonedDays);
+                scan.total(), byUser.size(), dispatchedUsers, dispatchedDays, abandonedDays,
+                scan.total() - dispatchedDays - abandonedDays);
     }
 
     /**
@@ -173,7 +185,7 @@ public class UserMemoryUpdateWorker {
      */
     private Status process(long userId, List<UserMemoryUpdatePending> batch, Instant now) {
         String taskId = UUID.randomUUID().toString();
-        if (!pendingStore.acquireGuard(userId, taskId, TASK_TTL)) {
+        if (!taskStore.acquireGuard(userId, taskId, TASK_TTL)) {
             return Status.GUARD_BUSY;
         }
 
@@ -182,7 +194,7 @@ public class UserMemoryUpdateWorker {
         } catch (TimelineAiDispatchRejectedException e) {
             // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
             taskStore.delete(taskId);
-            pendingStore.releaseGuard(userId);
+            taskStore.releaseGuard(userId);
             log.error("User Memory 갱신 접수 거절: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
             return Status.REJECTED;
@@ -204,7 +216,7 @@ public class UserMemoryUpdateWorker {
         if (records.isEmpty()) {
             // 저장 후 사용자가 하루 기록을 지웠다 — 갱신할 재료가 없다.
             taskStore.delete(taskId);
-            pendingStore.releaseGuard(userId);
+            taskStore.releaseGuard(userId);
             log.info("User Memory 갱신 취소(하루 기록 없음): userId={} days={}", userId, batch.size());
             return Status.NO_MATERIAL;
         }

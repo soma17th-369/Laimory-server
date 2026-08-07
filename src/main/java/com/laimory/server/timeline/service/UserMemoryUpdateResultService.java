@@ -96,7 +96,7 @@ public class UserMemoryUpdateResultService {
      */
     private void finish(UserMemoryUpdateTask task, String taskId, boolean applied) {
         taskStore.delete(taskId);
-        pendingStore.releaseGuard(task.userId());
+        taskStore.releaseGuard(task.userId());
         if (applied) {
             pendingStore.removeAll(task.userId(), task.dailyRecordIds());
         } else {

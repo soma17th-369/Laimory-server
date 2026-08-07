@@ -89,13 +89,13 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void guard를_못_잡으면_그때_큐에_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(false);
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(false);
 
         worker.dispatchNow(pending);
 
         // guard 획득 실패가 곧 "이 사용자의 갱신이 진행 중"이라는 판정이고, 실패를 기록할 유일한 지점이다.
         verify(pendingStore).enqueue(pending, NOW);
-        verifyNoInteractions(dispatcher, taskStore, userMemoryService);
+        verifyNoInteractions(dispatcher, userMemoryService);
     }
 
     @Test
@@ -121,8 +121,8 @@ class UserMemoryUpdateWorkerTest {
         worker.dispatchNow(pending);
 
         // 미리 읽어 두면 대기 동안 바뀐 문서를 놓친다 — 순서가 이 흐름의 핵심 불변식이다.
-        InOrder inOrder = inOrder(pendingStore, userMemoryService, dispatcher);
-        inOrder.verify(pendingStore).acquireGuard(eq(USER_ID), anyString(), any());
+        InOrder inOrder = inOrder(taskStore, userMemoryService, dispatcher);
+        inOrder.verify(taskStore).acquireGuard(eq(USER_ID), anyString(), any());
         inOrder.verify(userMemoryService).find(USER_ID);
         inOrder.verify(dispatcher).dispatch(any());
     }
@@ -174,13 +174,13 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 하루_기록이_사라졌으면_접수하지_않고_guard를_반납한다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
         worker.dispatchNow(pending);
 
         verify(taskStore).delete(anyString());
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 갱신할 재료가 없으므로 다시 시도할 이유도 없다 — 유일하게 큐에 남기지 않는 실패다.
         verify(pendingStore, never()).enqueue(any(), any());
         verifyNoInteractions(dispatcher);
@@ -197,7 +197,7 @@ class UserMemoryUpdateWorkerTest {
         worker.dispatchNow(pending);
 
         verify(taskStore).delete(anyString());
-        verify(pendingStore).releaseGuard(USER_ID);
+        verify(taskStore).releaseGuard(USER_ID);
         // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 지우면 고친 뒤에도 그 날은 복구되지 않는다.
         verify(pendingStore).enqueue(pending, NOW);
     }
@@ -213,7 +213,7 @@ class UserMemoryUpdateWorkerTest {
 
         // AI가 이미 받아 처리 중일 수 있다 — 지우면 뒤늦게 온 결과가 404로 버려진다.
         verify(taskStore, never()).delete(anyString());
-        verify(pendingStore, never()).releaseGuard(USER_ID);
+        verify(taskStore, never()).releaseGuard(USER_ID);
         // 결과가 끝내 안 오면 이 항목이 유일한 재시도 근거다(task는 TTL 3분이면 사라진다).
         verify(pendingStore).enqueue(pending, NOW);
     }
@@ -221,7 +221,7 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 즉시_접수는_예외를_밖으로_던지지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any()))
                 .thenThrow(new RuntimeException("redis down"));
 
         worker.dispatchNow(pending); // 저장 응답은 이미 나갔고 되돌릴 것이 없다.
@@ -235,8 +235,8 @@ class UserMemoryUpdateWorkerTest {
     void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
         UserMemoryUpdatePending first = pending(RECORD_ID);
         UserMemoryUpdatePending second = pending(RECORD_ID + 1);
-        when(pendingStore.findPending(NOW)).thenReturn(List.of(first, second));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubPendingQueue(List.of(first, second));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         stubRecord(RECORD_ID + 1);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -255,8 +255,8 @@ class UserMemoryUpdateWorkerTest {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, 10)
                 .mapToObj(index -> pending(RECORD_ID + index))
                 .toList();
-        when(pendingStore.findPending(NOW)).thenReturn(pendings);
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubPendingQueue(pendings);
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
         pendings.stream().limit(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES)
                 .forEach(pending -> stubRecord(pending.dailyRecordId()));
@@ -276,8 +276,8 @@ class UserMemoryUpdateWorkerTest {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, users)
                 .mapToObj(index -> new UserMemoryUpdatePending(USER_ID + index, RECORD_ID + index))
                 .toList();
-        when(pendingStore.findPending(NOW)).thenReturn(pendings);
-        when(pendingStore.acquireGuard(anyLong(), anyString(), any())).thenReturn(true);
+        stubPendingQueue(pendings);
+        when(taskStore.acquireGuard(anyLong(), anyString(), any())).thenReturn(true);
         pendings.forEach(pending -> {
             when(dailyRecordService.findByDailyRecordIdAndUserId(pending.dailyRecordId(), pending.userId()))
                     .thenReturn(Optional.of(record(pending.dailyRecordId())));
@@ -293,8 +293,8 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 배치는_접수만_하고_큐를_비우지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubPendingQueue(List.of(pending));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
@@ -308,8 +308,8 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 배치에서_접수가_4xx로_거절돼도_큐에_남긴다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubPendingQueue(List.of(pending));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
         doThrow(new TimelineAiDispatchRejectedException("rejected", new RuntimeException()))
@@ -324,8 +324,8 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 배치에서_하루_기록이_사라졌으면_큐에서_걷어낸다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubPendingQueue(List.of(pending));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
         worker.retryPendingUpdates();
@@ -339,27 +339,32 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending failing = pending(RECORD_ID);
         UserMemoryUpdatePending healthy =
                 new UserMemoryUpdatePending(USER_ID + 1, RECORD_ID + 1);
-        when(pendingStore.findPending(NOW)).thenReturn(List.of(failing, healthy));
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
+        stubPendingQueue(List.of(failing, healthy));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any()))
                 .thenThrow(new RuntimeException("redis down"));
-        when(pendingStore.acquireGuard(eq(USER_ID + 1), anyString(), any())).thenReturn(false);
+        when(taskStore.acquireGuard(eq(USER_ID + 1), anyString(), any())).thenReturn(false);
 
         worker.retryPendingUpdates();
 
-        verify(pendingStore).acquireGuard(eq(USER_ID + 1), anyString(), any());
+        verify(taskStore).acquireGuard(eq(USER_ID + 1), anyString(), any());
     }
 
     @Test
     void 대기_항목이_없으면_아무것도_하지_않는다() {
-        when(pendingStore.findPending(NOW)).thenReturn(List.of());
+        stubPendingQueue(List.of());
 
         worker.retryPendingUpdates();
 
         verifyNoInteractions(dispatcher, taskStore, userMemoryService, dailyRecordService);
     }
 
+    private void stubPendingQueue(List<UserMemoryUpdatePending> pending) {
+        when(pendingStore.findPending(NOW, UserMemoryUpdateWorker.SCAN_LIMIT))
+                .thenReturn(new UserMemoryUpdatePendingStore.PendingScan(pending.size(), pending));
+    }
+
     private void stubClaimable(UserMemoryUpdatePending pending) {
-        when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(pending.dailyRecordId());
     }
 
