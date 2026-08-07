@@ -61,27 +61,6 @@ public class RedisGateway {
             return 1
             """, Long.class);
 
-    // 큐에 넣으면서 같은 실행으로 만료분을 걷어내고 key TTL을 갱신한다. 청소를 읽는 쪽에만 달아 두면
-    // 읽는 주체(배치)가 멈춘 사이 넣기만 하고 지우는 사람이 없어 무한히 자란다 — 넣는 명령이 청소를
-    // 겸해야 "추가 없이는 성장도 없고, 추가가 있으면 청소도 있다"가 성립한다. TTL은 마지막 추가 뒤
-    // 그만큼 비활성인 key만 소멸시킨다(member별 TTL 아님) — 트래픽이 완전히 끊긴 환경의 최후 정리다.
-    private static final RedisScript<Long> SORTED_SET_ADD_IF_ABSENT_AND_PRUNE = new DefaultRedisScript<>("""
-            redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
-            redis.call('zadd', KEYS[1], 'NX', ARGV[2], ARGV[3])
-            return redis.call('pexpire', KEYS[1], ARGV[4])
-            """, Long.class);
-
-    // 만료분을 걷어낸 뒤 전체 개수와 상위 limit개를 한 왕복으로 돌려준다(첫 원소가 개수).
-    // 개수는 적체 관측용이라 limit으로 잘린 뒤에도 "얼마나 밀려 있는지"를 알아야 한다.
-    // 개수도 zcount로 목록과 같은 score 범위를 센다 — zcard로 전체를 세면 실행 중에 들어온(score가
-    // 상한보다 큰) member까지 잡혀, 잘리지 않았는데도 "개수 > 읽어온 수"가 되어 상한 판정이 거짓말한다.
-    private static final RedisScript<List> PRUNE_AND_READ_SORTED_SET = new DefaultRedisScript<>("""
-            redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
-            local members = redis.call('zrangebyscore', KEYS[1], '-inf', ARGV[2], 'LIMIT', 0, ARGV[3])
-            table.insert(members, 1, tostring(redis.call('zcount', KEYS[1], '-inf', ARGV[2])))
-            return members
-            """, List.class);
-
     // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
     // member 수를 한 번의 Redis 왕복으로 센다.
     private static final RedisScript<Long> PRUNE_AND_COUNT_SORTED_SET = new DefaultRedisScript<>("""
@@ -209,41 +188,52 @@ public class RedisGateway {
     }
 
     /**
-     * sorted set에 member가 없을 때만 넣고(ZADD NX), 같은 실행에서 만료분({@code score <= expiredScore})을
-     * 걷어내고 key TTL을 갱신한다. 이미 있는 member는 score를 <b>유지</b>한다 — 재기록으로 최초 기록
-     * 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
-     *
-     * <p>추가와 청소를 묶는 이유는 읽는 쪽이 멈춰도 key가 무한히 자라지 않게 하기 위해서다. 그래서
-     * key 크기는 "{@code ttl} 동안의 유입량"으로 상한이 잡힌다.
+     * sorted set에 member가 없을 때만 넣는다(ZADD NX). 이미 있는 member는 score를 <b>유지</b>한다 —
+     * 재기록으로 최초 기록 시각이 밀려 age 기반 만료가 무한 연장되는 것을 막는다.
      */
-    public void addToSortedSetIfAbsentAndPrune(String logicalSortedSetKey, String member, long score,
-                                               long expiredScore, Duration ttl) {
-        Long result = template.execute(SORTED_SET_ADD_IF_ABSENT_AND_PRUNE,
-                List.of(prefix + logicalSortedSetKey),
-                String.valueOf(expiredScore), String.valueOf(score), member,
-                String.valueOf(ttl.toMillis()));
-        requireScriptResult(result, logicalSortedSetKey);
+    public void addToSortedSetIfAbsent(String logicalSortedSetKey, String member, long score) {
+        template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
+    }
+
+    /** {@code score <= expiredScore}인 member를 제거하고 제거 수를 반환한다. */
+    public long pruneSortedSetByScore(String logicalSortedSetKey, long expiredScore) {
+        Long removed = template.opsForZSet()
+                .removeRangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, expiredScore);
+        if (removed == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis zremrangebyscore가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return removed;
     }
 
     /**
-     * 만료분을 걷어낸 뒤 {@code score <= inclusiveMaxScore}인 member를 오름차순으로 최대 {@code limit}개
-     * 반환한다. <b>첫 원소는 {@code limit}으로 잘라내기 전 개수</b>이고 그 뒤가 member다. key가 없으면
-     * {@code ["0"]}.
-     *
-     * <p>개수의 score 범위는 목록과 같다 — 그래야 "개수 > 읽어온 수"가 곧 "{@code limit}에 잘렸다"를
-     * 뜻한다. 호출 이후 들어온 member는 어느 쪽에도 잡히지 않는다.
+     * {@code score <= inclusiveMaxScore}인 member를 score 오름차순으로 최대 {@code limit}개 반환한다.
+     * key가 없으면 빈 목록이다.
      */
-    public List<String> pruneAndReadSortedSet(String logicalSortedSetKey, long expiredScore,
-                                              long inclusiveMaxScore, long limit) {
-        @SuppressWarnings("unchecked")
-        List<String> result = template.execute(PRUNE_AND_READ_SORTED_SET,
-                List.of(prefix + logicalSortedSetKey),
-                String.valueOf(expiredScore), String.valueOf(inclusiveMaxScore), String.valueOf(limit));
-        if (result == null || result.isEmpty()) {
+    public List<String> getSortedSetRangeByScore(String logicalSortedSetKey, long inclusiveMaxScore, long limit) {
+        Set<String> members = template.opsForZSet().rangeByScore(
+                prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore, 0, limit);
+        if (members == null) {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
-            throw new IllegalStateException("Redis script가 개수를 반환하지 않았습니다: " + logicalSortedSetKey);
+            throw new IllegalStateException("Redis rangeByScore가 null을 반환했습니다: " + logicalSortedSetKey);
         }
-        return List.copyOf(result);
+        return List.copyOf(members);
+    }
+
+    /** {@code score <= inclusiveMaxScore}인 member 수를 센다(ZCOUNT). */
+    public long countSortedSetByScore(String logicalSortedSetKey, long inclusiveMaxScore) {
+        Long count = template.opsForZSet()
+                .count(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore);
+        if (count == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis zcount가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+        return count;
+    }
+
+    /** key에 TTL을 다시 건다(PEXPIRE). key가 없으면 아무 일도 일어나지 않는다. */
+    public void expire(String logicalKey, Duration ttl) {
+        template.expire(prefix + logicalKey, ttl);
     }
 
 

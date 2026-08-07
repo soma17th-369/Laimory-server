@@ -32,6 +32,11 @@ import org.springframework.stereotype.Component;
  * 들어오기 때문이다. 양쪽에 두면 key 크기가 "retention 동안의 유입량"으로 상한이 잡힌다. key TTL도
  * 매번 갱신하지만 그건 트래픽이 완전히 끊긴 환경의 최후 정리일 뿐, 성장을 막는 것은 prune이다.
  *
+ * <p><b>Lua를 쓰지 않는다.</b> 이 큐가 기대는 동시성 보장은 전부 <b>단일 명령</b>에서 나온다 —
+ * 중복 적재는 {@code ZADD NX}가, 목록의 일관성은 {@code ZRANGEBYSCORE} 한 번이, 배치 실행 중 삽입은
+ * 목록과 개수가 공유하는 score 상한이 막는다. 여러 명령을 한 원자 경계로 묶어야 하는 이유가 없어,
+ * Redis를 그동안 붙잡는 스크립트 대신 평범한 명령을 쓴다.
+ *
  * <p>member는 JSON이 아니라 고정 형식 문자열이다 — 같은 작업을 두 번 담지 않으려면(ZADD가 member
  * 동일성으로 판정) 필드 순서가 흔들리는 직렬화를 쓸 수 없다. 식별자만으로 만들어지므로 결과 endpoint가
  * task의 {@code dailyRecordIds}만으로 같은 member를 복원할 수 있다.
@@ -57,12 +62,19 @@ public class UserMemoryUpdatePendingStore {
 
     /**
      * 아직 반영되지 않은 날을 큐에 남긴다. 이미 있으면 최초 기록 시각을 유지한다.
-     * 넣는 김에 같은 실행으로 만료분을 걷어내고 key TTL을 갱신한다.
+     * 넣는 김에 만료분을 걷어내고 key TTL을 갱신한다.
+     *
+     * <p>세 명령을 원자로 묶지 않는다. 청소는 {@code score <= 30일 전}만 건드리고 추가되는 member의
+     * score는 항상 현재 시각이라 두 범위가 30일 떨어져 있어, 어떤 순서로 섞여도 서로를 지우지 못한다.
+     * 중복 방지는 {@code ZADD NX} 한 명령이 이미 원자적으로 보장한다.
      */
     public void enqueue(UserMemoryUpdatePending pending, Instant recordedAt) {
+        // 청소를 읽는 쪽에만 두면 배치가 멈춘 사이 넣기만 하고 지우는 사람이 없어 무한히 자란다.
+        redis.pruneSortedSetByScore(PENDING_KEY, recordedAt.minus(retention).toEpochMilli());
+        redis.addToSortedSetIfAbsent(PENDING_KEY, member(pending), recordedAt.toEpochMilli());
         // TTL == retention이라 만료 시점에 남아 있는 member는 모두 retention보다 오래됐다(어차피 폐기 대상).
-        redis.addToSortedSetIfAbsentAndPrune(PENDING_KEY, member(pending), recordedAt.toEpochMilli(),
-                recordedAt.minus(retention).toEpochMilli(), retention);
+        // 마지막 추가 뒤 그만큼 비활성인 key만 소멸시키는 최후 정리이고, 성장을 막는 것은 위의 prune이다.
+        redis.expire(PENDING_KEY, retention);
     }
 
     public void enqueueAll(long userId, List<Long> dailyRecordIds, Instant recordedAt) {
@@ -85,15 +97,18 @@ public class UserMemoryUpdatePendingStore {
      * 걸리지 않을 만큼 크게 잡고, 걸리면 {@link PendingScan#total()}과 비교해 호출부가 경고한다.
      *
      * <p>{@link PendingScan#total()}은 <b>자르기 전</b> 크기다 — 잘린 채로도 적체를 알 수 있어야 한다.
+     *
+     * <p>세 명령을 원자로 묶지 않는다. 목록과 개수가 같은 score 상한({@code now})을 쓰므로, 그 사이에
+     * 들어온 항목은 <b>어느 쪽에도 잡히지 않는다</b>. 목록 자체도 한 명령의 결과라 찢어지지 않는다.
      */
     public PendingScan findPending(Instant now, int limit) {
-        List<String> result = redis.pruneAndReadSortedSet(PENDING_KEY,
-                now.minus(retention).toEpochMilli(), now.toEpochMilli(), limit);
+        redis.pruneSortedSetByScore(PENDING_KEY, now.minus(retention).toEpochMilli());
+        List<String> members = redis.getSortedSetRangeByScore(PENDING_KEY, now.toEpochMilli(), limit);
+        long total = redis.countSortedSetByScore(PENDING_KEY, now.toEpochMilli());
 
-        long total = parseTotal(result.getFirst());
-        List<UserMemoryUpdatePending> pending = new ArrayList<>(result.size() - 1);
+        List<UserMemoryUpdatePending> pending = new ArrayList<>(members.size());
         List<String> malformed = new ArrayList<>();
-        for (String member : result.subList(1, result.size())) {
+        for (String member : members) {
             UserMemoryUpdatePending parsed = parse(member);
             if (parsed == null) {
                 malformed.add(member);
@@ -134,12 +149,4 @@ public class UserMemoryUpdatePendingStore {
         }
     }
 
-    private static long parseTotal(String value) {
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException e) {
-            // 첫 원소는 스크립트가 항상 zcard로 채운다 — 숫자가 아니면 gateway 계약 위반이다.
-            throw new IllegalStateException("대기 큐 개수를 읽지 못했습니다: " + value, e);
-        }
-    }
 }

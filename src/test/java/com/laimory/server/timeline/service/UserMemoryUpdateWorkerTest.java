@@ -50,7 +50,11 @@ import org.springframework.test.util.ReflectionTestUtils;
  * <p>가장 중요한 계약은 <b>조립이 guard 획득 뒤에 일어난다</b>는 것이다 — 대기 중에 앞선 날짜의 갱신이
  * User Memory를 바꾸므로, 미리 읽어 두면 낡은 문서를 base로 삼게 된다.
  *
- * <p>그 다음은 <b>큐를 언제 비우느냐</b>다. 저장된 하루는 예외 없이 큐를 거치고 접수는 배치가 전담하므로,
+ * <p>두 번째는 <b>어느 날을 싣느냐</b>다. 큐 순서는 진입 시각이라 기록 날짜와 다를 수 있는데, 갱신이
+ * 접기라 기록 날짜 순서로 접어야 한다. 그래서 상한을 큐 순서가 아니라 {@code record_date} 오름차순
+ * 조회 결과에 적용한다(정렬 자체는 조회의 책임이라 여기서는 그 순서를 뒤집지 않는 것만 고정한다).
+ *
+ * <p>세 번째는 <b>큐를 언제 비우느냐</b>다. 저장된 하루는 예외 없이 큐를 거치고 접수는 배치가 전담하므로,
  * 접수 결과가 무엇이든 큐는 그대로 둔다 — 걷어내는 유일한 경우는 갱신할 재료(하루 기록)가 사라졌을 때이고
  * 일부만 사라진 경우도 같다. 나머지는 결과 endpoint가 반영을 확인하고 정리한다.
  */
@@ -59,6 +63,7 @@ class UserMemoryUpdateWorkerTest {
 
     private static final long USER_ID = 7L;
     private static final long RECORD_ID = 42L;
+    private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -152,7 +157,7 @@ class UserMemoryUpdateWorkerTest {
                 ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
         verify(dispatcher).dispatch(request.capture());
         AiUserMemoryUpdateRequest.DailyTimeline timeline = request.getValue().dailyTimelines().getFirst();
-        assertThat(timeline.recordDate()).isEqualTo(LocalDate.of(2026, 8, 5));
+        assertThat(timeline.recordDate()).isEqualTo(RECORD_DATE);
         assertThat(timeline.recordTimeZone()).isEqualTo("Asia/Seoul");
 
         AiUserMemoryUpdateRequest.Event dispatched = timeline.events().getFirst();
@@ -168,8 +173,7 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending second = pending(RECORD_ID + 1);
         stubPendingQueue(List.of(first, second));
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
-        stubRecord(RECORD_ID + 1);
+        stubLookup(List.of(first, second), List.of(record(RECORD_ID), record(RECORD_ID + 1)));
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
         worker.dispatchPendingUpdates();
@@ -182,15 +186,41 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
+    void 상한은_큐_순서가_아니라_기록_날짜_순서의_앞에서_자른다() {
+        // 큐 진입 순서는 8/5 → 8/1 → 8/2(과거 날짜를 나중에 저장). 조회는 record_date 오름차순으로 준다.
+        UserMemoryUpdatePending late = pending(RECORD_ID);
+        UserMemoryUpdatePending backfillFirst = pending(RECORD_ID + 1);
+        UserMemoryUpdatePending backfillSecond = pending(RECORD_ID + 2);
+        stubPendingQueue(List.of(late, backfillFirst, backfillSecond));
+        when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
+        stubLookup(List.of(late, backfillFirst, backfillSecond), List.of(
+                record(RECORD_ID + 1, LocalDate.of(2026, 8, 1)),
+                record(RECORD_ID + 2, LocalDate.of(2026, 8, 2)),
+                record(RECORD_ID, LocalDate.of(2026, 8, 5))));
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
+
+        worker.dispatchPendingUpdates();
+
+        // 접기는 기록 날짜 순서로 해야 한다 — 조회가 준 순서를 뒤집지 않는다.
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        assertThat(request.getValue().dailyTimelines())
+                .extracting(AiUserMemoryUpdateRequest.DailyTimeline::recordDate)
+                .containsExactly(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 2), LocalDate.of(2026, 8, 5));
+    }
+
+    @Test
     void 배치는_한_요청에_최대_5일까지만_싣는다() {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, 10)
                 .mapToObj(index -> pending(RECORD_ID + index))
                 .toList();
         stubPendingQueue(pendings);
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
-        pendings.stream().limit(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES)
-                .forEach(pending -> stubRecord(pending.dailyRecordId()));
+        // 조회는 밀린 날 전부를 날짜 순으로 돌려주고, 상한은 그 앞에서 잘린다.
+        stubLookup(pendings, IntStream.range(0, 10)
+                .mapToObj(index -> record(RECORD_ID + index, RECORD_DATE.plusDays(index)))
+                .toList());
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
         worker.dispatchPendingUpdates();
@@ -211,8 +241,9 @@ class UserMemoryUpdateWorkerTest {
         stubPendingQueue(pendings);
         when(taskStore.acquireGuard(anyLong(), anyString(), any())).thenReturn(true);
         pendings.forEach(pending -> {
-            when(dailyRecordService.findByDailyRecordIdAndUserId(pending.dailyRecordId(), pending.userId()))
-                    .thenReturn(Optional.of(record(pending.dailyRecordId())));
+            when(dailyRecordService.findAllByUserIdAndIdsOrderByRecordDate(
+                    pending.userId(), List.of(pending.dailyRecordId())))
+                    .thenReturn(List.of(record(pending.dailyRecordId())));
             when(userMemoryService.find(pending.userId())).thenReturn(Optional.empty());
         });
 
@@ -246,7 +277,7 @@ class UserMemoryUpdateWorkerTest {
 
         // 앞선 실행의 접수가 아직 진행 중이다 — 장애가 아니라 정상 직렬화라 다음 실행이 가져간다.
         verify(pendingStore, never()).removeAll(anyLong(), anyList());
-        verifyNoInteractions(dispatcher, userMemoryService);
+        verifyNoInteractions(dispatcher, userMemoryService, dailyRecordService);
     }
 
     @Test
@@ -288,7 +319,7 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
         stubPendingQueue(List.of(pending));
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
+        stubLookup(List.of(pending), List.of());
 
         worker.dispatchPendingUpdates();
 
@@ -305,8 +336,7 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending deleted = pending(RECORD_ID + 1);
         stubPendingQueue(List.of(alive, deleted));
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(RECORD_ID);
-        when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID + 1, USER_ID)).thenReturn(Optional.empty());
+        stubLookup(List.of(alive, deleted), List.of(record(RECORD_ID)));
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
 
         worker.dispatchPendingUpdates();
@@ -351,12 +381,14 @@ class UserMemoryUpdateWorkerTest {
 
     private void stubClaimable(UserMemoryUpdatePending pending) {
         when(taskStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
-        stubRecord(pending.dailyRecordId());
+        stubLookup(List.of(pending), List.of(record(pending.dailyRecordId())));
     }
 
-    private void stubRecord(long dailyRecordId) {
-        when(dailyRecordService.findByDailyRecordIdAndUserId(dailyRecordId, USER_ID))
-                .thenReturn(Optional.of(record(dailyRecordId)));
+    /** 조회는 밀린 날 전부를 받아 <b>살아 있는 것만</b> record_date 오름차순으로 돌려준다. */
+    private void stubLookup(List<UserMemoryUpdatePending> pending, List<DailyRecord> found) {
+        when(dailyRecordService.findAllByUserIdAndIdsOrderByRecordDate(USER_ID,
+                pending.stream().map(UserMemoryUpdatePending::dailyRecordId).toList()))
+                .thenReturn(found);
     }
 
     private static UserMemoryUpdatePending pending(long dailyRecordId) {
@@ -364,8 +396,12 @@ class UserMemoryUpdateWorkerTest {
     }
 
     private static DailyRecord record(long dailyRecordId) {
+        return record(dailyRecordId, RECORD_DATE);
+    }
+
+    private static DailyRecord record(long dailyRecordId, LocalDate recordDate) {
         DailyRecord record = DailyRecord.createDraft(
-                USER_ID, LocalDate.of(2026, 8, 5), LocalDateTime.of(2026, 8, 5, 21, 0), "Asia/Seoul");
+                USER_ID, recordDate, recordDate.atTime(21, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", dailyRecordId);
         return record;
     }
