@@ -16,36 +16,41 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * User Memory 갱신 접수를 담당한다. 진입점이 둘이고 역할이 다르다.
+ * User Memory 갱신 접수를 담당한다. 저장은 큐에 넣기만 하고, <b>접수는 하루 1회 배치 한 곳에서만</b> 한다.
  *
- * <p><b>1. 저장 직후 즉시 접수({@link #dispatchNow})</b> — 접수에 성공하는 대부분의 저장이 여기서 끝난다.
- * async 스레드에서 실행된다. 접수되지 못한 날만 그 작업을 큐에 남긴다.
+ * <p><b>1. 저장 직후 큐 적재({@link #enqueue})</b> — 저장 API가 커밋 뒤 호출한다. AI를 부르지 않고
+ * Redis 쓰기 한 번으로 끝난다.
  *
- * <p><b>2. 하루 1회 재시도 배치({@link #retryPendingUpdates})</b> — 큐에 쌓인 것, 즉 아직 반영되지 않은
- * 작업만 다시 접수한다.
+ * <p><b>2. 하루 1회 배치({@link #dispatchPendingUpdates})</b> — 큐에 쌓인 것을 사용자별로 묶어 접수한다.
  *
- * <p><b>어느 쪽도 결과를 기다리지 않는다.</b> AI 계약이 "202 접수 → 백그라운드 처리 → 완료 시 결과 API
- * 호출"이라 응답을 기다리는 척하려면 폴링을 얹어야 하고, 그건 프로토콜과 싸우는 짓이다. 반영 확인과 큐
- * 정리는 성패를 실제로 아는 지점, 즉 결과 endpoint({@link UserMemoryUpdateResultService})가 한다 —
- * 반영되면 큐에서 빼고, AI가 실패를 통보하면 큐에 넣는다.
+ * <p><b>왜 저장 시점에 보내지 않는가</b>: AI 계약이 "202 접수 → 백그라운드 처리 → 완료 시 결과 API 호출"이라
+ * 접수 성공이 반영 성공이 아니다. 접수에 성공한 날을 큐에 넣지 않으면, AI가 202를 준 뒤 결과를 주지 않을 때
+ * task는 TTL 3분에 사라지고 guard도 풀리고 <b>재시도할 근거가 아무 데도 남지 않는다</b> — 그 하루가 조용히
+ * 사라진다. 그래서 저장된 하루는 예외 없이 먼저 큐에 들어가고, <b>반영이 확인될 때만</b> 큐에서 빠진다
+ * (outbox). 대가는 반영 지연이 최대 cron 주기(기본 24시간)라는 것인데, User Memory는 다음 타임라인 품질을
+ * 높이는 보조 데이터라 즉시성이 요구되지 않는다.
+ *
+ * <p><b>어느 쪽도 결과를 기다리지 않는다.</b> 응답을 기다리는 척하려면 폴링을 얹어야 하고 그건 프로토콜과
+ * 싸우는 짓이다. 반영 확인과 큐 정리는 성패를 실제로 아는 지점, 즉 결과
+ * endpoint({@link UserMemoryUpdateResultService})가 한다 — 반영되면 큐에서 빼고, AI가 실패를 통보하면
+ * 큐에 남긴다.
  *
  * <p><b>왜 guard인가</b>: 사용자 하나의 User Memory는 문서 전체를 다시 쓰는 갱신이라, 다른 날짜의 갱신이
  * 진행 중일 때 같이 시작하면 둘 다 같은 base 문서를 읽고 나중에 도착한 쪽이 이겨 하루치가 통째로 사라진다.
- * guard 획득 실패가 곧 <b>"이 사용자의 갱신이 진행 중"</b>이라는 판정이고, 그래서 별도의 진행 상태 저장
- * 없이 guard 하나가 직렬화와 실패 판정을 겸한다. 점유는 장애가 아니라 정상 직렬화라 버리지 않고 미룬다.
+ * 배치는 사용자당 한 번만 보내므로 한 실행 안에서는 경합이 없고, guard가 막는 것은 <b>앞선 실행의 접수가
+ * 아직 진행 중인 경우</b>다. 점유는 장애가 아니라 정상 직렬화라 버리지 않고 미룬다.
  *
  * <p><b>불변식(가장 중요)</b>: 접수 body와 {@code baseMemoryHash}는 <b>guard를 잡은 뒤</b> 그 시점의
  * 상태를 읽어 만든다. 밀려 있는 동안 앞선 날짜의 갱신이 문서를 바꾸므로, 미리 조립해 두면 낡은 문서를
@@ -87,37 +92,18 @@ public class UserMemoryUpdateWorker {
     private final Clock clock;
 
     /**
-     * 저장 커밋 직후의 즉시 접수. AI가 202로 받으면 큐를 아예 거치지 않는다.
+     * 저장 커밋 직후 그 하루를 갱신 대기 큐에 넣는다. AI를 부르지 않으므로 요청 스레드에서 그대로 돌린다
+     * — Redis 쓰기 한 번이고, async로 넘기면 실행기 포화 시 그 하루가 유실될 뿐이다.
      *
-     * <p><b>접수되지 못한 날은 전부 큐에 남긴다</b>(DLQ) — guard 점유든, 4xx 거절이든, 5xx·timeout이든
-     * 공통점은 "아직 반영되지 않았다"이고 그게 큐의 정의다. 여기서 안 남기면 이 경로에는 재시도 근거가
-     * 아무 데도 없다(task는 TTL 3분이면 사라진다). 큐 항목은 접수 실패 시각을 score로 새로 받으므로
-     * 그 시점부터 {@code retention}만큼 다시 기회를 갖는다.
-     *
-     * <p>접수에 성공(202)했을 때만 큐를 건드리지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
-     * 접수할 하루 기록이 사라진 경우도 남기지 않는다(갱신할 재료가 없다).
-     *
-     * <p>실패를 밖으로 던지지 않는다. 호출부(저장 API)는 되돌릴 것이 없다.
+     * <p>이미 큐에 있으면 최초 기록 시각을 유지한다(재기록으로 포기 시한이 연장되지 않는다).
      */
-    @Async
-    public void dispatchNow(UserMemoryUpdatePending pending) {
-        Instant now = clock.instant();
-        try {
-            Status status = process(pending.userId(), List.of(pending), now);
-            if (status.requeues()) {
-                pendingStore.enqueue(pending, now);
-                log.info("User Memory 갱신 보류(배치가 재시도): userId={} dailyRecordId={} status={}",
-                        pending.userId(), pending.dailyRecordId(), status);
-            }
-        } catch (RuntimeException e) {
-            log.error("User Memory 갱신 즉시 접수 실패: userId={} dailyRecordId={}",
-                    pending.userId(), pending.dailyRecordId(), e);
-        }
+    public void enqueue(UserMemoryUpdatePending pending) {
+        pendingStore.enqueue(pending, clock.instant());
     }
 
     /**
-     * 아직 반영되지 않아 큐에 쌓인 작업을 하루 1회 다시 접수한다. 사용자별로 묶어 한 요청에 최대
-     * {@link #MAX_DAILY_TIMELINES}일을 싣는다.
+     * 큐에 쌓인 미반영 작업을 하루 1회 접수한다. 사용자별로 묶어 한 요청에 최대
+     * {@link #MAX_DAILY_TIMELINES}일을 싣는다. <b>여기가 AI로 나가는 유일한 지점이다.</b>
      *
      * <p><b>밀린 사용자를 전부 돈다 — 처리량 상한이 없다.</b> 사용자당 접수가 한 건이라 1회 실행의 일감은
      * 건수가 아니라 구별되는 사용자 수로 묶인다. 처리량을 건수로 자르면 잘려 나간 사용자가 이유 없이 하루를
@@ -129,20 +115,22 @@ public class UserMemoryUpdateWorker {
      * 도착한 쪽이 지문 대조에서 폐기되고({@link UserMemoryUpdateResultService}) 큐로 되돌아온다 — AI
      * 연산만 태우고 결과는 다음 실행으로 미뤄지는 것과 같다. 그래서 6일째부터는 애초에 다음 실행 몫이다.
      *
-     * <p><b>여기서도 결과를 기다리지 않고 큐도 비우지 않는다.</b> 반영이 확인되면 결과 endpoint가 큐에서
-     * 뺀다 — 그래서 AI가 FAILED를 주거나 아예 응답하지 않으면 항목이 그대로 남아 다음 실행이 다시 시도한다.
-     * 걷어내는 경우는 <b>갱신할 재료가 사라졌을 때 하나뿐이다</b>. 4xx 거절도 남긴다 — 계약 불일치처럼
-     * 우리 쪽 수정으로 풀리는 4xx가 있고, 그걸 지우면 고친 뒤에도 그 날은 복구되지 않는다.
+     * <p><b>결과를 기다리지 않고 큐도 비우지 않는다.</b> 반영이 확인되면 결과 endpoint가 큐에서 뺀다 —
+     * 그래서 AI가 FAILED를 주거나 아예 응답하지 않으면 항목이 그대로 남아 다음 실행이 다시 시도한다.
+     * 4xx 거절도 남긴다 — 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있고, 그걸 지우면 고친 뒤에도
+     * 그 날은 복구되지 않는다. 걷어내는 경우는 <b>갱신할 재료가 사라졌을 때 하나뿐이며</b>, 그 판정은
+     * 재료를 실제로 읽는 {@link #dispatch}가 한다.
      */
-    @Scheduled(cron = "${app.user-memory.update.retry-cron:0 30 4 * * *}")
-    public void retryPendingUpdates() {
+    @Scheduled(cron = "${app.user-memory.update.cron:0 30 4 * * *}")
+    public void dispatchPendingUpdates() {
         Instant now = clock.instant();
         UserMemoryUpdatePendingStore.PendingScan scan = pendingStore.findPending(now, SCAN_LIMIT);
         if (scan.scanned().isEmpty()) {
             return;
         }
-        if (scan.total() > scan.scanned().size()) {
+        if (scan.scanned().size() == SCAN_LIMIT) {
             // 안전선에 걸렸다 = 그만큼의 사용자가 조회조차 되지 못하고 다음 실행으로 밀렸다.
+            // total과 비교하지 않는다 — 실행 중 들어온 항목은 total에는 세지지만 이번 스냅샷 밖이다.
             log.warn("User Memory 갱신 대기 큐가 조회 상한을 넘었습니다: pendingDays={} scanned={} limit={}",
                     scan.total(), scan.scanned().size(), SCAN_LIMIT);
         }
@@ -156,81 +144,88 @@ public class UserMemoryUpdateWorker {
             // 사용자당 상한 초과분은 큐에 남겨 다음 실행이 가져간다.
             List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DAILY_TIMELINES).toList();
             try {
-                Status status = process(entry.getKey(), batch, now);
-                if (status == Status.NO_MATERIAL) {
-                    batch.forEach(pendingStore::remove);
-                    abandonedDays += batch.size();
-                } else if (status == Status.ACCEPTED) {
+                Outcome outcome = process(entry.getKey(), batch);
+                abandonedDays += outcome.abandonedDays();
+                if (outcome.status() == Status.ACCEPTED) {
                     dispatchedUsers++;
-                    dispatchedDays += batch.size();
+                    dispatchedDays += outcome.dispatchedDays();
                 }
             } catch (RuntimeException e) {
                 // 한 사용자의 실패가 나머지 드레인을 막지 않는다.
-                log.error("User Memory 갱신 재시도 실패: userId={} pendingDays={}",
+                log.error("User Memory 갱신 접수 실패: userId={} pendingDays={}",
                         entry.getKey(), batch.size(), e);
             }
         }
         // pendingDays가 곧 큐 적체다. deferredDays가 계속 남으면 하루 1회 주기가 부족하다는 신호다.
-        log.info("User Memory 갱신 재시도 배치 완료: pendingDays={} users={} dispatchedUsers={} "
+        log.info("User Memory 갱신 배치 완료: pendingDays={} users={} dispatchedUsers={} "
                         + "dispatchedDays={} abandonedDays={} deferredDays={}",
                 scan.total(), byUser.size(), dispatchedUsers, dispatchedDays, abandonedDays,
                 scan.total() - dispatchedDays - abandonedDays);
     }
 
     /**
-     * 사용자 guard를 잡고 그 사용자의 작업을 한 요청으로 접수한다. <b>큐는 건드리지 않는다</b> —
-     * 반환한 {@link Status}를 보고 호출부가 넣거나(즉시 접수) 지운다(배치).
+     * 사용자 guard를 잡고 그 사용자의 작업을 한 요청으로 접수한다.
+     *
+     * <p>큐에서 걷어내는 것은 <b>재료가 사라진 날뿐이고 그 판정은 {@link #dispatch} 안에서 일어난다</b> —
+     * 나머지 결과는 전부 "아직 반영 안 됨"이라 큐를 그대로 둔다.
      *
      * @param batch 이미 {@link #MAX_DAILY_TIMELINES} 이하로 잘린 목록
      */
-    private Status process(long userId, List<UserMemoryUpdatePending> batch, Instant now) {
+    private Outcome process(long userId, List<UserMemoryUpdatePending> batch) {
         String taskId = UUID.randomUUID().toString();
         if (!taskStore.acquireGuard(userId, taskId, TASK_TTL)) {
-            return Status.GUARD_BUSY;
+            return Outcome.of(Status.GUARD_BUSY);
         }
 
         try {
-            return dispatch(userId, batch, taskId, now);
+            return dispatch(userId, batch, taskId);
         } catch (TimelineAiDispatchRejectedException e) {
             // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
             taskStore.delete(taskId);
             taskStore.releaseGuard(userId);
             log.error("User Memory 갱신 접수 거절: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
-            return Status.REJECTED;
+            return Outcome.of(Status.REJECTED);
         } catch (RuntimeException e) {
             // AI가 이미 받았을 수 있으므로 task와 guard를 남긴다(결과가 오면 정상 종결된다).
             log.error("User Memory 갱신 접수 결과 불명: userId={} days={} taskId={}",
                     userId, batch.size(), taskId, e);
-            return Status.UNKNOWN;
+            return Outcome.of(Status.UNKNOWN);
         }
     }
 
     /** guard를 잡은 뒤에만 호출된다 — 여기서 읽는 record·event·memory가 접수 body의 권위다. */
-    private Status dispatch(long userId, List<UserMemoryUpdatePending> batch, String taskId, Instant now) {
-        List<DailyRecord> records = batch.stream()
-                .map(pending -> dailyRecordService
-                        .findByDailyRecordIdAndUserId(pending.dailyRecordId(), userId).orElse(null))
-                .filter(Objects::nonNull)
-                .toList();
+    private Outcome dispatch(long userId, List<UserMemoryUpdatePending> batch, String taskId) {
+        List<DailyRecord> records = new ArrayList<>(batch.size());
+        List<Long> missing = new ArrayList<>();
+        for (UserMemoryUpdatePending pending : batch) {
+            dailyRecordService.findByDailyRecordIdAndUserId(pending.dailyRecordId(), userId)
+                    .ifPresentOrElse(records::add, () -> missing.add(pending.dailyRecordId()));
+        }
+        if (!missing.isEmpty()) {
+            // 저장 후 사용자가 하루 기록을 지웠다 — 갱신할 재료가 없으니 다시 시도할 이유도 없다.
+            // 남겨 두면 큐를 빠져나갈 길이 없어 retention까지 매 실행 사용자당 상한을 갉아먹는다.
+            // 일부만 사라진 경우도 같다 — 접수 body에서 빠지는 순간 결과 endpoint가 지울 근거를 잃는다.
+            pendingStore.removeAll(userId, missing);
+            log.info("User Memory 갱신 재료 없음(큐에서 제거): userId={} days={}", userId, missing.size());
+        }
         if (records.isEmpty()) {
-            // 저장 후 사용자가 하루 기록을 지웠다 — 갱신할 재료가 없다.
-            taskStore.delete(taskId);
+            // task는 아직 저장 전이라 guard만 반납하면 된다.
             taskStore.releaseGuard(userId);
-            log.info("User Memory 갱신 취소(하루 기록 없음): userId={} days={}", userId, batch.size());
-            return Status.NO_MATERIAL;
+            return new Outcome(Status.NO_MATERIAL, 0, missing.size());
         }
 
         String taskToken = TaskTokens.generate();
         var baseMemory = userMemoryService.find(userId);
+        // 접수 시각은 여기서 찍는다 — 배치 진입 시각을 쓰면 밀린 시간까지 AI 소요로 집계된다.
         taskStore.save(taskId, new UserMemoryUpdateTask(userId,
                 records.stream().map(DailyRecord::getDailyRecordId).toList(),
-                TaskTokens.hash(taskToken), now, UserMemoryDigest.of(baseMemory)), TASK_TTL);
+                TaskTokens.hash(taskToken), clock.instant(), UserMemoryDigest.of(baseMemory)), TASK_TTL);
 
         dispatcher.dispatch(new AiUserMemoryUpdateRequest(taskId, taskToken, baseMemory.orElse(null),
                 records.stream().map(this::toDailyTimeline).toList()));
         log.info("User Memory 갱신 접수 요청: userId={} days={} taskId={}", userId, records.size(), taskId);
-        return Status.ACCEPTED;
+        return new Outcome(Status.ACCEPTED, records.size(), missing.size());
     }
 
     /**
@@ -258,9 +253,22 @@ public class UserMemoryUpdateWorker {
         return value == null ? null : value.atZone(recordZone).toOffsetDateTime();
     }
 
-    /** 접수 시도의 결과. 호출부가 큐를 어떻게 할지 이 값 하나로 정한다. */
+    /**
+     * 한 사용자 처리 결과. 집계 로그가 필요로 하는 세 값을 함께 돌려준다.
+     *
+     * @param dispatchedDays 접수 body에 실린 날 수(접수 성공일 때만 유효)
+     * @param abandonedDays  재료가 사라져 큐에서 걷어낸 날 수 — 일부만 사라져 접수는 성공한 경우에도 센다
+     */
+    private record Outcome(Status status, int dispatchedDays, int abandonedDays) {
+
+        static Outcome of(Status status) {
+            return new Outcome(status, 0, 0);
+        }
+    }
+
+    /** 접수 시도의 결과. */
     private enum Status {
-        /** 그 사용자의 다른 갱신이 진행 중 — 실패가 아니라 정상 직렬화다. */
+        /** 그 사용자의 앞선 갱신이 아직 진행 중 — 실패가 아니라 정상 직렬화다. */
         GUARD_BUSY,
         /** AI가 202로 접수했다. 반영 확인과 큐 정리는 결과 endpoint가 한다. */
         ACCEPTED,
@@ -268,12 +276,7 @@ public class UserMemoryUpdateWorker {
         REJECTED,
         /** 5xx·timeout·접수 계약 불일치 — AI가 받았을 수도 있다. 결과가 안 오면 다음 배치가 다시 보낸다. */
         UNKNOWN,
-        /** 접수할 하루 기록이 사라졌다 — 갱신할 재료가 없으므로 큐에서 걷어낸다. */
-        NO_MATERIAL;
-
-        /** 아직 반영되지 않았고 다시 시도할 수 있다 = 큐에 있어야 한다. */
-        boolean requeues() {
-            return this == GUARD_BUSY || this == REJECTED || this == UNKNOWN;
-        }
+        /** 접수할 하루 기록이 하나도 없었다 — 해당 날들은 이미 큐에서 걷어냈다. */
+        NO_MATERIAL
     }
 }

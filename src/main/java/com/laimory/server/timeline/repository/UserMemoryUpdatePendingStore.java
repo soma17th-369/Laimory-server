@@ -17,9 +17,10 @@ import org.springframework.stereotype.Component;
  * (member: {@code userId:dailyRecordId}, score: <b>최초</b> 기록 시각 epoch ms). 환경 prefix는
  * {@link RedisGateway}가 붙인다.
  *
- * <p><b>큐에 있는 것은 전부 "아직 반영 안 된 날"이다.</b> 경합 없이 접수돼 반영까지 끝난 날은 여기 들어오지
- * 않는다. 넣는 지점은 접수되지 못한 모든 경우(guard 점유·4xx 거절·결과 불명)와 AI의 실패 통보이고, 빼는
- * 지점은 반영 확인과 갱신할 재료가 사라졌을 때다.
+ * <p><b>큐에 있는 것은 전부 "아직 반영 안 된 날"이다.</b> 저장된 하루는 예외 없이 여기를 거치고, 접수는
+ * 하루 1회 배치가 이 큐만 보고 한다 — 큐를 거치지 않고 나간 날은 결과가 끝내 오지 않을 때 재시도할 근거가
+ * 남지 않기 때문이다. 넣는 지점은 저장 커밋 직후와 AI의 실패 통보이고, 빼는 지점은 반영 확인과 갱신할
+ * 재료가 사라졌을 때뿐이다.
  *
  * <p>재기록은 score를 <b>갱신하지 않는다</b>(ZADD NX). 최초 기록 시각이 밀리면 age 기반 포기 시한이
  * 무한히 연장돼 영영 안 되는 날이 큐에 남는다. 그래서 {@code retention}은 <b>최초 진입 기준 절대
@@ -69,10 +70,6 @@ public class UserMemoryUpdatePendingStore {
                 enqueue(new UserMemoryUpdatePending(userId, dailyRecordId), recordedAt));
     }
 
-    public void remove(UserMemoryUpdatePending pending) {
-        redis.removeFromSortedSet(PENDING_KEY, List.of(member(pending)));
-    }
-
     public void removeAll(long userId, List<Long> dailyRecordIds) {
         redis.removeFromSortedSet(PENDING_KEY, dailyRecordIds.stream()
                 .map(dailyRecordId -> member(new UserMemoryUpdatePending(userId, dailyRecordId)))
@@ -87,7 +84,7 @@ public class UserMemoryUpdatePendingStore {
      * 커졌을 때 한 번의 명령이 수 MB를 끌어오고, Redis는 싱글스레드라 그동안 다른 명령이 밀린다. 평상시엔
      * 걸리지 않을 만큼 크게 잡고, 걸리면 {@link PendingScan#total()}과 비교해 호출부가 경고한다.
      *
-     * <p>{@link PendingScan#total()}은 <b>자르기 전</b> 큐 전체 크기다 — 잘린 채로도 적체를 알 수 있어야 한다.
+     * <p>{@link PendingScan#total()}은 <b>자르기 전</b> 크기다 — 잘린 채로도 적체를 알 수 있어야 한다.
      */
     public PendingScan findPending(Instant now, int limit) {
         List<String> result = redis.pruneAndReadSortedSet(PENDING_KEY,
@@ -112,7 +109,9 @@ public class UserMemoryUpdatePendingStore {
     }
 
     /**
-     * @param total   {@code limit}으로 자르기 전 큐 전체 크기(적체 관측용)
+     * @param total   {@code limit}으로 자르기 전 크기(적체 관측용). {@code now} 이후에 들어온 항목은
+     *                이번 스냅샷 밖이라 여기에도 포함되지 않는다 — 그래야 {@code total > scanned}가
+     *                곧 "상한에 잘렸다"를 뜻한다
      * @param scanned 이번에 읽어온 것(오래된 순, 최대 {@code limit}개)
      */
     public record PendingScan(long total, List<UserMemoryUpdatePending> scanned) {
