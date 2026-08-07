@@ -22,8 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -63,6 +63,7 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class UserMemoryUpdateWorker {
 
     /** AI 내부 예산 120초에 여유를 둔 값(draft task와 동일). */
@@ -78,27 +79,6 @@ public class UserMemoryUpdateWorker {
     private final UserMemoryService userMemoryService;
     private final UserMemoryUpdateDispatcher dispatcher;
     private final Clock clock;
-    private final int batchSize;
-
-    // batch 크기 프로퍼티 주입이 있어 @RequiredArgsConstructor 대신 명시적 생성자를 쓴다.
-    public UserMemoryUpdateWorker(
-            UserMemoryUpdatePendingStore pendingStore,
-            UserMemoryUpdateTaskStore taskStore,
-            DailyRecordService dailyRecordService,
-            TimelineEventService timelineEventService,
-            UserMemoryService userMemoryService,
-            UserMemoryUpdateDispatcher dispatcher,
-            Clock clock,
-            @Value("${app.user-memory.update.batch-size:100}") int batchSize) {
-        this.pendingStore = pendingStore;
-        this.taskStore = taskStore;
-        this.dailyRecordService = dailyRecordService;
-        this.timelineEventService = timelineEventService;
-        this.userMemoryService = userMemoryService;
-        this.dispatcher = dispatcher;
-        this.clock = clock;
-        this.batchSize = batchSize;
-    }
 
     /**
      * 저장 커밋 직후의 즉시 접수. 경합이 없으면 큐를 아예 거치지 않는다.
@@ -127,6 +107,15 @@ public class UserMemoryUpdateWorker {
      * 아직 반영되지 않아 큐에 쌓인 작업을 하루 1회 다시 접수한다. 사용자별로 묶어 한 요청에 최대
      * {@link #MAX_DAILY_TIMELINES}일을 싣는다.
      *
+     * <p><b>큐 전체를 읽는다 — 건수 상한이 없다.</b> 사용자당 접수가 한 건이라 1회 실행의 일감은 건수가
+     * 아니라 구별되는 사용자 수로 묶인다. 건수 상한을 두면 잘려 나간 사용자가 이유 없이 하루를 더 기다린다.
+     * 대신 실행 시간이 사용자 수 × HTTP 왕복에 비례하므로, 완료 로그의 {@code users}가 그 비용을 보여준다.
+     *
+     * <p><b>한 사용자에게 연달아 보내지는 않는다.</b> 갱신이 "기존 문서 + 날들 → 새 문서"라 두 번째 요청의
+     * base는 첫 번째의 결과여야 한다. 결과를 기다리지 않고 이어 보내면 둘 다 같은 base로 만들어져 나중에
+     * 도착한 쪽이 지문 대조에서 폐기되고({@link UserMemoryUpdateResultService}) 큐로 되돌아온다 — AI
+     * 연산만 태우고 결과는 다음 실행으로 미뤄지는 것과 같다. 그래서 6일째부터는 애초에 다음 실행 몫이다.
+     *
      * <p><b>여기서도 결과를 기다리지 않고 큐도 비우지 않는다.</b> 반영이 확인되면 결과 endpoint가 큐에서
      * 뺀다 — 그래서 AI가 FAILED를 주거나 아예 응답하지 않으면 항목이 그대로 남아 다음 실행이 다시 시도한다.
      * 다시 보내도 결과가 같은 경우(4xx 거절·재료 없음)만 여기서 걷어낸다.
@@ -134,22 +123,27 @@ public class UserMemoryUpdateWorker {
     @Scheduled(cron = "${app.user-memory.update.retry-cron:0 30 4 * * *}")
     public void retryPendingUpdates() {
         Instant now = clock.instant();
-        Map<Long, List<UserMemoryUpdatePending>> byUser = pendingStore.findPending(now, batchSize).stream()
-                .collect(Collectors.groupingBy(UserMemoryUpdatePending::userId,
-                        LinkedHashMap::new, Collectors.toList()));
-        if (byUser.isEmpty()) {
+        List<UserMemoryUpdatePending> pending = pendingStore.findPending(now);
+        if (pending.isEmpty()) {
             return;
         }
-        int dispatched = 0;
+        Map<Long, List<UserMemoryUpdatePending>> byUser = pending.stream()
+                .collect(Collectors.groupingBy(UserMemoryUpdatePending::userId,
+                        LinkedHashMap::new, Collectors.toList()));
+        int dispatchedUsers = 0;
+        int dispatchedDays = 0;
+        int abandonedDays = 0;
         for (Map.Entry<Long, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
-            // 상한 초과분은 큐에 남겨 다음 배치가 가져간다.
+            // 상한 초과분은 큐에 남겨 다음 실행이 가져간다.
             List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DAILY_TIMELINES).toList();
             try {
                 Status status = process(entry.getKey(), batch, now);
                 if (status == Status.ABANDONED) {
                     batch.forEach(pendingStore::remove);
+                    abandonedDays += batch.size();
                 } else if (status == Status.DISPATCHED) {
-                    dispatched++;
+                    dispatchedUsers++;
+                    dispatchedDays += batch.size();
                 }
             } catch (RuntimeException e) {
                 // 한 사용자의 실패가 나머지 드레인을 막지 않는다.
@@ -157,7 +151,11 @@ public class UserMemoryUpdateWorker {
                         entry.getKey(), batch.size(), e);
             }
         }
-        log.info("User Memory 갱신 재시도 배치 완료: users={} dispatched={}", byUser.size(), dispatched);
+        // pendingDays가 곧 큐 적체다. deferredDays가 계속 남으면 하루 1회 주기가 부족하다는 신호다.
+        log.info("User Memory 갱신 재시도 배치 완료: pendingDays={} users={} dispatchedUsers={} "
+                        + "dispatchedDays={} abandonedDays={} deferredDays={}",
+                pending.size(), byUser.size(), dispatchedUsers, dispatchedDays, abandonedDays,
+                pending.size() - dispatchedDays - abandonedDays);
     }
 
     /**

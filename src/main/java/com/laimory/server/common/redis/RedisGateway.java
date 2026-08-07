@@ -196,12 +196,12 @@ public class RedisGateway {
     }
 
     /**
-     * {@code score <= inclusiveMaxScore}인 member를 score 오름차순으로 최대 {@code limit}개 반환한다.
+     * {@code score <= inclusiveMaxScore}인 member를 score 오름차순으로 전부 반환한다.
      * key가 없으면 빈 목록이다.
      */
-    public List<String> getSortedSetRangeByScore(String logicalSortedSetKey, long inclusiveMaxScore, long limit) {
+    public List<String> getSortedSetRangeByScore(String logicalSortedSetKey, long inclusiveMaxScore) {
         Set<String> members = template.opsForZSet()
-                .rangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore, 0, limit);
+                .rangeByScore(prefix + logicalSortedSetKey, Double.NEGATIVE_INFINITY, inclusiveMaxScore);
         if (members == null) {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis rangeByScore가 null을 반환했습니다: " + logicalSortedSetKey);

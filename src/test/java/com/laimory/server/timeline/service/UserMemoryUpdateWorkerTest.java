@@ -2,13 +2,13 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -60,7 +60,6 @@ class UserMemoryUpdateWorkerTest {
     private static final long USER_ID = 7L;
     private static final long RECORD_ID = 42L;
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
-    private static final int BATCH_SIZE = 100;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -82,7 +81,7 @@ class UserMemoryUpdateWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
-                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC), BATCH_SIZE);
+                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     // ── 즉시 접수 ──
@@ -231,7 +230,7 @@ class UserMemoryUpdateWorkerTest {
     void 배치는_한_사용자의_밀린_날들을_한_요청으로_묶는다() {
         UserMemoryUpdatePending first = pending(RECORD_ID);
         UserMemoryUpdatePending second = pending(RECORD_ID + 1);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(first, second));
+        when(pendingStore.findPending(NOW)).thenReturn(List.of(first, second));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         stubRecord(RECORD_ID + 1);
@@ -251,7 +250,7 @@ class UserMemoryUpdateWorkerTest {
         List<UserMemoryUpdatePending> pendings = IntStream.range(0, 10)
                 .mapToObj(index -> pending(RECORD_ID + index))
                 .toList();
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(pendings);
+        when(pendingStore.findPending(NOW)).thenReturn(pendings);
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         // 상한 초과분은 조회조차 하지 않는다 — 여기 stub을 더 두면 Mockito가 미사용으로 잡는다.
         pendings.stream().limit(UserMemoryUpdateWorker.MAX_DAILY_TIMELINES)
@@ -267,9 +266,29 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
+    void 배치는_밀린_사용자를_건수_상한_없이_전부_접수한다() {
+        int users = UserMemoryUpdateWorker.MAX_DAILY_TIMELINES * 10;
+        List<UserMemoryUpdatePending> pendings = IntStream.range(0, users)
+                .mapToObj(index -> new UserMemoryUpdatePending(USER_ID + index, RECORD_ID + index))
+                .toList();
+        when(pendingStore.findPending(NOW)).thenReturn(pendings);
+        when(pendingStore.acquireGuard(anyLong(), anyString(), any())).thenReturn(true);
+        pendings.forEach(pending -> {
+            when(dailyRecordService.findByDailyRecordIdAndUserId(pending.dailyRecordId(), pending.userId()))
+                    .thenReturn(Optional.of(record(pending.dailyRecordId())));
+            when(userMemoryService.find(pending.userId())).thenReturn(Optional.empty());
+        });
+
+        worker.retryPendingUpdates();
+
+        // 사용자당 접수가 한 건이라 건수 상한은 잘려 나간 사용자를 하루 더 기다리게 할 뿐이다.
+        verify(dispatcher, times(users)).dispatch(any());
+    }
+
+    @Test
     void 배치는_접수만_하고_큐를_비우지_않는다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -284,7 +303,7 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 배치에서_접수가_4xx로_거절되면_큐에서_걷어낸다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         stubRecord(RECORD_ID);
         when(userMemoryService.find(USER_ID)).thenReturn(Optional.empty());
@@ -300,7 +319,7 @@ class UserMemoryUpdateWorkerTest {
     @Test
     void 배치에서_하루_기록이_사라졌으면_큐에서_걷어낸다() {
         UserMemoryUpdatePending pending = pending(RECORD_ID);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(pending));
+        when(pendingStore.findPending(NOW)).thenReturn(List.of(pending));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any())).thenReturn(true);
         when(dailyRecordService.findByDailyRecordIdAndUserId(RECORD_ID, USER_ID)).thenReturn(Optional.empty());
 
@@ -315,7 +334,7 @@ class UserMemoryUpdateWorkerTest {
         UserMemoryUpdatePending failing = pending(RECORD_ID);
         UserMemoryUpdatePending healthy =
                 new UserMemoryUpdatePending(USER_ID + 1, RECORD_ID + 1);
-        when(pendingStore.findPending(NOW, BATCH_SIZE)).thenReturn(List.of(failing, healthy));
+        when(pendingStore.findPending(NOW)).thenReturn(List.of(failing, healthy));
         when(pendingStore.acquireGuard(eq(USER_ID), anyString(), any()))
                 .thenThrow(new RuntimeException("redis down"));
         when(pendingStore.acquireGuard(eq(USER_ID + 1), anyString(), any())).thenReturn(false);
@@ -327,7 +346,7 @@ class UserMemoryUpdateWorkerTest {
 
     @Test
     void 대기_항목이_없으면_아무것도_하지_않는다() {
-        when(pendingStore.findPending(eq(NOW), anyInt())).thenReturn(List.of());
+        when(pendingStore.findPending(NOW)).thenReturn(List.of());
 
         worker.retryPendingUpdates();
 
