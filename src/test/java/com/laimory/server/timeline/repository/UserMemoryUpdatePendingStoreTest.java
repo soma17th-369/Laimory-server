@@ -30,7 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *       하고 지우는 사람이 없어 key가 무한히 자란다.</li>
  *   <li><b>청소가 읽기보다 먼저다</b> — 순서가 뒤집히면 만료된 날이 그 실행에서 한 번 더 접수된다.</li>
  *   <li><b>자르기 전 개수를 함께 준다</b> — 조회 상한에 걸려도 적체가 얼마인지 알아야 경고할 수 있다.
- *       개수와 목록이 같은 score 상한을 쓰므로 잘리지 않았다면 둘이 같다.</li>
+ *       개수와 목록이 같은 상한(대기 시작 시각 <= now)을 쓰므로 잘리지 않았다면 둘이 같다.</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -38,7 +38,8 @@ class UserMemoryUpdatePendingStoreTest {
 
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
     private static final Duration RETENTION = Duration.ofDays(30);
-    private static final long EXPIRED_SCORE = NOW.minus(RETENTION).toEpochMilli();
+    /** 이 시각 이전에 대기를 시작한 항목은 retention을 넘겼다. */
+    private static final long GIVE_UP_BEFORE = NOW.minus(RETENTION).toEpochMilli();
     private static final int LIMIT = 3;
 
     @Mock
@@ -57,7 +58,7 @@ class UserMemoryUpdatePendingStoreTest {
 
         // 청소를 먼저 해야 방금 넣은 member가 같은 실행의 청소에 휩쓸릴 여지가 없다.
         InOrder inOrder = inOrder(redis);
-        inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, EXPIRED_SCORE);
+        inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, GIVE_UP_BEFORE);
         inOrder.verify(redis).addToSortedSetIfAbsent(
                 UserMemoryUpdatePendingStore.PENDING_KEY, "7:42", NOW.toEpochMilli());
         inOrder.verify(redis).expire(UserMemoryUpdatePendingStore.PENDING_KEY, RETENTION);
@@ -73,7 +74,7 @@ class UserMemoryUpdatePendingStoreTest {
 
         UserMemoryUpdatePendingStore.PendingScan scan = store.findPending(NOW, LIMIT);
 
-        // 개수가 읽어온 수보다 크다 = 상한에 잘렸다. 두 값이 같은 score 상한을 써야 이 해석이 성립한다.
+        // 개수가 읽어온 수보다 크다 = 상한에 잘렸다. 두 값이 같은 대기 시작 상한을 써야 이 해석이 성립한다.
         assertThat(scan.total()).isEqualTo(9);
         assertThat(scan.scanned()).containsExactly(
                 new UserMemoryUpdatePending(7L, 42L),
@@ -81,7 +82,7 @@ class UserMemoryUpdatePendingStoreTest {
                 new UserMemoryUpdatePending(13L, 88L));
 
         InOrder inOrder = inOrder(redis);
-        inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, EXPIRED_SCORE);
+        inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, GIVE_UP_BEFORE);
         inOrder.verify(redis).getSortedSetRangeByScore(anyString(), anyLong(), anyLong());
     }
 
