@@ -107,7 +107,7 @@ class TimelineSaveFlowIntegrationTest {
         List.of(DATE, OTHER_DATE).forEach(date -> dailyRecordRepository.findByUserIdAndRecordDate(userId, date)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())));
         userMemoryRepository.deleteByUserId(userId);
-        pendingStore.releaseGuard(userId);
+        taskStore.releaseGuard(userId);
         pendingEntriesOf(userId).forEach(pendingStore::remove);
     }
 
@@ -145,7 +145,7 @@ class TimelineSaveFlowIntegrationTest {
         Instant now = clock.instant();
         UserMemoryUpdatePending inFlight = new UserMemoryUpdatePending(userId, otherRecordId);
         pendingStore.enqueue(inFlight, now);
-        assertThat(pendingStore.acquireGuard(userId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
+        assertThat(taskStore.acquireGuard(userId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
         timelineSaveService.save("v1", userId, DATE);
 
@@ -155,7 +155,7 @@ class TimelineSaveFlowIntegrationTest {
                         .extracting(UserMemoryUpdatePending::dailyRecordId)
                         .contains(recordId));
 
-        pendingStore.releaseGuard(userId);
+        taskStore.releaseGuard(userId);
         userMemoryUpdateWorker.retryPendingUpdates();
 
         // 배치는 접수만 하고 큐를 비우지 않는다 — 반영 확인과 정리는 결과 endpoint 몫이다.
@@ -253,15 +253,15 @@ class TimelineSaveFlowIntegrationTest {
 
     /** guard는 획득 시도로만 관측한다 — 잡히면 비어 있었다는 뜻이라 곧바로 되돌린다. */
     private boolean guardHeldBy(long ownerId) {
-        if (pendingStore.acquireGuard(ownerId, "probe", Duration.ofSeconds(5))) {
-            pendingStore.releaseGuard(ownerId);
+        if (taskStore.acquireGuard(ownerId, "probe", Duration.ofSeconds(5))) {
+            taskStore.releaseGuard(ownerId);
             return false;
         }
         return true;
     }
 
     private List<UserMemoryUpdatePending> pendingEntriesOf(long ownerId) {
-        return pendingStore.findPending(clock.instant().plusSeconds(3600)).stream()
+        return pendingStore.findPending(clock.instant().plusSeconds(3600), 1000).scanned().stream()
                 .filter(pending -> pending.userId() == ownerId)
                 .toList();
     }
