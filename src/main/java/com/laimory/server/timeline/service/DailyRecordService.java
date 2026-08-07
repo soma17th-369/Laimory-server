@@ -37,6 +37,17 @@ public class DailyRecordService {
         return dailyRecordRepository.findByDailyRecordIdAndUserId(dailyRecordId, userId);
     }
 
+    /**
+     * 소유 record만 골라 record_date 오름차순으로 한 번에 반환한다. 없는 id는 결과에서 빠진다.
+     * 빈 목록을 넘기면 질의 없이 빈 결과다({@code IN ()}는 문법 오류다).
+     */
+    public List<DailyRecord> findAllByUserIdAndIdsOrderByRecordDate(Long userId, List<Long> dailyRecordIds) {
+        if (dailyRecordIds.isEmpty()) {
+            return List.of();
+        }
+        return dailyRecordRepository.findByUserIdAndDailyRecordIdInOrderByRecordDateAsc(userId, dailyRecordIds);
+    }
+
     public DailyRecord save(DailyRecord dailyRecord) {
         return dailyRecordRepository.save(dailyRecord);
     }

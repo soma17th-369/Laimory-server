@@ -16,10 +16,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -141,10 +141,10 @@ public class UserMemoryUpdateWorker {
         int dispatchedDays = 0;
         int abandonedDays = 0;
         for (Map.Entry<Long, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
-            // 사용자당 상한 초과분은 큐에 남겨 다음 실행이 가져간다.
-            List<UserMemoryUpdatePending> batch = entry.getValue().stream().limit(MAX_DAILY_TIMELINES).toList();
+            // 상한은 여기서 안 자른다 — 어느 날을 실을지는 record_date를 아는 dispatch가 고른다.
+            List<UserMemoryUpdatePending> pendingOfUser = entry.getValue();
             try {
-                Outcome outcome = process(entry.getKey(), batch);
+                Outcome outcome = process(entry.getKey(), pendingOfUser);
                 abandonedDays += outcome.abandonedDays();
                 if (outcome.status() == Status.ACCEPTED) {
                     dispatchedUsers++;
@@ -153,7 +153,7 @@ public class UserMemoryUpdateWorker {
             } catch (RuntimeException e) {
                 // 한 사용자의 실패가 나머지 드레인을 막지 않는다.
                 log.error("User Memory 갱신 접수 실패: userId={} pendingDays={}",
-                        entry.getKey(), batch.size(), e);
+                        entry.getKey(), pendingOfUser.size(), e);
             }
         }
         // pendingDays가 곧 큐 적체다. deferredDays가 계속 남으면 하루 1회 주기가 부족하다는 신호다.
@@ -169,39 +169,47 @@ public class UserMemoryUpdateWorker {
      * <p>큐에서 걷어내는 것은 <b>재료가 사라진 날뿐이고 그 판정은 {@link #dispatch} 안에서 일어난다</b> —
      * 나머지 결과는 전부 "아직 반영 안 됨"이라 큐를 그대로 둔다.
      *
-     * @param batch 이미 {@link #MAX_DAILY_TIMELINES} 이하로 잘린 목록
+     * @param pending 그 사용자의 미반영 날 전부. 상한을 적용해 실을 날을 고르는 것은 {@link #dispatch}다
      */
-    private Outcome process(long userId, List<UserMemoryUpdatePending> batch) {
+    private Outcome process(long userId, List<UserMemoryUpdatePending> pending) {
         String taskId = UUID.randomUUID().toString();
         if (!taskStore.acquireGuard(userId, taskId, TASK_TTL)) {
             return Outcome.of(Status.GUARD_BUSY);
         }
 
         try {
-            return dispatch(userId, batch, taskId);
+            return dispatch(userId, pending, taskId);
         } catch (TimelineAiDispatchRejectedException e) {
             // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
             // guard는 TTL에 맡긴다(같은 실행에서 다시 보내 봐야 같은 payload라 또 4xx다).
             taskStore.delete(taskId);
-            log.error("User Memory 갱신 접수 거절: userId={} days={} taskId={}",
-                    userId, batch.size(), taskId, e);
+            log.error("User Memory 갱신 접수 거절: userId={} pendingDays={} taskId={}",
+                    userId, pending.size(), taskId, e);
             return Outcome.of(Status.REJECTED);
         } catch (RuntimeException e) {
             // AI가 이미 받았을 수 있으므로 task와 guard를 남긴다(결과가 오면 정상 종결된다).
-            log.error("User Memory 갱신 접수 결과 불명: userId={} days={} taskId={}",
-                    userId, batch.size(), taskId, e);
+            log.error("User Memory 갱신 접수 결과 불명: userId={} pendingDays={} taskId={}",
+                    userId, pending.size(), taskId, e);
             return Outcome.of(Status.UNKNOWN);
         }
     }
 
-    /** guard를 잡은 뒤에만 호출된다 — 여기서 읽는 record·event·memory가 접수 body의 권위다. */
-    private Outcome dispatch(long userId, List<UserMemoryUpdatePending> batch, String taskId) {
-        List<DailyRecord> records = new ArrayList<>(batch.size());
-        List<Long> missing = new ArrayList<>();
-        for (UserMemoryUpdatePending pending : batch) {
-            dailyRecordService.findByDailyRecordIdAndUserId(pending.dailyRecordId(), userId)
-                    .ifPresentOrElse(records::add, () -> missing.add(pending.dailyRecordId()));
-        }
+    /**
+     * guard를 잡은 뒤에만 호출된다 — 여기서 읽는 record·event·memory가 접수 body의 권위다.
+     *
+     * <p><b>어느 날을 실을지도 여기서 고른다.</b> 큐 순서는 진입 시각이라 기록 날짜와 다를 수 있는데
+     * (과거 날짜를 나중에 저장할 수 있다), 갱신이 "기존 문서 + 날들 → 새 문서" 접기라 <b>기록 날짜
+     * 순서로</b> 접어야 한다. 큐 순서로 5개를 자르면 8/5를 먼저 접고 다음 실행에서 8/1을 접는 일이
+     * 생긴다 — 요청 안에서만 정렬해서는 실행을 넘나드는 순서가 안 잡힌다. 그래서 record_date 오름차순
+     * 조회 결과에서 앞의 {@link #MAX_DAILY_TIMELINES}일을 고른다.
+     */
+    private Outcome dispatch(long userId, List<UserMemoryUpdatePending> pending, String taskId) {
+        List<Long> pendingIds = pending.stream().map(UserMemoryUpdatePending::dailyRecordId).toList();
+        // record_date 오름차순 한 번의 질의. 삭제된 하루는 결과에서 빠지므로 차집합이 곧 사라진 날이다.
+        List<DailyRecord> found = dailyRecordService.findAllByUserIdAndIdsOrderByRecordDate(userId, pendingIds);
+
+        Set<Long> foundIds = found.stream().map(DailyRecord::getDailyRecordId).collect(Collectors.toSet());
+        List<Long> missing = pendingIds.stream().filter(id -> !foundIds.contains(id)).toList();
         if (!missing.isEmpty()) {
             // 저장 후 사용자가 하루 기록을 지웠다 — 갱신할 재료가 없으니 다시 시도할 이유도 없다.
             // 남겨 두면 큐를 빠져나갈 길이 없어 retention까지 매 실행 사용자당 상한을 갉아먹는다.
@@ -209,10 +217,12 @@ public class UserMemoryUpdateWorker {
             pendingStore.removeAll(userId, missing);
             log.info("User Memory 갱신 재료 없음(큐에서 제거): userId={} days={}", userId, missing.size());
         }
-        if (records.isEmpty()) {
+        if (found.isEmpty()) {
             // task는 아직 저장 전이고, guard는 TTL이 반납한다(그 사용자에게 이번 실행에 할 일이 없다).
             return new Outcome(Status.NO_MATERIAL, 0, missing.size());
         }
+        // 상한 초과분은 큐에 남아 다음 실행이 가져간다(그때도 가장 이른 날짜부터).
+        List<DailyRecord> records = found.stream().limit(MAX_DAILY_TIMELINES).toList();
 
         String taskToken = TaskTokens.generate();
         var baseMemory = userMemoryService.find(userId);
