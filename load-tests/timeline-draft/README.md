@@ -222,6 +222,10 @@ health check(`/intro` 반복)는 draft 경로를 데우지 못한다. 측정 전
 
 사다리를 올리기 전에 VU 1로 end-to-end median을 확인한다.
 
+**저VU 단계(≤5)의 기록값은 단발이 아니라 5회 반복의 풀링 중앙값으로 잡는다.** 표본 1~5개짜리
+단계는 큐 위치·GC 추첨의 분산이 단계 간 차이보다 커서 단발로는 역전이 흔하다(실측 3회 재발).
+고VU 단계(≥10)는 표본이 커서 단발로 충분하다.
+
 ```bash
 RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
   k6 run load-tests/timeline-draft/k6/calendar-core.js
