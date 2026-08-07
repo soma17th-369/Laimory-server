@@ -26,7 +26,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * <ul>
  *   <li><b>넣을 때도 만료분을 걷어낸다</b> — 청소가 읽기에만 있으면 읽는 주체(배치)가 멈춘 사이 넣기만
  *       하고 지우는 사람이 없어 key가 무한히 자란다.</li>
- *   <li><b>자르기 전 전체 개수를 함께 준다</b> — 조회 상한에 걸려도 적체가 얼마인지 알아야 경고할 수 있다.</li>
+ *   <li><b>자르기 전 개수를 함께 준다</b> — 조회 상한에 걸려도 적체가 얼마인지 알아야 경고할 수 있다.
+ *       개수는 목록과 같은 score 범위를 세므로(gateway 계약) 잘리지 않았다면 둘이 같다.</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -34,7 +35,7 @@ class UserMemoryUpdatePendingStoreTest {
 
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");
     private static final Duration RETENTION = Duration.ofDays(30);
-    private static final int LIMIT = 5;
+    private static final int LIMIT = 3;
 
     @Mock
     private RedisGateway redis;
@@ -55,8 +56,8 @@ class UserMemoryUpdatePendingStoreTest {
     }
 
     @Test
-    void 만료분을_걷어낸_뒤_상한만큼_읽고_전체_개수를_함께_준다() {
-        // 첫 원소가 자르기 전 전체 개수다 — 잘린 채로도 적체를 알 수 있어야 경고할 수 있다.
+    void 만료분을_걷어낸_뒤_상한만큼_읽고_자르기_전_개수를_함께_준다() {
+        // 첫 원소가 자르기 전 개수다 — 잘린 채로도 적체를 알 수 있어야 경고할 수 있다.
         when(redis.pruneAndReadSortedSet(UserMemoryUpdatePendingStore.PENDING_KEY,
                 NOW.minus(RETENTION).toEpochMilli(), NOW.toEpochMilli(), LIMIT))
                 .thenReturn(List.of("9", "7:42", "7:43", "13:88"));
