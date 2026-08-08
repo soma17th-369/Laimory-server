@@ -135,8 +135,14 @@ geo-day 실행 전 dev `.env`에 `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상을 �
 `applicationTaskExecutor`(스레드 8, 무제한 큐)라 뒤 단계 관측 구간까지 self-callback 부하가 번지고 정리
 범위도 커진다. `noop`은 로그만 남기고 task가 PROCESSING TTL 3분으로 소멸한다.
 
-localhost가 아닌 대상에는 k6가 `CONFIRM_AI_NOOP=yes` 없이는 실행을 거부한다. 이 확인 없이는 사다리를
-시작할 수 없다.
+localhost가 아닌 대상에는 k6가 AI 목적지 확인 없이 실행을 거부한다. 안전한 상태 두 가지 중 하나를
+눈으로 확인하고 해당 표식을 붙인다:
+
+- `CONFIRM_AI_NOOP=yes` — `APP_AI_MODE`가 `noop` 또는 `fake` (dispatch가 서버 밖으로 안 나감)
+- `CONFIRM_AI_SIMULATOR=yes` — `APP_AI_MODE=http` + `APP_AI_HTTP_BASE_URL`이 #257 simulator
+  (가짜 AI 경로 — dispatch·콜백이 simulator와 왕복)
+
+실제 AI 서비스를 향한 상태에는 유효한 표식이 없다 — 그 상태로는 발사할 수 없다.
 
 ```bash
 CONFIRM_AI_NOOP=yes   # APP_AI_MODE=noop을 눈으로 확인한 뒤에만 붙인다

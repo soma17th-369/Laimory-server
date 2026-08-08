@@ -68,7 +68,7 @@ export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
   const requestBudgetMs = intEnv('REQUEST_BUDGET_MS', 60000);
 
   const baseUrl = requiredEnv('BASE_URL').replace(/\/+$/, '');
-  requireAiNoopConfirmation(baseUrl);
+  requireAiTargetConfirmation(baseUrl);
 
   const runId = requiredEnv('RUN_ID');
   // rawId는 최대 36자다(서버 컬럼 계약). 잘라내면 요청 안에서 rawId가 충돌해 dedupe로 item이 사라지므로
@@ -101,22 +101,28 @@ export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
 }
 
 /**
- * 원격 대상에는 `CONFIRM_AI_NOOP=yes` 없이 발사할 수 없게 막는다.
+ * 원격 대상에는 AI dispatch 목적지가 안전함을 운영자가 확인했다는 표식 없이 발사할 수 없게 막는다.
  *
- * draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를 부른다. 대상이 `noop`이 아니면 1,000건이
- * 그대로 실제 AI로 전파되므로, 이것은 geo 전용 가드(CONFIRM_SIMULATOR)와 별개로 항상 필요하다.
+ * draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를 부른다. 목적지가 실제 AI 서비스면 요청 수만큼
+ * 그대로 전파되므로, geo 가드(CONFIRM_SIMULATOR)와 별개로 항상 필요하다. 안전한 상태는 두 가지뿐이고
+ * k6는 서버의 env를 볼 수 없으므로 운영자 확인을 요구한다:
+ *
+ *   CONFIRM_AI_NOOP=yes       — APP_AI_MODE가 noop 또는 fake(dispatch가 서버 밖으로 안 나감)
+ *   CONFIRM_AI_SIMULATOR=yes  — APP_AI_MODE=http이고 APP_AI_HTTP_BASE_URL이 #257 simulator를 가리킴
+ *
+ * 실제 AI를 향한 상태에는 유효한 확인 표식이 없다 — 그 상태로는 부하 발사가 불가능해야 한다.
  * localhost는 예외로 둬 로컬 검증 반복을 막지 않는다.
  */
-function requireAiNoopConfirmation(baseUrl) {
+function requireAiTargetConfirmation(baseUrl) {
   const host = baseUrl.replace(/^[a-zA-Z]+:\/\//, '').split('/')[0].split(':')[0];
   const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-  if (isLocal || __ENV.CONFIRM_AI_NOOP === 'yes') {
+  if (isLocal || __ENV.CONFIRM_AI_NOOP === 'yes' || __ENV.CONFIRM_AI_SIMULATOR === 'yes') {
     return;
   }
   throw new Error(
-    `원격 대상(${host})에는 CONFIRM_AI_NOOP=yes가 필요합니다. `
-    + '대상의 APP_AI_MODE가 noop인지 먼저 확인하세요 — noop이 아니면 요청 수만큼 실제 AI로 '
-    + 'dispatch가 전파됩니다.'
+    `원격 대상(${host})에는 AI 목적지 확인이 필요합니다. 서버의 AI 설정을 눈으로 확인한 뒤 `
+    + 'APP_AI_MODE가 noop|fake면 CONFIRM_AI_NOOP=yes를, http+simulator 주소면 CONFIRM_AI_SIMULATOR=yes를 '
+    + '붙이세요. 실제 AI 서비스를 향한 상태로는 발사할 수 없습니다.'
   );
 }
 
