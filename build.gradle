@@ -51,6 +51,9 @@ dependencies {
 	implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
 	implementation 'io.github.resilience4j:resilience4j-reactor:2.4.0'
 	implementation 'io.github.resilience4j:resilience4j-micrometer:2.4.0'
+	// @WithSpan 선택 계측(서비스 경계 span — #277). OTel javaagent(배포 이미지 탑재, .env로 활성화)가
+	// 없으면 애노테이션은 완전 no-op. 버전은 agent와 동일 라인 유지. Spring BOM 비관리 → 버전 명시.
+	implementation 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-annotations:2.30.0'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

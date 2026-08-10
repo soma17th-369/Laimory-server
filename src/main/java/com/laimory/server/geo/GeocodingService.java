@@ -1,6 +1,7 @@
 package com.laimory.server.geo;
 
 import com.laimory.server.common.logging.TransactionIds;
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.MDC;
@@ -55,6 +56,7 @@ public class GeocodingService {
      * 허용된 map에는 모든 입력 좌표 key가 있다 — 성공은 실제 {@link GeoPlace}, 예상된 실패는 materialize된
      * {@link GeoLookupOutcome.Failure}다. programming error만 예외로 전파된다.
      */
+    @WithSpan
     public Map<Coordinate, GeoLookupOutcome> lookupAll(Set<Coordinate> coordinates) {
         if (coordinates.isEmpty()) {
             return Map.of();

@@ -15,6 +15,7 @@ import com.laimory.server.timeline.payload.TimelineItemPayload;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import com.laimory.server.timeline.service.GeoEnrichmentPolicy.CoordinateObservation;
 import com.laimory.server.timeline.service.GeoEnrichmentPolicy.Decision;
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -74,6 +75,7 @@ public class SourceItemEnrichmentService {
     }
 
     /** {@code userId}는 PHOTO photoUrl의 full key 파생에 쓴다 — 저장될 row의 user_id와 같은 사용자여야 한다. */
+    @WithSpan
     public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, long userId) {
         long startNanos = System.nanoTime();
         List<CoordinateObservation> observations = collectObservations(sourceItems);
