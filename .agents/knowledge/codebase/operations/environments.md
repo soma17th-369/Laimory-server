@@ -30,8 +30,9 @@ automation을 바꿀 때 읽는다.
 dev deploy pre-flight는 dev 고정값(`REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`APP_GEO_MODE=kakao`·
 `SWAGGER_ENABLED=true`)과 `APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`를 exact-one으로 검증하고,
 위반이면 기존 container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비하지 않는 pre-flight
-전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 값까지 요구하고,
-`noop`이면 두 계열의 잔존을 금지한다(스위치만 내려간 "조용한 부분 off" 차단). firebase 전환 시 ADC 경로(`GOOGLE_APPLICATION_CREDENTIALS`)도
+전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 dev 고정값 byte 단위로
+요구하고(`OTEL_TRACES_SAMPLER`만 non-empty 유연 — 부하 테스트 ratio 전환 계약), `noop`이면 두
+계열의 잔존을 금지한다(스위치만 내려간 "조용한 부분 off" 차단). 상세 목록은 deployment.md Preflight. firebase 전환 시 ADC 경로(`GOOGLE_APPLICATION_CREDENTIALS`)도
 `.env`가 소유하고 pre-flight가 service-account 파일 존재·가독성을 검사한 뒤 read-only mount만
 추가한다. `APP_COMMIT_SHA`는 배포 workflow가 `.env`에
 원자 upsert하는 유일한 key다.
