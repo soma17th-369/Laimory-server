@@ -34,8 +34,13 @@ description:
 
 인증부터 확인한다. 안 그러면 본문 다 쓰고 질문 다 받은 뒤 *마지막 생성 단계*에서 막혀 헛수고가 된다.
 
-1. **로그인**: `gh auth status`를 실행한다. 로그인이 안 돼 있으면 사용자에게 `gh auth login`을
-   안내하고 멈춘다(추측으로 진행하지 말 것).
+1. **로그인**: `gh auth status`를 실행한다.
+   - macOS에서 sandbox 안의 명령만 실패하면 로그인 만료로 단정하지 않는다. sandbox가 macOS Keychain의
+     기존 `gh` credential을 읽지 못하는 실행 컨텍스트 문제일 수 있으므로, 가능하면 사용자 승인을 받아
+     **Keychain 접근이 허용된 컨텍스트에서 같은 read-only 명령을 다시 실행**한다. 그런 실행 경로가 없으면
+     사용자에게 host terminal에서 `gh auth status`를 실행해 상태만 알려 달라고 한다.
+   - Keychain 접근 가능한 확인도 실패한 경우에만 사용자에게 `gh auth login`을 안내하고 멈춘다(추측으로
+     진행하지 말 것). `gh auth token` 실행이나 token 원문 공유를 요청하지 않는다.
 2. **project 스코프**: 이슈를 **프로젝트에 추가하거나 Size를 설정할 때만** `project` 스코프가
    필요하다(이슈 생성·Type·Priority엔 불필요). `gh auth status`의 `Token scopes`에 `project`가
    없고 이번에 프로젝트/Size를 쓸 거라면, `gh auth refresh -s project`를 안내하고 사용자가 마친 뒤 진행한다.
