@@ -135,25 +135,28 @@ jobs:
           fi
           # tracing pre-flight(#277): APP_TRACING_MODE가 OTel agent 활성화의 명시적 SSOT다(앱은 이 키를
           # 소비하지 않는 pre-flight 전용 계약 키). otlp면 JVM 표준 JAVA_TOOL_OPTIONS(-javaagent)와 OTEL_*
-          # 세트를 값까지 검증한다 — agent 2.x 기본 protocol이 http/protobuf라 grpc 누락 시 4317로 http를
-          # 쏴 trace가 조용히 유실되고, metrics/logs exporter 기본이 otlp라 none 누락 시 의도 없는 export가
-          # 간다. redaction 목록(OAuth code/state·app_challenge·Kakao x/y/query)은 부재 시 기본 4종만
-          # 적용돼 48h trace에 비밀이 남으므로 존재를 강제한다. noop이면 JAVA_TOOL_OPTIONS·OTEL_* 잔존을
-          # 금지해 "한 줄 지워져 조용히 꺼진 채 남는" 상태를 fail-closed로 막는다.
+          # 세트를 dev 고정값 byte 단위로 검증한다 — agent 2.x 기본 protocol이 http/protobuf라 grpc 누락 시
+          # 4317로 http를 쏴 trace가 조용히 유실되고, metrics/logs exporter 기본이 otlp라 none 누락 시 의도
+          # 없는 export가 가며, 잘못된 endpoint도 trace를 조용히 유실한다. redaction 목록은 full-override라
+          # 부분 목록이면 기본 서명 4종까지 벗겨져 48h trace에 비밀이 남으므로 전체 집합을 값으로 고정한다.
+          # sampler만 값 미고정(exact-one non-empty) — 부하 테스트 시 ratio로 일시 전환하는 운영 계약.
+          # noop이면 JAVA_TOOL_OPTIONS·OTEL_* 잔존을 금지해 "한 줄 지워져 조용히 꺼진 채 남는" 상태를
+          # fail-closed로 막는다.
           TRACING_COUNT=\$(grep -c '^APP_TRACING_MODE=' "\$ENV_FILE" || true)
           [ "\$TRACING_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_TRACING_MODE must appear exactly once (found \$TRACING_COUNT)"; exit 1; }
           grep -qxE 'APP_TRACING_MODE=(noop|otlp)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_TRACING_MODE must be one of noop|otlp"; exit 1; }
           if grep -qxF 'APP_TRACING_MODE=otlp' "\$ENV_FILE"; then
             require_exact_line JAVA_TOOL_OPTIONS "JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar"
+            require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-dev"
+            require_exact_line OTEL_EXPORTER_OTLP_ENDPOINT "OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.32.14:4317"
             require_exact_line OTEL_EXPORTER_OTLP_PROTOCOL "OTEL_EXPORTER_OTLP_PROTOCOL=grpc"
             require_exact_line OTEL_METRICS_EXPORTER "OTEL_METRICS_EXPORTER=none"
             require_exact_line OTEL_LOGS_EXPORTER "OTEL_LOGS_EXPORTER=none"
             require_exact_line OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED "OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=true"
-            for TRACING_KEY in OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_ENDPOINT OTEL_TRACES_SAMPLER OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS; do
-              TRACING_KEY_COUNT=\$(grep -c "^\$TRACING_KEY=" "\$ENV_FILE" || true)
-              [ "\$TRACING_KEY_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$TRACING_KEY must appear exactly once when APP_TRACING_MODE=otlp (found \$TRACING_KEY_COUNT)"; exit 1; }
-              grep -qE "^\$TRACING_KEY=.+" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$TRACING_KEY must be non-empty when APP_TRACING_MODE=otlp"; exit 1; }
-            done
+            require_exact_line OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,sig,X-Goog-Signature,code,state,app_challenge,x,y,query"
+            SAMPLER_COUNT=\$(grep -c '^OTEL_TRACES_SAMPLER=' "\$ENV_FILE" || true)
+            [ "\$SAMPLER_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env OTEL_TRACES_SAMPLER must appear exactly once when APP_TRACING_MODE=otlp (found \$SAMPLER_COUNT)"; exit 1; }
+            grep -qE '^OTEL_TRACES_SAMPLER=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env OTEL_TRACES_SAMPLER must be non-empty when APP_TRACING_MODE=otlp"; exit 1; }
           else
             JTO_COUNT=\$(grep -c '^JAVA_TOOL_OPTIONS=' "\$ENV_FILE" || true)
             [ "\$JTO_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env JAVA_TOOL_OPTIONS must not be set when APP_TRACING_MODE=noop"; exit 1; }

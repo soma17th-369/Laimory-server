@@ -409,8 +409,9 @@ for key in $TRACING_REQUIRED_KEYS ; do
   assert_prune_once "T5c(otlp/missing $key)"
 done
 
-# 값 오류: protocol이 grpc가 아니면(agent 2.x 기본 http/protobuf) trace가 조용히 유실되므로 값까지 실패해야 한다.
-for wrong in "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" "OTEL_METRICS_EXPORTER=otlp" "OTEL_LOGS_EXPORTER=otlp" "OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=false" ; do
+# 값 오류: 잘못된 protocol/endpoint는 trace를 조용히 유실하고, redaction 부분 목록은 full-override라
+# 기본 서명 4종까지 벗겨진다 — dev 고정값은 byte 단위로 실패해야 한다.
+for wrong in "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" "OTEL_METRICS_EXPORTER=otlp" "OTEL_LOGS_EXPORTER=otlp" "OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=false" "OTEL_SERVICE_NAME=laimory-prod" "OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.32.99:4317" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=code" ; do
   key=${wrong%%=*}
   new_case; make_otlp_fixture
   grep -v "^$key=" "$CASE_DIR/.env" > "$CASE_DIR/.env.new" && mv "$CASE_DIR/.env.new" "$CASE_DIR/.env"
@@ -423,6 +424,15 @@ for wrong in "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" "OTEL_METRICS_EXPORTER=
   assert_no_stop_no_run "T5c(otlp/wrong $key)"
   assert_prune_once "T5c(otlp/wrong $key)"
 done
+
+# sampler만 값 미고정 계약: 부하 테스트의 ratio 일시 전환(D4)이 pre-flight에 막히면 안 된다.
+new_case; make_otlp_fixture
+PATH=/usr/bin:/bin sed -i.bak 's/^OTEL_TRACES_SAMPLER=always_on$/OTEL_TRACES_SAMPLER=parentbased_traceidratio/' "$CASE_DIR/.env"
+rm -f "$CASE_DIR/.env.bak"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5c(otlp/sampler-flex): ratio sampler must pass, rc=$RC ($(cat "$CASE_DIR/out.log"))"
 
 # 중복: exact-one 위반은 --env-file 해석 순서에 기대지 않고 실패해야 한다.
 new_case; make_otlp_fixture
