@@ -84,6 +84,13 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   runtime user(appuser, UID 1001)로 `test -r`까지 통과해야 구 컨테이너를 중지한다(파일은 chown
   1001·0400 — root 관점 검사만으론 권한 문제를 못 잡음). 통과 시 read-only bind mount만 추가하며
   ADC 경로는 `.env`가 소유한다. `noop`이면 mount·credential 검사 없이 기동
+- `APP_TRACING_MODE` exact-one(`noop|otlp`) — 앱이 소비하지 않는 pre-flight 전용 계약 키(#277).
+  `otlp`면 `JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar`와 `OTEL_*` 세트를
+  dev 고정값 byte 단위 exact-one으로 요구한다(service name `laimory-dev`, endpoint
+  `http://10.0.32.14:4317`, protocol `grpc`, metrics/logs exporter `none`, jdbc-datasource `true`,
+  query redaction 전체 목록 — full-override라 부분 목록이면 기본 서명 4종까지 벗겨지므로 값 고정).
+  `OTEL_TRACES_SAMPLER`만 non-empty 유연(부하 테스트 시 ratio 일시 전환 계약).
+  `noop`이면 `JAVA_TOOL_OPTIONS`·`OTEL_*` 잔존 금지(스위치만 내려간 "조용한 부분 off" 차단)
 
 `DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 현재 preflight하지 않는다.
 dev는 Kakao geo mode를 켜므로 API key 누락 시 기존 container 제거 후 새 앱 boot가 실패할 수 있다.

@@ -23,6 +23,7 @@ import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -76,6 +77,7 @@ public class TimelineDraftTaskService {
      * dispatch 실패는 내부 구분(미접수 확정 4xx → FAILED 종결 시도 / UNKNOWN → PROCESSING 유지)과
      * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
      */
+    @WithSpan
     public String createDraftTask(String applicationVersion, long userId, LocalDate recordDate,
                                   LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
                                   List<SourceItemDto> sourceItems) {

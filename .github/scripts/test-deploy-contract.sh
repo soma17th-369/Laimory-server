@@ -196,6 +196,7 @@ APP_GEO_MODE=kakao
 SWAGGER_ENABLED=true
 APP_AI_MODE=fake
 APP_PUSH_MODE=noop
+APP_TRACING_MODE=noop
 
 XAPP_COMMIT_SHA=lookalike-must-survive
 APP_COMMIT_SHA_OLD=lookalike-must-survive-2
@@ -318,7 +319,7 @@ mutate_env() {
   chmod 600 "$CASE_DIR/.env"
   cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 }
-for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE ; do
+for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP_TRACING_MODE ; do
   for mutation in missing wrong dup ; do
     new_case; base_env_fixture
     mutate_env "$key" "$mutation"
@@ -361,6 +362,104 @@ cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 execute_script
 [ "$RC" = "0" ] || fail "T5b(http/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
 ok "T5b(http): APP_AI_HTTP_BASE_URL exact-one non-empty enforced only for http mode"
+
+# --- 10a. T5c: tracing 계약 — otlp 필수 세트 fail-closed + noop 잔존 금지 ---
+TRACING_REQUIRED_KEYS="JAVA_TOOL_OPTIONS OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_ENDPOINT \
+OTEL_EXPORTER_OTLP_PROTOCOL OTEL_TRACES_SAMPLER OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER \
+OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED \
+OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS"
+
+make_otlp_fixture() {
+  base_env_fixture
+  PATH=/usr/bin:/bin sed -i.bak 's/^APP_TRACING_MODE=noop$/APP_TRACING_MODE=otlp/' "$CASE_DIR/.env"
+  rm -f "$CASE_DIR/.env.bak"
+  cat >> "$CASE_DIR/.env" <<'TRACING'
+JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar
+OTEL_SERVICE_NAME=laimory-dev
+OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.32.14:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_TRACES_SAMPLER=always_on
+OTEL_METRICS_EXPORTER=none
+OTEL_LOGS_EXPORTER=none
+OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=true
+OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,sig,X-Goog-Signature,code,state,app_challenge,x,y,query
+TRACING
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+}
+
+new_case; make_otlp_fixture
+execute_script
+[ "$RC" = "0" ] || fail "T5c(otlp/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+OTLP_RUN=$(grep '^docker run -d' "$CASE_DIR/docker.log")
+printf '%s\n' "$OTLP_RUN" | grep -qE ' (-e|--env)[ =]' && fail "T5c(otlp/valid): no -e expected"
+assert_prune_once "T5c(otlp/valid)"
+assert_no_sentinel "T5c(otlp/valid)"
+
+for key in $TRACING_REQUIRED_KEYS ; do
+  new_case; make_otlp_fixture
+  grep -v "^$key=" "$CASE_DIR/.env" > "$CASE_DIR/.env.new" && mv "$CASE_DIR/.env.new" "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5c(otlp/missing $key): preflight failure expected"
+  grep -q "PREFLIGHT FAILED: .env $key" "$CASE_DIR/out.log" || fail "T5c(otlp/missing $key): diagnostic expected"
+  assert_env_untouched "T5c(otlp/missing $key)"
+  assert_no_stop_no_run "T5c(otlp/missing $key)"
+  assert_prune_once "T5c(otlp/missing $key)"
+done
+
+# 값 오류: 잘못된 protocol/endpoint는 trace를 조용히 유실하고, redaction 부분 목록은 full-override라
+# 기본 서명 4종까지 벗겨진다 — dev 고정값은 byte 단위로 실패해야 한다.
+for wrong in "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf" "OTEL_METRICS_EXPORTER=otlp" "OTEL_LOGS_EXPORTER=otlp" "OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=false" "OTEL_SERVICE_NAME=laimory-prod" "OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.32.99:4317" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=code" ; do
+  key=${wrong%%=*}
+  new_case; make_otlp_fixture
+  grep -v "^$key=" "$CASE_DIR/.env" > "$CASE_DIR/.env.new" && mv "$CASE_DIR/.env.new" "$CASE_DIR/.env"
+  echo "$wrong" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5c(otlp/wrong $key): preflight failure expected"
+  grep -q "PREFLIGHT FAILED: .env $key" "$CASE_DIR/out.log" || fail "T5c(otlp/wrong $key): diagnostic expected"
+  assert_no_stop_no_run "T5c(otlp/wrong $key)"
+  assert_prune_once "T5c(otlp/wrong $key)"
+done
+
+# sampler만 값 미고정 계약: 부하 테스트의 ratio 일시 전환(D4)이 pre-flight에 막히면 안 된다.
+new_case; make_otlp_fixture
+PATH=/usr/bin:/bin sed -i.bak 's/^OTEL_TRACES_SAMPLER=always_on$/OTEL_TRACES_SAMPLER=parentbased_traceidratio/' "$CASE_DIR/.env"
+rm -f "$CASE_DIR/.env.bak"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5c(otlp/sampler-flex): ratio sampler must pass, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+
+# 중복: exact-one 위반은 --env-file 해석 순서에 기대지 않고 실패해야 한다.
+new_case; make_otlp_fixture
+echo "JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" != "0" ] || fail "T5c(otlp/dup): preflight failure expected"
+grep -q "PREFLIGHT FAILED: .env JAVA_TOOL_OPTIONS" "$CASE_DIR/out.log" || fail "T5c(otlp/dup): diagnostic expected"
+assert_no_stop_no_run "T5c(otlp/dup)"
+assert_prune_once "T5c(otlp/dup)"
+
+# noop 잔존 금지: 스위치만 내리고 agent env가 남는 "조용한 부분 off"를 차단한다.
+for residue in "JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar" "OTEL_TRACES_SAMPLER=always_on" ; do
+  residue_key=${residue%%=*}
+  new_case; base_env_fixture
+  echo "$residue" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5c(noop/residue $residue_key): preflight failure expected"
+  grep -q "must not be set when APP_TRACING_MODE=noop" "$CASE_DIR/out.log" || fail "T5c(noop/residue $residue_key): diagnostic expected"
+  assert_env_untouched "T5c(noop/residue $residue_key)"
+  assert_no_stop_no_run "T5c(noop/residue $residue_key)"
+  assert_prune_once "T5c(noop/residue $residue_key)"
+done
+ok "T5c: tracing contract fails closed (otlp full set exact-one with values, noop forbids residue)"
 
 # --- 11. T5/T5a: push mode 계약 ---
 new_case; base_env_fixture

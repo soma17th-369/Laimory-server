@@ -120,6 +120,32 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 `GlobalExceptionHandler`의 조립 지점에서 일괄 정화(200자)되고 매핑 `ignore_above: 256`이 이중 방어다.
 서버 생성 값(id·count·enum)은 유계라 대상이 아니다.
 
+## Distributed Tracing (Tempo + OTel, #277)
+
+- dev WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
+  WebClient/Redis** span으로 분해해 monitoring host의 Tempo(OTLP gRPC 4317)로 push한다.
+  보관은 로컬 스토리지 48h, metrics generator는 끈다. 조회는 Grafana Tempo datasource.
+- agent jar는 배포 이미지에 항상 탑재되고(`/otel/opentelemetry-javaagent.jar`), 활성화는 host
+  `.env`의 `JAVA_TOOL_OPTIONS`만이 소유한다 — `APP_TRACING_MODE` pre-flight가 스위치 SSOT다
+  (environments.md). env가 없는 local/integration은 agent가 아예 붙지 않아 완전 무영향이다.
+- **trace/span 축은 `transactionId`와 독립 공존한다.** transactionId 발급·MDC·response header
+  `Transaction-Id` 계약은 불변이다. agent의 Logback MDC instrumentation이 `trace_id`/`span_id`/
+  `trace_flags`를 MDC에 주입하고 `LogstashEncoder`가 MDC 전체를 출력하므로 JSON 로그에 필드가
+  실린다(logback 수정 없음) — Kibana 로그의 `trace_id`로 Grafana Tempo trace를 여는 연결 축이다.
+- metrics/logs exporter는 `none`으로 고정한다 — 기존 Prometheus(metrics)·ELK(logs) 경로와
+  중복 수집하지 않고 trace만 내보낸다.
+- **query 민감값 redaction**: 서버 span `url.query`·클라이언트 span `url.full`에 query가 실리므로
+  `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS`가 redaction
+  목록을 **full-override**로 소유한다 — 기본 서명 4종(`AWSAccessKeyId`·`Signature`·`sig`·
+  `X-Goog-Signature`)에 핸드오프/OAuth `code`·`state`·`app_challenge`와 Kakao `x`·`y`·`query`를
+  더한 전체 목록을 명시한다. 48h 보관 trace에 원문을 남기지 않는다(access log의 query 제외와
+  같은 원칙). 목록 변경 시 기본 4종을 빼먹으면 서명류가 다시 노출된다(전체 대체 의미론).
+- 메서드 단위는 `@WithSpan` **선택 계측**만 쓴다(콜트리 잡음·오버헤드 최소화): 현재
+  `TimelineDraftTaskService.createDraftTask`, `SourceItemEnrichmentService.enrich`,
+  `GeocodingService.lookupAll`, `TimelineDraftPreparationService.prepareDraft`. agent가 없으면
+  애노테이션은 no-op이다. Hikari 커넥션 대기는 `jdbc-datasource` 계측(기본 off →
+  `OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=true`)의 `getConnection` span으로 본다.
+
 ## Output by Environment
 
 - `docker` profile은 사람이 읽는 text console log를 사용한다.

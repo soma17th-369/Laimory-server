@@ -7,7 +7,9 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 ## 구성과 범위
 
 - Prometheus: 30초 수집, TSDB 7일 또는 12GB 중 먼저 도달한 제한
-- Grafana: Prometheus metrics와 read-only Elasticsearch dev log datasource
+- Tempo: dev WAS의 OTLP gRPC(4317) trace 수신, 로컬 스토리지 `block_retention: 48h`,
+  metrics generator off (#277)
+- Grafana: Prometheus metrics, read-only Elasticsearch dev log datasource와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK의 private IP:9100
 - textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
@@ -17,16 +19,83 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
   MySQL/Redis, AWS credit 수집, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
-Grafana 3000만 loopback과 monitoring private IP에 publish한다. Prometheus 9090, blackbox 9115,
-mysqld exporter 9104, redis exporter 9121은 Docker network에만 expose한다. `/status`는 DB 중심
-health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
+Grafana 3000은 loopback과 monitoring private IP에, Tempo OTLP 4317은 monitoring private IP에만
+publish한다(dev WAS의 push 유입 — SG source 계약은 environments.md). Prometheus 9090, Tempo 3200,
+blackbox 9115, mysqld exporter 9104, redis exporter 9121은 Docker network에만 expose한다.
+`/status`는 DB 중심 health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
 
-초기 resource limit은 Prometheus 2GiB, Grafana 768MiB, central exporter 각각 192MiB다. dashboard
+resource limit은 Prometheus 1GiB(초기 2GiB에서 #277이 회수 — 실사용 135MiB·active series 14,761
+기준 7.5배 여유), Tempo 768MiB, Grafana 768MiB, central exporter 각각 192MiB다. dashboard
 refresh는 30초다. 24시간 관찰에서 host memory 75% 초과가 15분 이상 반복되거나 OOM/restart가
 생기면 collector와 label을 먼저 줄인다. active series 10,000 초과, root disk 70% 초과, scrape
 duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 뒤에도 해소되지 않을 때 t3.large를
 별도 변경으로 검토한다. monitoring EC2의 CPU credit과 root EBS 지표는 5분마다 CloudWatch에서 읽어
 Infrastructure dashboard에 표시한다.
+
+## Tempo trace 수집
+
+Tempo는 monolithic 모드로 `tempo/tempo.yml`을 사용한다. OTLP gRPC 4317 receiver만 열고
+(`0.0.0.0:4317` 명시 — 2.7+ 기본 bind가 localhost), 로컬 스토리지 `tempo-data` 볼륨에
+`block_retention: 48h`로 보관한다. S3 backend와 metrics generator는 쓰지 않는다.
+
+**tempo 서비스는 compose healthcheck를 정의하지 않는다(규율의 명시적 예외)** — 공식 이미지가
+distroless(shell/wget 부재)이고 native `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너
+내부 검사 수단이 없다. 반영·점검 시 아래 대체 확인을 수행한다.
+
+```bash
+cd /opt/laimory-monitoring
+sudo docker compose ps tempo
+sudo docker compose exec grafana wget -q --spider http://tempo:3200/ready && echo "tempo ready"
+```
+
+host 반영은 `Existing live rollout`의 upload 절차로 세 자산(`docker-compose.yml`·`tempo/tempo.yml`·
+`grafana/provisioning/datasources/tempo.yml`)을 S3에 올린 뒤, monitoring host SSM 세션에서 아래를
+실행한다. datasource provisioning은 Grafana 시작 시에만 로드되므로 grafana 재시작까지가 반영이다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+sudo install -d -m 0755 /opt/laimory-monitoring/tempo
+sudo aws s3 cp "$BASE/docker-compose.yml" /opt/laimory-monitoring/docker-compose.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/tempo/tempo.yml" /opt/laimory-monitoring/tempo/tempo.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/grafana/provisioning/datasources/tempo.yml" \
+  /opt/laimory-monitoring/grafana/provisioning/datasources/tempo.yml \
+  --region ap-northeast-2 --only-show-errors
+cd /opt/laimory-monitoring
+sudo docker compose config --quiet
+sudo docker compose up -d
+sudo docker compose restart grafana
+```
+
+rollback은 아래 순서로 실행 가능해야 한다. Grafana DB에 등록된 datasource는 provisioning 파일
+삭제만으로는 지워지지 않으므로 삭제 전용 임시 provisioning을 반드시 거친다.
+
+```bash
+# 0) (운영자 로컬) compose를 이전 버전으로 S3 원래 key에 복원 업로드 — 반영 시 기록한
+#    ROLLBACK_PREFIX snapshot이 있으면 그 object를, 최초 등재 롤백이라 snapshot이 없으면
+#    git 이전 버전 파일을 사용한다. 신규 2종의 S3 key는 aws s3 rm으로 삭제한다.
+# 이하 monitoring host SSM 세션:
+cd /opt/laimory-monitoring
+sudo aws s3 cp "s3://<backup-bucket>/bootstrap/monitoring/docker-compose.yml" docker-compose.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo rm -f tempo/tempo.yml
+sudo rm -f grafana/provisioning/datasources/tempo.yml
+sudo tee grafana/provisioning/datasources/delete-tempo.yml > /dev/null <<'YML'
+apiVersion: 1
+deleteDatasources:
+  - name: Tempo
+    orgId: 1
+YML
+sudo docker compose config --quiet
+# plain `up -d`는 정의가 사라진 tempo 컨테이너를 orphan으로 계속 돌린다 — --remove-orphans 필수.
+sudo docker compose up -d --remove-orphans
+sudo docker compose restart grafana
+sudo rm -f grafana/provisioning/datasources/delete-tempo.yml
+```
+
+`tempo-data` 볼륨 삭제는 rollback 필수 단계가 아니며 별도 승인된 정리 작업으로만 한다.
 
 ## Alert rule source와 release
 
@@ -312,6 +381,9 @@ while IFS= read -r asset; do
     "s3://$BACKUP_BUCKET/bootstrap/monitoring/$asset" \
     --profile sandbox --region ap-northeast-2 --only-show-errors
 done <<'ASSETS'
+docker-compose.yml
+tempo/tempo.yml
+grafana/provisioning/datasources/tempo.yml
 node-exporter/install.sh
 grafana/provisioning/dashboards/json/laimory-overview.json
 grafana/provisioning/dashboards/json/laimory-jvm-spring.json

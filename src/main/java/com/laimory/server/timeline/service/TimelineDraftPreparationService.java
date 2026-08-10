@@ -5,6 +5,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,6 +35,7 @@ public class TimelineDraftPreparationService {
      * source rows를 같은 트랜잭션으로 저장한다. 반환값은 commit될 record ID다 — 호출부가 Redis task와
      * AI dispatch body에 싣는다.
      */
+    @WithSpan
     @Transactional
     public long prepareDraft(long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                              List<TimelineDraftSourceItem> sourceRows) {

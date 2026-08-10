@@ -28,8 +28,11 @@ automation을 바꿀 때 읽는다.
 
 배포된 환경의 runtime 값은 전부 host `/home/ubuntu/app/.env`가 소유한다(workflow `-e` 주입 없음).
 dev deploy pre-flight는 dev 고정값(`REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`APP_GEO_MODE=kakao`·
-`SWAGGER_ENABLED=true`)과 `APP_AI_MODE`/`APP_PUSH_MODE`를 exact-one으로 검증하고, 위반이면 기존
-container를 내리기 전에 실패한다. firebase 전환 시 ADC 경로(`GOOGLE_APPLICATION_CREDENTIALS`)도
+`SWAGGER_ENABLED=true`)과 `APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`를 exact-one으로 검증하고,
+위반이면 기존 container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비하지 않는 pre-flight
+전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 dev 고정값 byte 단위로
+요구하고(`OTEL_TRACES_SAMPLER`만 non-empty 유연 — 부하 테스트 ratio 전환 계약), `noop`이면 두
+계열의 잔존을 금지한다(스위치만 내려간 "조용한 부분 off" 차단). 상세 목록은 deployment.md Preflight. firebase 전환 시 ADC 경로(`GOOGLE_APPLICATION_CREDENTIALS`)도
 `.env`가 소유하고 pre-flight가 service-account 파일 존재·가독성을 검사한 뒤 read-only mount만
 추가한다. `APP_COMMIT_SHA`는 배포 workflow가 `.env`에
 원자 upsert하는 유일한 key다.
@@ -43,8 +46,12 @@ runtime 구성은 저장소가 소유하지 않으며 production workflow도 아
 
 dev monitoring 자산은 별도 private host에서 실행되고 prod는 수집하지 않는다. monitoring
 host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK
-9200으로 나가는 source-limited 경로만 갖는다. Grafana는 dev WAS nginx/SSM을 통해서만 접근하며,
-monitoring 장애는 application 배포·health gate 의존성이 아니다.
+9200으로 나가는 source-limited 경로만 갖는다. 유일한 인바운드 예외는 trace 수집이다 — Tempo의
+OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
+전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
+`laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
+열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 dev WAS nginx/SSM을 통해서만
+접근하며, monitoring 장애는 application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
 
@@ -52,6 +59,11 @@ monitoring 장애는 application 배포·health gate 의존성이 아니다.
 
 - DB/Redis connection and `REDIS_KEY_PREFIX`
 - `JWT_SECRET`, Google/Kakao OAuth client names
+- tracing(#277 — 앱 미소비, deploy pre-flight·JVM/agent가 소비): `APP_TRACING_MODE`,
+  `JAVA_TOOL_OPTIONS`(-javaagent 주입), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_METRICS_EXPORTER`,
+  `OTEL_LOGS_EXPORTER`, `OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED`,
+  `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS`
 - `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`,
   `APP_GEO_MAX_UNIQUE_COORDINATES`(공개 제품 상한 — 운영 tuning으로 낮추지 않음)
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
