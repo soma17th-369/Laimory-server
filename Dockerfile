@@ -16,6 +16,9 @@ RUN useradd -r -u 1001 appuser
 ADD --checksum=sha256:9d6bc2ad8dd8fb7f730984988e57b8ac0a82d81c7b3b8ae795378718733a509d --chmod=444 \
     https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v2.30.0/opentelemetry-javaagent.jar \
     /otel/opentelemetry-javaagent.jar
+# ADD --chmod는 암묵 생성된 부모 디렉터리에도 444를 적용해 non-root가 탐색(x)할 수 없다 —
+# appuser(UID 1001)가 -javaagent로 읽을 수 있게 디렉터리만 0755로 되돌린다.
+RUN chmod 0755 /otel
 COPY --from=build /app/build/libs/*.jar app.jar
 USER appuser
 EXPOSE 8080
