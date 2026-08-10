@@ -48,10 +48,54 @@ sudo docker compose ps tempo
 sudo docker compose exec grafana wget -q --spider http://tempo:3200/ready && echo "tempo ready"
 ```
 
-datasource provisioning은 Grafana 시작 시에만 로드되므로 datasource 파일 추가·변경 후에는
-`sudo docker compose restart grafana`가 필요하다. compose에서 tempo 서비스를 제거하는 rollback은
-`docker compose up -d --remove-orphans`로 적용한다(plain `up -d`는 정의가 사라진 tempo 컨테이너를
-orphan으로 계속 돌린다). `tempo-data` 볼륨 삭제는 별도 승인된 정리 작업으로만 한다.
+host 반영은 `Existing live rollout`의 upload 절차로 세 자산(`docker-compose.yml`·`tempo/tempo.yml`·
+`grafana/provisioning/datasources/tempo.yml`)을 S3에 올린 뒤, monitoring host SSM 세션에서 아래를
+실행한다. datasource provisioning은 Grafana 시작 시에만 로드되므로 grafana 재시작까지가 반영이다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+sudo install -d -m 0755 /opt/laimory-monitoring/tempo
+sudo aws s3 cp "$BASE/docker-compose.yml" /opt/laimory-monitoring/docker-compose.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/tempo/tempo.yml" /opt/laimory-monitoring/tempo/tempo.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/grafana/provisioning/datasources/tempo.yml" \
+  /opt/laimory-monitoring/grafana/provisioning/datasources/tempo.yml \
+  --region ap-northeast-2 --only-show-errors
+cd /opt/laimory-monitoring
+sudo docker compose config --quiet
+sudo docker compose up -d
+sudo docker compose restart grafana
+```
+
+rollback은 아래 순서로 실행 가능해야 한다. Grafana DB에 등록된 datasource는 provisioning 파일
+삭제만으로는 지워지지 않으므로 삭제 전용 임시 provisioning을 반드시 거친다.
+
+```bash
+# 0) (운영자 로컬) compose를 이전 버전으로 S3 원래 key에 복원 업로드 — 반영 시 기록한
+#    ROLLBACK_PREFIX snapshot이 있으면 그 object를, 최초 등재 롤백이라 snapshot이 없으면
+#    git 이전 버전 파일을 사용한다. 신규 2종의 S3 key는 aws s3 rm으로 삭제한다.
+# 이하 monitoring host SSM 세션:
+cd /opt/laimory-monitoring
+sudo aws s3 cp "s3://<backup-bucket>/bootstrap/monitoring/docker-compose.yml" docker-compose.yml \
+  --region ap-northeast-2 --only-show-errors
+sudo rm -f tempo/tempo.yml
+sudo rm -f grafana/provisioning/datasources/tempo.yml
+sudo tee grafana/provisioning/datasources/delete-tempo.yml > /dev/null <<'YML'
+apiVersion: 1
+deleteDatasources:
+  - name: Tempo
+    orgId: 1
+YML
+sudo docker compose config --quiet
+# plain `up -d`는 정의가 사라진 tempo 컨테이너를 orphan으로 계속 돌린다 — --remove-orphans 필수.
+sudo docker compose up -d --remove-orphans
+sudo docker compose restart grafana
+sudo rm -f grafana/provisioning/datasources/delete-tempo.yml
+```
+
+`tempo-data` 볼륨 삭제는 rollback 필수 단계가 아니며 별도 승인된 정리 작업으로만 한다.
 
 ## Alert rule source와 release
 
