@@ -26,8 +26,35 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    mem_limit: 2g
+    # 2g → 1g(#277): 실사용 135MiB(active series 14,761)로 7.5배 여유 — 회수분을 tempo 예산으로 재배정.
+    mem_limit: 1g
     cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  tempo:
+    image: grafana/tempo:${TEMPO_VERSION:-2.10.7}
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - tempo-data:/var/tempo
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+    ports:
+      # OTLP gRPC 수신은 private IP에만 publish(dev WAS → 4317). 4318(http)은 열지 않는다(#277 D5).
+      - "${MONITORING_PRIVATE_IP:-127.0.0.2}:4317:4317"
+    expose:
+      - "3200"
+    restart: unless-stopped
+    # healthcheck 없음(규율의 명시적 예외): 공식 이미지가 distroless(shell/wget 부재)이고 native
+    # `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너 내부 검사 수단이 없다. 대체 확인은
+    # grafana 컨테이너 경유 `wget -q --spider http://tempo:3200/ready` + OTLP ingest smoke(README Tempo 절).
+    mem_limit: 768m
+    cpus: 0.5
     security_opt:
       - no-new-privileges:true
     logging:
@@ -186,4 +213,5 @@ services:
 
 volumes:
   prometheus-data:
+  tempo-data:
   grafana-data:
