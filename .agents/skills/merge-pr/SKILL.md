@@ -35,6 +35,13 @@ merges require a separate workflow.
 
 ### 1. Identify, promote, and inspect the PR
 
+Before any PR read or mutation, run `gh auth status`. On macOS, a failure seen only inside a sandbox is not proof
+that the login is invalid: re-run the same read-only command from a context allowed to access the existing macOS
+Keychain, with user-approved sandbox escalation when available. If that execution path is unavailable, ask the user
+to run `gh auth status` in the host terminal and report only the status output. Recommend `gh auth login` only when
+the Keychain-capable check also reports no valid login. Never run or request output from `gh auth token`, and never
+ask the user to reveal an unmasked credential.
+
 Pass `--pr` only when `$ARGUMENTS` contains a recognizable PR number, PR URL, or branch name. Ignore prose arguments
 such as “이거 머지해줘” and use the PR associated with the current branch.
 
@@ -230,9 +237,8 @@ observed merge result.
 
 ## Gotchas
 
-- A sandboxed `gh auth status` may be unable to read credentials that are valid in the host keyring. Treat this as
-  an execution-context error first; do not tell the user to log in again until authentication has been checked from
-  a context allowed to access the existing credentials.
+- On macOS, follow the Step 1 Keychain-aware authentication preflight before treating a sandboxed
+  `gh auth status` failure as an invalid login.
 - The comment workflow is single-writer per PR. Two simultaneous runs can both observe zero marker comments and
   POST because GitHub offers no comment uniqueness/CAS primitive. A run that observes duplicates stops without
   editing or deleting either comment; inspect and manually reduce current-author duplicates to one before retrying.
