@@ -185,6 +185,47 @@ jobs:
           if [ -n "\$PUSH_ARGS" ]; then
             docker run --rm -v "\$CRED_FILE":/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400"; exit 1; }
           fi
+          # subject mapping pre-flight(#282): 배포 환경은 subject HMAC key를 Secrets Manager에서만 받는다.
+          # APP_SUBJECT_MODE가 secretsmanager 외 값(fixture 등)이면 테스트 고정 key로 가명화되는 조용한
+          # 사고가 되므로 mode를 값까지 고정하고, ARN 형식·runtime secret read 권한·mapping schema까지
+          # 전부 구 컨테이너 중지 전에 검사한다(ddl-auto=validate라 schema 불일치 시 새 앱이 기동 실패 —
+          # "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다). 실패 진단은 key 이름·개수
+          # 까지만 — 값(ARN·DB 접속 정보·secret)은 SSM/Actions 로그에 출력하지 않는다.
+          SUBJECT_MODE_COUNT=\$(grep -c '^APP_SUBJECT_MODE=' "\$ENV_FILE" || true)
+          [ "\$SUBJECT_MODE_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_MODE must appear exactly once (found \$SUBJECT_MODE_COUNT)"; exit 1; }
+          grep -qxF 'APP_SUBJECT_MODE=secretsmanager' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_MODE must be secretsmanager"; exit 1; }
+          ARN_COUNT=\$(grep -c '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" || true)
+          [ "\$ARN_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_SECRET_ARN must appear exactly once (found \$ARN_COUNT)"; exit 1; }
+          grep -qE '^APP_SUBJECT_SECRET_ARN=arn:aws:secretsmanager:' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_SECRET_ARN must start with arn:aws:secretsmanager:"; exit 1; }
+          # 앱 region은 미설정(default ap-northeast-2) 또는 같은 값 한 줄만 허용한다. 컨테이너는 --env-file만
+          # 받으므로 AWS credential/profile/endpoint override가 한 줄이라도 있으면 runtime role과 다른 identity로
+          # 뜰 수 있어 금지한다. host CLI도 env/shared config를 제거한 subshell에서 IMDS instance profile만 쓴다.
+          SUBJECT_REGION_COUNT=\$(grep -c '^AWS_REGION=' "\$ENV_FILE" || true)
+          [ "\$SUBJECT_REGION_COUNT" -le 1 ] || { echo "PREFLIGHT FAILED: .env AWS_REGION must appear at most once (found \$SUBJECT_REGION_COUNT)"; exit 1; }
+          if [ "\$SUBJECT_REGION_COUNT" = "1" ]; then
+            grep -qxF 'AWS_REGION=${AWS_REGION}' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env AWS_REGION must match deployment region"; exit 1; }
+          fi
+          AWS_OVERRIDE_COUNT=\$(grep -cE '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_PROFILE|AWS_DEFAULT_PROFILE|AWS_SHARED_CREDENTIALS_FILE|AWS_CONFIG_FILE|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_ROLE_ARN|AWS_ROLE_SESSION_NAME|AWS_CONTAINER_CREDENTIALS_RELATIVE_URI|AWS_CONTAINER_CREDENTIALS_FULL_URI|AWS_EC2_METADATA_DISABLED|AWS_EC2_METADATA_SERVICE_ENDPOINT|AWS_ENDPOINT_URL|AWS_ENDPOINT_URL_SECRETS_MANAGER)=' "\$ENV_FILE" || true)
+          [ "\$AWS_OVERRIDE_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env AWS credential/profile/endpoint overrides are forbidden (found \$AWS_OVERRIDE_COUNT)"; exit 1; }
+          # runtime secret read: host instance profile로 GetSecretValue가 실제로 되는지 exit code만 본다.
+          # VersionId만 질의하고 stdout/stderr를 전부 버린다 — secret 값은 어떤 경로로도 로그에 닿지 않는다.
+          SUBJECT_SECRET_ARN=\$(grep '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" | cut -d= -f2-)
+          ( unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_EC2_METADATA_DISABLED AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_ENDPOINT_URL AWS_ENDPOINT_URL_SECRETS_MANAGER; AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null aws secretsmanager get-secret-value --secret-id "\$SUBJECT_SECRET_ARN" --region ${AWS_REGION} --query VersionId --output text ) >/dev/null 2>&1 || { echo "PREFLIGHT FAILED: subject secret read failed (runtime role GetSecretValue or ARN)"; exit 1; }
+          # mapping schema: 앱 datasource와 같은 DB_HOST:3306/laimory를 검사한다. 앱이 소비하는 DB_* 3개를
+          # exact-one non-empty로 먼저 확인한 뒤(값 비출력), 고정 태그 mysql:8.0 client로 column 수·정확한
+          # type/nullability·단일-column PK/UNIQUE를 모두 판정한다. 추가 raw user_id나 composite index도
+          # 실패한다. password는 docker 인자에 값을 싣지 않도록 -e MYSQL_PWD 환경 전달만 쓴다.
+          for DB_KEY in DB_HOST DB_USERNAME DB_PASSWORD; do
+            DB_KEY_COUNT=\$(grep -c "^\$DB_KEY=" "\$ENV_FILE" || true)
+            [ "\$DB_KEY_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$DB_KEY must appear exactly once (found \$DB_KEY_COUNT)"; exit 1; }
+            grep -qE "^\$DB_KEY=.+" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$DB_KEY must be non-empty"; exit 1; }
+          done
+          DB_HOST_VAL=\$(grep '^DB_HOST=' "\$ENV_FILE" | cut -d= -f2-)
+          DB_USER_VAL=\$(grep '^DB_USERNAME=' "\$ENV_FILE" | cut -d= -f2-)
+          DB_PASS_VAL=\$(grep '^DB_PASSWORD=' "\$ENV_FILE" | cut -d= -f2-)
+          SUBJECT_SCHEMA_SQL="SELECT CASE WHEN (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links') = 3 AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND ((COLUMN_NAME = 'user_lookup_key' AND COLUMN_TYPE = 'binary(32)' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'binary(16)' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'lookup_key_version' AND COLUMN_TYPE = 'smallint' AND IS_NULLABLE = 'NO'))) = 3 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY') = 1 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'user_lookup_key' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1 AND EXISTS (SELECT 1 FROM (SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND NON_UNIQUE = 0 AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME = 'subject_id' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1) subject_unique) THEN 1 ELSE 0 END"
+          SCHEMA_MATCH=\$(MYSQL_PWD="\$DB_PASS_VAL" docker run --rm --network host -e MYSQL_PWD mysql:8.0 mysql -h"\$DB_HOST_VAL" -P3306 -u"\$DB_USER_VAL" -N -B -e "\$SUBJECT_SCHEMA_SQL" laimory 2>/dev/null) || { echo "PREFLIGHT FAILED: subject mapping schema query failed"; exit 1; }
+          [ "\$SCHEMA_MATCH" = "1" ] || { echo "PREFLIGHT FAILED: user_subject_links schema mismatch"; exit 1; }
           # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
           # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
           # 같은 디렉터리 temp + rename(같은 filesystem이라 원자적)으로 부분 쓰기를 막고 0600·owner를
