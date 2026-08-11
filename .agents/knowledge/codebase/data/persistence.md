@@ -102,8 +102,8 @@ PK이며, `subject_id BINARY(16)`(CSPRNG UUIDv4 canonical bytes, UNIQUE)과 `loo
 갖는다. 감사 컬럼·auto-increment·`BaseEntity` 상속이 의도적으로 없다(저장소 첫 BINARY 컬럼·`byte[]` 매핑 —
 `@Column(columnDefinition = "BINARY(32)")` 형태가 validate를 통과한다). HMAC key는 배포에서 Secrets
 Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트는 docker 프로필의 fixture key다
-(`fixture` 모드 — provider 자체가 docker profile 한정이고 기본 profile은 Secrets Manager provider만
-허용하며, mode 미설정도 기동 실패). 접근은 `SubjectMappingService` 한
+(`fixture` 모드 — provider 선택은 mode property 단일 축이고, fixture-key 기본값은 docker 프로필만
+소유해 배포 기본 프로필의 fixture는 무기본값으로 기동 실패하며, mode 미설정도 기동 실패). 접근은 `SubjectMappingService` 한
 곳뿐이고(arch test 강제) 일반 경로는 `getRequired()`가 누락을 자동 생성 없이 fail-closed한다. 신규
 사용자는 `NewUserProvisioner`가 user insert와 mapping insert를 한 transaction으로 커밋한다(mapping 실패
 = user rollback). rotation은 previous key hit 때 PK·version만 native UPDATE로 원자 교체한다(subject 불변).

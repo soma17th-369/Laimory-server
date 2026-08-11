@@ -200,8 +200,9 @@ Spring JSON stdout
   - `laimory.timeline.photo.delete.enqueue{result=scheduled|shared_retained|invalid_skipped}`:
     root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
-  - `laimory.subject.secret.load{result=success|failed}`: 기동 시 Secrets Manager HMAC snapshot
-    load timer. 실패도 기록한 뒤 context 기동은 fail-closed한다
+  - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
+    경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
+    없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)
   - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
     subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build

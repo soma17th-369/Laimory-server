@@ -30,7 +30,9 @@ automation을 바꿀 때 읽는다.
 dev deploy pre-flight는 dev 고정값(`REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`APP_GEO_MODE=kakao`·
 `SWAGGER_ENABLED=true`)과 `APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`,
 `APP_SUBJECT_MODE`(값 고정 `secretsmanager`)·`APP_SUBJECT_SECRET_ARN`(ARN 형식 + runtime secret
-read + `user_subject_links` schema 검사 동반)을 exact-one으로 검증한다. `AWS_REGION`은 없거나 workflow
+read·secret 내용 계약 검증 + `user_subject_links` schema 검사 동반)을 exact-one으로 검증한다.
+`SPRING_PROFILES_ACTIVE`는 `.env`에 없는 것이 정상이고 값에 `docker`가 포함되면 실패한다(docker
+프로필의 위험한 배포 기본값 차단). `AWS_REGION`은 없거나 workflow
 region과 같아야 하고 AWS credential/profile/endpoint override는 금지한다. 이들 계약을 위반하면 기존
 container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비하지 않는 pre-flight
 전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 dev 고정값 byte 단위로
@@ -81,10 +83,12 @@ OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 
   `APP_GEO_CIRCUIT_FAILURE_RATE_THRESHOLD`, `APP_GEO_CIRCUIT_WAIT_DURATION_IN_OPEN_STATE`,
   `APP_GEO_CIRCUIT_PERMITTED_CALLS_IN_HALF_OPEN`
 - `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
-- subject 매핑 HMAC(#282): `APP_SUBJECT_MODE`(`secretsmanager|fixture` — 배포 기본 프로필은
-  무기본값 fail-fast, fixture provider와 기본값은 docker 프로필에서만 활성), `APP_SUBJECT_SECRET_ARN`(key 값이
+- subject 매핑 HMAC(#282): `APP_SUBJECT_MODE`(`secretsmanager|fixture` — provider 선택은 이 mode
+  property 단일 축이고 배포 기본 프로필은 무기본값 fail-fast), `APP_SUBJECT_SECRET_ARN`(key 값이
   아니라 대상 Secrets Manager secret의 ARN 식별자 — key는 기동 시 `GetSecretValue` 1회로만 로드).
-  docker 프로필은 Secrets Manager provider를, 기본 프로필은 fixture provider를 활성화하지 않는다.
+  `app.subject.fixture-key` 기본값은 docker 프로필만 소유해 배포 기본 프로필의 fixture mode는
+  무기본값 property로 기동 실패하며, deploy preflight의 mode 값 고정·`SPRING_PROFILES_ACTIVE`
+  docker 금지 가드가 이를 이중으로 막는다.
   docker의 `app.subject.fixture-key`는 checked-in deterministic 값으로 보호 대상 secret이 아니다
 - `SWAGGER_ENABLED`
 - `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`

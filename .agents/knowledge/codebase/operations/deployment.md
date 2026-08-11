@@ -30,8 +30,9 @@ deploy workflow, preflight, health gate, container, environment injection 또는
    exact-one, 값 비출력 — 아래 Preflight).
 7. nginx no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는 배포를 중단한다.
 8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
-   이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read, `user_subject_links`
-   schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight → upsert 순서를 강제한다.
+   이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read + secret 내용 계약 검증,
+   `user_subject_links` schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight →
+   upsert 순서를 강제한다.
 9. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
    원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
 10. 기존 `laimory` container를 stop/remove한다.
@@ -93,7 +94,12 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   query redaction 전체 목록 — full-override라 부분 목록이면 기본 서명 4종까지 벗겨지므로 값 고정).
   `OTEL_TRACES_SAMPLER`만 non-empty 유연(부하 테스트 시 ratio 일시 전환 계약).
   `noop`이면 `JAVA_TOOL_OPTIONS`·`OTEL_*` 잔존 금지(스위치만 내려간 "조용한 부분 off" 차단)
-- subject mapping(#282) 3종 — 다른 `.env` 검사와 달리 image pull·UID 검사 뒤, `APP_COMMIT_SHA`
+- `SPRING_PROFILES_ACTIVE`는 `.env`에 없는 것이 정상이며, 값에 `docker`가 포함된 줄이 있으면
+  실패한다 — docker 프로필은 dummy JWT 기본값·localhost DB 등 배포에서 위험한 기본값과 subject
+  fixture-key 기본값을 켠다. subject provider 선택은 `app.subject.mode` property 단일 축이라
+  (`@Profile` 게이팅 없음) 이 가드와 `APP_SUBJECT_MODE` 값 고정이 배포의 fixture 금지를 담당한다.
+  진단은 key 이름과 고정 문구만 낸다
+- subject mapping(#282) — 다른 `.env` 검사와 달리 image pull·UID 검사 뒤, `APP_COMMIT_SHA`
   upsert·첫 stop 전에 실행된다(harness가 순서 강제):
   - `APP_SUBJECT_MODE=secretsmanager` 값 고정 exact-one — 배포 환경이 fixture key로 조용히
     뜨는 사고를 값 자체로 차단한다
@@ -101,9 +107,16 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   - `AWS_REGION`은 미설정(앱 기본값) 또는 workflow region과 같은 한 줄만 허용하고, `.env`의 AWS
     credential/profile/endpoint override를 금지한다. host AWS CLI도 env/shared config를 제거한
     subshell에서 IMDS instance profile만 사용해 앱 container와 runtime identity 경계를 맞춘다
-  - runtime secret read + mapping schema: host instance profile로 `GetSecretValue`를 exit code만
-    확인하고(VersionId 질의, stdout/stderr 폐기 — secret 값은 어떤 경로로도 로그에 닿지 않음),
-    앱이 실제 소비하는 `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` exact-one·non-empty를 확인한 뒤
+  - runtime secret read + 내용 계약 검증: host instance profile로 `GetSecretValue`를 1회 수행해
+    `SecretString`을 shell 변수로만 받고(출력·echo·argv 어디에도 비적재), 앱
+    `SecretsManagerSubjectHmacKeyConfig.parse()`와 1:1 규칙을 python3(host에 없으면 preflight
+    실패)에 환경변수로만 넘겨 검증한다 — JSON object · `currentVersion` 정수 1~32767 ·
+    `currentKey` base64 정확히 32바이트 · `previousVersion`/`previousKey` 동반 존재·version
+    상이·key 상이·`previousKey`도 32바이트 · `SecretString` 부재(SecretBinary 전용)면 실패.
+    계약 위반 secret은 새 앱이 `parse()`에서 기동 실패하므로(자동 rollback 없음) stop 전에
+    잡는다. 실패 진단은 항목 이름만 내고 python stderr도 버린다 — secret 값은 어떤 경로로도
+    로그에 닿지 않는다
+  - mapping schema: 앱이 실제 소비하는 `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` exact-one·non-empty를 확인한 뒤
     datasource와 같은 `DB_HOST:3306/laimory`에 `mysql:8.0` one-shot container로 접속한다.
     `user_subject_links`가 정확히 3개 column만 갖고 각 type/nullability가 일치하며,
     `user_lookup_key` 단일-column PK와 `subject_id` 단일-column UNIQUE인지 1/0으로 판정한다
