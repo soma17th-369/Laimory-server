@@ -16,7 +16,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  * <ul>
  *   <li>{@code errorCode} — 실패 분류 numeric code(허용: {@code -1008}).
  *       null/미지 값은 서버가 {@code -1008}로 폴백한다.</li>
- *   <li>{@code error} — 진단용 자유 텍스트. 저장·클라이언트 노출되지 않고 서버 로그로만 남는다.</li>
+ *   <li>{@code error} — 진단용 자유 텍스트. 사용자 원문이 섞일 수 있어 저장·클라이언트 노출은 물론
+ *       서버 로그에도 남기지 않는다(수신 후 폐기 — AI wire 계약 유지를 위해 필드만 유지).</li>
  * </ul>
  */
 public record DraftTaskCallbackRequest(

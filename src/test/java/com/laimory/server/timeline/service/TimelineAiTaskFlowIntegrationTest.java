@@ -98,6 +98,8 @@ class TimelineAiTaskFlowIntegrationTest {
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2000, 1, 1, 12, 0);
     private static final TimelineWindowDto WINDOW = new TimelineWindowDto(
             LocalDateTime.of(2000, 1, 1, 0, 0), LocalDateTime.of(2000, 1, 2, 0, 0));
+    // draft 입력 경계의 canonical lowercase UUID 검증(version 무관)을 통과하는 rawId.
+    private static final String RAW_ID = "0190a1b2-0001-7000-8000-000000000001";
 
     private final List<String> createdTaskIds = new ArrayList<>();
 
@@ -156,7 +158,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(input.window().startAt()).isEqualTo(OffsetDateTime.of(WINDOW.startTime(), KST));
         assertThat(input.window().endAt()).isEqualTo(OffsetDateTime.of(WINDOW.endTime(), KST));
         assertThat(input.sourceItems()).singleElement().satisfies(item -> {
-            assertThat(item.rawId()).isEqualTo("raw-p1");
+            assertThat(item.rawId()).isEqualTo(RAW_ID);
             assertThat(item.itemType()).isEqualTo(ItemType.PHOTO);
             // staging의 wall-clock에 record timezone offset이 붙어 나간다.
             assertThat(item.startAt()).isEqualTo(OffsetDateTime.of(DATE.atTime(9, 0), KST));
@@ -231,7 +233,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
         assertThat(timelineItemRepository.findAll())
-                .filteredOn(item -> "raw-p1".equals(item.getRawId()))
+                .filteredOn(item -> RAW_ID.equals(item.getRawId()))
                 .hasSize(1);
     }
 
@@ -358,7 +360,7 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     private List<SourceItemDto> sources() {
-        return List.of(new SourceItemDto(ItemType.PHOTO, "raw-p1", DATE.atTime(9, 0), null,
+        return List.of(new SourceItemDto(ItemType.PHOTO, RAW_ID, DATE.atTime(9, 0), null,
                 new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://p", 37.5, 127.0, null, null)));
     }
 }

@@ -37,7 +37,8 @@ version별 동작은 service가 결정한다.
 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 `POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
-timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). 지오코딩 대상 고유 좌표
+timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). `rawId`는 canonical lowercase
+UUID(version 무관)만 허용하며 위반은 400/`-400`이다(허용값은 정규화 없이 저장/echo). 지오코딩 대상 고유 좌표
 (rawId dedupe·기존 저장 item 제외 뒤 STAY 1개·MOVEMENT 최대 2개 좌표를 dedupe한 수)는 최대 30개이며
 초과는 외부 지도 API 호출 없이 400/`-400`이다 — `sourceItems` 배열 길이 제약(`maxItems`)이 아니라
 runtime 파생 계산이라 OpenAPI에는 description과 400 응답으로만 표현한다. 지오코딩 부분 실패 허용/거절
@@ -71,7 +72,8 @@ Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. E
 `photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
 배열은 Item 변경 없음이며 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
-`description`과 `photoUrl`은 입력 계약에 없다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+`description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
+규칙이며 위반은 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고

@@ -29,8 +29,9 @@ public interface UserMemoryUpdateApi {
     @Operation(summary = "User Memory 갱신 결과 저장",
             description = "AI가 만든 새 User Memory 문서를 사용자 문서 전체와 교체한다(부분 병합 없음). "
                     + "성공·실패 모두 이 endpoint로 오며 `status`가 갈래를 정한다. FAILED는 DB를 바꾸지 않고 "
-                    + "작업만 종결한다. 서버는 `userMemory`를 파싱·정규화·검증하지 않고 그대로 저장한다 — "
-                    + "스키마를 소유하고 검증하는 쪽이 AI 서버다. **하루 기록(`daily_records`)은 건드리지 "
+                    + "작업만 종결한다. 서버는 `userMemory`의 스키마를 파싱·정규화·검증하지 않는다 — "
+                    + "스키마를 소유하고 검증하는 쪽이 AI 서버다. 다만 저장 직전에 textual leaf만 v1 개인정보 "
+                    + "치환을 거친다(구조·필드명·숫자는 그대로). **하루 기록(`daily_records`)은 건드리지 "
                     + "않는다** — 저장 API가 이미 SAVED로 커밋했고 이 시점에 SAVED인 것이 정상이다. "
                     + "4xx는 전부 재시도해도 달라지지 않는 실패이므로 AI는 재시도 없이 중단한다.")
     @ApiResponses({

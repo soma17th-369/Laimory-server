@@ -35,7 +35,7 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 | `auth`, `user` | Google/Kakao OIDC, app handoff code, access/refresh token과 사용자 |
 | `geo` | Kakao Maps enrich와 noop provider |
 | `appconfig` | 공개 intro 설정 |
-| `common` | response envelope, error, transaction ID, Redis gateway |
+| `common` | response envelope, error, transaction ID, Redis gateway, privacy redaction(v1 token 치환) |
 | `config` | Security, OpenAPI, async, scheduling, JPA auditing |
 
 외부 연동은 Google/Kakao OIDC, Kakao Maps, S3, CloudFront, MySQL, Redis다.

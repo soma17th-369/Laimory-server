@@ -119,7 +119,8 @@ public class TimelineCallbackService {
             log.warn("unknown ai failure code, falling back: taskId={} requested={}", taskId, requested);
         }
         ExceptionType type = ExceptionType.AI_REPORTED_FAILURE;
-        log.warn("ai reported failure: taskId={} code={} detail={}", taskId, type.code(), request.error());
+        // 자유 text error는 사용자 원문이 섞일 수 있어 로그에 남기지 않는다 — bounded numeric code만 관측한다.
+        log.warn("ai reported failure: taskId={} code={}", taskId, type.code());
         return type;
     }
 }

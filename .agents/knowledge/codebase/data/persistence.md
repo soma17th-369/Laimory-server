@@ -31,7 +31,8 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
   성공 시 Item과 행 삭제)
-- `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE)
+- `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
+  v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지)
 - `users`, `refresh_tokens`, `user_memories` (사용자당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
 
@@ -79,7 +80,8 @@ entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배�
 
 `user_memories`(#253)는 사용자별 User Memory 문서다. `user_id`가 PK인 사용자당 1행이고 `memory`는
 `JSON NOT NULL`이며, 행 존재 = 메모리 있음이고 제거는 행 삭제다. entity는 `@JdbcTypeCode(SqlTypes.JSON)`
-`JsonNode`(`timeline_items.payload`와 같은 매핑)이고 서버는 문서 내부를 해석·정규화하지 않는다.
+`JsonNode`(`timeline_items.payload`와 같은 매핑)이고 서버는 문서 구조·스키마를 해석·정규화하지 않지만,
+저장 직전 textual leaf를 v1 privacy 치환한다(구조 불변).
 
 `users`의 컬럼이 아니라 별도 테이블인 이유는 문서 크기다 — JPA 엔티티 로드는 항상 전 컬럼을 SELECT하므로
 컬럼으로 두면 로그인의 `User` 조회가 매번 blob을 함께 읽는다. 테이블을 나눠 `User`를 읽는 어떤 경로도
@@ -164,6 +166,9 @@ apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 �
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱
   dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
+- staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의 `title`/`subtitle`/`question`,
+  `user_memories.memory`는 v1 privacy 치환 후의 값이다(`clientPhotoUri`만 storage 원문 유지 — AI 전달
+  에서만 치환). 사용자 편집(Event PATCH/memo PUT)의 title·subtitle·memo는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -14,6 +15,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
@@ -61,12 +64,15 @@ class UserMemoryUpdateResultServiceTest {
     @Mock
     private DailyRecordService dailyRecordService;
 
+    // 치환 검증은 실물 redactor로 하고, 실패 주입 테스트만 mock으로 바꿔 끼운다.
+    private final PrivacyRedactor privacyRedactor = new PrivacyRedactor();
+
     private UserMemoryUpdateResultService service;
 
     @BeforeEach
     void setUp() {
         service = new UserMemoryUpdateResultService(taskStore, pendingStore, userMemoryService,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                privacyRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -97,6 +103,47 @@ class UserMemoryUpdateResultServiceTest {
         service.applyResult(VERSION, TASK_ID, token, success(updated));
 
         verify(userMemoryService).replace(USER_ID, updated);
+    }
+
+    @Test
+    void 저장되는_문서는_textual_leaf가_치환된_사본이다() throws Exception {
+        JsonNode base = objectMapper.readTree("{\"schemaVersion\":\"1.0\"}");
+        JsonNode updated = objectMapper.readTree(
+                "{\"schemaVersion\":\"1.0\",\"profile\":{\"contact\":\"010-1234-5678\",\"steps\":8500}}");
+        when(taskStore.find(TASK_ID)).thenReturn(Optional.of(task(UserMemoryDigest.of(Optional.of(base)))));
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.of(base));
+
+        service.applyResult(VERSION, TASK_ID, token, success(updated));
+
+        // 구조·비문자 leaf는 유지하고 textual leaf의 v1 PII만 token으로 치환해 저장한다.
+        JsonNode expected = objectMapper.readTree(
+                "{\"schemaVersion\":\"1.0\",\"profile\":{\"contact\":\""
+                        + RedactionType.PHONE.token() + "\",\"steps\":8500}}");
+        verify(userMemoryService).replace(USER_ID, expected);
+        verify(taskStore).delete(TASK_ID);
+        verify(pendingStore).removeAll(USER_ID, List.of(RECORD_ID));
+    }
+
+    @Test
+    void redaction이_실패하면_기존_문서를_유지하고_pending을_복구한다() throws Exception {
+        // 원문 fallback 저장 금지 — 계약 위반 경로처럼 task를 종결하고 큐에 되돌려 다음 배치가 재시도한다.
+        JsonNode base = objectMapper.readTree("{\"schemaVersion\":\"1.0\"}");
+        when(taskStore.find(TASK_ID)).thenReturn(Optional.of(task(UserMemoryDigest.of(Optional.of(base)))));
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.of(base));
+        PrivacyRedactor failingRedactor = mock(PrivacyRedactor.class);
+        when(failingRedactor.redactTree(any(JsonNode.class)))
+                .thenThrow(new RuntimeException("redactor down"));
+        UserMemoryUpdateResultService failingService = new UserMemoryUpdateResultService(
+                taskStore, pendingStore, userMemoryService, failingRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> failingService.applyResult(VERSION, TASK_ID, token,
+                success(objectMapper.readTree("{\"schemaVersion\":\"1.0\",\"currentFocus\":\"새로\"}"))))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("redactor down");
+
+        verify(userMemoryService, never()).replace(anyLong(), any());
+        verify(taskStore).delete(TASK_ID);
+        verify(pendingStore).enqueueAll(USER_ID, List.of(RECORD_ID), NOW);
     }
 
     @Test

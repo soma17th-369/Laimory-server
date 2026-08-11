@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -16,6 +17,8 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
@@ -81,12 +84,15 @@ class UserMemoryUpdateWorkerTest {
     @Mock
     private UserMemoryUpdateDispatcher dispatcher;
 
+    // 치환 검증은 실물 redactor로 하고, 실패 주입 테스트만 mock으로 바꿔 끼운다.
+    private final PrivacyRedactor privacyRedactor = new PrivacyRedactor();
+
     private UserMemoryUpdateWorker worker;
 
     @BeforeEach
     void setUp() {
         worker = new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
-                userMemoryService, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC));
+                userMemoryService, dispatcher, privacyRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     // ── 저장 직후 큐 적재 ──
@@ -165,6 +171,61 @@ class UserMemoryUpdateWorkerTest {
         assertThat(dispatched.memo()).isEqualTo("응 좋았어");
         assertThat(dispatched.startAt()).isEqualTo(OffsetDateTime.parse("2026-08-05T12:10:00+09:00"));
         assertThat(dispatched.endAt()).isEqualTo(OffsetDateTime.parse("2026-08-05T13:00:00+09:00"));
+    }
+
+    @Test
+    void 접수_body의_base_문서와_Event_text는_치환하고_지문은_DB_원본으로_계산한다() throws Exception {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        JsonNode originalMemory = objectMapper.readTree("{\"profile\":{\"contact\":\"010-1234-5678\"}}");
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(USER_ID)).thenReturn(Optional.of(originalMemory));
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(eventWithPii()));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        // AI body의 base 문서와 Event text는 치환본이다(DB에는 원문이 남는다).
+        assertThat(request.getValue().userMemory().at("/profile/contact").textValue())
+                .isEqualTo(RedactionType.PHONE.token());
+        AiUserMemoryUpdateRequest.Event dispatched =
+                request.getValue().dailyTimelines().getFirst().events().getFirst();
+        assertThat(dispatched.title()).isEqualTo("전화 " + RedactionType.PHONE.token());
+        assertThat(dispatched.memo()).isEqualTo("메일 " + RedactionType.EMAIL.token());
+
+        // baseMemoryHash는 반드시 DB 원본으로 계산한다 — 치환본 기준이면 결과 endpoint의 지문 대조가 깨진다.
+        ArgumentCaptor<UserMemoryUpdateTask> task = ArgumentCaptor.forClass(UserMemoryUpdateTask.class);
+        verify(taskStore).save(eq(request.getValue().taskId()), task.capture(),
+                eq(UserMemoryUpdateWorker.TASK_TTL));
+        assertThat(task.getValue().baseMemoryHash())
+                .isEqualTo(UserMemoryDigest.of(Optional.of(originalMemory)));
+        assertThat(task.getValue().baseMemoryHash())
+                .isNotEqualTo(UserMemoryDigest.of(Optional.of(request.getValue().userMemory())));
+    }
+
+    @Test
+    void redaction이_실패하면_task_저장과_접수_없이_큐를_그대로_둔다() throws Exception {
+        // redacted DTO는 task 저장 전에 완성된다 — 실패는 원문 fallback 없이 task 저장·dispatch를 막고
+        // pending을 유지해 다음 배치가 다시 시도한다(기존 worker 실패 계약과 동일 수렴).
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(USER_ID))
+                .thenReturn(Optional.of(objectMapper.readTree("{\"schemaVersion\":\"1.0\"}")));
+        PrivacyRedactor failingRedactor = mock(PrivacyRedactor.class);
+        when(failingRedactor.redactTree(any(JsonNode.class)))
+                .thenThrow(new RuntimeException("redactor down"));
+        UserMemoryUpdateWorker failingWorker = new UserMemoryUpdateWorker(pendingStore, taskStore,
+                dailyRecordService, timelineEventService, userMemoryService, dispatcher,
+                failingRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        failingWorker.dispatchPendingUpdates();
+
+        verify(taskStore, never()).save(anyString(), any(), any());
+        verifyNoInteractions(dispatcher);
+        verify(pendingStore, never()).removeAll(anyLong(), anyList());
     }
 
     @Test
@@ -411,6 +472,15 @@ class UserMemoryUpdateWorkerTest {
                 LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
                 "점심", "회사 근처", "점심은 어땠나요?");
         event.updateMemo("응 좋았어");
+        return event;
+    }
+
+    /** DB에 원문 저장된 Event — AI 전달 DTO에서만 치환돼야 하는 v1 PII fixture를 담는다. */
+    private static TimelineEvent eventWithPii() {
+        TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
+                LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
+                "전화 010-1234-5678", null, null);
+        event.updateMemo("메일 yun@example.com");
         return event;
     }
 }
