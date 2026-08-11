@@ -118,6 +118,14 @@ jobs:
             [ "\$AI_URL_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must appear exactly once when APP_AI_MODE=http (found \$AI_URL_COUNT)"; exit 1; }
             grep -qE '^APP_AI_HTTP_BASE_URL=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must be non-empty when APP_AI_MODE=http"; exit 1; }
           fi
+          # spring profile 가드: 배포 컨테이너는 기본 프로필로만 기동해야 한다 — .env에
+          # SPRING_PROFILES_ACTIVE가 없는 것이 정상이고, 값에 docker가 끼면 dummy JWT 기본값·
+          # localhost DB 등 배포에서 위험한 기본값과 subject fixture-key 기본값까지 켜진다
+          # (@Profile 게이팅 없음 — 이 가드와 아래 subject mode 값 고정이 배포의 fixture 금지를
+          # 담당한다). 값은 비밀이 아니지만 진단은 key 이름과 고정 문구만 낸다.
+          if grep -qE '^SPRING_PROFILES_ACTIVE=.*docker' "\$ENV_FILE"; then
+            echo "PREFLIGHT FAILED: .env SPRING_PROFILES_ACTIVE docker profile must not be active"; exit 1;
+          fi
           # FCM push pre-flight: APP_PUSH_MODE가 credential mount 여부의 명시적 SSOT다. firebase면 ADC
           # 경로(GOOGLE_APPLICATION_CREDENTIALS, 고정 컨테이너 경로)도 .env가 정확히 한 줄로 소유해야 하고
           # host의 service account JSON이 있어야 배포를 진행한다(역시 구 컨테이너 중지 전 검사 — 앱은 ADC
@@ -207,10 +215,60 @@ jobs:
           fi
           AWS_OVERRIDE_COUNT=\$(grep -cE '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_PROFILE|AWS_DEFAULT_PROFILE|AWS_SHARED_CREDENTIALS_FILE|AWS_CONFIG_FILE|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_ROLE_ARN|AWS_ROLE_SESSION_NAME|AWS_CONTAINER_CREDENTIALS_RELATIVE_URI|AWS_CONTAINER_CREDENTIALS_FULL_URI|AWS_EC2_METADATA_DISABLED|AWS_EC2_METADATA_SERVICE_ENDPOINT|AWS_ENDPOINT_URL|AWS_ENDPOINT_URL_SECRETS_MANAGER)=' "\$ENV_FILE" || true)
           [ "\$AWS_OVERRIDE_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env AWS credential/profile/endpoint overrides are forbidden (found \$AWS_OVERRIDE_COUNT)"; exit 1; }
-          # runtime secret read: host instance profile로 GetSecretValue가 실제로 되는지 exit code만 본다.
-          # VersionId만 질의하고 stdout/stderr를 전부 버린다 — secret 값은 어떤 경로로도 로그에 닿지 않는다.
+          # runtime secret read + 내용 계약 검증: host instance profile로 GetSecretValue를 1회 수행해
+          # SecretString을 shell 변수로만 받고(출력·echo·argv 어디에도 싣지 않음), 앱
+          # SecretsManagerSubjectHmacKeyConfig.parse()와 1:1 규칙을 python3에 환경변수로만 넘겨
+          # 검증한다 — JSON object · currentVersion 정수 1~32767 · currentKey base64 정확히 32바이트 ·
+          # previousVersion/previousKey 동반 존재·version 상이·key 상이·previousKey도 32바이트 ·
+          # SecretString 부재(SecretBinary 전용)면 실패. 이 계약을 어긴 secret은 새 앱이 기동 실패
+          # (자동 rollback 없음)하므로 구 컨테이너 중지 전에 잡는다. 실패 진단은 항목 이름만 내고
+          # python stderr도 버린다 — secret 값은 어떤 경로로도 로그에 닿지 않는다.
+          command -v python3 >/dev/null 2>&1 || { echo "PREFLIGHT FAILED: python3 not found on host (required for subject secret validation)"; exit 1; }
           SUBJECT_SECRET_ARN=\$(grep '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" | cut -d= -f2-)
-          ( unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_EC2_METADATA_DISABLED AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_ENDPOINT_URL AWS_ENDPOINT_URL_SECRETS_MANAGER; AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null aws secretsmanager get-secret-value --secret-id "\$SUBJECT_SECRET_ARN" --region ${AWS_REGION} --query VersionId --output text ) >/dev/null 2>&1 || { echo "PREFLIGHT FAILED: subject secret read failed (runtime role GetSecretValue or ARN)"; exit 1; }
+          SUBJECT_SECRET_PAYLOAD=\$( unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_EC2_METADATA_DISABLED AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_ENDPOINT_URL AWS_ENDPOINT_URL_SECRETS_MANAGER; AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null aws secretsmanager get-secret-value --secret-id "\$SUBJECT_SECRET_ARN" --region ${AWS_REGION} --query SecretString --output json 2>/dev/null ) || { echo "PREFLIGHT FAILED: subject secret read failed (runtime role GetSecretValue or ARN)"; exit 1; }
+          SUBJECT_SECRET_DIAG=\$(SUBJECT_SECRET_PAYLOAD="\$SUBJECT_SECRET_PAYLOAD" python3 -c '
+          import base64, json, os, sys
+          def die(msg):
+              print(msg)
+              sys.exit(1)
+          payload = json.loads(os.environ["SUBJECT_SECRET_PAYLOAD"])
+          if payload is None:
+              die("SecretString missing (SecretBinary-only secret is not supported)")
+          try:
+              root = json.loads(payload)
+          except Exception:
+              die("is not valid JSON")
+          if not isinstance(root, dict):
+              die("must be a JSON object")
+          def ver(field):
+              value = root.get(field)
+              if isinstance(value, bool) or not isinstance(value, int):
+                  die(field + " must be an integer")
+              if value <= 0 or value > 32767:
+                  die(field + " must be a positive SMALLINT")
+              return value
+          def key(field):
+              value = root.get(field)
+              if not isinstance(value, str):
+                  die(field + " must be a string")
+              try:
+                  decoded = base64.b64decode(value, validate=True)
+              except Exception:
+                  die(field + " must be valid base64")
+              if len(decoded) != 32:
+                  die(field + " must decode to exactly 32 bytes")
+              return decoded
+          current_version = ver("currentVersion")
+          current_key = key("currentKey")
+          if (root.get("previousVersion") is None) != (root.get("previousKey") is None):
+              die("previousVersion and previousKey must be present together")
+          if root.get("previousVersion") is not None:
+              if ver("previousVersion") == current_version:
+                  die("previousVersion must differ from currentVersion")
+              if key("previousKey") == current_key:
+                  die("currentKey and previousKey must differ")
+          ' 2>/dev/null) || { echo "PREFLIGHT FAILED: subject secret \${SUBJECT_SECRET_DIAG:-validation could not run}"; exit 1; }
+          SUBJECT_SECRET_PAYLOAD=""
           # mapping schema: 앱 datasource와 같은 DB_HOST:3306/laimory를 검사한다. 앱이 소비하는 DB_* 3개를
           # exact-one non-empty로 먼저 확인한 뒤(값 비출력), 고정 태그 mysql:8.0 client로 column 수·정확한
           # type/nullability·단일-column PK/UNIQUE를 모두 판정한다. 추가 raw user_id나 composite index도

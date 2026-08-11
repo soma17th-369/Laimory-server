@@ -8,6 +8,8 @@
 # pre-stop 실패의 .env/SHA 보존, secret 비출력, 모든 종료 경로의 prune -af 1회와 원래 status 보존.
 # T5d(#282): subject mapping preflight — APP_SUBJECT_MODE=secretsmanager 고정, secret ARN 형식,
 # region/runtime-role 일치, secret read, DB_* presence와 user_subject_links schema 검사의 fail-closed·값 비출력.
+# T5e(#282 리뷰): secret 내용 계약 — 앱 parse()와 동일 규칙(JSON object·version·32-byte key·previous 쌍·
+# SecretString 부재)의 fail-closed·항목 이름만 진단·payload 비출력, SPRING_PROFILES_ACTIVE docker 가드.
 #
 # 실행: bash .github/scripts/test-deploy-contract.sh  (macOS bash 3.2 / Linux bash 호환)
 set -u
@@ -19,6 +21,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 FAKE_SHA="1234567890abcdef1234567890abcdef12345678"
 SENTINEL="SENTINEL_SECRET_XYZZY"
+# 합성 base64 key fixture(실제 secret 아님): 32바이트 2종(유효)과 31바이트(오염) — 앱 parse() 계약용.
+B64_KEY_32A="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+B64_KEY_32B="QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
+B64_KEY_31="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ=="
 PASS=0
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -130,9 +136,21 @@ STUBEOF
 
 cat > "$STUB/aws" <<'STUBEOF'
 #!/usr/bin/env bash
-# secretsmanager 하위 명령만 seam으로 실패시킬 수 있다 — ecr login 경로는 기존 동작 유지.
+# secretsmanager 경로는 SecretString 검증의 seam이다 — FAKE_SECRETSMANAGER_EXIT로 read 실패,
+# FAKE_SECRET_STRING_ABSENT=1로 SecretBinary 전용(SecretString null), FAKE_SECRET_JSON으로 오염
+# fixture를 재현한다. 기본은 유효 fixture(합성 base64 32-byte key + sentinel 잉여 필드 — 앱 parse()가
+# unknown 필드를 무시하므로 preflight도 통과해야 하고, sentinel은 payload 누출 검출용). 출력은 실제
+# aws --query SecretString --output json처럼 JSON 문자열 리터럴 형태다. ecr login 경로는 기존 동작 유지.
 if [ "$1" = "secretsmanager" ]; then
-  exit "${FAKE_SECRETSMANAGER_EXIT:-0}"
+  [ "${FAKE_SECRETSMANAGER_EXIT:-0}" = "0" ] || exit "${FAKE_SECRETSMANAGER_EXIT}"
+  if [ "${FAKE_SECRET_STRING_ABSENT:-0}" = "1" ]; then
+    echo null
+    exit 0
+  fi
+  DEFAULT_SECRET_JSON='{"currentVersion":2,"currentKey":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=","note":"SENTINEL_SECRET_XYZZY"}'
+  FAKE_SECRET_JSON="${FAKE_SECRET_JSON-$DEFAULT_SECRET_JSON}" \
+    python3 -c 'import json, os; print(json.dumps(os.environ["FAKE_SECRET_JSON"]))'
+  exit 0
 fi
 echo "fake-ecr-password"
 exit 0
@@ -570,6 +588,57 @@ run_prestop_failure "subject-schema-mismatch" base "FAKE_MYSQL_OUTPUT=0"
 grep -q "PREFLIGHT FAILED: user_subject_links schema mismatch" "$CASE_DIR/out.log" \
   || fail "T3a(subject-schema-mismatch): diagnostic expected"
 ok "T5d: subject mode/ARN/runtime-role/secret-read/DB/schema preflights fail closed before stopping the old container"
+
+# --- 10c. T5e: subject secret 내용 계약 — 앱 parse()와 동일 규칙 fail-closed·payload 비출력 ---
+# 기본 fixture(유효 current-only + 잉여 필드)는 위 모든 성공 케이스가 이미 통과시켰다.
+# rotation(previous 쌍) 유효 secret도 성공해야 한다.
+new_case; base_env_fixture
+execute_script "FAKE_SECRET_JSON={\"currentVersion\":2,\"currentKey\":\"$B64_KEY_32A\",\"previousVersion\":1,\"previousKey\":\"$B64_KEY_32B\"}"
+[ "$RC" = "0" ] || fail "T5e(rotation-valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+assert_sha_line "T5e(rotation-valid)"
+assert_prune_once "T5e(rotation-valid)"
+assert_no_sentinel "T5e(rotation-valid)"
+
+# 오염 fixture는 전부 구 컨테이너 중지 전에 항목 이름만으로 실패해야 한다(payload는 sentinel 포함 —
+# 어떤 출력에도 새면 assert_no_sentinel이 잡는다).
+run_prestop_failure "secret-not-json" base "FAKE_SECRET_JSON={$SENTINEL"
+grep -q "PREFLIGHT FAILED: subject secret is not valid JSON" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-not-json): diagnostic expected"
+run_prestop_failure "secret-key-31-bytes" base \
+  "FAKE_SECRET_JSON={\"currentVersion\":1,\"currentKey\":\"$B64_KEY_31\",\"note\":\"$SENTINEL\"}"
+grep -q "PREFLIGHT FAILED: subject secret currentKey must decode to exactly 32 bytes" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-key-31-bytes): diagnostic expected"
+run_prestop_failure "secret-half-previous-pair" base \
+  "FAKE_SECRET_JSON={\"currentVersion\":2,\"currentKey\":\"$B64_KEY_32A\",\"previousVersion\":1,\"note\":\"$SENTINEL\"}"
+grep -q "PREFLIGHT FAILED: subject secret previousVersion and previousKey must be present together" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-half-previous-pair): diagnostic expected"
+run_prestop_failure "secret-string-absent" base "FAKE_SECRET_STRING_ABSENT=1"
+grep -q "PREFLIGHT FAILED: subject secret SecretString missing" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-string-absent): diagnostic expected"
+
+# SPRING_PROFILES_ACTIVE 가드: 키 없음(기본 fixture)이 정상 — docker가 값에 포함되면 실패하고,
+# docker가 없는 값은 이 가드에 걸리지 않는다(진단은 key 이름과 고정 문구만).
+for spa in "docker" "dev,docker" ; do
+  new_case; base_env_fixture
+  printf '%s\n' "SPRING_PROFILES_ACTIVE=$spa" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5e(profiles=$spa): preflight failure expected"
+  grep -q "PREFLIGHT FAILED: .env SPRING_PROFILES_ACTIVE docker profile must not be active" "$CASE_DIR/out.log" \
+    || fail "T5e(profiles=$spa): diagnostic expected"
+  assert_env_untouched "T5e(profiles=$spa)"
+  assert_no_stop_no_run "T5e(profiles=$spa)"
+  assert_prune_once "T5e(profiles=$spa)"
+  assert_no_sentinel "T5e(profiles=$spa)"
+done
+new_case; base_env_fixture
+printf '%s\n' "SPRING_PROFILES_ACTIVE=prod" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5e(profiles=prod): non-docker value must pass this guard, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+ok "T5e: secret content contract mirrors app parse() and SPRING_PROFILES_ACTIVE=docker fails closed"
 
 # --- 11. T5/T5a: push mode 계약 ---
 new_case; base_env_fixture
