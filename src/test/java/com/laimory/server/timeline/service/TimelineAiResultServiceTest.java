@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -13,6 +14,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
@@ -30,6 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /** RESULT → CALLBACK token/stage 선점과 DB 실패 rollback을 검증한다. */
@@ -40,6 +44,9 @@ class TimelineAiResultServiceTest {
     private TimelineTaskService timelineTaskService;
     @Mock
     private TimelineAiResultTransactionService timelineAiResultTransactionService;
+    // 실물 redactor를 spy로 주입한다 — 치환 검증은 실물 동작으로, 실패 주입만 stubbing으로 한다.
+    @Spy
+    private PrivacyRedactor privacyRedactor = new PrivacyRedactor();
     @InjectMocks
     private TimelineAiResultService service;
 
@@ -175,6 +182,66 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(
                 VERSION, TASK_ID, TASK_TOKEN, new AiTimelineResultRequest(List.of())))
                 .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    @Test
+    void storeResult_redactsEventTextsBeforeStore() {
+        // AI 생성 title/subtitle/question의 v1 PII는 final 저장 경로에 들어가기 전에 token으로 치환된다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+        AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "010-1234-5678로 예약한 점심", "메일 yun@example.com",
+                "연락처 010-9876-5432 맞나요?",
+                OffsetDateTime.of(DATE.atTime(12, 0), KST), OffsetDateTime.of(DATE.atTime(13, 0), KST),
+                List.of("raw-1"))));
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
+
+        ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        AiTimelineResultRequest.Event event = stored.getValue().events().getFirst();
+        assertThat(event.title()).isEqualTo(RedactionType.PHONE.token() + "로 예약한 점심");
+        assertThat(event.subtitle()).isEqualTo("메일 " + RedactionType.EMAIL.token());
+        assertThat(event.question()).isEqualTo("연락처 " + RedactionType.PHONE.token() + " 맞나요?");
+    }
+
+    @Test
+    void storeResult_boundedRedaction_keepsTitleWithin255WithoutPartialToken() {
+        // 원문 247자(shape 검증 통과)가 token 팽창으로 257자가 되면 token 시작 앞에서 절단돼
+        // 255 이하를 유지하고 placeholder literal이 잘리지 않는다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+        String title = "가".repeat(240) + " a@b.co";
+        AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, title, null, null,
+                OffsetDateTime.of(DATE.atTime(12, 0), KST), null, List.of("raw-1"))));
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
+
+        ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        String storedTitle = stored.getValue().events().getFirst().title();
+        assertThat(storedTitle).hasSizeLessThanOrEqualTo(255);
+        assertThat(storedTitle).doesNotContain("a@b.co").doesNotContain("[REDACTED");
+        assertThat(storedTitle).isEqualTo("가".repeat(240) + " ");
+    }
+
+    @Test
+    void storeResult_redactionFailure_keepsResultTokenUnclaimed() {
+        // redaction 실패는 token 선점 전이라 RESULT_PENDING·기존 token이 그대로 유지된다 —
+        // 원문 fallback으로 store를 호출하지 않는다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        doThrow(new RuntimeException("redactor down")).when(privacyRedactor).redactText(any(), anyInt());
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("redactor down");
+
         verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }

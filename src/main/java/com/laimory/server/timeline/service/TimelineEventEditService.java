@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -37,7 +38,6 @@ public class TimelineEventEditService {
     private static final int MAX_SUBTITLE_LENGTH = 255;
     /** User Memory 갱신 접수 계약이 확정한 상한. 초과 memo는 AI가 422로 거절하므로 입력에서 막는다. */
     private static final int MAX_MEMO_LENGTH = 500;
-    private static final int MAX_RAW_ID_LENGTH = 36;
 
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
@@ -116,11 +116,13 @@ public class TimelineEventEditService {
             if (photo == null) {
                 throw new IllegalArgumentException("photosToAdd element is null: index=" + i);
             }
+            // rawId는 draft source와 같은 규칙(canonical lowercase UUID, version 무관 — {@link RawIds})으로
+            // 검증한다. 메시지에 rawId 원문을 싣지 않는다(GlobalExceptionHandler가 메시지를 로그에 남긴다).
             if (isBlank(photo.rawId())) {
                 throw new IllegalArgumentException("photo requires rawId: index=" + i);
             }
-            if (photo.rawId().length() > MAX_RAW_ID_LENGTH) {
-                throw new IllegalArgumentException("photo rawId is too long: index=" + i);
+            if (!RawIds.isCanonicalUuid(photo.rawId())) {
+                throw new IllegalArgumentException("photo rawId is not a canonical UUID: index=" + i);
             }
             UpdateTimelineEventPhotoPayloadRequest payload = photo.payload();
             if (payload == null) {

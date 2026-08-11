@@ -5,8 +5,10 @@ import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
+import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.SourceItemDto;
@@ -58,6 +60,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TimelineDraftTaskService {
 
+    /**
+     * staging 저장 redaction에서 원문을 보존하는 필드. PHOTO {@code clientPhotoUri}는 클라 로컬 캐싱용
+     * echo 값이라 DB·앱 응답에서 원문을 유지하고, AI 전달에서만 치환한다(계획 §2.2).
+     */
+    private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS = Set.of("clientPhotoUri");
+
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftPreparationService timelineDraftPreparationService;
@@ -67,6 +75,7 @@ public class TimelineDraftTaskService {
     private final TimelineItemService timelineItemService;
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineAiDispatcher timelineAiDispatcher;
+    private final PrivacyRedactor privacyRedactor;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -140,11 +149,15 @@ public class TimelineDraftTaskService {
 
         // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
         //    먼저 커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 전체 롤백 후 전파(500).
+        //    payload는 enrich본의 textual leaf를 치환한 결과만 staging에 저장한다(clientPhotoUri만 원문 보존).
+        //    redaction은 prepareDraft보다 먼저 완료되며 실패는 그대로 전파한다 — 원문 fallback 없이
+        //    DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed).
         List<TimelineDraftSourceItem> rows = enrichedItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
                         taskId, userId,
                         src.itemType(), src.rawId(), src.startAt(), src.endAt(),
-                        objectMapper.valueToTree(src.payload())))
+                        privacyRedactor.redactTree(objectMapper.valueToTree(src.payload()),
+                                STORAGE_REDACTION_EXCLUDED_FIELDS).node()))
                 .toList();
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
                 userId, recordDate, recordAt, recordTimeZone, rows);
@@ -267,12 +280,14 @@ public class TimelineDraftTaskService {
             if (src.itemType() == null) {
                 throw new IllegalArgumentException("sourceItem has null itemType: index=" + i);
             }
-            // rawId는 클라 원본 데이터 ID(UUIDv7) — opaque echo 값이라 형식 검증·trim 없이 존재·길이만 본다(DB 컬럼 36자).
+            // rawId는 클라 원본 데이터 ID — canonical lowercase UUID(version 무관)만 허용한다({@link RawIds}).
+            // 임의 문자열에 개인정보가 실리는 것을 막는 400 경계이며, 허용값은 정규화 없이 그대로 저장한다.
             if (isBlank(src.rawId())) {
                 throw new IllegalArgumentException("sourceItem requires rawId: index=" + i);
             }
-            if (src.rawId().length() > 36) {
-                throw new IllegalArgumentException("sourceItem rawId is too long: index=" + i);
+            if (!RawIds.isCanonicalUuid(src.rawId())) {
+                // 메시지에 rawId 원문을 싣지 않는다 — GlobalExceptionHandler가 메시지를 로그에 남긴다.
+                throw new IllegalArgumentException("sourceItem rawId is not a canonical UUID: index=" + i);
             }
             // 원래 계약: startAt 필수·endAt nullable(모든 itemType 공통). AI 입력 계약(CollectedSourceItem)도
             // startAt을 필수로 요구하므로 누락은 dispatch 뒤 실패가 아니라 이 경계에서 400으로 앞당긴다.

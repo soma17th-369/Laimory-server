@@ -1,7 +1,9 @@
 package com.laimory.server.timeline.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
 import com.laimory.server.timeline.entity.UserMemoryUpdateTask;
@@ -44,6 +46,7 @@ public class UserMemoryUpdateResultService {
     private final UserMemoryUpdateTaskStore taskStore;
     private final UserMemoryUpdatePendingStore pendingStore;
     private final UserMemoryService userMemoryService;
+    private final PrivacyRedactor privacyRedactor;
     private final Clock clock;
 
     /**
@@ -82,7 +85,19 @@ public class UserMemoryUpdateResultService {
             throw new BusinessException(ExceptionType.SAVE_TASK_STATE_CONFLICT);
         }
 
-        userMemoryService.replace(task.userId(), request.userMemory());
+        // 저장 전에 textual leaf를 치환한다(schema는 AI 소유 — 구조는 그대로). 실패하면 원문 fallback 없이
+        // 기존 문서를 유지하고 종결해 pending을 복구한다 — 다음 배치가 전체 흐름을 다시 시도한다.
+        JsonNode redactedMemory;
+        try {
+            redactedMemory = privacyRedactor.redactTree(request.userMemory()).node();
+        } catch (RuntimeException redactionFailure) {
+            finish(task, taskId, false);
+            log.error("User Memory 갱신 결과 redaction 실패(기존 문서 유지): userId={} dailyRecordIds={} taskId={}",
+                    task.userId(), task.dailyRecordIds(), taskId, redactionFailure);
+            throw redactionFailure;
+        }
+
+        userMemoryService.replace(task.userId(), redactedMemory);
         finish(task, taskId, true);
         log.info("User Memory 갱신 반영: userId={} dailyRecordIds={} taskId={} elapsedMs={}",
                 task.userId(), task.dailyRecordIds(), taskId, elapsedMillis(task));

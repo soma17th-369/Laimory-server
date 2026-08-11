@@ -19,8 +19,9 @@ import java.time.LocalDateTime;
  * <p>{@code itemType}은 payload 밖 형제 필드(external property)로 받는 타입 디스크리미네이터다. payload JSON엔 타입 정보가 없다.
  * {@code visible = true}라 itemType이 이 레코드 컴포넌트에도 바인딩된다.
  *
- * <p>{@code rawId}는 클라가 부여하는 기기 원본 데이터 식별자(UUIDv7)다. payload가 아닌 **envelope 필드**로
- * 받아 컬럼으로 저장한다 — 서버는 해석·정규화 없이 echo만 한다(필수, blank·길이만 검증).
+ * <p>{@code rawId}는 클라가 부여하는 기기 원본 데이터 식별자다. payload가 아닌 **envelope 필드**로
+ * 받아 컬럼으로 저장한다 — canonical lowercase UUID(version 무관)만 허용하고, 허용값은 정규화 없이
+ * 그대로 저장/echo한다.
  */
 public record SourceItemDto(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "PHOTO",
@@ -28,7 +29,8 @@ public record SourceItemDto(
         ItemType itemType,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, maxLength = 36,
                 example = "0190a1b2-0001-7000-8000-000000000001",
-                description = "클라 기기 원본 데이터 식별자(UUIDv7 관례). 필수·최대 36자 — 형식은 검증하지 않고 그대로 저장/echo.")
+                description = "클라 기기 원본 데이터 식별자. 필수 — canonical lowercase UUID(version 무관)만 허용하고 "
+                        + "그 외는 400. 허용값은 정규화 없이 그대로 저장/echo.")
         String rawId,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "2026-07-08T09:05:00",
                 description = "아이템 시작(벽시계 LocalDateTime, offset 없음). 필수 — 누락 시 400/-400. "

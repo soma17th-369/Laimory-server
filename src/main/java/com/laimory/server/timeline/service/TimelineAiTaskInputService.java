@@ -1,7 +1,10 @@
 package com.laimory.server.timeline.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -91,7 +94,27 @@ public class TimelineAiTaskInputService {
         return new AiTimelineTaskInputResponse.SourceItem(
                 source.getRawId(), source.getItemType(),
                 toOffset(source.getStartAt(), recordZone), toOffset(source.getEndAt(), recordZone),
-                source.getPayload());
+                redactClientPhotoUri(source.getPayload()));
+    }
+
+    /**
+     * AI 전달 직전 PHOTO {@code clientPhotoUri} 값 전체를 고정 token으로 바꾼다. storage payload는 이미
+     * v1 치환 저장본이라 전체 redaction을 다시 돌리지 않고 storage 예외였던 이 필드만 치환한다(계획 §2.2).
+     *
+     * <p>{@code source.getPayload()}는 Hibernate 관리 엔티티 필드라 변형하지 않는다 — 해당 필드가 있을 때만
+     * deep copy 뒤 치환하고, 없으면 read-only 직렬화 용도이므로 기존 인스턴스를 그대로 반환한다.
+     */
+    private static JsonNode redactClientPhotoUri(JsonNode payload) {
+        if (payload == null || !payload.isObject()) {
+            return payload;
+        }
+        JsonNode clientPhotoUri = payload.get("clientPhotoUri");
+        if (clientPhotoUri == null || !clientPhotoUri.isTextual()) {
+            return payload;
+        }
+        ObjectNode copy = payload.deepCopy();
+        copy.put("clientPhotoUri", RedactionType.DEVICE_URI.token());
+        return copy;
     }
 
     private static OffsetDateTime toOffset(LocalDateTime value, ZoneId recordZone) {

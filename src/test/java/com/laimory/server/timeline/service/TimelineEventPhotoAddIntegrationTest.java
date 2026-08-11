@@ -43,6 +43,8 @@ class TimelineEventPhotoAddIntegrationTest {
 
     private static final LocalDate DATE = LocalDate.of(2000, 1, 6);
     private static final String FILENAME = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
+    // PATCH 입력 경계의 canonical lowercase UUID 검증(version 무관)을 통과하는 rawId.
+    private static final String RAW_ID = "0190a1b2-0001-7000-8000-000000000001";
 
     @Autowired
     private TimelineEventEditService timelineEventEditService;
@@ -93,7 +95,7 @@ class TimelineEventPhotoAddIntegrationTest {
 
     @Test
     void samePatchRetryCreatesOnePhotoAndOneLink_withManualPayloadContract() throws Exception {
-        UpdateTimelineEventRequest request = request("새 제목", "새 메모", List.of(photo("raw-photo")));
+        UpdateTimelineEventRequest request = request("새 제목", "새 메모", List.of(photo(RAW_ID)));
         long itemCountBefore = timelineItemRepository.count();
 
         timelineEventEditService.updateEvent("v1", userId, eventId, request);
@@ -106,7 +108,7 @@ class TimelineEventPhotoAddIntegrationTest {
         TimelineItem stored = timelineItemRepository.findById(links.get(0).getTimelineItemId()).orElseThrow();
         PhotoPayload payload = objectMapper.treeToValue(stored.getPayload(), PhotoPayload.class);
         assertThat(payload.filename()).isEqualTo(FILENAME);
-        assertThat(payload.clientPhotoUri()).isEqualTo("content://photo/raw-photo");
+        assertThat(payload.clientPhotoUri()).isEqualTo("content://photo/" + RAW_ID);
         assertThat(payload.latitude()).isEqualTo(37.5);
         assertThat(payload.longitude()).isEqualTo(127.0);
         assertThat(payload.description()).isNull();
@@ -124,7 +126,7 @@ class TimelineEventPhotoAddIntegrationTest {
         redisGateway.set(legacyGuardKey(), "task:legacy-photo", Duration.ofHours(1));
 
         UpdateTimelineEventRequest photoRequest = request("사진 제목", "사진 메모",
-                List.of(photo("raw-photo")));
+                List.of(photo(RAW_ID)));
         timelineEventEditService.updateEvent("v1", userId, eventId, photoRequest);
 
         assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).hasSize(1);
@@ -141,7 +143,7 @@ class TimelineEventPhotoAddIntegrationTest {
                 .when(timelineEventItemService).saveAll(anyList());
 
         assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", userId, eventId,
-                request("새 제목", "새 메모", List.of(photo("raw-photo")))))
+                request("새 제목", "새 메모", List.of(photo(RAW_ID)))))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("junction save 강제 실패");
 

@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
@@ -83,12 +84,19 @@ public class UserMemoryUpdateWorker {
      */
     static final int SCAN_LIMIT = 10_000;
 
+    /** AI 전달 Event text의 bounded redaction 상한(title/subtitle/question — 컬럼 계약 255자). */
+    private static final int EVENT_TEXT_MAX_LENGTH = 255;
+
+    /** AI 전달 memo의 bounded redaction 상한(접수 계약 500자). */
+    private static final int MEMO_MAX_LENGTH = 500;
+
     private final UserMemoryUpdatePendingStore pendingStore;
     private final UserMemoryUpdateTaskStore taskStore;
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
     private final UserMemoryService userMemoryService;
     private final UserMemoryUpdateDispatcher dispatcher;
+    private final PrivacyRedactor privacyRedactor;
     private final Clock clock;
 
     /**
@@ -226,13 +234,18 @@ public class UserMemoryUpdateWorker {
 
         String taskToken = TaskTokens.generate();
         var baseMemory = userMemoryService.find(userId);
+        // AI body에 실리는 base 문서·Event text만 치환한다. baseMemoryHash는 반드시 DB 원본으로 계산해야
+        // 결과 endpoint의 지문 대조가 유지된다(§2.5). redacted DTO를 task 저장 전에 완성하므로 redaction
+        // 실패는 task 저장·dispatch 없이 전파돼 pending이 그대로 남는다(원문 fallback 금지).
+        AiUserMemoryUpdateRequest redactedRequest = new AiUserMemoryUpdateRequest(taskId, taskToken,
+                baseMemory.map(memory -> privacyRedactor.redactTree(memory).node()).orElse(null),
+                records.stream().map(this::toDailyTimeline).toList());
         // 접수 시각은 여기서 찍는다 — 배치 진입 시각을 쓰면 밀린 시간까지 AI 소요로 집계된다.
         taskStore.save(taskId, new UserMemoryUpdateTask(userId,
                 records.stream().map(DailyRecord::getDailyRecordId).toList(),
                 TaskTokens.hash(taskToken), clock.instant(), UserMemoryDigest.of(baseMemory)), TASK_TTL);
 
-        dispatcher.dispatch(new AiUserMemoryUpdateRequest(taskId, taskToken, baseMemory.orElse(null),
-                records.stream().map(this::toDailyTimeline).toList()));
+        dispatcher.dispatch(redactedRequest);
         log.info("User Memory 갱신 접수 요청: userId={} days={} taskId={}", userId, records.size(), taskId);
         return new Outcome(Status.ACCEPTED, records.size(), missing.size());
     }
@@ -251,11 +264,18 @@ public class UserMemoryUpdateWorker {
                 record.getRecordTimezone(), record.getEmotionType(), events);
     }
 
-    private static AiUserMemoryUpdateRequest.Event toEvent(TimelineEvent event, ZoneId recordZone) {
+    /**
+     * DB에는 사용자 수정 원문이 남고 AI 전달 DTO에서만 치환한다. bounded 상한은 각 컬럼 계약과 같다
+     * (title/subtitle/question 255, memo 500). subtitle/question/memo는 nullable — null-safe 치환.
+     */
+    private AiUserMemoryUpdateRequest.Event toEvent(TimelineEvent event, ZoneId recordZone) {
         return new AiUserMemoryUpdateRequest.Event(
-                event.getEventType(), event.getTitle(), event.getSubtitle(), event.getQuestion(),
+                event.getEventType(),
+                privacyRedactor.redactText(event.getTitle(), EVENT_TEXT_MAX_LENGTH).text(),
+                privacyRedactor.redactText(event.getSubtitle(), EVENT_TEXT_MAX_LENGTH).text(),
+                privacyRedactor.redactText(event.getQuestion(), EVENT_TEXT_MAX_LENGTH).text(),
                 toOffset(event.getStartAt(), recordZone), toOffset(event.getEndAt(), recordZone),
-                event.getMemo());
+                privacyRedactor.redactText(event.getMemo(), MEMO_MAX_LENGTH).text());
     }
 
     private static OffsetDateTime toOffset(LocalDateTime value, ZoneId recordZone) {

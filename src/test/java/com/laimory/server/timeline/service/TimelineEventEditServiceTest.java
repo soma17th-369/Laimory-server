@@ -236,6 +236,52 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
+    void updateEvent_invalidRawIdMessageDoesNotContainRawId() {
+        // GlobalExceptionHandler가 IAE 메시지를 로그에 남기므로 rawId 원문을 메시지에 싣지 않는다.
+        stubOwnedDraftEvent();
+        String invalidRawId = "0190A1B2-0001-7000-8000-000000000001";
+        UpdateTimelineEventRequest request = request(
+                null, "제목", null, NEW_START, null, null, false,
+                List.of(photo(invalidRawId, FILENAME_1, "content://photo")));
+
+        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(invalidRawId));
+
+        verifyNoInteractions(transactionService);
+    }
+
+    @Test
+    void updateEvent_userTitleAndMemoWithPiiLikeTextAreStoredVerbatim() {
+        // 사용자 입력 원문 보존 계약 — Event PATCH title/memo는 redaction 없이 DB 원문 저장한다
+        // (User Memory AI 전달 시점에만 치환). PII 형태 텍스트도 command에 그대로 실려야 한다.
+        stubOwnedDraftEvent();
+        String titleWithPii = "친구 010-1234-5678에게 전화한 날";
+        String memoWithPii = "메일 yun@example.com로 보냈다";
+        UpdateTimelineEventRequest request = request(
+                null, titleWithPii, null, NEW_START, null, memoWithPii, true, List.of());
+
+        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+
+        ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
+                ArgumentCaptor.forClass(TimelineEventEditCommand.class);
+        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        assertThat(commandCaptor.getValue().title()).isEqualTo(titleWithPii);
+        assertThat(commandCaptor.getValue().memo()).isEqualTo(memoWithPii);
+    }
+
+    @Test
+    void updateMemo_piiLikeTextIsStoredVerbatim() {
+        // memo PUT도 원문 저장 계약이다 — 조회 응답에서 placeholder로 바뀌지 않는다.
+        TimelineEvent event = stubOwnedDraftEvent();
+        String memoWithPii = "연락처 010-1234-5678 저장";
+
+        service.updateMemo(VERSION, USER_ID, EVENT_ID, memoWithPii);
+
+        assertThat(event.getMemo()).isEqualTo(memoWithPii);
+    }
+
+    @Test
     void updateEvent_duplicateRawIdKeepsFirstPhoto() {
         stubOwnedDraftEvent();
         UpdateTimelineEventPhotoRequest first = new UpdateTimelineEventPhotoRequest(
@@ -424,7 +470,14 @@ class TimelineEventEditServiceTest {
                 Arguments.of("null photosToAdd", null),
                 Arguments.of("null element", java.util.Arrays.asList((UpdateTimelineEventPhotoRequest) null)),
                 Arguments.of("blank rawId", List.of(photo("   ", FILENAME_1, "content://photo"))),
+                // canonical lowercase UUID(version 무관)가 아니면 전부 400 — draft source와 같은 규칙.
                 Arguments.of("rawId over 36", List.of(photo("r".repeat(37), FILENAME_1, "content://photo"))),
+                Arguments.of("uppercase uuid rawId", List.of(
+                        photo("0190A1B2-0001-7000-8000-000000000001", FILENAME_1, "content://photo"))),
+                Arguments.of("ulid-like rawId", List.of(
+                        photo("01ARZ3NDEKTSV4RRFFQ69G5FAV", FILENAME_1, "content://photo"))),
+                Arguments.of("non-uuid 36 chars rawId", List.of(
+                        photo("x".repeat(36), FILENAME_1, "content://photo"))),
                 Arguments.of("null payload", List.of(
                         new UpdateTimelineEventPhotoRequest(RAW_ID_1, NEW_START, null, null))),
                 Arguments.of("invalid filename", List.of(photo(RAW_ID_1, "../photo.jpg", "content://photo"))),
