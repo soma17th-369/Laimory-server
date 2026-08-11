@@ -262,6 +262,42 @@ class TransactionIdFilterTest {
     }
 
     @Test
+    void completionLog_masksPrivacyPathBodiesEntirely() throws Exception {
+        // 사생활 원문 경로는 body 전체가 고정 placeholder다 — 클라이언트 응답은 불변, 로그 어디에도 원문 없음.
+        String rawRequest = "RAW_DRAFT_MEMO_281_NEVER_LOG";
+        MockHttpServletRequest request = jsonRequest("POST", "/a/api/v1/timeline/drafts",
+                "{\"items\":[{\"text\":\"" + rawRequest + "\"}]}");
+        filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain(new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                req.getInputStream().readAllBytes();
+            }
+        }));
+
+        String rawResponse = "RAW_TIMELINE_TITLE_281_NEVER_LOG";
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(new MockHttpServletRequest("GET", "/a/api/v1/timeline/daily-records"), response,
+                new MockFilterChain(new HttpServlet() {
+                    @Override
+                    protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {
+                        res.setContentType("application/json");
+                        res.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                        res.getWriter().write("{\"title\":\"" + rawResponse + "\"}");
+                    }
+                }));
+
+        assertThat(response.getContentAsString()).contains(rawResponse);
+        assertThat(encoded(accessLog.list.get(0)).get("requestBody").asText())
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+        assertThat(encoded(accessLog.list.get(1)).get("responseBody").asText())
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+        for (ILoggingEvent event : accessLog.list) {
+            assertThat(new String(encode(event), StandardCharsets.UTF_8))
+                    .doesNotContain(rawRequest, rawResponse);
+        }
+    }
+
+    @Test
     void requestBody_isNullWhenChainDoesNotReadRequestStream() throws Exception {
         MockHttpServletRequest request = jsonRequest("POST", "/api/v1/test", "{\"safe\":true}");
 
@@ -430,8 +466,10 @@ class TransactionIdFilterTest {
     }
 
     private int encodedSizeForJsonResponse(String responseBody) throws Exception {
+        // #281부터 polling 실경로 응답은 전체 placeholder로 마스킹된다 —
+        // encoder worst case 측정이 목적이므로 비대상 경로로 같은 크기의 body를 흘린다.
         MockHttpServletResponse response = new MockHttpServletResponse();
-        filter.doFilter(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts/task-152"), response,
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/v1/preview-size-probe"), response,
                 new MockFilterChain(new HttpServlet() {
                     @Override
                     protected void service(HttpServletRequest req, HttpServletResponse res) throws java.io.IOException {

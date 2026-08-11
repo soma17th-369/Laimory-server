@@ -95,6 +95,123 @@ class AccessLogBodyMaskerTest {
         );
     }
 
+    @ParameterizedTest
+    @MethodSource("privacyRequestPaths")
+    void privacyRequestBodiesAreFullyMaskedBeforeJsonParsing(String method, String path) {
+        ObjectMapper unusedMapper = mock(ObjectMapper.class);
+        AccessLogBodyMasker privacyMasker = new AccessLogBodyMasker(unusedMapper);
+        String raw = "{\"memo\":\"RAW_PRIVACY_281_NEVER_LOG\"}";
+        MockHttpServletRequest request = jsonRequest(method, path, raw);
+
+        String masked = privacyMasker.maskRequest(request, bytes(raw), false);
+
+        assertThat(masked)
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY)
+                .doesNotContain("RAW_PRIVACY_281_NEVER_LOG");
+        verifyNoInteractions(unusedMapper);
+    }
+
+    private static Stream<Arguments> privacyRequestPaths() {
+        return Stream.of(
+                Arguments.of("POST", "/a/api/v1/timeline/drafts"),
+                Arguments.of("PATCH", "/a/api/v12/timeline/events/42"),
+                Arguments.of("PUT", "/a/api/v1/timeline/events/42/memo"),
+                Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
+                Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),
+                Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("privacyResponsePaths")
+    void privacyResponseBodiesAreFullyMaskedBeforeJsonParsing(String path) {
+        ObjectMapper unusedMapper = mock(ObjectMapper.class);
+        AccessLogBodyMasker privacyMasker = new AccessLogBodyMasker(unusedMapper);
+        String raw = "{\"title\":\"RAW_PRIVACY_281_NEVER_LOG\"}";
+
+        String masked = privacyMasker.maskResponse(
+                new MockHttpServletRequest("GET", path), jsonResponse(), bytes(raw), false);
+
+        assertThat(masked)
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY)
+                .doesNotContain("RAW_PRIVACY_281_NEVER_LOG");
+        verifyNoInteractions(unusedMapper);
+    }
+
+    private static Stream<String> privacyResponsePaths() {
+        return Stream.of(
+                "/a/api/v1/timeline/drafts/task-281",          // draft polling(전체 상태 — SUCCESS만이 아님)
+                "/a/api/v1/timeline/daily-records",
+                "/a/api/v3/timeline/daily-records/2026-08-11",
+                "/a/api/v1/timeline/daily-records/by-id/42",
+                "/a/api/v1/timeline/events/42");
+    }
+
+    @Test
+    void privacyPathJudgmentPrecedesBodyChecks() {
+        // malformed JSON도 [unavailable...]이 아닌 같은 placeholder
+        assertThat(maskRequest("POST", "/a/api/v1/timeline/drafts", "{RAW_PRIVACY_281_NEVER_LOG"))
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+
+        // 비JSON content type도 null이 아닌 placeholder
+        MockHttpServletRequest nonJson = new MockHttpServletRequest("PUT", "/a/api/v1/timeline/events/1/memo");
+        nonJson.setContentType("text/plain");
+        assertThat(masker.maskRequest(nonJson, bytes("raw text memo"), false))
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+
+        // 캡처 상한 초과(truncate)도 [too large...]가 아닌 placeholder
+        assertThat(masker.maskRequest(
+                jsonRequest("POST", "/s/api/v1/timeline/drafts/task-281/result", "{}"), bytes("{}"), true))
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+        assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts/task-281"),
+                jsonResponse(), bytes("{}"), true))
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+
+        // 미열람(empty) body도 null이 아닌 placeholder — body 존재 형태 정보도 남기지 않는다
+        assertThat(masker.maskRequest(
+                jsonRequest("POST", "/a/api/v1/timeline/drafts", "{}"), new byte[0], false))
+                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+    }
+
+    @Test
+    void methodDistinguishesPrivacyTargetsOnSamePath() {
+        // 같은 경로라도 method가 다르면 대상이 아니다 — 목록 GET request는 일반 규칙으로 남는다.
+        assertThat(maskRequest("GET", "/a/api/v1/timeline/drafts", "{\"safe\":\"kept\"}"))
+                .isEqualTo("{\"safe\":\"kept\"}");
+        // response도 method 판정 — draft 생성 POST의 response(taskId 등)는 마스킹하지 않는다.
+        assertThat(masker.maskResponse(new MockHttpServletRequest("POST", "/a/api/v1/timeline/drafts"),
+                jsonResponse(), bytes("{\"taskId\":\"task-281\"}"), false))
+                .isEqualTo("{\"taskId\":\"task-281\"}");
+    }
+
+    @Test
+    void nonPrivacyPathsKeepFieldLevelMasking() {
+        // presign(photo-uploads)은 대상 아님 — 기존 필드 기반 secret 마스킹이 그대로 적용된다.
+        String presign = maskRequest("POST", "/a/api/v1/timeline/drafts/photo-uploads",
+                "{\"filename\":\"a.jpg\",\"uploadUrl\":\"RAW_URL_281_NEVER_LOG\"}");
+        assertThat(presign).contains("\"filename\":\"a.jpg\"").doesNotContain("RAW_URL_281_NEVER_LOG");
+
+        // AI input 응답은 저장 시점에 치환된 서버간 응답이라 대상 아님.
+        assertThat(masker.maskResponse(
+                new MockHttpServletRequest("GET", "/s/api/v1/timeline/drafts/task-281/input"),
+                jsonResponse(), bytes("{\"items\":[]}"), false))
+                .isEqualTo("{\"items\":[]}");
+
+        // drafts 목록 GET response는 polling 단건과 달리 대상 아님.
+        assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts"),
+                jsonResponse(), bytes("{\"tasks\":[]}"), false))
+                .isEqualTo("{\"tasks\":[]}");
+    }
+
+    @Test
+    void authPathJudgmentPrecedesBodyChecks() {
+        // 순서 교정 회귀 방지 — 비JSON content type이어도 auth 경로는 placeholder다.
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/auth/token");
+        request.setContentType("text/plain");
+
+        assertThat(masker.maskRequest(request, bytes("appCode=RAW_SECRET_281_NEVER_LOG"), false))
+                .isEqualTo(AccessLogBodyMasker.MASKED_AUTH_BODY);
+    }
+
     @Test
     void malformedJsonUsesPlaceholderWithoutRawInput() {
         String raw = "{RAW_SECRET_152_NEVER_LOG";
@@ -121,7 +238,7 @@ class AccessLogBodyMaskerTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setContentType("application/json");
 
-        assertThat(masker.maskResponse(response, bytes("{}"), true))
+        assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/api/v1/test"), response, bytes("{}"), true))
                 .isEqualTo("[too large: body exceeds 524288 bytes]");
     }
 
@@ -131,7 +248,8 @@ class AccessLogBodyMaskerTest {
         when(response.getContentType()).thenReturn("application/json");
         when(response.getCharacterEncoding()).thenReturn(StandardCharsets.ISO_8859_1.name());
 
-        assertThat(masker.maskResponse(response, bytes("{\"title\":\"한글 일기\"}"), false))
+        assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/api/v1/test"),
+                response, bytes("{\"title\":\"한글 일기\"}"), false))
                 .isEqualTo("{\"title\":\"한글 일기\"}");
     }
 
@@ -145,16 +263,30 @@ class AccessLogBodyMaskerTest {
     }
 
     private String maskRequest(String path, String body) {
-        MockHttpServletRequest request = jsonRequest(path, body);
+        return maskRequest("POST", path, body);
+    }
+
+    private String maskRequest(String method, String path, String body) {
+        MockHttpServletRequest request = jsonRequest(method, path, body);
         return masker.maskRequest(request, bytes(body), false);
     }
 
     private static MockHttpServletRequest jsonRequest(String path, String body) {
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+        return jsonRequest("POST", path, body);
+    }
+
+    private static MockHttpServletRequest jsonRequest(String method, String path, String body) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         request.setContentType("application/json");
         request.setCharacterEncoding(StandardCharsets.UTF_8.name());
         request.setContent(bytes(body));
         return request;
+    }
+
+    private static MockHttpServletResponse jsonResponse() {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setContentType("application/json");
+        return response;
     }
 
     private static byte[] bytes(String value) {

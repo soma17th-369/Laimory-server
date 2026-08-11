@@ -7,6 +7,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 /** 현재 task token과 Redis ProcessStage 기반 callback 전이를 검증한다. */
 @ExtendWith(MockitoExtension.class)
@@ -93,6 +97,34 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markFailedIfCurrent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
         verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
+    }
+
+    @Test
+    void failedCallback_neverLogsFreeTextErrorFromAi() {
+        // AI의 자유 text error는 사용자 원문이 섞일 수 있다 — bounded numeric code 관측만 남긴다(#281).
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Logger logger = (Logger) LoggerFactory.getLogger(TimelineCallbackService.class);
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            String rawError = "RAW_AI_ERROR_TEXT_281_NEVER_LOG";
+            TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
+            when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+            when(timelineTaskService.markFailedIfCurrent(
+                    TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
+
+            service.handleCallback(VERSION, TASK_ID, TASK_TOKEN,
+                    new DraftTaskCallbackRequest(TaskStatus.FAILED, 9999, rawError));
+
+            assertThat(appender.list)
+                    .anySatisfy(event -> assertThat(event.getFormattedMessage())
+                            .contains("ai reported failure")
+                            .contains("code=" + ExceptionType.AI_REPORTED_FAILURE.code()));
+            assertThat(appender.list).allSatisfy(event ->
+                    assertThat(event.getFormattedMessage()).doesNotContain(rawError));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     @Test
