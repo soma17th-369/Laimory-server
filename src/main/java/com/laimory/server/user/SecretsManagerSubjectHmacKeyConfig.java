@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
@@ -17,6 +16,12 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 
 /**
  * 배포 환경 subject HMAC key provider — {@code app.subject.mode=secretsmanager}에서만 활성화된다.
+ *
+ * <p>환경 분기는 저장소 관례대로 {@code @ConditionalOnProperty}(mode property) 하나가 유일한
+ * 스위치다({@code @Profile} 게이팅 없음). "배포에서 fixture 금지" 계약(계획 §2.9)은 ① deploy
+ * preflight가 {@code APP_SUBJECT_MODE=secretsmanager}를 값까지 고정하고 ②
+ * {@code app.subject.fixture-key} 기본값이 docker properties에만 있어 배포 기본 프로필의 fixture
+ * mode는 무기본값 property로 어차피 기동 실패한다는 이중 장치로 성립한다.
  *
  * <p><b>이 저장소에서 유일하게 context refresh 중 실 AWS 호출을 하는 빈이다.</b>
  * {@code PhotoStorageConfig}가 의도적으로 피해온 성질({@code S3Client}는 생성 시점 AWS 무호출)의
@@ -32,7 +37,6 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
  * Jackson·Base64 예외 메시지는 원문 일부를 포함할 수 있다).
  */
 @Configuration
-@Profile("!docker")
 @ConditionalOnProperty(name = "app.subject.mode", havingValue = "secretsmanager")
 class SecretsManagerSubjectHmacKeyConfig {
 
@@ -46,26 +50,23 @@ class SecretsManagerSubjectHmacKeyConfig {
             @Value("${aws.region:ap-northeast-2}") String region,
             SubjectMappingMetrics subjectMappingMetrics) {
         Timer.Sample sample = subjectMappingMetrics.start();
-        String result = "failed";
-        try {
-            if (secretArn == null || secretArn.isBlank()) {
-                throw new IllegalStateException(
-                        "APP_SUBJECT_SECRET_ARN is required when app.subject.mode=secretsmanager");
-            }
-            // 자격증명은 SDK 기본 체인(DefaultCredentialsProvider — EC2 인스턴스 프로파일/환경변수)으로 해석.
-            // client는 기동 시 이 1회 호출 전용이므로 호출 후 즉시 닫는다.
-            try (SecretsManagerClient client = SecretsManagerClient.builder()
-                    .region(Region.of(region))
-                    .overrideConfiguration(override -> override
-                            .apiCallTimeout(CALL_TIMEOUT)
-                            .apiCallAttemptTimeout(ATTEMPT_TIMEOUT))
-                    .build()) {
-                SubjectHmacKeySnapshot snapshot = loadSnapshot(client, secretArn);
-                result = "success";
-                return snapshot;
-            }
-        } finally {
-            subjectMappingMetrics.recordSecretLoad(sample, result);
+        if (secretArn == null || secretArn.isBlank()) {
+            throw new IllegalStateException(
+                    "APP_SUBJECT_SECRET_ARN is required when app.subject.mode=secretsmanager");
+        }
+        // 자격증명은 SDK 기본 체인(DefaultCredentialsProvider — EC2 인스턴스 프로파일/환경변수)으로 해석.
+        // client는 기동 시 이 1회 호출 전용이므로 호출 후 즉시 닫는다.
+        try (SecretsManagerClient client = SecretsManagerClient.builder()
+                .region(Region.of(region))
+                .overrideConfiguration(override -> override
+                        .apiCallTimeout(CALL_TIMEOUT)
+                        .apiCallAttemptTimeout(ATTEMPT_TIMEOUT))
+                .build()) {
+            SubjectHmacKeySnapshot snapshot = loadSnapshot(client, secretArn);
+            // 성공 latency만 기록한다 — 실패 시 context가 기동하지 않아 Prometheus가 이 meter를
+            // 수집할 수 없다(죽은 관측). 실패 관측은 기동 실패 로그와 deploy preflight가 담당한다.
+            subjectMappingMetrics.recordSecretLoad(sample);
+            return snapshot;
         }
     }
 

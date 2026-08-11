@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * {@code app.subject.mode} 배선 검증({@link ApplicationContextRunner}) — fixture/secretsmanager
@@ -20,6 +19,10 @@ import org.springframework.context.ConfigurableApplicationContext;
  * <p>{@link SubjectLookupKeyDeriver}를 <b>required consumer</b>로 함께 등록하는 것이 핵심이다 —
  * production에서도 무조건 빈이라, 매칭 snapshot provider가 없을 때(오타·미설정) 주입 실패로 컨텍스트가
  * 실제로 실패한다({@code matchIfMissing} 없음 = 배포 환경이 fixture로 조용히 뜨지 않는다는 계약).
+ *
+ * <p>provider 선택 축은 {@code app.subject.mode} property 하나다({@code @Profile} 게이팅 없음) —
+ * 배포의 fixture 금지는 deploy preflight의 mode 값 고정과, fixture-key 기본값이 docker properties에만
+ * 있어 배포 기본 프로필의 fixture 기동이 실패한다는 사실이 담당한다.
  */
 class SubjectHmacKeyWiringTest {
 
@@ -34,12 +37,9 @@ class SubjectHmacKeyWiringTest {
                     SubjectLookupKeyDeriver.class)
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
 
-    private final ApplicationContextRunner dockerRunner = runner.withInitializer(
-            context -> ((ConfigurableApplicationContext) context).getEnvironment().setActiveProfiles("docker"));
-
     @Test
     void fixtureMode_buildsSnapshotFromFixtureKey() {
-        dockerRunner.withPropertyValues(
+        runner.withPropertyValues(
                         "app.subject.mode=fixture",
                         "app.subject.fixture-key=" + FIXTURE_KEY_BASE64)
                 .run(context -> {
@@ -76,15 +76,16 @@ class SubjectHmacKeyWiringTest {
 
     @Test
     void fixtureMode_withoutFixtureKeyProperty_failsContext() {
-        // 배포 기본 프로필에는 fixture 기본값이 없다 — key 없는 fixture 기동은 실패해야 한다.
-        dockerRunner.withPropertyValues("app.subject.mode=fixture")
+        // 배포 기본 프로필에는 fixture 기본값이 없다 — key 없는 fixture 기동은 실패해야 한다
+        // (@Profile 게이팅 제거 후 "배포에서 fixture 금지"를 코드가 담당하는 절반이 이 경로다).
+        runner.withPropertyValues("app.subject.mode=fixture")
                 .run(context -> assertThat(context).getFailure()
                         .hasStackTraceContaining("app.subject.fixture-key"));
     }
 
     @Test
     void fixtureMode_invalidBase64_failsContext() {
-        dockerRunner.withPropertyValues(
+        runner.withPropertyValues(
                         "app.subject.mode=fixture",
                         "app.subject.fixture-key=not-base64!!")
                 .run(context -> assertThat(context).getFailure()
@@ -95,35 +96,13 @@ class SubjectHmacKeyWiringTest {
 
     @Test
     void fixtureMode_keyNotThirtyTwoBytes_failsContext() {
-        dockerRunner.withPropertyValues(
+        runner.withPropertyValues(
                         "app.subject.mode=fixture",
                         "app.subject.fixture-key=c2hvcnQta2V5") // "short-key" — 9바이트
                 .run(context -> assertThat(context).getFailure()
                         .rootCause()
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessageContaining("32 bytes"));
-    }
-
-    @Test
-    void fixtureMode_outsideDockerProfile_failsContext() {
-        runner.withPropertyValues(
-                        "app.subject.mode=fixture",
-                        "app.subject.fixture-key=" + FIXTURE_KEY_BASE64)
-                .run(context -> assertThat(context).getFailure()
-                        .rootCause()
-                        .isInstanceOf(NoSuchBeanDefinitionException.class)
-                        .hasMessageContaining("SubjectHmacKeySnapshot"));
-    }
-
-    @Test
-    void secretsManagerMode_insideDockerProfile_failsContext() {
-        dockerRunner.withPropertyValues(
-                        "app.subject.mode=secretsmanager",
-                        "app.subject.secret-arn=arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:test")
-                .run(context -> assertThat(context).getFailure()
-                        .rootCause()
-                        .isInstanceOf(NoSuchBeanDefinitionException.class)
-                        .hasMessageContaining("SubjectHmacKeySnapshot"));
     }
 
     @Test
