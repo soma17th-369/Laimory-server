@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.common.privacy.RedactionResult;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskTokens;
@@ -27,6 +29,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -228,6 +231,42 @@ class TimelineAiResultServiceTest {
         assertThat(storedTitle).hasSizeLessThanOrEqualTo(255);
         assertThat(storedTitle).doesNotContain("a@b.co").doesNotContain("[REDACTED");
         assertThat(storedTitle).isEqualTo("가".repeat(240) + " ");
+    }
+
+    @Test
+    void storeResult_normalizesLeadingWhitespaceBeforeBoundedRedaction() {
+        // 앞공백 250 + 'a@b.co'는 trim 길이 6이라 shape 검증을 통과한다. trim 없이 255 bounded 치환을
+        // 하면 token 시작(index 250) 앞 절단으로 공백만 남아 transaction trim 후 빈 제목이 저장된다 —
+        // persistence와 같은 normalize를 치환 전에 적용해 token이 보존돼야 한다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+        String title = " ".repeat(250) + "a@b.co";
+        AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, title, null, null,
+                OffsetDateTime.of(DATE.atTime(12, 0), KST), null, List.of("raw-1"))));
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
+
+        ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        assertThat(stored.getValue().events().getFirst().title()).isEqualTo(RedactionType.EMAIL.token());
+    }
+
+    @Test
+    void storeResult_titleBlankAfterRedaction_rejectedBeforeClaim() {
+        // 필수 title이 치환 후 blank면 shape 위반과 같은 400 계열로 거절한다 — token 선점 전이라
+        // RESULT_PENDING이 유지되고 원문 fallback으로 store하지 않는다. 실물 redactor는 normalize 후
+        // blank를 만들지 않으므로 stub으로 invariant guard를 검증한다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        doReturn(new RedactionResult(" ", Map.of())).when(privacyRedactor).redactText(anyString(), anyInt());
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verifyNoInteractions(timelineAiResultTransactionService);
     }
 
     @Test
