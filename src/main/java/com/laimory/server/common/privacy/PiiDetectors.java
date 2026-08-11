@@ -68,9 +68,12 @@ final class PiiDetectors {
     private static final Pattern AREA_PHONE =
             Pattern.compile("(?<![\\d-])0(?:2|[3-6]\\d|70)[ -]?\\d{3,4}[ -]?\\d{4}(?![\\d-])");
 
-    // 계좌번호는 숫자만으로 지우지 않는다 — label 문맥 뒤 10~16자리만 치환한다.
+    // 계좌번호는 숫자만으로 지우지 않는다 — label 문맥이 붙은 10~16자리만 치환한다(label-먼저 형).
     private static final Pattern ACCOUNT_VALUE = Pattern.compile(
             "(?i)(?:계좌\\s*번호|계좌|account\\s*(?:no\\.?|number|#)?|acct)[^0-9\\r\\n]{0,12}(\\d(?:[ -]?\\d){9,15})(?![\\d-])");
+    // 값-먼저 형("110-123-456789 계좌로 송금") — label-먼저 형과 같은 12자 거리 상한을 값 뒤에 적용한다.
+    private static final Pattern ACCOUNT_VALUE_THEN_LABEL = Pattern.compile(
+            "(?i)(?<![\\d-])(\\d(?:[ -]?\\d){9,15})(?![\\d-])[^0-9\\r\\n]{0,12}(?:계좌|account|acct)");
 
     // 알려진 profile URL의 handle 경로 조각. 도메인 앞 경계가 netflix.com 같은 suffix 오탐을 막는다.
     private static final Pattern PROFILE_URL_HANDLE = Pattern.compile(
@@ -82,6 +85,11 @@ final class PiiDetectors {
     private static final Pattern SNS_LABEL_HANDLE = Pattern.compile(
             "(?i)(?:인스타(?:그램)?|카카오톡|카카오|카톡|트위터|페이스북|틱톡|텔레그램|sns)"
                     + "\\s*(?:(?:아이디|id)\\s*(?:[:=]|은|는)?|[:=]|은|는)\\s*([A-Za-z0-9_.]{3,30})(?![A-Za-z0-9_.])");
+    // 값-먼저 형("yun_daily는 내 인스타 아이디") — label-먼저 형과 같은 근접 결합(조사·구분자 필수)을
+    // 값 뒤에 요구한다. 연결어 없이 단순 인접("john_doe 랑 점심")은 handle로 보지 않는다.
+    private static final Pattern SNS_HANDLE_THEN_LABEL = Pattern.compile(
+            "(?i)(?<![A-Za-z0-9_.@])([A-Za-z0-9_.]{3,30})\\s*(?:[:=]|이|가|은|는)\\s*(?:내|제)?\\s*"
+                    + "(?:인스타(?:그램)?|카카오톡|카카오|카톡|트위터|페이스북|틱톡|텔레그램|sns)");
 
     private PiiDetectors() {
     }
@@ -100,9 +108,11 @@ final class PiiDetectors {
         claimWhole(MOBILE_PHONE, text, spans, RedactionType.PHONE);
         claimWhole(AREA_PHONE, text, spans, RedactionType.PHONE);
         claimGroup(ACCOUNT_VALUE, text, spans, RedactionType.ACCOUNT);
+        claimGroup(ACCOUNT_VALUE_THEN_LABEL, text, spans, RedactionType.ACCOUNT);
         claimGroup(PROFILE_URL_HANDLE, text, spans, RedactionType.SOCIAL_ID);
         claimWhole(AT_HANDLE, text, spans, RedactionType.SOCIAL_ID);
         claimGroup(SNS_LABEL_HANDLE, text, spans, RedactionType.SOCIAL_ID);
+        claimGroup(SNS_HANDLE_THEN_LABEL, text, spans, RedactionType.SOCIAL_ID);
         return spans.inOrder();
     }
 
@@ -136,25 +146,67 @@ final class PiiDetectors {
     private static void detectPassports(String text, ClaimedSpans spans) {
         Matcher matcher = PASSPORT.matcher(text);
         while (matcher.find()) {
-            int windowStart = Math.max(0, matcher.start() - PASSPORT_CONTEXT_WINDOW);
-            if (PASSPORT_CONTEXT.matcher(text.substring(windowStart, matcher.start())).find()) {
+            if (hasPassportContext(text, matcher.start(), matcher.end())) {
                 spans.tryClaim(matcher.start(), matcher.end(), RedactionType.PASSPORT);
             }
         }
     }
 
+    /** 형식만으로 모호하므로 값 앞뒤 같은 크기의 bounded window 어느 쪽이든 여권 문맥이 있어야 한다. */
+    private static boolean hasPassportContext(String text, int start, int end) {
+        int windowStart = Math.max(0, start - PASSPORT_CONTEXT_WINDOW);
+        int windowEnd = Math.min(text.length(), end + PASSPORT_CONTEXT_WINDOW);
+        return PASSPORT_CONTEXT.matcher(text.substring(windowStart, start)).find()
+                || PASSPORT_CONTEXT.matcher(text.substring(end, windowEnd)).find();
+    }
+
     private static void detectCards(String text, ClaimedSpans spans) {
         Matcher matcher = CARD_CANDIDATE.matcher(text);
         while (matcher.find()) {
-            String candidate = matcher.group();
-            // 혼합 구분자는 "날짜 전화번호"처럼 서로 다른 숫자 연쇄가 붙은 경우라 카드로 보지 않는다.
-            if (candidate.indexOf(' ') >= 0 && candidate.indexOf('-') >= 0) {
-                continue;
-            }
-            if (passesLuhn(candidate.replaceAll("[ -]", ""))) {
-                spans.tryClaim(matcher.start(), matcher.end(), RedactionType.CARD);
+            int prefixEnd = longestLuhnValidCardPrefixEnd(matcher.group());
+            if (prefixEnd > 0) {
+                spans.tryClaim(matcher.start(), matcher.start() + prefixEnd, RedactionType.CARD);
             }
         }
+    }
+
+    /**
+     * 후보 안에서 단일 구분자만 쓰고 그룹 경계에서 끝나는 가장 긴 13~19자리 Luhn 통과 prefix의
+     * 끝 index를 반환한다(없으면 0). 카드 뒤에 유효기간("... 1111 12/28")이 붙어 후보가 탐욕적으로
+     * 늘어나거나 다른 구분자의 숫자 연쇄가 이어져도 카드 본체를 놓치지 않는다. 반대로 그룹 중간은
+     * 절단하지 않는다 — 구분자 없는 연쇄는 경계를 알 수 없어 통째로만 판정한다(주문번호류 오탐 방지).
+     */
+    private static int longestLuhnValidCardPrefixEnd(String candidate) {
+        // 각 원소 {prefix 끝 index, 그 prefix의 숫자 개수}. 후보는 항상 숫자로 시작·종료한다.
+        List<int[]> groupBoundaries = new ArrayList<>();
+        StringBuilder digits = new StringBuilder(candidate.length());
+        char separator = 0;
+        boolean mixed = false;
+        for (int i = 0; i < candidate.length() && !mixed; i++) {
+            char c = candidate.charAt(i);
+            if (c != ' ' && c != '-') {
+                digits.append(c);
+                continue;
+            }
+            groupBoundaries.add(new int[] {i, digits.length()});
+            if (separator == 0) {
+                separator = c;
+            } else if (separator != c) {
+                // 혼합 구분자부터는 "날짜 전화번호"처럼 서로 다른 숫자 연쇄가 붙은 것으로 본다.
+                mixed = true;
+            }
+        }
+        if (!mixed) {
+            groupBoundaries.add(new int[] {candidate.length(), digits.length()});
+        }
+        String allDigits = digits.toString();
+        for (int b = groupBoundaries.size() - 1; b >= 0; b--) {
+            int digitCount = groupBoundaries.get(b)[1];
+            if (digitCount >= 13 && digitCount <= 19 && passesLuhn(allDigits.substring(0, digitCount))) {
+                return groupBoundaries.get(b)[0];
+            }
+        }
+        return 0;
     }
 
     private static void claimWhole(Pattern pattern, String text, ClaimedSpans spans, RedactionType type) {

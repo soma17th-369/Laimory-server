@@ -48,6 +48,10 @@ class PrivacyRedactorTest {
                 Arguments.of("900101-5123452", RedactionType.FOREIGNER_ID),
                 Arguments.of("여권번호 M12345678", RedactionType.PASSPORT),
                 Arguments.of("passport no. M123A4567", RedactionType.PASSPORT),
+                // 값-먼저 표현 — 문맥 label이 값 뒤에 와도 같은 거리 상한 안이면 치환한다.
+                Arguments.of("M12345678 여권번호", RedactionType.PASSPORT),
+                Arguments.of("110-123-456789 계좌로 송금", RedactionType.ACCOUNT),
+                Arguments.of("yun_daily는 내 인스타 아이디", RedactionType.SOCIAL_ID),
                 Arguments.of("12-34-567890-12", RedactionType.DRIVER_LICENSE),
                 Arguments.of("4111-1111-1111-1111", RedactionType.CARD),
                 Arguments.of("4111 1111 1111 1111", RedactionType.CARD),
@@ -85,6 +89,8 @@ class PrivacyRedactorTest {
             "task token was refreshed",
             // '@' 단독은 handle이 아니다
             "meet @ 3pm",
+            // handle 형식 단어지만 SNS label 문맥이 앞뒤 어디에도 없다
+            "john_doe 랑 점심",
             // rawId·taskId — canonical lowercase UUID는 절대 치환하지 않는다
             "0198a5f0-3c4e-7d2a-8b1c-9e8f7a6b5c4d",
             "12345678-1234-1234-1234-123456789012"})
@@ -103,6 +109,35 @@ class PrivacyRedactorTest {
 
         assertThat(result.text()).isEqualTo("주민등록번호 " + RedactionType.RRN.token());
         assertThat(result.count(RedactionType.RRN)).isEqualTo(1);
+    }
+
+    @Test
+    void cardFollowedByExpiryStillRedactsCardBody() {
+        // 카드+유효기간 표기에서 후보가 뒤의 12까지 탐욕 소비해 18자리 Luhn에 실패해도,
+        // 그룹 경계 기준 prefix 재검증으로 카드 본체(16자리)는 치환돼야 한다.
+        RedactionResult spaced = redactor.redactText("결제 4111 1111 1111 1111 12/28");
+
+        assertThat(spaced.text()).isEqualTo("결제 " + RedactionType.CARD.token() + " 12/28");
+        assertThat(spaced.count(RedactionType.CARD)).isEqualTo(1);
+    }
+
+    @Test
+    void cardWithDashesFollowedByExpiryStillRedactsCardBody() {
+        // 카드(하이픈)와 유효기간(공백 연결)이 섞여도 단일 구분자 prefix까지는 카드로 판정한다.
+        RedactionResult dashed = redactor.redactText("결제 4111-1111-1111-1111 12/28");
+
+        assertThat(dashed.text()).isEqualTo("결제 " + RedactionType.CARD.token() + " 12/28");
+        assertThat(dashed.count(RedactionType.CARD)).isEqualTo(1);
+    }
+
+    @Test
+    void unseparatedCardExpiryRunStaysUnchanged() {
+        // 구분자 없는 숫자 연쇄는 그룹 경계가 없어 중간 절단 재검증을 하지 않는다 —
+        // 주문번호·송장번호류 긴 숫자 오탐을 막는 보수 규칙의 한계를 회귀 fixture로 고정한다.
+        RedactionResult result = redactor.redactText("결제 411111111111111112/28");
+
+        assertThat(result.text()).isEqualTo("결제 411111111111111112/28");
+        assertThat(result.total()).isZero();
     }
 
     @Test
