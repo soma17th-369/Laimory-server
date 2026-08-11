@@ -16,14 +16,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
 /**
- * findOrCreate 계약: 기존 조회 우선, 미존재면 생성, 동시 최초 로그인(UNIQUE 위반)은 재조회로 수렴.
- * Kakao 기존 사용자는 non-null 닉네임만 갱신하고 누락 claim은 기존 값을 보존한다. 인프라 0.
+ * findOrCreate 계약: 기존 조회 우선, 미존재면 NewUserProvisioner로 생성(user+subject mapping 한
+ * transaction), 동시 최초 로그인(UNIQUE 위반)은 재조회로 수렴. Kakao 기존 사용자는 non-null 닉네임만
+ * 갱신하고 누락 claim은 기존 값을 보존한다. 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private NewUserProvisioner newUserProvisioner;
 
     @InjectMocks
     private UserService userService;
@@ -41,19 +45,23 @@ class UserServiceTest {
 
         assertThat(result).isSameAs(existing);
         verify(userRepository, never()).saveAndFlush(any());
+        verify(newUserProvisioner, never()).provision(any(), any(), any(), any());
     }
 
     @Test
-    void findOrCreate_absentUser_savesAndReturnsCreated() {
+    void findOrCreate_absentUser_provisionsAndReturnsCreated() {
         User created = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
         when(userRepository.findByProviderAndProviderUserId(PROVIDER, PROVIDER_USER_ID))
                 .thenReturn(Optional.empty());
-        when(userRepository.saveAndFlush(any())).thenReturn(created);
+        when(newUserProvisioner.provision(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick"))
+                .thenReturn(created);
 
         User result = userService.findOrCreate(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
 
         assertThat(result).isSameAs(created);
-        verify(userRepository).saveAndFlush(any());
+        verify(newUserProvisioner).provision(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
+        // 생성은 provisioner 경유만 — UserService가 직접 insert하지 않는다.
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -61,8 +69,8 @@ class UserServiceTest {
         User winnerRow = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
         when(userRepository.findByProviderAndProviderUserId(PROVIDER, PROVIDER_USER_ID))
                 .thenReturn(Optional.empty())   // 최초 조회: 없음
-                .thenReturn(Optional.of(winnerRow)); // insert 패배 후 재조회: 상대가 만든 행
-        when(userRepository.saveAndFlush(any()))
+                .thenReturn(Optional.of(winnerRow)); // provision 패배 후 재조회: 상대가 만든 행
+        when(newUserProvisioner.provision(any(), any(), any(), any()))
                 .thenThrow(new DataIntegrityViolationException("duplicate key"));
 
         User result = userService.findOrCreate(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
@@ -114,10 +122,11 @@ class UserServiceTest {
         User winnerRow = User.of(Provider.KAKAO, PROVIDER_USER_ID, null, "승자닉");
         when(userRepository.findByProviderAndProviderUserId(Provider.KAKAO, PROVIDER_USER_ID))
                 .thenReturn(Optional.empty())   // 최초 조회: 없음
-                .thenReturn(Optional.of(winnerRow)); // insert 패배 후 재조회: 상대가 만든 행
+                .thenReturn(Optional.of(winnerRow)); // provision 패배 후 재조회: 상대가 만든 행
+        when(newUserProvisioner.provision(any(), any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate key")); // 내 insert 패배
         when(userRepository.saveAndFlush(any()))
-                .thenThrow(new DataIntegrityViolationException("duplicate key")) // 내 insert 패배
-                .thenAnswer(invocation -> invocation.getArgument(0));            // 승자 닉네임 갱신 저장
+                .thenAnswer(invocation -> invocation.getArgument(0)); // 승자 닉네임 갱신 저장
 
         User result = userService.findOrCreate(Provider.KAKAO, PROVIDER_USER_ID, null, "이번닉");
 
@@ -126,12 +135,12 @@ class UserServiceTest {
     }
 
     @Test
-    void findOrCreate_saveFailsAndRefetchEmpty_propagatesOriginalException() {
+    void findOrCreate_provisionFailsAndRefetchEmpty_propagatesOriginalException() {
         DataIntegrityViolationException original = new DataIntegrityViolationException("duplicate key");
         when(userRepository.findByProviderAndProviderUserId(PROVIDER, PROVIDER_USER_ID))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.empty());
-        when(userRepository.saveAndFlush(any())).thenThrow(original);
+        when(newUserProvisioner.provision(any(), any(), any(), any())).thenThrow(original);
 
         assertThatThrownBy(() -> userService.findOrCreate(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick"))
                 .isSameAs(original);

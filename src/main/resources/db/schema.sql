@@ -141,6 +141,18 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 인증 사용자 ↔ 콘텐츠 subject 매핑(#282, 계획 §2.3). raw user_id를 저장하지 않는다 — PK는
+-- 애플리케이션 HMAC-SHA-256("content-subject-lookup:v1" || userId 8-byte BE) 결과라, DB 단독
+-- 유출로는 후보 userId 대입이 어렵다. 감사 컬럼·auto-increment surrogate·정밀 생성 시각을 의도적으로
+-- 두지 않는다(행 자체가 최소 정보 원칙 대상). rotation은 PK·lookup_key_version만 원자 교체한다(subject 불변).
+CREATE TABLE IF NOT EXISTS user_subject_links (
+    user_lookup_key BINARY(32) NOT NULL,             -- HMAC-SHA-256 lookup key(Secrets Manager 비밀키 기반)
+    subject_id BINARY(16) NOT NULL,                  -- 애플리케이션 CSPRNG UUIDv4의 canonical 16바이트
+    lookup_key_version SMALLINT NOT NULL,            -- HMAC key rotation 식별(secret currentVersion)
+    PRIMARY KEY (user_lookup_key),
+    UNIQUE KEY uq_user_subject_links_subject (subject_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 사용자별 User Memory. AI가 만드는 누적 요약을 서버가 해석하지 않고 그대로 보존하는 opaque 문서다.
 -- users의 컬럼이 아니라 별도 테이블인 이유: 문서가 커질 수 있어 users 엔티티 로드(로그인)가 blob을
 -- 끌고 오지 않게 분리한다. 행 존재 = 메모리 있음(제거는 행 삭제), user_id PK로 사용자당 1행.

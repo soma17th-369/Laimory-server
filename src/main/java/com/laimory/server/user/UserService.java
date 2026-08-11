@@ -4,12 +4,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
-/** users leaf 서비스. 자신과 1:1인 UserRepository에만 접근한다. */
+/** users leaf 서비스. 조회·갱신은 1:1인 UserRepository로, 신규 생성은 NewUserProvisioner로만 한다. */
 @Service
 @RequiredArgsConstructor
 public class UserService {
 
     private final UserRepository userRepository;
+    private final NewUserProvisioner newUserProvisioner;
 
     /**
      * (provider, providerUserId)로 사용자를 찾고 없으면 생성한다. Kakao 기존 사용자는 이번 로그인의
@@ -19,15 +20,17 @@ public class UserService {
      * <p>의도적으로 <b>무트랜잭션</b>이다: 동시 최초 로그인 레이스에서 한쪽 insert가 UNIQUE 위반으로 지는데,
      * 합류 트랜잭션 안에서 catch하면 트랜잭션이 rollback-only로 오염돼 같은 트랜잭션의 재조회가 무의미해진다
      * ({@code DailyRecordService.findOrCreateDraft} 주석 참고 — 같은 함정으로 옛 upsert를 폐기한 이력).
-     * 여기선 {@code saveAndFlush}가 repository 프록시의 자체 트랜잭션에서 실행·롤백되고 catch는 그 밖이라
-     * 재조회가 유효하다. <b>호출자는 이 메서드를 둘러싼 트랜잭션 안에서 부르지 않는다.</b>
+     * 여기선 생성이 {@link NewUserProvisioner#provision}의 자체 트랜잭션(user + subject mapping을 함께
+     * commit/rollback)에서 실행되고 catch는 그 밖이라 재조회가 유효하다 — 패자의 provisioner transaction이
+     * 통째로 rollback되므로 orphan subject mapping도 남지 않는다.
+     * <b>호출자는 이 메서드를 둘러싼 트랜잭션 안에서 부르지 않는다.</b>
      */
     public User findOrCreate(Provider provider, String providerUserId, String email, String nickname) {
         return userRepository.findByProviderAndProviderUserId(provider, providerUserId)
                 .map(existing -> refreshKakaoNickname(existing, provider, nickname))
                 .orElseGet(() -> {
                     try {
-                        return userRepository.saveAndFlush(User.of(provider, providerUserId, email, nickname));
+                        return newUserProvisioner.provision(provider, providerUserId, email, nickname);
                     } catch (DataIntegrityViolationException e) {
                         // 동시 최초 로그인: 상대가 먼저 insert — 그 행으로 수렴하고 이번 닉네임을 적용한다.
                         return userRepository.findByProviderAndProviderUserId(provider, providerUserId)
