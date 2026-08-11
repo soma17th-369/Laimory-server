@@ -29,8 +29,9 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   (일반적으로 `@RequiredArgsConstructor`와 `private final` field).
 - leaf service는 대체로 하나의 repository/store/adapter 책임을 감싼다.
 - 여러 domain 작업은 orchestrator가 leaf service를 합성한다.
-- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 대표 규칙은 application code의
-  Redis 직접 접근 금지이며 `RedisAccessArchTest`가 확인한다.
+- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 application code의
+  Redis 직접 접근 금지(`RedisAccessArchTest`)와, subject mapping 내부(repository·lookup key
+  deriver)를 `SubjectMappingService` 외에는 의존 금지(`SubjectMappingAccessArchTest`, #282)다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
 

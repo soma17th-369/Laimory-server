@@ -30,6 +30,8 @@ deploy workflow, preflight, health gate, container, environment injection 또는
    exact-one, 값 비출력 — 아래 Preflight).
 7. nginx no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는 배포를 중단한다.
 8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
+   이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read, `user_subject_links`
+   schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight → upsert 순서를 강제한다.
 9. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
    원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
 10. 기존 `laimory` container를 stop/remove한다.
@@ -91,8 +93,29 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   query redaction 전체 목록 — full-override라 부분 목록이면 기본 서명 4종까지 벗겨지므로 값 고정).
   `OTEL_TRACES_SAMPLER`만 non-empty 유연(부하 테스트 시 ratio 일시 전환 계약).
   `noop`이면 `JAVA_TOOL_OPTIONS`·`OTEL_*` 잔존 금지(스위치만 내려간 "조용한 부분 off" 차단)
+- subject mapping(#282) 3종 — 다른 `.env` 검사와 달리 image pull·UID 검사 뒤, `APP_COMMIT_SHA`
+  upsert·첫 stop 전에 실행된다(harness가 순서 강제):
+  - `APP_SUBJECT_MODE=secretsmanager` 값 고정 exact-one — 배포 환경이 fixture key로 조용히
+    뜨는 사고를 값 자체로 차단한다
+  - `APP_SUBJECT_SECRET_ARN` exact-one + `arn:aws:secretsmanager:` 접두 형식 검사
+  - `AWS_REGION`은 미설정(앱 기본값) 또는 workflow region과 같은 한 줄만 허용하고, `.env`의 AWS
+    credential/profile/endpoint override를 금지한다. host AWS CLI도 env/shared config를 제거한
+    subshell에서 IMDS instance profile만 사용해 앱 container와 runtime identity 경계를 맞춘다
+  - runtime secret read + mapping schema: host instance profile로 `GetSecretValue`를 exit code만
+    확인하고(VersionId 질의, stdout/stderr 폐기 — secret 값은 어떤 경로로도 로그에 닿지 않음),
+    앱이 실제 소비하는 `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` exact-one·non-empty를 확인한 뒤
+    datasource와 같은 `DB_HOST:3306/laimory`에 `mysql:8.0` one-shot container로 접속한다.
+    `user_subject_links`가 정확히 3개 column만 갖고 각 type/nullability가 일치하며,
+    `user_lookup_key` 단일-column PK와 `subject_id` 단일-column UNIQUE인지 1/0으로 판정한다
+    (추가 raw `user_id`, nullable·unsigned type, composite PK/UNIQUE도 실패). password는 `MYSQL_PWD`
+    env 전달로 docker 인자에 값을 넣지 않고 row·값도 출력하지 않는다. `ddl-auto=validate`라 schema
+    불일치 시 "새 앱 기동 불가 + 구 컨테이너 이미 중지"
+    다운타임이 되므로 stop 전에 잡는다. cleanup의 `docker image prune -af`가 어떤 container도
+    참조하지 않는 `mysql:8.0` image를 매 배포 후 제거하므로, 이 검사는 배포마다 `mysql:8.0`을
+    다시 내려받는다
 
-`DB_*`, `REDIS_*`, `KAKAO_REST_API_KEY`는 현재 preflight하지 않는다.
+`REDIS_*`, `KAKAO_REST_API_KEY`는 현재 preflight하지 않는다. 실제 앱 datasource가 소비하는 `DB_*`
+3종은 #282 subject schema 검사가 presence(exact-one·non-empty)와 실제 DB 접속까지 함께 검증한다.
 dev는 Kakao geo mode를 켜므로 API key 누락 시 기존 container 제거 후 새 앱 boot가 실패할 수 있다.
 Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env`를 noop으로 되돌린 재배포다
 (FID 등록 API/DB는 유지).

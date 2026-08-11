@@ -147,6 +147,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
 | 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `-2001`이고 principal userId가 service까지 전파된다. |
 | 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 요청자 userId다. 폴링 소유권 대조와 콜백 terminal 전이의 기준이다. |
+| 콘텐츠 주체 | Subject (`SubjectId`) | 현재 구현 | 인증 userId와 분리된 콘텐츠 소유 식별자다. CSPRNG UUIDv4를 감싼 불변 value type이며 영속 표현은 canonical 16바이트뿐이다. `toString`이 원문을 노출하지 않고, 로그·예외에 userId·lookup key와 함께 남기지 않는다. 콘텐츠 owner 컬럼의 subject 전환은 후속(#283~)이다. |
+| 주체 매핑 | Subject Mapping | 현재 구현 | `user_subject_links` 행 — HMAC-SHA-256 lookup key(BINARY(32) PK)로 userId를 subject로 해석한다. `SubjectMappingService`만 접근하며, 신규 사용자 생성 transaction에서만 만들어지고 일반 경로(`getRequired`)는 누락을 자동 생성 없이 내부 불변식 위반으로 fail-closed한다. HMAC key rotation은 PK·version 원자 교체이고 subject는 불변이다. |
 
 ## 푸시 알림
 

@@ -200,6 +200,10 @@ Spring JSON stdout
   - `laimory.timeline.photo.delete.enqueue{result=scheduled|shared_retained|invalid_skipped}`:
     root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
+  - `laimory.subject.secret.load{result=success|failed}`: 기동 시 Secrets Manager HMAC snapshot
+    load timer. 실패도 기록한 뒤 context 기동은 fail-closed한다
+  - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
+    subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
   - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
     unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회
@@ -213,8 +217,9 @@ Spring JSON stdout
     (Resilience4j binder의 state/calls gauge와 별도, 의미 중복 계수 없음)
 - Reactor Netty native `reactor.netty.connection.provider.*`(total/active/idle/pending/max/max.pending)는
   전용 pool 이름 `kakao-local`로 활성화돼 있다(kakao mode 한정).
-- custom label은 고정 `result`, build info의 `commit`, geo 전용 `outcome`/`failure_kind`/`endpoint`/
-  `attempt`/`from`/`to`만 사용한다. userId/taskId/transactionId/FID/좌표/주소/raw URL·query/
+- custom label은 고정 `result`·`operation`, build info의 `commit`, geo 전용
+  `outcome`/`failure_kind`/`endpoint`/`attempt`/`from`/`to`만 사용한다.
+  userId/taskId/transactionId/FID/subject/lookup key/좌표/주소/raw URL·query/
   자유 입력/exception message는 tag로 쓰지 않는다.
 - Fake AI callback은 URI template을 보존하며, Kakao WebClient의 URI function도 좌표·주소 query를
   low-cardinality tag로 만들지 않는다.
