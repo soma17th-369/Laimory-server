@@ -31,6 +31,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
    검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). source item도
    같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
+   `rawId`는 canonical lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용하고 위반은 400 `-400`이다.
+   임의 문자열에 개인정보가 실리는 것을 막는 경계라 오류 메시지에 rawId 원문을 싣지 않으며, 허용값은
+   서버 정규화 없이 그대로 저장한다.
 4. UUIDv7 `taskId`와 최초 입력 조회용 256-bit `taskToken`을 만들고(token 원문은 dispatch, SHA-256 hash는
    Redis용), SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
@@ -46,6 +49,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
+   staging payload는 enrich 결과의 textual leaf를 `PrivacyRedactor.redactTree`로 v1 치환한 것만 저장한다
+   (`clientPhotoUri`만 storage 원문 보존). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
+   전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
+   payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
 7. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
@@ -79,9 +86,14 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ### AI input, result and callback
 
 1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
-   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 성공하면 새 token hash와
+   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
+   payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
+   entity·DB·앱 응답은 원문 유지). 성공하면 새 token hash와
    `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다.
-2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): 새 callback token hash와
+2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·callback token 선점 전에
+   Event `title`/`subtitle`/`question`을 255자 token-aware bounded로 v1 치환한 요청 사본을 만들고 이후
+   단계는 치환본만 본다 — 치환 실패는 token 미선점·`RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
+   새 callback token hash와
    `CALLBACK_PENDING`을 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction
    INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. 저장 예외면 가능한 경우 이전
    result token hash와 RESULT_PENDING으로 복구한다. 성공하면 callback token 원문을 응답 body에 반환한다.
@@ -138,6 +150,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   DRAFT 상태를 preflight한 뒤 별도 transaction service가 다시 소유권·DRAFT를 확인하고 Event/memo 수정 +
   PHOTO Item/junction 추가를 하나의 transaction으로 commit한다. 두 경로 모두 날짜 Redis guard를
   취득하지 않는다.
+- `photosToAdd`의 rawId는 draft source와 같은 canonical lowercase UUID 규칙(`RawIds`)으로 검증하고
+  위반은 400이다(오류 메시지에 원문 없음).
 - request rawId는 입력 순서의 첫 항목을 사용한다. 같은 record의 같은 rawId가 non-PHOTO면 400, PHOTO면
   기존 Item을 재사용하고 대상 Event에 이미 연결됐으면 no-op이다. legacy PHOTO 중복은 대상 Event 연결 행을
   우선하고 없으면 가장 작은 Item ID를 고른다. 신규 후보끼리 filename이 중복되면 400이다.
@@ -227,8 +241,17 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
   행 PK 제외, 시각은 record timezone offset). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
   없고 circuit breaker도 두지 않는다. 재시도는 다음날 배치가 담당한다.
-- 결과 적용은 token 검증 → base 지문 대조 → 문서 전체 교체 순이다. 지문이 다르면 그 사이 다른 날짜의
-  갱신이 문서를 교체했다는 뜻이라 409(`-1017`)로 폐기한다. 성공·실패 어느 쪽이든 task와 guard를 지우므로
+- **접수 body의 텍스트는 v1 privacy 치환본이다** — base 문서(`userMemory`)는 `redactTree`, Event
+  `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이다. DB에는 사용자 수정
+  원문이 남고 AI 전달 DTO에서만 치환한다. 치환된 DTO는 task 저장 전에 완성되므로 치환 실패는
+  task 저장·dispatch 없이 전파되고 그 날들은 pending에 남는다(원문 fallback 없음). base 지문
+  (`baseMemoryHash`)은 접수 body의 치환본이 아니라 **DB 원본 문서**로 계산한다 — 결과 endpoint의 지문
+  대조가 원본 기준이라야 유지된다.
+- 결과 적용은 token 검증 → base 지문 대조 → `redactTree` 치환 → 문서 전체 교체 순이다. 지문이 다르면
+  그 사이 다른 날짜의
+  갱신이 문서를 교체했다는 뜻이라 409(`-1017`)로 폐기한다. 치환 실패는 원문 fallback 없이 기존 문서를
+  유지하고 작업만 종결해 pending을 복구한다(다음 배치가 전체 흐름 재시도). 성공·실패 어느 쪽이든 task와
+  guard를 지우므로
   중복·뒤늦은 결과는 404(`-1001`)가 된다. 이 경로는 `daily_records`를 건드리지 않는다.
 
 ### Retention and cleanup
@@ -250,6 +273,13 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
+- 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(`redactTree`, `clientPhotoUri`만
+  원문), AI 결과 Event text(255자 bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback
+  없이 그 단계 전체를 중단한다(fail-closed).
+- 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
+  유지하고 AI 전달 DTO 조립에서만 치환한다.
+- `rawId`는 draft source·Event PATCH PHOTO 양쪽에서 canonical lowercase UUID(version 무관)만
+  허용한다(위반 400, 허용값 무정규화 저장).
 - 저장 전이와 User Memory 교체는 하나의 transaction이 아니다 — 저장 API가 전이를, 결과 API가 교체를
   각각 commit한다. User Memory는 저장 성패와 무관한 보조 데이터다.
 - User Memory 갱신 접수 body와 base 지문은 사용자 guard를 잡은 뒤에 만든다.

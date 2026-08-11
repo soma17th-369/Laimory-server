@@ -58,7 +58,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. 서버 내부 행 식별자이며 AI에는 노출하지 않는다(AI는 `rawId`로만 식별한다). |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. UUIDv7은 client convention이며 서버는 blank와 길이만 검증한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, Event PATCH의 PHOTO 추가는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, Event PATCH의 PHOTO 추가는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 결과에서 Event에 연결한 staging source item이다. 서버 결과 저장 transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -85,7 +85,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 파일명 | filename | 현재 구현 | DB에 저장하는 `{uuidv7}.{jpg|png|webp}` 형식의 최소 사진 식별자다. |
-| 클라이언트 사진 URI | clientPhotoUri | 현재 구현 | 기기 로컬 URI다. 서버는 해석하지 않고 저장·echo하며 `photoUrl`과 다른 layer다. |
+| 클라이언트 사진 URI | clientPhotoUri | 현재 구현 | 기기 로컬 URI다. 서버는 해석하지 않고 저장·echo하며 `photoUrl`과 다른 layer다. storage redaction에서 원문을 보존하는 유일한 제외 필드지만, AI 입력 조회 응답에서는 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 치환한다(DB·앱 응답은 원문). |
 | 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{sha256hex(userId)}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
@@ -138,7 +138,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 갱신한다. Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다. `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장이 갱신을 유발하지만 저장과 **같은 transaction이 아니다** — 저장 API는 async로 접수를 깨운 뒤 끝나고(사용자 guard를 못 잡으면 그때 대기 큐에 남겨 하루 1회 배치가 다시 시도), AI가 결과를 들고 오면 별도 endpoint가 문서 전체를 교체한다. 부분 병합과 앱 노출 API는 여전히 없다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `users` 컬럼이 아니라 별도 `user_memories` 테이블(사용자당 1행, 행 존재=메모리 있음)이며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장이 갱신을 유발하지만 저장과 **같은 transaction이 아니다** — 저장 API는 async로 접수를 깨운 뒤 끝나고(사용자 guard를 못 잡으면 그때 대기 큐에 남겨 하루 1회 배치가 다시 시도), AI가 결과를 들고 오면 별도 endpoint가 문서 전체를 교체한다. 부분 병합과 앱 노출 API는 여전히 없다. |
 | 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |
@@ -155,6 +155,13 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 푸시 등록 | Push Registration | 현재 구현 | 사용자 한 명의 활성 앱 설치(FID) 하나를 나타내는 `push_registrations` 행이다. 행 존재가 활성이고 해제·영구 무효는 행 삭제다. 사용자 1:N이며 FID 하나는 한 시점 단일 owner다(계정 전환 시 현재 인증 사용자로 원자 재결합). |
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
+
+## 개인정보 치환
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 개인정보 치환기 | Privacy Redactor | 현재 구현 | v1 금지 유형을 고정 token으로 바꾸는 상태 없는 공용 component(`common.privacy.PrivacyRedactor`)다. 저장(draft staging·AI 결과·User Memory)과 AI 전달 경계가 같은 인스턴스를 공유한다. 원문·매치 문자열을 예외·로그·metric에 담지 않고 유형별 occurrence 수만 집계하며, 기존 token literal을 보호해 멱등이다. 길이 상한 경계(Event text 255자·memo 500자)에서는 token literal을 중간에서 자르지 않는 token-aware bounded 치환을 쓴다(원문 fallback 없음). |
+| 치환 토큰 | Redaction Token | 현재 구현 | `RedactionType`이 소유하는 `[REDACTED_*]` literal 11종(PHONE·EMAIL·RRN·FOREIGNER_ID·PASSPORT·DRIVER_LICENSE·CARD·ACCOUNT·SECRET·SOCIAL_ID·DEVICE_URI)이다. 저장·AI 전달 경계가 공유하는 계약 문자열이라 enum에서만 정의한다. `DEVICE_URI`는 텍스트 자동 탐지가 없는 상수 전용 유형으로, AI 입력 조회의 `clientPhotoUri` 값 치환에만 쓴다. |
 
 ## 사용 금지 표현
 

@@ -25,6 +25,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
 - draft source item의 `startAt`은 전 타입 필수이고 `endAt`은 nullable이다(누락 `startAt`은 저장·외부
   호출 전 400).
+- `rawId`는 draft source와 Event PATCH `photosToAdd` 양쪽에서 canonical lowercase UUID(8-4-4-4-12,
+  version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고 오류 메시지에 rawId 원문을
+  싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
+- 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(enrich본 `redactTree`,
+  `clientPhotoUri`만 storage 원문), AI 결과 Event `title`/`subtitle`/`question`(255자 token-aware
+  bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를 중단한다
+  (fail-closed — draft는 부수효과 전무, AI 결과는 callback token 미선점, User Memory는 task/dispatch
+  미생성 또는 기존 문서 유지).
+- 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
+  유지하고 AI 전달 DTO 조립에서만 치환한다. User Memory base 지문은 접수 body의 치환본이 아니라
+  DB 원본 문서로 계산한다.
 - 지오코딩 부분 실패 품질 판정은 materialize된 unique coordinate 최종 outcome 기준이다 — `U>0`에서
   `5F > U`(실패 20% 초과, 정수 교차곱·정확히 20%는 허용) 또는 시간순 coordinate observation
   (STAY·MOVEMENT START는 `startAt`, MOVEMENT END는 `endAt`-or-`startAt`; `observationAt→rawId→START<END`
@@ -131,6 +142,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   SUCCESS/FAILED로 종결하는 책임은 콜백만 가진다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
+- callback·User Memory 결과의 자유 text `error`는 사용자 원문이 섞일 수 있어 저장·클라이언트 노출은
+  물론 application log에도 남기지 않는다(수신 후 폐기 — taskId와 bounded numeric code만 로깅).
 - SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.
 - terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
 - 결과 저장 commit 후 callback 전 AI process 종료 시 원 task는 PROCESSING TTL로 만료되고 저장된 graph는

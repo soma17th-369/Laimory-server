@@ -33,7 +33,9 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - Actuator는 app port와 분리된 9090에서 health·Prometheus endpoint만 노출한다. 애플리케이션 인증이
   아니라 private network와 source-limited SG가 접근 경계다.
 - 허용된 JSON request/response body만 512 KiB 제한 캡처 후 text preview로 log에 남긴다.
-  query string, 민감 header, token·credential·presigned URL 원문은 남기지 않는다.
+  query string, 민감 header, token·credential·presigned URL 원문은 남기지 않으며, 사용자 사생활 원문을
+  통째로 담는 지정 timeline·AI endpoint의 body는 고정 placeholder로 전체 마스킹한다
+  (목록은 observability).
 - Docker image build는 test를 제외하며 PR CI가 `./gradlew build`를 담당한다.
 - 자동 애플리케이션 배포는 dev의 image/deploy 관련 path에만 실행되며 health failure 자동 rollback은 없다.
 - dev monitoring alert rule은 관련 path merge에서만 S3 release와 SSM 적용이 자동 실행되며,

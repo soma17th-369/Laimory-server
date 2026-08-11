@@ -58,8 +58,9 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
   application log·예외 메시지에 남기지 않는다. `accepted`는 FCM 접수 성공이지 단말 수신·노출 성공이
   아니며, 발송 결과 summary는 무효 등록 DB 정리 전에 남긴다(sender/notifier unit test가 고정).
 
-**요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀만: token, password, credential, presigned URL,
-세션 값.** query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302
+**요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀(token, password, credential, presigned URL,
+세션 값)과 사용자 사생활 원문을 통째로 담는 지정 endpoint body(#281 — 아래 전체 마스킹 목록)다.**
+query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302
 `Location`의 `app_code`도 기록하지 않는다. 향후 header 로깅은 별도 마스킹·보안 검토 없이는 추가하지 않는다.
 금지 대상을 예외 메시지에도 넣지 않는다.
 
@@ -79,8 +80,15 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
 - 문자열 값의 대소문자 무관 `X-Amz-` 검사는 필드명 마스킹이 놓친 presigned S3 URL을 위한 denylist
   백스톱이다. 현재 사진 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
   파라미터도 별도 보안 검토한다.
-- `/api/v\d+/auth/(token|refresh|logout)`의 non-empty JSON request는 파싱하지 않고
-  `[masked auth body]`로 전체 마스킹한다. 비정상 auth body의 형태·누락/미지 필드·원문·fingerprint는
+- **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
+  `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
+  사용자 사생활 원문을 통째로 담는 지정 11개 endpoint의 body는 파싱 시도 없이 고정
+  `[masked privacy body]`로 전체 마스킹한다(#281) — request 6개(draft 생성 POST, Event PATCH,
+  memo PUT, AI timeline result POST, AI callback POST, User Memory result POST), response 5개
+  (draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET). malformed·oversize·비JSON·
+  empty도 같은 placeholder다. AI input 응답(`GET /s/.../input`)은 대상이 아니다 — 저장 시점에 이미
+  privacy 치환된 서버간 응답이다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
+  비정상 body의 형태·누락/미지 필드·원문·fingerprint는
   access logging 범위가 아니며 status/errorCode/transactionId/clientIp로 조사한다.
 - request cache는 MVC가 실제로 읽은 bytes만 가진다. 404/405/415처럼 body를 읽기 전에 거절하면
   client가 bytes를 보냈어도 `requestBody`가 null일 수 있고, malformed JSON은 소비된 부분 또는 전체가
@@ -89,18 +97,18 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `[unavailable: unhandled exception]`로 남긴다. 이후 container `/error` body는 현재 한 줄 access log에서
   관찰하지 않는다.
 
-body에는 위치·건강·알림 본문·기기 사진 URI 등 개인정보가 들어갈 수 있고 `clientIp`·`userId`와 결합된다
+위치·건강·알림 본문·기기 사진 URI 등 사용자 사생활 원문을 통째로 담는 timeline·AI 경로의 body는 위
+11개 endpoint 전체 마스킹으로 access log에 남지 않는다. 마스킹 밖 경로의 body에도 개인 데이터가 실릴
+수 있고 `clientIp`·`userId`와 결합된다
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
 개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
 
-polling GET도 response body를 기록한다. `FAILED`도 HTTP 200 envelope일 수 있으므로 비-2xx만 기록하는
-정책은 동등한 진단 대안이 아니다. 2026-07-17 dev rollout에서는 Android polling 설정을 확보하지 못했지만,
-직전 7일 live access log의 polling GET이 2건이고 아래 대표 SUCCESS 기준 30 MB에 약 3,028건이 들어가며
-dev 전용·실사용자 미도입 상태라 전체 response body 기록을 유지하기로 결정했다. 실사용자 도입 전이나
-polling 트래픽이 유의미하게 증가하면 client interval·terminal 중단·동시 task 수를 다시 확보해 제외 여부를
-재검토한다.
+polling GET response body는 privacy 마스킹(#281)부터 `[masked privacy body]`다 — 이벤트 제목·부제·
+질문·payload 등 사용자 사생활 원문을 통째로 담기 때문이다. 2026-07-17의 "전체 response body 기록 유지"
+결정은 이 마스킹으로 뒤집혔고, FAILED 진단은 body 대신 status/errorCode/exceptionType/transactionId로
+한다. 아래 preview 상한 산정 수치는 마스킹 도입 전 polling body 기준의 기록이다.
 
 2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함, preview 8,192자)는
 `PROCESSING` 652 B, 12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy preview
