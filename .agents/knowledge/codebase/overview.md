@@ -32,13 +32,14 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 | Package | Responsibility |
 |---|---|
 | `timeline` | 비동기 timeline draft, event/item 영속화, 사진 업로드와 cleanup |
-| `auth`, `user` | Google/Kakao OIDC, app handoff code, access/refresh token과 사용자 |
+| `auth`, `user` | Google/Kakao OIDC, app handoff code, access/refresh token과 사용자, 콘텐츠 subject 매핑(#282) |
 | `geo` | Kakao Maps enrich와 noop provider |
 | `appconfig` | 공개 intro 설정 |
 | `common` | response envelope, error, transaction ID, Redis gateway, privacy redaction(v1 token 치환) |
 | `config` | Security, OpenAPI, async, scheduling, JPA auditing |
 
-외부 연동은 Google/Kakao OIDC, Kakao Maps, S3, CloudFront, MySQL, Redis다.
+외부 연동은 Google/Kakao OIDC, Kakao Maps, S3, CloudFront, Secrets Manager(배포 모드에서 기동 시
+subject HMAC key 1회 로드), MySQL, Redis다.
 AI dispatcher는 현재 `noop`과 dev/test용 `fake`만 존재한다.
 
 dev 배포는 `dev` push에서 GitHub Actions가 ECR image를 만들고 SSM으로 EC2에 배포한다.

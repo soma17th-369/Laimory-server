@@ -27,6 +27,15 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - dev와 prod가 Redis를 공유하므로 dev는 환경 prefix로 격리한다.
 - 기본 Spring profile은 원격 의존성을 기대한다. 로컬 실행은 `docker` profile을 사용한다.
 - DB·Redis·JWT·OAuth의 필수 설정 일부는 startup에서 fail-fast한다.
+- subject 매핑 HMAC key(#282)의 `app.subject.mode`는 배포 기본 프로필에 기본값이 없어 미설정이면
+  기동 실패한다. provider 선택은 mode property 단일 축이다(`@Profile` 게이팅 없음) — fixture-key
+  기본값은 docker profile만 소유해 배포 기본 프로필의 fixture mode는 무기본값 property로 기동
+  실패하고, deploy preflight가 `APP_SUBJECT_MODE=secretsmanager` 값 고정과
+  `SPRING_PROFILES_ACTIVE`의 docker 포함 금지를 함께 강제한다. `secretsmanager` 모드는 기동 시 Secrets Manager
+  `GetSecretValue`를 정확히 1회 호출해 32-byte key·version schema 검증 실패 시 기동을 실패시킨다 —
+  이 저장소에서 유일하게 context refresh 중 실 AWS를 호출하는 빈이며(S3 client는 생성 시점 무호출),
+  요청 경로 재호출은 없고 rotation 반영은 secret 갱신 + 재기동이다. AWS SDK `secretsmanager` 모듈은
+  기존 BOM으로 버전을 관리한다.
 - Swagger는 기본 off이고 dev/local에서만 켠다.
 - AI mode는 현재 `noop|fake`뿐이며 production dispatcher가 없다.
 - 기본 profile은 JSON stdout, local docker profile은 text log를 사용한다.

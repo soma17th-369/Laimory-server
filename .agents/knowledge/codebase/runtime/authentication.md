@@ -52,6 +52,10 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
      읽고(blank·비문자열은 null) UserInfo endpoint는 호출하지 않는다. email은 수집하지 않는다(콘솔 권한 없음).
    - 기존 Kakao 사용자는 재로그인 시 non-null 닉네임으로 갱신하고 누락 claim은 기존 값을 보존한다.
      Google 기존 사용자는 갱신 없이 반환한다.
+   - 신규 사용자 생성은 `NewUserProvisioner`의 단일 transaction이 user insert와 subject mapping
+     insert(#282, `user_subject_links`)를 함께 commit/rollback한다 — 실패 시 부분 user나 orphan
+     mapping이 남지 않는다. `UserService.findOrCreate`의 무트랜잭션 catch-재조회 동시 로그인
+     수렴은 유지된다(UNIQUE 패자는 provisioner transaction 전체가 rollback된 뒤 승자 행으로 수렴).
 2. 앱이 verifier에서 만든 challenge로 login 시작 주체를 바인딩한다.
 3. login 성공 뒤 60초 App Code를 Redis hash key로 저장하고 GETDEL로 소비한다.
 4. 교환 성공 시 자체 access JWT와 opaque refresh token을 발급한다.
@@ -81,6 +85,8 @@ handoff를 그대로 사용한다.
   Redis terminal 전이를 수행한다.
 - 고정 fallback(`TimelineDefaults.DEFAULT_USER_ID=0`)은 제거됐다. 기존 user 0 데이터는 인증 API에서
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
+- 콘텐츠 subject(`SubjectId`, `user_subject_links` — #282)는 principal이 아니다. 인증·전파 대상은
+  raw `Long` userId 그대로이며, 콘텐츠 owner·PHOTO 호출 경로의 subject 전환은 후속(#283~)이다.
 
 ## Invariants
 
@@ -90,6 +96,8 @@ handoff를 그대로 사용한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
 - principal은 별도 래퍼 없는 `Long` userId다 — `@AuthenticationPrincipal(errorOnInvalidType = true) Long`과
   1:1이어야 한다(String principal을 만드는 테스트 헬퍼 `user()` 사용 금지, `AuthTestSupport` 사용).
+- access JWT의 `sub` claim은 raw userId다 — 콘텐츠 subject를 token·principal에 넣지 않으며,
+  #282는 인증 계약과 인증 도메인 스키마(users·refresh_tokens)를 바꾸지 않는다.
 
 ## Update When
 

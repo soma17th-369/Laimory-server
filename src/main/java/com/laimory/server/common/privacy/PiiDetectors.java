@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 
 /**
  * v1 유형별 text 탐지기. 계획 §1의 고정 순서(placeholder 보호 → SECRET → EMAIL →
- * 법적 식별번호 → CARD → PHONE → 문맥 기반 ACCOUNT/SOCIAL_ID)로 원문 위 구간을 선점한다.
+ * 법적 식별번호 → CARD → PHONE → 문맥 기반 ACCOUNT → 형식 기반 SOCIAL_ID)로 원문 위 구간을 선점한다.
  *
  * <p>앞선 유형이 선점한 구간과 겹치는 뒤 유형의 match는 버린다. 매치 문자열·전후 문맥을
  * 예외 메시지·로그·metric에 절대 담지 않는다.
@@ -82,15 +82,6 @@ final class PiiDetectors {
                     + "/@?([A-Za-z0-9_.\\-]{2,30})");
     private static final Pattern AT_HANDLE = Pattern.compile(
             "(?<![A-Za-z0-9._%+-])@[A-Za-z0-9_][A-Za-z0-9_.]{1,29}(?<!\\.)");
-    private static final Pattern SNS_LABEL_HANDLE = Pattern.compile(
-            "(?i)(?:인스타(?:그램)?|카카오톡|카카오|카톡|트위터|페이스북|틱톡|텔레그램|sns)"
-                    + "\\s*(?:(?:아이디|id)\\s*(?:[:=]|은|는)?|[:=]|은|는)\\s*([A-Za-z0-9_.]{3,30})(?![A-Za-z0-9_.])");
-    // 값-먼저 형("yun_daily는 내 인스타 아이디") — label-먼저 형과 같은 근접 결합(조사·구분자 필수)을
-    // 값 뒤에 요구한다. 연결어 없이 단순 인접("john_doe 랑 점심")은 handle로 보지 않는다.
-    private static final Pattern SNS_HANDLE_THEN_LABEL = Pattern.compile(
-            "(?i)(?<![A-Za-z0-9_.@])([A-Za-z0-9_.]{3,30})\\s*(?:[:=]|이|가|은|는)\\s*(?:내|제)?\\s*"
-                    + "(?:인스타(?:그램)?|카카오톡|카카오|카톡|트위터|페이스북|틱톡|텔레그램|sns)");
-
     private PiiDetectors() {
     }
 
@@ -111,8 +102,6 @@ final class PiiDetectors {
         claimGroup(ACCOUNT_VALUE_THEN_LABEL, text, spans, RedactionType.ACCOUNT);
         claimGroup(PROFILE_URL_HANDLE, text, spans, RedactionType.SOCIAL_ID);
         claimWhole(AT_HANDLE, text, spans, RedactionType.SOCIAL_ID);
-        claimGroup(SNS_LABEL_HANDLE, text, spans, RedactionType.SOCIAL_ID);
-        claimGroup(SNS_HANDLE_THEN_LABEL, text, spans, RedactionType.SOCIAL_ID);
         return spans.inOrder();
     }
 

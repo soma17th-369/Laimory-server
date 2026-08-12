@@ -6,6 +6,10 @@
 # LAIMORY_ENV_FILE / LAIMORY_FCM_CRED_FILE seam으로 운영 경로 대신 fixture 경로를 준다.
 # 검증 계약: 계획 #197의 T1~T10 — exact-one preflight fail-closed, APP_COMMIT_SHA 원자 upsert,
 # pre-stop 실패의 .env/SHA 보존, secret 비출력, 모든 종료 경로의 prune -af 1회와 원래 status 보존.
+# T5d(#282): subject mapping preflight — APP_SUBJECT_MODE=secretsmanager 고정, secret ARN 형식,
+# region/runtime-role 일치, secret read, DB_* presence와 user_subject_links schema 검사의 fail-closed·값 비출력.
+# T5e(#282 리뷰): secret 내용 계약 — 앱 parse()와 동일 규칙(JSON object·version·32-byte key·previous 쌍·
+# SecretString 부재)의 fail-closed·항목 이름만 진단·payload 비출력, SPRING_PROFILES_ACTIVE docker 가드.
 #
 # 실행: bash .github/scripts/test-deploy-contract.sh  (macOS bash 3.2 / Linux bash 호환)
 set -u
@@ -17,6 +21,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 FAKE_SHA="1234567890abcdef1234567890abcdef12345678"
 SENTINEL="SENTINEL_SECRET_XYZZY"
+# 합성 base64 key fixture(실제 secret 아님): 32바이트 2종(유효)과 31바이트(오염) — 앱 parse() 계약용.
+B64_KEY_32A="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+B64_KEY_32B="QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI="
+B64_KEY_31="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ=="
 PASS=0
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -82,14 +90,20 @@ ln_of() { grep -n "$1" "$SCRIPT_FILE" | head -1 | cut -d: -f1; }
 TRAP_LN=$(ln_of 'trap cleanup EXIT')
 FIRST_CHECK_LN=$(ln_of 'JWT_SECRET')
 PULL_LN=$(ln_of '^docker pull ')
+SUBJECT_LN=$(ln_of 'APP_SUBJECT_MODE')
+SCHEMA_LN=$(ln_of 'mysql:8.0')
 MKTEMP_LN=$(ln_of 'mktemp')
 STOP_LN=$(ln_of '^docker stop laimory')
-{ [ -n "$TRAP_LN" ] && [ -n "$FIRST_CHECK_LN" ] && [ -n "$PULL_LN" ] && [ -n "$MKTEMP_LN" ] && [ -n "$STOP_LN" ]; } \
+{ [ -n "$TRAP_LN" ] && [ -n "$FIRST_CHECK_LN" ] && [ -n "$PULL_LN" ] && [ -n "$SUBJECT_LN" ] \
+  && [ -n "$SCHEMA_LN" ] && [ -n "$MKTEMP_LN" ] && [ -n "$STOP_LN" ]; } \
   || fail "order: expected markers not found in expanded script"
 [ "$TRAP_LN" -lt "$FIRST_CHECK_LN" ] || fail "order: trap must be installed before first failable check"
+[ "$PULL_LN" -lt "$SUBJECT_LN" ] || fail "order: subject preflight must run after docker pull"
+[ "$SUBJECT_LN" -lt "$SCHEMA_LN" ] || fail "order: mode/ARN checks must precede the schema check"
+[ "$SCHEMA_LN" -lt "$MKTEMP_LN" ] || fail "order: subject schema check must run before APP_COMMIT_SHA upsert"
 [ "$PULL_LN" -lt "$MKTEMP_LN" ] || fail "order: APP_COMMIT_SHA upsert must run after docker pull"
 [ "$MKTEMP_LN" -lt "$STOP_LN" ] || fail "order: APP_COMMIT_SHA upsert must run before docker stop"
-ok "T1/order: single --env-file run without -e; trap->preflight->pull->upsert->stop"
+ok "T1/order: single --env-file run without -e; trap->preflight->pull->subject-preflight->upsert->stop"
 
 # --- 4. fake PATH stubs ---
 STUB="$WORK/stub"
@@ -101,7 +115,15 @@ echo "docker $*" >> "${DOCKER_LOG:?}"
 case "$1" in
   login) cat >/dev/null 2>&1 || true; exit "${FAKE_LOGIN_EXIT:-0}" ;;
   pull) exit "${FAKE_PULL_EXIT:-0}" ;;
-  run) if [ "$2" = "--rm" ]; then exit "${FAKE_UID_CHECK_EXIT:-0}"; else exit "${FAKE_RUN_EXIT:-0}"; fi ;;
+  run)
+    # subject schema preflight의 mysql:8.0 one-shot run은 UID check와 별도 seam으로 제어한다.
+    # 성공 시 schema 질의의 exact-shape 판정(기본 1)만 stdout으로 낸다 — row/값 출력 없음.
+    case " $* " in
+      *" mysql:8.0 "*)
+        [ "${FAKE_MYSQL_EXIT:-0}" = "0" ] && echo "${FAKE_MYSQL_OUTPUT:-1}"
+        exit "${FAKE_MYSQL_EXIT:-0}" ;;
+    esac
+    if [ "$2" = "--rm" ]; then exit "${FAKE_UID_CHECK_EXIT:-0}"; else exit "${FAKE_RUN_EXIT:-0}"; fi ;;
   image) exit "${FAKE_PRUNE_EXIT:-0}" ;;
   *) exit 0 ;;
 esac
@@ -114,6 +136,22 @@ STUBEOF
 
 cat > "$STUB/aws" <<'STUBEOF'
 #!/usr/bin/env bash
+# secretsmanager 경로는 SecretString 검증의 seam이다 — FAKE_SECRETSMANAGER_EXIT로 read 실패,
+# FAKE_SECRET_STRING_ABSENT=1로 SecretBinary 전용(SecretString null), FAKE_SECRET_JSON으로 오염
+# fixture를 재현한다. 기본은 유효 fixture(합성 base64 32-byte key + sentinel 잉여 필드 — 앱 parse()가
+# unknown 필드를 무시하므로 preflight도 통과해야 하고, sentinel은 payload 누출 검출용). 출력은 실제
+# aws --query SecretString --output json처럼 JSON 문자열 리터럴 형태다. ecr login 경로는 기존 동작 유지.
+if [ "$1" = "secretsmanager" ]; then
+  [ "${FAKE_SECRETSMANAGER_EXIT:-0}" = "0" ] || exit "${FAKE_SECRETSMANAGER_EXIT}"
+  if [ "${FAKE_SECRET_STRING_ABSENT:-0}" = "1" ]; then
+    echo null
+    exit 0
+  fi
+  DEFAULT_SECRET_JSON='{"currentVersion":2,"currentKey":"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=","note":"SENTINEL_SECRET_XYZZY"}'
+  FAKE_SECRET_JSON="${FAKE_SECRET_JSON-$DEFAULT_SECRET_JSON}" \
+    python3 -c 'import json, os; print(json.dumps(os.environ["FAKE_SECRET_JSON"]))'
+  exit 0
+fi
 echo "fake-ecr-password"
 exit 0
 STUBEOF
@@ -197,6 +235,11 @@ SWAGGER_ENABLED=true
 APP_AI_MODE=fake
 APP_PUSH_MODE=noop
 APP_TRACING_MODE=noop
+APP_SUBJECT_MODE=secretsmanager
+APP_SUBJECT_SECRET_ARN=arn:aws:secretsmanager:ap-northeast-2:000000000000:secret:fixture
+DB_HOST=db-host.fixture.test
+DB_USERNAME=db-user-fixture
+DB_PASSWORD=${SENTINEL}_db-password
 
 XAPP_COMMIT_SHA=lookalike-must-survive
 APP_COMMIT_SHA_OLD=lookalike-must-survive-2
@@ -319,7 +362,8 @@ mutate_env() {
   chmod 600 "$CASE_DIR/.env"
   cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 }
-for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP_TRACING_MODE ; do
+for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP_TRACING_MODE \
+  APP_SUBJECT_MODE APP_SUBJECT_SECRET_ARN ; do
   for mutation in missing wrong dup ; do
     new_case; base_env_fixture
     mutate_env "$key" "$mutation"
@@ -332,7 +376,7 @@ for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP
     assert_no_sentinel "T5b($key/$mutation)"
   done
 done
-ok "T5b: fixed dev keys and APP_AI_MODE fail closed on missing/wrong/duplicate lines"
+ok "T5b: fixed dev keys, APP_AI_MODE and subject mode/ARN fail closed on missing/wrong/duplicate lines"
 
 # --- 10. T5b(http): base URL 필수 계약 ---
 for mutation in missing empty dup ; do
@@ -461,11 +505,147 @@ for residue in "JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar" 
 done
 ok "T5c: tracing contract fails closed (otlp full set exact-one with values, noop forbids residue)"
 
+# --- 10b. T5d: subject mapping 계약(#282) — mode 고정값·secret read·DB 접속·schema fail-closed ---
+# fixture mode 차단: 배포 환경에서 secretsmanager 외 값(테스트 고정 key)은 값 자체로 실패해야 한다.
+new_case; base_env_fixture
+PATH=/usr/bin:/bin sed -i.bak 's/^APP_SUBJECT_MODE=secretsmanager$/APP_SUBJECT_MODE=fixture/' "$CASE_DIR/.env"
+rm -f "$CASE_DIR/.env.bak"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" != "0" ] || fail "T5d(mode=fixture): preflight failure expected"
+grep -q "PREFLIGHT FAILED: .env APP_SUBJECT_MODE must be secretsmanager" "$CASE_DIR/out.log" \
+  || fail "T5d(mode=fixture): diagnostic expected"
+assert_env_untouched "T5d(mode=fixture)"
+assert_no_stop_no_run "T5d(mode=fixture)"
+assert_prune_once "T5d(mode=fixture)"
+assert_no_sentinel "T5d(mode=fixture)"
+
+# 앱과 host preflight가 같은 region/runtime role을 쓰도록 region mismatch·credential override를 차단한다.
+new_case; base_env_fixture
+printf '%s\n' 'AWS_REGION=us-east-1' >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" != "0" ] || fail "T5d(region mismatch): preflight failure expected"
+grep -q "PREFLIGHT FAILED: .env AWS_REGION must match deployment region" "$CASE_DIR/out.log" \
+  || fail "T5d(region mismatch): diagnostic expected"
+assert_env_untouched "T5d(region mismatch)"
+assert_no_stop_no_run "T5d(region mismatch)"
+assert_prune_once "T5d(region mismatch)"
+assert_no_sentinel "T5d(region mismatch)"
+
+new_case; base_env_fixture
+printf '%s\n' "AWS_ACCESS_KEY_ID=${SENTINEL}_aws-access-key" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" != "0" ] || fail "T5d(credential override): preflight failure expected"
+grep -q "PREFLIGHT FAILED: .env AWS credential/profile/endpoint overrides are forbidden" "$CASE_DIR/out.log" \
+  || fail "T5d(credential override): diagnostic expected"
+assert_env_untouched "T5d(credential override)"
+assert_no_stop_no_run "T5d(credential override)"
+assert_prune_once "T5d(credential override)"
+assert_no_sentinel "T5d(credential override)"
+
+# DB 접속 계약: presence exact-one(누락·중복)과 non-empty — 진단은 key 이름·개수까지만(값 비출력).
+for db_key in DB_HOST DB_USERNAME DB_PASSWORD ; do
+  for mutation in missing dup ; do
+    new_case; base_env_fixture
+    mutate_env "$db_key" "$mutation"
+    execute_script
+    [ "$RC" != "0" ] || fail "T5d($db_key/$mutation): preflight failure expected"
+    grep -q "PREFLIGHT FAILED: .env $db_key" "$CASE_DIR/out.log" || fail "T5d($db_key/$mutation): key-only diagnostic expected"
+    assert_env_untouched "T5d($db_key/$mutation)"
+    assert_no_stop_no_run "T5d($db_key/$mutation)"
+    assert_prune_once "T5d($db_key/$mutation)"
+    assert_no_sentinel "T5d($db_key/$mutation)"
+  done
+done
+new_case; base_env_fixture
+PATH=/usr/bin:/bin sed -i.bak 's/^DB_PASSWORD=.*$/DB_PASSWORD=/' "$CASE_DIR/.env"
+rm -f "$CASE_DIR/.env.bak"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" != "0" ] || fail "T5d(DB_PASSWORD/empty): preflight failure expected"
+grep -q "PREFLIGHT FAILED: .env DB_PASSWORD must be non-empty" "$CASE_DIR/out.log" \
+  || fail "T5d(DB_PASSWORD/empty): diagnostic expected"
+assert_no_stop_no_run "T5d(DB_PASSWORD/empty)"
+assert_prune_once "T5d(DB_PASSWORD/empty)"
+assert_no_sentinel "T5d(DB_PASSWORD/empty)"
+
+# runtime secret read 실패: host role 권한/ARN 문제는 구 컨테이너 중지 전에 잡힌다(.env/SHA 보존).
+run_prestop_failure "subject-secret-read" base "FAKE_SECRETSMANAGER_EXIT=1"
+grep -q "PREFLIGHT FAILED: subject secret read failed" "$CASE_DIR/out.log" \
+  || fail "T3a(subject-secret-read): diagnostic expected"
+
+# schema 검사 실패: query 실패(접속/권한)와 매치 개수 불일치 모두 fail-closed — row/값 미출력.
+run_prestop_failure "subject-schema-query" base "FAKE_MYSQL_EXIT=1"
+grep -q "PREFLIGHT FAILED: subject mapping schema query failed" "$CASE_DIR/out.log" \
+  || fail "T3a(subject-schema-query): diagnostic expected"
+run_prestop_failure "subject-schema-mismatch" base "FAKE_MYSQL_OUTPUT=0"
+grep -q "PREFLIGHT FAILED: user_subject_links schema mismatch" "$CASE_DIR/out.log" \
+  || fail "T3a(subject-schema-mismatch): diagnostic expected"
+ok "T5d: subject mode/ARN/runtime-role/secret-read/DB/schema preflights fail closed before stopping the old container"
+
+# --- 10c. T5e: subject secret 내용 계약 — 앱 parse()와 동일 규칙 fail-closed·payload 비출력 ---
+# 기본 fixture(유효 current-only + 잉여 필드)는 위 모든 성공 케이스가 이미 통과시켰다.
+# rotation(previous 쌍) 유효 secret도 성공해야 한다.
+new_case; base_env_fixture
+execute_script "FAKE_SECRET_JSON={\"currentVersion\":2,\"currentKey\":\"$B64_KEY_32A\",\"previousVersion\":1,\"previousKey\":\"$B64_KEY_32B\"}"
+[ "$RC" = "0" ] || fail "T5e(rotation-valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+assert_sha_line "T5e(rotation-valid)"
+assert_prune_once "T5e(rotation-valid)"
+assert_no_sentinel "T5e(rotation-valid)"
+
+# 오염 fixture는 전부 구 컨테이너 중지 전에 항목 이름만으로 실패해야 한다(payload는 sentinel 포함 —
+# 어떤 출력에도 새면 assert_no_sentinel이 잡는다).
+run_prestop_failure "secret-not-json" base "FAKE_SECRET_JSON={$SENTINEL"
+grep -q "PREFLIGHT FAILED: subject secret is not valid JSON" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-not-json): diagnostic expected"
+run_prestop_failure "secret-key-31-bytes" base \
+  "FAKE_SECRET_JSON={\"currentVersion\":1,\"currentKey\":\"$B64_KEY_31\",\"note\":\"$SENTINEL\"}"
+grep -q "PREFLIGHT FAILED: subject secret currentKey must decode to exactly 32 bytes" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-key-31-bytes): diagnostic expected"
+run_prestop_failure "secret-half-previous-pair" base \
+  "FAKE_SECRET_JSON={\"currentVersion\":2,\"currentKey\":\"$B64_KEY_32A\",\"previousVersion\":1,\"note\":\"$SENTINEL\"}"
+grep -q "PREFLIGHT FAILED: subject secret previousVersion and previousKey must be present together" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-half-previous-pair): diagnostic expected"
+run_prestop_failure "secret-string-absent" base "FAKE_SECRET_STRING_ABSENT=1"
+grep -q "PREFLIGHT FAILED: subject secret SecretString missing" "$CASE_DIR/out.log" \
+  || fail "T5e(secret-string-absent): diagnostic expected"
+
+# SPRING_PROFILES_ACTIVE 가드: 키 없음(기본 fixture)이 정상 — docker가 값에 포함되면 실패하고,
+# docker가 없는 값은 이 가드에 걸리지 않는다(진단은 key 이름과 고정 문구만).
+for spa in "docker" "dev,docker" ; do
+  new_case; base_env_fixture
+  printf '%s\n' "SPRING_PROFILES_ACTIVE=$spa" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5e(profiles=$spa): preflight failure expected"
+  grep -q "PREFLIGHT FAILED: .env SPRING_PROFILES_ACTIVE docker profile must not be active" "$CASE_DIR/out.log" \
+    || fail "T5e(profiles=$spa): diagnostic expected"
+  assert_env_untouched "T5e(profiles=$spa)"
+  assert_no_stop_no_run "T5e(profiles=$spa)"
+  assert_prune_once "T5e(profiles=$spa)"
+  assert_no_sentinel "T5e(profiles=$spa)"
+done
+new_case; base_env_fixture
+printf '%s\n' "SPRING_PROFILES_ACTIVE=prod" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5e(profiles=prod): non-docker value must pass this guard, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+ok "T5e: secret content contract mirrors app parse() and SPRING_PROFILES_ACTIVE=docker fails closed"
+
 # --- 11. T5/T5a: push mode 계약 ---
 new_case; base_env_fixture
 execute_script
 [ "$RC" = "0" ] || fail "T5(noop): success expected, rc=$RC"
-grep -q '^docker run --rm' "$CASE_DIR/docker.log" && fail "T5(noop): UID check must be skipped"
+# UID check는 credential mount(-v)가 있는 one-shot run만 해당 — mysql:8.0 schema check run과 구분한다.
+grep -q '^docker run --rm -v ' "$CASE_DIR/docker.log" && fail "T5(noop): UID check must be skipped"
 NOOP_RUN=$(grep '^docker run -d' "$CASE_DIR/docker.log")
 printf '%s\n' "$NOOP_RUN" | grep -q -- '-v ' && fail "T5(noop): no credential mount expected"
 printf '%s\n' "$NOOP_RUN" | grep -qE ' (-e|--env)[ =]' && fail "T5(noop): no -e expected"
@@ -510,13 +690,13 @@ ok "T6: firebase requires an existing non-empty host credential file before stop
 new_case; make_firebase_fixture
 execute_script
 [ "$RC" = "0" ] || fail "T7: success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
-grep -q '^docker run --rm' "$CASE_DIR/docker.log" || fail "T7: UID 1001 readability check expected"
+grep -q '^docker run --rm -v ' "$CASE_DIR/docker.log" || fail "T7: UID 1001 readability check expected"
 FB_RUN=$(grep '^docker run -d' "$CASE_DIR/docker.log")
 printf '%s\n' "$FB_RUN" | grep -q -- "-v $CASE_DIR/cred.json:/run/secrets/firebase-service-account.json:ro" \
   || fail "T7: read-only credential mount expected"
 printf '%s\n' "$FB_RUN" | grep -qE ' (-e|--env)[ =]' && fail "T7: no -e expected in firebase run"
 printf '%s\n' "$FB_RUN" | grep -q 'GOOGLE_APPLICATION_CREDENTIALS' && fail "T7: ADC path must come from .env only"
-UID_LN=$(grep -n '^docker run --rm' "$CASE_DIR/docker.log" | head -1 | cut -d: -f1)
+UID_LN=$(grep -n '^docker run --rm -v ' "$CASE_DIR/docker.log" | head -1 | cut -d: -f1)
 STOP_LOG_LN=$(grep -n '^docker stop' "$CASE_DIR/docker.log" | head -1 | cut -d: -f1)
 [ "$UID_LN" -lt "$STOP_LOG_LN" ] || fail "T7: UID check must run before stopping the old container"
 assert_sha_line "T7"

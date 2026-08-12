@@ -34,6 +34,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지)
 - `users`, `refresh_tokens`, `user_memories` (사용자당 1행 opaque JSON 문서, 행 존재=메모리 있음)
+- `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -94,6 +95,19 @@ entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배�
 감사 컬럼은 upsert SQL이 직접 채운다(`modified_by` NULL). entity는 조회·validate용 read model이다.
 갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
 삭제로 수렴한다.
+
+`user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
+`HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`
+PK이며, `subject_id BINARY(16)`(CSPRNG UUIDv4 canonical bytes, UNIQUE)과 `lookup_key_version SMALLINT`만
+갖는다. 감사 컬럼·auto-increment·`BaseEntity` 상속이 의도적으로 없다(저장소 첫 BINARY 컬럼·`byte[]` 매핑 —
+`@Column(columnDefinition = "BINARY(32)")` 형태가 validate를 통과한다). HMAC key는 배포에서 Secrets
+Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트는 docker 프로필의 fixture key다
+(`fixture` 모드 — provider 선택은 mode property 단일 축이고, fixture-key 기본값은 docker 프로필만
+소유해 배포 기본 프로필의 fixture는 무기본값으로 기동 실패하며, mode 미설정도 기동 실패). 접근은 `SubjectMappingService` 한
+곳뿐이고(arch test 강제) 일반 경로는 `getRequired()`가 누락을 자동 생성 없이 fail-closed한다. 신규
+사용자는 `NewUserProvisioner`가 user insert와 mapping insert를 한 transaction으로 커밋한다(mapping 실패
+= user rollback). rotation은 previous key hit 때 PK·version만 native UPDATE로 원자 교체한다(subject 불변).
+콘텐츠 owner 컬럼의 subject 전환은 후속(#283~#285)이며 이 테이블은 additive 기반이다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
