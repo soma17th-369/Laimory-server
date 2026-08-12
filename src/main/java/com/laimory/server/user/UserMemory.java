@@ -6,6 +6,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.util.UUID;
 import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -23,16 +24,17 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>쓰기는 repository의 native upsert/delete로만 하므로 이 엔티티는 조회와
  * {@code ddl-auto=validate} 검증용 read model이다. JPA ID에는 attribute converter를 적용하지 않고
- * repository/service 경계에서 {@link com.laimory.server.common.id.SubjectId}와 canonical byte 배열을 변환한다.
+ * UUID는 Hibernate의 VARCHAR JDBC mapping으로 canonical 문자열에 저장한다.
  */
 @Entity
-@Table(name = "user_memory_documents")
+@Table(name = "user_memories")
 @Getter
 public class UserMemory extends BaseEntity {
 
     @Id
-    @Column(name = "subject_id", columnDefinition = "BINARY(16)")
-    private byte[] subjectId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", length = 36)
+    private UUID subjectId;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)

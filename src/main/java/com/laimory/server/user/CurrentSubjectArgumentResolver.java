@@ -1,6 +1,6 @@
 package com.laimory.server.user;
 
-import com.laimory.server.common.id.SubjectId;
+import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.MethodParameter;
 import org.springframework.security.core.Authentication;
@@ -24,11 +24,11 @@ public class CurrentSubjectArgumentResolver implements HandlerMethodArgumentReso
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
         return parameter.hasParameterAnnotation(CurrentSubject.class)
-                && parameter.getParameterType() == SubjectId.class;
+                && parameter.getParameterType() == UUID.class;
     }
 
     @Override
-    public SubjectId resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
+    public UUID resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
                                      NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof Long userId)) {

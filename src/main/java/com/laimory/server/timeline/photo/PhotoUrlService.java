@@ -1,6 +1,6 @@
 package com.laimory.server.timeline.photo;
 
-import com.laimory.server.common.id.SubjectId;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -44,7 +44,7 @@ public class PhotoUrlService {
      * @param subjectId 콘텐츠 subject(전체 key 파생에 사용)
      * @return {@code https://{cdnDomain}/{subjectNamespace(subjectId)}/photos/{filename}}
      */
-    public String buildSubjectUrl(String filename, SubjectId subjectId) {
+    public String buildSubjectUrl(String filename, UUID subjectId) {
         return "https://" + cdnDomain + "/" + PhotoObjectKeys.subjectFullKey(filename, subjectId);
     }
 }

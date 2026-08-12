@@ -21,7 +21,6 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.TaskTokens;
@@ -53,6 +52,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -94,7 +94,7 @@ class TimelineDraftTaskServiceTest {
 
     private static final String VERSION = "v1";
     // 인증 principal userId — 모든 귀속 지점(조회·enrich·staging·task)에 이 값 하나만 흘러야 한다.
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final String ZONE = "Asia/Seoul";
     // 클라 선택 날짜(단일 권위) — 서버는 계산 없이 그대로 쓴다.
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);

@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -48,7 +49,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class SourceItemEnrichmentServiceTest {
 
     private static final LocalDateTime T = LocalDateTime.of(2026, 6, 17, 9, 0);
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+    private static final java.util.UUID SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(1L);
     private static final int MAX_UNIQUE_COORDINATES = 30;
 

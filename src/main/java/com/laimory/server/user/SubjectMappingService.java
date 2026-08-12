@@ -1,7 +1,7 @@
 package com.laimory.server.user;
 
-import com.laimory.server.common.id.SubjectId;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -37,7 +37,7 @@ public class SubjectMappingService {
         try {
             userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(
                     subjectLookupKeyDeriver.deriveCurrent(userId),
-                    SubjectId.newRandom().bytes(),
+                    UUID.randomUUID(),
                     subjectLookupKeyDeriver.currentVersion()));
             result = "success";
         } finally {
@@ -74,7 +74,7 @@ public class SubjectMappingService {
             }
             userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(
                     currentLookupKey,
-                    SubjectId.newRandom().bytes(),
+                    UUID.randomUUID(),
                     subjectLookupKeyDeriver.currentVersion()));
             result = "created";
             return true;
@@ -92,14 +92,14 @@ public class SubjectMappingService {
      *                               메시지에 userId·lookup key·subject를 담지 않는다.
      */
     @Transactional
-    public SubjectId getRequired(long userId) {
+    public UUID getRequired(long userId) {
         var sample = subjectMappingMetrics.start();
         String result = "failed";
         try {
             byte[] currentLookupKey = subjectLookupKeyDeriver.deriveCurrent(userId);
             Optional<UserSubjectLink> current = userSubjectLinkRepository.findById(currentLookupKey);
             if (current.isPresent()) {
-                SubjectId subjectId = SubjectId.fromBytes(current.get().getSubjectId());
+                UUID subjectId = requireUuidV4(current.get().getSubjectId());
                 result = "success";
                 return subjectId;
             }
@@ -111,7 +111,7 @@ public class SubjectMappingService {
                     // 영향 행 0 = 동시 getRequired가 먼저 교체 — subject는 어느 쪽이든 같으므로 멱등이다.
                     userSubjectLinkRepository.rekey(previousLookupKey.get(), currentLookupKey,
                             subjectLookupKeyDeriver.currentVersion());
-                    SubjectId subjectId = SubjectId.fromBytes(previous.get().getSubjectId());
+                    UUID subjectId = requireUuidV4(previous.get().getSubjectId());
                     result = "rotated";
                     return subjectId;
                 }
@@ -121,5 +121,12 @@ public class SubjectMappingService {
         } finally {
             subjectMappingMetrics.recordMapping(sample, "lookup", result);
         }
+    }
+
+    private static UUID requireUuidV4(UUID subjectId) {
+        if (subjectId == null || subjectId.version() != 4 || subjectId.variant() != 2) {
+            throw new IllegalStateException("subject mapping contains an invalid UUIDv4");
+        }
+        return subjectId;
     }
 }

@@ -19,6 +19,7 @@ import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,7 +39,7 @@ class TimelineTaskServiceTest {
     @InjectMocks
     private TimelineTaskService service;
 
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
     private static final long RECORD_ID = 42L;
     private static final Instant STARTED_AT = Instant.parse("2026-06-17T03:05:00Z");
 

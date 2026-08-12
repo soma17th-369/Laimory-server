@@ -32,7 +32,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 version별 동작은 service가 결정한다.
 
 보호 operation 17개(timeline 15 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
-401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject SubjectId` parameter로 주입돼 OpenAPI
+401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject UUID subjectId` parameter로 주입돼 OpenAPI
 parameter에 나타나지 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
 

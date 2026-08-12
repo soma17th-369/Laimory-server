@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -10,6 +9,7 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,7 +38,7 @@ public class TimelineDraftPreparationService {
      */
     @WithSpan
     @Transactional
-    public long prepareDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+    public long prepareDraft(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                              List<TimelineDraftSourceItem> sourceRows) {
         DailyRecord record = dailyRecordService.findOrCreateDraft(subjectId, recordDate, recordAt, recordTimezone);
         if (record.getStatus() == DailyRecordStatus.SAVED) {

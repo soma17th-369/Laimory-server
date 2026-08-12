@@ -9,13 +9,13 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.time.LocalDate;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,8 +43,8 @@ class TimelineDeletionServiceTest {
     private TimelinePhotoDeleteMetrics timelinePhotoDeleteMetrics;
 
     private static final String VERSION = "v1";
-    private static final SubjectId SUBJECT_ID = id(7L);
-    private static final SubjectId OTHER_SUBJECT_ID = id(999L);
+    private static final UUID SUBJECT_ID = id(7L);
+    private static final UUID OTHER_SUBJECT_ID = id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 7, 8);
@@ -357,7 +357,7 @@ class TimelineDeletionServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(SubjectId subjectId) {
+    private DailyRecord draftRecordOf(UUID subjectId) {
         DailyRecord record = DailyRecord.createDraft(
                 subjectId,
                 RECORD_DATE,

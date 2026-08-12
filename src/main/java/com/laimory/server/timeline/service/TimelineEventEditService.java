@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
@@ -16,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -57,7 +57,7 @@ public class TimelineEventEditService {
     }
 
     /** Event 상세·optional memo·optional PHOTO append를 하나의 PATCH 계약으로 처리한다. */
-    public void updateEvent(String applicationVersion, SubjectId subjectId, Long timelineEventId,
+    public void updateEvent(String applicationVersion, UUID subjectId, Long timelineEventId,
                             UpdateTimelineEventRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         findOwnedEditableEvent(subjectId, timelineEventId);
@@ -67,14 +67,14 @@ public class TimelineEventEditService {
 
     /** 메모 전용 API. null·공백뿐은 제거, 그 외는 trim 없이 원문 저장한다. */
     @Transactional
-    public void updateMemo(String applicationVersion, SubjectId subjectId, Long timelineEventId, String memo) {
+    public void updateMemo(String applicationVersion, UUID subjectId, Long timelineEventId, String memo) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEditableEvent(subjectId, timelineEventId);
         event.updateMemo(normalizeMemo(memo));
     }
 
     /** owner/DRAFT 검증은 입력 검증·DB mutation보다 먼저 수행한다. */
-    private TimelineEvent findOwnedEditableEvent(SubjectId subjectId, Long timelineEventId) {
+    private TimelineEvent findOwnedEditableEvent(UUID subjectId, Long timelineEventId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         DailyRecord record = dailyRecordService.findById(event.getDailyRecordId())

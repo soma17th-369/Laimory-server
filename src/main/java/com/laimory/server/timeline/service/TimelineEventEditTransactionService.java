@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
@@ -20,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -42,7 +42,7 @@ public class TimelineEventEditTransactionService {
 
     /** 소유권·DRAFT를 재확인하고 Event 필드와 수동 PHOTO graph를 원자적으로 반영한다. */
     @Transactional
-    public void updateEvent(SubjectId subjectId, Long timelineEventId, TimelineEventEditCommand command) {
+    public void updateEvent(UUID subjectId, Long timelineEventId, TimelineEventEditCommand command) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         DailyRecord record = requireOwnedDraftRecord(subjectId, event.getDailyRecordId());
@@ -136,7 +136,7 @@ public class TimelineEventEditTransactionService {
         return new PhotoChanges(existingItemIdsToLink, newPhotos);
     }
 
-    private DailyRecord requireOwnedDraftRecord(SubjectId subjectId, Long dailyRecordId) {
+    private DailyRecord requireOwnedDraftRecord(UUID subjectId, Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));

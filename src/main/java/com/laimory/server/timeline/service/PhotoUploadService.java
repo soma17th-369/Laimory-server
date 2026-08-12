@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
@@ -11,6 +10,7 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -55,7 +55,7 @@ public class PhotoUploadService {
      * 컨트롤러가 넘긴 {@code applicationVersion}을 받아 둔다(컨벤션 일관성).
      * subjectId는 S3 full key의 hash namespace를 결정한다.
      */
-    public PhotoUploadCreateResponse createUploads(String applicationVersion, SubjectId subjectId,
+    public PhotoUploadCreateResponse createUploads(String applicationVersion, UUID subjectId,
                                                    List<PhotoUploadItem> photos) {
         if (photos == null || photos.isEmpty()) {
             throw new IllegalArgumentException("photos is required");

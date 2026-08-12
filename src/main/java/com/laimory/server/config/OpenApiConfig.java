@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Swagger/OpenAPI 문서 메타 정보(타이틀·공통 규칙 안내).

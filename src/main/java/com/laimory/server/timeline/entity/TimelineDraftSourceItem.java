@@ -2,11 +2,8 @@ package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.common.BaseEntity;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdAttributeConverter;
 import com.laimory.server.timeline.ItemType;
 import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -15,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -41,9 +39,9 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "task_id", nullable = false, length = 36)
     private String taskId;
 
-    @Convert(converter = SubjectIdAttributeConverter.class)
-    @Column(name = "subject_id", nullable = false, columnDefinition = "BINARY(16)")
-    private SubjectId subjectId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", nullable = false, length = 36)
+    private UUID subjectId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "item_type", nullable = false, length = 32)
@@ -66,7 +64,7 @@ public class TimelineDraftSourceItem extends BaseEntity {
     protected TimelineDraftSourceItem() {
     }
 
-    private TimelineDraftSourceItem(String taskId, SubjectId subjectId, ItemType itemType, String rawId,
+    private TimelineDraftSourceItem(String taskId, UUID subjectId, ItemType itemType, String rawId,
                                     LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
         this.taskId = taskId;
         this.subjectId = subjectId;
@@ -77,7 +75,7 @@ public class TimelineDraftSourceItem extends BaseEntity {
         this.payload = payload;
     }
 
-    public static TimelineDraftSourceItem of(String taskId, SubjectId subjectId, ItemType itemType, String rawId,
+    public static TimelineDraftSourceItem of(String taskId, UUID subjectId, ItemType itemType, String rawId,
                                              LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
         return new TimelineDraftSourceItem(taskId, subjectId, itemType, rawId, startAt, endAt, payload);
     }

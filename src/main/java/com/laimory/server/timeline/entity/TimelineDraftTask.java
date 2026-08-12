@@ -2,18 +2,15 @@ package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.laimory.server.common.error.StrictErrorCodeDeserializer;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdJsonDeserializer;
-import com.laimory.server.common.id.SubjectIdJsonSerializer;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * timeline draft 비동기 작업의 상태 모델. Redis에 JSON으로 저장된다(JPA 엔티티 아님).
@@ -49,9 +46,7 @@ public record TimelineDraftTask(
         @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
-        @JsonSerialize(using = SubjectIdJsonSerializer.class)
-        @JsonDeserialize(using = SubjectIdJsonDeserializer.class)
-        SubjectId subjectId
+        UUID subjectId
 ) {
 
     public TimelineDraftTask {
@@ -84,7 +79,7 @@ public record TimelineDraftTask(
     ) {
     }
 
-    public static TimelineDraftTask processing(SubjectId subjectId, long dailyRecordId, TimelineWindow timelineWindow,
+    public static TimelineDraftTask processing(UUID subjectId, long dailyRecordId, TimelineWindow timelineWindow,
                                                String tokenHash, Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, dailyRecordId, timelineWindow, null,
                 tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, subjectId);
@@ -99,12 +94,12 @@ public record TimelineDraftTask(
                 Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, subjectId);
     }
 
-    public static TimelineDraftTask success(SubjectId subjectId, long dailyRecordId, String tokenHash) {
+    public static TimelineDraftTask success(UUID subjectId, long dailyRecordId, String tokenHash) {
         return new TimelineDraftTask(TaskStatus.SUCCESS, dailyRecordId, null, null,
                 tokenHash, null, null, subjectId);
     }
 
-    public static TimelineDraftTask failed(SubjectId subjectId, long dailyRecordId, int error,
+    public static TimelineDraftTask failed(UUID subjectId, long dailyRecordId, int error,
                                            String tokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null, error,
                 tokenHash, null, null, subjectId);

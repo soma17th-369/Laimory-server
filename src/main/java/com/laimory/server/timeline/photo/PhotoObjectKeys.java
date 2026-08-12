@@ -1,13 +1,14 @@
 package com.laimory.server.timeline.photo;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.id.UuidV7;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
@@ -70,7 +71,7 @@ public final class PhotoObjectKeys {
      * @param subjectId 콘텐츠 subject
      * @return {@code {subjectNamespace(subjectId)}/photos/{filename}}
      */
-    public static String subjectFullKey(String filename, SubjectId subjectId) {
+    public static String subjectFullKey(String filename, UUID subjectId) {
         return subjectNamespace(subjectId) + "/photos/" + filename;
     }
 
@@ -87,14 +88,18 @@ public final class PhotoObjectKeys {
     /**
      * subject 기반 namespace — {@code hex(SHA-256(subjectId canonical 16 bytes))}(계획 §2.7).
      *
-     * <p>입력은 반드시 {@link SubjectId#bytes()} canonical 16바이트다 — 문자열 UUID 표기, context
+     * <p>입력은 UUID의 두 64-bit 필드를 big-endian으로 이은 canonical 16바이트다 — 문자열 UUID 표기, context
      * prefix, HMAC lookup key를 입력으로 쓰지 않는다(타입 시그니처가 이를 강제한다).
      *
      * @param subjectId 콘텐츠 subject
      * @return SHA-256 64자 소문자 hex
      */
-    public static String subjectNamespace(SubjectId subjectId) {
-        return sha256hexOf(subjectId.bytes());
+    public static String subjectNamespace(UUID subjectId) {
+        byte[] bytes = ByteBuffer.allocate(16)
+                .putLong(subjectId.getMostSignificantBits())
+                .putLong(subjectId.getLeastSignificantBits())
+                .array();
+        return sha256hexOf(bytes);
     }
 
     private static String sha256hexOf(byte[] input) {

@@ -5,18 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 
-import com.laimory.server.common.id.SubjectId;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -30,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * user_subject_links ↔ MySQL 실 왕복 검증(#282).
- * - ddl-auto=validate이므로 컨텍스트 기동 자체가 BINARY(32)/BINARY(16)/SMALLINT ↔ 엔티티 매핑 정합을
+ * - ddl-auto=validate이므로 컨텍스트 기동 자체가 BINARY(32)/VARCHAR(36)/SMALLINT ↔ 엔티티 매핑 정합을
  *   검증한다(이 저장소 최초의 BINARY 컬럼 매핑).
  * - provisioner의 원자성(신규 user와 mapping이 한 transaction — mapping 실패 시 user까지 rollback)은
  *   실 DB에서만 성립하므로 여기서 검증한다. 실패 주입은 spy stubbing으로 한다.
@@ -91,15 +90,15 @@ class SubjectMappingPersistenceIntegrationTest {
         createdUserIds.add(userId);
         createdLookupKeys.add(currentLookupKey);
 
-        em.clear(); // 1차 캐시를 비워 DB 바이트에서 실제로 재조회하게 한다
+        em.clear(); // 1차 캐시를 비워 DB 문자열에서 실제로 재조회하게 한다
         UserSubjectLink link = userSubjectLinkRepository.findById(currentLookupKey).orElseThrow();
         assertThat(link.getUserLookupKey()).isEqualTo(currentLookupKey);     // BINARY(32) PK 왕복
-        assertThat(link.getSubjectId()).hasSize(16);                         // BINARY(16) 왕복
-        assertThat((link.getSubjectId()[6] >> 4) & 0x0F).isEqualTo(4);       // UUIDv4
+        assertThat(link.getSubjectId().version()).isEqualTo(4);              // UUIDv4
+        assertThat(link.getSubjectId().variant()).isEqualTo(2);              // RFC 4122 variant
         assertThat(link.getLookupKeyVersion()).isEqualTo(subjectLookupKeyDeriver.currentVersion());
         assertThat(userRepository.findById(userId)).isPresent();             // user·mapping 정확히 1:1
         // 일반 경로(getRequired)도 같은 subject로 해석된다.
-        assertThat(subjectMappingService.getRequired(userId).bytes()).isEqualTo(link.getSubjectId());
+        assertThat(subjectMappingService.getRequired(userId)).isEqualTo(link.getSubjectId());
     }
 
     @Test
@@ -179,7 +178,7 @@ class SubjectMappingPersistenceIntegrationTest {
     @Test
     @Transactional // 테스트 트랜잭션 rollback으로 자동 정리
     void subjectId_uniqueConstraint_rejectsDuplicateSubject() {
-        byte[] subject = SubjectId.newRandom().bytes();
+        UUID subject = UUID.randomUUID();
         userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(lookupKey(10), subject, (short) 1));
 
         assertThatThrownBy(() -> userSubjectLinkRepository.saveAndFlush(
@@ -190,7 +189,7 @@ class SubjectMappingPersistenceIntegrationTest {
     @Test
     @Transactional // 테스트 트랜잭션 rollback으로 자동 정리
     void rekey_swapsPrimaryKeyAndVersionAtomically_preservingSubject() {
-        byte[] subject = SubjectId.newRandom().bytes();
+        UUID subject = UUID.randomUUID();
         userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(lookupKey(30), subject, (short) 1));
 
         int affected = userSubjectLinkRepository.rekey(lookupKey(30), lookupKey(40), (short) 2);

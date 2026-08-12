@@ -35,7 +35,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지)
 - `users`, `refresh_tokens`
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
-- `user_memory_documents` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
+- `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -73,7 +73,7 @@ job 삭제도 rollback된다. 상태·시도 횟수·backoff·lease·error·완�
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
-쓴다(테이블 기본은 `_unicode_ci` — 저장소 유일한 컬럼 collation). `subject_id BINARY(16)`가 FK 없는
+쓴다(테이블 기본은 `_unicode_ci`). `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`이 FK 없는
 owner이고 조회 index를 가진다. legacy `user_id`는 cutover 정리 전 nullable migration column일 뿐 live
 read/write에 쓰지 않는다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭제다. 쓰기는 repository의
 `INSERT ... ON DUPLICATE KEY UPDATE` native upsert(저장소 첫 native query — 등록·계정 전환 재결합을
@@ -81,7 +81,8 @@ read/write에 쓰지 않는다. 행 존재 = 활성 등록이며 해제·영구 
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
 entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다.
 
-`user_memory_documents`는 subject별 User Memory 문서다. `subject_id BINARY(16)`가 PK인 subject당 1행이고
+`user_memories`는 subject별 User Memory 문서다. `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`이
+PK인 subject당 1행이고
 `memory`는 `JSON NOT NULL`이며, 행 존재 = 메모리 있음이고 제거는 행 삭제다. entity는
 `@JdbcTypeCode(SqlTypes.JSON)`
 `JsonNode`(`timeline_items.payload`와 같은 매핑)이고 서버는 문서 구조·스키마를 해석·정규화하지 않지만,
@@ -91,9 +92,8 @@ entity는 조회·validate용 read model이다. live dev/prod 반영은 앱 배�
 컬럼으로 두면 로그인의 `User` 조회가 매번 blob을 함께 읽는다. 테이블을 나눠 `User`를 읽는 어떤 경로도
 문서에 닿지 않게 한다. 두 entity 사이에 JPA 연관 매핑을 두지 않는 것이 이 분리의 전제다(저장소 전체
 방침과 동일 — `@OneToOne`은 기본 EAGER이고 역방향은 지연 로딩이 불가능해 분리 효과가 사라진다).
-접근은 service가 `SubjectId`를 canonical 16-byte PK로 변환해 `UserMemoryRepository.findById(bytes)`를
-호출하는 경로뿐이다. JPA ID attribute converter의 불확실성을 피하려 entity ID는 `byte[]`로 매핑한다.
-legacy `user_memories`는 migration/정리 전용이고 live read/write에 쓰지 않는다.
+접근은 service가 Java `UUID`를 `UserMemoryRepository.findById(subjectId)`로 전달하는 경로뿐이다.
+Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper나 converter를 두지 않는다.
 
 쓰기는 repository의 native `INSERT ... ON DUPLICATE KEY UPDATE` upsert와 조건부 delete뿐이라(같은
 사용자 동시 저장의 PK 중복을 한 문장으로 원자화 — `push_registrations` 선례) JPA auditing이 돌지 않고
@@ -103,9 +103,10 @@ legacy `user_memories`는 migration/정리 전용이고 live read/write에 쓰�
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
 `HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`
-PK이며, `subject_id BINARY(16)`(CSPRNG UUIDv4 canonical bytes, UNIQUE)과 `lookup_key_version SMALLINT`만
-갖는다. 감사 컬럼·auto-increment·`BaseEntity` 상속이 의도적으로 없다(저장소 첫 BINARY 컬럼·`byte[]` 매핑 —
-`@Column(columnDefinition = "BINARY(32)")` 형태가 validate를 통과한다). HMAC key는 배포에서 Secrets
+PK이며, `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`(CSPRNG UUIDv4 canonical lowercase,
+UNIQUE)과 `lookup_key_version SMALLINT`만 갖는다. 감사 컬럼·auto-increment·`BaseEntity` 상속이 의도적으로
+없다. lookup key만 `BINARY(32)`/`byte[]`이고 subject는 Java `UUID`를 VARCHAR JDBC type으로 매핑한다.
+HMAC key는 배포에서 Secrets
 Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트는 docker 프로필의 fixture key다
 (`fixture` 모드 — provider 선택은 mode property 단일 축이고, fixture-key 기본값은 docker 프로필만
 소유해 배포 기본 프로필의 fixture는 무기본값으로 기동 실패하며, mode 미설정도 기동 실패). 접근은 `SubjectMappingService` 한
@@ -113,21 +114,21 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 사용자는 `NewUserProvisioner`가 user insert와 mapping insert를 한 transaction으로 커밋한다(mapping 실패
 = user rollback). rotation은 previous key hit 때 PK·version만 native UPDATE로 원자 교체한다(subject 불변).
 
-콘텐츠 owner는 `SubjectId`다. `daily_records`의 `subject_id BINARY(16)`은 NOT NULL이며
+콘텐츠 owner는 Java `UUID subjectId`다. `daily_records`의 canonical UUID 문자열 `subject_id`는 NOT NULL이며
 `uq_daily_records_subject_date (subject_id, record_date)` UNIQUE·FK RESTRICT를 가진다.
 `timeline_draft_source_items.subject_id`도 NOT NULL·FK RESTRICT이고,
 `push_registrations.subject_id`는 NOT NULL·조회 index를 가지되 기존 soft-owner 방침대로 FK는 없다.
-`user_memory_documents`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
+`user_memories`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
-명시 삭제 후 mapping을 마지막에 지우는 계약이다. legacy `user_id` 컬럼과 `user_memories` 테이블은
+명시 삭제 후 mapping을 마지막에 지우는 계약이다. legacy `user_id` 컬럼은
 cutover 검증·정리 전까지만 nullable 상태로 남고 live application 경로에는 매핑되지 않는다.
 채우기는 `app.subject.migration.mode` property로 게이트되는 one-shot backfill 도구
 (`user/migration/`, #284 photo 도구와 같은 패턴 — `backfill-mappings`는
 `SubjectMappingService.createIfAbsent`로 `users` 전 행 mapping 보충+1:1 검증, `backfill-owners`는
-native SQL로 NULL owner 채움+`user_memories`→documents upsert 복사+delta 검증, `verify-owners`는
-검증만)가 담당한다. owner 검증은 NULL과 행 수만 보지 않고 legacy `user_id`를 mapping으로
-해석해 DailyRecord/staging/push의 cross-owner 0건, User Memory document의 subject·JSON·감사
-컬럼 동등성을 확인한다. photo 모드와 동시 설정은 기동 실패다(상호 배타 — 둘 다
+native SQL로 NULL owner를 채우고 cross-owner를 검증하며, `verify-owners`는 검증만)가 담당한다.
+빈 legacy `user_memories`는 별도 document table로 복사하지 않고 PK를 subject로 직접 전환한다.
+owner 검증은 NULL과 행 수만 보지 않고 legacy `user_id`를 mapping으로 해석해
+DailyRecord/staging/push의 cross-owner 0건을 확인한다. photo 모드와 동시 설정은 기동 실패다(상호 배타 — 둘 다
 one-shot exit).
 NOT NULL 확정·legacy `user_id` nullable화·Redis namespace 폐기·legacy 삭제 순서는
 `deploy/subject-cutover/README.md` runbook이 소유한다(forward 전용 — rollback 미지원).
@@ -148,12 +149,12 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner `SubjectId`·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 3m(입력 조회·결과 저장 성공마다 재확보), terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt` 포함). FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 3m(입력 조회·결과 저장 성공마다 재확보), terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장+ZADD와 terminal 저장+ZREM은 Lua 원자 연산이며, read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
-| `timeline:draft-task:user:{base64url(subjectId)}:processing` | subject별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). PROCESSING 저장 Lua가 task JSON·전역 index와 함께 ZADD하고 key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 ZREM한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 PROCESSING 저장마다 갱신(마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
-| `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`base64url(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
-| `timeline:user-memory-update:user:{base64url(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
-| `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner `SubjectId`, 대상 record IDs, base digest) | PROCESSING 3m |
+| `timeline:draft-task:user:{canonicalUuid(subjectId)}:processing` | subject별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). PROCESSING 저장 Lua가 task JSON·전역 index와 함께 ZADD하고 key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 ZREM한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 PROCESSING 저장마다 갱신(마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
+| `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`canonicalUuid(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
+| `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
+| `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 

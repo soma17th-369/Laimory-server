@@ -41,7 +41,7 @@ public class TimelineDraftSourceItemBatchRepository {
             public void setValues(PreparedStatement statement, int index) throws SQLException {
                 TimelineDraftSourceItem item = items.get(index);
                 statement.setString(1, item.getTaskId());
-                statement.setBytes(2, item.getSubjectId().bytes());
+                statement.setString(2, item.getSubjectId().toString());
                 statement.setString(3, item.getItemType().name());
                 statement.setString(4, item.getRawId());
                 setTimestamp(statement, 5, item.getStartAt());

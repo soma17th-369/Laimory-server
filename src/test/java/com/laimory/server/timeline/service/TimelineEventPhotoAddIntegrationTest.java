@@ -7,7 +7,6 @@ import static org.mockito.Mockito.doThrow;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
@@ -69,14 +68,14 @@ class TimelineEventPhotoAddIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private SubjectId subjectId;
+    private UUID subjectId;
     private long legacyUserId;
     private Long recordId;
     private Long eventId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         legacyUserId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
         ensureExists(jdbcTemplate, subjectId);
         recordId = dailyRecordRepository.save(
@@ -98,7 +97,7 @@ class TimelineEventPhotoAddIntegrationTest {
         if (!itemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(itemIds);
         }
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
         redisGateway.delete(legacyGuardKey());
     }
 

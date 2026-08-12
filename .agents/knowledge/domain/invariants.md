@@ -158,7 +158,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — TTL 재확보에도 바뀌지 않고 terminal 전이 시 폐기한다.
-- subject별 진행 작업 index(`timeline:draft-task:user:{base64url(subjectId)}:processing`)는 조회 후보일 뿐이다 —
+- subject별 진행 작업 index(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)는 조회 후보일 뿐이다 —
   task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
   소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
   요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
@@ -210,7 +210,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
-  `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request `SubjectId`가 draft record 조회·
+  `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request UUID subjectId가 draft record 조회·
   enrich photo key·staging row·Redis task owner·polling·DailyRecord/Event 조회·편집·삭제·push 등록 소유권
   검사까지 전부 동일해야 한다(지점 분기 금지, mapping 누락은 자동 생성 없이 fail-closed).
 - Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에

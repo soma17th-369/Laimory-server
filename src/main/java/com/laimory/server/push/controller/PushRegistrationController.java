@@ -1,9 +1,9 @@
 package com.laimory.server.push.controller;
 
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.dto.PushRegistrationRequest;
 import com.laimory.server.push.service.PushRegistrationService;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,14 +22,14 @@ public class PushRegistrationController implements PushRegistrationApi {
 
     @Override
     public ResponseEntity<ApiResponse<Void>> registerPushRegistration(
-            String applicationVersion, SubjectId subjectId, PushRegistrationRequest request) {
+            String applicationVersion, UUID subjectId, PushRegistrationRequest request) {
         pushRegistrationService.register(applicationVersion, subjectId, request.firebaseInstallationId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> unregisterPushRegistration(
-            String applicationVersion, SubjectId subjectId, PushRegistrationRequest request) {
+            String applicationVersion, UUID subjectId, PushRegistrationRequest request) {
         pushRegistrationService.unregister(applicationVersion, subjectId, request.firebaseInstallationId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }

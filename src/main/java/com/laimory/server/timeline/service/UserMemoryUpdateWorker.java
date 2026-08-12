@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.privacy.PrivacyRedactor;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
@@ -143,13 +142,13 @@ public class UserMemoryUpdateWorker {
             log.warn("User Memory 갱신 대기 큐가 조회 상한을 넘었습니다: pendingDays={} scanned={} limit={}",
                     scan.total(), scan.scanned().size(), SCAN_LIMIT);
         }
-        Map<SubjectId, List<UserMemoryUpdatePending>> byUser = scan.scanned().stream()
+        Map<UUID, List<UserMemoryUpdatePending>> byUser = scan.scanned().stream()
                 .collect(Collectors.groupingBy(UserMemoryUpdatePending::subjectId,
                         LinkedHashMap::new, Collectors.toList()));
         int dispatchedUsers = 0;
         int dispatchedDays = 0;
         int abandonedDays = 0;
-        for (Map.Entry<SubjectId, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
+        for (Map.Entry<UUID, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
             // 상한은 여기서 안 자른다 — 어느 날을 실을지는 record_date를 아는 dispatch가 고른다.
             List<UserMemoryUpdatePending> pendingOfUser = entry.getValue();
             try {
@@ -179,7 +178,7 @@ public class UserMemoryUpdateWorker {
      *
      * @param pending 그 사용자의 미반영 날 전부. 상한을 적용해 실을 날을 고르는 것은 {@link #dispatch}다
      */
-    private Outcome process(SubjectId subjectId, List<UserMemoryUpdatePending> pending) {
+    private Outcome process(UUID subjectId, List<UserMemoryUpdatePending> pending) {
         String taskId = UUID.randomUUID().toString();
         if (!taskStore.acquireGuard(subjectId, taskId, TASK_TTL)) {
             return Outcome.of(Status.GUARD_BUSY);
@@ -211,7 +210,7 @@ public class UserMemoryUpdateWorker {
      * 생긴다 — 요청 안에서만 정렬해서는 실행을 넘나드는 순서가 안 잡힌다. 그래서 record_date 오름차순
      * 조회 결과에서 앞의 {@link #MAX_DAILY_TIMELINES}일을 고른다.
      */
-    private Outcome dispatch(SubjectId subjectId, List<UserMemoryUpdatePending> pending, String taskId) {
+    private Outcome dispatch(UUID subjectId, List<UserMemoryUpdatePending> pending, String taskId) {
         List<Long> pendingIds = pending.stream().map(UserMemoryUpdatePending::dailyRecordId).toList();
         // record_date 오름차순 한 번의 질의. 삭제된 하루는 결과에서 빠지므로 차집합이 곧 사라진 날이다.
         List<DailyRecord> found = dailyRecordService.findAllBySubjectIdAndIdsOrderByRecordDate(subjectId, pendingIds);

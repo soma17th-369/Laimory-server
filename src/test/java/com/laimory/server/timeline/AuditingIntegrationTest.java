@@ -4,13 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class AuditingIntegrationTest {
 
-    private static final SubjectId SUBJECT_ID = id(15L);
+    private static final UUID SUBJECT_ID = id(15L);
 
     @Autowired
     private DailyRecordRepository dailyRecordRepository;

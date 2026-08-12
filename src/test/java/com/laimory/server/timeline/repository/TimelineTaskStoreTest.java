@@ -15,8 +15,6 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 
 import com.laimory.server.common.redis.RedisGateway;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdCodec;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -25,6 +23,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,8 +49,8 @@ class TimelineTaskStoreTest {
     private TimelineTaskStore store;
 
     private static final Instant STARTED_AT = Instant.parse("2026-05-08T13:41:07Z");
-    private static final SubjectId SUBJECT = id(7L);
-    private static final SubjectId OTHER_SUBJECT = id(8L);
+    private static final UUID SUBJECT = id(7L);
+    private static final UUID OTHER_SUBJECT = id(8L);
     private static final String USER_INDEX_KEY = TimelineTaskStore.subjectProcessingIndexKey(SUBJECT);
 
     @BeforeEach
@@ -98,7 +97,7 @@ class TimelineTaskStoreTest {
                 anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
         String json = jsonCaptor.getValue();
         assertThat(json).contains("\"dailyRecordId\":42");
-        assertThat(json).contains("\"subjectId\":\"" + SubjectIdCodec.encode(SUBJECT) + "\"");
+        assertThat(json).contains("\"subjectId\":\"" + SUBJECT + "\"");
         assertThat(json).doesNotContain("userId");
         // PROCESSING 시작 시각은 UTC ISO-8601 문자열로 고정된다(숫자 timestamp 설정 무관 — @JsonFormat STRING).
         assertThat(json).contains("\"processingStartedAt\":\"2026-05-08T13:41:07Z\"");
@@ -180,7 +179,7 @@ class TimelineTaskStoreTest {
         for (String value : java.util.List.of("ERROR_1009", "-1009")) {
             when(redis.get("timeline:draft-task:string-error")).thenReturn(
                     "{\"status\":\"FAILED\",\"dailyRecordId\":42,\"error\":\"" + value + "\","
-                            + "\"tokenHash\":\"h\",\"subjectId\":\"" + SubjectIdCodec.encode(SUBJECT) + "\"}");
+                            + "\"tokenHash\":\"h\",\"subjectId\":\"" + SUBJECT + "\"}");
 
             assertThatThrownBy(() -> store.find("string-error"))
                     .isInstanceOf(IllegalStateException.class);

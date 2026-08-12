@@ -8,8 +8,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.id.SubjectId;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -60,8 +60,8 @@ class SubjectMappingServiceTest {
         UserSubjectLink saved = captor.getValue();
         assertThat(saved.getUserLookupKey()).isEqualTo(lookupKey(1));
         assertThat(saved.getLookupKeyVersion()).isEqualTo(CURRENT_VERSION);
-        assertThat(saved.getSubjectId()).hasSize(16);
-        assertThat((saved.getSubjectId()[6] >> 4) & 0x0F).isEqualTo(4); // UUIDv4
+        assertThat(saved.getSubjectId().version()).isEqualTo(4);
+        assertThat(saved.getSubjectId().variant()).isEqualTo(2);
     }
 
     @Test
@@ -79,8 +79,8 @@ class SubjectMappingServiceTest {
         UserSubjectLink saved = captor.getValue();
         assertThat(saved.getUserLookupKey()).isEqualTo(lookupKey(1));
         assertThat(saved.getLookupKeyVersion()).isEqualTo(CURRENT_VERSION);
-        assertThat(saved.getSubjectId()).hasSize(16);
-        assertThat((saved.getSubjectId()[6] >> 4) & 0x0F).isEqualTo(4); // UUIDv4
+        assertThat(saved.getSubjectId().version()).isEqualTo(4);
+        assertThat(saved.getSubjectId().variant()).isEqualTo(2);
     }
 
     @Test
@@ -88,7 +88,7 @@ class SubjectMappingServiceTest {
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(userSubjectLinkRepository.findById(lookupKey(1)))
                 .thenReturn(Optional.of(UserSubjectLink.of(
-                        lookupKey(1), SubjectId.newRandom().bytes(), CURRENT_VERSION)));
+                        lookupKey(1), UUID.randomUUID(), CURRENT_VERSION)));
 
         assertThat(subjectMappingService.createIfAbsent(USER_ID)).isFalse();
 
@@ -104,7 +104,7 @@ class SubjectMappingServiceTest {
         when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
         when(userSubjectLinkRepository.findById(lookupKey(2)))
                 .thenReturn(Optional.of(UserSubjectLink.of(
-                        lookupKey(2), SubjectId.newRandom().bytes(), (short) 1)));
+                        lookupKey(2), UUID.randomUUID(), (short) 1)));
 
         assertThat(subjectMappingService.createIfAbsent(USER_ID)).isFalse();
 
@@ -114,12 +114,12 @@ class SubjectMappingServiceTest {
 
     @Test
     void getRequired_currentHit_returnsSubjectWithoutRekey() {
-        SubjectId subject = SubjectId.newRandom();
+        UUID subject = UUID.randomUUID();
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(userSubjectLinkRepository.findById(lookupKey(1)))
-                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(1), subject.bytes(), CURRENT_VERSION)));
+                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(1), subject, CURRENT_VERSION)));
 
-        SubjectId result = subjectMappingService.getRequired(USER_ID);
+        UUID result = subjectMappingService.getRequired(USER_ID);
 
         assertThat(result).isEqualTo(subject);
         verify(userSubjectLinkRepository, never()).rekey(any(), any(), anyShort());
@@ -141,16 +141,16 @@ class SubjectMappingServiceTest {
 
     @Test
     void getRequired_currentMissPreviousHit_rekeysAtomicallyAndPreservesSubject() {
-        SubjectId subject = SubjectId.newRandom();
+        UUID subject = UUID.randomUUID();
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
         when(subjectLookupKeyDeriver.currentVersion()).thenReturn(CURRENT_VERSION);
         when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
         when(userSubjectLinkRepository.findById(lookupKey(2)))
-                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject.bytes(), (short) 1)));
+                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject, (short) 1)));
         when(userSubjectLinkRepository.rekey(lookupKey(2), lookupKey(1), CURRENT_VERSION)).thenReturn(1);
 
-        SubjectId result = subjectMappingService.getRequired(USER_ID);
+        UUID result = subjectMappingService.getRequired(USER_ID);
 
         assertThat(result).isEqualTo(subject); // 교체는 PK·version만 — subject 불변
         verify(userSubjectLinkRepository).rekey(lookupKey(2), lookupKey(1), CURRENT_VERSION);
@@ -159,13 +159,13 @@ class SubjectMappingServiceTest {
 
     @Test
     void getRequired_rekeyRace_zeroAffectedRows_stillReturnsSubject() {
-        SubjectId subject = SubjectId.newRandom();
+        UUID subject = UUID.randomUUID();
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
         when(subjectLookupKeyDeriver.currentVersion()).thenReturn(CURRENT_VERSION);
         when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
         when(userSubjectLinkRepository.findById(lookupKey(2)))
-                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject.bytes(), (short) 1)));
+                .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject, (short) 1)));
         when(userSubjectLinkRepository.rekey(lookupKey(2), lookupKey(1), CURRENT_VERSION)).thenReturn(0);
 
         // 동시 getRequired가 먼저 교체(0행)해도 subject는 동일 — 멱등으로 성공한다.

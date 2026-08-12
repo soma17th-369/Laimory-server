@@ -2,13 +2,13 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import io.micrometer.core.instrument.Timer;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -103,7 +103,7 @@ public class TimelineCallbackService {
     }
 
     /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. */
-    private void enqueuePushQuietly(String taskId, SubjectId subjectId, TaskStatus status) {
+    private void enqueuePushQuietly(String taskId, UUID subjectId, TaskStatus status) {
         try {
             timelineCompletionPushNotifier.notifyAsync(subjectId, taskId, status);
         } catch (RuntimeException e) {

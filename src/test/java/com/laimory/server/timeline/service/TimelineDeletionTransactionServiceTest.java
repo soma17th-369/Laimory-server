@@ -28,6 +28,7 @@ import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,8 +60,8 @@ class TimelineDeletionTransactionServiceTest {
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
-    private static final com.laimory.server.common.id.SubjectId OTHER_SUBJECT_ID =
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID OTHER_SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
@@ -91,7 +92,7 @@ class TimelineDeletionTransactionServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(com.laimory.server.common.id.SubjectId subjectId) {
+    private DailyRecord draftRecordOf(java.util.UUID subjectId) {
         DailyRecord record = DailyRecord.createDraft(
                 subjectId,
                 RECORD_DATE,

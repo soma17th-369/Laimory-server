@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
@@ -92,13 +91,13 @@ class TimelineSaveFlowIntegrationTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // 다른 테스트·잔여 데이터와 겹치지 않도록 실행마다 임의 사용자로 격리한다.
-    private SubjectId subjectId;
+    private UUID subjectId;
     private Long recordId;
     private Long eventId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         ensureExists(jdbcTemplate, subjectId);
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
@@ -111,7 +110,7 @@ class TimelineSaveFlowIntegrationTest {
     void cleanUp() {
         List.of(DATE, OTHER_DATE).forEach(date -> dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, date)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())));
-        userMemoryRepository.deleteBySubjectId(subjectId.bytes());
+        userMemoryRepository.deleteBySubjectId(subjectId.toString());
         taskStore.releaseGuard(subjectId);
         List<Long> leftover = pendingEntriesOf(subjectId).stream()
                 .map(UserMemoryUpdatePending::dailyRecordId)
@@ -119,7 +118,7 @@ class TimelineSaveFlowIntegrationTest {
         if (!leftover.isEmpty()) {
             pendingStore.removeAll(subjectId, leftover);
         }
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
     @Test
@@ -264,7 +263,7 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     /** guard는 획득 시도로만 관측한다 — 잡히면 비어 있었다는 뜻이라 곧바로 되돌린다. */
-    private boolean guardHeldBy(SubjectId ownerId) {
+    private boolean guardHeldBy(UUID ownerId) {
         if (taskStore.acquireGuard(ownerId, "probe", Duration.ofSeconds(5))) {
             taskStore.releaseGuard(ownerId);
             return false;
@@ -272,7 +271,7 @@ class TimelineSaveFlowIntegrationTest {
         return true;
     }
 
-    private List<UserMemoryUpdatePending> pendingEntriesOf(SubjectId ownerId) {
+    private List<UserMemoryUpdatePending> pendingEntriesOf(UUID ownerId) {
         return pendingStore.findPending(clock.instant().plusSeconds(3600), 1000).scanned().stream()
                 .filter(pending -> pending.subjectId().equals(ownerId))
                 .toList();

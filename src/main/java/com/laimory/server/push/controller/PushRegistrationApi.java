@@ -2,7 +2,6 @@ package com.laimory.server.push.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.push.dto.PushRegistrationRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +9,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -50,7 +50,7 @@ public interface PushRegistrationApi {
     @PutMapping
     ResponseEntity<ApiResponse<Void>> registerPushRegistration(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @RequestBody PushRegistrationRequest request);
 
     @Operation(summary = "FID 해제",
@@ -68,6 +68,6 @@ public interface PushRegistrationApi {
     @DeleteMapping
     ResponseEntity<ApiResponse<Void>> unregisterPushRegistration(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @RequestBody PushRegistrationRequest request);
 }

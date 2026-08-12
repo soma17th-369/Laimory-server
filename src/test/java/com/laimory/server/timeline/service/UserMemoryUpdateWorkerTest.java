@@ -37,6 +37,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,7 +65,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class UserMemoryUpdateWorkerTest {
 
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
     private static final long RECORD_ID = 42L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
     private static final Instant NOW = Instant.parse("2026-08-05T12:00:00Z");

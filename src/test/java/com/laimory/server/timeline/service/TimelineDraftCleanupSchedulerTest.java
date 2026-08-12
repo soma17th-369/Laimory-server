@@ -15,7 +15,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.StayPayload;
@@ -27,6 +26,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -50,7 +50,7 @@ class TimelineDraftCleanupSchedulerTest {
     private static final Clock FIXED =
             Clock.fixed(Instant.parse("2026-06-22T03:00:00Z"), ZoneOffset.UTC);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 1);
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final String FILENAME = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {

@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.geo.Coordinate;
 import com.laimory.server.geo.GeoLookupOutcome;
 import com.laimory.server.geo.GeoMetrics;
@@ -25,6 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -77,7 +77,7 @@ public class SourceItemEnrichmentService {
 
     /** {@code subjectId}는 PHOTO photoUrl의 full key 파생에 쓴다 — 저장될 row의 owner와 같아야 한다. */
     @WithSpan
-    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, SubjectId subjectId) {
+    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, UUID subjectId) {
         long startNanos = System.nanoTime();
         List<CoordinateObservation> observations = collectObservations(sourceItems);
         Set<Coordinate> coordinates = uniqueCoordinates(observations);
@@ -216,7 +216,7 @@ public class SourceItemEnrichmentService {
         return "none";
     }
 
-    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, SubjectId subjectId) {
+    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, UUID subjectId) {
         TimelineItemPayload reconstructed = switch (src.payload()) {
             case StayPayload stay -> {
                 GeoPlace geo = lookups.get(new Coordinate(stay.latitude(), stay.longitude()));

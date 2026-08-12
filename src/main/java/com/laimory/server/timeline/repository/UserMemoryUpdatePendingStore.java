@@ -1,13 +1,12 @@
 package com.laimory.server.timeline.repository;
 
 import com.laimory.server.common.redis.RedisGateway;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdCodec;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -16,7 +15,7 @@ import org.springframework.stereotype.Component;
  * 아직 User Memory에 반영되지 않은 날의 큐.
  *
  * <p>논리 키: sorted set {@code timeline:user-memory-update:pending}
- * (member: {@code base64url(subjectId):dailyRecordId}). 환경 prefix는 {@link RedisGateway}가 붙인다.
+ * (member: {@code canonicalUuid(subjectId):dailyRecordId}). 환경 prefix는 {@link RedisGateway}가 붙인다.
  *
  * <p><b>정렬 기준은 "대기 시작 시각"(epoch ms)이다</b> — 이 큐에 처음 들어온 순간이고, 갱신 대상
  * 날짜({@code record_date})가 아니다. 세 가지를 동시에 정한다:
@@ -93,12 +92,12 @@ public class UserMemoryUpdatePendingStore {
         redis.expire(PENDING_KEY, retention);
     }
 
-    public void enqueueAll(SubjectId subjectId, List<Long> dailyRecordIds, Instant waitingSince) {
+    public void enqueueAll(UUID subjectId, List<Long> dailyRecordIds, Instant waitingSince) {
         dailyRecordIds.forEach(dailyRecordId ->
                 enqueue(new UserMemoryUpdatePending(subjectId, dailyRecordId), waitingSince));
     }
 
-    public void removeAll(SubjectId subjectId, List<Long> dailyRecordIds) {
+    public void removeAll(UUID subjectId, List<Long> dailyRecordIds) {
         redis.removeFromSortedSet(PENDING_KEY, dailyRecordIds.stream()
                 .map(dailyRecordId -> member(new UserMemoryUpdatePending(subjectId, dailyRecordId)))
                 .toList());
@@ -163,7 +162,7 @@ public class UserMemoryUpdatePendingStore {
     }
 
     private static String member(UserMemoryUpdatePending pending) {
-        return SubjectIdCodec.encode(pending.subjectId()) + MEMBER_DELIMITER + pending.dailyRecordId();
+        return pending.subjectId() + MEMBER_DELIMITER + pending.dailyRecordId();
     }
 
     private static UserMemoryUpdatePending parse(String member) {
@@ -172,7 +171,11 @@ public class UserMemoryUpdatePendingStore {
             return null;
         }
         try {
-            return new UserMemoryUpdatePending(SubjectIdCodec.decode(fields[0]), Long.parseLong(fields[1]));
+            UUID subjectId = UUID.fromString(fields[0]);
+            if (!subjectId.toString().equals(fields[0])) {
+                return null;
+            }
+            return new UserMemoryUpdatePending(subjectId, Long.parseLong(fields[1]));
         } catch (IllegalArgumentException e) {
             // 숫자 파싱 실패와 record compact 생성자의 범위 검증 실패를 함께 받는다.
             return null;

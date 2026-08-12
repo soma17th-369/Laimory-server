@@ -1,15 +1,11 @@
 package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdJsonDeserializer;
-import com.laimory.server.common.id.SubjectIdJsonSerializer;
 import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * User Memory 갱신 비동기 작업의 상태 모델. Redis에 JSON으로 저장된다(JPA 엔티티 아님).
@@ -28,9 +24,7 @@ import java.util.Objects;
  * 처리된다). 로그 상관관계 용도이며 외부 계약이 아니다.
  */
 public record UserMemoryUpdateTask(
-        @JsonSerialize(using = SubjectIdJsonSerializer.class)
-        @JsonDeserialize(using = SubjectIdJsonDeserializer.class)
-        SubjectId subjectId,
+        UUID subjectId,
         List<Long> dailyRecordIds,
         String tokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant processingStartedAt,

@@ -28,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -49,7 +50,7 @@ class TimelineAiTaskInputServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "t";
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
     private static final long RECORD_ID = 42L;
     private static final String ZONE = "Asia/Seoul";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);

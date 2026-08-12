@@ -5,7 +5,6 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -25,13 +24,13 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -77,12 +76,12 @@ class TimelineEventItemDetachIntegrationTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Set<Long> fixtureItemIds = new HashSet<>();
 
-    private SubjectId subjectId;
+    private UUID subjectId;
     private Long recordId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         ensureExists(jdbcTemplate, subjectId);
         fixtureItemIds.clear();
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
@@ -102,7 +101,7 @@ class TimelineEventItemDetachIntegrationTest {
         }
         dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
     private List<TimelinePhotoDeleteJob> findFixturePhotoDeleteJobs() {

@@ -16,11 +16,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.config.SecurityConfig;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.user.SubjectMappingService;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +40,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class PushRegistrationControllerTest {
 
     private static final long USER_ID = 7L;
-    private static final SubjectId SUBJECT_ID = TestSubjects.id(USER_ID);
+    private static final UUID SUBJECT_ID = TestSubjects.id(USER_ID);
     private static final String PATH = "/a/api/v1/push-registrations";
     private static final String BODY = """
             {"firebaseInstallationId":"fid-abc"}
@@ -104,7 +104,7 @@ class PushRegistrationControllerTest {
     @Test
     void register_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(any(), any(SubjectId.class), any());
+                .when(pushRegistrationService).register(any(), any(UUID.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"firebaseInstallationId\":\"\"}"))
@@ -116,7 +116,7 @@ class PushRegistrationControllerTest {
     @Test
     void unregister_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).unregister(any(), any(SubjectId.class), any());
+                .when(pushRegistrationService).unregister(any(), any(UUID.class), any());
 
         mockMvc.perform(delete(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
@@ -128,7 +128,7 @@ class PushRegistrationControllerTest {
     void register_missingField_passesNullToServiceValidation() throws Exception {
         // 필드 부재는 역직렬화에서 null — 400 판정은 서비스 validation 한 곳이 담당한다(중복 검증 금지).
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(anyString(), any(SubjectId.class), any());
+                .when(pushRegistrationService).register(anyString(), any(UUID.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))

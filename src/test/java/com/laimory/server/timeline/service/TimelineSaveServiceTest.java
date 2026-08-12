@@ -13,13 +13,13 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,7 +39,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class TimelineSaveServiceTest {
 
     private static final String VERSION = "v1";
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final Long RECORD_ID = 42L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
 

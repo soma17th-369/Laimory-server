@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -43,14 +42,14 @@ class TimelineDeletionGuardIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     // 다른 테스트·잔여 데이터와 겹치지 않도록 실행마다 임의 사용자로 격리한다.
-    private SubjectId subjectId;
+    private UUID subjectId;
     private long legacyUserId;
     private Long recordId;
     private Long eventId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         legacyUserId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
         ensureExists(jdbcTemplate, subjectId);
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
@@ -64,7 +63,7 @@ class TimelineDeletionGuardIntegrationTest {
     void cleanUp() {
         dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
         redisGateway.delete(legacyGuardKey());
     }
 

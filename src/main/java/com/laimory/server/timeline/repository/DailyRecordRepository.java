@@ -1,12 +1,12 @@
 package com.laimory.server.timeline.repository;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -14,11 +14,11 @@ import org.springframework.data.repository.query.Param;
 
 public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> {
 
-    Optional<DailyRecord> findBySubjectIdAndRecordDate(SubjectId subjectId, LocalDate recordDate);
+    Optional<DailyRecord> findBySubjectIdAndRecordDate(UUID subjectId, LocalDate recordDate);
 
-    List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SubjectId subjectId);
+    List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(UUID subjectId);
 
-    Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, SubjectId subjectId);
+    Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId);
 
     /**
      * 소유 record만 골라 {@code record_date} 오름차순으로 반환한다. 없는 id는 결과에서 빠지므로,
@@ -28,7 +28,7 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
      * 큐 진입 순서(과거 날짜를 나중에 저장할 수 있다)와 다르다.
      */
     List<DailyRecord> findBySubjectIdAndDailyRecordIdInOrderByRecordDateAsc(
-            SubjectId subjectId, Collection<Long> dailyRecordIds);
+            UUID subjectId, Collection<Long> dailyRecordIds);
 
     /**
      * 소유 DRAFT record만 SAVED로 옮기는 조건부 UPDATE. 영향 행 수가 전이 성공 판정 기준이라 같은
@@ -45,6 +45,6 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
             + "set r.status = com.laimory.server.timeline.DailyRecordStatus.SAVED, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
             + "and r.status = com.laimory.server.timeline.DailyRecordStatus.DRAFT")
-    int markSaved(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") SubjectId subjectId,
+    int markSaved(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
                   @Param("now") LocalDateTime now);
 }

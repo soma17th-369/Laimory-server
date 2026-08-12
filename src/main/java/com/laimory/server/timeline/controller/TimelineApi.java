@@ -2,7 +2,6 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
@@ -18,6 +17,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.UUID;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -167,7 +167,7 @@ public interface TimelineApi {
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),
                             examples = @ExampleObject(name = "6개 itemType 전체 예시", value = CREATE_DRAFT_EXAMPLE)))
@@ -188,7 +188,7 @@ public interface TimelineApi {
     @PostMapping("/photo-uploads")
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @RequestBody PhotoUploadCreateRequest request);
 
     @Operation(summary = "진행 중 draft 작업 목록 조회",
@@ -206,7 +206,7 @@ public interface TimelineApi {
     @GetMapping
     ResponseEntity<ApiResponse<DraftTaskListResponse>> listProcessingDraftTasks(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId);
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId);
 
     @Operation(summary = "draft 작업 상태 폴링",
             description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
@@ -229,6 +229,6 @@ public interface TimelineApi {
     @GetMapping("/{taskId}")
     ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @Parameter(description = "draft 작업 ID (생성 응답의 taskId)") @PathVariable String taskId);
 }

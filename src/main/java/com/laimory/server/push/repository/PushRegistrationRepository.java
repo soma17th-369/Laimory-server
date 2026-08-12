@@ -1,10 +1,10 @@
 package com.laimory.server.push.repository;
 
 import com.laimory.server.push.entity.PushRegistration;
-import com.laimory.server.common.id.SubjectId;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -30,12 +30,12 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
             + "values (:subjectId, :fid, :now, :now, :now) "
             + "on duplicate key update subject_id = :subjectId, last_registered_at = :now, updated_at = :now",
             nativeQuery = true)
-    void upsert(@Param("subjectId") byte[] subjectId, @Param("fid") String firebaseInstallationId,
+    void upsert(@Param("subjectId") String subjectId, @Param("fid") String firebaseInstallationId,
                 @Param("now") LocalDateTime now);
 
     /** callback task owner의 활성 설치 전체 발송 대상 조회(FID만 — 엔티티 로드 불필요). */
     @Query("select p.firebaseInstallationId from PushRegistration p where p.subjectId = :subjectId")
-    List<String> findAllFirebaseInstallationIdsBySubjectId(@Param("subjectId") SubjectId subjectId);
+    List<String> findAllFirebaseInstallationIdsBySubjectId(@Param("subjectId") UUID subjectId);
 
     /**
      * owner 조건 해제 — (principal에서 해석한 subject, FID)가 함께 일치할 때만 삭제해
@@ -45,7 +45,7 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
     @Modifying
     @Transactional
     @Query("delete from PushRegistration p where p.subjectId = :subjectId and p.firebaseInstallationId = :fid")
-    int deleteBySubjectIdAndFirebaseInstallationId(@Param("subjectId") SubjectId subjectId,
+    int deleteBySubjectIdAndFirebaseInstallationId(@Param("subjectId") UUID subjectId,
                                                    @Param("fid") String firebaseInstallationId);
 
     /**

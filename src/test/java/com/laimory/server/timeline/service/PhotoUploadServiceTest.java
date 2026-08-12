@@ -10,13 +10,13 @@ import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -30,7 +30,7 @@ import org.springframework.util.unit.DataSize;
 class PhotoUploadServiceTest {
 
     private static final long TEN_MB = 10L * 1024 * 1024;
-    private static final SubjectId SUBJECT_ID = id(424242L);
+    private static final UUID SUBJECT_ID = id(424242L);
 
     private S3PhotoStorageService storage;
     private PhotoUploadService service;

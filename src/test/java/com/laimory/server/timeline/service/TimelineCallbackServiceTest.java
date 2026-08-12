@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -22,6 +21,7 @@ import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -44,7 +44,7 @@ class TimelineCallbackServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "task";
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final long RECORD_ID = 42L;
     private static final String TASK_TOKEN = "raw-task-token";
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);

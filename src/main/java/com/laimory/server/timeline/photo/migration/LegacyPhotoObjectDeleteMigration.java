@@ -1,6 +1,5 @@
 package com.laimory.server.timeline.photo.migration;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.UserRepository;
@@ -8,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeletedObject;
@@ -68,7 +68,7 @@ class LegacyPhotoObjectDeleteMigration {
     private long verifyAllTargets(List<Long> userIds) {
         long objectsVerified = 0;
         for (Long userId : userIds) {
-            SubjectId subjectId = subjectMappingService.getRequired(userId);
+            UUID subjectId = subjectMappingService.getRequired(userId);
             String sourcePrefix = legacyPrefix(userId);
             String targetPrefix = subjectPrefix(subjectId);
             String continuationToken = null;
@@ -168,7 +168,7 @@ class LegacyPhotoObjectDeleteMigration {
         return PhotoObjectKeys.sha256hex(userId) + "/photos/";
     }
 
-    private static String subjectPrefix(SubjectId subjectId) {
+    private static String subjectPrefix(UUID subjectId) {
         return PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
     }
 

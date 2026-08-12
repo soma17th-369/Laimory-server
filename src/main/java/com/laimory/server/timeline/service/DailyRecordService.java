@@ -1,6 +1,5 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.Clock;
@@ -8,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,7 +20,7 @@ public class DailyRecordService {
     private final DailyRecordRepository dailyRecordRepository;
     private final Clock clock;
 
-    public Optional<DailyRecord> findBySubjectIdAndRecordDate(SubjectId subjectId, LocalDate recordDate) {
+    public Optional<DailyRecord> findBySubjectIdAndRecordDate(UUID subjectId, LocalDate recordDate) {
         return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate);
     }
 
@@ -29,12 +29,12 @@ public class DailyRecordService {
     }
 
     /** 사용자의 일일 기록 전체를 record_date, daily_record_id 내림차순으로 반환한다. */
-    public List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SubjectId subjectId) {
+    public List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(UUID subjectId) {
         return dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(subjectId);
     }
 
     /** 일일 기록 ID와 subject가 모두 일치하는 소유 record만 반환한다. */
-    public Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, SubjectId subjectId) {
+    public Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId) {
         return dailyRecordRepository.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId);
     }
 
@@ -42,7 +42,7 @@ public class DailyRecordService {
      * 소유 record만 골라 record_date 오름차순으로 한 번에 반환한다. 없는 id는 결과에서 빠진다.
      * 빈 목록을 넘기면 질의 없이 빈 결과다({@code IN ()}는 문법 오류다).
      */
-    public List<DailyRecord> findAllBySubjectIdAndIdsOrderByRecordDate(SubjectId subjectId,
+    public List<DailyRecord> findAllBySubjectIdAndIdsOrderByRecordDate(UUID subjectId,
                                                                       List<Long> dailyRecordIds) {
         if (dailyRecordIds.isEmpty()) {
             return List.of();
@@ -64,7 +64,7 @@ public class DailyRecordService {
      * 소유 DRAFT record를 SAVED로 전이하고 실제로 옮긴 행 수를 반환한다(0 = 이미 SAVED·삭제됨·비소유).
      * 호출부의 트랜잭션에 합류하는 조건부 UPDATE라 별도 lock 없이 동시 저장 중 하나만 성공한다.
      */
-    public int markSaved(Long dailyRecordId, SubjectId subjectId) {
+    public int markSaved(Long dailyRecordId, UUID subjectId) {
         return dailyRecordRepository.markSaved(dailyRecordId, subjectId, LocalDateTime.now(clock));
     }
 
@@ -83,7 +83,7 @@ public class DailyRecordService {
      * 롤백하므로, 갱신은 flush 전에 폐기된다.
      */
     @Transactional
-    public DailyRecord findOrCreateDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt,
+    public DailyRecord findOrCreateDraft(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                          String recordTimezone) {
         return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .map(existing -> {

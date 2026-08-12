@@ -10,13 +10,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdCodec;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,8 +43,8 @@ class UserMemoryUpdatePendingStoreTest {
     /** 이 시각 이전에 대기를 시작한 항목은 retention을 넘겼다. */
     private static final long GIVE_UP_BEFORE = NOW.minus(RETENTION).toEpochMilli();
     private static final int LIMIT = 3;
-    private static final SubjectId SUBJECT = id(7L);
-    private static final SubjectId OTHER_SUBJECT = id(13L);
+    private static final UUID SUBJECT = id(7L);
+    private static final UUID OTHER_SUBJECT = id(13L);
 
     @Mock
     private RedisGateway redis;
@@ -125,7 +124,7 @@ class UserMemoryUpdatePendingStoreTest {
                 UserMemoryUpdatePendingStore.PENDING_KEY, List.of(member(SUBJECT, 42L), member(SUBJECT, 43L)));
     }
 
-    private static String member(SubjectId subjectId, long dailyRecordId) {
-        return SubjectIdCodec.encode(subjectId) + ":" + dailyRecordId;
+    private static String member(UUID subjectId, long dailyRecordId) {
+        return subjectId + ":" + dailyRecordId;
     }
 }

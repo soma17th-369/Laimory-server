@@ -1,12 +1,9 @@
 package com.laimory.server.timeline.entity;
 
 import com.laimory.server.common.BaseEntity;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdAttributeConverter;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -16,7 +13,10 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
@@ -31,9 +31,9 @@ public class DailyRecord extends BaseEntity {
     @Column(name = "daily_record_id")
     private Long dailyRecordId;
 
-    @Convert(converter = SubjectIdAttributeConverter.class)
-    @Column(name = "subject_id", nullable = false, columnDefinition = "BINARY(16)")
-    private SubjectId subjectId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", nullable = false, length = 36)
+    private UUID subjectId;
 
     @Column(nullable = false)
     private LocalDate recordDate;
@@ -55,7 +55,7 @@ public class DailyRecord extends BaseEntity {
     protected DailyRecord() {
     }
 
-    private DailyRecord(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+    private DailyRecord(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                         DailyRecordStatus status) {
         this.subjectId = subjectId;
         this.recordDate = recordDate;
@@ -64,7 +64,7 @@ public class DailyRecord extends BaseEntity {
         this.status = status;
     }
 
-    public static DailyRecord createDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt,
+    public static DailyRecord createDraft(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                           String recordTimezone) {
         return new DailyRecord(subjectId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
     }

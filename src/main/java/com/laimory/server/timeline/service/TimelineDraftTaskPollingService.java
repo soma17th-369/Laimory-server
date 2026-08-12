@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -10,6 +9,7 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,7 +36,7 @@ public class TimelineDraftTaskPollingService {
     private final DailyTimelineService dailyTimelineService;
     private final Clock clock;
 
-    public DraftTaskStatusResponse poll(String applicationVersion, SubjectId subjectId, String taskId) {
+    public DraftTaskStatusResponse poll(String applicationVersion, UUID subjectId, String taskId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
@@ -73,7 +73,7 @@ public class TimelineDraftTaskPollingService {
     }
 
     /** SUCCESS task의 결과 record를 ID로만 찾는다. 삭제됨·비소유는 전부 0404로 은닉한다. */
-    private DailyRecord findResultRecord(TimelineDraftTask task, SubjectId subjectId) {
+    private DailyRecord findResultRecord(TimelineDraftTask task, UUID subjectId) {
         return dailyRecordService.findById(task.dailyRecordId())
                 .filter(record -> record.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_RESULT_NOT_FOUND));

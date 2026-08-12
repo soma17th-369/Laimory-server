@@ -11,7 +11,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
@@ -28,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,8 +40,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class TimelineEventEditTransactionServiceTest {
 
-    private static final SubjectId SUBJECT_ID = id(7L);
-    private static final SubjectId OTHER_SUBJECT_ID = id(999L);
+    private static final UUID SUBJECT_ID = id(7L);
+    private static final UUID OTHER_SUBJECT_ID = id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long OTHER_EVENT_ID = 12L;
     private static final Long RECORD_ID = 100L;
@@ -252,7 +252,7 @@ class TimelineEventEditTransactionServiceTest {
         return event;
     }
 
-    private DailyRecord record(SubjectId subjectId, DailyRecordStatus status) {
+    private DailyRecord record(UUID subjectId, DailyRecordStatus status) {
         DailyRecord record = DailyRecord.createDraft(
                 subjectId, RECORD_DATE, RECORD_DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);

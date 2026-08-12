@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -13,6 +12,7 @@ import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,9 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TimelineQueryPersistenceIntegrationTest {
 
-    private static final SubjectId OWNER_ID = id(9_187_000_001L);
-    private static final SubjectId OTHER_SUBJECT_ID = id(9_187_000_002L);
-    private static final SubjectId EVENT_OWNER_ID = id(9_187_000_003L);
+    private static final UUID OWNER_ID = id(9_187_000_001L);
+    private static final UUID OTHER_SUBJECT_ID = id(9_187_000_002L);
+    private static final UUID EVENT_OWNER_ID = id(9_187_000_003L);
 
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
@@ -104,7 +104,7 @@ class TimelineQueryPersistenceIntegrationTest {
                         secondRecordEvent.getTimelineEventId());
     }
 
-    private DailyRecord record(SubjectId subjectId, LocalDate recordDate) {
+    private DailyRecord record(UUID subjectId, LocalDate recordDate) {
         return DailyRecord.createDraft(subjectId, recordDate, recordDate.atTime(12, 0), "Asia/Seoul");
     }
 

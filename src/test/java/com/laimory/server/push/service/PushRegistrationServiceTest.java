@@ -7,13 +7,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.push.repository.PushRegistrationRepository;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -29,7 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class PushRegistrationServiceTest {
 
-    private static final SubjectId SUBJECT_ID = TestSubjects.id(7L);
+    private static final UUID SUBJECT_ID = TestSubjects.id(7L);
     /** 고정 Clock — upsert freshness 값이 이 시각으로 전달돼야 한다. */
     private static final Clock FIXED_CLOCK =
             Clock.fixed(Instant.parse("2026-07-21T01:30:00Z"), ZoneId.of("Asia/Seoul"));
@@ -47,7 +47,7 @@ class PushRegistrationServiceTest {
         // opaque 계약: 앞뒤 공백·대소문자 포함 원문 그대로 repository에 전달한다(trim·정규화 금지).
         service().register("v1", SUBJECT_ID, " AbC-fid ");
 
-        verify(pushRegistrationRepository).upsert(SUBJECT_ID.bytes(), " AbC-fid ", FIXED_NOW);
+        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), " AbC-fid ", FIXED_NOW);
     }
 
     @ParameterizedTest
@@ -76,7 +76,7 @@ class PushRegistrationServiceTest {
 
         service().register("v1", SUBJECT_ID, max);
 
-        verify(pushRegistrationRepository).upsert(SUBJECT_ID.bytes(), max, FIXED_NOW);
+        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), max, FIXED_NOW);
     }
 
     @Test

@@ -5,7 +5,6 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -23,6 +22,7 @@ import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,7 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TimelineItemPersistenceIntegrationTest {
 
-    private static final SubjectId SUBJECT = id(11L);
+    private static final UUID SUBJECT = id(11L);
 
     @Autowired
     private DailyRecordRepository dailyRecordRepository;

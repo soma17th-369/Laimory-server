@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -16,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -57,7 +57,7 @@ class TimelineEventEditConcurrencyIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private static final SubjectId SUBJECT_ID = id(14L);
+    private static final UUID SUBJECT_ID = id(14L);
 
     private Long eventId;
 
@@ -75,7 +75,7 @@ class TimelineEventEditConcurrencyIntegrationTest {
     @AfterEach
     void cleanUp() {
         deleteFixtureRecord();
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 
     private void deleteFixtureRecord() {

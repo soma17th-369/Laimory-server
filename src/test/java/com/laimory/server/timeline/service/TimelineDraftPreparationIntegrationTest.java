@@ -7,7 +7,6 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -59,12 +58,12 @@ class TimelineDraftPreparationIntegrationTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private SubjectId subjectId;
+    private UUID subjectId;
     private String taskId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         ensureExists(jdbcTemplate, subjectId);
         taskId = UUID.randomUUID().toString();
     }
@@ -74,7 +73,7 @@ class TimelineDraftPreparationIntegrationTest {
         timelineDraftSourceItemRepository.deleteByTaskId(taskId);
         dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
     @Test

@@ -1,6 +1,5 @@
 package com.laimory.server.push.service;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
@@ -8,6 +7,7 @@ import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -36,7 +36,7 @@ public class TimelineCompletionPushNotifier {
     private final Clock clock;
 
     @Async
-    public void notifyAsync(SubjectId subjectId, String taskId, TaskStatus status) {
+    public void notifyAsync(UUID subjectId, String taskId, TaskStatus status) {
         try {
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면
             // (lastRegisteredAt > snapshotAt) 무효 정리에서 보호된다.

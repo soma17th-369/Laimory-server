@@ -3,8 +3,6 @@ package com.laimory.server.timeline.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdCodec;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -12,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,7 +19,7 @@ import org.springframework.stereotype.Component;
  * timeline draft 작업 상태의 Redis 데이터 접근 계층.
  * 논리 키: {@code timeline:draft-task:{taskId}}, 값: TimelineDraftTask JSON.
  * subject별 진행 작업 index 논리 키:
- * {@code timeline:draft-task:user:{base64url(subjectId)}:processing}
+ * {@code timeline:draft-task:user:{canonicalUuid(subjectId)}:processing}
  * (sorted set — member: taskId, score: processingStartedAt epoch ms).
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  *
@@ -42,9 +41,9 @@ public class TimelineTaskStore {
     private final RedisGateway redis;
     private final ObjectMapper objectMapper;
 
-    /** subject별 진행 작업 index의 논리 키. codec이 null과 비정상 subject를 fail-closed한다. */
-    static String subjectProcessingIndexKey(SubjectId subjectId) {
-        return USER_PROCESSING_INDEX_KEY_PREFIX + SubjectIdCodec.encode(subjectId)
+    /** subject별 진행 작업 index의 논리 키. */
+    static String subjectProcessingIndexKey(UUID subjectId) {
+        return USER_PROCESSING_INDEX_KEY_PREFIX + java.util.Objects.requireNonNull(subjectId, "subjectId")
                 + USER_PROCESSING_INDEX_KEY_SUFFIX;
     }
 
@@ -115,7 +114,7 @@ public class TimelineTaskStore {
      * <p>역직렬화 불가 JSON(owner 누락·null·0 포함)은 권위를 판정할 수 없으므로 예외를 전파하고(500)
      * 어떤 member도 자동 삭제하지 않는다(수동 조사 가능성 보존).
      */
-    public List<String> findProcessingTaskIds(SubjectId subjectId) {
+    public List<String> findProcessingTaskIds(UUID subjectId) {
         String userIndexKey = subjectProcessingIndexKey(subjectId);
         List<String> candidates = redis.getSortedSetReverseRange(userIndexKey);
         if (candidates.isEmpty()) {

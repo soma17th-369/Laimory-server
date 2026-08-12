@@ -15,7 +15,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionResult;
@@ -33,6 +32,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -57,7 +57,7 @@ class TimelineAiResultServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "t";
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final long RECORD_ID = 42L;
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);

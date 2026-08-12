@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -21,6 +20,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -59,7 +59,7 @@ public class TimelineAiResultTransactionService {
 
     /** AI 결과를 final graph에 반영한다. Redis token CAS 선점은 호출부가 transaction 전에 수행한다. */
     @Transactional
-    public void store(String taskId, SubjectId subjectId, long dailyRecordId, AiTimelineResultRequest request) {
+    public void store(String taskId, UUID subjectId, long dailyRecordId, AiTimelineResultRequest request) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         if (!record.getSubjectId().equals(subjectId)) {

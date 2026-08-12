@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,9 +42,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 class TimelineEventEditServiceTest {
 
     private static final String VERSION = "v1";
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+    private static final java.util.UUID SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(7L);
-    private static final com.laimory.server.common.id.SubjectId OTHER_SUBJECT_ID =
+    private static final java.util.UUID OTHER_SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
@@ -421,7 +422,7 @@ class TimelineEventEditServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(com.laimory.server.common.id.SubjectId subjectId) {
+    private DailyRecord draftRecordOf(java.util.UUID subjectId) {
         DailyRecord record = DailyRecord.createDraft(
                 subjectId, RECORD_DATE, LocalDateTime.of(2026, 7, 8, 12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);

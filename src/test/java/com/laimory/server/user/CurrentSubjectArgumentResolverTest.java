@@ -6,8 +6,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.id.SubjectId;
 import java.lang.reflect.Method;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -28,21 +28,21 @@ class CurrentSubjectArgumentResolverTest {
     void supportsOnlyCurrentSubjectSubjectIdParameter() throws Exception {
         CurrentSubjectArgumentResolver resolver = resolver(null);
 
-        assertThat(resolver.supportsParameter(parameter("subject", SubjectId.class))).isTrue();
-        assertThat(resolver.supportsParameter(parameter("unannotated", SubjectId.class))).isFalse();
+        assertThat(resolver.supportsParameter(parameter("subject", UUID.class))).isTrue();
+        assertThat(resolver.supportsParameter(parameter("unannotated", UUID.class))).isFalse();
         assertThat(resolver.supportsParameter(parameter("wrongType", Long.class))).isFalse();
     }
 
     @Test
     void resolveArgument_mapsAuthenticatedLongPrincipal() throws Exception {
-        SubjectId expected = SubjectId.newRandom();
+        UUID expected = UUID.randomUUID();
         SubjectMappingService mappingService = mock(SubjectMappingService.class);
         when(mappingService.getRequired(USER_ID)).thenReturn(expected);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(USER_ID, null, java.util.List.of()));
 
-        SubjectId actual = resolver(mappingService).resolveArgument(
-                parameter("subject", SubjectId.class), null, null, null);
+        UUID actual = resolver(mappingService).resolveArgument(
+                parameter("subject", UUID.class), null, null, null);
 
         assertThat(actual).isEqualTo(expected);
         verify(mappingService).getRequired(USER_ID);
@@ -53,14 +53,14 @@ class CurrentSubjectArgumentResolverTest {
         CurrentSubjectArgumentResolver resolver = resolver(mock(SubjectMappingService.class));
 
         assertThatThrownBy(() -> resolver.resolveArgument(
-                parameter("subject", SubjectId.class), null, null, null))
+                parameter("subject", UUID.class), null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Long principal");
 
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated("77", null, java.util.List.of()));
         assertThatThrownBy(() -> resolver.resolveArgument(
-                parameter("subject", SubjectId.class), null, null, null))
+                parameter("subject", UUID.class), null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Long principal");
     }
@@ -71,7 +71,7 @@ class CurrentSubjectArgumentResolverTest {
                 UsernamePasswordAuthenticationToken.authenticated(USER_ID, null, java.util.List.of()));
 
         assertThatThrownBy(() -> resolver(null).resolveArgument(
-                parameter("subject", SubjectId.class), null, null, null))
+                parameter("subject", UUID.class), null, null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("subject mapping service is unavailable");
     }
@@ -89,10 +89,10 @@ class CurrentSubjectArgumentResolverTest {
     }
 
     private static final class Fixture {
-        void subject(@CurrentSubject SubjectId subjectId) {
+        void subject(@CurrentSubject UUID subjectId) {
         }
 
-        void unannotated(SubjectId subjectId) {
+        void unannotated(UUID subjectId) {
         }
 
         void wrongType(@CurrentSubject Long userId) {

@@ -5,7 +5,6 @@ import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -37,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -88,7 +88,7 @@ public class TimelineDraftTaskService {
      * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
      */
     @WithSpan
-    public String createDraftTask(String applicationVersion, SubjectId subjectId, LocalDate recordDate,
+    public String createDraftTask(String applicationVersion, UUID subjectId, LocalDate recordDate,
                                   LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
                                   List<SourceItemDto> sourceItems) {
         if (recordDate == null) {

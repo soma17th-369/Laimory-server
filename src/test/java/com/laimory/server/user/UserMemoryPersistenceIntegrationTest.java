@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.id.SubjectId;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
@@ -73,7 +72,7 @@ class UserMemoryPersistenceIntegrationTest {
         return new TestUser(userId, subjectMappingService.getRequired(userId));
     }
 
-    private JsonNode reload(SubjectId subjectId) {
+    private JsonNode reload(UUID subjectId) {
         em.clear();
         return userMemoryService.find(subjectId).orElse(null);
     }
@@ -162,6 +161,6 @@ class UserMemoryPersistenceIntegrationTest {
         assertThat(userMemoryService.find(testUser.subjectId())).isPresent();
     }
 
-    private record TestUser(long userId, SubjectId subjectId) {
+    private record TestUser(long userId, UUID subjectId) {
     }
 }

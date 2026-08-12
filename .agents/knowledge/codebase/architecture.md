@@ -25,7 +25,7 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 ```
 
 - `*Api` interface가 OpenAPI annotation과 HTTP signature를 소유하고 controller가 구현한다.
-- timeline/push의 인증 사용자 API는 `@CurrentSubject SubjectId` parameter를 쓰고 MVC argument resolver가
+- timeline/push의 인증 사용자 API는 `@CurrentSubject UUID subjectId` parameter를 쓰고 MVC argument resolver가
   SecurityContext의 raw `Long` principal을 `SubjectMappingService.getRequired`로 변환한다.
 - component dependency는 field injection 대신 constructor injection을 사용한다
   (일반적으로 `@RequiredArgsConstructor`와 `private final` field).

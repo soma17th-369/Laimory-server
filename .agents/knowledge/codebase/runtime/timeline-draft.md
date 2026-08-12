@@ -58,7 +58,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
-   (`timeline:draft-task:user:{base64url(subjectId)}:processing`)에 시작 시각 score로 taskId를 추가하고 subject index
+   (`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)에 시작 시각 score로 taskId를 추가하고 subject index
    key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
    90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
    callback 계약의 권위는 기존 JSON이다.
@@ -195,7 +195,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
   시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
 - 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 그 하루를 갱신 대기 큐
-  (`timeline:user-memory-update:pending` sorted set, member `base64url(subjectId):dailyRecordId`, score 최초 기록
+  (`timeline:user-memory-update:pending` sorted set, member `canonicalUuid(subjectId):dailyRecordId`, score 최초 기록
   시각)에 넣기만 하고 곧바로 응답한다. Redis 쓰기 한 번이라 async로 넘기지 않는다 — 실행기 포화 시
   그 하루가 유실될 뿐이다. 등록 실패는 로그만 남기고 200을 깨지 않는다.
 - **접수는 하루 1회 배치**(`dispatchPendingUpdates`, 기본 04:30 cron) **한 곳에서만 한다.** 저장된
@@ -205,7 +205,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   task는 TTL 3분에 사라지고 guard도 풀리고 **재시도할 근거가 아무 데도 남지 않는다.** 대가는 반영
   지연이 최대 cron 주기(기본 24시간)라는 것인데, User Memory는 다음 타임라인 품질을 높이는 보조
   데이터라 즉시성이 요구되지 않는다.
-- 사용자 guard는 `timeline:user-memory-update:user:{base64url(subjectId)}`(SET NX, TTL 3분)이고,
+- 사용자 guard는 `timeline:user-memory-update:user:{canonicalUuid(subjectId)}`(SET NX, TTL 3분)이고,
   **획득 실패가 곧
   "이 사용자의 갱신이 진행 중"이라는 판정**이다. 그래서 별도의 진행 상태 저장 없이 guard 하나가
   직렬화와 실패 판정을 겸한다. 배치는 사용자당 한 번만 보내므로 한 실행 안에서는 경합이 없고, guard가

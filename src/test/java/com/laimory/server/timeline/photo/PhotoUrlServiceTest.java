@@ -2,8 +2,6 @@ package com.laimory.server.timeline.photo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.laimory.server.common.id.SubjectId;
-import java.nio.ByteBuffer;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -31,11 +29,7 @@ class PhotoUrlServiceTest {
         PhotoUrlService service = new PhotoUrlService(DOMAIN);
         String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
         String subjectUuid = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-        UUID uuid = UUID.fromString(subjectUuid);
-        SubjectId subject = SubjectId.fromBytes(ByteBuffer.allocate(16)
-                .putLong(uuid.getMostSignificantBits())
-                .putLong(uuid.getLeastSignificantBits())
-                .array());
+        UUID subject = UUID.fromString(subjectUuid);
 
         String url = service.buildSubjectUrl(filename, subject);
 

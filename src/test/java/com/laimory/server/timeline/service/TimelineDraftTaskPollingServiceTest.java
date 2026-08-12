@@ -14,7 +14,6 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -25,6 +24,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -48,8 +48,8 @@ class TimelineDraftTaskPollingServiceTest {
     @InjectMocks
     private TimelineDraftTaskPollingService service;
 
-    private static final SubjectId SUBJECT_ID = id(7L);
-    private static final SubjectId OTHER_SUBJECT_ID = id(999L);
+    private static final UUID SUBJECT_ID = id(7L);
+    private static final UUID OTHER_SUBJECT_ID = id(999L);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     // 폴링 관측 시각(mock Clock) — PROCESSING 경과 시간의 "현재".
     private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");

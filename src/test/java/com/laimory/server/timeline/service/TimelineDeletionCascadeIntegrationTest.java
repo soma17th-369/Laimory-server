@@ -7,7 +7,6 @@ import static org.mockito.Mockito.doThrow;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -77,12 +76,12 @@ class TimelineDeletionCascadeIntegrationTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Set<Long> fixtureItemIds = new HashSet<>();
 
-    private SubjectId subjectId;
+    private UUID subjectId;
     private Long recordId;
 
     @BeforeEach
     void setUp() {
-        subjectId = SubjectId.newRandom();
+        subjectId = UUID.randomUUID();
         ensureExists(jdbcTemplate, subjectId);
         fixtureItemIds.clear();
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
@@ -93,7 +92,7 @@ class TimelineDeletionCascadeIntegrationTest {
     void cleanUp() {
         deleteFixtureRecord();
         deleteFixturePhotoJobsAndItems();
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
     private void deleteFixturePhotoJobsAndItems() {

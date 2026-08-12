@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -23,7 +24,7 @@ class TimelineDraftTaskListServiceTest {
     @InjectMocks
     private TimelineDraftTaskListService service;
 
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+    private static final java.util.UUID SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(7L);
 
     @Test

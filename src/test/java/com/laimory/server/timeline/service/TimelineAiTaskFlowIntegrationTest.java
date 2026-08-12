@@ -8,7 +8,6 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.ProcessStage;
@@ -37,6 +36,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -95,7 +95,7 @@ class TimelineAiTaskFlowIntegrationTest {
     private TimelineAiDispatcher dispatcher;
 
     private static final String VERSION = "v1";
-    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final UUID SUBJECT_ID = id(7L);
     private static final String ZONE = "Asia/Seoul";
     private static final String QUESTION = "그날 아침 기분은 어땠나요?";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
@@ -135,7 +135,7 @@ class TimelineAiTaskFlowIntegrationTest {
             redis.delete("timeline:draft-task:" + id);
         });
         createdTaskIds.clear();
-        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.bytes());
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
@@ -12,6 +11,7 @@ import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -30,7 +30,7 @@ public class TimelineController implements TimelineApi {
 
     @Override
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
-            String applicationVersion, SubjectId subjectId, CreateDraftTaskRequest request) {
+            String applicationVersion, UUID subjectId, CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
                 applicationVersion, subjectId, request.recordDate(), request.recordAt(), request.recordTimeZone(),
                 request.timelineWindow(), request.sourceItems());
@@ -39,21 +39,21 @@ public class TimelineController implements TimelineApi {
 
     @Override
     public ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
-            String applicationVersion, SubjectId subjectId, PhotoUploadCreateRequest request) {
+            String applicationVersion, UUID subjectId, PhotoUploadCreateRequest request) {
         return ResponseEntity.ok(ApiResponse.success(
                 photoUploadService.createUploads(applicationVersion, subjectId, request.photos())));
     }
 
     @Override
     public ResponseEntity<ApiResponse<DraftTaskListResponse>> listProcessingDraftTasks(
-            String applicationVersion, SubjectId subjectId) {
+            String applicationVersion, UUID subjectId) {
         return ResponseEntity.ok(ApiResponse.success(
                 timelineDraftTaskListService.list(applicationVersion, subjectId)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
-            String applicationVersion, SubjectId subjectId, String taskId) {
+            String applicationVersion, UUID subjectId, String taskId) {
         return ResponseEntity.ok(ApiResponse.success(
                 timelineDraftTaskPollingService.poll(applicationVersion, subjectId, taskId)));
     }

@@ -27,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -51,9 +52,9 @@ class DailyTimelineServiceTest {
     private DailyTimelineService dailyTimelineService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+    private static final java.util.UUID SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(7L);
-    private static final com.laimory.server.common.id.SubjectId OTHER_SUBJECT_ID =
+    private static final java.util.UUID OTHER_SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 6, 17);
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 6, 17, 12, 0);

@@ -17,7 +17,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -36,6 +35,7 @@ import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.user.SubjectMappingService;
@@ -58,7 +58,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class TimelineControllerTest {
 
     private static final long USER_ID = 7L;
-    private static final SubjectId SUBJECT_ID = id(USER_ID);
+    private static final UUID SUBJECT_ID = id(USER_ID);
     private static final String TASKS = "/a/api/v1/timeline/drafts";
 
     // recordDate(선택 날짜)와 recordAt(실제 작성 시각)의 날짜가 다른 "다음날 아침 일기" 시나리오 — 정합성 미검증 계약.

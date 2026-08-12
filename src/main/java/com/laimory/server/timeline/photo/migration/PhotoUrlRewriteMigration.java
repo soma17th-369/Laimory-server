@@ -2,7 +2,6 @@ package com.laimory.server.timeline.photo.migration;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -20,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -71,7 +71,7 @@ class PhotoUrlRewriteMigration {
         Set<String> targetNamespaces = new HashSet<>();
         List<Long> userIds = userRepository.findAllUserIds();
         for (Long userId : userIds) {
-            SubjectId subjectId = subjectMappingService.getRequired(userId);
+            UUID subjectId = subjectMappingService.getRequired(userId);
             String subjectNamespace = PhotoObjectKeys.subjectNamespace(subjectId);
             targetNamespaceBySource.put(PhotoObjectKeys.sha256hex(userId), subjectNamespace);
             targetNamespaces.add(subjectNamespace);

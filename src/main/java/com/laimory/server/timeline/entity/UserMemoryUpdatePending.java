@@ -1,6 +1,6 @@
 package com.laimory.server.timeline.entity;
 
-import com.laimory.server.common.id.SubjectId;
+import java.util.UUID;
 
 /**
  * User Memory 갱신이 아직 반영되지 않은 하루. 사용자 guard를 못 잡았거나 AI가 실패를 통보했을 때
@@ -14,7 +14,7 @@ import com.laimory.server.common.id.SubjectId;
  * 다시 기록돼도 시한이 연장되지 않아야 하기 때문이다.
  */
 public record UserMemoryUpdatePending(
-        SubjectId subjectId,
+        UUID subjectId,
         long dailyRecordId
 ) {
 

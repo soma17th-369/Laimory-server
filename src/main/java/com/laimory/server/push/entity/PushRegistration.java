@@ -1,17 +1,17 @@
 package com.laimory.server.push.entity;
 
 import com.laimory.server.common.BaseEntity;
-import com.laimory.server.common.id.SubjectId;
-import com.laimory.server.common.id.SubjectIdAttributeConverter;
 import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * FCM 푸시 등록 행 — 사용자 한 명의 활성 앱 설치 하나(FID)다. 행 존재가 활성 등록이며 해제·영구 무효는
@@ -31,9 +31,9 @@ public class PushRegistration extends BaseEntity {
     @Column(name = "push_registration_id")
     private Long pushRegistrationId;
 
-    @Convert(converter = SubjectIdAttributeConverter.class)
-    @Column(name = "subject_id", nullable = false, columnDefinition = "BINARY(16)")
-    private SubjectId subjectId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", nullable = false, length = 36)
+    private UUID subjectId;
 
     /** Firebase Installation ID(FID) — 발송 target. UNIQUE(한 시점 단일 owner — 계정 전환 시 재결합). */
     @Column(nullable = false, length = 255)

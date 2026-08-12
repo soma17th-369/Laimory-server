@@ -9,13 +9,13 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -30,7 +30,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class UserMemoryServiceTest {
 
-    private static final SubjectId SUBJECT_ID = TestSubjects.id(7L);
+    private static final UUID SUBJECT_ID = TestSubjects.id(7L);
     private static final ZoneId ZONE = ZoneId.of("Asia/Seoul");
     private static final Instant NOW = Instant.parse("2026-08-05T03:00:00Z");
 
@@ -46,14 +46,14 @@ class UserMemoryServiceTest {
     /** 쓰기가 native query뿐이라 엔티티에 팩토리가 없다 — 조회 fixture는 필드를 직접 채운다. */
     private UserMemory memoryRow(JsonNode memory) {
         UserMemory row = new UserMemory();
-        ReflectionTestUtils.setField(row, "subjectId", SUBJECT_ID.bytes());
+        ReflectionTestUtils.setField(row, "subjectId", SUBJECT_ID);
         ReflectionTestUtils.setField(row, "memory", memory);
         return row;
     }
 
     @Test
     void find_absentRow_isEmpty() {
-        when(userMemoryRepository.findById(SUBJECT_ID.bytes())).thenReturn(Optional.empty());
+        when(userMemoryRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThat(service().find(SUBJECT_ID)).isEmpty();
     }
@@ -61,7 +61,7 @@ class UserMemoryServiceTest {
     @Test
     void find_existingRow_returnsStoredDocument() throws Exception {
         JsonNode document = objectMapper.readTree("{\"summary\":\"누적 요약\"}");
-        when(userMemoryRepository.findById(SUBJECT_ID.bytes())).thenReturn(Optional.of(memoryRow(document)));
+        when(userMemoryRepository.findById(SUBJECT_ID)).thenReturn(Optional.of(memoryRow(document)));
 
         assertThat(service().find(SUBJECT_ID)).contains(document);
     }
@@ -72,7 +72,7 @@ class UserMemoryServiceTest {
 
         service().replace(SUBJECT_ID, document);
 
-        verify(userMemoryRepository).upsert(SUBJECT_ID.bytes(), document.toString(),
+        verify(userMemoryRepository).upsert(SUBJECT_ID.toString(), document.toString(),
                 LocalDateTime.ofInstant(NOW, ZONE));
         verify(userMemoryRepository, never()).deleteBySubjectId(any());
     }
@@ -81,7 +81,7 @@ class UserMemoryServiceTest {
     void replace_null_deletesRow() {
         service().replace(SUBJECT_ID, null);
 
-        verify(userMemoryRepository).deleteBySubjectId(SUBJECT_ID.bytes());
+        verify(userMemoryRepository).deleteBySubjectId(SUBJECT_ID.toString());
         verify(userMemoryRepository, never()).upsert(any(), anyString(), any());
     }
 
@@ -90,7 +90,7 @@ class UserMemoryServiceTest {
         // JSON null은 의미 없는 행을 남기지 않고 "메모리 없음"으로 수렴한다.
         service().replace(SUBJECT_ID, objectMapper.nullNode());
 
-        verify(userMemoryRepository).deleteBySubjectId(SUBJECT_ID.bytes());
+        verify(userMemoryRepository).deleteBySubjectId(SUBJECT_ID.toString());
         verify(userMemoryRepository, never()).upsert(any(), anyString(), any());
     }
 }

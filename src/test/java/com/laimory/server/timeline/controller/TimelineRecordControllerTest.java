@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.EmotionType;
@@ -45,6 +44,7 @@ import com.laimory.server.user.SubjectMappingService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -66,7 +66,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class TimelineRecordControllerTest {
 
     private static final long USER_ID = 7L;
-    private static final SubjectId SUBJECT_ID = id(USER_ID);
+    private static final UUID SUBJECT_ID = id(USER_ID);
     private static final LocalDate RECORD_DATE = LocalDate.parse("2026-07-08");
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";

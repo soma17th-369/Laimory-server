@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -14,12 +13,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,14 +46,14 @@ class TimelineTaskStoreIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    private static final SubjectId SUBJECT = id(7L);
+    private static final UUID SUBJECT = id(7L);
 
-    private static SubjectId uniqueSubjectId() {
-        return SubjectId.newRandom();
+    private static UUID uniqueSubjectId() {
+        return UUID.randomUUID();
     }
 
     /** terminal 저장(전역·사용자 index ZREM)을 거쳐 task key와 사용자 index key를 제거한다. */
-    private void cleanupTask(SubjectId subjectId, String taskId) {
+    private void cleanupTask(UUID subjectId, String taskId) {
         timelineTaskStore.save(taskId, TimelineDraftTask.success(subjectId, 42L, tokenHashes("h")), Duration.ofMinutes(1));
         redisGateway.delete("timeline:draft-task:" + taskId);
         redisGateway.delete(TimelineTaskStore.subjectProcessingIndexKey(subjectId));
@@ -246,8 +245,8 @@ class TimelineTaskStoreIntegrationTest {
     void userIndex_returnsOwnedProcessingNewestFirst_andIsolatesUsers() {
         // T1·T5·T6: 같은 사용자의 복수 task는 덮어쓰지 않고 전부 score(processingStartedAt) 내림차순으로
         // 반환하며, 다른 사용자의 유효 PROCESSING task는 절대 섞이지 않는다(키 자체가 사용자별).
-        SubjectId userA = uniqueSubjectId();
-        SubjectId userB = uniqueSubjectId();
+        UUID userA = uniqueSubjectId();
+        UUID userB = uniqueSubjectId();
         Instant now = Instant.now();
         String a1 = "it-user-" + UUID.randomUUID();
         String a2 = "it-user-" + UUID.randomUUID();
@@ -277,7 +276,7 @@ class TimelineTaskStoreIntegrationTest {
     void userIndex_sameMillisecondScore_tieBreaksByMemberReverseLexicographic() {
         // T7: UUIDv7 동일 ms 영역은 생성 순서를 보장하지 않으므로 엄격한 intra-ms 순서는 계약하지 않고,
         // Redis reverse range의 member 역 lexicographic 순서만 deterministic 계약으로 고정한다.
-        SubjectId user = uniqueSubjectId();
+        UUID user = uniqueSubjectId();
         Instant sameInstant = Instant.now();
         String base = "it-tie-" + UUID.randomUUID();
         String lower = base + "-a";
@@ -300,7 +299,7 @@ class TimelineTaskStoreIntegrationTest {
         // T9·T14·T18b: markSuccess/markFailed가 공유하는 terminal 저장 경계 한 번이 사용자 index member도
         // 제거해 이후 목록에서 즉시 사라진다(SUCCESS/FAILED 종류 무관). 마지막 member 제거로 빈 sorted set
         // key는 Redis가 없앤다.
-        SubjectId user = uniqueSubjectId();
+        UUID user = uniqueSubjectId();
         Instant now = Instant.now();
         String p1 = "it-terminal-" + UUID.randomUUID();
         String p2 = "it-terminal-" + UUID.randomUUID();
@@ -328,7 +327,7 @@ class TimelineTaskStoreIntegrationTest {
     void userIndex_expiredTaskMember_isExcludedAndPruned() throws Exception {
         // T8·T17·T18a: 짧은 TTL로 task key만 자연 만료시키면(만료는 key 소멸 — terminal 전이 아님) 남은
         // index member는 응답에서 제외되고 같은 조회가 lazy prune한다. 아직 유효한 task는 계속 재발견된다.
-        SubjectId user = uniqueSubjectId();
+        UUID user = uniqueSubjectId();
         Instant now = Instant.now();
         String shortLived = "it-expired-" + UUID.randomUUID();
         String alive = "it-alive-" + UUID.randomUUID();
@@ -359,7 +358,7 @@ class TimelineTaskStoreIntegrationTest {
     void userIndex_terminalJsonWithLeftoverMember_isExcludedAndPruned() throws Exception {
         // T18c(권위 JSON이 terminal인 경우)·T9: 3-key Lua 밖에서 task JSON만 terminal로 바뀐 부분 실패/
         // legacy 상황을 시뮬레이션한다 — 목록은 index가 아니라 JSON 권위를 따라 제외하고 member를 정리한다.
-        SubjectId user = uniqueSubjectId();
+        UUID user = uniqueSubjectId();
         String taskId = "it-leftover-" + UUID.randomUUID();
         try {
             timelineTaskStore.save(taskId, TimelineDraftTask.processing(user, 42L, null, tokenHashes("h"), Instant.now()),
@@ -380,8 +379,8 @@ class TimelineTaskStoreIntegrationTest {
     void userIndex_wrongOwnerMember_isExcludedAndPrunedFromRequesterIndexOnly() {
         // T4·T5: 요청 사용자 index에 타인 소유 task member가 섞여도(오염 시뮬레이션) 존재 여부를 노출하지
         // 않고 제외하며, 요청 사용자의 잘못된 member만 정리한다 — 소유자의 index·task JSON은 그대로다.
-        SubjectId userA = uniqueSubjectId();
-        SubjectId userB = uniqueSubjectId();
+        UUID userA = uniqueSubjectId();
+        UUID userB = uniqueSubjectId();
         Instant now = Instant.now();
         String a1 = "it-owner-" + UUID.randomUUID();
         String b1 = "it-owner-" + UUID.randomUUID();
@@ -413,7 +412,7 @@ class TimelineTaskStoreIntegrationTest {
         // 첫 task TTL에 key가 통째로 사라져 이후 task까지 유실된다. 마지막 생성 뒤 TTL 동안 새 생성이
         // 없으면 key 전체가 자연 소멸한다(production 3m 상수 전달은 TimelineTaskServiceTest가 고정 —
         // 여기는 short-TTL analog로 만료 의미만 검증한다).
-        SubjectId user = uniqueSubjectId();
+        UUID user = uniqueSubjectId();
         Duration shortTtl = Duration.ofSeconds(3);
         String userIndexKey = TimelineTaskStore.subjectProcessingIndexKey(user);
         Instant t0 = Instant.now();
@@ -455,8 +454,8 @@ class TimelineTaskStoreIntegrationTest {
         // T15·T16: create/terminal 저장과 GET이 경쟁해도 반환 목록은 D13이 허용한 snapshot 중 하나다 —
         // 모든 원소는 이 사용자의 실제 생성 task이고 타인 task·발명된 ID·index-only 부분 결과가 없으며,
         // 상대 순서는 항상 score 내림차순과 일치한다. 최종 상태는 결정적이다(생성 후 전부, 종결 후 빈 목록).
-        SubjectId userA = uniqueSubjectId();
-        SubjectId userB = uniqueSubjectId();
+        UUID userA = uniqueSubjectId();
+        UUID userB = uniqueSubjectId();
         Instant base = Instant.now();
         String foreign = "it-race-foreign-" + UUID.randomUUID();
         List<String> created = new ArrayList<>();
@@ -514,7 +513,7 @@ class TimelineTaskStoreIntegrationTest {
 
     /** writer 작업이 도는 동안 같은 사용자 목록 조회를 반복해 관측 snapshot을 수집한다. */
     private void runWithConcurrentReads(ExecutorService executor, List<List<String>> snapshots,
-                                        SubjectId subjectId, ThrowingWriter writer) throws Exception {
+                                        UUID subjectId, ThrowingWriter writer) throws Exception {
         java.util.concurrent.atomic.AtomicBoolean writing = new java.util.concurrent.atomic.AtomicBoolean(true);
         Future<?> reads = executor.submit(() -> {
             while (writing.get()) {

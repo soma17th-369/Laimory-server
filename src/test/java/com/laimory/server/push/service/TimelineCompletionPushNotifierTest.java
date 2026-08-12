@@ -15,7 +15,6 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.push.PushMessageSender;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
@@ -25,6 +24,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class TimelineCompletionPushNotifierTest {
 
-    private static final SubjectId SUBJECT_ID = TestSubjects.id(7L);
+    private static final UUID SUBJECT_ID = TestSubjects.id(7L);
     private static final String TASK_ID = "t-1";
     /** 고정 Clock — invalid 정리에 전달되는 snapshot 시각이 이 값이어야 한다. */
     private static final Clock FIXED_CLOCK =

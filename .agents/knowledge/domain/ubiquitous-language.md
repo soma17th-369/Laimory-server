@@ -111,7 +111,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 처리 단계 | Process Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. token hash와 함께 현재 task JSON 전체 CAS로 전이한다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI 입력 조회 응답에서 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 내보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
-| subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{base64url(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 목록 API가 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 PROCESSING 저장마다 3분으로 갱신되는 inactivity cleanup이다. |
+| subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 목록 API가 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 PROCESSING 저장마다 3분으로 갱신되는 inactivity cleanup이다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
 
 ## 저장 규칙
@@ -138,16 +138,16 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 갱신한다. Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memory_documents` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memories` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
 | 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |
 | 재사용 탐지 | Reuse Detection | 현재 구현 | `ROTATED`/`REVOKED` token 재제시 때 사용자의 refresh token 전체를 폐기한다. |
 | 앱 인증 코드 | App Code | 현재 구현 | 로그인 성공 후 앱 handoff용 60초 one-time code다. Redis에는 hash key로만 저장하고 GETDEL로 소비한다. |
 | 앱 검증값 | App Verifier / App Challenge | 현재 구현 | verifier와 `base64url(sha256(verifier))` challenge로 app-code 교환을 로그인 시작 주체에 바인딩한다. |
-| 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `-2001`이다. JWT filter의 raw `Long userId` principal은 유지하되, 콘텐츠·push API는 `@CurrentSubject` MVC resolver가 `SubjectId`로 해석해 controller/service에 주입한다. |
-| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 `SubjectId`다. 폴링 소유권 대조, 콜백 terminal 전이·완료 push 대상 조회의 기준이다. raw userId/FID는 task에 보존하지 않는다. |
-| 콘텐츠 주체 | Subject (`SubjectId`) | 현재 구현 | 인증 userId와 분리된 콘텐츠·push 소유 식별자다. CSPRNG UUIDv4를 감싼 불변 value type이며 DB는 canonical 16바이트, Redis는 canonical base64url 22자를 쓴다. `toString`이 원문을 노출하지 않고 로그·예외에 userId·lookup key와 함께 남기지 않는다. DailyRecord·staging·User Memory·push·Redis task/queue/guard·PHOTO namespace의 owner authority다. |
+| 인증 사용자 API | Authenticated API | 현재 구현 | `/a/api/{version}`은 bearer 인증 강제 영역이다. 무토큰/무효 토큰은 401 `-2001`이다. JWT filter의 raw `Long userId` principal은 유지하되, 콘텐츠·push API는 `@CurrentSubject` MVC resolver가 Java `UUID subjectId`로 해석해 controller/service에 주입한다. |
+| 작업 소유자 | Task Owner | 현재 구현 | Redis draft task에 필수로 보존되는 UUIDv4 subject다. 폴링 소유권 대조, 콜백 terminal 전이·완료 push 대상 조회의 기준이다. raw userId/FID는 task에 보존하지 않는다. |
+| 콘텐츠 주체 | Subject (`subjectId`) | 현재 구현 | 인증 userId와 분리된 콘텐츠·push 소유 UUIDv4다. 별도 value type 없이 Java `UUID`를 쓰고, DB와 Redis는 canonical lowercase 36자 문자열을 사용한다. 로그·예외에는 userId·lookup key와 함께 남기지 않는다. DailyRecord·staging·User Memory·push·Redis task/queue/guard·PHOTO namespace의 owner authority다. |
 | 주체 매핑 | Subject Mapping | 현재 구현 | `user_subject_links` 행 — HMAC-SHA-256 lookup key(BINARY(32) PK)로 userId를 subject로 해석한다. `SubjectMappingService`만 접근하며, 신규 사용자 생성 transaction에서만 만들어지고 일반 경로(`getRequired`)는 누락을 자동 생성 없이 내부 불변식 위반으로 fail-closed한다. HMAC key rotation은 PK·version 원자 교체이고 subject는 불변이다. |
 
 ## 푸시 알림

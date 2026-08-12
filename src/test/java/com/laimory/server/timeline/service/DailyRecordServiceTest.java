@@ -7,13 +7,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -33,7 +33,7 @@ class DailyRecordServiceTest {
 
     private static final String ZONE = "Asia/Seoul";
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 5, 8, 12, 0);
-    private static final SubjectId SUBJECT = id(42L);
+    private static final UUID SUBJECT = id(42L);
 
     @Test
     void findByUserIdAndRecordDate_delegatesToRepository() {

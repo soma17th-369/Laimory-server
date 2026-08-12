@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -81,7 +80,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
     private PhotoUrlRewriteMigration migration;
 
     private Long userId;
-    private SubjectId subjectId;
+    private UUID subjectId;
     private String legacyUrl;
     private String subjectUrl;
     private final List<Long> createdDraftIds = new ArrayList<>();
