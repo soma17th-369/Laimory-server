@@ -39,14 +39,8 @@ class PhotoMigrationRunner implements ApplicationRunner {
         try {
             log.info("photo migration 시작: mode={}", mode);
             switch (mode) {
-                case COPY_VERIFY -> logCopyResult(
-                        copyMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT));
-                case REVERSE_COPY -> logCopyResult(
-                        copyMigration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY));
-                case REWRITE_URLS -> logRewriteResult(
-                        rewriteMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT));
-                case REVERSE_REWRITE -> logRewriteResult(
-                        rewriteMigration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY));
+                case COPY_VERIFY -> logCopyResult(copyMigration.execute());
+                case REWRITE_URLS -> logRewriteResult(rewriteMigration.execute());
             }
             exitCode = 0;
         } catch (PhotoMigrationAbortedException e) {

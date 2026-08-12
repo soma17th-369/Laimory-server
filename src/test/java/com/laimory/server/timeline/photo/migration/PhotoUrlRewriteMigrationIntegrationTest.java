@@ -36,8 +36,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * staging/final PHOTO payload {@code photoUrl} rewrite 도구의 실 MySQL 왕복 검증(#284) —
- * forward rewrite 후 photoUrl 외 필드 동등성, 멱등 재실행, reverse 왕복 복원, 알 수 없는
- * namespace의 fail-closed 중단과 transaction rollback.
+ * rewrite 후 photoUrl 외 필드 동등성, 멱등 재실행, 알 수 없는 namespace의 fail-closed 중단과
+ * transaction rollback.
  *
  * <p>executor는 property 게이트 밖에서 직접 조립한다 — {@code app.photo.migration.mode}를 켠
  * 컨텍스트는 기동 시 runner가 실행되므로 테스트에서 켜지 않는다. rewrite는 두 테이블의 PHOTO 전 행을
@@ -142,13 +142,12 @@ class PhotoUrlRewriteMigrationIntegrationTest {
     }
 
     @Test
-    void forwardRewrite_rewritesPhotoUrlOnlyInBothTables() {
+    void rewrite_rewritesPhotoUrlOnlyInBothTables() {
         ObjectNode original = photoPayload(legacyUrl);
         long draftId = saveDraftRow(original);
         long itemId = saveItemRow(original);
 
-        PhotoUrlRewriteMigration.Result result =
-                migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        PhotoUrlRewriteMigration.Result result = migration.execute();
 
         assertThat(result.stagingRowsRewritten()).isEqualTo(1);
         assertThat(result.finalRowsRewritten()).isEqualTo(1);
@@ -162,33 +161,16 @@ class PhotoUrlRewriteMigrationIntegrationTest {
     }
 
     @Test
-    void forwardRewrite_secondRunIsIdempotent() {
+    void rewrite_secondRunIsIdempotent() {
         long draftId = saveDraftRow(photoPayload(legacyUrl));
 
-        migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
-        PhotoUrlRewriteMigration.Result secondRun =
-                migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        migration.execute();
+        PhotoUrlRewriteMigration.Result secondRun = migration.execute();
 
         assertThat(secondRun.stagingRowsRewritten()).isZero();
         assertThat(secondRun.stagingRowsAlreadyTarget()).isEqualTo(1);
         assertThat(draftSourceItemRepository.findById(draftId).orElseThrow()
                 .getPayload().get("photoUrl").asText()).isEqualTo(subjectUrl);
-    }
-
-    @Test
-    void reverseRewrite_restoresOriginalPayloadRoundTrip() {
-        ObjectNode original = photoPayload(legacyUrl);
-        long draftId = saveDraftRow(original);
-        long itemId = saveItemRow(original);
-
-        migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
-        migration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY);
-
-        // photoUrl까지 포함한 payload 전체가 원본과 동등해야 한다(왕복 복원).
-        assertThat(draftSourceItemRepository.findById(draftId).orElseThrow().getPayload())
-                .isEqualTo(original);
-        assertThat(timelineItemRepository.findById(itemId).orElseThrow().getPayload())
-                .isEqualTo(original);
     }
 
     @Test
@@ -199,7 +181,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
                 + "/photos/" + FILENAME;
         saveDraftRow(photoPayload(unknownNamespaceUrl));
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
                 .satisfies(thrown -> assertThat(thrown.getMessage())
                         .doesNotContain("https://")
@@ -217,7 +199,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
         payload.remove("photoUrl");
         saveDraftRow(payload);
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
                 .hasMessageContaining("photoUrl 누락");
     }

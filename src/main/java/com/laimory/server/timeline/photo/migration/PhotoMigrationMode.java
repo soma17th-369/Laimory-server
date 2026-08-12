@@ -1,8 +1,11 @@
 package com.laimory.server.timeline.photo.migration;
 
 /**
- * PHOTO subject migration 도구의 실행 모드(#284, 계획 §5.3·§5.6). {@code app.photo.migration.mode}
+ * PHOTO subject migration 도구의 실행 모드(#284, 계획 §5.3). {@code app.photo.migration.mode}
  * property 값과 1:1이며, 알 수 없는 값은 기동 실패로 fail-fast한다(조용한 no-op 금지).
+ *
+ * <p>역방향(rollback) 모드는 지원하지 않는다 — cutover 후 legacy object는 별도 승인 하에 즉시
+ * 삭제한다(#285 runbook).
  */
 enum PhotoMigrationMode {
 
@@ -10,13 +13,7 @@ enum PhotoMigrationMode {
     COPY_VERIFY("copy-verify"),
 
     /** staging/final PHOTO payload의 {@code photoUrl}을 legacy → subject URL로 rewrite한다(cutover window 전용). */
-    REWRITE_URLS("rewrite-urls"),
-
-    /** rollback — subject 기간 object를 legacy key로 copy한다(계획 §5.6). */
-    REVERSE_COPY("reverse-copy"),
-
-    /** rollback — {@code photoUrl}을 subject → legacy URL로 복원한다(계획 §5.6). */
-    REVERSE_REWRITE("reverse-rewrite");
+    REWRITE_URLS("rewrite-urls");
 
     private final String propertyValue;
 

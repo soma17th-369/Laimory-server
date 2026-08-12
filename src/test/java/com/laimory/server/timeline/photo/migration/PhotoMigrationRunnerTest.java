@@ -18,7 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.DefaultApplicationArguments;
 
 /**
- * migration runner 단위 검증 — mode별 방향 dispatch, 성공 0/실패 1 exit code, 로그의
+ * migration runner 단위 검증 — mode별 dispatch, 성공 0/실패 1 exit code, 로그의
  * 건수 전용·무식별자 불변식(fail-closed 메시지는 그대로, 그 외 예외는 클래스 이름만).
  */
 class PhotoMigrationRunnerTest {
@@ -51,13 +51,13 @@ class PhotoMigrationRunnerTest {
     }
 
     @Test
-    void copyVerify_runsLegacyToSubjectCopyAndExitsZero() {
-        when(copyMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+    void copyVerify_runsCopyAndExitsZero() {
+        when(copyMigration.execute())
                 .thenReturn(new PhotoObjectCopyMigration.Result(2, 5, 4, 1));
 
         runner(PhotoMigrationMode.COPY_VERIFY).run(new DefaultApplicationArguments());
 
-        verify(copyMigration).execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        verify(copyMigration).execute();
         verifyNoInteractions(rewriteMigration);
         assertThat(exitCodes).containsExactly(0);
         assertThat(allLogText())
@@ -67,24 +67,13 @@ class PhotoMigrationRunnerTest {
     }
 
     @Test
-    void reverseCopy_runsSubjectToLegacyCopy() {
-        when(copyMigration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY))
-                .thenReturn(new PhotoObjectCopyMigration.Result(1, 1, 1, 0));
-
-        runner(PhotoMigrationMode.REVERSE_COPY).run(new DefaultApplicationArguments());
-
-        verify(copyMigration).execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY);
-        assertThat(exitCodes).containsExactly(0);
-    }
-
-    @Test
-    void rewriteUrls_runsLegacyToSubjectRewrite() {
-        when(rewriteMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+    void rewriteUrls_runsRewrite() {
+        when(rewriteMigration.execute())
                 .thenReturn(new PhotoUrlRewriteMigration.Result(2, 3, 3, 0, 4, 4, 0));
 
         runner(PhotoMigrationMode.REWRITE_URLS).run(new DefaultApplicationArguments());
 
-        verify(rewriteMigration).execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        verify(rewriteMigration).execute();
         verifyNoInteractions(copyMigration);
         assertThat(exitCodes).containsExactly(0);
         assertThat(allLogText())
@@ -93,19 +82,8 @@ class PhotoMigrationRunnerTest {
     }
 
     @Test
-    void reverseRewrite_runsSubjectToLegacyRewrite() {
-        when(rewriteMigration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY))
-                .thenReturn(new PhotoUrlRewriteMigration.Result(1, 0, 0, 0, 1, 1, 0));
-
-        runner(PhotoMigrationMode.REVERSE_REWRITE).run(new DefaultApplicationArguments());
-
-        verify(rewriteMigration).execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY);
-        assertThat(exitCodes).containsExactly(0);
-    }
-
-    @Test
     void abortedMigration_exitsOneAndLogsCountOnlyMessage() {
-        when(copyMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        when(copyMigration.execute())
                 .thenThrow(new PhotoMigrationAbortedException("pending photo delete job 존재로 중단: "
                         + "pendingDeleteJobs=2"));
 
@@ -118,7 +96,7 @@ class PhotoMigrationRunnerTest {
     @Test
     void unexpectedException_exitsOneAndLogsOnlyExceptionClassName() {
         // 예외 메시지에 식별자가 실려 올 수 있는 경로 — 클래스 이름만 남고 메시지는 로그에 없어야 한다.
-        when(copyMigration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        when(copyMigration.execute())
                 .thenThrow(new IllegalStateException("simulated-identifier-value-1234567890abcdef"));
 
         runner(PhotoMigrationMode.COPY_VERIFY).run(new DefaultApplicationArguments());

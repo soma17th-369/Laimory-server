@@ -26,8 +26,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * staging({@code timeline_draft_source_items})·final({@code timeline_items}) PHOTO payload의
- * {@code photoUrl}을 legacy↔subject namespace로 rewrite하는 도구(#284, 계획 §5.4·§5.6).
- * {@code rewrite-urls}(legacy→subject)와 {@code reverse-rewrite}(subject→legacy)가 방향만 바꿔 공유한다.
+ * {@code photoUrl}을 legacy→subject namespace로 rewrite하는 도구(#284, 계획 §5.4) —
+ * {@code rewrite-urls} 모드(cutover window 전용). 역방향(rollback)은 지원하지 않으며, cutover 후
+ * legacy object는 별도 승인 하에 즉시 삭제한다(#285 runbook).
  *
  * <p>URL의 namespace 세그먼트만 치환한다 — filename·clientPhotoUri·다른 JSON 필드는 불변이며,
  * bulk update 뒤 같은 transaction에서 재조회해 photoUrl 외 필드 동등성과 기대 URL 일치를 검증한다.
@@ -65,21 +66,15 @@ class PhotoUrlRewriteMigration {
         this.cdnUrlPrefix = "https://" + cdnDomain + "/";
     }
 
-    Result execute(PhotoMigrationDirection direction) {
+    Result execute() {
         Map<String, String> targetNamespaceBySource = new HashMap<>();
         Set<String> targetNamespaces = new HashSet<>();
         List<Long> userIds = userRepository.findAllUserIds();
         for (Long userId : userIds) {
             SubjectId subjectId = subjectMappingService.getRequired(userId);
-            String legacyNamespace = PhotoObjectKeys.sha256hex(userId);
             String subjectNamespace = PhotoObjectKeys.subjectNamespace(subjectId);
-            if (direction == PhotoMigrationDirection.LEGACY_TO_SUBJECT) {
-                targetNamespaceBySource.put(legacyNamespace, subjectNamespace);
-                targetNamespaces.add(subjectNamespace);
-            } else {
-                targetNamespaceBySource.put(subjectNamespace, legacyNamespace);
-                targetNamespaces.add(legacyNamespace);
-            }
+            targetNamespaceBySource.put(PhotoObjectKeys.sha256hex(userId), subjectNamespace);
+            targetNamespaces.add(subjectNamespace);
         }
 
         // 두 테이블을 한 transaction으로 묶는다 — 중단 시 어느 테이블에도 부분 rewrite가 남지 않는다.

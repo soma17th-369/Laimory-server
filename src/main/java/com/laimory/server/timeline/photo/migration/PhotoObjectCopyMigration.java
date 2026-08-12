@@ -16,12 +16,13 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
 /**
- * PHOTO S3 object의 legacy↔subject namespace copy·검증 도구(#284, 계획 §5.3·§5.6).
- * {@code copy-verify}(legacy→subject)와 {@code reverse-copy}(subject→legacy)가 방향만 바꿔 공유한다.
+ * PHOTO S3 object의 legacy→subject namespace copy·검증 도구(#284, 계획 §5.3) —
+ * {@code copy-verify} 모드. 역방향(rollback)은 지원하지 않으며, cutover 후 legacy object는 별도
+ * 승인 하에 즉시 삭제한다(#285 runbook).
  *
  * <p>절차: preflight로 {@code timeline_photo_delete_jobs} 0건 확인(아니면 즉시 fail-closed — pending
  * delete object의 migration 정책을 임의로 만들지 않는다) → {@code users} 전 행 순회 → subject 해석 →
- * source namespace prefix의 object를 열거 → target key로 {@code CopyObject} → {@code HeadObject}로
+ * legacy namespace prefix의 object를 열거 → subject key로 {@code CopyObject} → {@code HeadObject}로
  * 존재·크기 검증. target에 같은 크기 object가 이미 있으면 skip(멱등 재실행). 크기 불일치는 즉시
  * fail-closed 중단이다.
  *
@@ -47,7 +48,7 @@ class PhotoObjectCopyMigration {
         this.photoDeleteJobRepository = photoDeleteJobRepository;
     }
 
-    Result execute(PhotoMigrationDirection direction) {
+    Result execute() {
         long pendingDeleteJobs = photoDeleteJobRepository.count();
         if (pendingDeleteJobs != 0) {
             throw new PhotoMigrationAbortedException(
@@ -60,12 +61,8 @@ class PhotoObjectCopyMigration {
         long objectsAlreadyPresent = 0;
         for (Long userId : userIds) {
             SubjectId subjectId = subjectMappingService.getRequired(userId);
-            String legacyPrefix = PhotoObjectKeys.sha256hex(userId) + "/photos/";
-            String subjectPrefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
-            String sourcePrefix =
-                    direction == PhotoMigrationDirection.LEGACY_TO_SUBJECT ? legacyPrefix : subjectPrefix;
-            String targetPrefix =
-                    direction == PhotoMigrationDirection.LEGACY_TO_SUBJECT ? subjectPrefix : legacyPrefix;
+            String sourcePrefix = PhotoObjectKeys.sha256hex(userId) + "/photos/";
+            String targetPrefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
 
             String continuationToken = null;
             do {

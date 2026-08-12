@@ -35,8 +35,8 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.S3Object;
 
 /**
- * legacy↔subject S3 object copy·검증 도구 단위 검증(mock S3) — delete job preflight fail-closed,
- * copy/head 호출·검증, 멱등 skip, 크기 불일치 fail-closed, reverse 방향, 예외 메시지 무식별자.
+ * legacy→subject S3 object copy·검증 도구 단위 검증(mock S3) — delete job preflight fail-closed,
+ * copy/head 호출·검증, 멱등 skip, 크기 불일치 fail-closed, 예외 메시지 무식별자.
  */
 class PhotoObjectCopyMigrationTest {
 
@@ -100,7 +100,7 @@ class PhotoObjectCopyMigrationTest {
     void pendingDeleteJobs_abortsBeforeAnyS3Call() {
         when(photoDeleteJobRepository.count()).thenReturn(3L);
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
                 .hasMessageContaining("pendingDeleteJobs=3");
         verifyNoInteractions(s3Client);
@@ -111,8 +111,7 @@ class PhotoObjectCopyMigrationTest {
         bucketContents.put(legacyPrefix + "a.jpg", 10L);
         bucketContents.put(legacyPrefix + "b.png", 20L);
 
-        PhotoObjectCopyMigration.Result result =
-                migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        PhotoObjectCopyMigration.Result result = migration.execute();
 
         assertThat(result.usersProcessed()).isEqualTo(1);
         assertThat(result.objectsListed()).isEqualTo(2);
@@ -137,8 +136,7 @@ class PhotoObjectCopyMigrationTest {
         bucketContents.put(legacyPrefix + "b.png", 20L);
         bucketContents.put(subjectPrefix + "a.jpg", 10L); // 이전 실행이 이미 복사한 object
 
-        PhotoObjectCopyMigration.Result result =
-                migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT);
+        PhotoObjectCopyMigration.Result result = migration.execute();
 
         assertThat(result.objectsListed()).isEqualTo(2);
         assertThat(result.objectsCopied()).isEqualTo(1);
@@ -153,7 +151,7 @@ class PhotoObjectCopyMigrationTest {
         bucketContents.put(legacyPrefix + "a.jpg", 10L);
         bucketContents.put(subjectPrefix + "a.jpg", 99L); // 크기 불일치 target
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
                 .hasMessageContaining("mismatches=1")
                 .satisfies(PhotoObjectCopyMigrationTest::assertMessageHasNoIdentifiers);
@@ -170,25 +168,10 @@ class PhotoObjectCopyMigrationTest {
             return CopyObjectResponse.builder().build();
         });
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
                 .hasMessageContaining("mismatches=1")
                 .satisfies(PhotoObjectCopyMigrationTest::assertMessageHasNoIdentifiers);
-    }
-
-    @Test
-    void reverseCopy_copiesSubjectObjectsBackToLegacyKeys() {
-        bucketContents.put(subjectPrefix + "a.jpg", 10L); // subject 기간에 생긴 object
-
-        PhotoObjectCopyMigration.Result result =
-                migration.execute(PhotoMigrationDirection.SUBJECT_TO_LEGACY);
-
-        assertThat(result.objectsCopied()).isEqualTo(1);
-        ArgumentCaptor<CopyObjectRequest> copies = ArgumentCaptor.forClass(CopyObjectRequest.class);
-        verify(s3Client).copyObject(copies.capture());
-        assertThat(copies.getValue().sourceKey()).isEqualTo(subjectPrefix + "a.jpg");
-        assertThat(copies.getValue().destinationKey()).isEqualTo(legacyPrefix + "a.jpg");
-        assertThat(bucketContents).containsEntry(legacyPrefix + "a.jpg", 10L);
     }
 
     @Test
@@ -197,7 +180,7 @@ class PhotoObjectCopyMigrationTest {
         when(subjectMappingService.getRequired(USER_ID))
                 .thenThrow(new IllegalStateException("subject mapping missing for authenticated user"));
 
-        assertThatThrownBy(() -> migration.execute(PhotoMigrationDirection.LEGACY_TO_SUBJECT))
+        assertThatThrownBy(migration::execute)
                 .isInstanceOf(IllegalStateException.class)
                 .satisfies(PhotoObjectCopyMigrationTest::assertMessageHasNoIdentifiers);
     }
