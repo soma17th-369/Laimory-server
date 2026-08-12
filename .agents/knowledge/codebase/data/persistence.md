@@ -148,7 +148,10 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 ### S3
 
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
-full key는 `{sha256hex(userId)}/photos/{filename}`이며 DB column으로 저장하지 않는다.
+full key는 DB column으로 저장하지 않으며 namespace 규칙이 둘이다(#284, additive) — live 경로와 저장된
+`photoUrl`은 legacy `{sha256hex(userId)}/photos/{filename}`이고, subject 기반
+`{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`은 #283 activation 전까지 migration
+도구(`app.photo.migration.mode` 게이트, `timeline/photo/migration/`)만 사용한다.
 Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를 조회하지 않는다.
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를

@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.repository;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -34,4 +36,17 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
      * 개별 삭제하므로 bulk delete가 아니라 조회로 받는다.
      */
     List<TimelineDraftSourceItem> findByCreatedAtBefore(LocalDateTime cutoff);
+
+    /** PHOTO migration 도구(#284) 전용 — payload {@code photoUrl} rewrite 대상 전체 조회. */
+    List<TimelineDraftSourceItem> findByItemType(ItemType itemType);
+
+    /**
+     * PHOTO migration 도구(#284) 전용 — payload만 교체하는 bulk update. auditing·영속성 컨텍스트를
+     * 우회하므로 호출자가 transaction 안에서 {@code EntityManager#clear} 후 재검증한다.
+     * {@code @Transactional}을 붙이지 않아 활성 transaction 없이는 실패한다(원자성 보장).
+     */
+    @Modifying
+    @Query("update TimelineDraftSourceItem source set source.payload = :payload "
+            + "where source.timelineDraftSourceItemId = :id")
+    int updatePayload(@Param("id") long id, @Param("payload") JsonNode payload);
 }
