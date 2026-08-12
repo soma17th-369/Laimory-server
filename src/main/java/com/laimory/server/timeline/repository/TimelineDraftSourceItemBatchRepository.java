@@ -20,7 +20,7 @@ import org.springframework.stereotype.Repository;
 public class TimelineDraftSourceItemBatchRepository {
 
     private static final String INSERT_SQL = "insert into timeline_draft_source_items "
-            + "(task_id, user_id, item_type, raw_id, start_at, end_at, payload, created_at, updated_at) "
+            + "(task_id, subject_id, item_type, raw_id, start_at, end_at, payload, created_at, updated_at) "
             + "values (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     private final JdbcTemplate jdbcTemplate;
@@ -41,7 +41,7 @@ public class TimelineDraftSourceItemBatchRepository {
             public void setValues(PreparedStatement statement, int index) throws SQLException {
                 TimelineDraftSourceItem item = items.get(index);
                 statement.setString(1, item.getTaskId());
-                statement.setLong(2, item.getUserId());
+                statement.setBytes(2, item.getSubjectId().bytes());
                 statement.setString(3, item.getItemType().name());
                 statement.setString(4, item.getRawId());
                 setTimestamp(statement, 5, item.getStartAt());

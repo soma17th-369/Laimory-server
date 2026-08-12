@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.Clock;
@@ -19,8 +20,8 @@ public class DailyRecordService {
     private final DailyRecordRepository dailyRecordRepository;
     private final Clock clock;
 
-    public Optional<DailyRecord> findByUserIdAndRecordDate(Long userId, LocalDate recordDate) {
-        return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate);
+    public Optional<DailyRecord> findBySubjectIdAndRecordDate(SubjectId subjectId, LocalDate recordDate) {
+        return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate);
     }
 
     public Optional<DailyRecord> findById(Long id) {
@@ -28,24 +29,26 @@ public class DailyRecordService {
     }
 
     /** 사용자의 일일 기록 전체를 record_date, daily_record_id 내림차순으로 반환한다. */
-    public List<DailyRecord> findByUserIdOrderByRecordDateDescDailyRecordIdDesc(Long userId) {
-        return dailyRecordRepository.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(userId);
+    public List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SubjectId subjectId) {
+        return dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(subjectId);
     }
 
-    /** 일일 기록 ID와 사용자 ID가 모두 일치하는 소유 record만 반환한다. */
-    public Optional<DailyRecord> findByDailyRecordIdAndUserId(Long dailyRecordId, Long userId) {
-        return dailyRecordRepository.findByDailyRecordIdAndUserId(dailyRecordId, userId);
+    /** 일일 기록 ID와 subject가 모두 일치하는 소유 record만 반환한다. */
+    public Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, SubjectId subjectId) {
+        return dailyRecordRepository.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId);
     }
 
     /**
      * 소유 record만 골라 record_date 오름차순으로 한 번에 반환한다. 없는 id는 결과에서 빠진다.
      * 빈 목록을 넘기면 질의 없이 빈 결과다({@code IN ()}는 문법 오류다).
      */
-    public List<DailyRecord> findAllByUserIdAndIdsOrderByRecordDate(Long userId, List<Long> dailyRecordIds) {
+    public List<DailyRecord> findAllBySubjectIdAndIdsOrderByRecordDate(SubjectId subjectId,
+                                                                      List<Long> dailyRecordIds) {
         if (dailyRecordIds.isEmpty()) {
             return List.of();
         }
-        return dailyRecordRepository.findByUserIdAndDailyRecordIdInOrderByRecordDateAsc(userId, dailyRecordIds);
+        return dailyRecordRepository.findBySubjectIdAndDailyRecordIdInOrderByRecordDateAsc(
+                subjectId, dailyRecordIds);
     }
 
     public DailyRecord save(DailyRecord dailyRecord) {
@@ -61,12 +64,12 @@ public class DailyRecordService {
      * 소유 DRAFT record를 SAVED로 전이하고 실제로 옮긴 행 수를 반환한다(0 = 이미 SAVED·삭제됨·비소유).
      * 호출부의 트랜잭션에 합류하는 조건부 UPDATE라 별도 lock 없이 동시 저장 중 하나만 성공한다.
      */
-    public int markSaved(Long dailyRecordId, Long userId) {
-        return dailyRecordRepository.markSaved(dailyRecordId, userId, LocalDateTime.now(clock));
+    public int markSaved(Long dailyRecordId, SubjectId subjectId) {
+        return dailyRecordRepository.markSaved(dailyRecordId, subjectId, LocalDateTime.now(clock));
     }
 
     /**
-     * (userId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. draft POST의 선생성 트랜잭션
+     * (subjectId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. draft POST의 선생성 트랜잭션
      * ({@link TimelineDraftPreparationService})에 합류({@code REQUIRED})하므로 record 생성이 source 저장과
      * all-or-nothing으로 묶인다 — 후속 단계가 실패하면 신규 record도 롤백된다.
      *
@@ -80,14 +83,14 @@ public class DailyRecordService {
      * 롤백하므로, 갱신은 flush 전에 폐기된다.
      */
     @Transactional
-    public DailyRecord findOrCreateDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
+    public DailyRecord findOrCreateDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                          String recordTimezone) {
-        return dailyRecordRepository.findByUserIdAndRecordDate(userId, recordDate)
+        return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .map(existing -> {
                     existing.updateRecordTime(recordAt, recordTimezone);
                     return existing;
                 })
                 .orElseGet(() -> dailyRecordRepository.save(
-                        DailyRecord.createDraft(userId, recordDate, recordAt, recordTimezone)));
+                        DailyRecord.createDraft(subjectId, recordDate, recordAt, recordTimezone)));
     }
 }

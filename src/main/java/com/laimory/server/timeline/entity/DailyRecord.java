@@ -1,9 +1,12 @@
 package com.laimory.server.timeline.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.common.id.SubjectIdAttributeConverter;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -16,7 +19,7 @@ import java.time.LocalDateTime;
 import lombok.Getter;
 
 /**
- * 일일 기록. (user_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
+ * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
  */
 @Entity
 @Table(name = "daily_records")
@@ -28,8 +31,9 @@ public class DailyRecord extends BaseEntity {
     @Column(name = "daily_record_id")
     private Long dailyRecordId;
 
-    @Column(nullable = false)
-    private Long userId;
+    @Convert(converter = SubjectIdAttributeConverter.class)
+    @Column(name = "subject_id", nullable = false, columnDefinition = "BINARY(16)")
+    private SubjectId subjectId;
 
     @Column(nullable = false)
     private LocalDate recordDate;
@@ -51,18 +55,18 @@ public class DailyRecord extends BaseEntity {
     protected DailyRecord() {
     }
 
-    private DailyRecord(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+    private DailyRecord(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                         DailyRecordStatus status) {
-        this.userId = userId;
+        this.subjectId = subjectId;
         this.recordDate = recordDate;
         this.recordAt = recordAt;
         this.recordTimezone = recordTimezone;
         this.status = status;
     }
 
-    public static DailyRecord createDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
+    public static DailyRecord createDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                           String recordTimezone) {
-        return new DailyRecord(userId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
+        return new DailyRecord(subjectId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
     }
 
     /**

@@ -4,6 +4,10 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.laimory.server.common.error.StrictErrorCodeDeserializer;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.common.id.SubjectIdJsonDeserializer;
+import com.laimory.server.common.id.SubjectIdJsonSerializer;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -32,7 +36,7 @@ import java.util.Objects;
  * 저장하기 직전에 캡처한 Server 절대 시각(UTC ISO-8601)이다 — 폴링이 "AI 작업 대기 경과 시간"
  * ({@code elapsedSeconds})을 계산하는 기준이다. 두 필드 모두 PROCESSING 전용으로 종결 시 보존하지 않는다.
  *
- * <p>{@code userId}는 task owner(작성 요청자)다 — 세 상태 모두 보존되며, 폴링의 소유권 대조와 콜백의
+ * <p>{@code subjectId}는 task owner(콘텐츠 주체)다 — 세 상태 모두 보존되며, 폴링의 소유권 대조와 콜백의
  * terminal 전이·완료 push가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다).
  */
 public record TimelineDraftTask(
@@ -45,7 +49,9 @@ public record TimelineDraftTask(
         @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
-        long userId
+        @JsonSerialize(using = SubjectIdJsonSerializer.class)
+        @JsonDeserialize(using = SubjectIdJsonDeserializer.class)
+        SubjectId subjectId
 ) {
 
     public TimelineDraftTask {
@@ -54,9 +60,7 @@ public record TimelineDraftTask(
             throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
         }
         Objects.requireNonNull(tokenHash, "tokenHash");
-        if (userId <= 0) {
-            throw new IllegalArgumentException("userId는 양수여야 합니다");
-        }
+        Objects.requireNonNull(subjectId, "subjectId");
         if (status == TaskStatus.PROCESSING && processingStartedAt == null) {
             throw new IllegalArgumentException("PROCESSING task에는 processingStartedAt이 필요합니다");
         }
@@ -80,10 +84,10 @@ public record TimelineDraftTask(
     ) {
     }
 
-    public static TimelineDraftTask processing(long userId, long dailyRecordId, TimelineWindow timelineWindow,
+    public static TimelineDraftTask processing(SubjectId subjectId, long dailyRecordId, TimelineWindow timelineWindow,
                                                String tokenHash, Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, dailyRecordId, timelineWindow, null,
-                tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, userId);
+                tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, subjectId);
     }
 
     public TimelineDraftTask withTokenAndStage(String nextTokenHash, ProcessStage nextStage) {
@@ -92,17 +96,17 @@ public record TimelineDraftTask(
         }
         return new TimelineDraftTask(status, dailyRecordId, timelineWindow, error,
                 Objects.requireNonNull(nextTokenHash, "nextTokenHash"),
-                Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, userId);
+                Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, subjectId);
     }
 
-    public static TimelineDraftTask success(long userId, long dailyRecordId, String tokenHash) {
+    public static TimelineDraftTask success(SubjectId subjectId, long dailyRecordId, String tokenHash) {
         return new TimelineDraftTask(TaskStatus.SUCCESS, dailyRecordId, null, null,
-                tokenHash, null, null, userId);
+                tokenHash, null, null, subjectId);
     }
 
-    public static TimelineDraftTask failed(long userId, long dailyRecordId, int error,
+    public static TimelineDraftTask failed(SubjectId subjectId, long dailyRecordId, int error,
                                            String tokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null, error,
-                tokenHash, null, null, userId);
+                tokenHash, null, null, subjectId);
     }
 }

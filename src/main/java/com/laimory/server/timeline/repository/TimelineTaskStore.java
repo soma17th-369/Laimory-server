@@ -3,6 +3,8 @@ package com.laimory.server.timeline.repository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.common.id.SubjectIdCodec;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
@@ -17,7 +19,8 @@ import org.springframework.stereotype.Component;
 /**
  * timeline draft 작업 상태의 Redis 데이터 접근 계층.
  * 논리 키: {@code timeline:draft-task:{taskId}}, 값: TimelineDraftTask JSON.
- * 사용자별 진행 작업 index 논리 키: {@code timeline:draft-task:user:{userId}:processing}
+ * subject별 진행 작업 index 논리 키:
+ * {@code timeline:draft-task:user:{base64url(subjectId)}:processing}
  * (sorted set — member: taskId, score: processingStartedAt epoch ms).
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  *
@@ -39,15 +42,16 @@ public class TimelineTaskStore {
     private final RedisGateway redis;
     private final ObjectMapper objectMapper;
 
-    /** 사용자별 진행 작업 index의 논리 키. owner는 record 계약상 항상 양수라 {@code :null:} 오염이 없다. */
-    static String userProcessingIndexKey(long userId) {
-        return USER_PROCESSING_INDEX_KEY_PREFIX + userId + USER_PROCESSING_INDEX_KEY_SUFFIX;
+    /** subject별 진행 작업 index의 논리 키. codec이 null과 비정상 subject를 fail-closed한다. */
+    static String subjectProcessingIndexKey(SubjectId subjectId) {
+        return USER_PROCESSING_INDEX_KEY_PREFIX + SubjectIdCodec.encode(subjectId)
+                + USER_PROCESSING_INDEX_KEY_SUFFIX;
     }
 
     public void save(String taskId, TimelineDraftTask task, Duration ttl) {
         try {
             String json = objectMapper.writeValueAsString(task);
-            String userIndexKey = userProcessingIndexKey(task.userId());
+            String userIndexKey = subjectProcessingIndexKey(task.subjectId());
             if (task.status() == TaskStatus.PROCESSING) {
                 if (task.processingStartedAt() == null) {
                     throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
@@ -84,7 +88,7 @@ public class TimelineTaskStore {
         try {
             String expectedJson = objectMapper.writeValueAsString(expected);
             String replacementJson = objectMapper.writeValueAsString(replacement);
-            String userIndexKey = userProcessingIndexKey(replacement.userId());
+            String userIndexKey = subjectProcessingIndexKey(replacement.subjectId());
             if (replacement.status() == TaskStatus.PROCESSING) {
                 if (replacement.processingStartedAt() == null) {
                     throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
@@ -111,8 +115,8 @@ public class TimelineTaskStore {
      * <p>역직렬화 불가 JSON(owner 누락·null·0 포함)은 권위를 판정할 수 없으므로 예외를 전파하고(500)
      * 어떤 member도 자동 삭제하지 않는다(수동 조사 가능성 보존).
      */
-    public List<String> findProcessingTaskIds(long userId) {
-        String userIndexKey = userProcessingIndexKey(userId);
+    public List<String> findProcessingTaskIds(SubjectId subjectId) {
+        String userIndexKey = subjectProcessingIndexKey(subjectId);
         List<String> candidates = redis.getSortedSetReverseRange(userIndexKey);
         if (candidates.isEmpty()) {
             return List.of();
@@ -129,7 +133,7 @@ public class TimelineTaskStore {
                 continue;
             }
             TimelineDraftTask task = deserialize(taskId, json);
-            if (task.userId() != userId || task.status() != TaskStatus.PROCESSING) {
+            if (!task.subjectId().equals(subjectId) || task.status() != TaskStatus.PROCESSING) {
                 // 타인 소유(존재 여부 비노출) 또는 terminal 전이 뒤 잔존 member — 요청 사용자 index만 정리.
                 staleMembers.add(taskId);
                 continue;

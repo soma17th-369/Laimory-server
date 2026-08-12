@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.id.SubjectId;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
@@ -37,6 +38,18 @@ class UserMemoryPersistenceIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private NewUserProvisioner newUserProvisioner;
+
+    @Autowired
+    private SubjectMappingService subjectMappingService;
+
+    @Autowired
+    private UserSubjectLinkRepository userSubjectLinkRepository;
+
+    @Autowired
+    private SubjectLookupKeyDeriver subjectLookupKeyDeriver;
+
     @PersistenceContext
     private EntityManager em;
 
@@ -46,29 +59,30 @@ class UserMemoryPersistenceIntegrationTest {
     @AfterEach
     void cleanUp() {
         createdUserIds.forEach(userId -> {
-            userMemoryService.replace(userId, null);
+            userMemoryService.replace(subjectMappingService.getRequired(userId), null);
+            userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(userId));
             userRepository.deleteById(userId);
         });
         createdUserIds.clear();
     }
 
-    private long newUserId() {
-        Long userId = userRepository.save(
-                User.of(Provider.GOOGLE, "sub-" + UUID.randomUUID(), "e@x.com", "nick")).getUserId();
+    private TestUser newUser() {
+        Long userId = newUserProvisioner.provision(
+                Provider.GOOGLE, "sub-" + UUID.randomUUID(), "e@x.com", "nick").getUserId();
         createdUserIds.add(userId);
-        return userId;
+        return new TestUser(userId, subjectMappingService.getRequired(userId));
     }
 
-    private JsonNode reload(long userId) {
+    private JsonNode reload(SubjectId subjectId) {
         em.clear();
-        return userMemoryService.find(userId).orElse(null);
+        return userMemoryService.find(subjectId).orElse(null);
     }
 
     @Test
     void newUser_hasNoMemoryRow() {
-        long userId = newUserId();
+        TestUser user = newUser();
 
-        assertThat(userMemoryService.find(userId)).isEmpty();
+        assertThat(userMemoryService.find(user.subjectId())).isEmpty();
     }
 
     @Test
@@ -81,70 +95,73 @@ class UserMemoryPersistenceIntegrationTest {
                  "history":[{"date":"2026-08-01","summary":"카페에서 작업 ☕"},
                             {"date":"2026-08-02","summary":"한강 러닝"}]}
                 """);
-        long userId = newUserId();
+        TestUser user = newUser();
 
-        userMemoryService.replace(userId, document);
+        userMemoryService.replace(user.subjectId(), document);
 
-        assertThat(reload(userId)).isEqualTo(document);
+        assertThat(reload(user.subjectId())).isEqualTo(document);
     }
 
     @Test
     void replace_swapsWholeDocumentInSingleRow() throws Exception {
-        long userId = newUserId();
-        userMemoryService.replace(userId, objectMapper.readTree("{\"keep\":1,\"drop\":2}"));
+        TestUser user = newUser();
+        userMemoryService.replace(user.subjectId(), objectMapper.readTree("{\"keep\":1,\"drop\":2}"));
 
         JsonNode next = objectMapper.readTree("{\"keep\":9}");
-        userMemoryService.replace(userId, next);
+        userMemoryService.replace(user.subjectId(), next);
 
         // 병합이 아니라 교체 — 이전 문서의 key는 사라지고 행은 여전히 하나다(upsert).
-        JsonNode loaded = reload(userId);
+        JsonNode loaded = reload(user.subjectId());
         assertThat(loaded).isEqualTo(next);
         assertThat(loaded.has("drop")).isFalse();
-        assertThat(userMemoryService.find(userId)).isPresent();
+        assertThat(userMemoryService.find(user.subjectId())).isPresent();
     }
 
     @Test
     void replace_null_removesRow() throws Exception {
-        long userId = newUserId();
-        userMemoryService.replace(userId, objectMapper.readTree("{\"a\":1}"));
+        TestUser user = newUser();
+        userMemoryService.replace(user.subjectId(), objectMapper.readTree("{\"a\":1}"));
 
-        userMemoryService.replace(userId, null);
+        userMemoryService.replace(user.subjectId(), null);
 
-        assertThat(reload(userId)).isNull();
+        assertThat(reload(user.subjectId())).isNull();
     }
 
     @Test
     void replace_onAbsentRow_isIdempotent() {
-        long userId = newUserId();
+        TestUser user = newUser();
 
-        userMemoryService.replace(userId, null); // 없는 메모리 제거는 0행 — 예외 없이 멱등이다.
+        userMemoryService.replace(user.subjectId(), null); // 없는 메모리 제거는 0행 — 예외 없이 멱등이다.
 
-        assertThat(userMemoryService.find(userId)).isEmpty();
+        assertThat(userMemoryService.find(user.subjectId())).isEmpty();
     }
 
     @Test
     void memory_isIsolatedPerUser() throws Exception {
-        long first = newUserId();
-        long second = newUserId();
+        TestUser first = newUser();
+        TestUser second = newUser();
 
-        userMemoryService.replace(first, objectMapper.readTree("{\"owner\":\"first\"}"));
-        userMemoryService.replace(second, objectMapper.readTree("{\"owner\":\"second\"}"));
-        userMemoryService.replace(first, objectMapper.readTree("{\"owner\":\"first-updated\"}"));
+        userMemoryService.replace(first.subjectId(), objectMapper.readTree("{\"owner\":\"first\"}"));
+        userMemoryService.replace(second.subjectId(), objectMapper.readTree("{\"owner\":\"second\"}"));
+        userMemoryService.replace(first.subjectId(), objectMapper.readTree("{\"owner\":\"first-updated\"}"));
 
-        assertThat(reload(first).get("owner").asText()).isEqualTo("first-updated");
-        assertThat(reload(second).get("owner").asText()).isEqualTo("second");
+        assertThat(reload(first.subjectId()).get("owner").asText()).isEqualTo("first-updated");
+        assertThat(reload(second.subjectId()).get("owner").asText()).isEqualTo("second");
     }
 
     /** 분리의 목적 — 로그인 경로의 User 조회는 memory 행과 무관하게 동작한다. */
     @Test
     void userLookup_isUnaffectedByMemory() throws Exception {
-        long userId = newUserId();
-        userMemoryService.replace(userId, objectMapper.readTree("{\"big\":\"document\"}"));
+        TestUser testUser = newUser();
+        userMemoryService.replace(testUser.subjectId(), objectMapper.readTree("{\"big\":\"document\"}"));
 
         em.clear();
-        User user = userRepository.findById(userId).orElseThrow();
+        User user = userRepository.findById(testUser.userId()).orElseThrow();
 
-        assertThat(user.getUserId()).isEqualTo(userId);
-        assertThat(userMemoryService.find(userId)).isPresent();
+        assertThat(user.getUserId()).isEqualTo(testUser.userId());
+        assertThat(userMemoryService.find(testUser.subjectId())).isPresent();
+    }
+
+    private record TestUser(long userId, SubjectId subjectId) {
     }
 }

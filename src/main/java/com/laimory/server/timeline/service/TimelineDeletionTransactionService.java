@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -47,13 +48,13 @@ public class TimelineDeletionTransactionService {
 
     /** 소유권·DRAFT 재확인 후 PHOTO Item/job 보존과 Event/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
     @Transactional
-    public DeletionResult deleteEvent(long userId, Long timelineEventId) {
+    public DeletionResult deleteEvent(SubjectId subjectId, Long timelineEventId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(userId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
         DeletionItems deletionItems = resolveDeletionItems(Set.of(timelineEventId));
-        OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), userId);
+        OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
         timelineEventService.deleteById(timelineEventId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
         return new DeletionResult(
@@ -62,14 +63,14 @@ public class TimelineDeletionTransactionService {
 
     /** 소유권·DRAFT 재확인 후 PHOTO Item/job 보존과 DailyRecord/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
     @Transactional
-    public DeletionResult deleteDailyRecord(long userId, Long dailyRecordId) {
-        requireOwnedDraftRecord(userId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
+    public DeletionResult deleteDailyRecord(SubjectId subjectId, Long dailyRecordId) {
+        requireOwnedDraftRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
 
         Set<Long> recordEventIds = timelineEventService.findByDailyRecordId(dailyRecordId).stream()
                 .map(TimelineEvent::getTimelineEventId)
                 .collect(Collectors.toSet());
         DeletionItems deletionItems = resolveDeletionItems(recordEventIds);
-        OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), userId);
+        OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
         dailyRecordService.deleteById(dailyRecordId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
         return new DeletionResult(
@@ -85,10 +86,10 @@ public class TimelineDeletionTransactionService {
      * (유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙을 같은 commit으로 묶는다.
      */
     @Transactional
-    public DeletionResult detachEventItem(long userId, Long timelineEventId, Long timelineItemId) {
+    public DeletionResult detachEventItem(SubjectId subjectId, Long timelineEventId, Long timelineItemId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(userId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
         TimelineItem item = timelineItemService.findById(timelineItemId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
@@ -105,7 +106,7 @@ public class TimelineDeletionTransactionService {
         if (!timelineEventItemService.findByTimelineItemIds(List.of(timelineItemId)).isEmpty()) {
             return new DeletionResult(0, 1, 0);
         }
-        OrphanPreparation preparation = prepareOrphanItems(List.of(item), userId);
+        OrphanPreparation preparation = prepareOrphanItems(List.of(item), subjectId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
         return new DeletionResult(preparation.scheduled(), 0, preparation.invalidSkipped());
     }
@@ -143,7 +144,7 @@ public class TimelineDeletionTransactionService {
      * valid orphan PHOTO는 job을 만들고 원문 Item을 보존한다.
      * non-PHOTO와 job을 만들 수 없는 손상 PHOTO만 request transaction에서 즉시 hard delete한다.
      */
-    private OrphanPreparation prepareOrphanItems(List<TimelineItem> orphanItems, long userId) {
+    private OrphanPreparation prepareOrphanItems(List<TimelineItem> orphanItems, SubjectId subjectId) {
         int scheduled = 0;
         int invalidSkipped = 0;
         List<Long> immediateDeleteItemIds = new ArrayList<>();
@@ -170,7 +171,7 @@ public class TimelineDeletionTransactionService {
                 continue;
             }
 
-            String objectKey = PhotoObjectKeys.fullKey(photo.filename(), userId);
+            String objectKey = PhotoObjectKeys.subjectFullKey(photo.filename(), subjectId);
             try {
                 if (timelinePhotoDeleteJobService.insertIfAbsent(item.getTimelineItemId(), objectKey)) {
                     scheduled++;
@@ -186,9 +187,9 @@ public class TimelineDeletionTransactionService {
     }
 
     /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(-1003)로 거절한다. */
-    private DailyRecord requireOwnedDraftRecord(long userId, Long dailyRecordId, ExceptionType notFoundType) {
+    private DailyRecord requireOwnedDraftRecord(SubjectId subjectId, Long dailyRecordId, ExceptionType notFoundType) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
-                .filter(owned -> owned.getUserId() == userId)
+                .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(notFoundType));
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);

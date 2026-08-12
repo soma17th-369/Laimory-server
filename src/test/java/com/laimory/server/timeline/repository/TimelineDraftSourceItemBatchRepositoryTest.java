@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,7 +97,7 @@ class TimelineDraftSourceItemBatchRepositoryTest {
     private TimelineDraftSourceItem sourceItem(String rawId, int index) {
         return TimelineDraftSourceItem.of(
                 "11111111-1111-1111-1111-111111111111",
-                7L,
+                id(7L),
                 ItemType.CALENDAR,
                 rawId,
                 LocalDateTime.of(2026, 8, 6, 9, 0).plusMinutes(index),

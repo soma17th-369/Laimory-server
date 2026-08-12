@@ -227,7 +227,8 @@ ALTER TABLE timeline_draft_source_items
 
 ALTER TABLE push_registrations
     MODIFY COLUMN subject_id BINARY(16) NOT NULL,
-    MODIFY COLUMN user_id BIGINT NULL;
+    MODIFY COLUMN user_id BIGINT NULL,
+    ADD KEY idx_push_registrations_subject (subject_id);
 ```
 
 **실패 시**: NULL 잔여 행이 있으면 MODIFY가 거부된다 — 4단계 ②를 재실행해 delta를 채우고 다시

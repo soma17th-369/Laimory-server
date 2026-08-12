@@ -6,7 +6,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.common.id.SubjectId;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -42,13 +44,13 @@ class TimelineCallbackServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "task";
-    private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(7L);
     private static final long RECORD_ID = 42L;
     private static final String TASK_TOKEN = "raw-task-token";
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);
 
     private TimelineDraftTask taskAt(ProcessStage stage) {
-        return TimelineDraftTask.processing(USER_ID, RECORD_ID, null, TOKEN_HASH,
+        return TimelineDraftTask.processing(SUBJECT_ID, RECORD_ID, null, TOKEN_HASH,
                         Instant.parse("2026-06-17T03:05:00Z"))
                 .withTokenAndStage(TOKEN_HASH, stage);
     }
@@ -70,7 +72,7 @@ class TimelineCallbackServiceTest {
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success());
 
         verify(timelineTaskService).markSuccessIfCurrent(TASK_ID, task);
-        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
+        verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
     }
 
     @Test
@@ -96,7 +98,7 @@ class TimelineCallbackServiceTest {
 
         verify(timelineTaskService).markFailedIfCurrent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
-        verify(timelineCompletionPushNotifier).notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
+        verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
     }
 
     @Test
@@ -151,7 +153,7 @@ class TimelineCallbackServiceTest {
     @Test
     void sameTerminalCallbackReplay_isBodilessSuccess() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));
+                .thenReturn(Optional.of(TimelineDraftTask.success(SUBJECT_ID, RECORD_ID, TOKEN_HASH)));
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success());
 
@@ -162,7 +164,7 @@ class TimelineCallbackServiceTest {
     void conflictingTerminalCallback_returns409() {
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(TimelineDraftTask.failed(
-                        USER_ID, RECORD_ID, ExceptionType.AI_REPORTED_FAILURE.code(), TOKEN_HASH)));
+                        SUBJECT_ID, RECORD_ID, ExceptionType.AI_REPORTED_FAILURE.code(), TOKEN_HASH)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -174,7 +176,7 @@ class TimelineCallbackServiceTest {
         TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(task),
-                        Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));
+                        Optional.of(TimelineDraftTask.success(SUBJECT_ID, RECORD_ID, TOKEN_HASH)));
         when(timelineTaskService.markSuccessIfCurrent(TASK_ID, task)).thenReturn(false);
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success());

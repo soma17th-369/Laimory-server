@@ -9,9 +9,11 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
@@ -37,7 +39,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class TimelineSaveServiceTest {
 
     private static final String VERSION = "v1";
-    private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(7L);
     private static final Long RECORD_ID = 42L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
 
@@ -59,56 +61,56 @@ class TimelineSaveServiceTest {
 
     @Test
     void 전이를_커밋한_뒤에_갱신_대기_큐에_넣는다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
-        service.save(VERSION, USER_ID, RECORD_DATE);
+        service.save(VERSION, SUBJECT_ID, RECORD_DATE);
 
         // 커밋 전에 넣으면 롤백된 저장이 갱신을 유발한다.
         InOrder inOrder = inOrder(timelineSaveTransactionService, worker);
-        inOrder.verify(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
+        inOrder.verify(timelineSaveTransactionService).save(SUBJECT_ID, RECORD_ID);
         inOrder.verify(worker).enqueue(any());
     }
 
     @Test
     void 큐_등록이_실패해도_저장은_성공으로_끝난다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
         doThrow(new RuntimeException("redis down")).when(worker).enqueue(any());
 
-        assertThatCode(() -> service.save(VERSION, USER_ID, RECORD_DATE)).doesNotThrowAnyException();
+        assertThatCode(() -> service.save(VERSION, SUBJECT_ID, RECORD_DATE)).doesNotThrowAnyException();
 
-        verify(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
+        verify(timelineSaveTransactionService).save(SUBJECT_ID, RECORD_ID);
     }
 
     @Test
     void 큐에는_식별자만_담는다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
-        service.save(VERSION, USER_ID, RECORD_DATE);
+        service.save(VERSION, SUBJECT_ID, RECORD_DATE);
 
         // 접수 body와 base 지문은 배치가 guard를 잡은 뒤 만든다 — 여기서 미리 조립하지 않는다.
         ArgumentCaptor<UserMemoryUpdatePending> pending = ArgumentCaptor.forClass(UserMemoryUpdatePending.class);
         verify(worker).enqueue(pending.capture());
-        assertThat(pending.getValue()).isEqualTo(new UserMemoryUpdatePending(USER_ID, RECORD_ID));
+        assertThat(pending.getValue()).isEqualTo(new UserMemoryUpdatePending(SUBJECT_ID, RECORD_ID));
     }
 
     @Test
     void 요청_경로에서는_AI를_호출하지_않는다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
 
-        service.save(VERSION, USER_ID, RECORD_DATE);
+        service.save(VERSION, SUBJECT_ID, RECORD_DATE);
 
         verifyNoInteractions(dispatcher);
     }
 
     @Test
     void 해당_날짜의_기록이_없으면_404로_은닉하고_아무_부수효과도_없다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE)).thenReturn(Optional.empty());
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.save(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.save(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -118,10 +120,10 @@ class TimelineSaveServiceTest {
 
     @Test
     void 이미_SAVED면_409로_거절하고_아무_부수효과도_없다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(savedRecord()));
 
-        assertThatThrownBy(() -> service.save(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.save(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -131,19 +133,19 @@ class TimelineSaveServiceTest {
 
     @Test
     void 전이가_실패하면_큐에_넣지_않는다() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineSaveTransactionService).save(USER_ID, RECORD_ID);
+                .when(timelineSaveTransactionService).save(SUBJECT_ID, RECORD_ID);
 
-        assertThatThrownBy(() -> service.save(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.save(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOf(BusinessException.class);
         verifyNoInteractions(worker);
     }
 
     private DailyRecord draftRecord() {
         DailyRecord record = DailyRecord.createDraft(
-                USER_ID, RECORD_DATE, LocalDateTime.of(2026, 8, 5, 21, 0), "Asia/Seoul");
+                SUBJECT_ID, RECORD_DATE, LocalDateTime.of(2026, 8, 5, 21, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);
         return record;
     }

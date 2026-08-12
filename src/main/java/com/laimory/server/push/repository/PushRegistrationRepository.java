@@ -1,6 +1,7 @@
 package com.laimory.server.push.repository;
 
 import com.laimory.server.push.entity.PushRegistration;
+import com.laimory.server.common.id.SubjectId;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -25,26 +26,27 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
     @Modifying
     @Transactional
     @Query(value = "insert into push_registrations "
-            + "(user_id, firebase_installation_id, last_registered_at, created_at, updated_at) "
-            + "values (:userId, :fid, :now, :now, :now) "
-            + "on duplicate key update user_id = :userId, last_registered_at = :now, updated_at = :now",
+            + "(subject_id, firebase_installation_id, last_registered_at, created_at, updated_at) "
+            + "values (:subjectId, :fid, :now, :now, :now) "
+            + "on duplicate key update subject_id = :subjectId, last_registered_at = :now, updated_at = :now",
             nativeQuery = true)
-    void upsert(@Param("userId") long userId, @Param("fid") String firebaseInstallationId,
+    void upsert(@Param("subjectId") byte[] subjectId, @Param("fid") String firebaseInstallationId,
                 @Param("now") LocalDateTime now);
 
     /** callback task owner의 활성 설치 전체 발송 대상 조회(FID만 — 엔티티 로드 불필요). */
-    @Query("select p.firebaseInstallationId from PushRegistration p where p.userId = :userId")
-    List<String> findAllFirebaseInstallationIdsByUserId(@Param("userId") long userId);
+    @Query("select p.firebaseInstallationId from PushRegistration p where p.subjectId = :subjectId")
+    List<String> findAllFirebaseInstallationIdsBySubjectId(@Param("subjectId") SubjectId subjectId);
 
     /**
-     * owner 조건 해제 — (principal userId, FID)가 함께 일치할 때만 삭제해 계정 전환 뒤 이전 사용자의
+     * owner 조건 해제 — (principal에서 해석한 subject, FID)가 함께 일치할 때만 삭제해
+     * 계정 전환 뒤 이전 사용자의
      * 늦은 해제가 재결합된 등록을 지우지 않는다. 미존재 삭제는 0행(멱등).
      */
     @Modifying
     @Transactional
-    @Query("delete from PushRegistration p where p.userId = :userId and p.firebaseInstallationId = :fid")
-    int deleteByUserIdAndFirebaseInstallationId(@Param("userId") long userId,
-                                                @Param("fid") String firebaseInstallationId);
+    @Query("delete from PushRegistration p where p.subjectId = :subjectId and p.firebaseInstallationId = :fid")
+    int deleteBySubjectIdAndFirebaseInstallationId(@Param("subjectId") SubjectId subjectId,
+                                                   @Param("fid") String firebaseInstallationId);
 
     /**
      * FCM이 영구 무효(UNREGISTERED 등)로 판정한 FID 등록 일괄 삭제. repository 메서드 단위의 짧은 별도

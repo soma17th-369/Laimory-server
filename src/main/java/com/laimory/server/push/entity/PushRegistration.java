@@ -1,7 +1,10 @@
 package com.laimory.server.push.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.common.id.SubjectIdAttributeConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -28,8 +31,9 @@ public class PushRegistration extends BaseEntity {
     @Column(name = "push_registration_id")
     private Long pushRegistrationId;
 
-    @Column(nullable = false)
-    private Long userId;
+    @Convert(converter = SubjectIdAttributeConverter.class)
+    @Column(name = "subject_id", nullable = false, columnDefinition = "BINARY(16)")
+    private SubjectId subjectId;
 
     /** Firebase Installation ID(FID) — 발송 target. UNIQUE(한 시점 단일 owner — 계정 전환 시 재결합). */
     @Column(nullable = false, length = 255)

@@ -2,6 +2,8 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
@@ -15,7 +17,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -30,7 +31,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * draft 작성 작업(생성·폴링)은 {@link TimelineApi}에 분리 — 여기는 finalize로 만들어진 기록을 다룬다.
  *
  * <p>모든 엔드포인트가 특정 사용자의 기록에 종속되므로 인증 prefix({@code /a/api})에 둔다.
- * userId는 인증된 JWT principal에서 받으며 클라이언트 입력이 아니다 — OpenAPI parameter로 노출하지 않는다.
+ * JWT raw userId는 {@link CurrentSubject}로 subjectId에 해석하며 클라이언트 입력이 아니다 — OpenAPI
+ * parameter로 노출하지 않는다.
  *
  * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING)만으로
  * Event/memo/PHOTO 변경 요청을 거절하지 않는다.
@@ -55,7 +57,7 @@ public interface TimelineRecordApi {
     @GetMapping("/daily-records")
     ResponseEntity<ApiResponse<DailyTimelinesResponse>> getDailyTimelines(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId);
 
     @Operation(summary = "하루 타임라인 단건 조회(ID, deprecated)", deprecated = true,
             description = "호환을 위해 한시적으로 유지하는 ID 기반 조회다. 신규 클라이언트는 "
@@ -72,7 +74,7 @@ public interface TimelineRecordApi {
     @GetMapping("/daily-records/by-id/{dailyRecordId}")
     ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimeline(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "조회할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "하루 타임라인 날짜 조회",
@@ -91,7 +93,7 @@ public interface TimelineRecordApi {
     @GetMapping("/daily-records/{recordDate}")
     ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimelineByDate(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "조회할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 
@@ -109,7 +111,7 @@ public interface TimelineRecordApi {
     @GetMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<TimelineEventResponse>> getTimelineEvent(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "조회할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
     @Operation(summary = "타임라인 Event 수정",
@@ -143,7 +145,7 @@ public interface TimelineRecordApi {
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "수정할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventRequest request);
 
@@ -165,7 +167,7 @@ public interface TimelineRecordApi {
     @PutMapping("/events/{timelineEventId}/memo")
     ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "메모를 바꿀 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventMemoRequest request);
 
@@ -188,7 +190,7 @@ public interface TimelineRecordApi {
     @DeleteMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "삭제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId);
 
     @Operation(summary = "타임라인 Event에서 사진(PHOTO Item) 삭제",
@@ -214,7 +216,7 @@ public interface TimelineRecordApi {
     @DeleteMapping("/events/{timelineEventId}/items/{timelineItemId}")
     ResponseEntity<ApiResponse<Void>> detachTimelineEventItem(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "연결을 해제할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @Parameter(description = "연결을 해제할 타임라인 아이템 ID") @PathVariable Long timelineItemId);
 
@@ -238,7 +240,7 @@ public interface TimelineRecordApi {
     @DeleteMapping("/daily-records/by-id/{dailyRecordId}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "삭제할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "하루 기록(DailyRecord) 날짜 삭제",
@@ -262,7 +264,7 @@ public interface TimelineRecordApi {
     @DeleteMapping("/daily-records/{recordDate}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "삭제할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 
@@ -288,7 +290,7 @@ public interface TimelineRecordApi {
     @PostMapping("/daily-records/{recordDate}/save")
     ResponseEntity<ApiResponse<Void>> saveDailyRecord(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "저장할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 }

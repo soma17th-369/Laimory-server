@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -48,13 +49,13 @@ public class TimelineTaskService {
     /**
      * dailyRecordId는 선생성된 DailyRecord의 ID다 — 세 상태 모두 보존되며 폴링·콜백 전이의 기준이다.
      * processingStartedAt은 폴링의 AI 작업 대기 경과 시간 기준(PROCESSING 전용 — terminal은 보존하지 않음).
-     * userId는 task owner다 — 세 상태 전이 모두 필수로 받아 보존한다(폴링 소유권 대조·콜백 전이 기준).
+     * subjectId는 task owner다 — 세 상태 전이 모두 필수로 받아 보존한다(폴링 소유권 대조·콜백 전이 기준).
      */
-    public void createProcessing(String taskId, long userId, long dailyRecordId,
+    public void createProcessing(String taskId, SubjectId subjectId, long dailyRecordId,
                                  TimelineDraftTask.TimelineWindow timelineWindow,
                                  String tokenHash, Instant processingStartedAt) {
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.processing(userId, dailyRecordId, timelineWindow,
+                TimelineDraftTask.processing(subjectId, dailyRecordId, timelineWindow,
                         tokenHash, processingStartedAt),
                 PROCESSING_TTL);
         timelineMetrics.recordDraftCreated();
@@ -85,7 +86,7 @@ public class TimelineTaskService {
     /** callback이 읽은 PROCESSING task가 그대로일 때만 SUCCESS로 종결한다. */
     public boolean markSuccessIfCurrent(String taskId, TimelineDraftTask task) {
         boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
-                TimelineDraftTask.success(task.userId(), task.dailyRecordId(), task.tokenHash()), TERMINAL_TTL);
+                TimelineDraftTask.success(task.subjectId(), task.dailyRecordId(), task.tokenHash()), TERMINAL_TTL);
         if (saved) {
             timelineMetrics.recordTerminalSuccess();
         }
@@ -97,13 +98,13 @@ public class TimelineTaskService {
      * 허용한다 — raw 문자열을 받지 않아, 내부 예외 메시지가 폴링 {@code body.error}로 유출되는 경로를
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */
-    public void markFailed(String taskId, long userId, long dailyRecordId, ExceptionType failureType,
+    public void markFailed(String taskId, SubjectId subjectId, long dailyRecordId, ExceptionType failureType,
                            String tokenHash) {
         if (!TASK_FAILURE_TYPES.contains(failureType)) {
             throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
         timelineTaskStore.save(taskId,
-                TimelineDraftTask.failed(userId, dailyRecordId, failureType.code(), tokenHash),
+                TimelineDraftTask.failed(subjectId, dailyRecordId, failureType.code(), tokenHash),
                 TERMINAL_TTL);
         timelineMetrics.recordTerminalFailed();
     }
@@ -114,7 +115,7 @@ public class TimelineTaskService {
             throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
         boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
-                TimelineDraftTask.failed(task.userId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
+                TimelineDraftTask.failed(task.subjectId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
                 TERMINAL_TTL);
         if (saved) {
             timelineMetrics.recordTerminalFailed();
@@ -139,8 +140,8 @@ public class TimelineTaskService {
      * 뿐이고 task JSON의 status/owner가 권위다 — stale 후보(만료·terminal·타인 소유)는 store가 응답에서
      * 제외하고 best-effort로 정리한다.
      */
-    public List<String> findProcessingTaskIds(long userId) {
-        return timelineTaskStore.findProcessingTaskIds(userId);
+    public List<String> findProcessingTaskIds(SubjectId subjectId) {
+        return timelineTaskStore.findProcessingTaskIds(subjectId);
     }
 
     long countStuckProcessing(Instant now, Duration stuckAfter) {

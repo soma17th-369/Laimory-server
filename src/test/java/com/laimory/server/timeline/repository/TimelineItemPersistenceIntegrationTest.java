@@ -1,8 +1,11 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -21,10 +24,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TimelineItemPersistenceIntegrationTest {
 
+    private static final SubjectId SUBJECT = id(11L);
+
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
 
@@ -54,15 +61,23 @@ class TimelineItemPersistenceIntegrationTest {
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @PersistenceContext
     private EntityManager em;
 
     // payload에 날짜 필드가 없으므로 기본 ObjectMapper로 충분하다.
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @BeforeEach
+    void createSubjectMapping() {
+        ensureExists(jdbcTemplate, SUBJECT);
+    }
+
     @Test
     void persistsAndReloadsTypedPayloadFromJsonColumn_withJunctionLink() throws Exception {
-        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), LocalDateTime.of(2026, 5, 8, 12, 0), "Asia/Seoul"));
+        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), LocalDateTime.of(2026, 5, 8, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.MOVEMENT,
                         LocalDateTime.of(2026, 5, 8, 8, 30),
@@ -141,7 +156,7 @@ class TimelineItemPersistenceIntegrationTest {
     @Test
     void junction_rejectsDuplicatePair_byCompositePrimaryKey() {
         // 같은 (event, item) pair 중복 연결은 composite PK가 DB에서 거부한다(N:M 무결성의 유일한 DB 제약).
-        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 11),
+        DailyRecord record = dailyRecordRepository.save(DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 11),
                 LocalDateTime.of(2026, 5, 11, 12, 0), "Asia/Seoul"));
         TimelineEvent event = timelineEventRepository.save(
                 TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,

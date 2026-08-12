@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.geo.Coordinate;
 import com.laimory.server.geo.GeoLookupOutcome;
 import com.laimory.server.geo.GeoMetrics;
@@ -31,7 +32,7 @@ import org.springframework.stereotype.Service;
 /**
  * 저장 전 payload 재구성: 서버 파생 필드는 클라 값을 무시하고 서버 값으로만 채운다
  * (mass assignment 방어 — 거절이 아니라 무시). STAY/MOVEMENT의 {@code address}/{@code places}는
- * 지오코딩 결과, {@code durationText}는 startAt/endAt 계산값, PHOTO의 {@code photoUrl}은 filename+userId로
+ * 지오코딩 결과, {@code durationText}는 startAt/endAt 계산값, PHOTO의 {@code photoUrl}은 filename+subjectId로
  * 파생한 무서명 CloudFront 서빙 URL이다(AI가 서버간 입력 조회 API로 소비).
  * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
  *
@@ -74,9 +75,9 @@ public class SourceItemEnrichmentService {
         this.maxUniqueCoordinates = maxUniqueCoordinates;
     }
 
-    /** {@code userId}는 PHOTO photoUrl의 full key 파생에 쓴다 — 저장될 row의 user_id와 같은 사용자여야 한다. */
+    /** {@code subjectId}는 PHOTO photoUrl의 full key 파생에 쓴다 — 저장될 row의 owner와 같아야 한다. */
     @WithSpan
-    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, long userId) {
+    public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, SubjectId subjectId) {
         long startNanos = System.nanoTime();
         List<CoordinateObservation> observations = collectObservations(sourceItems);
         Set<Coordinate> coordinates = uniqueCoordinates(observations);
@@ -90,7 +91,7 @@ public class SourceItemEnrichmentService {
                 ? Map.of()
                 : lookupAndJudge(coordinates, observations);
         List<SourceItemDto> enriched = sourceItems.stream()
-                .map(src -> reconstruct(src, lookups, userId))
+                .map(src -> reconstruct(src, lookups, subjectId))
                 .toList();
         if (!lookups.isEmpty()) {
             // 좌표값은 로그 금지(위치 민감정보) — 유니크 좌표 수·총 소요시간만.
@@ -215,7 +216,7 @@ public class SourceItemEnrichmentService {
         return "none";
     }
 
-    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, long userId) {
+    private SourceItemDto reconstruct(SourceItemDto src, Map<Coordinate, GeoPlace> lookups, SubjectId subjectId) {
         TimelineItemPayload reconstructed = switch (src.payload()) {
             case StayPayload stay -> {
                 GeoPlace geo = lookups.get(new Coordinate(stay.latitude(), stay.longitude()));
@@ -230,7 +231,7 @@ public class SourceItemEnrichmentService {
             case PhotoPayload photo -> new PhotoPayload(
                     photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
                     photo.description(),
-                    photoUrlService.buildUrl(photo.filename(), userId));
+                    photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
             default -> src.payload();
         };
         if (reconstructed == src.payload()) {

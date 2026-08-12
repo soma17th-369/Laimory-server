@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -39,14 +40,14 @@ public class TimelineDeletionService {
     private final TimelinePhotoDeleteMetrics timelinePhotoDeleteMetrics;
 
     /** Event/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
-    public void deleteEvent(String applicationVersion, long userId, Long timelineEventId) {
+    public void deleteEvent(String applicationVersion, SubjectId subjectId, Long timelineEventId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(userId, event.getDailyRecordId(),
+        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(),
                 ExceptionType.TIMELINE_EVENT_NOT_FOUND);
         executeDelete("event", timelineEventId,
-                () -> timelineDeletionTransactionService.deleteEvent(userId, timelineEventId));
+                () -> timelineDeletionTransactionService.deleteEvent(subjectId, timelineEventId));
     }
 
     /**
@@ -54,34 +55,34 @@ public class TimelineDeletionService {
      * 사전 guard는 event·record까지만이고 junction 존재·삭제 판정은 트랜잭션이 소유한다
      * ({@link TimelineDeletionTransactionService#detachEventItem} — 직접 DELETE 영향 행 수 기반).
      */
-    public void detachEventItem(String applicationVersion, long userId,
+    public void detachEventItem(String applicationVersion, SubjectId subjectId,
                                 Long timelineEventId, Long timelineItemId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(userId, event.getDailyRecordId(),
+        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(),
                 ExceptionType.TIMELINE_EVENT_NOT_FOUND);
         executeDelete("eventItem", timelineItemId,
-                () -> timelineDeletionTransactionService.detachEventItem(userId, timelineEventId, timelineItemId));
+                () -> timelineDeletionTransactionService.detachEventItem(subjectId, timelineEventId, timelineItemId));
     }
 
     /** Record·Events/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
-    public void deleteDailyRecord(String applicationVersion, long userId, Long dailyRecordId) {
+    public void deleteDailyRecord(String applicationVersion, SubjectId subjectId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        requireOwnedDraftRecord(userId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
+        requireOwnedDraftRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
         executeDelete("dailyRecord", dailyRecordId,
-                () -> timelineDeletionTransactionService.deleteDailyRecord(userId, dailyRecordId));
+                () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
     }
 
     /** 날짜로 찾은 Record·Events/non-PHOTO orphan을 삭제하고 PHOTO orphan Item과 삭제 job을 남긴다. */
-    public void deleteDailyRecordByDate(String applicationVersion, long userId, LocalDate recordDate) {
+    public void deleteDailyRecordByDate(String applicationVersion, SubjectId subjectId, LocalDate recordDate) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         requireDraftRecord(record);
         Long dailyRecordId = record.getDailyRecordId();
         executeDelete("dailyRecord", dailyRecordId,
-                () -> timelineDeletionTransactionService.deleteDailyRecord(userId, dailyRecordId));
+                () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
     }
 
     /** PHOTO job enqueue + hard delete transaction 결과를 metric과 안전한 구조화 로그에 반영한다. */
@@ -98,9 +99,9 @@ public class TimelineDeletionService {
     }
 
     /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(-1003)로 사전 거절한다. */
-    private void requireOwnedDraftRecord(long userId, Long dailyRecordId, ExceptionType notFoundType) {
+    private void requireOwnedDraftRecord(SubjectId subjectId, Long dailyRecordId, ExceptionType notFoundType) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
-                .filter(owned -> owned.getUserId() == userId)
+                .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(notFoundType));
         requireDraftRecord(record);
     }

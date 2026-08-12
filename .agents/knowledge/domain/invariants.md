@@ -19,7 +19,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ### Timeline
 
-- `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(user_id, record_date)`는 유일하다.
+- `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(subject_id, record_date)`는 유일하다.
 - draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을
   보존하며 AI transport에는 record timezone 기반 offset ISO로 변환해 전달한다. `recordDate`·`recordAt`·
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
@@ -91,7 +91,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - Event·DailyRecord 삭제와 Event-Item 연결 해제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에
   거절하고 없음·비소유는 404로 은닉한다.
-- 날짜 기반 DailyRecord 삭제는 `(principal userId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
+- 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
   transaction이 그 정확한 ID의 owner/DRAFT를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
   record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.
 - 삭제 transaction은 다른 Event가 참조하지 않아 association 0이 될 orphan Item을 계산하고, orphan PHOTO의
@@ -158,7 +158,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — TTL 재확보에도 바뀌지 않고 terminal 전이 시 폐기한다.
-- 사용자별 진행 작업 index(`timeline:draft-task:user:{userId}:processing`)는 조회 후보일 뿐이다 —
+- subject별 진행 작업 index(`timeline:draft-task:user:{base64url(subjectId)}:processing`)는 조회 후보일 뿐이다 —
   task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
   소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
   요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
@@ -184,7 +184,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ### Photos
 
-- S3 key는 서버가 userId와 filename에서 파생하며 client가 full key를 정하지 않는다.
+- S3 key는 서버가 subjectId와 filename에서 파생하며 client가 full key를 정하지 않는다.
 - presigned PUT은 content type과 content length를 서명에 묶는다.
 - `photoUrl`은 save 시 materialize한다. CDN domain이나 key 규칙 변경에는 기존 payload backfill이 필요하다.
 - Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내며 서버는 S3 object 존재 여부를 확인하지
@@ -209,10 +209,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
-- 요청 하나의 principal userId가 draft record 조회·enrich photo key·staging row·
-  Redis task owner·polling·DailyRecord 전체/ID·날짜 단건 조회·ID·날짜 삭제·Event 단건 조회·편집·삭제
-  소유권 검사까지 전부 동일해야 한다
-  (지점 분기 금지).
+- 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
+  `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request `SubjectId`가 draft record 조회·
+  enrich photo key·staging row·Redis task owner·polling·DailyRecord/Event 조회·편집·삭제·push 등록 소유권
+  검사까지 전부 동일해야 한다(지점 분기 금지, mapping 누락은 자동 생성 없이 fail-closed).
 - Redis draft task owner와 dailyRecordId는 세 상태 모두 필수로 보존된다. polling은 상태 분기 전에
   owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
 - 서버간 요청(입력·결과·콜백)은 request principal이 아니라 task 저장 owner를 쓴다. 결과가 참조하는

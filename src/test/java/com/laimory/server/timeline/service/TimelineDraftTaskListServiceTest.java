@@ -23,19 +23,20 @@ class TimelineDraftTaskListServiceTest {
     @InjectMocks
     private TimelineDraftTaskListService service;
 
-    private static final long USER_ID = 7L;
+    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(7L);
 
     @Test
     void list_wrapsOwnerScopedProcessingTaskIds_newestFirst() {
-        when(timelineTaskService.findProcessingTaskIds(USER_ID)).thenReturn(List.of("newer", "older"));
+        when(timelineTaskService.findProcessingTaskIds(SUBJECT_ID)).thenReturn(List.of("newer", "older"));
 
-        assertThat(service.list("v1", USER_ID).taskIds()).containsExactly("newer", "older");
+        assertThat(service.list("v1", SUBJECT_ID).taskIds()).containsExactly("newer", "older");
     }
 
     @Test
     void list_noProcessingTasks_returnsEmptyArrayNotNull() {
-        when(timelineTaskService.findProcessingTaskIds(USER_ID)).thenReturn(List.of());
+        when(timelineTaskService.findProcessingTaskIds(SUBJECT_ID)).thenReturn(List.of());
 
-        assertThat(service.list("v1", USER_ID).taskIds()).isNotNull().isEmpty();
+        assertThat(service.list("v1", SUBJECT_ID).taskIds()).isNotNull().isEmpty();
     }
 }

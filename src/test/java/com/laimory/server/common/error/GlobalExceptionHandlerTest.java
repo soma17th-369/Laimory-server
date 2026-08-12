@@ -2,8 +2,8 @@ package com.laimory.server.common.error;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
+import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -20,6 +20,8 @@ import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
+import com.laimory.server.user.SubjectMappingService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -59,10 +61,17 @@ class GlobalExceptionHandlerTest {
     private TimelineDraftTaskListService timelineDraftTaskListService;
     @MockitoBean
     private PhotoUploadService photoUploadService;
+    @MockitoBean
+    private SubjectMappingService subjectMappingService;
+
+    @BeforeEach
+    void resolveSubject() {
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(id(USER_ID));
+    }
 
     @Test
     void businessException_mapsToEnumStatus_withCodeAndTransactionIdHeader() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -76,7 +85,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void illegalArgument_mapsToError0400_andForwardsDetailToAccessLog() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));
 
         var result = mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -96,7 +105,7 @@ class GlobalExceptionHandlerTest {
         // 요청값이 echo된 긴 메시지 — CR/LF 제거(텍스트 로그 위조 방지) + 200자 상한(keyword term 한도로
         // 인한 ES 문서 거부 방지, ignore_above 256과 이중 방어)이 단일 조립 지점에서 적용돼야 한다.
         String hostile = "invalid photo filename: line1\r\nFAKE LOG LINE\n" + "x".repeat(500);
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException(hostile));
 
         var result = mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -110,7 +119,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void unexpectedException_mapsToError0500_withoutLeakingDetail() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("redis serialization failed: secret detail"));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -152,7 +161,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void acceptLanguage_switchesErrorMessageLocale() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY)
@@ -170,7 +179,7 @@ class GlobalExceptionHandlerTest {
      */
     @Test
     void withoutAcceptLanguage_fallsBackToKorean() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))

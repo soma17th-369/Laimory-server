@@ -7,8 +7,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.dto.PhotoUploadItem;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -28,7 +30,7 @@ import org.springframework.util.unit.DataSize;
 class PhotoUploadServiceTest {
 
     private static final long TEN_MB = 10L * 1024 * 1024;
-    private static final long USER_ID = 424242L;
+    private static final SubjectId SUBJECT_ID = id(424242L);
 
     private S3PhotoStorageService storage;
     private PhotoUploadService service;
@@ -45,7 +47,7 @@ class PhotoUploadServiceTest {
         when(storage.generatePresignedPutUrl(anyString(), anyString(), anyLong()))
                 .thenReturn("https://example/put");
 
-        PhotoUploadCreateResponse response = service.createUploads("v1", USER_ID, List.of(
+        PhotoUploadCreateResponse response = service.createUploads("v1", SUBJECT_ID, List.of(
                 new PhotoUploadItem("image/jpeg", 1000L),
                 new PhotoUploadItem("image/png", 2000L)));
 
@@ -60,7 +62,7 @@ class PhotoUploadServiceTest {
         when(storage.generatePresignedPutUrl(anyString(), anyString(), anyLong()))
                 .thenReturn("https://example/put");
 
-        service.createUploads("v1", USER_ID, List.of(new PhotoUploadItem("image/jpeg", 4242L)));
+        service.createUploads("v1", SUBJECT_ID, List.of(new PhotoUploadItem("image/jpeg", 4242L)));
 
         ArgumentCaptor<Long> length = ArgumentCaptor.forClass(Long.class);
         verify(storage).generatePresignedPutUrl(anyString(), eq("image/jpeg"), length.capture());
@@ -74,26 +76,25 @@ class PhotoUploadServiceTest {
                 .thenReturn("https://example/put");
 
         PhotoUploadCreateResponse response =
-                service.createUploads("v1", USER_ID, List.of(new PhotoUploadItem("image/jpeg", 1000L)));
+                service.createUploads("v1", SUBJECT_ID, List.of(new PhotoUploadItem("image/jpeg", 1000L)));
 
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
         verify(storage).generatePresignedPutUrl(key.capture(), anyString(), anyLong());
         assertThat(key.getValue())
-                .isEqualTo(PhotoObjectKeys.sha256hex(USER_ID) + "/photos/" + response.uploads().get(0).filename());
-        assertThat(key.getValue()).doesNotStartWith(PhotoObjectKeys.sha256hex(0L));
+                .isEqualTo(PhotoObjectKeys.subjectFullKey(response.uploads().get(0).filename(), SUBJECT_ID));
     }
 
     @Test
     void createUploads_rejectsEmptyPhotos() {
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID, List.of()))
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID, List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID, null))
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createUploads_rejectsTooManyPhotos_withDedicatedCode() {
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID, List.of(
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID, List.of(
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L),
                 new PhotoUploadItem("image/jpeg", 1L),
@@ -106,22 +107,22 @@ class PhotoUploadServiceTest {
 
     @Test
     void createUploads_rejectsNullElement() {
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID,
                 Arrays.asList(new PhotoUploadItem("image/jpeg", 1L), null)))
                 .isInstanceOf(IllegalArgumentException.class); // NPE→500이 아니라 400
     }
 
     @Test
     void createUploads_rejectsNullOrNonPositiveSize() {
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID, List.of(new PhotoUploadItem("image/jpeg", null))))
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID, List.of(new PhotoUploadItem("image/jpeg", null))))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID, List.of(new PhotoUploadItem("image/jpeg", 0L))))
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID, List.of(new PhotoUploadItem("image/jpeg", 0L))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createUploads_rejectsPerPhotoOverLimit_withDedicatedCode() {
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID,
                 List.of(new PhotoUploadItem("image/jpeg", TEN_MB + 1))))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getErrorCode()).isEqualTo(-1005);
@@ -135,7 +136,7 @@ class PhotoUploadServiceTest {
         when(storage.generatePresignedPutUrl(anyString(), anyString(), anyLong()))
                 .thenReturn("https://example/put");
 
-        PhotoUploadCreateResponse response = service.createUploads("v1", USER_ID, List.of(
+        PhotoUploadCreateResponse response = service.createUploads("v1", SUBJECT_ID, List.of(
                 new PhotoUploadItem("image/jpeg", TEN_MB),
                 new PhotoUploadItem("image/jpeg", TEN_MB),
                 new PhotoUploadItem("image/jpeg", TEN_MB)));
@@ -146,13 +147,13 @@ class PhotoUploadServiceTest {
     @Test
     void createUploads_rejectsUnsupportedContentType_withDedicatedCode_withoutEchoingInput() {
         // HEIC(아이폰 기본)·GIF — 사용자가 유발 가능 → 전용 코드. args 없음(입력 echo 금지).
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID,
                 List.of(new PhotoUploadItem("image/heic", 1000L))))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getErrorCode()).isEqualTo(-1007);
                     assertThat(ex.getArgs()).isEmpty();
                 });
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID,
                 List.of(new PhotoUploadItem("image/gif", 1000L))))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1007));
@@ -161,7 +162,7 @@ class PhotoUploadServiceTest {
     @Test
     void createUploads_rejectsBlankContentType_asPlainValidation() {
         // 형식 불량(누락)은 전용 코드가 아니라 제네릭 400(IAE) — 정상 앱은 보낼 수 없는 요청.
-        assertThatThrownBy(() -> service.createUploads("v1", USER_ID,
+        assertThatThrownBy(() -> service.createUploads("v1", SUBJECT_ID,
                 List.of(new PhotoUploadItem("  ", 1000L))))
                 .isInstanceOf(IllegalArgumentException.class);
     }

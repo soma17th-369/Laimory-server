@@ -3,7 +3,6 @@ package com.laimory.server.push.controller;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -17,9 +16,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.user.SubjectMappingService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -37,6 +40,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class PushRegistrationControllerTest {
 
     private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = TestSubjects.id(USER_ID);
     private static final String PATH = "/a/api/v1/push-registrations";
     private static final String BODY = """
             {"firebaseInstallationId":"fid-abc"}
@@ -50,6 +54,14 @@ class PushRegistrationControllerTest {
 
     @MockitoBean
     private PushRegistrationService pushRegistrationService;
+
+    @MockitoBean
+    private SubjectMappingService subjectMappingService;
+
+    @BeforeEach
+    void resolveSubject() {
+        org.mockito.Mockito.when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+    }
 
     @Test
     void unauthenticatedRequests_rejected401BeforeService() throws Exception {
@@ -74,7 +86,7 @@ class PushRegistrationControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이고, FID는 body 원문 그대로 서비스에 전달된다.
-        verify(pushRegistrationService).register("v1", USER_ID, "fid-abc");
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-abc");
     }
 
     @Test
@@ -86,13 +98,13 @@ class PushRegistrationControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(pushRegistrationService).unregister("v1", USER_ID, "fid-abc");
+        verify(pushRegistrationService).unregister("v1", SUBJECT_ID, "fid-abc");
     }
 
     @Test
     void register_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(any(), anyLong(), any());
+                .when(pushRegistrationService).register(any(), any(SubjectId.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"firebaseInstallationId\":\"\"}"))
@@ -104,7 +116,7 @@ class PushRegistrationControllerTest {
     @Test
     void unregister_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).unregister(any(), anyLong(), any());
+                .when(pushRegistrationService).unregister(any(), any(SubjectId.class), any());
 
         mockMvc.perform(delete(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
@@ -116,14 +128,14 @@ class PushRegistrationControllerTest {
     void register_missingField_passesNullToServiceValidation() throws Exception {
         // 필드 부재는 역직렬화에서 null — 400 판정은 서비스 validation 한 곳이 담당한다(중복 검증 금지).
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(anyString(), anyLong(), any());
+                .when(pushRegistrationService).register(anyString(), any(SubjectId.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
 
-        verify(pushRegistrationService).register("v1", USER_ID, null);
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, null);
     }
 
     private void assertBodyIsExplicitNull(MvcResult result) throws Exception {

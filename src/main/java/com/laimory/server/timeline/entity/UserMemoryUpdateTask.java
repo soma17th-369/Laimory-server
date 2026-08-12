@@ -1,6 +1,11 @@
 package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.common.id.SubjectIdJsonDeserializer;
+import com.laimory.server.common.id.SubjectIdJsonSerializer;
 import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
 import java.util.List;
@@ -23,7 +28,9 @@ import java.util.Objects;
  * 처리된다). 로그 상관관계 용도이며 외부 계약이 아니다.
  */
 public record UserMemoryUpdateTask(
-        long userId,
+        @JsonSerialize(using = SubjectIdJsonSerializer.class)
+        @JsonDeserialize(using = SubjectIdJsonDeserializer.class)
+        SubjectId subjectId,
         List<Long> dailyRecordIds,
         String tokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant processingStartedAt,
@@ -31,9 +38,7 @@ public record UserMemoryUpdateTask(
 ) {
 
     public UserMemoryUpdateTask {
-        if (userId <= 0) {
-            throw new IllegalArgumentException("userId는 양수여야 합니다");
-        }
+        Objects.requireNonNull(subjectId, "subjectId");
         if (dailyRecordIds == null || dailyRecordIds.isEmpty()) {
             throw new IllegalArgumentException("dailyRecordIds는 최소 1건이어야 합니다");
         }

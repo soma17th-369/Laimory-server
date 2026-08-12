@@ -48,7 +48,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class SourceItemEnrichmentServiceTest {
 
     private static final LocalDateTime T = LocalDateTime.of(2026, 6, 17, 9, 0);
-    private static final long USER_ID = 0L;
+    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(1L);
     private static final int MAX_UNIQUE_COORDINATES = 30;
 
     @Mock
@@ -122,7 +123,7 @@ class SourceItemEnrichmentServiceTest {
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 "IN_VEHICLE", 5200.0)));
 
-        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
 
         // 재구성(new SourceItemDto)돼도 envelope 필드(rawId)는 원본 그대로 보존돼야 한다 — 유실 시 DB NOT NULL 500.
         assertThat(enriched.get(0).rawId()).isEqualTo("raw-loc");
@@ -149,12 +150,13 @@ class SourceItemEnrichmentServiceTest {
     @Test
     void enrich_injectsPhotoUrl_ignoringClientValue_withoutGeocoding() {
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
-        when(photoUrlService.buildUrl(filename, USER_ID)).thenReturn("https://cdn.example/abc/photos/" + filename);
+        when(photoUrlService.buildSubjectUrl(filename, SUBJECT_ID))
+                .thenReturn("https://cdn.example/abc/photos/" + filename);
         // 클라가 photoUrl을 위조해 보내도 서버 파생값으로만 덮어쓴다. 나머지 필드·envelope은 보존.
         SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
                 new PhotoPayload(filename, "content://x", 1.0, 2.0, "설명", "https://evil.example/fake.jpg"));
 
-        List<SourceItemDto> enriched = service().enrich(List.of(photo), USER_ID);
+        List<SourceItemDto> enriched = service().enrich(List.of(photo), SUBJECT_ID);
 
         assertThat(enriched.get(0).itemType()).isEqualTo(ItemType.PHOTO);
         assertThat(enriched.get(0).rawId()).isEqualTo("raw-photo");
@@ -184,7 +186,7 @@ class SourceItemEnrichmentServiceTest {
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 null, null)));
 
-        service().enrich(sources, USER_ID);
+        service().enrich(sources, SUBJECT_ID);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Set<Coordinate>> captor = ArgumentCaptor.forClass(Set.class);
@@ -200,7 +202,7 @@ class SourceItemEnrichmentServiceTest {
         List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.STAY, "r1", T, null,
                 new StayPayload(37.5340, 126.9668, null, null, null)));
 
-        StayPayload stay = (StayPayload) service().enrich(sources, USER_ID).get(0).payload();
+        StayPayload stay = (StayPayload) service().enrich(sources, SUBJECT_ID).get(0).payload();
 
         // endAt이 없으면 머문 시간을 계산할 수 없어 null(NON_NULL 직렬화로 키 생략).
         assertThat(stay.durationText()).isNull();
@@ -215,7 +217,7 @@ class SourceItemEnrichmentServiceTest {
                 new SourceItemDto(ItemType.STAY, "r2", T, T.plusMinutes(45),
                         new StayPayload(37.5445, 127.0557, null, null, null)));
 
-        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
 
         assertThat(((StayPayload) enriched.get(0).payload()).durationText()).isEqualTo("2시간");
         assertThat(((StayPayload) enriched.get(1).payload()).durationText()).isEqualTo("45분");
@@ -227,7 +229,7 @@ class SourceItemEnrichmentServiceTest {
         SourceItemDto health = new SourceItemDto(ItemType.HEALTH, "raw-h", T, T.plusHours(1),
                 new HealthPayload(HealthMetric.STEPS, "10145보"));
 
-        List<SourceItemDto> enriched = service().enrich(List.of(health), USER_ID);
+        List<SourceItemDto> enriched = service().enrich(List.of(health), SUBJECT_ID);
 
         assertThat(enriched.get(0)).isSameAs(health);
         verifyNoInteractions(geocodingService);
@@ -247,7 +249,7 @@ class SourceItemEnrichmentServiceTest {
         stubOutcomes(successes, Map.of(
                 stayCoordinate(0), MapPlaceLookupException.remoteTransient("coord2address http 500", null)));
 
-        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
 
         StayPayload failed = (StayPayload) enriched.get(0).payload();
         assertThat(failed.address()).isNull();
@@ -277,7 +279,7 @@ class SourceItemEnrichmentServiceTest {
                 stayCoordinate(1), MapPlaceLookupException.remoteTransient("coord2address http 500", null)));
 
         // (F,U)=(1,4) → 25% 초과 거절. materialize된 실패가 전부 transient라 -1014.
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
         assertThat(batchCount("rejected", "transient")).isEqualTo(1);
@@ -291,7 +293,7 @@ class SourceItemEnrichmentServiceTest {
                 stayCoordinate(2), MapPlaceLookupException.remotePermanent("keyword http 429", null)));
 
         // 혼합 aggregate에 영구가 하나라도 있으면 -1015(D7).
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1015));
         assertThat(batchCount("rejected", "mixed")).isEqualTo(1);
@@ -313,7 +315,7 @@ class SourceItemEnrichmentServiceTest {
         stubOutcomes(Map.of(), Map.of(
                 failing, MapPlaceLookupException.remoteTransient("coord2address http 500", null)));
 
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
 
@@ -331,7 +333,7 @@ class SourceItemEnrichmentServiceTest {
         // U=31 > 30 → 외부 I/O 전 IllegalArgumentException(기존 validation 400/-400 경로), provider 미구독.
         List<SourceItemDto> sources = distinctStays(31);
 
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unique geo coordinates");
         verifyNoInteractions(geocodingService);
@@ -343,7 +345,7 @@ class SourceItemEnrichmentServiceTest {
         stubLookupAll(Map.of());
         List<SourceItemDto> sources = distinctStays(30);
 
-        List<SourceItemDto> enriched = service().enrich(sources, USER_ID);
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
 
         assertThat(enriched).hasSize(30);
     }
@@ -358,7 +360,7 @@ class SourceItemEnrichmentServiceTest {
                     new StayPayload(37.5340, 126.9668, null, null, null)));
         }
 
-        assertThat(service().enrich(sources, USER_ID)).hasSize(31);
+        assertThat(service().enrich(sources, SUBJECT_ID)).hasSize(31);
     }
 
     // ── D4: programming error — 502로 가리지 않고 그대로 전파 ──
@@ -371,7 +373,7 @@ class SourceItemEnrichmentServiceTest {
                 new SourceItemDto(ItemType.STAY, "r1", T, null,
                         new StayPayload(37.5340, 126.9668, null, null, null)));
 
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(batchCount("bug", "none")).isEqualTo(1);
     }
@@ -385,7 +387,7 @@ class SourceItemEnrichmentServiceTest {
                 new SourceItemDto(ItemType.STAY, "r1", T, null,
                         new StayPayload(37.5340, 126.9668, null, null, null)));
 
-        assertThatThrownBy(() -> service().enrich(sources, USER_ID))
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("outcomes");
         assertThat(batchCount("bug", "none")).isEqualTo(1);

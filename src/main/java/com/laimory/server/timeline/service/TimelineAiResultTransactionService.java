@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -20,7 +21,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -59,18 +59,27 @@ public class TimelineAiResultTransactionService {
 
     /** AI 결과를 final graph에 반영한다. Redis token CAS 선점은 호출부가 transaction 전에 수행한다. */
     @Transactional
-    public void store(String taskId, long dailyRecordId, AiTimelineResultRequest request) {
+    public void store(String taskId, SubjectId subjectId, long dailyRecordId, AiTimelineResultRequest request) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
+        if (!record.getSubjectId().equals(subjectId)) {
+            throw new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND);
+        }
         if (record.getStatus() != DailyRecordStatus.DRAFT) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
 
         // 1. 결과가 참조하는 rawId가 이 task의 staging source인지 확인한다(타 task·임의 값 차단).
-        Map<String, TimelineDraftSourceItem> sourcesByRawId = timelineDraftSourceItemService.findByTaskId(taskId)
-                .stream()
-                .collect(Collectors.toMap(TimelineDraftSourceItem::getRawId, Function.identity(),
-                        (first, duplicate) -> first, LinkedHashMap::new));
+        List<TimelineDraftSourceItem> sources = timelineDraftSourceItemService.findByTaskId(taskId);
+        for (TimelineDraftSourceItem source : sources) {
+            if (!source.getSubjectId().equals(subjectId)) {
+                throw new IllegalStateException("draft source owner does not match task owner");
+            }
+        }
+        Map<String, TimelineDraftSourceItem> sourcesByRawId = new LinkedHashMap<>();
+        for (TimelineDraftSourceItem source : sources) {
+            sourcesByRawId.putIfAbsent(source.getRawId(), source);
+        }
         List<String> adoptedRawIds = distinctRawIds(request);
         List<String> unknownRawIds = adoptedRawIds.stream()
                 .filter(rawId -> !sourcesByRawId.containsKey(rawId))

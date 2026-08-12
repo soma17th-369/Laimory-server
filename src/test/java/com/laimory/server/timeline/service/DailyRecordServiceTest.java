@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.LocalDate;
@@ -31,45 +33,46 @@ class DailyRecordServiceTest {
 
     private static final String ZONE = "Asia/Seoul";
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 5, 8, 12, 0);
+    private static final SubjectId SUBJECT = id(42L);
 
     @Test
     void findByUserIdAndRecordDate_delegatesToRepository() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        DailyRecord record = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
-        when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(record));
+        DailyRecord record = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
+        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.of(record));
 
-        Optional<DailyRecord> result = dailyRecordService.findByUserIdAndRecordDate(0L, date);
+        Optional<DailyRecord> result = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT, date);
 
         assertThat(result).containsSame(record);
-        verify(dailyRecordRepository).findByUserIdAndRecordDate(0L, date);
+        verify(dailyRecordRepository).findBySubjectIdAndRecordDate(SUBJECT, date);
     }
 
     @Test
     void findByUserIdOrderByRecordDateDescDailyRecordIdDesc_delegatesToRepository() {
-        DailyRecord record = DailyRecord.createDraft(42L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
         List<DailyRecord> records = List.of(record);
-        when(dailyRecordRepository.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L)).thenReturn(records);
+        when(dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT)).thenReturn(records);
 
-        List<DailyRecord> result = dailyRecordService.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L);
+        List<DailyRecord> result = dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT);
 
         assertThat(result).isSameAs(records);
-        verify(dailyRecordRepository).findByUserIdOrderByRecordDateDescDailyRecordIdDesc(42L);
+        verify(dailyRecordRepository).findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT);
     }
 
     @Test
     void findByDailyRecordIdAndUserId_delegatesToRepository() {
-        DailyRecord record = DailyRecord.createDraft(42L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
-        when(dailyRecordRepository.findByDailyRecordIdAndUserId(100L, 42L)).thenReturn(Optional.of(record));
+        DailyRecord record = DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
+        when(dailyRecordRepository.findByDailyRecordIdAndSubjectId(100L, SUBJECT)).thenReturn(Optional.of(record));
 
-        Optional<DailyRecord> result = dailyRecordService.findByDailyRecordIdAndUserId(100L, 42L);
+        Optional<DailyRecord> result = dailyRecordService.findByDailyRecordIdAndSubjectId(100L, SUBJECT);
 
         assertThat(result).containsSame(record);
-        verify(dailyRecordRepository).findByDailyRecordIdAndUserId(100L, 42L);
+        verify(dailyRecordRepository).findByDailyRecordIdAndSubjectId(100L, SUBJECT);
     }
 
     @Test
     void save_delegatesToRepository() {
-        DailyRecord record = DailyRecord.createDraft(0L, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
         when(dailyRecordRepository.save(record)).thenReturn(record);
 
         assertThat(dailyRecordService.save(record)).isSameAs(record);
@@ -81,11 +84,11 @@ class DailyRecordServiceTest {
     @Test
     void findOrCreateDraft_returnsExistingWhenFound_withoutSaving() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        DailyRecord existing = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
+        DailyRecord existing = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
-        when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.of(existing));
+        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.of(existing));
 
-        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, RECORD_AT, ZONE);
+        DailyRecord result = dailyRecordService.findOrCreateDraft(SUBJECT, date, RECORD_AT, ZONE);
 
         assertThat(result).isSameAs(existing);
         verify(dailyRecordRepository, never()).save(any());
@@ -94,12 +97,12 @@ class DailyRecordServiceTest {
     @Test
     void findOrCreateDraft_createsWhenAbsent() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        when(dailyRecordRepository.findByUserIdAndRecordDate(0L, date)).thenReturn(Optional.empty());
-        DailyRecord created = DailyRecord.createDraft(0L, date, RECORD_AT, ZONE);
+        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.empty());
+        DailyRecord created = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
         when(dailyRecordRepository.save(any())).thenReturn(created);
 
-        DailyRecord result = dailyRecordService.findOrCreateDraft(0L, date, RECORD_AT, ZONE);
+        DailyRecord result = dailyRecordService.findOrCreateDraft(SUBJECT, date, RECORD_AT, ZONE);
 
         assertThat(result).isSameAs(created);
         verify(dailyRecordRepository).save(any());

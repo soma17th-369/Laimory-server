@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -20,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>AI dispatch 전에 record 메타데이터(recordAt/recordTimezone)를 DB에 먼저 확정한다 — AI는 body의
  * dailyRecordId로 record를 읽으므로 이 커밋이 dispatch보다 선행해야 한다. SAVED 재확인이 던지면 전체
- * 롤백된다(신규 record·메타데이터 갱신·source rows 모두). 같은 (userId, recordDate) 동시 생성은
+ * 롤백된다(신규 record·메타데이터 갱신·source rows 모두). 같은 (subjectId, recordDate) 동시 생성은
  * 별도 직렬화 없이 경합할 수 있고 unique 위반은 그대로 전파된다. 이 동시성 계약의 보완은 후속 작업 범위다.
  */
 @Service
@@ -37,9 +38,9 @@ public class TimelineDraftPreparationService {
      */
     @WithSpan
     @Transactional
-    public long prepareDraft(long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+    public long prepareDraft(SubjectId subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                              List<TimelineDraftSourceItem> sourceRows) {
-        DailyRecord record = dailyRecordService.findOrCreateDraft(userId, recordDate, recordAt, recordTimezone);
+        DailyRecord record = dailyRecordService.findOrCreateDraft(subjectId, recordDate, recordAt, recordTimezone);
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }

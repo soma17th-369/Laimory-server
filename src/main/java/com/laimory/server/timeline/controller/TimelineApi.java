@@ -2,6 +2,8 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
@@ -17,7 +19,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,9 +28,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 /**
  * 타임라인 draft 작성 작업 API의 문서·계약(구현은 {@link TimelineController}). 콜백은 서버간 통신이라 {@link TimelineCallbackController}에 분리.
  *
- * <p>모든 엔드포인트가 userId에 종속된 작업이라 인증 prefix({@code /a/api})에 둔다(사진 presign은 S3 객체를
- * 만들어내므로 공개 노출 시 남발/비용 위험 — 인증 경계로 보호). userId는 인증된 JWT principal에서 받으며
- * 클라이언트 입력(query/body/path)이 아니다 — OpenAPI parameter로 노출하지 않는다.
+ * <p>모든 엔드포인트가 사용자 콘텐츠에 종속된 작업이라 인증 prefix({@code /a/api})에 둔다(사진 presign은
+ * S3 객체를 만들어내므로 공개 노출 시 남발/비용 위험 — 인증 경계로 보호). JWT raw userId는
+ * {@link CurrentSubject}로 subjectId에 해석하며 클라이언트 입력(query/body/path)이 아니다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
@@ -166,7 +167,7 @@ public interface TimelineApi {
     @PostMapping
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),
                             examples = @ExampleObject(name = "6개 itemType 전체 예시", value = CREATE_DRAFT_EXAMPLE)))
@@ -187,7 +188,7 @@ public interface TimelineApi {
     @PostMapping("/photo-uploads")
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @RequestBody PhotoUploadCreateRequest request);
 
     @Operation(summary = "진행 중 draft 작업 목록 조회",
@@ -205,7 +206,7 @@ public interface TimelineApi {
     @GetMapping
     ResponseEntity<ApiResponse<DraftTaskListResponse>> listProcessingDraftTasks(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId);
 
     @Operation(summary = "draft 작업 상태 폴링",
             description = "PROCESSING이면 status와 elapsedSeconds, SUCCESS면 result(그날 타임라인), FAILED면 body.error에 실패 분류 코드가 담긴다"
@@ -228,6 +229,6 @@ public interface TimelineApi {
     @GetMapping("/{taskId}")
     ResponseEntity<ApiResponse<DraftTaskStatusResponse>> pollDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @Parameter(description = "draft 작업 ID (생성 응답의 taskId)") @PathVariable String taskId);
 }

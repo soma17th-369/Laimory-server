@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doThrow;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
@@ -66,20 +69,23 @@ class TimelineDeletionCascadeIntegrationTest {
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
     private TimelinePhotoDeleteCompletionService timelinePhotoDeleteCompletionService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     @MockitoSpyBean
     private TimelineItemService timelineItemService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Set<Long> fixtureItemIds = new HashSet<>();
 
-    private long userId;
+    private SubjectId subjectId;
     private Long recordId;
 
     @BeforeEach
     void setUp() {
-        userId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        subjectId = SubjectId.newRandom();
+        ensureExists(jdbcTemplate, subjectId);
         fixtureItemIds.clear();
-        recordId = dailyRecordRepository.save(DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), ZONE))
+        recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
     }
 
@@ -87,6 +93,7 @@ class TimelineDeletionCascadeIntegrationTest {
     void cleanUp() {
         deleteFixtureRecord();
         deleteFixturePhotoJobsAndItems();
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
     }
 
     private void deleteFixturePhotoJobsAndItems() {
@@ -109,7 +116,7 @@ class TimelineDeletionCascadeIntegrationTest {
 
     private void deleteFixtureRecord() {
         // Item은 record cascade 대상이 아니므로 junction 경유로 수집해 함께 지운다(테스트 잔존 방지).
-        dailyRecordRepository.findByUserIdAndRecordDate(userId, DATE).ifPresent(record -> {
+        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE).ifPresent(record -> {
             List<Long> eventIds = timelineEventRepository
                     .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()).stream()
                     .map(TimelineEvent::getTimelineEventId)
@@ -145,7 +152,7 @@ class TimelineDeletionCascadeIntegrationTest {
     private Long savePhotoLinkedTo(String rawId, String filename, int hour, Long... eventIds) {
         PhotoPayload payload = new PhotoPayload(
                 filename, "content://fixture/" + rawId, null, null, null,
-                "https://cdn.example/" + PhotoObjectKeys.fullKey(filename, userId));
+                "https://cdn.example/" + PhotoObjectKeys.subjectFullKey(filename, subjectId));
         TimelineItem item = timelineItemRepository.save(TimelineItem.of(
                 ItemType.PHOTO, rawId, DATE.atTime(hour, 0), null, objectMapper.valueToTree(payload)));
         fixtureItemIds.add(item.getTimelineItemId());
@@ -166,7 +173,7 @@ class TimelineDeletionCascadeIntegrationTest {
                 9, targetEventId, siblingEventId);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.deleteEvent(userId, targetEventId);
+                timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
 
         // Event/junction hard delete와 PHOTO Item/job 보존이 같은 commit에 반영된다.
         assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(1, 1, 0));
@@ -177,7 +184,7 @@ class TimelineDeletionCascadeIntegrationTest {
                 .singleElement()
                 .satisfies(job -> {
                     assertThat(job.getTimelineItemId()).isEqualTo(exclusiveItemId);
-                    assertThat(job.getObjectKey()).isEqualTo(PhotoObjectKeys.fullKey(exclusiveFilename, userId));
+                    assertThat(job.getObjectKey()).isEqualTo(PhotoObjectKeys.subjectFullKey(exclusiveFilename, subjectId));
                 });
         // shared Item과 형제 이벤트·그 연결·record는 유지된다.
         assertThat(timelineItemRepository.findById(sharedItemId)).isPresent();
@@ -196,7 +203,7 @@ class TimelineDeletionCascadeIntegrationTest {
         doThrow(new IllegalStateException("forced hard delete failure"))
                 .when(timelineItemService).deleteByIds(anyCollection());
 
-        assertThatThrownBy(() -> timelineDeletionTransactionService.deleteEvent(userId, targetEventId))
+        assertThatThrownBy(() -> timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId))
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(findFixturePhotoDeleteJobs()).isEmpty();
@@ -212,7 +219,7 @@ class TimelineDeletionCascadeIntegrationTest {
         Long onlyEventId = saveEvent("마지막 이벤트", 9);
         Long itemId = saveItemLinkedTo("raw-last", 9, onlyEventId);
 
-        timelineDeletionTransactionService.deleteEvent(userId, onlyEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, onlyEventId);
 
         // 마지막 Event를 지워도 DailyRecord는 유지된다 — 하루 전체 제거는 DailyRecord 삭제 API만 담당.
         assertThat(timelineEventRepository.findById(onlyEventId)).isEmpty();
@@ -231,7 +238,7 @@ class TimelineDeletionCascadeIntegrationTest {
         Long item2 = saveItemLinkedTo("raw-all-2", 10, event1, event2);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.deleteDailyRecord(userId, recordId);
+                timelineDeletionTransactionService.deleteDailyRecord(subjectId, recordId);
 
         assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
         assertThat(dailyRecordRepository.findById(recordId)).isEmpty();
@@ -242,7 +249,7 @@ class TimelineDeletionCascadeIntegrationTest {
         assertThat(timelineEventItemRepository.findByTimelineEventIdIn(List.of(event1, event2))).isEmpty();
         assertThat(findFixturePhotoDeleteJobs())
                 .extracting(TimelinePhotoDeleteJob::getObjectKey)
-                .containsExactly(PhotoObjectKeys.fullKey(filename, userId));
+                .containsExactly(PhotoObjectKeys.subjectFullKey(filename, subjectId));
     }
 
     @Test
@@ -250,7 +257,7 @@ class TimelineDeletionCascadeIntegrationTest {
         Long targetEventId = saveEvent("완료 대상", 9);
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b60.jpg";
         Long itemId = savePhotoLinkedTo("raw-complete", filename, 9, targetEventId);
-        timelineDeletionTransactionService.deleteEvent(userId, targetEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
 
         timelinePhotoDeleteCompletionService.completeSucceeded(List.of(job));
@@ -264,7 +271,7 @@ class TimelineDeletionCascadeIntegrationTest {
         Long targetEventId = saveEvent("완료 롤백 대상", 9);
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b61.jpg";
         Long itemId = savePhotoLinkedTo("raw-complete-rollback", filename, 9, targetEventId);
-        timelineDeletionTransactionService.deleteEvent(userId, targetEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
         doThrow(new IllegalStateException("forced completion item delete failure"))
                 .when(timelineItemService).deleteByIds(List.of(itemId));

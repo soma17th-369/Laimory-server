@@ -2,6 +2,8 @@ package com.laimory.server.push.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.common.id.SubjectId;
+import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.push.dto.PushRegistrationRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -9,7 +11,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -21,8 +22,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * Android가 Firebase Messaging 등록 콜백(onRegistered)·로그인 직후·FID 변경 시 PUT을,
  * 로그아웃·계정 전환 전 best-effort로 DELETE를 호출한다.
  *
- * <p>등록은 특정 사용자에 종속되므로 인증 prefix({@code /a/api})에 둔다. userId는 인증된 JWT
- * principal에서 받으며 클라이언트 입력이 아니다 — OpenAPI parameter로 노출하지 않는다.
+ * <p>등록은 특정 사용자에 종속되므로 인증 prefix({@code /a/api})에 둔다. JWT raw userId는
+ * {@link CurrentSubject}로 subjectId에 해석하며 클라이언트 입력이 아니다.
  *
  * <p>FID는 URL이 아닌 request body로 받는다 — access log·프록시 URL에 원문이 남지 않게 한다.
  *
@@ -49,7 +50,7 @@ public interface PushRegistrationApi {
     @PutMapping
     ResponseEntity<ApiResponse<Void>> registerPushRegistration(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @RequestBody PushRegistrationRequest request);
 
     @Operation(summary = "FID 해제",
@@ -67,6 +68,6 @@ public interface PushRegistrationApi {
     @DeleteMapping
     ResponseEntity<ApiResponse<Void>> unregisterPushRegistration(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
+            @Parameter(hidden = true) @CurrentSubject SubjectId subjectId,
             @RequestBody PushRegistrationRequest request);
 }

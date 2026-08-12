@@ -1,8 +1,11 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
@@ -14,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,6 +39,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TimelineDraftSourceItemPersistenceIntegrationTest {
 
+    private static final SubjectId SUBJECT = id(12L);
+
     @Autowired
     private TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
     @Autowired
@@ -47,6 +53,11 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @BeforeEach
+    void createSubjectMapping() {
+        ensureExists(jdbcTemplate, SUBJECT);
+    }
+
     @Test
     void persistsAndReloadsDraftSourceItemFromJsonColumn() throws Exception {
         String taskId = "11111111-1111-1111-1111-111111111111";
@@ -57,7 +68,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
 
         TimelineDraftSourceItem toSave = TimelineDraftSourceItem.of(
                 taskId,
-                0L,
+                SUBJECT,
                 ItemType.MOVEMENT,
                 "0197b1c2-0000-7000-8000-000000000001",
                 LocalDateTime.of(2026, 5, 8, 8, 30),
@@ -71,7 +82,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         TimelineDraftSourceItem reloaded =
                 timelineDraftSourceItemRepository.findById(saved.getTimelineDraftSourceItemId()).orElseThrow();
         assertThat(reloaded.getTaskId()).isEqualTo(taskId);
-        assertThat(reloaded.getUserId()).isEqualTo(0L);
+        assertThat(reloaded.getSubjectId()).isEqualTo(SUBJECT);
         assertThat(reloaded.getItemType()).isEqualTo(ItemType.MOVEMENT);
         assertThat(reloaded.getRawId()).isEqualTo("0197b1c2-0000-7000-8000-000000000001");
         assertThat(reloaded.getStartAt()).isEqualTo(LocalDateTime.of(2026, 5, 8, 8, 30));
@@ -97,10 +108,10 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
                 .add("둘째");
 
         TimelineDraftSourceItem jpaSaved = timelineDraftSourceItemRepository.saveAndFlush(TimelineDraftSourceItem.of(
-                jpaTaskId, 0L, ItemType.CALENDAR, "raw-jpa",
+                jpaTaskId, SUBJECT, ItemType.CALENDAR, "raw-jpa",
                 LocalDateTime.of(2026, 5, 8, 9, 0), null, payload));
         timelineDraftSourceItemBatchRepository.insertAll(List.of(TimelineDraftSourceItem.of(
-                batchTaskId, 0L, ItemType.CALENDAR, "raw-batch",
+                batchTaskId, SUBJECT, ItemType.CALENDAR, "raw-batch",
                 LocalDateTime.of(2026, 5, 8, 9, 0), null, payload)));
 
         String jpaJson = storedPayload(jpaTaskId);
@@ -177,7 +188,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
     }
 
     private TimelineDraftSourceItem sourceItem(String taskId, String rawId) {
-        return TimelineDraftSourceItem.of(taskId, 0L, ItemType.CALENDAR, rawId,
+        return TimelineDraftSourceItem.of(taskId, SUBJECT, ItemType.CALENDAR, rawId,
                 LocalDateTime.of(2026, 5, 8, 9, 0), null,
                 objectMapper.valueToTree(new CalendarPayload("회의", null, null, false)));
     }

@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
@@ -41,38 +42,40 @@ public class DailyTimelineService {
 
     /** 인증 사용자의 모든 일일 기록 graph를 recordDate·ID 내림차순으로 반환한다. */
     @Transactional(readOnly = true)
-    public DailyTimelinesResponse getDailyTimelines(String applicationVersion, long userId) {
+    public DailyTimelinesResponse getDailyTimelines(String applicationVersion, SubjectId subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        List<DailyRecord> records = dailyRecordService.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(userId);
+        List<DailyRecord> records = dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(subjectId);
         return new DailyTimelinesResponse(assembleTimelines(records));
     }
 
     /** 인증 사용자가 소유한 일일 기록 한 건의 graph를 반환한다. 없음·비소유는 같은 404로 은닉한다. */
     @Transactional(readOnly = true)
-    public DailyTimelineResponse getDailyTimeline(String applicationVersion, long userId, Long dailyRecordId) {
+    public DailyTimelineResponse getDailyTimeline(String applicationVersion, SubjectId subjectId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        DailyRecord record = dailyRecordService.findByDailyRecordIdAndUserId(dailyRecordId, userId)
+        DailyRecord record = dailyRecordService.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         return assembleTimelines(List.of(record)).get(0);
     }
 
     /** 인증 사용자의 선택 날짜에 해당하는 일일 기록 graph를 반환한다. */
     @Transactional(readOnly = true)
-    public DailyTimelineResponse getDailyTimeline(String applicationVersion, long userId, LocalDate recordDate) {
+    public DailyTimelineResponse getDailyTimeline(String applicationVersion, SubjectId subjectId,
+                                                  LocalDate recordDate) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         return assembleTimelines(List.of(record)).get(0);
     }
 
     /** 인증 사용자가 소유한 Event와 연결 Item을 반환한다. 없음·부모 없음·비소유는 같은 404로 은닉한다. */
     @Transactional(readOnly = true)
-    public TimelineEventResponse getTimelineEvent(String applicationVersion, long userId, Long timelineEventId) {
+    public TimelineEventResponse getTimelineEvent(String applicationVersion, SubjectId subjectId,
+                                                  Long timelineEventId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         dailyRecordService.findById(event.getDailyRecordId())
-                .filter(record -> record.getUserId() == userId)
+                .filter(record -> record.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         return assembleEventResponses(List.of(event)).get(0);
     }

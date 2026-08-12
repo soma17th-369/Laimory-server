@@ -1,5 +1,6 @@
 package com.laimory.server.push.service;
 
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.push.repository.PushRegistrationRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -22,21 +23,21 @@ public class PushRegistrationService {
     private final Clock clock;
 
     /** 등록·갱신·계정 전환(원자 재결합). 같은 사용자·FID 재등록은 멱등 성공이며 freshness만 갱신된다. */
-    public void register(String applicationVersion, long userId, String firebaseInstallationId) {
+    public void register(String applicationVersion, SubjectId subjectId, String firebaseInstallationId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         validate(firebaseInstallationId);
-        pushRegistrationRepository.upsert(userId, firebaseInstallationId, LocalDateTime.now(clock));
+        pushRegistrationRepository.upsert(subjectId.bytes(), firebaseInstallationId, LocalDateTime.now(clock));
     }
 
     /** owner 조건 해제 — 미존재 등록도 성공(멱등). 계정 전환으로 재결합된 등록은 이전 사용자가 못 지운다. */
-    public void unregister(String applicationVersion, long userId, String firebaseInstallationId) {
+    public void unregister(String applicationVersion, SubjectId subjectId, String firebaseInstallationId) {
         validate(firebaseInstallationId);
-        pushRegistrationRepository.deleteByUserIdAndFirebaseInstallationId(userId, firebaseInstallationId);
+        pushRegistrationRepository.deleteBySubjectIdAndFirebaseInstallationId(subjectId, firebaseInstallationId);
     }
 
     /** 사용자의 활성 설치 전체 FID(발송 대상). */
-    public List<String> findFirebaseInstallationIds(long userId) {
-        return pushRegistrationRepository.findAllFirebaseInstallationIdsByUserId(userId);
+    public List<String> findFirebaseInstallationIds(SubjectId subjectId) {
+        return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
     }
 
     /**

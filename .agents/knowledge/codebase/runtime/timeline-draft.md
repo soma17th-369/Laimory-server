@@ -26,8 +26,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 ### Create
 
 1. `POST /a/api/{version}/timeline/drafts`가 요청을 받는다(유효 Bearer 필수 — 401은 security 단계 처리).
-2. 인증 principal userId 하나가 record 조회·enrich photo key·staging row·Redis task owner에
-   동일하게 흐른다. task는 owner를 세 상태 모두 보존한다.
+2. MVC 경계에서 인증 principal을 해석한 request subjectId 하나가 record 조회·enrich photo key·staging
+   row·Redis task owner에 동일하게 흐른다. task는 subject owner를 세 상태 모두 보존한다.
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
    검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). source item도
    같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
@@ -47,7 +47,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    두 규칙 어디에도 계수하지 않고**(D2에서는 무정보 skip — reset 아님) 해당 좌표만 fallback으로
    강등한다(#262). local 혼잡만으로는 502가 나지 않는다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
-   `(userId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
+   `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
    staging payload는 enrich 결과의 textual leaf를 `PrivacyRedactor.redactTree`로 v1 치환한 것만 저장한다
    (`clientPhotoUri`만 storage 원문 보존). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
@@ -58,7 +58,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
-   (`timeline:draft-task:user:{userId}:processing`)에 시작 시각 score로 taskId를 추가하고 사용자 index
+   (`timeline:draft-task:user:{base64url(subjectId)}:processing`)에 시작 시각 score로 taskId를 추가하고 subject index
    key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
    90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
    callback 계약의 권위는 기존 JSON이다.
@@ -108,10 +108,10 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ### Polling and read
 
-- `GET /a/api/{version}/timeline/daily-records`는 principal userId의 DRAFT/SAVED DailyRecord 전체를
+- `GET /a/api/{version}/timeline/daily-records`는 request subjectId의 DRAFT/SAVED DailyRecord 전체를
   최신 날짜·ID 내림차순으로 반환한다(빈 record 포함, 없으면 200 `timelines=[]`).
   외부 하루 단건의 날짜 기반 공개 경로는
-  `GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(userId, recordDate)`가 일치하는
+  `GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(subjectId, recordDate)`가 일치하는
   한 건만 반환한다. 기존 `GET .../daily-records/by-id/{dailyRecordId}`는 같은 응답을 반환하는 deprecated 호환
   경로다. 없음·비소유는 두 경로 모두 404 `-404`로 은닉하며, record→Event→junction→Item을 한 read-only
   transaction에서 읽어 Event별 `items`까지 조립한다.
@@ -126,9 +126,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   누락·null·0을 포함한 역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다. 목록은 lock이 아니다 —
   create/terminal/expiry와 겹치면 새 task가 이번 응답에서 빠지거나 권위 read 직후 종결된 task가 포함될
   수 있고, 각 taskId의 최신 권위는 단건 폴링이다(폴링의 404·terminal은 정상 수명주기).
-- polling은 task 조회 직후, 상태 분기 전에 request userId와 task owner를 대조한다 — 타 사용자 task는
+- polling은 task 조회 직후, 상태 분기 전에 request subjectId와 task owner를 대조한다 — 타 사용자 task는
   상태와 무관하게 404 `-1001`로 은닉한다. SUCCESS 결과는 task의 `dailyRecordId`로만 조회한다 —
-  (userId, recordDate) 재조회는 쓰지 않는다. record가 삭제·비소유면 404 `-404`(task 자체 없음
+  (subjectId, recordDate) 재조회는 쓰지 않는다. record가 삭제·비소유면 404 `-404`(task 자체 없음
   `-1001`과 구분). polling 선검증 뒤 조립 서비스의
   권위 재조회 전에 record가 삭제돼도 `DRAFT_RESULT_NOT_FOUND`로 변환해 catch-all 500을 내지 않는다.
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 반환한다(음수 0 clamp,
@@ -167,7 +167,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
-- DailyRecord 삭제의 날짜 기반 공개 경로는 `(principal userId, recordDate)`로 record를 찾는
+- DailyRecord 삭제의 날짜 기반 공개 경로는 `(request subjectId, recordDate)`로 record를 찾는
   `DELETE .../daily-records/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
   삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner/DRAFT를 재확인한다. lookup 뒤 같은
   날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/by-id/{dailyRecordId}`는
@@ -184,7 +184,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신
 
-- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(body 없음). `(principal userId,
+- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(body 없음). `(request subjectId,
   recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로 <b>부수효과 전에</b>
   거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로 전이한다. 영향 행 수 0은
   재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
@@ -195,7 +195,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
   시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
 - 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 그 하루를 갱신 대기 큐
-  (`timeline:user-memory-update:pending` sorted set, member `userId:dailyRecordId`, score 최초 기록
+  (`timeline:user-memory-update:pending` sorted set, member `base64url(subjectId):dailyRecordId`, score 최초 기록
   시각)에 넣기만 하고 곧바로 응답한다. Redis 쓰기 한 번이라 async로 넘기지 않는다 — 실행기 포화 시
   그 하루가 유실될 뿐이다. 등록 실패는 로그만 남기고 200을 깨지 않는다.
 - **접수는 하루 1회 배치**(`dispatchPendingUpdates`, 기본 04:30 cron) **한 곳에서만 한다.** 저장된
@@ -205,7 +205,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   task는 TTL 3분에 사라지고 guard도 풀리고 **재시도할 근거가 아무 데도 남지 않는다.** 대가는 반영
   지연이 최대 cron 주기(기본 24시간)라는 것인데, User Memory는 다음 타임라인 품질을 높이는 보조
   데이터라 즉시성이 요구되지 않는다.
-- 사용자 guard는 `timeline:user-memory-update:user:{userId}`(SET NX, TTL 3분)이고, **획득 실패가 곧
+- 사용자 guard는 `timeline:user-memory-update:user:{base64url(subjectId)}`(SET NX, TTL 3분)이고,
+  **획득 실패가 곧
   "이 사용자의 갱신이 진행 중"이라는 판정**이다. 그래서 별도의 진행 상태 저장 없이 guard 하나가
   직렬화와 실패 판정을 겸한다. 배치는 사용자당 한 번만 보내므로 한 실행 안에서는 경합이 없고, guard가
   막는 것은 앞선 실행의 접수가 아직 진행 중인 경우다.
@@ -217,7 +218,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   있는데(과거 날짜를 나중에 저장할 수 있다), 갱신이 접기라 **기록 날짜 순서로** 접어야 한다. 큐 순서로
   상한을 자르면 8/5를 먼저 접고 다음 실행에서 8/1을 접는 일이 생긴다 — 요청 안에서만 정렬해서는
   실행을 넘나드는 순서가 안 잡힌다. 그래서 밀린 날 전부를 `record_date` 오름차순 단일 질의로 읽고
-  (`findByUserIdAndDailyRecordIdInOrderByRecordDateAsc`) 그 앞에서 5일을 자른다. 결과에서 빠진 id가
+  (`findBySubjectIdAndDailyRecordIdInOrderByRecordDateAsc`) 그 앞에서 5일을 자른다. 결과에서 빠진 id가
   곧 그 사이 삭제된 하루다.
 - **배치도 결과를 기다리지 않는다.** 응답을 기다리는 척하려면 폴링을 얹어야 하고 그건 프로토콜과 싸우는
   짓이다.
@@ -297,7 +298,7 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - User Memory 갱신이 **끝내 안 된 날**(7일 retention 안에 반영 못 함)은 그 날의 내용이 memory에 영영
   반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
   없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를
-  `userId`/`dailyRecordId`/`taskId` 로그로만 관측한다.
+  식별자 없이 aggregate count와 `dailyRecordId`/`taskId` 로그로만 관측한다.
 - 대기 중인 두 날짜가 경합하면 memory에 병합되는 순서가 정해지지 않는다. 누락이 아니라 순서 문제라
   수용한다.
 - presign 뒤 draft가 만들어지지 않은 orphan S3 object는 cleanup하지 않는다.

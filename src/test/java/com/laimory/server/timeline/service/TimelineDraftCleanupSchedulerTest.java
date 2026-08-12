@@ -9,11 +9,13 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.StayPayload;
@@ -48,7 +50,7 @@ class TimelineDraftCleanupSchedulerTest {
     private static final Clock FIXED =
             Clock.fixed(Instant.parse("2026-06-22T03:00:00Z"), ZoneOffset.UTC);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 1);
-    private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(7L);
     private static final String FILENAME = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
 
     private TimelineDraftCleanupScheduler scheduler(long retentionDays) {
@@ -60,7 +62,7 @@ class TimelineDraftCleanupSchedulerTest {
     }
 
     private TimelineDraftSourceItem photoRow(long id, String filename) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, SUBJECT_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
                 // photoUrl이 payload에 있어도 S3 삭제 key는 계속 filename+userId에서 파생된다(URL 파싱 안 함).
                 MAPPER.valueToTree(new PhotoPayload(filename, "content://x", 1.0, 2.0, null,
                         "https://cdn.example/hash/photos/" + filename)));
@@ -69,14 +71,14 @@ class TimelineDraftCleanupSchedulerTest {
     }
 
     private TimelineDraftSourceItem photoRow(long id, JsonNode payload) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, SUBJECT_ID, ItemType.PHOTO, "r" + id, DATE.atTime(9, 0), null,
                 payload);
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
     }
 
     private TimelineDraftSourceItem stayRow(long id) {
-        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, USER_ID, ItemType.STAY, "r" + id, DATE.atTime(9, 0), null,
+        TimelineDraftSourceItem row = TimelineDraftSourceItem.of("task-" + id, SUBJECT_ID, ItemType.STAY, "r" + id, DATE.atTime(9, 0), null,
                 MAPPER.valueToTree(new StayPayload(3.0, 4.0, null, null, null)));
         ReflectionTestUtils.setField(row, "timelineDraftSourceItemId", id);
         return row;
@@ -116,7 +118,7 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler(7L).cleanupExpiredDrafts();
 
         // filename → fullKey({sha256hex(userId)}/photos/{filename}) 복원해 S3 삭제.
-        verify(s3PhotoStorageService).delete(PhotoObjectKeys.fullKey(FILENAME, USER_ID));
+        verify(s3PhotoStorageService).delete(PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID));
         verify(timelineDraftSourceItemService).deleteById(10L);
     }
 
@@ -138,7 +140,7 @@ class TimelineDraftCleanupSchedulerTest {
         when(timelineDraftSourceItemService.findCreatedBefore(any()))
                 .thenReturn(List.of(failing, ok));
         doThrow(new RuntimeException("s3 down"))
-                .when(s3PhotoStorageService).delete(PhotoObjectKeys.fullKey(FILENAME, USER_ID));
+                .when(s3PhotoStorageService).delete(PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID));
 
         scheduler(7L).cleanupExpiredDrafts();
 

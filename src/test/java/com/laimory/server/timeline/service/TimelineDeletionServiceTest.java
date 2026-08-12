@@ -5,9 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -41,7 +43,8 @@ class TimelineDeletionServiceTest {
     private TimelinePhotoDeleteMetrics timelinePhotoDeleteMetrics;
 
     private static final String VERSION = "v1";
-    private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(7L);
+    private static final SubjectId OTHER_SUBJECT_ID = id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 7, 8);
@@ -61,10 +64,10 @@ class TimelineDeletionServiceTest {
     void deleteEvent_runsTransactionAndRecordsCommittedEnqueueMetrics() {
         stubOwnedDraftEvent(new TimelineDeletionTransactionService.DeletionResult(2, 1, 3));
 
-        service.deleteEvent(VERSION, USER_ID, EVENT_ID);
+        service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID);
 
         InOrder order = inOrder(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
-        order.verify(timelineDeletionTransactionService).deleteEvent(USER_ID, EVENT_ID);
+        order.verify(timelineDeletionTransactionService).deleteEvent(SUBJECT_ID, EVENT_ID);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(2);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(1);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(3);
@@ -74,10 +77,10 @@ class TimelineDeletionServiceTest {
     void deleteDailyRecord_runsTransactionAndRecordsCommittedEnqueueMetrics() {
         stubOwnedDraftRecord(new TimelineDeletionTransactionService.DeletionResult(4, 2, 1));
 
-        service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID);
+        service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
 
         InOrder order = inOrder(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
-        order.verify(timelineDeletionTransactionService).deleteDailyRecord(USER_ID, RECORD_ID);
+        order.verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(4);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(2);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(1);
@@ -85,19 +88,19 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecordByDate_resolvesSnapshotIdAndRecordsCommittedEnqueueMetrics() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
+                .thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
                 .thenReturn(new TimelineDeletionTransactionService.DeletionResult(3, 2, 1));
 
-        service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE);
+        service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE);
 
         InOrder order = inOrder(
                 dailyRecordService,
                 timelineDeletionTransactionService,
                 timelinePhotoDeleteMetrics);
-        order.verify(dailyRecordService).findByUserIdAndRecordDate(USER_ID, RECORD_DATE);
-        order.verify(timelineDeletionTransactionService).deleteDailyRecord(USER_ID, RECORD_ID);
+        order.verify(dailyRecordService).findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE);
+        order.verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(3);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(2);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(1);
@@ -106,14 +109,14 @@ class TimelineDeletionServiceTest {
     @Test
     void detachEventItem_runsTransactionAndRecordsCommittedEnqueueMetrics() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(USER_ID, EVENT_ID, 21L))
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
-        service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L);
+        service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
         InOrder order = inOrder(timelineDeletionTransactionService, timelinePhotoDeleteMetrics);
-        order.verify(timelineDeletionTransactionService).detachEventItem(USER_ID, EVENT_ID, 21L);
+        order.verify(timelineDeletionTransactionService).detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueScheduled(1);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueSharedRetained(0);
         order.verify(timelinePhotoDeleteMetrics).recordEnqueueInvalidSkipped(0);
@@ -123,7 +126,7 @@ class TimelineDeletionServiceTest {
     void detachEventItem_hidesUnknownEventBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -135,9 +138,9 @@ class TimelineDeletionServiceTest {
     @Test
     void detachEventItem_hidesForeignRecordBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -149,11 +152,11 @@ class TimelineDeletionServiceTest {
     @Test
     void detachEventItem_rejectsSavedRecordBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -165,11 +168,11 @@ class TimelineDeletionServiceTest {
     @Test
     void detachEventItem_dbFailurePropagatesAndDoesNotRecordMetrics() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(USER_ID, EVENT_ID, 21L))
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatThrownBy(() -> service.detachEventItem(VERSION, USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
@@ -179,11 +182,11 @@ class TimelineDeletionServiceTest {
     @Test
     void deleteEvent_dbFailurePropagatesAndDoesNotRecordMetrics() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteEvent(USER_ID, EVENT_ID))
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
@@ -192,11 +195,11 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecord_dbFailurePropagatesAndDoesNotRecordMetrics() {
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID))
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
@@ -205,12 +208,12 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecordByDate_dbFailurePropagatesAndDoesNotRecordMetrics() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
-                .thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
+                .thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
@@ -221,7 +224,7 @@ class TimelineDeletionServiceTest {
     void deleteEvent_hidesUnknownEventBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -233,9 +236,9 @@ class TimelineDeletionServiceTest {
     @Test
     void deleteEvent_hidesForeignRecordBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -247,11 +250,11 @@ class TimelineDeletionServiceTest {
     @Test
     void deleteEvent_rejectsSavedRecordBeforeTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteEvent(VERSION, USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -264,7 +267,7 @@ class TimelineDeletionServiceTest {
     void deleteDailyRecord_hidesUnknownRecordBeforeTransaction() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -275,9 +278,9 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecord_hidesForeignRecordBeforeTransaction() {
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -288,11 +291,11 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecord_rejectsSavedRecordBeforeTransaction() {
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -303,10 +306,10 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecordByDate_hidesUnknownRecordBeforeTransaction() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -317,12 +320,12 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecordByDate_rejectsSavedRecordBeforeTransaction() {
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -333,13 +336,13 @@ class TimelineDeletionServiceTest {
 
     private void stubOwnedDraftEvent(TimelineDeletionTransactionService.DeletionResult result) {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteEvent(USER_ID, EVENT_ID)).thenReturn(result);
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID)).thenReturn(result);
     }
 
     private void stubOwnedDraftRecord(TimelineDeletionTransactionService.DeletionResult result) {
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(USER_ID, RECORD_ID)).thenReturn(result);
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID)).thenReturn(result);
     }
 
     private TimelineEvent event() {
@@ -354,9 +357,9 @@ class TimelineDeletionServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(long userId) {
+    private DailyRecord draftRecordOf(SubjectId subjectId) {
         DailyRecord record = DailyRecord.createDraft(
-                userId,
+                subjectId,
                 RECORD_DATE,
                 RECORD_DATE.atTime(12, 0),
                 "Asia/Seoul");

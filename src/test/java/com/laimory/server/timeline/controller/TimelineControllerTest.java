@@ -2,6 +2,7 @@ package com.laimory.server.timeline.controller;
 
 import static org.hamcrest.Matchers.nullValue;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
+import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -16,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -36,6 +38,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.user.SubjectMappingService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -54,6 +58,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class TimelineControllerTest {
 
     private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(USER_ID);
     private static final String TASKS = "/a/api/v1/timeline/drafts";
 
     // recordDate(선택 날짜)와 recordAt(실제 작성 시각)의 날짜가 다른 "다음날 아침 일기" 시나리오 — 정합성 미검증 계약.
@@ -85,6 +90,13 @@ class TimelineControllerTest {
     private TimelineDraftTaskListService timelineDraftTaskListService;
     @MockitoBean
     private PhotoUploadService photoUploadService;
+    @MockitoBean
+    private SubjectMappingService subjectMappingService;
+
+    @BeforeEach
+    void resolveSubject() {
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+    }
 
     @Test
     void protectedEndpoints_withoutAuthentication_return401Envelope() throws Exception {
@@ -108,7 +120,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -121,12 +133,12 @@ class TimelineControllerTest {
     void createDraftTask_passesParsedRecordDateAndWindowToService() throws Exception {
         // HTTP 파싱 계약 고정: recordDate는 ISO LocalDate, window는 offset 없는 ISO local datetime으로 파싱돼
         // 값 그대로 서비스에 전달된다(recordAt과 recordDate의 날짜가 달라도 그대로 — 정합성 미검증).
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted());
 
-        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(USER_ID), eq(LocalDate.parse("2026-06-17")),
+        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(SUBJECT_ID), eq(LocalDate.parse("2026-06-17")),
                 eq(LocalDateTime.parse("2026-06-18T09:30:00")), eq("Asia/Seoul"),
                 eq(new TimelineWindowDto(LocalDateTime.parse("2026-06-17T00:00"),
                         LocalDateTime.parse("2026-06-18T00:00"))), any());
@@ -134,7 +146,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -146,7 +158,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -156,7 +168,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -168,7 +180,7 @@ class TimelineControllerTest {
     @CsvSource({"GEOCODING_TRANSIENT_FAILURE, -1014", "GEOCODING_PERMANENT_FAILURE, -1015"})
     void createDraftTask_mapsGeocodingFailureTo502(String type, int code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -180,7 +192,7 @@ class TimelineControllerTest {
     @Test
     void createDraftTask_mapsAiDispatchFailureTo502WithoutTaskId() throws Exception {
         // AI dispatch 실패 계약: 502 + -1009 envelope, body=null — 실패 응답에는 내부 taskId가 없다.
-        when(timelineDraftTaskService.createDraftTask(any(), anyLong(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.AI_DISPATCH_FAILED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -192,7 +204,7 @@ class TimelineControllerTest {
 
     @Test
     void createPhotoUploads_returns200WithUploads() throws Exception {
-        when(photoUploadService.createUploads(any(), anyLong(), any()))
+        when(photoUploadService.createUploads(any(), any(), any()))
                 .thenReturn(new PhotoUploadCreateResponse(List.of(
                         new PhotoUploadResponse("f.jpg", "https://example/put"))));
 
@@ -206,12 +218,12 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.uploads[0].uploadUrl").value("https://example/put"));
 
         // principal userId가 service 인자로 전달된다(고정 0 회귀 방지).
-        verify(photoUploadService).createUploads(eq("v1"), eq(USER_ID), any());
+        verify(photoUploadService).createUploads(eq("v1"), eq(SUBJECT_ID), any());
     }
 
     @Test
     void createPhotoUploads_mapsLimitExceededToDedicatedCodeWithLimitValue() throws Exception {
-        when(photoUploadService.createUploads(any(), anyLong(), any()))
+        when(photoUploadService.createUploads(any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.PHOTO_SIZE_EXCEEDED, 15L));
 
         String body = """
@@ -225,7 +237,7 @@ class TimelineControllerTest {
 
     @Test
     void createPhotoUploads_mapsIllegalArgumentTo400() throws Exception {
-        when(photoUploadService.createUploads(any(), anyLong(), any()))
+        when(photoUploadService.createUploads(any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("too many photos"));
 
         String body = """
@@ -239,7 +251,7 @@ class TimelineControllerTest {
     @Test
     void listProcessingDraftTasks_returns200WithTaskIdsNewestFirst() throws Exception {
         // T1: 성공 envelope(code 0) + body.taskIds에 진행 중 작업 ID만 최신순 — 상세 필드는 싣지 않는다.
-        when(timelineDraftTaskListService.list(any(), anyLong()))
+        when(timelineDraftTaskListService.list(any(), any()))
                 .thenReturn(new DraftTaskListResponse(List.of("t-newer", "t-older")));
 
         mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
@@ -251,13 +263,13 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.taskIds.length()").value(2));
 
         // principal userId가 service 인자로 전달된다 — userId는 path/query/body 입력이 아니다(D16).
-        verify(timelineDraftTaskListService).list(eq("v1"), eq(USER_ID));
+        verify(timelineDraftTaskListService).list(eq("v1"), eq(SUBJECT_ID));
     }
 
     @Test
     void listProcessingDraftTasks_empty_returns200WithEmptyArray() throws Exception {
         // T2: 진행 작업이 없어도 404/null이 아니라 200 + 빈 배열 계약이다.
-        when(timelineDraftTaskListService.list(any(), anyLong()))
+        when(timelineDraftTaskListService.list(any(), any()))
                 .thenReturn(new DraftTaskListResponse(List.of()));
 
         mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
@@ -270,7 +282,7 @@ class TimelineControllerTest {
     @Test
     void listProcessingDraftTasks_redisAuthorityFailure_maps500Envelope() throws Exception {
         // T11: 후보 read·역직렬화 실패는 index만 보고 목록을 만들 수 없다 — catch-all 500(-500)으로 끝난다.
-        when(timelineDraftTaskListService.list(any(), anyLong()))
+        when(timelineDraftTaskListService.list(any(), any()))
                 .thenThrow(new IllegalStateException("TimelineDraftTask 역직렬화에 실패했습니다: t-1"));
 
         mockMvc.perform(get(TASKS).with(authenticatedUser(USER_ID)))
@@ -281,7 +293,7 @@ class TimelineControllerTest {
 
     @Test
     void pollDraftTask_returns200WithStatus() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-1")))
+        when(timelineDraftTaskPollingService.poll(any(), any(), eq("t-1")))
                 .thenReturn(DraftTaskStatusResponse.processing(12L));
 
         mockMvc.perform(get(TASKS + "/t-1").with(authenticatedUser(USER_ID)))
@@ -292,7 +304,7 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.elapsedSeconds").value(12));
 
         // principal userId가 service 인자로 전달된다(고정 0 회귀 방지).
-        verify(timelineDraftTaskPollingService).poll(eq("v1"), eq(USER_ID), eq("t-1"));
+        verify(timelineDraftTaskPollingService).poll(eq("v1"), eq(SUBJECT_ID), eq("t-1"));
     }
 
     /**
@@ -301,7 +313,7 @@ class TimelineControllerTest {
      */
     @Test
     void pollDraftTask_failed_returns200WithEnvelope() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-failed")))
+        when(timelineDraftTaskPollingService.poll(any(), any(), eq("t-failed")))
                 .thenReturn(DraftTaskStatusResponse.failed(-1008));
 
         mockMvc.perform(get(TASKS + "/t-failed").with(authenticatedUser(USER_ID)))
@@ -316,7 +328,7 @@ class TimelineControllerTest {
 
     @Test
     void pollDraftTask_mapsNotFoundTo404() throws Exception {
-        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("missing")))
+        when(timelineDraftTaskPollingService.poll(any(), any(), eq("missing")))
                 .thenThrow(new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
 
         mockMvc.perform(get(TASKS + "/missing").with(authenticatedUser(USER_ID)))
@@ -340,7 +352,7 @@ class TimelineControllerTest {
                 "title", "subtitle", "question", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
                 42L, LocalDate.parse("2026-06-17"), null, List.of(event));
-        when(timelineDraftTaskPollingService.poll(any(), anyLong(), eq("t-ok")))
+        when(timelineDraftTaskPollingService.poll(any(), any(), eq("t-ok")))
                 .thenReturn(DraftTaskStatusResponse.success(result));
 
         mockMvc.perform(get(TASKS + "/t-ok").with(authenticatedUser(USER_ID)))

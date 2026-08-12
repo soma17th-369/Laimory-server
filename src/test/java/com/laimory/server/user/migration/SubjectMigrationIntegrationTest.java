@@ -9,7 +9,6 @@ import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.User;
-import com.laimory.server.user.UserMemoryRepository;
 import com.laimory.server.user.UserRepository;
 import com.laimory.server.user.UserSubjectLinkRepository;
 import java.time.LocalDate;
@@ -18,9 +17,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,6 +43,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SubjectMigrationIntegrationTest {
 
     @Autowired
@@ -49,8 +52,6 @@ class SubjectMigrationIntegrationTest {
     private SubjectMappingService subjectMappingService;
     @Autowired
     private UserRepository userRepository;
-    @Autowired
-    private UserMemoryRepository userMemoryRepository;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -65,6 +66,26 @@ class SubjectMigrationIntegrationTest {
     private SubjectOwnerBackfillMigration ownerBackfill;
 
     private final List<Long> createdUserIds = new ArrayList<>();
+
+    /**
+     * #283 schema.sql은 activation 후 NOT NULL 계약이다. 이 클래스는 cutover 이미지가 final DDL 전
+     * additive schema의 NULL legacy owner를 실제로 backfill할 수 있는지를 검증하므로, 클래스 경계에서만
+     * subject_id를 nullable로 열고 종료 시 activation 계약으로 복구한다. 통합 테스트는 기본 순차 실행이고
+     * 이 migration은 전체 테이블 스캔이라 원래부터 독점적 테스 상태를 전제한다.
+     */
+    @BeforeAll
+    void openAdditiveOwnerSchema() {
+        jdbcTemplate.execute("ALTER TABLE daily_records MODIFY COLUMN subject_id BINARY(16) NULL");
+        jdbcTemplate.execute("ALTER TABLE timeline_draft_source_items MODIFY COLUMN subject_id BINARY(16) NULL");
+        jdbcTemplate.execute("ALTER TABLE push_registrations MODIFY COLUMN subject_id BINARY(16) NULL");
+    }
+
+    @AfterAll
+    void restoreActivationOwnerSchema() {
+        jdbcTemplate.execute("ALTER TABLE daily_records MODIFY COLUMN subject_id BINARY(16) NOT NULL");
+        jdbcTemplate.execute("ALTER TABLE timeline_draft_source_items MODIFY COLUMN subject_id BINARY(16) NOT NULL");
+        jdbcTemplate.execute("ALTER TABLE push_registrations MODIFY COLUMN subject_id BINARY(16) NOT NULL");
+    }
 
     @BeforeEach
     void setUp() {
@@ -81,7 +102,7 @@ class SubjectMigrationIntegrationTest {
             jdbcTemplate.update("DELETE FROM daily_records WHERE user_id = ?", userId);
             jdbcTemplate.update("DELETE FROM timeline_draft_source_items WHERE user_id = ?", userId);
             jdbcTemplate.update("DELETE FROM push_registrations WHERE user_id = ?", userId);
-            userMemoryRepository.deleteByUserId(userId);
+            jdbcTemplate.update("DELETE FROM user_memories WHERE user_id = ?", userId);
             byte[] lookupKey = subjectLookupKeyDeriver.deriveCurrent(userId);
             userSubjectLinkRepository.findById(lookupKey).ifPresent(link -> {
                 jdbcTemplate.update("DELETE FROM user_memory_documents WHERE subject_id = ?",
@@ -142,6 +163,13 @@ class SubjectMigrationIntegrationTest {
         return subjectMappingService.getRequired(userId).bytes();
     }
 
+    private void upsertLegacyMemory(long userId, String memory, LocalDateTime now) {
+        jdbcTemplate.update("INSERT INTO user_memories "
+                        + "(user_id, memory, created_at, updated_at) VALUES (?, ?, ?, ?) "
+                        + "ON DUPLICATE KEY UPDATE memory = VALUES(memory), updated_at = VALUES(updated_at)",
+                userId, memory, now, now);
+    }
+
     @Test
     void backfillMappings_createsMissingMappingAndSecondRunIsIdempotent() {
         long userId = saveUserWithoutMapping();
@@ -165,7 +193,7 @@ class SubjectMigrationIntegrationTest {
         long dailyRecordId = insertDailyRecord(userId);
         long stagingItemId = insertStagingItem(userId);
         long pushRegistrationId = insertPushRegistration(userId);
-        userMemoryRepository.upsert(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
+        upsertLegacyMemory(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
         byte[] subjectBytes = subjectBytesOf(userId);
 
         SubjectOwnerBackfillMigration.Result firstRun = ownerBackfill.execute();
@@ -206,7 +234,7 @@ class SubjectMigrationIntegrationTest {
                 userId, subjectBytes)).isTrue();
 
         // 원본 memory 갱신 뒤 재실행하면 문서가 최신 원본으로 수렴한다(upsert delta 반영).
-        userMemoryRepository.upsert(userId, "{\"summary\": \"second\"}", LocalDateTime.now());
+        upsertLegacyMemory(userId, "{\"summary\": \"second\"}", LocalDateTime.now());
         ownerBackfill.execute();
         assertThat(jdbcTemplate.queryForObject("SELECT (SELECT CAST(memory AS CHAR) "
                         + "FROM user_memories WHERE user_id = ?) = (SELECT CAST(memory AS CHAR) "
@@ -227,11 +255,11 @@ class SubjectMigrationIntegrationTest {
     @Test
     void verifyOwners_memoryDocumentCountMismatch_abortsFailClosed() {
         long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
+        upsertLegacyMemory(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
         ownerBackfill.execute(); // 문서 복사 + 검증 통과
 
         // 복사 후 원본 행이 사라지면(문서만 남음) count 불일치 — delta 검증이 fail-closed로 잡는다.
-        userMemoryRepository.deleteByUserId(userId);
+        jdbcTemplate.update("DELETE FROM user_memories WHERE user_id = ?", userId);
 
         assertThatThrownBy(ownerBackfill::verify)
                 .isInstanceOf(SubjectMigrationAbortedException.class)
@@ -266,7 +294,7 @@ class SubjectMigrationIntegrationTest {
     @Test
     void verifyOwners_sameCountButDifferentMemoryDocument_abortsFailClosed() {
         long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"legacy\"}", LocalDateTime.now());
+        upsertLegacyMemory(userId, "{\"summary\": \"legacy\"}", LocalDateTime.now());
         ownerBackfill.execute();
 
         jdbcTemplate.update("UPDATE user_memory_documents SET memory = ? WHERE subject_id = ?",
@@ -282,8 +310,7 @@ class SubjectMigrationIntegrationTest {
     @Test
     void verifyOwners_memoryDocumentDiffersOnlyByLetterCase_abortsFailClosed() {
         long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"CaseSensitive\"}",
-                LocalDateTime.now());
+        upsertLegacyMemory(userId, "{\"summary\": \"CaseSensitive\"}", LocalDateTime.now());
         ownerBackfill.execute();
 
         jdbcTemplate.update("UPDATE user_memory_documents SET memory = ? WHERE subject_id = ?",

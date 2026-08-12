@@ -59,7 +59,9 @@ class TimelineDeletionTransactionServiceTest {
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final long USER_ID = 7L;
+    private static final com.laimory.server.common.id.SubjectId SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final com.laimory.server.common.id.SubjectId OTHER_SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 7, 8);
@@ -89,9 +91,9 @@ class TimelineDeletionTransactionServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(long userId) {
+    private DailyRecord draftRecordOf(com.laimory.server.common.id.SubjectId subjectId) {
         DailyRecord record = DailyRecord.createDraft(
-                userId,
+                subjectId,
                 RECORD_DATE,
                 RECORD_DATE.atTime(12, 0),
                 "Asia/Seoul");
@@ -151,7 +153,7 @@ class TimelineDeletionTransactionServiceTest {
 
     private void stubOwnedDraftEvent() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
     }
 
     @Test
@@ -173,11 +175,11 @@ class TimelineDeletionTransactionServiceTest {
                         TimelineEventItem.of(12L, 23L)));
         when(timelineItemService.findByIds(anyCollection()))
                 .thenReturn(List.of(orphanPhoto, orphanCalendar, sharedPhoto));
-        String objectKey = PhotoObjectKeys.fullKey("a.jpg", USER_ID);
+        String objectKey = PhotoObjectKeys.subjectFullKey("a.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(true);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.deleteEvent(USER_ID, EVENT_ID);
+                service.deleteEvent(SUBJECT_ID, EVENT_ID);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(1, 1, 0));
@@ -211,7 +213,7 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineItemService.findByIds(anyCollection())).thenReturn(List.of(sharedPhoto));
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.deleteEvent(USER_ID, EVENT_ID);
+                service.deleteEvent(SUBJECT_ID, EVENT_ID);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(0, 1, 0));
@@ -241,11 +243,11 @@ class TimelineDeletionTransactionServiceTest {
                         TimelineEventItem.of(EVENT_ID, 34L)));
         when(timelineItemService.findByIds(anyCollection()))
                 .thenReturn(List.of(broken, blank, valid, jsonNull));
-        String validKey = PhotoObjectKeys.fullKey("good.jpg", USER_ID);
+        String validKey = PhotoObjectKeys.subjectFullKey("good.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(33L, validKey)).thenReturn(true);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.deleteEvent(USER_ID, EVENT_ID);
+                service.deleteEvent(SUBJECT_ID, EVENT_ID);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(1, 0, 3));
@@ -271,11 +273,11 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineEventItemService.findByTimelineItemIds(anyCollection()))
                 .thenReturn(List.of(TimelineEventItem.of(EVENT_ID, 21L)));
         when(timelineItemService.findByIds(anyCollection())).thenReturn(List.of(photo));
-        String objectKey = PhotoObjectKeys.fullKey("a.jpg", USER_ID);
+        String objectKey = PhotoObjectKeys.subjectFullKey("a.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(false);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.deleteEvent(USER_ID, EVENT_ID);
+                service.deleteEvent(SUBJECT_ID, EVENT_ID);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(0, 0, 0));
@@ -286,7 +288,7 @@ class TimelineDeletionTransactionServiceTest {
     @Test
     void deleteDailyRecord_enqueuesPhotoBeforeRecordHardDeleteAndReturnsCounts() {
         when(dailyRecordService.findById(RECORD_ID))
-                .thenReturn(Optional.of(draftRecordOf(USER_ID)));
+                .thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
         when(timelineEventService.findByDailyRecordId(RECORD_ID))
                 .thenReturn(List.of(event(EVENT_ID), event(12L)));
         TimelineItem photo = photoItem(21L, "record.jpg");
@@ -299,11 +301,11 @@ class TimelineDeletionTransactionServiceTest {
                         TimelineEventItem.of(EVENT_ID, 21L),
                         TimelineEventItem.of(12L, 21L)));
         when(timelineItemService.findByIds(anyCollection())).thenReturn(List.of(photo));
-        String objectKey = PhotoObjectKeys.fullKey("record.jpg", USER_ID);
+        String objectKey = PhotoObjectKeys.subjectFullKey("record.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(true);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.deleteDailyRecord(USER_ID, RECORD_ID);
+                service.deleteDailyRecord(SUBJECT_ID, RECORD_ID);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
@@ -320,7 +322,7 @@ class TimelineDeletionTransactionServiceTest {
     void deleteEvent_missingEventOnRecheckIs404WithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteEvent(USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -332,9 +334,9 @@ class TimelineDeletionTransactionServiceTest {
     @Test
     void deleteEvent_foreignRecordOnRecheckIs404WithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.deleteEvent(USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
         verify(timelineEventService, never()).deleteById(anyLong());
@@ -344,11 +346,11 @@ class TimelineDeletionTransactionServiceTest {
     @Test
     void deleteEvent_savedRecordOnRecheckIsConflictWithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteEvent(USER_ID, EVENT_ID))
+        assertThatThrownBy(() -> service.deleteEvent(SUBJECT_ID, EVENT_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
         verify(timelineEventService, never()).deleteById(anyLong());
@@ -365,7 +367,7 @@ class TimelineDeletionTransactionServiceTest {
                 .thenReturn(List.of(TimelineEventItem.of(12L, 21L)));
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+                service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(0, 1, 0));
@@ -381,11 +383,11 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
         when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
         when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
-        String objectKey = PhotoObjectKeys.fullKey("last.jpg", USER_ID);
+        String objectKey = PhotoObjectKeys.subjectFullKey("last.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(true);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+                service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
@@ -403,7 +405,7 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+                service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(0, 0, 1));
@@ -418,11 +420,11 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
         when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
         when(timelineEventItemService.findByTimelineItemIds(List.of(21L))).thenReturn(List.of());
-        String objectKey = PhotoObjectKeys.fullKey("dup.jpg", USER_ID);
+        String objectKey = PhotoObjectKeys.subjectFullKey("dup.jpg", SUBJECT_ID);
         when(timelinePhotoDeleteJobService.insertIfAbsent(21L, objectKey)).thenReturn(false);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                service.detachEventItem(USER_ID, EVENT_ID, 21L);
+                service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThat(result).isEqualTo(
                 new TimelineDeletionTransactionService.DeletionResult(0, 0, 0));
@@ -438,7 +440,7 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
         when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(0);
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -452,7 +454,7 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineItemService.findById(21L)).thenReturn(Optional.of(calendarItem(21L)));
         when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1018));
 
@@ -468,7 +470,7 @@ class TimelineDeletionTransactionServiceTest {
         when(timelineItemService.findById(21L)).thenReturn(Optional.of(calendarItem(21L)));
         when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(false);
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -481,7 +483,7 @@ class TimelineDeletionTransactionServiceTest {
         stubOwnedDraftEvent();
         when(timelineItemService.findById(21L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -493,7 +495,7 @@ class TimelineDeletionTransactionServiceTest {
     void detachEventItem_missingEventIs404WithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -504,9 +506,9 @@ class TimelineDeletionTransactionServiceTest {
     @Test
     void detachEventItem_foreignRecordIs404WithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -517,11 +519,11 @@ class TimelineDeletionTransactionServiceTest {
     @Test
     void detachEventItem_savedRecordIsConflictWithoutMutation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.detachEventItem(USER_ID, EVENT_ID, 21L))
+        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
 
@@ -533,7 +535,7 @@ class TimelineDeletionTransactionServiceTest {
     void deleteDailyRecord_missingRecordOnRecheckIs404WithoutMutation() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -544,11 +546,11 @@ class TimelineDeletionTransactionServiceTest {
 
     @Test
     void deleteDailyRecord_savedRecordOnRecheckIsConflictWithoutMutation() {
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(USER_ID, RECORD_ID))
+        assertThatThrownBy(() -> service.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
         verify(dailyRecordService, never()).deleteById(anyLong());

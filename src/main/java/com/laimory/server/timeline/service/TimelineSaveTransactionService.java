@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.id.SubjectId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,9 +36,9 @@ public class TimelineSaveTransactionService {
      *                           record가 사라졌거나 비소유면 404 {@code -404}
      */
     @Transactional
-    public void save(long userId, Long dailyRecordId) {
-        if (dailyRecordService.markSaved(dailyRecordId, userId) == 0) {
-            throw new BusinessException(classifyTransitionFailure(userId, dailyRecordId));
+    public void save(SubjectId subjectId, Long dailyRecordId) {
+        if (dailyRecordService.markSaved(dailyRecordId, subjectId) == 0) {
+            throw new BusinessException(classifyTransitionFailure(subjectId, dailyRecordId));
         }
         log.info("하루 기록 저장 commit: dailyRecordId={}", dailyRecordId);
     }
@@ -47,8 +48,8 @@ public class TimelineSaveTransactionService {
      * (동시 저장 경합·응답 유실 후 재시도), 없거나 비소유면 삭제됐거나 애초에 남의 기록이다 —
      * 후자는 존재를 노출하지 않는 기존 404 계약으로 수렴시킨다.
      */
-    private ExceptionType classifyTransitionFailure(long userId, Long dailyRecordId) {
-        return dailyRecordService.findByDailyRecordIdAndUserId(dailyRecordId, userId)
+    private ExceptionType classifyTransitionFailure(SubjectId subjectId, Long dailyRecordId) {
+        return dailyRecordService.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId)
                 .map(record -> ExceptionType.DAILY_RECORD_ALREADY_SAVED)
                 .orElse(ExceptionType.DAILY_RECORD_NOT_FOUND);
     }

@@ -17,10 +17,10 @@ import java.util.Map;
  *
  * <ul>
  *   <li><b>legacy</b>: {@code {sha256hex(userId)}/photos/{filename}} — 숫자 userId 기반이라 후보 대입이
- *       가능하다. presign/enrich/Event PATCH/cleanup/delete job의 live caller가 #283 activation 전까지
- *       계속 사용한다({@link #fullKey}, {@link #sha256hex}).</li>
+ *       가능하다. migration과 legacy 정리 경로만 사용한다
+ *       ({@link #fullKey}, {@link #sha256hex}).</li>
  *   <li><b>subject</b>: {@code {hex(SHA-256(subjectId 16 bytes))}/photos/{filename}} — UUIDv4 subject
- *       기반이라 후보 열거가 현실적으로 불가능하다. #283 activation과 migration 도구가 사용한다
+ *       기반이라 후보 열거가 현실적으로 불가능하다. live 경로와 migration 도구가 사용한다
  *       ({@link #subjectFullKey}, {@link #subjectNamespace}).</li>
  * </ul>
  */
@@ -52,8 +52,8 @@ public final class PhotoObjectKeys {
     }
 
     /**
-     * <b>legacy</b> — 파일명과 raw 사용자 id로부터 전체 S3 객체 key를 만든다. #283 activation 전까지
-     * live caller(presign/enrich/Event PATCH/cleanup/delete job)가 사용하며 동작·포맷은 불변이다.
+     * <b>legacy</b> — 파일명과 raw 사용자 id로부터 전체 S3 객체 key를 만든다.
+     * migration과 legacy 정리 경로만 사용한다.
      *
      * @param filename 파일명(예: {@code uuidv7.jpg})
      * @param userId   사용자 id
@@ -64,8 +64,7 @@ public final class PhotoObjectKeys {
     }
 
     /**
-     * subject 기반 파일명 → 전체 S3 객체 key. legacy {@link #fullKey}와 명시적으로 공존하는 additive
-     * 함수다 — live caller 전환은 #283이 한다.
+     * subject 기반 파일명 → 전체 S3 객체 key. live 경로의 정본이다.
      *
      * @param filename  파일명(예: {@code uuidv7.jpg})
      * @param subjectId 콘텐츠 subject

@@ -64,24 +64,24 @@ public class UserMemoryUpdateResultService {
 
         if (request.isFailed()) {
             finish(task, taskId, false);
-            log.warn("User Memory 갱신 실패 통보: userId={} dailyRecordIds={} taskId={} aiErrorCode={} elapsedMs={}",
-                    task.userId(), task.dailyRecordIds(), taskId, request.errorCode(), elapsedMillis(task));
+            log.warn("User Memory 갱신 실패 통보: dailyRecordIds={} taskId={} aiErrorCode={} elapsedMs={}",
+                    task.dailyRecordIds(), taskId, request.errorCode(), elapsedMillis(task));
             return;
         }
         if (!request.isSuccess() || request.userMemory() == null) {
             // 계약 위반(status 누락·SUCCESS인데 userMemory 없음). AI는 4xx를 재시도 중단으로 읽으므로
             // task를 남겨 봐야 TTL까지 guard만 잡고 있다 — 종결하고 다음 갱신 길을 터 준다.
             finish(task, taskId, false);
-            log.error("User Memory 갱신 결과 계약 위반: userId={} dailyRecordIds={} taskId={} status={}",
-                    task.userId(), task.dailyRecordIds(), taskId, request.status());
+            log.error("User Memory 갱신 결과 계약 위반: dailyRecordIds={} taskId={} status={}",
+                    task.dailyRecordIds(), taskId, request.status());
             throw new BusinessException(ExceptionType.VALIDATION_FAILED);
         }
 
-        if (!Objects.equals(UserMemoryDigest.of(userMemoryService.find(task.userId())), task.baseMemoryHash())) {
+        if (!Objects.equals(UserMemoryDigest.of(userMemoryService.find(task.subjectId())), task.baseMemoryHash())) {
             // 접수 이후 다른 날짜의 갱신이 문서를 교체했다. 적용하면 그 날짜 기여가 사라지므로 폐기한다.
             finish(task, taskId, false);
-            log.warn("User Memory 갱신 폐기(base 문서 교체됨): userId={} dailyRecordIds={} taskId={}",
-                    task.userId(), task.dailyRecordIds(), taskId);
+            log.warn("User Memory 갱신 폐기(base 문서 교체됨): dailyRecordIds={} taskId={}",
+                    task.dailyRecordIds(), taskId);
             throw new BusinessException(ExceptionType.SAVE_TASK_STATE_CONFLICT);
         }
 
@@ -92,15 +92,15 @@ public class UserMemoryUpdateResultService {
             redactedMemory = privacyRedactor.redactTree(request.userMemory()).node();
         } catch (RuntimeException redactionFailure) {
             finish(task, taskId, false);
-            log.error("User Memory 갱신 결과 redaction 실패(기존 문서 유지): userId={} dailyRecordIds={} taskId={}",
-                    task.userId(), task.dailyRecordIds(), taskId, redactionFailure);
+            log.error("User Memory 갱신 결과 redaction 실패(기존 문서 유지): dailyRecordIds={} taskId={}",
+                    task.dailyRecordIds(), taskId, redactionFailure);
             throw redactionFailure;
         }
 
-        userMemoryService.replace(task.userId(), redactedMemory);
+        userMemoryService.replace(task.subjectId(), redactedMemory);
         finish(task, taskId, true);
-        log.info("User Memory 갱신 반영: userId={} dailyRecordIds={} taskId={} elapsedMs={}",
-                task.userId(), task.dailyRecordIds(), taskId, elapsedMillis(task));
+        log.info("User Memory 갱신 반영: dailyRecordIds={} taskId={} elapsedMs={}",
+                task.dailyRecordIds(), taskId, elapsedMillis(task));
     }
 
     /**
@@ -112,9 +112,9 @@ public class UserMemoryUpdateResultService {
     private void finish(UserMemoryUpdateTask task, String taskId, boolean applied) {
         taskStore.delete(taskId);
         if (applied) {
-            pendingStore.removeAll(task.userId(), task.dailyRecordIds());
+            pendingStore.removeAll(task.subjectId(), task.dailyRecordIds());
         } else {
-            pendingStore.enqueueAll(task.userId(), task.dailyRecordIds(), clock.instant());
+            pendingStore.enqueueAll(task.subjectId(), task.dailyRecordIds(), clock.instant());
         }
     }
 

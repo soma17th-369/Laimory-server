@@ -1,9 +1,11 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -36,6 +38,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -68,18 +71,21 @@ class TimelineEventItemDetachIntegrationTest {
     private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
     @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Set<Long> fixtureItemIds = new HashSet<>();
 
-    private long userId;
+    private SubjectId subjectId;
     private Long recordId;
 
     @BeforeEach
     void setUp() {
-        userId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        subjectId = SubjectId.newRandom();
+        ensureExists(jdbcTemplate, subjectId);
         fixtureItemIds.clear();
-        recordId = dailyRecordRepository.save(DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), ZONE))
+        recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
     }
 
@@ -94,8 +100,9 @@ class TimelineEventItemDetachIntegrationTest {
         if (!fixtureItemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(fixtureItemIds);
         }
-        dailyRecordRepository.findByUserIdAndRecordDate(userId, DATE)
+        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.bytes());
     }
 
     private List<TimelinePhotoDeleteJob> findFixturePhotoDeleteJobs() {
@@ -113,7 +120,7 @@ class TimelineEventItemDetachIntegrationTest {
     private Long savePhotoLinkedTo(String rawId, String filename, int hour, Long... eventIds) {
         PhotoPayload payload = new PhotoPayload(
                 filename, "content://fixture/" + rawId, null, null, null,
-                "https://cdn.example/" + PhotoObjectKeys.fullKey(filename, userId));
+                "https://cdn.example/" + PhotoObjectKeys.subjectFullKey(filename, subjectId));
         TimelineItem item = timelineItemRepository.save(TimelineItem.of(
                 ItemType.PHOTO, rawId, DATE.atTime(hour, 0), null, objectMapper.valueToTree(payload)));
         fixtureItemIds.add(item.getTimelineItemId());
@@ -132,7 +139,7 @@ class TimelineEventItemDetachIntegrationTest {
                 9, targetEventId, siblingEventId);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.detachEventItem(userId, targetEventId, itemId);
+                timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
 
         assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(0, 1, 0));
         // 대상 junction만 사라지고 Event·Item·형제 연결·record는 그대로다.
@@ -152,7 +159,7 @@ class TimelineEventItemDetachIntegrationTest {
         Long itemId = savePhotoLinkedTo("raw-detach-last", filename, 9, targetEventId);
 
         TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.detachEventItem(userId, targetEventId, itemId);
+                timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
 
         assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
         assertThat(timelineEventItemRepository.findByTimelineEventId(targetEventId)).isEmpty();
@@ -162,7 +169,7 @@ class TimelineEventItemDetachIntegrationTest {
                 .singleElement()
                 .satisfies(job -> {
                     assertThat(job.getTimelineItemId()).isEqualTo(itemId);
-                    assertThat(job.getObjectKey()).isEqualTo(PhotoObjectKeys.fullKey(filename, userId));
+                    assertThat(job.getObjectKey()).isEqualTo(PhotoObjectKeys.subjectFullKey(filename, subjectId));
                 });
     }
 
@@ -173,8 +180,8 @@ class TimelineEventItemDetachIntegrationTest {
                 "raw-detach-dup", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4c04.jpg", 9, eventId);
 
         List<Outcome> outcomes = runConcurrently(
-                () -> timelineDeletionTransactionService.detachEventItem(userId, eventId, itemId),
-                () -> timelineDeletionTransactionService.detachEventItem(userId, eventId, itemId));
+                () -> timelineDeletionTransactionService.detachEventItem(subjectId, eventId, itemId),
+                () -> timelineDeletionTransactionService.detachEventItem(subjectId, eventId, itemId));
 
         // 직접 DELETE의 영향 행 수가 판정 기준이라 후발 요청은 500(stale-state)이 아니라 404 은닉으로 수렴한다.
         List<Outcome> succeeded = outcomes.stream().filter(outcome -> outcome.error() == null).toList();

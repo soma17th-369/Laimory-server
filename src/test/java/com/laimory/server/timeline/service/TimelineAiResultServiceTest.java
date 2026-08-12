@@ -13,7 +13,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionResult;
@@ -55,7 +57,7 @@ class TimelineAiResultServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "t";
-    private static final long USER_ID = 7L;
+    private static final SubjectId SUBJECT_ID = id(7L);
     private static final long RECORD_ID = 42L;
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
@@ -63,7 +65,7 @@ class TimelineAiResultServiceTest {
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);
 
     private TimelineDraftTask taskAt(ProcessStage stage) {
-        return TimelineDraftTask.processing(USER_ID, RECORD_ID, null, TOKEN_HASH,
+        return TimelineDraftTask.processing(SUBJECT_ID, RECORD_ID, null, TOKEN_HASH,
                         Instant.parse("2026-06-17T03:05:00Z"))
                 .withTokenAndStage(TOKEN_HASH, stage);
     }
@@ -89,7 +91,7 @@ class TimelineAiResultServiceTest {
         assertThat(claimed.getValue().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
         assertThat(claimed.getValue().matchesToken(response.taskToken())).isTrue();
         assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
-        verify(timelineAiResultTransactionService).store(TASK_ID, RECORD_ID, result());
+        verify(timelineAiResultTransactionService).store(TASK_ID, SUBJECT_ID, RECORD_ID, result());
     }
 
     @Test
@@ -99,7 +101,7 @@ class TimelineAiResultServiceTest {
         when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
         when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), eq(pending))).thenReturn(true);
         doThrow(new RuntimeException("db down"))
-                .when(timelineAiResultTransactionService).store(anyString(), anyLong(), any());
+                .when(timelineAiResultTransactionService).store(anyString(), any(), anyLong(), any());
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOf(RuntimeException.class)
@@ -154,7 +156,7 @@ class TimelineAiResultServiceTest {
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, legacy);
 
-        verify(timelineAiResultTransactionService).store(TASK_ID, RECORD_ID, legacy);
+        verify(timelineAiResultTransactionService).store(TASK_ID, SUBJECT_ID, RECORD_ID, legacy);
     }
 
     @Test
@@ -204,7 +206,7 @@ class TimelineAiResultServiceTest {
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
 
         ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
-        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
         AiTimelineResultRequest.Event event = stored.getValue().events().getFirst();
         assertThat(event.title()).isEqualTo(RedactionType.PHONE.token() + "로 예약한 점심");
         assertThat(event.subtitle()).isEqualTo("메일 " + RedactionType.EMAIL.token());
@@ -226,7 +228,7 @@ class TimelineAiResultServiceTest {
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
 
         ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
-        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
         String storedTitle = stored.getValue().events().getFirst().title();
         assertThat(storedTitle).hasSizeLessThanOrEqualTo(255);
         assertThat(storedTitle).doesNotContain("a@b.co").doesNotContain("[REDACTED");
@@ -249,7 +251,7 @@ class TimelineAiResultServiceTest {
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
 
         ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
-        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(RECORD_ID), stored.capture());
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
         assertThat(stored.getValue().events().getFirst().title()).isEqualTo(RedactionType.EMAIL.token());
     }
 
