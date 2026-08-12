@@ -1,0 +1,95 @@
+name: Build-only image push (ECR)
+
+# #285 quiescent cutover 지원: 지정한 exact commit SHA를 checkout해 기존 deploy와 동일한
+# docker build + ECR push만 수행한다(SSM 배포 없음). push된 SHA tag와 ECR digest를 summary에
+# 기록하며, 두 값을 deploy.yml manual deploy-existing에 넣어 동일 image를 digest로 배포한다.
+# deploy.yml push trigger paths와 무관하며 pause gate(DEPLOY_PAUSED)의 영향도 받지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "build할 exact commit의 40자 lowercase SHA"
+        required: true
+        type: string
+
+permissions:
+  id-token: write      # OIDC 필수
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: laimory
+
+jobs:
+  build-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate image_sha input
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "image_sha must be a 40-char lowercase hex commit SHA" >&2; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.image_sha }}
+
+      - name: Validate deployment variables
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          test -n "$AWS_ROLE_ARN" || { echo "missing repository variable: AWS_DEPLOY_ROLE_ARN" >&2; exit 1; }
+
+      # checkout 결과가 input exact SHA와 다르면 AWS 접근 전에 fail-closed한다.
+      - name: Verify checked-out commit
+        id: rev
+        env:
+          EXPECTED_SHA: ${{ inputs.image_sha }}
+        run: |
+          IMAGE_TAG=$(git rev-parse HEAD)
+          [ "$IMAGE_TAG" = "$EXPECTED_SHA" ] \
+            || { echo "checked-out commit does not match image_sha" >&2; exit 1; }
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "building image for commit $IMAGE_TAG"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.rev.outputs.image_tag }}
+        run: |
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" --region "$AWS_REGION" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "ECR returned an invalid image digest" >&2; exit 1; }
+          echo "image_digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Record pushed exact image
+        env:
+          IMAGE_TAG: ${{ steps.rev.outputs.image_tag }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.image_digest }}
+        run: |
+          {
+            echo "## build-only image pushed"
+            echo ""
+            echo "- ECR repository: \`$ECR_REPOSITORY\`"
+            echo "- image tag (commit SHA): \`$IMAGE_TAG\`"
+            echo "- image digest: \`$IMAGE_DIGEST\`"
+            echo ""
+            echo "deploy.yml workflow_dispatch에 \`image_sha\`와 \`image_digest\`를 같이 넣는다."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "recorded exact image for commit $IMAGE_TAG"

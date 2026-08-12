@@ -14,7 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>일반 경로에는 {@link #getRequired(long)}만 제공한다. mapping을 자동 생성하거나 raw userId로
  * fallback하지 않으며, 누락은 내부 불변식 위반으로 fail-closed한다. 예외·로그에 userId·lookup
- * key·subject를 담지 않는다.
+ * key·subject를 담지 않는다. {@link #createIfAbsent(long)}는 일반 경로가 아니라 controlled backfill
+ * 도구(#285) 전용 진입점이다.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,6 +42,44 @@ public class SubjectMappingService {
             result = "success";
         } finally {
             subjectMappingMetrics.recordMapping(sample, "create", result);
+        }
+    }
+
+    /**
+     * controlled backfill 도구(#285) 전용 멱등 생성 — current lookup key로 존재를 확인하고 없으면
+     * {@link #createFor(long)}와 같은 방식으로 새 subject mapping을 insert한다. 이미 있으면 no-op이다.
+     * rotation 기간에는 previous key의 기존 행도 "존재"로 인정한다 — 같은 사용자에 두 번째 subject를
+     * 만들지 않으며, 그 행의 current key 교체는 {@link #getRequired(long)}가 수행한다.
+     *
+     * <p>일반 경로는 이 메서드를 호출하지 않는다: 신규 사용자는 provisioning transaction의
+     * {@link #createFor(long)}({@code MANDATORY} — 호출자는 NewUserProvisioner뿐), 조회는
+     * {@link #getRequired(long)}다. 이 메서드는 maintenance window의 migration runner가 자체
+     * transaction으로 호출한다.
+     *
+     * @return 새 mapping을 만들었으면 {@code true}, 이미 있어 no-op이면 {@code false}
+     */
+    @Transactional
+    public boolean createIfAbsent(long userId) {
+        var sample = subjectMappingMetrics.start();
+        String result = "failed";
+        try {
+            byte[] currentLookupKey = subjectLookupKeyDeriver.deriveCurrent(userId);
+            boolean present = userSubjectLinkRepository.findById(currentLookupKey).isPresent()
+                    || subjectLookupKeyDeriver.derivePrevious(userId)
+                            .flatMap(userSubjectLinkRepository::findById)
+                            .isPresent();
+            if (present) {
+                result = "already-present";
+                return false;
+            }
+            userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(
+                    currentLookupKey,
+                    SubjectId.newRandom().bytes(),
+                    subjectLookupKeyDeriver.currentVersion()));
+            result = "created";
+            return true;
+        } finally {
+            subjectMappingMetrics.recordMapping(sample, "backfill", result);
         }
     }
 

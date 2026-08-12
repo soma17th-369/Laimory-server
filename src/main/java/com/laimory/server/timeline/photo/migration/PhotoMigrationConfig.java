@@ -52,12 +52,23 @@ class PhotoMigrationConfig {
     }
 
     @Bean
+    LegacyPhotoObjectDeleteMigration legacyPhotoObjectDeleteMigration(
+            S3Client s3Client,
+            @Value("${photo.s3.bucket}") String bucket,
+            UserRepository userRepository,
+            SubjectMappingService subjectMappingService) {
+        return new LegacyPhotoObjectDeleteMigration(s3Client, bucket, userRepository,
+                subjectMappingService);
+    }
+
+    @Bean
     PhotoMigrationRunner photoMigrationRunner(@Value("${app.photo.migration.mode}") String mode,
                                               PhotoObjectCopyMigration photoObjectCopyMigration,
                                               PhotoUrlRewriteMigration photoUrlRewriteMigration,
+                                              LegacyPhotoObjectDeleteMigration deleteMigration,
                                               ApplicationContext applicationContext) {
         return new PhotoMigrationRunner(PhotoMigrationMode.fromProperty(mode),
-                photoObjectCopyMigration, photoUrlRewriteMigration,
+                photoObjectCopyMigration, photoUrlRewriteMigration, deleteMigration,
                 exitCode -> System.exit(
                         SpringApplication.exit(applicationContext, () -> exitCode)));
     }

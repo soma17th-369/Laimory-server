@@ -13,7 +13,10 @@ enum PhotoMigrationMode {
     COPY_VERIFY("copy-verify"),
 
     /** staging/final PHOTO payload의 {@code photoUrl}을 legacy → subject URL로 rewrite한다(cutover window 전용). */
-    REWRITE_URLS("rewrite-urls");
+    REWRITE_URLS("rewrite-urls"),
+
+    /** target 동등성을 재검증한 뒤 모든 known-user legacy object를 삭제하고 잔여 0건을 확인한다. */
+    DELETE_LEGACY("delete-legacy");
 
     private final String propertyValue;
 

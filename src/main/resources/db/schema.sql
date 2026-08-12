@@ -11,9 +11,26 @@ CREATE TABLE IF NOT EXISTS app_config (
     PRIMARY KEY (app_config_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 인증 사용자 ↔ 콘텐츠 subject 매핑(#282, 계획 §2.3). raw user_id를 저장하지 않는다 — PK는
+-- 애플리케이션 HMAC-SHA-256("content-subject-lookup:v1" || userId 8-byte BE) 결과라, DB 단독
+-- 유출로는 후보 userId 대입이 어렵다. 감사 컬럼·auto-increment surrogate·정밀 생성 시각을 의도적으로
+-- 두지 않는다(행 자체가 최소 정보 원칙 대상). rotation은 PK·lookup_key_version만 원자 교체한다(subject 불변).
+-- (#285: 콘텐츠 테이블의 subject FK가 참조하므로 파일 안에서 그 테이블들보다 먼저 정의한다 — 정의 내용 불변.)
+CREATE TABLE IF NOT EXISTS user_subject_links (
+    user_lookup_key BINARY(32) NOT NULL,             -- HMAC-SHA-256 lookup key(Secrets Manager 비밀키 기반)
+    subject_id BINARY(16) NOT NULL,                  -- 애플리케이션 CSPRNG UUIDv4의 canonical 16바이트
+    lookup_key_version SMALLINT NOT NULL,            -- HMAC key rotation 식별(secret currentVersion)
+    PRIMARY KEY (user_lookup_key),
+    UNIQUE KEY uq_user_subject_links_subject (subject_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- #285 additive: subject_id는 #283 activation 전까지 NULL 허용이며 migration 도구만 쓴다. cutover에서
+-- backfill·검증 후 NOT NULL로 확정하고 legacy user_id를 nullable로 바꾼다. CREATE TABLE IF NOT EXISTS는
+-- 기존 live DB를 바꾸지 않으므로 live dev DB에는 deploy/subject-cutover/README.md의 수동 ALTER를 적용한다.
 CREATE TABLE IF NOT EXISTS daily_records (
     daily_record_id BIGINT NOT NULL AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
+    subject_id BINARY(16) NULL,                      -- #285 additive: 콘텐츠 owner subject(#283 activation 전 NULL 허용, cutover 후 NOT NULL 확정)
     record_date DATE NOT NULL,
     record_at DATETIME NOT NULL,                     -- 클라가 보낸 기록 벽시계 시각(같은 날 여러 task면 마지막에 finalize된 값). record_timezone과 짝지어 절대시각 복원
     record_timezone VARCHAR(64) NOT NULL,           -- record_at·이벤트/아이템 wall-clock을 절대시각으로 해석할 zone
@@ -24,7 +41,12 @@ CREATE TABLE IF NOT EXISTS daily_records (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (daily_record_id),
-    UNIQUE KEY uq_daily_records_user_date (user_id, record_date)
+    UNIQUE KEY uq_daily_records_user_date (user_id, record_date),
+    -- #285 additive: cutover 후 (subject, 날짜) 유일성 authority. NULL 다중 허용이라 activation 전 무해.
+    UNIQUE KEY uq_daily_records_subject_date (subject_id, record_date),
+    -- mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 RESTRICT(계획 §2.4 — 탈퇴는 콘텐츠 명시 삭제 후 mapping 삭제).
+    CONSTRAINT fk_daily_records_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 감사 컬럼 default: final 테이블 writer는 API JPA 하나뿐이다(AI 결과도 서버 transaction이 저장한다).
@@ -110,6 +132,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     timeline_draft_source_item_id BIGINT NOT NULL AUTO_INCREMENT,
     task_id VARCHAR(36) NOT NULL,
     user_id BIGINT NOT NULL,
+    subject_id BINARY(16) NULL,                      -- #285 additive: 콘텐츠 owner subject(#283 activation 전 NULL 허용, cutover 후 NOT NULL 확정)
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     -- rawId는 대소문자 구분 opaque 식별자 → binary collation(테이블 기본 _unicode_ci와 달리). 아래 (task_id, raw_id)
     -- UNIQUE가 이 collation을 따라 case-sensitive 비교하므로 서버 Java dedupe(abc≠ABC)와 규칙이 일치한다.
@@ -123,7 +146,11 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_draft_source_item_id),
     UNIQUE KEY uq_draft_source_task_raw (task_id, raw_id), -- leftmost prefix가 task_id 조회 index를 겸한다
-    KEY idx_draft_source_created (created_at)        -- cleanup 보관기간 스캔용
+    KEY idx_draft_source_created (created_at),       -- cleanup 보관기간 스캔용
+    -- #285 additive: FK가 만드는 implicit index 외 별도 조회 index는 두지 않는다(조회는 task_id 경유 —
+    -- 기존 user_id도 단독 index 없음).
+    CONSTRAINT fk_draft_source_items_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).
@@ -141,22 +168,12 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 인증 사용자 ↔ 콘텐츠 subject 매핑(#282, 계획 §2.3). raw user_id를 저장하지 않는다 — PK는
--- 애플리케이션 HMAC-SHA-256("content-subject-lookup:v1" || userId 8-byte BE) 결과라, DB 단독
--- 유출로는 후보 userId 대입이 어렵다. 감사 컬럼·auto-increment surrogate·정밀 생성 시각을 의도적으로
--- 두지 않는다(행 자체가 최소 정보 원칙 대상). rotation은 PK·lookup_key_version만 원자 교체한다(subject 불변).
-CREATE TABLE IF NOT EXISTS user_subject_links (
-    user_lookup_key BINARY(32) NOT NULL,             -- HMAC-SHA-256 lookup key(Secrets Manager 비밀키 기반)
-    subject_id BINARY(16) NOT NULL,                  -- 애플리케이션 CSPRNG UUIDv4의 canonical 16바이트
-    lookup_key_version SMALLINT NOT NULL,            -- HMAC key rotation 식별(secret currentVersion)
-    PRIMARY KEY (user_lookup_key),
-    UNIQUE KEY uq_user_subject_links_subject (subject_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 사용자별 User Memory. AI가 만드는 누적 요약을 서버가 해석하지 않고 그대로 보존하는 opaque 문서다.
 -- users의 컬럼이 아니라 별도 테이블인 이유: 문서가 커질 수 있어 users 엔티티 로드(로그인)가 blob을
 -- 끌고 오지 않게 분리한다. 행 존재 = 메모리 있음(제거는 행 삭제), user_id PK로 사용자당 1행.
 -- user_id는 기존 방침대로 FK 없는 soft-owner다.
+-- (#285: cutover 후 아래 user_memory_documents(subject PK)가 대체하며 이 테이블은 검증 뒤 별도 승인
+--  하에 삭제한다 — runbook 참조.)
 CREATE TABLE IF NOT EXISTS user_memories (
     user_id BIGINT NOT NULL,
     memory JSON NOT NULL,                            -- 서버는 내부 구조·버전을 해석하지 않는다(전체 교체만)
@@ -165,6 +182,23 @@ CREATE TABLE IF NOT EXISTS user_memories (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- #285 additive: user_memories의 subject 기반 후계 테이블(계획 §2.4·§2.5 — rename이 아닌 새 테이블).
+-- user_memories와 동형의 memory·감사 컬럼을 유지하고 PK만 user_id → subject_id로 바뀐다.
+-- #283 activation 전에는 migration 도구(backfill-owners row 복사)만 쓴다. live dev DB에는
+-- deploy/subject-cutover/README.md의 수동 CREATE를 적용한다.
+CREATE TABLE IF NOT EXISTS user_memory_documents (
+    subject_id BINARY(16) NOT NULL,                  -- 공통 mapping subject(user_subject_links.subject_id) — subject당 1행
+    memory JSON NOT NULL,                            -- 서버는 내부 구조·버전을 해석하지 않는다(전체 교체만)
+    -- 감사 컬럼 (BaseEntity + native upsert용 직접 기입 — user_memories와 동형)
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (subject_id),
+    -- mapping 삭제가 문서를 암묵 cascade하지 않게 RESTRICT(계획 §2.4 — 탈퇴는 콘텐츠 명시 삭제 후 mapping 삭제).
+    CONSTRAINT fk_user_memory_documents_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- refresh token(원문 미저장 — SHA-256 hex 해시만). FK 없음(기존 방침), parent_id는 회전 계보 감사용 soft ref.
@@ -191,6 +225,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE TABLE IF NOT EXISTS push_registrations (
     push_registration_id BIGINT NOT NULL AUTO_INCREMENT,
     user_id BIGINT NOT NULL,
+    subject_id BINARY(16) NULL,                      -- #285 additive: owner subject(#283 activation 전 NULL 허용, cutover 후 NOT NULL 확정). 기존 soft-owner 방침대로 FK 없음
     firebase_installation_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     last_registered_at DATETIME(6) NOT NULL,         -- Android가 FID를 서버와 마지막으로 동기화한 시각(후속 stale 정리 기준)
     -- 감사 컬럼 (BaseEntity)

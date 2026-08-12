@@ -80,9 +80,11 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`(`PhotoObjectKeys.subjectFullKey`,
   `PhotoUrlService.buildSubjectUrl`)은 #283 activation 전까지 live 경로에 연결되지 않는다.
 - legacy→subject 전환용 in-app migration 도구가 `app.photo.migration.mode`
-  property(`copy-verify|rewrite-urls`)로 게이트된다 — property 부재 시 빈 자체가 없고, 실행 후
+  property(`copy-verify|rewrite-urls|delete-legacy`)로 게이트된다 — property 부재 시 빈 자체가 없고, 실행 후
   exit code와 함께 종료하는 one-shot이며 로그는 건수만 남긴다(식별자 미출력). 역방향(rollback)
-  모드는 없으며 cutover 후 legacy object는 별도 승인 하에 즉시 삭제한다(#285 runbook).
+  모드는 없다. `delete-legacy`는 users 전 행을 순회해 source↔subject target의 크기·Content-Type을
+  전체 재검증한 뒤에만 source를 삭제하고 known-user legacy prefix 잔여 0건을 fail-closed로 확인한다
+  (cutover 검증 후 별도 승인 대상, #285 runbook).
 - response/AI가 쓰는 `photoUrl`은 unsigned CloudFront URL이며 payload에 materialize한다.
 - Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내는 계약이다. 서버는 object 존재 여부를
   HEAD하지 않고, 입력에 `description`·`photoUrl`을 받지 않으며 `description=null`과 server-derived

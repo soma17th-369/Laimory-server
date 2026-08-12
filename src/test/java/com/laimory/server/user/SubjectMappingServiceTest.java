@@ -21,6 +21,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * SubjectMappingService 계약: getRequired는 current→(rotation 기간 한정) previous 순서로 조회하고,
  * 누락은 자동 생성·raw userId fallback 없이 fail-closed(메시지 무식별자)한다. previous hit는 PK·version을
  * current로 원자 교체하되 subject는 보존한다. createFor는 새 UUIDv4 subject를 current key로 insert한다.
+ * createIfAbsent(#285 backfill 전용)는 current(rotation 기간엔 previous 포함) 존재 확인 후 없을 때만
+ * 생성하는 멱등 경로다.
  */
 @ExtendWith(MockitoExtension.class)
 class SubjectMappingServiceTest {
@@ -60,6 +62,54 @@ class SubjectMappingServiceTest {
         assertThat(saved.getLookupKeyVersion()).isEqualTo(CURRENT_VERSION);
         assertThat(saved.getSubjectId()).hasSize(16);
         assertThat((saved.getSubjectId()[6] >> 4) & 0x0F).isEqualTo(4); // UUIDv4
+    }
+
+    @Test
+    void createIfAbsent_missingMapping_insertsNewSubjectAndReturnsTrue() {
+        when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
+        when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.empty());
+        when(subjectLookupKeyDeriver.currentVersion()).thenReturn(CURRENT_VERSION);
+        when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
+
+        boolean created = subjectMappingService.createIfAbsent(USER_ID);
+
+        assertThat(created).isTrue();
+        ArgumentCaptor<UserSubjectLink> captor = ArgumentCaptor.forClass(UserSubjectLink.class);
+        verify(userSubjectLinkRepository).saveAndFlush(captor.capture());
+        UserSubjectLink saved = captor.getValue();
+        assertThat(saved.getUserLookupKey()).isEqualTo(lookupKey(1));
+        assertThat(saved.getLookupKeyVersion()).isEqualTo(CURRENT_VERSION);
+        assertThat(saved.getSubjectId()).hasSize(16);
+        assertThat((saved.getSubjectId()[6] >> 4) & 0x0F).isEqualTo(4); // UUIDv4
+    }
+
+    @Test
+    void createIfAbsent_currentKeyPresent_isNoOpAndReturnsFalse() {
+        when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
+        when(userSubjectLinkRepository.findById(lookupKey(1)))
+                .thenReturn(Optional.of(UserSubjectLink.of(
+                        lookupKey(1), SubjectId.newRandom().bytes(), CURRENT_VERSION)));
+
+        assertThat(subjectMappingService.createIfAbsent(USER_ID)).isFalse();
+
+        verify(userSubjectLinkRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void createIfAbsent_previousKeyPresentDuringRotation_isNoOpWithoutSecondSubject() {
+        // rotation 기간에 previous key 행이 있는 사용자에게 두 번째 subject를 만들면 안 된다 —
+        // 그 행의 current key 교체는 getRequired의 rekey 경로가 담당한다.
+        when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
+        when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
+        when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
+        when(userSubjectLinkRepository.findById(lookupKey(2)))
+                .thenReturn(Optional.of(UserSubjectLink.of(
+                        lookupKey(2), SubjectId.newRandom().bytes(), (short) 1)));
+
+        assertThat(subjectMappingService.createIfAbsent(USER_ID)).isFalse();
+
+        verify(userSubjectLinkRepository, never()).saveAndFlush(any());
+        verify(userSubjectLinkRepository, never()).rekey(any(), any(), anyShort());
     }
 
     @Test

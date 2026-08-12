@@ -45,6 +45,7 @@ class PhotoMigrationWiringTest {
             assertThat(context).doesNotHaveBean(PhotoMigrationRunner.class);
             assertThat(context).doesNotHaveBean(PhotoObjectCopyMigration.class);
             assertThat(context).doesNotHaveBean(PhotoUrlRewriteMigration.class);
+            assertThat(context).doesNotHaveBean(LegacyPhotoObjectDeleteMigration.class);
         });
     }
 
@@ -56,6 +57,7 @@ class PhotoMigrationWiringTest {
                     assertThat(context).hasSingleBean(PhotoMigrationRunner.class);
                     assertThat(context).hasSingleBean(PhotoObjectCopyMigration.class);
                     assertThat(context).hasSingleBean(PhotoUrlRewriteMigration.class);
+                    assertThat(context).hasSingleBean(LegacyPhotoObjectDeleteMigration.class);
                 });
     }
 

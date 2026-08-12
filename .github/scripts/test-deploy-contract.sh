@@ -10,16 +10,21 @@
 # region/runtime-role 일치, secret read, DB_* presence와 user_subject_links schema 검사의 fail-closed·값 비출력.
 # T5e(#282 리뷰): secret 내용 계약 — 앱 parse()와 동일 규칙(JSON object·version·32-byte key·previous 쌍·
 # SecretString 부재)의 fail-closed·항목 이름만 진단·payload 비출력, SPRING_PROFILES_ACTIVE docker 가드.
+# T0(#285): workflow 레벨 계약 — manual deploy-existing(workflow_dispatch + required SHA/digest),
+# push pause gate, dispatch build skip, SSM 전 ECR tag↔digest 일치 검증, digest pull,
+# build-only.yml의 exact SHA checkout·digest 기록.
 #
 # 실행: bash .github/scripts/test-deploy-contract.sh  (macOS bash 3.2 / Linux bash 호환)
 set -u
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORKFLOW="$REPO_ROOT/.github/workflows/deploy.yml"
+BUILD_ONLY="$REPO_ROOT/.github/workflows/build-only.yml"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 FAKE_SHA="1234567890abcdef1234567890abcdef12345678"
+FAKE_DIGEST="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 SENTINEL="SENTINEL_SECRET_XYZZY"
 # 합성 base64 key fixture(실제 secret 아님): 32바이트 2종(유효)과 31바이트(오염) — 앱 parse() 계약용.
 B64_KEY_32A="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
@@ -35,13 +40,19 @@ file_mode() {
 }
 
 # --- 1. production script 본문 추출(러너의 YAML 디코딩과 동일하게 YAML 파서 사용) ---
+# T0(#285): workflow 레벨 계약(pause gate·deploy-existing dispatch·build-only)도 같은 파서로 검증한다.
+[ -f "$BUILD_ONLY" ] || fail "build-only workflow file missing: $BUILD_ONLY"
 ruby -ryaml -e '
-  src = File.read(ARGV[0])
-  wf = begin
-    YAML.unsafe_load(src)
-  rescue NoMethodError
-    YAML.load(src)
+  q = 39.chr
+  load_yaml = lambda do |path|
+    src = File.read(path)
+    begin
+      YAML.unsafe_load(src)
+    rescue NoMethodError
+      YAML.load(src)
+    end
   end
+  wf = load_yaml.call(ARGV[0])
   triggers = wf["on"] || wf[true]
   abort "dev push trigger missing" unless triggers.dig("push", "branches") == ["dev"]
   expected_paths = [
@@ -56,10 +67,52 @@ ruby -ryaml -e '
     "src/main/**",
   ]
   abort "application deploy paths changed" unless triggers.dig("push", "paths") == expected_paths
-  step = wf["jobs"]["deploy"]["steps"].find { |s| s["id"] == "ssm" }
+  abort "workflow_dispatch trigger missing" unless triggers.key?("workflow_dispatch")
+  image_sha = triggers.dig("workflow_dispatch", "inputs", "image_sha")
+  abort "workflow_dispatch image_sha input missing" unless image_sha
+  abort "image_sha input must be required" unless image_sha["required"] == true
+  image_digest = triggers.dig("workflow_dispatch", "inputs", "image_digest")
+  abort "workflow_dispatch image_digest input missing" unless image_digest
+  abort "image_digest input must be required" unless image_digest["required"] == true
+  push_only = "github.event_name == #{q}push#{q}"
+  dispatch_only = "github.event_name == #{q}workflow_dispatch#{q}"
+  gate_true = "steps.gate.outputs.deploy == #{q}true#{q}"
+  steps = wf["jobs"]["deploy"]["steps"]
+  gate = steps.find { |s| s["id"] == "gate" }
+  abort "pause gate step missing" unless gate
+  abort "pause gate must read vars.DEPLOY_PAUSED" unless gate.dig("env", "DEPLOY_PAUSED").to_s.include?("vars.DEPLOY_PAUSED")
+  abort "pause gate must pause only push events" unless gate["run"].to_s.include?("\"$GITHUB_EVENT_NAME\" = \"push\"")
+  abort "pause gate must check DEPLOY_PAUSED value" unless gate["run"].to_s.include?("\"$DEPLOY_PAUSED\" = \"true\"")
+  abort "pause gate must log deploy paused" unless gate["run"].to_s.include?("deploy paused")
+  build = steps.find { |s| s["name"] == "Build & push image" }
+  abort "build step not found" unless build
+  abort "build step must run only on push events" unless build["if"].to_s.include?(push_only)
+  abort "build step must respect the pause gate" unless build["if"].to_s.include?(gate_true)
+  ecr_check = steps.find { |s| s["run"].to_s.include?("aws ecr describe-images") }
+  abort "deploy-existing ECR pre-check step missing" unless ecr_check
+  abort "ECR pre-check must run only on manual dispatch" unless ecr_check["if"].to_s.include?(dispatch_only)
+  abort "ECR pre-check must compare the recorded digest" unless ecr_check["run"].to_s.include?("ACTUAL_IMAGE_DIGEST") && ecr_check["run"].to_s.include?("EXPECTED_IMAGE_DIGEST")
+  step = steps.find { |s| s["id"] == "ssm" }
   abort "ssm step not found" unless step
+  abort "ssm step must respect the pause gate" unless step["if"].to_s.include?(gate_true)
+  abort "ssm IMAGE_TAG must come from inputs.image_sha on dispatch" unless step.dig("env", "IMAGE_TAG").to_s.include?("inputs.image_sha")
+  abort "ssm IMAGE_DIGEST must come from inputs.image_digest on dispatch" unless step.dig("env", "IMAGE_DIGEST").to_s.include?("inputs.image_digest")
+  abort "deploy-existing must pull by digest" unless step["run"].to_s.include?("@$IMAGE_DIGEST")
+  bo = load_yaml.call(ARGV[1])
+  bo_triggers = bo["on"] || bo[true]
+  abort "build-only must be workflow_dispatch-only (no push trigger)" unless bo_triggers.is_a?(Hash) && bo_triggers.keys == ["workflow_dispatch"]
+  bo_image_sha = bo_triggers.dig("workflow_dispatch", "inputs", "image_sha")
+  abort "build-only image_sha input must be required" unless bo_image_sha && bo_image_sha["required"] == true
+  bo_steps = bo["jobs"]["build-only"]["steps"]
+  checkout = bo_steps.find { |s| s["uses"].to_s.start_with?("actions/checkout@") }
+  abort "build-only checkout must use exact input SHA" unless checkout.dig("with", "ref").to_s.include?("inputs.image_sha")
+  rev = bo_steps.find { |s| s["id"] == "rev" }
+  abort "build-only must compare checked-out SHA with input" unless rev["run"].to_s.include?("EXPECTED_SHA")
+  image = bo_steps.find { |s| s["id"] == "image" }
+  abort "build-only must record the ECR digest" unless image && image["run"].to_s.include?("imageDetails[0].imageDigest") && image["run"].to_s.include?("GITHUB_OUTPUT")
   print step["run"]
-' "$WORKFLOW" > "$WORK/ssm_run.sh" || fail "extract ssm step run block"
+' "$WORKFLOW" "$BUILD_ONLY" > "$WORK/ssm_run.sh" || fail "extract ssm step run block / workflow-level contract"
+ok "T0: pause gate, deploy-existing dispatch and build-only workflow contract"
 
 awk '/<<EOF \|\| true$/{inside=1; next} inside && /^EOF$/{exit} inside{print}' \
   "$WORK/ssm_run.sh" > "$WORK/remote_body.raw"
@@ -74,10 +127,22 @@ grep -q 'trap cleanup EXIT' "$WORK/remote_body.raw" || fail "extracted body miss
   echo 'printf "%s\n" "$SCRIPT"'
 } > "$WORK/driver.sh"
 env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
-    "IMAGE_TAG=$FAKE_SHA" "IMG=registry.test/laimory:$FAKE_SHA" \
+    "GITHUB_EVENT_NAME=push" "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" \
+    "IMG=registry.test/laimory:$FAKE_SHA" \
     /bin/bash "$WORK/driver.sh" > "$WORK/remote_script.sh" || fail "runner heredoc expansion"
 SCRIPT_FILE="$WORK/remote_script.sh"
 grep -q "APP_COMMIT_SHA=\" sha" "$SCRIPT_FILE" || fail "expanded script missing upsert awk"
+
+# manual deploy-existing는 tag가 아닌 기록한 digest reference를 remote pull/run에 쓴다.
+env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
+    "GITHUB_EVENT_NAME=workflow_dispatch" "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" \
+    "IMG=registry.test/laimory@$FAKE_DIGEST" \
+    /bin/bash "$WORK/driver.sh" > "$WORK/remote_dispatch_script.sh" \
+    || fail "runner deploy-existing heredoc expansion"
+grep -q "^ *docker pull registry.test/laimory@$FAKE_DIGEST$" "$WORK/remote_dispatch_script.sh" \
+  || fail "T0: deploy-existing remote pull must use the recorded digest"
+grep -q "^ *docker run -d .* registry.test/laimory@$FAKE_DIGEST$" "$WORK/remote_dispatch_script.sh" \
+  || fail "T0: deploy-existing remote run must use the recorded digest"
 
 # --- 3. T1 + 순서: 장기 실행 docker run은 --env-file 하나, -e/--env 0개; upsert는 pull 뒤 stop 앞 ---
 RUN_LINE=$(grep -E '^ *docker run -d --name laimory ' "$SCRIPT_FILE")
