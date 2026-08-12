@@ -106,9 +106,9 @@ jobs:
           IMAGE_SHA: ${{ inputs.image_sha }}
           EXPECTED_IMAGE_DIGEST: ${{ inputs.image_digest }}
         run: |
-          ACTUAL_IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+          ACTUAL_IMAGE_DIGEST=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$IMAGE_SHA" --region "$AWS_REGION" \
-            --query 'imageDetails[0].imageDigest' --output text) \
+            --query 'images[0].imageId.imageDigest' --output text) \
             || { echo "image tag $IMAGE_SHA not found in ECR repository $ECR_REPOSITORY" >&2; exit 1; }
           [ "$ACTUAL_IMAGE_DIGEST" = "$EXPECTED_IMAGE_DIGEST" ] \
             || { echo "image digest does not match the build-only result" >&2; exit 1; }

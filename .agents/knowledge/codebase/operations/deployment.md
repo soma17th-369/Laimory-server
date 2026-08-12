@@ -176,8 +176,9 @@ subject cutover(#285)용 수동 배포 계약은 `deploy/subject-cutover/README.
 40-char commit SHA를 checkout했는지 확인한 뒤 ECR push만 하고 SHA tag·digest를 summary에
 기록한다. `deploy.yml` deploy-existing은 SHA tag가 가리키는 ECR digest를 기록된
 `image_digest`와 SSM 전에 비교하고, 일치한 image만 tag가 아닌 digest reference로 pull·기동한다.
-AWS deploy role에는 이 경로의 `ecr:DescribeImages` 권한이 필요하며 live IAM 반영은 별도
-승인 대상이다. 이 수동 경로는 forward cutover용이며 legacy rollback은 지원하지 않는다.
+SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ecr:BatchGetImage`를 사용한다.
+`ecr:DescribeImages` 추가 권한은 요구하지 않는다. 이 수동 경로는 forward cutover용이며 legacy
+rollback은 지원하지 않는다.
 
 ## Invariants
 

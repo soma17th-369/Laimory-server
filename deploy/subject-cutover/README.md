@@ -132,8 +132,8 @@ SHA=$(gh api repos/soma17th-369/Laimory-server/commits/dev --jq .sha)
 gh workflow run build-only.yml --repo soma17th-369/Laimory-server -f image_sha="$SHA"
 # 완료 후 run summary의 SHA·digest를 기록한다.
 DIGEST=<summary에 기록된 sha256:64-hex>
-aws ecr describe-images --repository-name laimory --region ap-northeast-2 \
-  --image-ids imageTag="$SHA" --query 'imageDetails[0].imageDigest' --output text | grep -qxF "$DIGEST"
+aws ecr batch-get-image --repository-name laimory --region ap-northeast-2 \
+  --image-ids imageTag="$SHA" --query 'images[0].imageId.imageDigest' --output text | grep -qxF "$DIGEST"
 ```
 
 **실패 시**: build 실패는 forward-fix commit 후 build-only 재실행(새 SHA로 기록 갱신).

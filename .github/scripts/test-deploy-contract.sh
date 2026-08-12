@@ -88,10 +88,11 @@ ruby -ryaml -e '
   abort "build step not found" unless build
   abort "build step must run only on push events" unless build["if"].to_s.include?(push_only)
   abort "build step must respect the pause gate" unless build["if"].to_s.include?(gate_true)
-  ecr_check = steps.find { |s| s["run"].to_s.include?("aws ecr describe-images") }
+  ecr_check = steps.find { |s| s["run"].to_s.include?("aws ecr batch-get-image") }
   abort "deploy-existing ECR pre-check step missing" unless ecr_check
   abort "ECR pre-check must run only on manual dispatch" unless ecr_check["if"].to_s.include?(dispatch_only)
   abort "ECR pre-check must compare the recorded digest" unless ecr_check["run"].to_s.include?("ACTUAL_IMAGE_DIGEST") && ecr_check["run"].to_s.include?("EXPECTED_IMAGE_DIGEST")
+  abort "deploy-existing must not require DescribeImages" if ecr_check["run"].to_s.include?("describe-images")
   step = steps.find { |s| s["id"] == "ssm" }
   abort "ssm step not found" unless step
   abort "ssm step must respect the pause gate" unless step["if"].to_s.include?(gate_true)
@@ -109,7 +110,8 @@ ruby -ryaml -e '
   rev = bo_steps.find { |s| s["id"] == "rev" }
   abort "build-only must compare checked-out SHA with input" unless rev["run"].to_s.include?("EXPECTED_SHA")
   image = bo_steps.find { |s| s["id"] == "image" }
-  abort "build-only must record the ECR digest" unless image && image["run"].to_s.include?("imageDetails[0].imageDigest") && image["run"].to_s.include?("GITHUB_OUTPUT")
+  abort "build-only must record the ECR digest" unless image && image["run"].to_s.include?("aws ecr batch-get-image") && image["run"].to_s.include?("images[0].imageId.imageDigest") && image["run"].to_s.include?("GITHUB_OUTPUT")
+  abort "build-only must not require DescribeImages" if image["run"].to_s.include?("describe-images")
   print step["run"]
 ' "$WORKFLOW" "$BUILD_ONLY" > "$WORK/ssm_run.sh" || fail "extract ssm step run block / workflow-level contract"
 ok "T0: pause gate, deploy-existing dispatch and build-only workflow contract"
