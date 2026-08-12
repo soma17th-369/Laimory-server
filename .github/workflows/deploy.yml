@@ -13,6 +13,19 @@ on:
       - gradlew
       - settings.gradle
       - src/main/**
+  # deploy-existing(#285): build-only가 기록한 commit SHA + digest image를 build 없이 재배포한다.
+  # forward 재기동 전용이며 rollback 절차는 지원하지 않는다. pause gate(DEPLOY_PAUSED)와 무관하게
+  # 실행되므로 runbook이 pause 중 cutover 재기동에 사용한다.
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "배포할 기존 ECR image의 40자 commit SHA (build 없이 재배포)"
+        required: true
+        type: string
+      image_digest:
+        description: "build-only가 기록한 ECR image digest (sha256:64-hex)"
+        required: true
+        type: string
 
 permissions:
   id-token: write      # OIDC 필수
@@ -37,17 +50,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pause gate(#285): repo variable DEPLOY_PAUSED=true면 push 배포를 workflow 레벨에서 skip한다 —
+      # SSM 전송 자체가 없으므로 실행 중 컨테이너와 host .env(APP_COMMIT_SHA)는 그대로다.
+      # manual dispatch(deploy-existing)는 pause 중에도 실행된다(runbook cutover 계약).
+      - name: Check deploy pause gate
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "deploy paused (repository variable DEPLOY_PAUSED=true) - skipping build and deploy"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # deploy-existing input 형식 검증: SHA/digest가 canonical 형식이 아니면 AWS 접근 전에 실패한다.
+      - name: Validate deploy-existing inputs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "image_sha must be a 40-char lowercase hex commit SHA" >&2; exit 1; }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "image_digest must be sha256: followed by 64 lowercase hex chars" >&2; exit 1; }
+
       - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.deploy == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: steps.gate.outputs.deploy == 'true'
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build & push image
+        if: steps.gate.outputs.deploy == 'true' && github.event_name == 'push'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -55,13 +98,36 @@ jobs:
           docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      # deploy-existing ECR 선검증: tag가 없거나 build-only가 기록한 digest와 다르면
+      # SSM 전송 전에 중단한다. 변경 가능한 tag가 다른 image를 가리키는 경우도 통과시키지 않는다.
+      - name: Verify exact image in ECR (deploy-existing)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          EXPECTED_IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          ACTUAL_IMAGE_DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_SHA" --region "$AWS_REGION" \
+            --query 'imageDetails[0].imageDigest' --output text) \
+            || { echo "image tag $IMAGE_SHA not found in ECR repository $ECR_REPOSITORY" >&2; exit 1; }
+          [ "$ACTUAL_IMAGE_DIGEST" = "$EXPECTED_IMAGE_DIGEST" ] \
+            || { echo "image digest does not match the build-only result" >&2; exit 1; }
+          echo "exact ECR image verified for $IMAGE_SHA"
+
       - name: Deploy via SSM (docker run)
+        if: steps.gate.outputs.deploy == 'true'
         id: ssm
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          # manual dispatch(deploy-existing)는 checkout SHA가 아니라 input의 기존 image SHA를 배포한다.
+          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_sha || github.sha }}
+          IMAGE_DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.image_digest || '' }}
         run: |
-          IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            IMG="$REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST"
+          else
+            IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          fi
           # 원격 배포 스크립트: docker run 뒤 /api/v1/intro 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
           # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
           # 이 heredoc 본문은 .github/scripts/test-deploy-contract.sh가 그대로 추출·실행해 검증한다.
@@ -320,6 +386,7 @@ jobs:
           echo "Sent SSM command: $CMD_ID"
 
       - name: Wait for deploy & fetch logs
+        if: steps.gate.outputs.deploy == 'true'
         run: |
           CMD_ID=${{ steps.ssm.outputs.command_id }}
           sleep 5   # invocation 등록 레이스 방지

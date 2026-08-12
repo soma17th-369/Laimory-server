@@ -11,7 +11,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByProviderAndProviderUserId(Provider provider, String providerUserId);
 
     /**
-     * 전 사용자 id projection(PHOTO migration 도구 #284 전용 — users 전 행 순회).
+     * 전 사용자 id projection(PHOTO #284·subject backfill #285 migration 도구 전용 — users 전 행 순회).
      * 엔티티 전체(email/nickname)를 migration 메모리로 끌고 오지 않도록 id만 select한다.
      */
     @Query("select u.userId from User u order by u.userId asc")

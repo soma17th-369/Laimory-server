@@ -35,6 +35,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지)
 - `users`, `refresh_tokens`, `user_memories` (사용자당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
+- `user_memory_documents` (#285 additive — `user_memories`의 subject PK 후계 테이블, cutover 후 대체)
 - `push_registrations`
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -107,7 +108,25 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 곳뿐이고(arch test 강제) 일반 경로는 `getRequired()`가 누락을 자동 생성 없이 fail-closed한다. 신규
 사용자는 `NewUserProvisioner`가 user insert와 mapping insert를 한 transaction으로 커밋한다(mapping 실패
 = user rollback). rotation은 previous key hit 때 PK·version만 native UPDATE로 원자 교체한다(subject 불변).
-콘텐츠 owner 컬럼의 subject 전환은 후속(#283~#285)이며 이 테이블은 additive 기반이다.
+
+콘텐츠 owner의 subject 전환은 #285가 additive 단계까지 반영했다. `daily_records`(+
+`uq_daily_records_subject_date (subject_id, record_date)` UNIQUE·FK RESTRICT)·
+`timeline_draft_source_items`(FK RESTRICT)·`push_registrations`(기존 soft-owner 방침대로 FK 없음)에
+nullable `subject_id BINARY(16)`이 있고, `user_memories`와 동형이되 PK만 subject인 새
+`user_memory_documents`(FK RESTRICT)가 있다. subject FK는 `user_subject_links.subject_id`를
+`ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
+명시 삭제 후 mapping을 마지막에 지우는 계약이다(계획 §2.4). 이 컬럼·테이블은 **엔티티에 매핑하지
+않는다**(#283 activation 몫 — `ddl-auto=validate`는 엔티티에 없는 컬럼/테이블을 검증하지 않는다).
+채우기는 `app.subject.migration.mode` property로 게이트되는 one-shot backfill 도구
+(`user/migration/`, #284 photo 도구와 같은 패턴 — `backfill-mappings`는
+`SubjectMappingService.createIfAbsent`로 `users` 전 행 mapping 보충+1:1 검증, `backfill-owners`는
+native SQL로 NULL owner 채움+`user_memories`→documents upsert 복사+delta 검증, `verify-owners`는
+검증만)가 담당한다. owner 검증은 NULL과 행 수만 보지 않고 legacy `user_id`를 mapping으로
+해석해 DailyRecord/staging/push의 cross-owner 0건, User Memory document의 subject·JSON·감사
+컬럼 동등성을 확인한다. photo 모드와 동시 설정은 기동 실패다(상호 배타 — 둘 다
+one-shot exit).
+NOT NULL 확정·legacy `user_id` nullable화·legacy 즉시 삭제는 `deploy/subject-cutover/README.md`
+runbook의 cutover 단계다(forward 전용 — rollback 미지원).
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
@@ -144,6 +163,11 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 
 과거 같은 날짜 작업 admission에 쓰던 `timeline:date-guard:*` key는 더 이상 application key 계약이
 아니다. 배포 전에 남은 key는 읽거나 일괄 삭제하지 않으며 설정돼 있던 TTL로 자연 만료한다.
+
+subject cutover(#285)에서 legacy user-owner 형식의 draft task/index와 User Memory
+pending/guard/task namespace는 count 기록 후 폐기 예정이다. `RedisGateway`에 SCAN primitive가 없어
+코드가 아닌 runbook(`deploy/subject-cutover/README.md`)의 수동 redis-cli 절차로 수행하며, 기존
+Redis owner 데이터를 subject 형식으로 이관하지 않는다(pre-release — 보존할 사용자 상태 없음 전제).
 
 ### S3
 
