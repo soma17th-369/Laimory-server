@@ -13,10 +13,13 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
- * 일일 기록. (user_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
+ * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
  */
 @Entity
 @Table(name = "daily_records")
@@ -28,8 +31,9 @@ public class DailyRecord extends BaseEntity {
     @Column(name = "daily_record_id")
     private Long dailyRecordId;
 
-    @Column(nullable = false)
-    private Long userId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", nullable = false, length = 36)
+    private UUID subjectId;
 
     @Column(nullable = false)
     private LocalDate recordDate;
@@ -51,18 +55,18 @@ public class DailyRecord extends BaseEntity {
     protected DailyRecord() {
     }
 
-    private DailyRecord(Long userId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
+    private DailyRecord(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt, String recordTimezone,
                         DailyRecordStatus status) {
-        this.userId = userId;
+        this.subjectId = subjectId;
         this.recordDate = recordDate;
         this.recordAt = recordAt;
         this.recordTimezone = recordTimezone;
         this.status = status;
     }
 
-    public static DailyRecord createDraft(Long userId, LocalDate recordDate, LocalDateTime recordAt,
+    public static DailyRecord createDraft(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                           String recordTimezone) {
-        return new DailyRecord(userId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
+        return new DailyRecord(subjectId, recordDate, recordAt, recordTimezone, DailyRecordStatus.DRAFT);
     }
 
     /**

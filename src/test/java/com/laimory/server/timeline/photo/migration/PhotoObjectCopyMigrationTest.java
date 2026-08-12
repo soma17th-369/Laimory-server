@@ -11,12 +11,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.UserRepository;
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +52,7 @@ class PhotoObjectCopyMigrationTest {
     private final PhotoObjectCopyMigration migration = new PhotoObjectCopyMigration(
             s3Client, BUCKET, userRepository, subjectMappingService, photoDeleteJobRepository);
 
-    private final SubjectId subject = subjectIdOf(SUBJECT_UUID);
+    private final UUID subject = subjectIdOf(SUBJECT_UUID);
     private final String legacyPrefix = PhotoObjectKeys.sha256hex(USER_ID) + "/photos/";
     private final String subjectPrefix = PhotoObjectKeys.subjectNamespace(subject) + "/photos/";
 
@@ -65,12 +63,8 @@ class PhotoObjectCopyMigrationTest {
     private record StoredObject(long size, String contentType) {
     }
 
-    private static SubjectId subjectIdOf(String uuidLiteral) {
-        UUID uuid = UUID.fromString(uuidLiteral);
-        return SubjectId.fromBytes(ByteBuffer.allocate(16)
-                .putLong(uuid.getMostSignificantBits())
-                .putLong(uuid.getLeastSignificantBits())
-                .array());
+    private static UUID subjectIdOf(String uuidLiteral) {
+        return UUID.fromString(uuidLiteral);
     }
 
     @BeforeEach
@@ -256,7 +250,7 @@ class PhotoObjectCopyMigrationTest {
 
     /** fail-closed 예외 메시지에 raw userId·namespace hex·filename이 없어야 한다(건수만 허용). */
     private static void assertMessageHasNoIdentifiers(Throwable thrown) {
-        SubjectId subject = subjectIdOf(SUBJECT_UUID);
+        UUID subject = subjectIdOf(SUBJECT_UUID);
         assertThat(thrown.getMessage())
                 .doesNotContain(Long.toString(USER_ID) + "/") // 경로화된 userId
                 .doesNotContain(PhotoObjectKeys.sha256hex(USER_ID))

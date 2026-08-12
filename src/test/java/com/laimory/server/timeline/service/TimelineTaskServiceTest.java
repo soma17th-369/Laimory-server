@@ -19,6 +19,7 @@ import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,14 +39,14 @@ class TimelineTaskServiceTest {
     @InjectMocks
     private TimelineTaskService service;
 
-    private static final long USER_ID = 7L;
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
     private static final long RECORD_ID = 42L;
     private static final Instant STARTED_AT = Instant.parse("2026-06-17T03:05:00Z");
 
     @Test
     void createProcessing_storesRecordIdAndStartedAtWithProcessingTtl() {
         // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이의 기준) + TTL 3분.
-        service.createProcessing("t", USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
+        service.createProcessing("t", SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
@@ -53,7 +54,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().status()).isEqualTo(TaskStatus.PROCESSING);
         assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
         assertThat(task.getValue().processingStartedAt()).isEqualTo(STARTED_AT);
-        assertThat(task.getValue().userId()).isEqualTo(USER_ID);
+        assertThat(task.getValue().subjectId()).isEqualTo(SUBJECT_ID);
         assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
         verify(timelineMetrics).recordDraftCreated();
     }
@@ -61,7 +62,7 @@ class TimelineTaskServiceTest {
     @Test
     void rotateTokenAndStage_usesProcessingCasAndTtl() {
         TimelineDraftTask task = TimelineDraftTask.processing(
-                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
+                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
         TimelineDraftTask replacement = task.withTokenAndStage(
                 tokenHashes("next"), ProcessStage.RESULT_PENDING);
         when(timelineTaskStore.replaceIfUnchanged(
@@ -78,7 +79,7 @@ class TimelineTaskServiceTest {
 
     @Test
     void markFailed_storesNumericFailureCode() {
-        service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, tokenHashes("hash"));
+        service.markFailed("t", SUBJECT_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, tokenHashes("hash"));
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
         verify(timelineTaskStore).save(eq("t"), task.capture(), any(Duration.class));
@@ -86,7 +87,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().error()).isEqualTo(-1009);
         // FAILED도 PROCESSING 시각을 보존하지 않는다. owner·dailyRecordId는 보존된다.
         assertThat(task.getValue().processingStartedAt()).isNull();
-        assertThat(task.getValue().userId()).isEqualTo(USER_ID);
+        assertThat(task.getValue().subjectId()).isEqualTo(SUBJECT_ID);
         assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
         verify(timelineMetrics).recordTerminalFailed();
     }
@@ -94,7 +95,7 @@ class TimelineTaskServiceTest {
     @Test
     void markFailed_rejectsNonTaskFailureCode() {
         // HTTP 에러 코드(ERROR_0400 등)를 task 상태로 저장하는 오용은 시그니처+가드가 차단한다.
-        assertThatThrownBy(() -> service.markFailed("t", USER_ID, RECORD_ID, ExceptionType.VALIDATION_FAILED, tokenHashes("hash")))
+        assertThatThrownBy(() -> service.markFailed("t", SUBJECT_ID, RECORD_ID, ExceptionType.VALIDATION_FAILED, tokenHashes("hash")))
                 .isInstanceOf(IllegalStateException.class);
         verify(timelineTaskStore, never()).save(any(), any(), any());
         verify(timelineMetrics, never()).recordTerminalFailed();
@@ -120,7 +121,7 @@ class TimelineTaskServiceTest {
     @Test
     void terminalMetric_isNotIncrementedWhenStoreFails() {
         TimelineDraftTask task = TimelineDraftTask.processing(
-                USER_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
+                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
                 .withTokenAndStage(tokenHashes("hash"), ProcessStage.CALLBACK_PENDING);
         doThrow(new RuntimeException("redis down")).when(timelineTaskStore)
                 .replaceIfUnchanged(eq("t"), eq(task), any(), any());
@@ -134,9 +135,9 @@ class TimelineTaskServiceTest {
     @Test
     void findProcessingTaskIds_delegatesOwnerScopedLookup_preservingOrder() {
         // 사용자별 진행 작업 조회는 store가 소유한다(권위 검증·stale prune 포함) — leaf는 순서 그대로 전달만.
-        when(timelineTaskStore.findProcessingTaskIds(USER_ID)).thenReturn(List.of("newer", "older"));
+        when(timelineTaskStore.findProcessingTaskIds(SUBJECT_ID)).thenReturn(List.of("newer", "older"));
 
-        assertThat(service.findProcessingTaskIds(USER_ID)).containsExactly("newer", "older");
+        assertThat(service.findProcessingTaskIds(SUBJECT_ID)).containsExactly("newer", "older");
     }
 
     @Test

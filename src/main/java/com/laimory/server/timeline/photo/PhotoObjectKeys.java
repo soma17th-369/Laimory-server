@@ -1,13 +1,14 @@
 package com.laimory.server.timeline.photo;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.common.id.UuidV7;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
@@ -17,10 +18,10 @@ import java.util.Map;
  *
  * <ul>
  *   <li><b>legacy</b>: {@code {sha256hex(userId)}/photos/{filename}} — 숫자 userId 기반이라 후보 대입이
- *       가능하다. presign/enrich/Event PATCH/cleanup/delete job의 live caller가 #283 activation 전까지
- *       계속 사용한다({@link #fullKey}, {@link #sha256hex}).</li>
+ *       가능하다. migration과 legacy 정리 경로만 사용한다
+ *       ({@link #fullKey}, {@link #sha256hex}).</li>
  *   <li><b>subject</b>: {@code {hex(SHA-256(subjectId 16 bytes))}/photos/{filename}} — UUIDv4 subject
- *       기반이라 후보 열거가 현실적으로 불가능하다. #283 activation과 migration 도구가 사용한다
+ *       기반이라 후보 열거가 현실적으로 불가능하다. live 경로와 migration 도구가 사용한다
  *       ({@link #subjectFullKey}, {@link #subjectNamespace}).</li>
  * </ul>
  */
@@ -52,8 +53,8 @@ public final class PhotoObjectKeys {
     }
 
     /**
-     * <b>legacy</b> — 파일명과 raw 사용자 id로부터 전체 S3 객체 key를 만든다. #283 activation 전까지
-     * live caller(presign/enrich/Event PATCH/cleanup/delete job)가 사용하며 동작·포맷은 불변이다.
+     * <b>legacy</b> — 파일명과 raw 사용자 id로부터 전체 S3 객체 key를 만든다.
+     * migration과 legacy 정리 경로만 사용한다.
      *
      * @param filename 파일명(예: {@code uuidv7.jpg})
      * @param userId   사용자 id
@@ -64,14 +65,13 @@ public final class PhotoObjectKeys {
     }
 
     /**
-     * subject 기반 파일명 → 전체 S3 객체 key. legacy {@link #fullKey}와 명시적으로 공존하는 additive
-     * 함수다 — live caller 전환은 #283이 한다.
+     * subject 기반 파일명 → 전체 S3 객체 key. live 경로의 정본이다.
      *
      * @param filename  파일명(예: {@code uuidv7.jpg})
      * @param subjectId 콘텐츠 subject
      * @return {@code {subjectNamespace(subjectId)}/photos/{filename}}
      */
-    public static String subjectFullKey(String filename, SubjectId subjectId) {
+    public static String subjectFullKey(String filename, UUID subjectId) {
         return subjectNamespace(subjectId) + "/photos/" + filename;
     }
 
@@ -88,14 +88,18 @@ public final class PhotoObjectKeys {
     /**
      * subject 기반 namespace — {@code hex(SHA-256(subjectId canonical 16 bytes))}(계획 §2.7).
      *
-     * <p>입력은 반드시 {@link SubjectId#bytes()} canonical 16바이트다 — 문자열 UUID 표기, context
+     * <p>입력은 UUID의 두 64-bit 필드를 big-endian으로 이은 canonical 16바이트다 — 문자열 UUID 표기, context
      * prefix, HMAC lookup key를 입력으로 쓰지 않는다(타입 시그니처가 이를 강제한다).
      *
      * @param subjectId 콘텐츠 subject
      * @return SHA-256 64자 소문자 hex
      */
-    public static String subjectNamespace(SubjectId subjectId) {
-        return sha256hexOf(subjectId.bytes());
+    public static String subjectNamespace(UUID subjectId) {
+        byte[] bytes = ByteBuffer.allocate(16)
+                .putLong(subjectId.getMostSignificantBits())
+                .putLong(subjectId.getLeastSignificantBits())
+                .array();
+        return sha256hexOf(bytes);
     }
 
     private static String sha256hexOf(byte[] input) {

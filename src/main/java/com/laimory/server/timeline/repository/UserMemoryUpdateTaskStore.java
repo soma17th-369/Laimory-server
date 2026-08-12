@@ -6,13 +6,14 @@ import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.UserMemoryUpdateTask;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
  * User Memory 갱신 <b>진행 상태</b>의 Redis 데이터 접근 계층 — 작업 하나와 사용자 guard를 함께 다룬다.
  * 논리 키: 작업이 {@code timeline:user-memory-update:{taskId}}(값 UserMemoryUpdateTask JSON),
- * guard가 {@code timeline:user-memory-update:user:{userId}}(SET NX, TTL).
+ * guard가 {@code timeline:user-memory-update:user:{canonicalUuid(subjectId)}}(SET NX, TTL).
  * 환경 prefix 부착은 {@link RedisGateway}가 담당한다.
  *
  * <p><b>key 존재 자체가 진행 중</b>이라 status 필드도, terminal 값을 남기는 저장도 없다 — 종결은 삭제다.
@@ -64,8 +65,8 @@ public class UserMemoryUpdateTaskStore {
      *
      * @param taskId 진단용으로 guard에 남길 값
      */
-    public boolean acquireGuard(long userId, String taskId, Duration ttl) {
-        return redis.setIfAbsent(guardKey(userId), taskId, ttl);
+    public boolean acquireGuard(UUID subjectId, String taskId, Duration ttl) {
+        return redis.setIfAbsent(guardKey(subjectId), taskId, ttl);
     }
 
     /**
@@ -81,11 +82,11 @@ public class UserMemoryUpdateTaskStore {
      * <p><b>cron 주기를 guard TTL 가까이 줄이거나 즉시 접수를 되살린다면 이 판단이 뒤집힌다</b> —
      * 그때는 반납이 필요하고, 소유권을 대조하는 CAS(Lua)로 만들어야 한다.
      */
-    public void releaseGuard(long userId) {
-        redis.delete(guardKey(userId));
+    public void releaseGuard(UUID subjectId) {
+        redis.delete(guardKey(subjectId));
     }
 
-    static String guardKey(long userId) {
-        return GUARD_KEY_PREFIX + userId;
+    static String guardKey(UUID subjectId) {
+        return GUARD_KEY_PREFIX + java.util.Objects.requireNonNull(subjectId, "subjectId");
     }
 }

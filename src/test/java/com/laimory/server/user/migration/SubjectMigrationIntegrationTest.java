@@ -9,7 +9,6 @@ import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.User;
-import com.laimory.server.user.UserMemoryRepository;
 import com.laimory.server.user.UserRepository;
 import com.laimory.server.user.UserSubjectLinkRepository;
 import java.time.LocalDate;
@@ -18,9 +17,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,7 +31,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * subject backfill 도구의 실 MySQL 왕복 검증(#285) — mapping 멱등 생성과 1:1 검증, NULL owner
- * 컬럼 backfill·user_memories→user_memory_documents 복사의 멱등 재실행, 검증 실패의 fail-closed
+ * 컬럼 backfill의 멱등 재실행, 검증 실패의 fail-closed
  * 중단(건수 전용 메시지).
  *
  * <p>executor는 property 게이트 밖에서 직접 조립한다 — {@code app.subject.migration.mode}를 켠
@@ -41,6 +43,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SubjectMigrationIntegrationTest {
 
     @Autowired
@@ -49,8 +52,6 @@ class SubjectMigrationIntegrationTest {
     private SubjectMappingService subjectMappingService;
     @Autowired
     private UserRepository userRepository;
-    @Autowired
-    private UserMemoryRepository userMemoryRepository;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -66,6 +67,32 @@ class SubjectMigrationIntegrationTest {
 
     private final List<Long> createdUserIds = new ArrayList<>();
 
+    /**
+     * #283 schema.sql은 activation 후 NOT NULL 계약이다. 이 클래스는 cutover 이미지가 final DDL 전
+     * additive schema의 NULL legacy owner를 실제로 backfill할 수 있는지를 검증하므로, 클래스 경계에서만
+     * subject_id를 nullable로 열고 종료 시 activation 계약으로 복구한다. 통합 테스트는 기본 순차 실행이고
+     * 이 migration은 전체 테이블 스캔이라 원래부터 독점적 테스 상태를 전제한다.
+     */
+    @BeforeAll
+    void openAdditiveOwnerSchema() {
+        jdbcTemplate.execute("ALTER TABLE daily_records MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL");
+        jdbcTemplate.execute("ALTER TABLE timeline_draft_source_items MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL");
+        jdbcTemplate.execute("ALTER TABLE push_registrations MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL");
+    }
+
+    @AfterAll
+    void restoreActivationOwnerSchema() {
+        jdbcTemplate.execute("ALTER TABLE daily_records MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL");
+        jdbcTemplate.execute("ALTER TABLE timeline_draft_source_items MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL");
+        jdbcTemplate.execute("ALTER TABLE push_registrations MODIFY COLUMN subject_id "
+                + "VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL");
+    }
+
     @BeforeEach
     void setUp() {
         mappingBackfill = new SubjectMappingBackfillMigration(userRepository,
@@ -77,15 +104,12 @@ class SubjectMigrationIntegrationTest {
     @AfterEach
     void cleanUp() {
         for (Long userId : createdUserIds) {
-            // FK RESTRICT 순서: subject를 참조하는 콘텐츠·문서 행 → mapping → user.
+            // FK RESTRICT 순서: subject를 참조하는 콘텐츠 행 → mapping → user.
             jdbcTemplate.update("DELETE FROM daily_records WHERE user_id = ?", userId);
             jdbcTemplate.update("DELETE FROM timeline_draft_source_items WHERE user_id = ?", userId);
             jdbcTemplate.update("DELETE FROM push_registrations WHERE user_id = ?", userId);
-            userMemoryRepository.deleteByUserId(userId);
             byte[] lookupKey = subjectLookupKeyDeriver.deriveCurrent(userId);
             userSubjectLinkRepository.findById(lookupKey).ifPresent(link -> {
-                jdbcTemplate.update("DELETE FROM user_memory_documents WHERE subject_id = ?",
-                        (Object) link.getSubjectId());
                 userSubjectLinkRepository.deleteById(lookupKey);
             });
             userRepository.deleteById(userId);
@@ -138,8 +162,8 @@ class SubjectMigrationIntegrationTest {
                 + "WHERE user_id = ?", Long.class, userId);
     }
 
-    private byte[] subjectBytesOf(long userId) {
-        return subjectMappingService.getRequired(userId).bytes();
+    private String subjectIdOf(long userId) {
+        return subjectMappingService.getRequired(userId).toString();
     }
 
     @Test
@@ -160,58 +184,34 @@ class SubjectMigrationIntegrationTest {
     }
 
     @Test
-    void backfillOwners_fillsNullOwnersAndCopiesMemoryDocument_idempotently() {
+    void backfillOwners_fillsNullOwners_idempotently() {
         long userId = provisionUserWithMapping();
         long dailyRecordId = insertDailyRecord(userId);
         long stagingItemId = insertStagingItem(userId);
         long pushRegistrationId = insertPushRegistration(userId);
-        userMemoryRepository.upsert(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
-        byte[] subjectBytes = subjectBytesOf(userId);
+        String subjectId = subjectIdOf(userId);
 
         SubjectOwnerBackfillMigration.Result firstRun = ownerBackfill.execute();
 
         assertThat(firstRun.dailyRecordsBackfilled()).isEqualTo(1);
         assertThat(firstRun.stagingItemsBackfilled()).isEqualTo(1);
         assertThat(firstRun.pushRegistrationsBackfilled()).isEqualTo(1);
-        assertThat(firstRun.memoryDocumentsUpserted()).isEqualTo(1);
         assertThat(firstRun.verification().dailyRecordsNullSubject()).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT subject_id FROM daily_records "
-                + "WHERE daily_record_id = ?", byte[].class, dailyRecordId)).isEqualTo(subjectBytes);
+                + "WHERE daily_record_id = ?", String.class, dailyRecordId)).isEqualTo(subjectId);
         assertThat(jdbcTemplate.queryForObject("SELECT subject_id FROM timeline_draft_source_items "
-                + "WHERE timeline_draft_source_item_id = ?", byte[].class, stagingItemId))
-                .isEqualTo(subjectBytes);
+                + "WHERE timeline_draft_source_item_id = ?", String.class, stagingItemId))
+                .isEqualTo(subjectId);
         assertThat(jdbcTemplate.queryForObject("SELECT subject_id FROM push_registrations "
-                + "WHERE push_registration_id = ?", byte[].class, pushRegistrationId))
-                .isEqualTo(subjectBytes);
-        // 문서 복사 — memory JSON과 감사 컬럼이 원본 행과 동일하다(MySQL 정규화 표현으로 비교).
-        assertThat(jdbcTemplate.queryForObject("SELECT (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memories WHERE user_id = ?) = (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memory_documents WHERE subject_id = ?)", Boolean.class,
-                userId, subjectBytes)).isTrue();
-        assertThat(jdbcTemplate.queryForObject("SELECT (SELECT created_at FROM user_memories "
-                        + "WHERE user_id = ?) = (SELECT created_at FROM user_memory_documents "
-                        + "WHERE subject_id = ?)", Boolean.class, userId, subjectBytes)).isTrue();
+                + "WHERE push_registration_id = ?", String.class, pushRegistrationId))
+                .isEqualTo(subjectId);
 
         SubjectOwnerBackfillMigration.Result secondRun = ownerBackfill.execute();
 
-        // 멱등 재실행 — NULL인 행이 없어 owner UPDATE 영향 행이 없다. 문서 upsert는 동일 값이어도
-        // Connector/J 기본 CLIENT_FOUND_ROWS 의미로 touch한 행당 1로 집계된다(상태는 불변).
+        // 멱등 재실행 — NULL인 행이 없어 owner UPDATE 영향 행이 없다.
         assertThat(secondRun.dailyRecordsBackfilled()).isZero();
         assertThat(secondRun.stagingItemsBackfilled()).isZero();
         assertThat(secondRun.pushRegistrationsBackfilled()).isZero();
-        assertThat(secondRun.memoryDocumentsUpserted()).isEqualTo(1);
-        assertThat(jdbcTemplate.queryForObject("SELECT (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memories WHERE user_id = ?) = (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memory_documents WHERE subject_id = ?)", Boolean.class,
-                userId, subjectBytes)).isTrue();
-
-        // 원본 memory 갱신 뒤 재실행하면 문서가 최신 원본으로 수렴한다(upsert delta 반영).
-        userMemoryRepository.upsert(userId, "{\"summary\": \"second\"}", LocalDateTime.now());
-        ownerBackfill.execute();
-        assertThat(jdbcTemplate.queryForObject("SELECT (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memories WHERE user_id = ?) = (SELECT CAST(memory AS CHAR) "
-                        + "FROM user_memory_documents WHERE subject_id = ?)", Boolean.class,
-                userId, subjectBytes)).isTrue();
     }
 
     @Test
@@ -225,21 +225,6 @@ class SubjectMigrationIntegrationTest {
     }
 
     @Test
-    void verifyOwners_memoryDocumentCountMismatch_abortsFailClosed() {
-        long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"first\"}", LocalDateTime.now());
-        ownerBackfill.execute(); // 문서 복사 + 검증 통과
-
-        // 복사 후 원본 행이 사라지면(문서만 남음) count 불일치 — delta 검증이 fail-closed로 잡는다.
-        userMemoryRepository.deleteByUserId(userId);
-
-        assertThatThrownBy(ownerBackfill::verify)
-                .isInstanceOf(SubjectMigrationAbortedException.class)
-                .hasMessageContaining("userMemories=0")
-                .hasMessageContaining("memoryDocuments=1");
-    }
-
-    @Test
     void verifyOwners_nonNullCrossOwner_abortsFailClosed() {
         long ownerUserId = provisionUserWithMapping();
         long otherUserId = provisionUserWithMapping();
@@ -248,7 +233,7 @@ class SubjectMigrationIntegrationTest {
         long pushRegistrationId = insertPushRegistration(ownerUserId);
         ownerBackfill.execute();
 
-        byte[] otherSubject = subjectBytesOf(otherUserId);
+        String otherSubject = subjectIdOf(otherUserId);
         jdbcTemplate.update("UPDATE daily_records SET subject_id = ? WHERE daily_record_id = ?",
                 otherSubject, dailyRecordId);
         jdbcTemplate.update("UPDATE timeline_draft_source_items SET subject_id = ? "
@@ -263,34 +248,4 @@ class SubjectMigrationIntegrationTest {
                 .hasMessageContaining("pushOwnerMismatch=1");
     }
 
-    @Test
-    void verifyOwners_sameCountButDifferentMemoryDocument_abortsFailClosed() {
-        long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"legacy\"}", LocalDateTime.now());
-        ownerBackfill.execute();
-
-        jdbcTemplate.update("UPDATE user_memory_documents SET memory = ? WHERE subject_id = ?",
-                "{\"summary\": \"different\"}", subjectBytesOf(userId));
-
-        assertThatThrownBy(ownerBackfill::verify)
-                .isInstanceOf(SubjectMigrationAbortedException.class)
-                .hasMessageContaining("userMemories=1")
-                .hasMessageContaining("memoryDocuments=1")
-                .hasMessageContaining("memoryDocumentMismatch=1");
-    }
-
-    @Test
-    void verifyOwners_memoryDocumentDiffersOnlyByLetterCase_abortsFailClosed() {
-        long userId = provisionUserWithMapping();
-        userMemoryRepository.upsert(userId, "{\"summary\": \"CaseSensitive\"}",
-                LocalDateTime.now());
-        ownerBackfill.execute();
-
-        jdbcTemplate.update("UPDATE user_memory_documents SET memory = ? WHERE subject_id = ?",
-                "{\"summary\": \"casesensitive\"}", subjectBytesOf(userId));
-
-        assertThatThrownBy(ownerBackfill::verify)
-                .isInstanceOf(SubjectMigrationAbortedException.class)
-                .hasMessageContaining("memoryDocumentMismatch=1");
-    }
 }

@@ -64,23 +64,18 @@ class SubjectMigrationRunner implements ApplicationRunner {
 
     private void logOwnerResult(SubjectOwnerBackfillMigration.Result result) {
         log.info("subject owner backfill 완료: usersProcessed={} dailyRecordsBackfilled={} "
-                        + "stagingItemsBackfilled={} pushRegistrationsBackfilled={} "
-                        + "memoryDocumentsUpserted={}",
+                        + "stagingItemsBackfilled={} pushRegistrationsBackfilled={}",
                 result.usersProcessed(), result.dailyRecordsBackfilled(),
-                result.stagingItemsBackfilled(), result.pushRegistrationsBackfilled(),
-                result.memoryDocumentsUpserted());
+                result.stagingItemsBackfilled(), result.pushRegistrationsBackfilled());
         logVerification(result.verification());
     }
 
     private void logVerification(SubjectOwnerBackfillMigration.Verification verification) {
         log.info("subject owner 검증 통과: dailyRecordsNullSubject={} stagingNullSubject={} "
                         + "pushNullSubject={} dailyRecordsOwnerMismatch={} "
-                        + "stagingOwnerMismatch={} pushOwnerMismatch={} userMemories={} "
-                        + "memoryDocuments={} memoryDocumentMismatch={}",
+                        + "stagingOwnerMismatch={} pushOwnerMismatch={}",
                 verification.dailyRecordsNullSubject(), verification.stagingNullSubject(),
                 verification.pushNullSubject(), verification.dailyRecordsOwnerMismatch(),
-                verification.stagingOwnerMismatch(), verification.pushOwnerMismatch(),
-                verification.userMemories(), verification.memoryDocuments(),
-                verification.memoryDocumentMismatch());
+                verification.stagingOwnerMismatch(), verification.pushOwnerMismatch());
     }
 }

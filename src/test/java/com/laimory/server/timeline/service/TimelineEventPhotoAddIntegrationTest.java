@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -63,16 +65,21 @@ class TimelineEventPhotoAddIntegrationTest {
     // junction 저장 실패 주입용 spy — 나머지 테스트에서는 pass-through라 기존 계약에 영향이 없다.
     @MockitoSpyBean
     private TimelineEventItemService timelineEventItemService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
-    private long userId;
+    private UUID subjectId;
+    private long legacyUserId;
     private Long recordId;
     private Long eventId;
 
     @BeforeEach
     void setUp() {
-        userId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        subjectId = UUID.randomUUID();
+        legacyUserId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        ensureExists(jdbcTemplate, subjectId);
         recordId = dailyRecordRepository.save(
-                DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), "Asia/Seoul"))
+                DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), "Asia/Seoul"))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(TimelineEvent.of(
                 recordId, TimelineEventType.REST, DATE.atTime(9, 0), DATE.atTime(10, 0),
@@ -90,6 +97,7 @@ class TimelineEventPhotoAddIntegrationTest {
         if (!itemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(itemIds);
         }
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
         redisGateway.delete(legacyGuardKey());
     }
 
@@ -98,8 +106,8 @@ class TimelineEventPhotoAddIntegrationTest {
         UpdateTimelineEventRequest request = request("새 제목", "새 메모", List.of(photo(RAW_ID)));
         long itemCountBefore = timelineItemRepository.count();
 
-        timelineEventEditService.updateEvent("v1", userId, eventId, request);
-        timelineEventEditService.updateEvent("v1", userId, eventId, request);
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, request);
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, request);
 
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore + 1);
         List<TimelineEventItem> links = timelineEventItemRepository.findByTimelineEventId(eventId);
@@ -114,7 +122,7 @@ class TimelineEventPhotoAddIntegrationTest {
         assertThat(payload.description()).isNull();
         assertThat(stored.getPayload().has("description")).isFalse();
         assertThat(payload.photoUrl()).isEqualTo("https://cdn.integration.test/"
-                + com.laimory.server.timeline.photo.PhotoObjectKeys.fullKey(FILENAME, userId));
+                + com.laimory.server.timeline.photo.PhotoObjectKeys.subjectFullKey(FILENAME, subjectId));
 
         TimelineEvent updated = timelineEventRepository.findById(eventId).orElseThrow();
         assertThat(updated.getTitle()).isEqualTo("새 제목");
@@ -127,7 +135,7 @@ class TimelineEventPhotoAddIntegrationTest {
 
         UpdateTimelineEventRequest photoRequest = request("사진 제목", "사진 메모",
                 List.of(photo(RAW_ID)));
-        timelineEventEditService.updateEvent("v1", userId, eventId, photoRequest);
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, photoRequest);
 
         assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).hasSize(1);
         TimelineEvent updated = timelineEventRepository.findById(eventId).orElseThrow();
@@ -142,7 +150,7 @@ class TimelineEventPhotoAddIntegrationTest {
         doThrow(new RuntimeException("junction save 강제 실패"))
                 .when(timelineEventItemService).saveAll(anyList());
 
-        assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", userId, eventId,
+        assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", subjectId, eventId,
                 request("새 제목", "새 메모", List.of(photo(RAW_ID)))))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("junction save 강제 실패");
@@ -172,6 +180,6 @@ class TimelineEventPhotoAddIntegrationTest {
     }
 
     private String legacyGuardKey() {
-        return "timeline:date-guard:" + userId + ":" + DATE;
+        return "timeline:date-guard:" + legacyUserId + ":" + DATE;
     }
 }

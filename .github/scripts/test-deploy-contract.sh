@@ -132,6 +132,13 @@ env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
     /bin/bash "$WORK/driver.sh" > "$WORK/remote_script.sh" || fail "runner heredoc expansion"
 SCRIPT_FILE="$WORK/remote_script.sh"
 grep -q "APP_COMMIT_SHA=\" sha" "$SCRIPT_FILE" || fail "expanded script missing upsert awk"
+grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'varchar(36)'" "$SCRIPT_FILE" \
+  || fail "T5d: subject schema preflight must require VARCHAR(36)"
+grep -Fq "CHARACTER_SET_NAME = 'ascii' AND COLLATION_NAME = 'ascii_bin'" "$SCRIPT_FILE" \
+  || fail "T5d: subject schema preflight must require ascii/ascii_bin"
+if grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'binary(16)'" "$SCRIPT_FILE"; then
+  fail "T5d: subject schema preflight must not retain the pre-cutover BINARY(16) contract"
+fi
 
 # manual deploy-existing는 tag가 아닌 기록한 digest reference를 remote pull/run에 쓴다.
 env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \

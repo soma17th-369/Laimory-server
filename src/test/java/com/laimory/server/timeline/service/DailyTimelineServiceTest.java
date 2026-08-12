@@ -27,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -51,7 +52,10 @@ class DailyTimelineServiceTest {
     private DailyTimelineService dailyTimelineService;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Long USER_ID = 7L;
+    private static final java.util.UUID SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID OTHER_SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 6, 17);
     private static final LocalDateTime RECORD_AT = LocalDateTime.of(2026, 6, 17, 12, 0);
     private static final String ZONE = "Asia/Seoul";
@@ -63,17 +67,17 @@ class DailyTimelineServiceTest {
     }
 
     private DailyRecord record(long id, LocalDate recordDate) {
-        DailyRecord record = DailyRecord.createDraft(USER_ID, recordDate, recordDate.atTime(12, 0), ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT_ID, recordDate, recordDate.atTime(12, 0), ZONE);
         ReflectionTestUtils.setField(record, "dailyRecordId", id);
         return record;
     }
 
     @Test
     void getDailyTimeline_ownedRecord_assemblesEventsAndItemsViaJunction() {
-        DailyRecord record = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(record, "dailyRecordId", 300L);
         ReflectionTestUtils.setField(record, "emotionType", EmotionType.HAPPY);
-        when(dailyRecordService.findByDailyRecordIdAndUserId(300L, USER_ID)).thenReturn(Optional.of(record));
+        when(dailyRecordService.findByDailyRecordIdAndSubjectId(300L, SUBJECT_ID)).thenReturn(Optional.of(record));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
         TimelineEvent event = TimelineEvent.of(300L, TimelineEventType.EXERCISE, t, t.plusHours(2),
@@ -94,7 +98,7 @@ class DailyTimelineServiceTest {
         ReflectionTestUtils.setField(stayItem, "timelineItemId", 22L);
         when(timelineItemService.findByIds(List.of(22L, 21L))).thenReturn(List.of(stayItem, photoItem));
 
-        DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", USER_ID, 300L);
+        DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", SUBJECT_ID, 300L);
 
         assertThat(result.recordDate()).isEqualTo(RECORD_DATE);
         assertThat(result.emotionType()).isEqualTo(EmotionType.HAPPY);
@@ -132,26 +136,26 @@ class DailyTimelineServiceTest {
     @Test
     void getDailyTimeline_ownedDate_returnsRecordGraph() {
         DailyRecord record = record(300L, RECORD_DATE);
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(record));
         when(timelineEventService.findByDailyRecordIds(List.of(300L))).thenReturn(List.of());
         when(timelineEventItemService.findByTimelineEventIds(List.of())).thenReturn(List.of());
         when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
 
-        DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", USER_ID, RECORD_DATE);
+        DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", SUBJECT_ID, RECORD_DATE);
 
         assertThat(result.dailyRecordId()).isEqualTo(300L);
         assertThat(result.recordDate()).isEqualTo(RECORD_DATE);
         assertThat(result.events()).isEmpty();
-        verify(dailyRecordService).findByUserIdAndRecordDate(USER_ID, RECORD_DATE);
+        verify(dailyRecordService).findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE);
     }
 
     @Test
     void getDailyTimeline_dateMissing_throwsDailyRecordNotFoundWithoutLoadingGraph() {
-        when(dailyRecordService.findByUserIdAndRecordDate(USER_ID, RECORD_DATE))
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> dailyTimelineService.getDailyTimeline("v1", USER_ID, RECORD_DATE))
+        assertThatThrownBy(() -> dailyTimelineService.getDailyTimeline("v1", SUBJECT_ID, RECORD_DATE))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND));
 
@@ -186,7 +190,7 @@ class DailyTimelineServiceTest {
         when(timelineItemService.findByIds(List.of(22L, 23L, 21L)))
                 .thenReturn(List.of(laterId, untimed, earlierId));
 
-        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L);
+        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", SUBJECT_ID, 11L);
 
         assertThat(result.timelineEventId()).isEqualTo(11L);
         assertThat(result.eventType()).isEqualTo(TimelineEventType.WORK);
@@ -213,7 +217,7 @@ class DailyTimelineServiceTest {
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L))).thenReturn(List.of());
         when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
 
-        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L);
+        TimelineEventResponse result = dailyTimelineService.getTimelineEvent("v1", SUBJECT_ID, 11L);
 
         assertThat(result.timelineEventId()).isEqualTo(11L);
         assertThat(result.items()).isEmpty();
@@ -223,7 +227,7 @@ class DailyTimelineServiceTest {
     void getTimelineEvent_missingEvent_throwsEventNotFoundWithoutLoadingParentOrItems() {
         when(timelineEventService.findById(11L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", SUBJECT_ID, 11L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
@@ -238,7 +242,7 @@ class DailyTimelineServiceTest {
         when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(300L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", SUBJECT_ID, 11L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
@@ -251,12 +255,12 @@ class DailyTimelineServiceTest {
                 300L, TimelineEventType.UNKNOWN, RECORD_DATE.atTime(9, 0), null, "이벤트", null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         DailyRecord foreign = DailyRecord.createDraft(
-                999L, RECORD_DATE, RECORD_AT, ZONE);
+                OTHER_SUBJECT_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(foreign, "dailyRecordId", 300L);
         when(timelineEventService.findById(11L)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(foreign));
 
-        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", USER_ID, 11L))
+        assertThatThrownBy(() -> dailyTimelineService.getTimelineEvent("v1", SUBJECT_ID, 11L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
@@ -269,7 +273,7 @@ class DailyTimelineServiceTest {
         DailyRecord saved = record(300L, RECORD_DATE);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         DailyRecord empty = record(299L, RECORD_DATE.minusDays(1));
-        when(dailyRecordService.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(USER_ID))
+        when(dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT_ID))
                 .thenReturn(List.of(recent, saved, empty));
 
         LocalDateTime t = LocalDateTime.of(2026, 6, 17, 10, 0);
@@ -283,7 +287,7 @@ class DailyTimelineServiceTest {
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L, 12L))).thenReturn(List.of());
         when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
 
-        DailyTimelinesResponse result = dailyTimelineService.getDailyTimelines("v1", USER_ID);
+        DailyTimelinesResponse result = dailyTimelineService.getDailyTimelines("v1", SUBJECT_ID);
 
         assertThat(result.timelines()).extracting(DailyTimelineResponse::dailyRecordId)
                 .containsExactly(301L, 300L, 299L);
@@ -299,10 +303,10 @@ class DailyTimelineServiceTest {
 
     @Test
     void getDailyTimelines_noRecords_returnsEmptyWithoutLoadingGraph() {
-        when(dailyRecordService.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(USER_ID))
+        when(dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT_ID))
                 .thenReturn(List.of());
 
-        DailyTimelinesResponse result = dailyTimelineService.getDailyTimelines("v1", USER_ID);
+        DailyTimelinesResponse result = dailyTimelineService.getDailyTimelines("v1", SUBJECT_ID);
 
         assertThat(result.timelines()).isEmpty();
         verifyNoInteractions(timelineEventService, timelineEventItemService, timelineItemService);
@@ -312,7 +316,7 @@ class DailyTimelineServiceTest {
     void getDailyTimeline_sharedItemAppearsInEveryLinkedEvent() {
         // N:M: 같은 Item(21)이 두 Event에 연결되면 두 Event의 items에 모두 나타난다(같은 timelineItemId 반복 —
         // Android 수용 확인된 계약).
-        DailyRecord record = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(record, "dailyRecordId", 300L);
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
 
@@ -341,7 +345,7 @@ class DailyTimelineServiceTest {
     @Test
     void getDailyTimeline_nullStartAtItemsSortFirst() {
         // 기존 SQL 정렬(MySQL ASC NULLS-FIRST) 동작 보존: startAt null인 Item이 앞에 온다.
-        DailyRecord record = DailyRecord.createDraft(USER_ID, RECORD_DATE, RECORD_AT, ZONE);
+        DailyRecord record = DailyRecord.createDraft(SUBJECT_ID, RECORD_DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(record, "dailyRecordId", 300L);
         when(dailyRecordService.findById(300L)).thenReturn(Optional.of(record));
 
@@ -375,9 +379,9 @@ class DailyTimelineServiceTest {
 
     @Test
     void getDailyTimeline_ownedRecordMissing_throwsDailyRecordNotFound() {
-        when(dailyRecordService.findByDailyRecordIdAndUserId(999L, USER_ID)).thenReturn(Optional.empty());
+        when(dailyRecordService.findByDailyRecordIdAndSubjectId(999L, SUBJECT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> dailyTimelineService.getDailyTimeline("v1", USER_ID, 999L))
+        assertThatThrownBy(() -> dailyTimelineService.getDailyTimeline("v1", SUBJECT_ID, 999L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND));
     }

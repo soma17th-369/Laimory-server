@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TimelineEventType;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /** 과거 날짜 guard 키가 남아 있어도 Event·DailyRecord 삭제가 이를 읽거나 지우지 않는지 검증한다. */
@@ -36,16 +38,21 @@ class TimelineDeletionGuardIntegrationTest {
     private TimelineEventRepository timelineEventRepository;
     @Autowired
     private RedisGateway redisGateway;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     // 다른 테스트·잔여 데이터와 겹치지 않도록 실행마다 임의 사용자로 격리한다.
-    private long userId;
+    private UUID subjectId;
+    private long legacyUserId;
     private Long recordId;
     private Long eventId;
 
     @BeforeEach
     void setUp() {
-        userId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
-        recordId = dailyRecordRepository.save(DailyRecord.createDraft(userId, DATE, DATE.atTime(12, 0), ZONE))
+        subjectId = UUID.randomUUID();
+        legacyUserId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        ensureExists(jdbcTemplate, subjectId);
+        recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(
                         TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "이벤트", null, null))
@@ -54,8 +61,9 @@ class TimelineDeletionGuardIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        dailyRecordRepository.findByUserIdAndRecordDate(userId, DATE)
+        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
         redisGateway.delete(legacyGuardKey());
     }
 
@@ -63,7 +71,7 @@ class TimelineDeletionGuardIntegrationTest {
     void staleGuardKeyDoesNotBlockEventDeleteAndRemainsUntouched() {
         redisGateway.set(legacyGuardKey(), "task:legacy-event", Duration.ofHours(1));
 
-        timelineDeletionService.deleteEvent("v1", userId, eventId);
+        timelineDeletionService.deleteEvent("v1", subjectId, eventId);
 
         assertThat(timelineEventRepository.findById(eventId)).isEmpty();
         assertThat(dailyRecordRepository.findById(recordId)).isPresent(); // 마지막 Event 삭제 후에도 record 유지
@@ -74,7 +82,7 @@ class TimelineDeletionGuardIntegrationTest {
     void staleGuardKeyDoesNotBlockDailyRecordDeleteAndRemainsUntouched() {
         redisGateway.set(legacyGuardKey(), "delete:legacy-record", Duration.ofHours(1));
 
-        timelineDeletionService.deleteDailyRecord("v1", userId, recordId);
+        timelineDeletionService.deleteDailyRecord("v1", subjectId, recordId);
 
         assertThat(dailyRecordRepository.findById(recordId)).isEmpty();
         assertThat(timelineEventRepository.findById(eventId)).isEmpty(); // events도 cascade 소멸
@@ -82,6 +90,6 @@ class TimelineDeletionGuardIntegrationTest {
     }
 
     private String legacyGuardKey() {
-        return "timeline:date-guard:" + userId + ":" + DATE;
+        return "timeline:date-guard:" + legacyUserId + ":" + DATE;
     }
 }

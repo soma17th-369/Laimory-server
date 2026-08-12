@@ -65,7 +65,7 @@ public class TimelineAiResultService {
         }
 
         try {
-            timelineAiResultTransactionService.store(taskId, task.dailyRecordId(), redacted);
+            timelineAiResultTransactionService.store(taskId, task.subjectId(), task.dailyRecordId(), redacted);
         } catch (RuntimeException storageFailure) {
             try {
                 if (!timelineTaskService.replaceProcessing(taskId, claimed, task)) {

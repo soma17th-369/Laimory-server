@@ -12,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -38,8 +39,9 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "task_id", nullable = false, length = 36)
     private String taskId;
 
-    @Column(name = "user_id", nullable = false)
-    private Long userId;
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "subject_id", nullable = false, length = 36)
+    private UUID subjectId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "item_type", nullable = false, length = 32)
@@ -62,10 +64,10 @@ public class TimelineDraftSourceItem extends BaseEntity {
     protected TimelineDraftSourceItem() {
     }
 
-    private TimelineDraftSourceItem(String taskId, Long userId, ItemType itemType, String rawId,
+    private TimelineDraftSourceItem(String taskId, UUID subjectId, ItemType itemType, String rawId,
                                     LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
         this.taskId = taskId;
-        this.userId = userId;
+        this.subjectId = subjectId;
         this.itemType = itemType;
         this.rawId = rawId;
         this.startAt = startAt;
@@ -73,8 +75,8 @@ public class TimelineDraftSourceItem extends BaseEntity {
         this.payload = payload;
     }
 
-    public static TimelineDraftSourceItem of(String taskId, Long userId, ItemType itemType, String rawId,
+    public static TimelineDraftSourceItem of(String taskId, UUID subjectId, ItemType itemType, String rawId,
                                              LocalDateTime startAt, LocalDateTime endAt, JsonNode payload) {
-        return new TimelineDraftSourceItem(taskId, userId, itemType, rawId, startAt, endAt, payload);
+        return new TimelineDraftSourceItem(taskId, subjectId, itemType, rawId, startAt, endAt, payload);
     }
 }

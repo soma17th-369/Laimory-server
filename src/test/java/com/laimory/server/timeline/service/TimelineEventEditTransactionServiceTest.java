@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +27,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,7 +40,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class TimelineEventEditTransactionServiceTest {
 
-    private static final long USER_ID = 7L;
+    private static final UUID SUBJECT_ID = id(7L);
+    private static final UUID OTHER_SUBJECT_ID = id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long OTHER_EVENT_ID = 12L;
     private static final Long RECORD_ID = 100L;
@@ -81,13 +84,13 @@ class TimelineEventEditTransactionServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         TimelineEventEditCommand command = command(true, " 새 메모 ", List.of(photo(RAW_ID, FILENAME)));
         stubRecordGraph(List.of(event), List.of(), List.of());
-        when(photoUrlService.buildUrl(FILENAME, USER_ID)).thenReturn(PHOTO_URL);
+        when(photoUrlService.buildSubjectUrl(FILENAME, SUBJECT_ID)).thenReturn(PHOTO_URL);
         when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
             TimelineItem item = invocation.getArgument(0);
             ReflectionTestUtils.setField(item, "timelineItemId", 21L);
             return item;
         });
-        service.updateEvent(USER_ID, EVENT_ID, command);
+        service.updateEvent(SUBJECT_ID, EVENT_ID, command);
 
         assertThat(event.getEventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(event.getTitle()).isEqualTo("새 제목");
@@ -127,7 +130,7 @@ class TimelineEventEditTransactionServiceTest {
         TimelineItem existing = item(21L, ItemType.PHOTO, RAW_ID);
         TimelineEventItem targetLink = TimelineEventItem.of(EVENT_ID, 21L);
         stubRecordGraph(List.of(event), List.of(targetLink), List.of(existing));
-        service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
+        service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
         verify(timelineItemService, never()).save(any());
@@ -145,7 +148,7 @@ class TimelineEventEditTransactionServiceTest {
                 List.of(event, other),
                 List.of(TimelineEventItem.of(OTHER_EVENT_ID, 30L), TimelineEventItem.of(OTHER_EVENT_ID, 20L)),
                 List.of(higherId, lowerId));
-        service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
+        service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
 
         verify(timelineItemService, never()).save(any());
         @SuppressWarnings("unchecked")
@@ -170,7 +173,7 @@ class TimelineEventEditTransactionServiceTest {
                 List.of(conflicting));
 
         assertThatThrownBy(() -> service.updateEvent(
-                USER_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
+                SUBJECT_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("rawId is already used by a non-PHOTO item");
 
@@ -184,7 +187,7 @@ class TimelineEventEditTransactionServiceTest {
         event.updateMemo("기존 메모");
         stubRecordGraph(List.of(event), List.of(), List.of());
 
-        assertThatThrownBy(() -> service.updateEvent(USER_ID, EVENT_ID,
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
                 command(true, "새 메모", List.of(photo(RAW_ID, FILENAME), photo(RAW_ID_2, FILENAME)))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("filename is duplicated across new photos");
@@ -197,9 +200,9 @@ class TimelineEventEditTransactionServiceTest {
     void updateEvent_foreignOwnerOnTransactionRecheckIsHiddenAs404() {
         TimelineEvent event = event(EVENT_ID);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(record(999L, DailyRecordStatus.DRAFT)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(record(OTHER_SUBJECT_ID, DailyRecordStatus.DRAFT)));
 
-        assertThatThrownBy(() -> service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of())))
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of())))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -214,9 +217,9 @@ class TimelineEventEditTransactionServiceTest {
         TimelineEvent event = event(EVENT_ID);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID))
-                .thenReturn(Optional.of(record(USER_ID, DailyRecordStatus.SAVED)));
+                .thenReturn(Optional.of(record(SUBJECT_ID, DailyRecordStatus.SAVED)));
 
-        assertThatThrownBy(() -> service.updateEvent(USER_ID, EVENT_ID, command(false, null, List.of())))
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of())))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -230,7 +233,7 @@ class TimelineEventEditTransactionServiceTest {
         TimelineEvent event = event(EVENT_ID);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID))
-                .thenReturn(Optional.of(record(USER_ID, DailyRecordStatus.DRAFT)));
+                .thenReturn(Optional.of(record(SUBJECT_ID, DailyRecordStatus.DRAFT)));
         return event;
     }
 
@@ -249,9 +252,9 @@ class TimelineEventEditTransactionServiceTest {
         return event;
     }
 
-    private DailyRecord record(long userId, DailyRecordStatus status) {
+    private DailyRecord record(UUID subjectId, DailyRecordStatus status) {
         DailyRecord record = DailyRecord.createDraft(
-                userId, RECORD_DATE, RECORD_DATE.atTime(12, 0), "Asia/Seoul");
+                subjectId, RECORD_DATE, RECORD_DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);
         ReflectionTestUtils.setField(record, "status", status);
         return record;

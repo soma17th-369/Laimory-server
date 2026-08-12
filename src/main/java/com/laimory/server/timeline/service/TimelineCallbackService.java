@@ -8,6 +8,7 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import io.micrometer.core.instrument.Timer;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -70,7 +71,7 @@ public class TimelineCallbackService {
                 handleCallbackRace(taskId, taskToken, request.status());
                 return;
             }
-            enqueuePushQuietly(taskId, task.userId(), TaskStatus.FAILED);
+            enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.FAILED);
             return;
         }
 
@@ -82,7 +83,7 @@ public class TimelineCallbackService {
             handleCallbackRace(taskId, taskToken, request.status());
             return;
         }
-        enqueuePushQuietly(taskId, task.userId(), TaskStatus.SUCCESS);
+        enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.SUCCESS);
     }
 
     /** callback CAS 경합 뒤 최신 terminal 상태가 같은 결과면 멱등 성공, 나머지는 상충이다. */
@@ -102,9 +103,9 @@ public class TimelineCallbackService {
     }
 
     /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. */
-    private void enqueuePushQuietly(String taskId, long userId, TaskStatus status) {
+    private void enqueuePushQuietly(String taskId, UUID subjectId, TaskStatus status) {
         try {
-            timelineCompletionPushNotifier.notifyAsync(userId, taskId, status);
+            timelineCompletionPushNotifier.notifyAsync(subjectId, taskId, status);
         } catch (RuntimeException e) {
             log.warn("completion push enqueue failed (polling is fallback): taskId={} status={} detail={}",
                     taskId, status, e.getMessage());

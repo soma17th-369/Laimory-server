@@ -3,10 +3,12 @@ package com.laimory.server.push.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.push.entity.PushRegistration;
+import com.laimory.server.testsupport.TestSubjects;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,8 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class PushRegistrationPersistenceIntegrationTest {
 
-    private static final long USER_A = 91_001L;
-    private static final long USER_B = 91_002L;
+    private static final UUID SUBJECT_A = TestSubjects.id(91_001L);
+    private static final UUID SUBJECT_B = TestSubjects.id(91_002L);
     private static final LocalDateTime T1 = LocalDateTime.of(2026, 7, 21, 10, 0, 0);
     private static final LocalDateTime T2 = LocalDateTime.of(2026, 7, 21, 11, 30, 0);
 
@@ -47,25 +49,25 @@ class PushRegistrationPersistenceIntegrationTest {
 
     @Test
     void insertsNewFid_andFindsByUser() {
-        repository.upsert(USER_A, "fid-a1", T1);
-        repository.upsert(USER_A, "fid-a2", T1);
-        repository.upsert(USER_B, "fid-b1", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-a1", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-a2", T1);
+        repository.upsert(SUBJECT_B.toString(), "fid-b1", T1);
 
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A))
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A))
                 .containsExactlyInAnyOrder("fid-a1", "fid-a2");
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_B))
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_B))
                 .containsExactly("fid-b1");
     }
 
     @Test
     void sameUserSameFid_reregistration_updatesFreshnessWithoutNewRow() {
-        repository.upsert(USER_A, "fid-a1", T1);
-        repository.upsert(USER_A, "fid-a1", T2);
+        repository.upsert(SUBJECT_A.toString(), "fid-a1", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-a1", T2);
 
         List<PushRegistration> rows = rowsInDb();
         assertThat(rows).hasSize(1);
         PushRegistration row = rows.get(0);
-        assertThat(row.getUserId()).isEqualTo(USER_A);
+        assertThat(row.getSubjectId()).isEqualTo(SUBJECT_A);
         assertThat(row.getLastRegisteredAt()).isEqualTo(T2);
         // native upsert가 감사 컬럼을 직접 채운다 — created_at은 최초 등록, updated_at은 재등록 시각.
         assertThat(row.getCreatedAt()).isEqualTo(T1);
@@ -75,70 +77,70 @@ class PushRegistrationPersistenceIntegrationTest {
     @Test
     void differentUserSameFid_atomicallyRebindsSingleOwner() {
         // 계정 전환: unique FID 위 upsert가 원자적으로 owner를 덮는다 — 행은 늘지 않고 단일 owner 불변식 유지.
-        repository.upsert(USER_A, "fid-shared", T1);
-        repository.upsert(USER_B, "fid-shared", T2);
+        repository.upsert(SUBJECT_A.toString(), "fid-shared", T1);
+        repository.upsert(SUBJECT_B.toString(), "fid-shared", T2);
 
         List<PushRegistration> rows = rowsInDb();
         assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).getUserId()).isEqualTo(USER_B);
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).isEmpty();
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_B)).containsExactly("fid-shared");
+        assertThat(rows.get(0).getSubjectId()).isEqualTo(SUBJECT_B);
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A)).isEmpty();
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_B)).containsExactly("fid-shared");
     }
 
     @Test
     void caseDifferingFids_areDistinctInstallations() {
         // 컬럼 단위 utf8mb4_bin: 대소문자만 다른 FID는 unique 충돌 없이 서로 다른 설치로 보존돼야 한다.
-        repository.upsert(USER_A, "Fid-Case", T1);
-        repository.upsert(USER_A, "fid-case", T1);
+        repository.upsert(SUBJECT_A.toString(), "Fid-Case", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-case", T1);
 
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A))
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A))
                 .containsExactlyInAnyOrder("Fid-Case", "fid-case");
     }
 
     @Test
     void previousOwnerDelete_doesNotRemoveReboundRegistration() {
         // 계정 전환 뒤 이전 사용자(A)의 늦은 해제: (owner, FID) 동시 일치 조건이라 B의 등록은 남는다.
-        repository.upsert(USER_A, "fid-shared", T1);
-        repository.upsert(USER_B, "fid-shared", T2);
+        repository.upsert(SUBJECT_A.toString(), "fid-shared", T1);
+        repository.upsert(SUBJECT_B.toString(), "fid-shared", T2);
 
-        int deleted = repository.deleteByUserIdAndFirebaseInstallationId(USER_A, "fid-shared");
+        int deleted = repository.deleteBySubjectIdAndFirebaseInstallationId(SUBJECT_A, "fid-shared");
 
         assertThat(deleted).isZero();
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_B)).containsExactly("fid-shared");
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_B)).containsExactly("fid-shared");
     }
 
     @Test
     void ownerDelete_isIdempotent() {
-        repository.upsert(USER_A, "fid-a1", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-a1", T1);
 
-        assertThat(repository.deleteByUserIdAndFirebaseInstallationId(USER_A, "fid-a1")).isEqualTo(1);
-        assertThat(repository.deleteByUserIdAndFirebaseInstallationId(USER_A, "fid-a1")).isZero();
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).isEmpty();
+        assertThat(repository.deleteBySubjectIdAndFirebaseInstallationId(SUBJECT_A, "fid-a1")).isEqualTo(1);
+        assertThat(repository.deleteBySubjectIdAndFirebaseInstallationId(SUBJECT_A, "fid-a1")).isZero();
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A)).isEmpty();
     }
 
     @Test
     void invalidFidBatchDelete_removesOnlyGivenFids() {
-        repository.upsert(USER_A, "fid-keep", T1);
-        repository.upsert(USER_A, "fid-gone-1", T1);
-        repository.upsert(USER_B, "fid-gone-2", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-keep", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-gone-1", T1);
+        repository.upsert(SUBJECT_B.toString(), "fid-gone-2", T1);
 
         int deleted = repository.deleteInvalidRegistrations(List.of("fid-gone-1", "fid-gone-2"), T1);
 
         assertThat(deleted).isEqualTo(2);
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).containsExactly("fid-keep");
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_B)).isEmpty();
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A)).containsExactly("fid-keep");
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_B)).isEmpty();
     }
 
     @Test
     void invalidFidBatchDelete_sparesRegistrationRefreshedAfterSnapshot() {
         // 발송 snapshot(T1) 이후 같은 FID가 재등록(T2)됐다면, 지연 도착한 무효 응답의 삭제가 최신 행을
         // 지우면 안 된다 — snapshot 조건부 삭제가 보호한다.
-        repository.upsert(USER_A, "fid-revived", T1);
-        repository.upsert(USER_A, "fid-revived", T2);
+        repository.upsert(SUBJECT_A.toString(), "fid-revived", T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-revived", T2);
 
         int deleted = repository.deleteInvalidRegistrations(List.of("fid-revived"), T1);
 
         assertThat(deleted).isZero();
-        assertThat(repository.findAllFirebaseInstallationIdsByUserId(USER_A)).containsExactly("fid-revived");
+        assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A)).containsExactly("fid-revived");
     }
 }

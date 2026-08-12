@@ -7,18 +7,19 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import com.laimory.server.user.CurrentSubject;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
  * 보호 API 17개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code ERROR_2001} 응답 문서,
- * {@code @AuthenticationPrincipal Long} principal의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
+ * {@code @CurrentSubject UUID} owner의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  */
 class TimelineApiAuthenticationContractTest {
 
@@ -53,15 +54,14 @@ class TimelineApiAuthenticationContractTest {
 
     @ParameterizedTest
     @MethodSource("protectedOperations")
-    void everyProtectedOperation_hidesLongPrincipalFromOpenApiParameters(Method method) {
+    void everyProtectedOperation_hidesCurrentSubjectFromOpenApiParameters(Method method) {
         List<java.lang.reflect.Parameter> principals = Arrays.stream(method.getParameters())
-                .filter(parameter -> parameter.isAnnotationPresent(AuthenticationPrincipal.class))
+                .filter(parameter -> parameter.isAnnotationPresent(CurrentSubject.class))
                 .toList();
 
         assertThat(principals).hasSize(1);
         java.lang.reflect.Parameter principal = principals.get(0);
-        assertThat(principal.getType()).isEqualTo(Long.class);
-        assertThat(principal.getAnnotation(AuthenticationPrincipal.class).errorOnInvalidType()).isTrue();
+        assertThat(principal.getType()).isEqualTo(UUID.class);
         // principal은 클라이언트 입력이 아니다 — 생성된 OpenAPI parameter에 나타나면 안 된다.
         Parameter openApiParameter = principal.getAnnotation(Parameter.class);
         assertThat(openApiParameter).isNotNull();
@@ -83,9 +83,9 @@ class TimelineApiAuthenticationContractTest {
     @org.junit.jupiter.api.Test
     void dailyRecordIdOperations_areDeprecatedAndPointToDateReplacement() throws NoSuchMethodException {
         Method getById = TimelineRecordApi.class.getDeclaredMethod(
-                "getDailyTimeline", String.class, Long.class, Long.class);
+                "getDailyTimeline", String.class, UUID.class, Long.class);
         Method deleteById = TimelineRecordApi.class.getDeclaredMethod(
-                "deleteDailyRecord", String.class, Long.class, Long.class);
+                "deleteDailyRecord", String.class, UUID.class, Long.class);
 
         for (Method method : List.of(getById, deleteById)) {
             Operation operation = method.getAnnotation(Operation.class);

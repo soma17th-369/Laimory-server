@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -81,6 +80,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
     private PhotoUrlRewriteMigration migration;
 
     private Long userId;
+    private UUID subjectId;
     private String legacyUrl;
     private String subjectUrl;
     private final List<Long> createdDraftIds = new ArrayList<>();
@@ -94,7 +94,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
         userId = newUserProvisioner
                 .provision(Provider.GOOGLE, "photo-mig-" + UUID.randomUUID(), null, null)
                 .getUserId();
-        SubjectId subjectId = subjectMappingService.getRequired(userId);
+        subjectId = subjectMappingService.getRequired(userId);
         legacyUrl = "https://" + CDN_DOMAIN + "/" + PhotoObjectKeys.sha256hex(userId)
                 + "/photos/" + FILENAME;
         subjectUrl = "https://" + CDN_DOMAIN + "/" + PhotoObjectKeys.subjectNamespace(subjectId)
@@ -123,7 +123,7 @@ class PhotoUrlRewriteMigrationIntegrationTest {
 
     private long saveDraftRow(JsonNode payload) {
         TimelineDraftSourceItem row = draftSourceItemRepository.save(TimelineDraftSourceItem.of(
-                UUID.randomUUID().toString(), userId, ItemType.PHOTO, RAW_ID, null, null, payload));
+                UUID.randomUUID().toString(), subjectId, ItemType.PHOTO, RAW_ID, null, null, payload));
         createdDraftIds.add(row.getTimelineDraftSourceItemId());
         return row.getTimelineDraftSourceItemId();
     }

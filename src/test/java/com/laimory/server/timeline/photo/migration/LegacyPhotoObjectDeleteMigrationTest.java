@@ -8,11 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.UserRepository;
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,8 +38,8 @@ class LegacyPhotoObjectDeleteMigrationTest {
     private final S3Client s3Client = mock(S3Client.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final SubjectMappingService subjectMappingService = mock(SubjectMappingService.class);
-    private final SubjectId subject = subjectIdOf("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
-    private final SubjectId otherSubject = subjectIdOf("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
+    private final UUID subject = subjectIdOf("3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+    private final UUID otherSubject = subjectIdOf("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
     private final Map<String, StoredObject> bucketContents = new HashMap<>();
 
     private final LegacyPhotoObjectDeleteMigration migration =
@@ -137,7 +135,7 @@ class LegacyPhotoObjectDeleteMigrationTest {
                 .satisfies(LegacyPhotoObjectDeleteMigrationTest::assertMessageHasNoIdentifiers);
     }
 
-    private void putMatchingPair(long userId, SubjectId subjectId, String filename, long size,
+    private void putMatchingPair(long userId, UUID subjectId, String filename, long size,
                                  String contentType) {
         StoredObject object = new StoredObject(size, contentType);
         bucketContents.put(legacyKey(userId, filename), object);
@@ -148,16 +146,12 @@ class LegacyPhotoObjectDeleteMigrationTest {
         return PhotoObjectKeys.sha256hex(userId) + "/photos/" + filename;
     }
 
-    private static String subjectKey(SubjectId subjectId, String filename) {
+    private static String subjectKey(UUID subjectId, String filename) {
         return PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/" + filename;
     }
 
-    private static SubjectId subjectIdOf(String uuidLiteral) {
-        UUID uuid = UUID.fromString(uuidLiteral);
-        return SubjectId.fromBytes(ByteBuffer.allocate(16)
-                .putLong(uuid.getMostSignificantBits())
-                .putLong(uuid.getLeastSignificantBits())
-                .array());
+    private static UUID subjectIdOf(String uuidLiteral) {
+        return UUID.fromString(uuidLiteral);
     }
 
     private static void assertMessageHasNoIdentifiers(Throwable thrown) {

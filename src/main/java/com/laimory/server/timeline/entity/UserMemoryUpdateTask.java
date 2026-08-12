@@ -5,6 +5,7 @@ import com.laimory.server.timeline.TaskTokens;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * User Memory 갱신 비동기 작업의 상태 모델. Redis에 JSON으로 저장된다(JPA 엔티티 아님).
@@ -23,7 +24,7 @@ import java.util.Objects;
  * 처리된다). 로그 상관관계 용도이며 외부 계약이 아니다.
  */
 public record UserMemoryUpdateTask(
-        long userId,
+        UUID subjectId,
         List<Long> dailyRecordIds,
         String tokenHash,
         @JsonFormat(shape = JsonFormat.Shape.STRING) Instant processingStartedAt,
@@ -31,9 +32,7 @@ public record UserMemoryUpdateTask(
 ) {
 
     public UserMemoryUpdateTask {
-        if (userId <= 0) {
-            throw new IllegalArgumentException("userId는 양수여야 합니다");
-        }
+        Objects.requireNonNull(subjectId, "subjectId");
         if (dailyRecordIds == null || dailyRecordIds.isEmpty()) {
             throw new IllegalArgumentException("dailyRecordIds는 최소 1건이어야 합니다");
         }

@@ -75,10 +75,10 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 
 - client는 server-issued presigned PUT URL로 S3에 직접 업로드한다.
 - signature는 content type과 content length를 묶는다.
-- object key namespace 규칙은 둘이 공존한다(#284, additive). live caller(presign/enrich/Event
-  PATCH/cleanup/delete job)는 전부 legacy `{sha256hex(userId)}/photos/{filename}`을 쓰고, subject 기반
-  `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`(`PhotoObjectKeys.subjectFullKey`,
-  `PhotoUrlService.buildSubjectUrl`)은 #283 activation 전까지 live 경로에 연결되지 않는다.
+- object key namespace 규칙은 둘이 공존한다. live caller(presign/enrich/Event PATCH/cleanup/delete job)는
+  subject 기반 `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`
+  (`PhotoObjectKeys.subjectFullKey`, `PhotoUrlService.buildSubjectUrl`)을 쓴다. legacy
+  `{sha256hex(userId)}/photos/{filename}` helper는 cutover migration 전용이다.
 - legacy→subject 전환용 in-app migration 도구가 `app.photo.migration.mode`
   property(`copy-verify|rewrite-urls|delete-legacy`)로 게이트된다 — property 부재 시 빈 자체가 없고, 실행 후
   exit code와 함께 종료하는 one-shot이며 로그는 건수만 남긴다(식별자 미출력). 역방향(rollback)
@@ -110,6 +110,8 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort 1회다.
   메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
+- FID 등록·해제·callback 발송 대상 조회의 owner는 UUID subjectId다. 인증된 앱 요청은 MVC 경계에서 매핑된
+  subject를 쓰고, callback은 Redis task의 subject owner로 FID를 조회한다(raw userId 역조회 없음).
 - multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를
   매핑한다. `UNREGISTERED`와 target-level `INVALID_ARGUMENT`만 등록 삭제 대상이다(server-built
   payload 정상은 unit test로 고정). 인증·project mismatch·quota·internal 오류는 삭제 근거가 아니며,

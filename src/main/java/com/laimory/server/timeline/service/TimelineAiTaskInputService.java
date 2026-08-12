@@ -59,8 +59,14 @@ public class TimelineAiTaskInputService {
 
         DailyRecord record = dailyRecordService.findById(task.dailyRecordId())
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
+        if (!record.getSubjectId().equals(task.subjectId())) {
+            throw new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND);
+        }
         ZoneId recordZone = ZoneId.of(record.getRecordTimezone());
         List<TimelineDraftSourceItem> sources = timelineDraftSourceItemService.findByTaskId(taskId);
+        if (sources.stream().anyMatch(source -> !source.getSubjectId().equals(task.subjectId()))) {
+            throw new IllegalStateException("draft source owner does not match task owner");
+        }
         String resultToken = TaskTokens.generate();
 
         AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(

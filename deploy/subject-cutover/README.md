@@ -24,36 +24,37 @@ migration 모드는 **반드시 한 번에 하나만** 실행한다(도구가 �
 
 ## 0) 사전조건
 
-- [ ] PR #285 merge **전에** live dev DB에 아래 additive DDL을 수동 적용한다(별도 승인 필수).
-  `schema.sql`의 `CREATE TABLE IF NOT EXISTS`는 기존 live DB를 바꾸지 않으므로 이 ALTER가 live 반영
-  경로이며, 컬럼·제약은 `src/main/resources/db/schema.sql`과 1:1이다.
+dev DB에는 #285의 additive DDL(`BINARY(16)` subject column 3개와 `user_memory_documents`)이 이미
+적용됐다. 아래 preflight로 그 선행 schema와 빈 User Memory 결정을 다시 확인한다. UUID 문자열 전환은
+현재 배포 image와 호환되지 않으므로 서비스가 살아 있는 동안 실행하지 않고, 3단계에서 구 컨테이너를
+중지한 뒤 3.1단계에서 적용한다.
 
 ```sql
--- live dev MySQL (적용 전후 SHOW CREATE TABLE로 확인, 값 비출력)
-ALTER TABLE daily_records
-    ADD COLUMN subject_id BINARY(16) NULL AFTER user_id,
-    ADD UNIQUE KEY uq_daily_records_subject_date (subject_id, record_date),
-    ADD CONSTRAINT fk_daily_records_subject
-        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT;
+-- additive DDL 선행조건. 결과가 각각 4, 2, 2, 1이 아니면 중단한다.
+SELECT COUNT(*) FROM information_schema.columns
+WHERE table_schema = DATABASE()
+  AND column_type = 'binary(16)'
+  AND ((table_name = 'user_subject_links' AND column_name = 'subject_id' AND is_nullable = 'NO')
+    OR (table_name = 'daily_records' AND column_name = 'subject_id' AND is_nullable = 'YES')
+    OR (table_name = 'timeline_draft_source_items' AND column_name = 'subject_id' AND is_nullable = 'YES')
+    OR (table_name = 'push_registrations' AND column_name = 'subject_id' AND is_nullable = 'YES'));
+SELECT COUNT(*) FROM information_schema.table_constraints
+WHERE constraint_schema = DATABASE()
+  AND constraint_type = 'FOREIGN KEY'
+  AND ((table_name = 'daily_records' AND constraint_name = 'fk_daily_records_subject')
+    OR (table_name = 'timeline_draft_source_items'
+        AND constraint_name = 'fk_draft_source_items_subject'));
+SELECT COUNT(*) FROM information_schema.statistics
+WHERE table_schema = DATABASE()
+  AND table_name = 'daily_records'
+  AND index_name = 'uq_daily_records_subject_date';
+SELECT COUNT(*) FROM information_schema.tables
+WHERE table_schema = DATABASE() AND table_name = 'user_memory_documents';
 
-ALTER TABLE timeline_draft_source_items
-    ADD COLUMN subject_id BINARY(16) NULL AFTER user_id,
-    ADD CONSTRAINT fk_draft_source_items_subject
-        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT;
+-- 두 User Memory 테이블은 공개 전 빈 상태라는 결정의 검증. 하나라도 0이 아니면 중단한다.
+SELECT COUNT(*) FROM user_memories;          -- 0
+SELECT COUNT(*) FROM user_memory_documents; -- 0
 
-ALTER TABLE push_registrations
-    ADD COLUMN subject_id BINARY(16) NULL AFTER user_id;
-
-CREATE TABLE user_memory_documents (
-    subject_id BINARY(16) NOT NULL,
-    memory JSON NOT NULL,
-    created_at DATETIME(6) NOT NULL,
-    updated_at DATETIME(6) NOT NULL,
-    modified_by VARCHAR(32) NULL,
-    PRIMARY KEY (subject_id),
-    CONSTRAINT fk_user_memory_documents_subject
-        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 - [ ] dev `.env`의 AI 모드 확인 — `fake`면 04:30 User Memory 배치가 `user_memories`에 실제 write할 수
@@ -77,8 +78,8 @@ sudo docker exec laimory sh -c 'date; echo "TZ=$TZ"'
 SELECT COUNT(*) FROM timeline_photo_delete_jobs;  -- 0이어야 한다
 ```
 
-**실패 시**: DDL 실패는 원인 교정 후 재적용(모두 additive라 재시도 안전). photo delete job이 있으면
-03:00 배치 실행 후 0건을 재확인하고 진행한다.
+**실패 시**: 두 User Memory 테이블 중 하나라도 0행이 아니면 direct 전환 결정을 적용할 수 없으므로
+중단한다. photo delete job이 있으면 03:00 배치 실행 후 0건을 재확인하고 진행한다.
 
 ## 1) 자동 배포 pause
 
@@ -162,6 +163,125 @@ redis-cli -h <REDIS_HOST> ZCARD dev_timeline:draft-task:processing-index
 redis-cli -h <REDIS_HOST> --scan --pattern 'dev_timeline:draft-task:*' | wc -l
 ```
 
+## 3.1) UUID 문자열 schema 전환
+
+구 컨테이너가 완전히 중지된 뒤에만 실행한다. 기존 mapping/owner의 `BINARY(16)` UUID를 canonical
+`VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`으로 보존 전환한다. MySQL DDL은 자동 commit이므로
+각 검증이 0건일 때만 다음 묶음으로 진행한다(별도 승인 필수).
+
+```sql
+-- BINARY 원본을 보존한 채 문자열 임시 컬럼을 만든다.
+ALTER TABLE user_subject_links
+    ADD COLUMN subject_id_varchar VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER subject_id;
+ALTER TABLE daily_records
+    ADD COLUMN subject_id_varchar VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER subject_id;
+ALTER TABLE timeline_draft_source_items
+    ADD COLUMN subject_id_varchar VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER subject_id;
+ALTER TABLE push_registrations
+    ADD COLUMN subject_id_varchar VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL AFTER subject_id;
+
+UPDATE user_subject_links
+SET subject_id_varchar = LOWER(CONCAT(
+    SUBSTR(HEX(subject_id), 1, 8), '-', SUBSTR(HEX(subject_id), 9, 4), '-',
+    SUBSTR(HEX(subject_id), 13, 4), '-', SUBSTR(HEX(subject_id), 17, 4), '-',
+    SUBSTR(HEX(subject_id), 21, 12)));
+UPDATE daily_records
+SET subject_id_varchar = LOWER(CONCAT(
+    SUBSTR(HEX(subject_id), 1, 8), '-', SUBSTR(HEX(subject_id), 9, 4), '-',
+    SUBSTR(HEX(subject_id), 13, 4), '-', SUBSTR(HEX(subject_id), 17, 4), '-',
+    SUBSTR(HEX(subject_id), 21, 12)))
+WHERE subject_id IS NOT NULL;
+UPDATE timeline_draft_source_items
+SET subject_id_varchar = LOWER(CONCAT(
+    SUBSTR(HEX(subject_id), 1, 8), '-', SUBSTR(HEX(subject_id), 9, 4), '-',
+    SUBSTR(HEX(subject_id), 13, 4), '-', SUBSTR(HEX(subject_id), 17, 4), '-',
+    SUBSTR(HEX(subject_id), 21, 12)))
+WHERE subject_id IS NOT NULL;
+UPDATE push_registrations
+SET subject_id_varchar = LOWER(CONCAT(
+    SUBSTR(HEX(subject_id), 1, 8), '-', SUBSTR(HEX(subject_id), 9, 4), '-',
+    SUBSTR(HEX(subject_id), 13, 4), '-', SUBSTR(HEX(subject_id), 17, 4), '-',
+    SUBSTR(HEX(subject_id), 21, 12)))
+WHERE subject_id IS NOT NULL;
+
+-- 네 쿼리 모두 0이어야 한다. mapping은 UUIDv4/RFC variant도 함께 확인한다.
+SELECT COUNT(*) FROM user_subject_links
+WHERE subject_id_varchar IS NULL
+   OR LOWER(REPLACE(subject_id_varchar, '-', '')) <> LOWER(HEX(subject_id))
+   OR SUBSTR(subject_id_varchar, 15, 1) <> '4'
+   OR SUBSTR(subject_id_varchar, 20, 1) NOT IN ('8', '9', 'a', 'b');
+SELECT COUNT(*) FROM daily_records
+WHERE (subject_id IS NULL) <> (subject_id_varchar IS NULL)
+   OR (subject_id IS NOT NULL
+       AND LOWER(REPLACE(subject_id_varchar, '-', '')) <> LOWER(HEX(subject_id)));
+SELECT COUNT(*) FROM timeline_draft_source_items
+WHERE (subject_id IS NULL) <> (subject_id_varchar IS NULL)
+   OR (subject_id IS NOT NULL
+       AND LOWER(REPLACE(subject_id_varchar, '-', '')) <> LOWER(HEX(subject_id)));
+SELECT COUNT(*) FROM push_registrations
+WHERE (subject_id IS NULL) <> (subject_id_varchar IS NULL)
+   OR (subject_id IS NOT NULL
+       AND LOWER(REPLACE(subject_id_varchar, '-', '')) <> LOWER(HEX(subject_id)));
+
+-- quiesce 뒤 최종 확인. 하나라도 0이 아니면 DROP/PK 변경을 시작하지 않고 중단한다.
+SELECT COUNT(*) FROM user_memories;          -- 0
+SELECT COUNT(*) FROM user_memory_documents; -- 0
+
+-- 참조 제약/index를 먼저 내린 뒤 parent와 child를 문자열 컬럼으로 교체한다.
+ALTER TABLE daily_records
+    DROP FOREIGN KEY fk_daily_records_subject,
+    DROP KEY uq_daily_records_subject_date;
+ALTER TABLE timeline_draft_source_items
+    DROP FOREIGN KEY fk_draft_source_items_subject,
+    DROP KEY fk_draft_source_items_subject;
+-- 바로 위에서 0행을 재확인한 document table도 parent FK를 참조하므로 parent 변경 전에 제거한다.
+DROP TABLE user_memory_documents;
+
+ALTER TABLE user_subject_links
+    DROP KEY uq_user_subject_links_subject,
+    DROP COLUMN subject_id,
+    CHANGE COLUMN subject_id_varchar subject_id
+        VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    ADD UNIQUE KEY uq_user_subject_links_subject (subject_id);
+
+ALTER TABLE daily_records
+    DROP COLUMN subject_id,
+    CHANGE COLUMN subject_id_varchar subject_id
+        VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    ADD UNIQUE KEY uq_daily_records_subject_date (subject_id, record_date),
+    ADD CONSTRAINT fk_daily_records_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT;
+ALTER TABLE timeline_draft_source_items
+    DROP COLUMN subject_id,
+    CHANGE COLUMN subject_id_varchar subject_id
+        VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+    ADD CONSTRAINT fk_draft_source_items_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT;
+ALTER TABLE push_registrations
+    DROP COLUMN subject_id,
+    CHANGE COLUMN subject_id_varchar subject_id
+        VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL;
+
+-- 바로 위에서 빈 상태를 재확인한 기존 table은 복사 없이 PK를 직접 바꾼다.
+ALTER TABLE user_memories
+    DROP PRIMARY KEY,
+    DROP COLUMN user_id,
+    ADD COLUMN subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL FIRST,
+    ADD PRIMARY KEY (subject_id),
+    ADD CONSTRAINT fk_user_memories_subject
+        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT;
+
+SHOW CREATE TABLE user_subject_links;
+SHOW CREATE TABLE daily_records;
+SHOW CREATE TABLE timeline_draft_source_items;
+SHOW CREATE TABLE push_registrations;
+SHOW CREATE TABLE user_memories;
+```
+
+**실패 시**: 어느 단계까지 자동 commit됐는지 `SHOW CREATE TABLE`로 확인하고 그 단계부터 forward-fix한다.
+임시 컬럼 검증이 0이 아니면 원본 `BINARY(16)` 컬럼을 drop하지 않는다. 구 image는 문자열 schema와
+호환되지 않으므로 재기동하지 않는다.
+
 ## 4) subject backfill 실행
 
 dev WAS에서 2단계의 exact SHA image로 **모드를 하나씩** 실행한다. 도구는 멱등이라 실패 시 원인
@@ -184,8 +304,7 @@ sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
   --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=backfill-mappings
 
-# ② owner backfill(멱등) — NULL subject_id 채움 + user_memories→user_memory_documents 복사,
-#    종료 시 NULL/cross-owner 0건·문서 subject/JSON/감사 컬럼 동등성 검증
+# ② owner backfill(멱등) — NULL subject_id 채움, 종료 시 NULL/cross-owner 0건 검증
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
   --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=backfill-owners
@@ -218,16 +337,17 @@ backfill·rewrite가 모두 성공한 뒤에만 실행한다(별도 승인 필�
 
 ```sql
 ALTER TABLE daily_records
-    MODIFY COLUMN subject_id BINARY(16) NOT NULL,
+    MODIFY COLUMN subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     MODIFY COLUMN user_id BIGINT NULL;
 
 ALTER TABLE timeline_draft_source_items
-    MODIFY COLUMN subject_id BINARY(16) NOT NULL,
+    MODIFY COLUMN subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     MODIFY COLUMN user_id BIGINT NULL;
 
 ALTER TABLE push_registrations
-    MODIFY COLUMN subject_id BINARY(16) NOT NULL,
-    MODIFY COLUMN user_id BIGINT NULL;
+    MODIFY COLUMN subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    MODIFY COLUMN user_id BIGINT NULL,
+    ADD KEY idx_push_registrations_subject (subject_id);
 ```
 
 **실패 시**: NULL 잔여 행이 있으면 MODIFY가 거부된다 — 4단계 ②를 재실행해 delta를 채우고 다시
@@ -236,7 +356,7 @@ ALTER TABLE push_registrations
 ## 7) 최종 검증 — verify-owners + 검증 SQL
 
 ```bash
-# backfill 없이 검증만 재수행(NULL/cross-owner/document 동등성 불일치면 exit 1)
+# backfill 없이 검증만 재수행(NULL/cross-owner 불일치면 exit 1)
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
   --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=verify-owners
@@ -249,13 +369,11 @@ SELECT COUNT(*) FROM user_subject_links;   -- (b) = (a) 이어야 한다 (mappin
 SELECT COUNT(*) FROM daily_records                WHERE subject_id IS NULL;  -- 0
 SELECT COUNT(*) FROM timeline_draft_source_items  WHERE subject_id IS NULL;  -- 0
 SELECT COUNT(*) FROM push_registrations           WHERE subject_id IS NULL;  -- 0
-SELECT COUNT(*) FROM user_memories;        -- (c)
-SELECT COUNT(*) FROM user_memory_documents;-- (d) = (c) 이어야 한다
+SELECT COUNT(*) FROM user_memories WHERE subject_id IS NULL;                 -- 0
 ```
 
 `verify-owners`는 각 legacy `user_id`를 in-process mapping으로 해석해 세 owner 테이블의
-cross-owner와 User Memory document의 subject·JSON·감사 컬럼 불일치를 값 출력 없이 집계한다.
-아래 SQL은 운영자가 남기는 보조 count이며 도구의 동등성 검증을 대체하지 않는다.
+cross-owner 불일치를 값 출력 없이 집계한다. 아래 SQL은 운영자가 남기는 보조 count다.
 
 **실패 시**: 불일치는 새 image 기동 금지 사유다. 원인을 좁혀 4~6단계를 재실행한다.
 
@@ -303,7 +421,7 @@ gh workflow run deploy.yml --repo soma17th-369/Laimory-server \
 curl -fsS http://localhost:8080/api/v1/intro > /dev/null && echo OK
 ```
 
-- 7단계 검증 SQL 재실행(count 불변 확인 — 특히 mapping 1:1, NULL 0건, 문서 수 일치)
+- 7단계 검증 SQL 재실행(count 불변 확인 — 특히 mapping 1:1, NULL 0건)
 - 소유권: 테스트 계정 로그인 → timeline 조회·draft 생성 → 본인 데이터만 보이는지 확인
 - FCM: push 등록 API 호출 후 `push_registrations` count 증가 확인(값 비출력)
 - PHOTO: 기존 timeline의 photoUrl(subject namespace)이 CDN에서 200으로 서빙되는지,
@@ -336,7 +454,7 @@ delete 응답의 error·미보고 key 또는 삭제 후 known-user legacy prefix
 성공 로그의 `objectsVerified=objectsDeleted`, `objectsRemaining=0`을 확인한 뒤에만 legacy DB 삭제로 간다.
 
 ```sql
--- ② legacy user_id 컬럼·user_memories 테이블 삭제(사전 승인 필수).
+-- ② legacy user_id 컬럼 삭제(사전 승인 필수).
 --    다중 컬럼 UNIQUE/index는 컬럼 DROP 전에 명시적으로 지운다(잔여 축소 index 방지).
 ALTER TABLE daily_records
     DROP KEY uq_daily_records_user_date,
@@ -346,10 +464,9 @@ ALTER TABLE timeline_draft_source_items
 ALTER TABLE push_registrations
     DROP KEY idx_push_registrations_user,
     DROP COLUMN user_id;
-DROP TABLE user_memories;
 ```
 
 - ③ migration 도구 일괄 제거 PR을 만든다 — `timeline/photo/migration/`·`user/migration/` 패키지,
   `UserRepository.findAllUserIds` 등 migration 전용 메서드, `PhotoObjectKeys` legacy 함수
   (`fullKey(userId,…)`/`sha256hex`), `SubjectMappingService.createIfAbsent`, `schema.sql`의 legacy
-  `user_id` 컬럼·`user_memories` 정의와 이 runbook의 관련 절차.
+  legacy `user_id` 컬럼과 이 runbook의 관련 절차. `user_memories`는 subject PK 정본으로 유지한다.

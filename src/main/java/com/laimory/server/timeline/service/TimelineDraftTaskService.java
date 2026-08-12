@@ -36,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -87,7 +88,7 @@ public class TimelineDraftTaskService {
      * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
      */
     @WithSpan
-    public String createDraftTask(String applicationVersion, long userId, LocalDate recordDate,
+    public String createDraftTask(String applicationVersion, UUID subjectId, LocalDate recordDate,
                                   LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
                                   List<SourceItemDto> sourceItems) {
         if (recordDate == null) {
@@ -116,8 +117,8 @@ public class TimelineDraftTaskService {
         // recordTimeZone은 record 저장·AI transport window의 offset 변환에 쓰므로 유효성부터 검증(잘못된 zone → IAE → 400).
         RecordDates.requireValidTimeZone(recordTimeZone);
 
-        // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row user_id·task owner는 전부
-        // 인자로 받은 request userId(인증 principal) 하나만 쓴다 — 지점이 갈리면 남의 키로 URL을 파생하거나
+        // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row·task owner는 전부
+        // 인증 경계에서 해석한 subjectId 하나만 쓴다 — 지점이 갈리면 남의 키로 URL을 파생하거나
         // 남의 namespace에 귀속되는 버그다(불변식).
 
         String taskId = UuidV7.randomUuidV7().toString();
@@ -127,7 +128,7 @@ public class TimelineDraftTaskService {
         String taskToken = TaskTokens.generate();
         String tokenHash = TaskTokens.hash(taskToken);
 
-        Optional<DailyRecord> existingRecord = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate);
+        Optional<DailyRecord> existingRecord = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate);
         existingRecord
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
                 .ifPresent(record -> {
@@ -145,7 +146,7 @@ public class TimelineDraftTaskService {
         // AI 입력 조회가 이 값을 반환하므로 source 저장 전에 완료돼야 한다. 지오코딩 최종 실패가 품질 한도
         // (unique 20% 초과 또는 시간순 연속 3개)를 넘으면 enrich가 BusinessException(-1014 전이 /
         // -1015 영구 포함)을 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
-        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, userId);
+        List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, subjectId);
 
         // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
         //    먼저 커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 전체 롤백 후 전파(500).
@@ -154,20 +155,20 @@ public class TimelineDraftTaskService {
         //    DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed).
         List<TimelineDraftSourceItem> rows = enrichedItems.stream()
                 .map(src -> TimelineDraftSourceItem.of(
-                        taskId, userId,
+                        taskId, subjectId,
                         src.itemType(), src.rawId(), src.startAt(), src.endAt(),
                         privacyRedactor.redactTree(objectMapper.valueToTree(src.payload()),
                                 STORAGE_REDACTION_EXCLUDED_FIELDS).node()))
                 .toList();
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
-                userId, recordDate, recordAt, recordTimeZone, rows);
+                subjectId, recordDate, recordAt, recordTimeZone, rows);
 
         // 2. Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
         //    실패하면 이번 task의 source rows만 보상 삭제하고 전파한다(DailyRecord는 유지 — 클래스 주석 참고).
         //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다.
         Instant processingStartedAt = clock.instant();
         try {
-            timelineTaskService.createProcessing(taskId, userId, dailyRecordId,
+            timelineTaskService.createProcessing(taskId, subjectId, dailyRecordId,
                     new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
                     tokenHash, processingStartedAt);
         } catch (RuntimeException e) {
@@ -189,7 +190,7 @@ public class TimelineDraftTaskService {
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
             try {
                 timelineTaskService.markFailed(
-                        taskId, userId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
+                        taskId, subjectId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
             } catch (RuntimeException saveFailure) {
                 // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
                 // PROCESSING으로 남았다면 최초 3분 TTL이 회수한다.

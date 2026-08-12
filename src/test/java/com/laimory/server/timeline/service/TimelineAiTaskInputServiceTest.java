@@ -28,6 +28,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -49,7 +50,7 @@ class TimelineAiTaskInputServiceTest {
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "t";
-    private static final long USER_ID = 7L;
+    private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
     private static final long RECORD_ID = 42L;
     private static final String ZONE = "Asia/Seoul";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
@@ -58,7 +59,7 @@ class TimelineAiTaskInputServiceTest {
     private static final String TOKEN_HASH = TaskTokens.hash(TASK_TOKEN);
 
     private TimelineDraftTask taskAt(ProcessStage stage) {
-        return TimelineDraftTask.processing(USER_ID, RECORD_ID,
+        return TimelineDraftTask.processing(SUBJECT_ID, RECORD_ID,
                         new TimelineDraftTask.TimelineWindow(
                                 DATE.atStartOfDay(), DATE.plusDays(1).atStartOfDay()),
                         TOKEN_HASH, Instant.parse("2026-06-17T03:05:00Z"))
@@ -67,12 +68,12 @@ class TimelineAiTaskInputServiceTest {
 
     private void givenRecordAndSources() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
-                DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(22, 0), ZONE)));
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(22, 0), ZONE)));
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
-                TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.CALENDAR, "raw-1",
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.CALENDAR, "raw-1",
                         DATE.atTime(9, 0), DATE.atTime(10, 0),
                         new ObjectMapper().createObjectNode().put("title", "수업")),
-                TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.NOTIFICATION, "raw-2",
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.NOTIFICATION, "raw-2",
                         null, null, new ObjectMapper().createObjectNode().put("title", "알림"))));
     }
 
@@ -103,13 +104,13 @@ class TimelineAiTaskInputServiceTest {
         TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
-                DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(22, 0), ZONE)));
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(22, 0), ZONE)));
         ObjectNode photoPayload = new ObjectMapper().createObjectNode()
                 .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
                 .put("clientPhotoUri", "content://media/external/images/42")
                 .put("latitude", 37.5665);
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
-                TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.PHOTO, "raw-1",
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-1",
                         DATE.atTime(9, 0), null, photoPayload)));
         when(timelineTaskService.rotateTokenAndStage(
                 eq(TASK_ID), eq(task), anyString(), eq(ProcessStage.RESULT_PENDING))).thenReturn(true);
@@ -132,10 +133,10 @@ class TimelineAiTaskInputServiceTest {
         TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
-                DailyRecord.createDraft(USER_ID, DATE, DATE.atTime(22, 0), ZONE)));
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(22, 0), ZONE)));
         ObjectNode calendarPayload = new ObjectMapper().createObjectNode().put("title", "수업");
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
-                TimelineDraftSourceItem.of(TASK_ID, USER_ID, ItemType.CALENDAR, "raw-1",
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.CALENDAR, "raw-1",
                         DATE.atTime(9, 0), DATE.atTime(10, 0), calendarPayload)));
         when(timelineTaskService.rotateTokenAndStage(
                 eq(TASK_ID), eq(task), anyString(), eq(ProcessStage.RESULT_PENDING))).thenReturn(true);
@@ -170,7 +171,7 @@ class TimelineAiTaskInputServiceTest {
     @Test
     void getInput_terminalTask_throws1017() {
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(TimelineDraftTask.success(USER_ID, RECORD_ID, TOKEN_HASH)));
+                .thenReturn(Optional.of(TimelineDraftTask.success(SUBJECT_ID, RECORD_ID, TOKEN_HASH)));
 
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,

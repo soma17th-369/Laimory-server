@@ -73,8 +73,8 @@ class SubjectMigrationRunnerTest {
     @Test
     void backfillOwners_runsOwnerBackfillWithVerification() {
         when(ownerBackfill.execute()).thenReturn(new SubjectOwnerBackfillMigration.Result(
-                3, 4, 2, 1, 1,
-                new SubjectOwnerBackfillMigration.Verification(0, 0, 0, 0, 0, 0, 1, 1, 0)));
+                3, 4, 2, 1,
+                new SubjectOwnerBackfillMigration.Verification(0, 0, 0, 0, 0, 0)));
 
         runner(SubjectMigrationMode.BACKFILL_OWNERS).run(new DefaultApplicationArguments());
 
@@ -83,7 +83,6 @@ class SubjectMigrationRunnerTest {
         assertThat(exitCodes).containsExactly(0);
         assertThat(allLogText())
                 .contains("dailyRecordsBackfilled=4")
-                .contains("memoryDocumentsUpserted=1")
                 .contains("dailyRecordsNullSubject=0");
     }
 
@@ -91,7 +90,7 @@ class SubjectMigrationRunnerTest {
     void verifyOwners_runsVerificationOnly() {
         when(ownerBackfill.verify())
                 .thenReturn(new SubjectOwnerBackfillMigration.Verification(
-                        0, 0, 0, 0, 0, 0, 2, 2, 0));
+                        0, 0, 0, 0, 0, 0));
 
         runner(SubjectMigrationMode.VERIFY_OWNERS).run(new DefaultApplicationArguments());
 
@@ -99,9 +98,7 @@ class SubjectMigrationRunnerTest {
         verifyNoMoreInteractions(ownerBackfill); // execute()가 불리면 안 된다 — 검증 전용 모드
         verifyNoInteractions(mappingBackfill);
         assertThat(exitCodes).containsExactly(0);
-        assertThat(allLogText())
-                .contains("userMemories=2")
-                .contains("memoryDocuments=2");
+        assertThat(allLogText()).contains("pushOwnerMismatch=0");
     }
 
     @Test

@@ -15,9 +15,7 @@ enum SubjectMigrationMode {
 
     /**
      * DailyRecord/staging/push registration의 NULL {@code subject_id}를 각 행의 user_id → mapping
-     * subject로 채우고, {@code user_memories}를 {@code user_memory_documents}로 upsert 복사한 뒤
-     * 잔여 NULL·cross-owner 0건과 문서 subject·JSON·감사 컬럼 동등성을 검증한다
-     * (불일치 fail-closed).
+     * subject로 채운 뒤 잔여 NULL·cross-owner 0건을 검증한다(불일치 fail-closed).
      */
     BACKFILL_OWNERS("backfill-owners"),
 

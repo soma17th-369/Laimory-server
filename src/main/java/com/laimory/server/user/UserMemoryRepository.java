@@ -1,6 +1,7 @@
 package com.laimory.server.user;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
  * user_memories 레포. 교체는 native upsert 한 문장으로 원자 보장한다 — read-then-insert는 같은
  * 사용자의 동시 저장에서 PK 중복 예외가 새어나온다(push_registrations와 같은 선례).
  */
-public interface UserMemoryRepository extends JpaRepository<UserMemory, Long> {
+public interface UserMemoryRepository extends JpaRepository<UserMemory, UUID> {
 
     /**
      * User Memory 문서 전체 교체. 없으면 insert, 있으면 덮어쓴다(부분 병합 없음). native INSERT는 JPA
@@ -22,16 +23,16 @@ public interface UserMemoryRepository extends JpaRepository<UserMemory, Long> {
      */
     @Modifying
     @Transactional
-    @Query(value = "insert into user_memories (user_id, memory, created_at, updated_at) "
-            + "values (:userId, :memory, :now, :now) "
+    @Query(value = "insert into user_memories (subject_id, memory, created_at, updated_at) "
+            + "values (:subjectId, :memory, :now, :now) "
             + "on duplicate key update memory = :memory, updated_at = :now",
             nativeQuery = true)
-    void upsert(@Param("userId") long userId, @Param("memory") String memory,
+    void upsert(@Param("subjectId") String subjectId, @Param("memory") String memory,
                 @Param("now") LocalDateTime now);
 
     /** 메모리 제거 — 행 삭제다. 미존재 삭제는 0행(멱등). */
     @Modifying
     @Transactional
-    @Query("delete from UserMemory m where m.userId = :userId")
-    int deleteByUserId(@Param("userId") long userId);
+    @Query(value = "delete from user_memories where subject_id = :subjectId", nativeQuery = true)
+    int deleteBySubjectId(@Param("subjectId") String subjectId);
 }

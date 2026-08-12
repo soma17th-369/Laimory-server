@@ -8,12 +8,14 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +43,8 @@ class UserMemoryUpdatePendingStoreTest {
     /** 이 시각 이전에 대기를 시작한 항목은 retention을 넘겼다. */
     private static final long GIVE_UP_BEFORE = NOW.minus(RETENTION).toEpochMilli();
     private static final int LIMIT = 3;
+    private static final UUID SUBJECT = id(7L);
+    private static final UUID OTHER_SUBJECT = id(13L);
 
     @Mock
     private RedisGateway redis;
@@ -54,13 +58,13 @@ class UserMemoryUpdatePendingStoreTest {
 
     @Test
     void 넣을_때도_만료분을_걷어내고_key_TTL을_갱신한다() {
-        store.enqueue(new UserMemoryUpdatePending(7L, 42L), NOW);
+        store.enqueue(new UserMemoryUpdatePending(SUBJECT, 42L), NOW);
 
         // 청소를 먼저 해야 방금 넣은 member가 같은 실행의 청소에 휩쓸릴 여지가 없다.
         InOrder inOrder = inOrder(redis);
         inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, GIVE_UP_BEFORE);
         inOrder.verify(redis).addToSortedSetIfAbsent(
-                UserMemoryUpdatePendingStore.PENDING_KEY, "7:42", NOW.toEpochMilli());
+                UserMemoryUpdatePendingStore.PENDING_KEY, member(SUBJECT, 42L), NOW.toEpochMilli());
         inOrder.verify(redis).expire(UserMemoryUpdatePendingStore.PENDING_KEY, RETENTION);
     }
 
@@ -68,7 +72,7 @@ class UserMemoryUpdatePendingStoreTest {
     void 만료분을_걷어낸_뒤_상한만큼_읽고_자르기_전_개수를_함께_준다() {
         when(redis.getSortedSetRangeByScore(
                 UserMemoryUpdatePendingStore.PENDING_KEY, NOW.toEpochMilli(), LIMIT))
-                .thenReturn(List.of("7:42", "7:43", "13:88"));
+                .thenReturn(List.of(member(SUBJECT, 42L), member(SUBJECT, 43L), member(OTHER_SUBJECT, 88L)));
         when(redis.countSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, NOW.toEpochMilli()))
                 .thenReturn(9L);
 
@@ -77,9 +81,9 @@ class UserMemoryUpdatePendingStoreTest {
         // 개수가 읽어온 수보다 크다 = 상한에 잘렸다. 두 값이 같은 대기 시작 상한을 써야 이 해석이 성립한다.
         assertThat(scan.total()).isEqualTo(9);
         assertThat(scan.scanned()).containsExactly(
-                new UserMemoryUpdatePending(7L, 42L),
-                new UserMemoryUpdatePending(7L, 43L),
-                new UserMemoryUpdatePending(13L, 88L));
+                new UserMemoryUpdatePending(SUBJECT, 42L),
+                new UserMemoryUpdatePending(SUBJECT, 43L),
+                new UserMemoryUpdatePending(OTHER_SUBJECT, 88L));
 
         InOrder inOrder = inOrder(redis);
         inOrder.verify(redis).pruneSortedSetByScore(UserMemoryUpdatePendingStore.PENDING_KEY, GIVE_UP_BEFORE);
@@ -100,23 +104,27 @@ class UserMemoryUpdatePendingStoreTest {
     @Test
     void 형식이_깨진_member는_결과에서_빼고_즉시_제거한다() {
         when(redis.getSortedSetRangeByScore(anyString(), anyLong(), anyLong()))
-                .thenReturn(List.of("7:42", "broken", "13:x"));
+                .thenReturn(List.of(member(SUBJECT, 42L), "broken", "invalid:x"));
         when(redis.countSortedSetByScore(anyString(), anyLong())).thenReturn(3L);
 
         UserMemoryUpdatePendingStore.PendingScan scan = store.findPending(NOW, LIMIT);
 
         // 되살아나면 매 실행마다 같은 쓰레기를 다시 읽는다.
-        assertThat(scan.scanned()).containsExactly(new UserMemoryUpdatePending(7L, 42L));
+        assertThat(scan.scanned()).containsExactly(new UserMemoryUpdatePending(SUBJECT, 42L));
         verify(redis).removeFromSortedSet(
-                UserMemoryUpdatePendingStore.PENDING_KEY, List.of("broken", "13:x"));
+                UserMemoryUpdatePendingStore.PENDING_KEY, List.of("broken", "invalid:x"));
     }
 
     @Test
     void 반영된_날들은_member를_복원해_한_번에_지운다() {
-        store.removeAll(7L, List.of(42L, 43L));
+        store.removeAll(SUBJECT, List.of(42L, 43L));
 
         // 결과 endpoint는 task의 dailyRecordIds만 들고 있으므로 member를 식별자로 복원할 수 있어야 한다.
         verify(redis).removeFromSortedSet(
-                UserMemoryUpdatePendingStore.PENDING_KEY, List.of("7:42", "7:43"));
+                UserMemoryUpdatePendingStore.PENDING_KEY, List.of(member(SUBJECT, 42L), member(SUBJECT, 43L)));
+    }
+
+    private static String member(UUID subjectId, long dailyRecordId) {
+        return subjectId + ":" + dailyRecordId;
     }
 }

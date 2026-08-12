@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -10,10 +12,12 @@ import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,9 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TimelineQueryPersistenceIntegrationTest {
 
-    private static final long OWNER_ID = 9_187_000_001L;
-    private static final long OTHER_USER_ID = 9_187_000_002L;
-    private static final long EVENT_OWNER_ID = 9_187_000_003L;
+    private static final UUID OWNER_ID = id(9_187_000_001L);
+    private static final UUID OTHER_SUBJECT_ID = id(9_187_000_002L);
+    private static final UUID EVENT_OWNER_ID = id(9_187_000_003L);
 
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
@@ -34,14 +38,19 @@ class TimelineQueryPersistenceIntegrationTest {
     @Autowired
     private TimelineEventRepository timelineEventRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @PersistenceContext
     private EntityManager em;
 
     @Test
     void dailyRecordQueries_filterByOwnerAndOrderNewestFirst() {
+        ensureExists(jdbcTemplate, OWNER_ID);
+        ensureExists(jdbcTemplate, OTHER_SUBJECT_ID);
         DailyRecord older = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 7, 20)));
         DailyRecord newer = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 7, 22)));
-        DailyRecord other = dailyRecordRepository.save(record(OTHER_USER_ID, LocalDate.of(2026, 7, 22)));
+        DailyRecord other = dailyRecordRepository.save(record(OTHER_SUBJECT_ID, LocalDate.of(2026, 7, 22)));
         Long olderId = older.getDailyRecordId();
         Long newerId = newer.getDailyRecordId();
         Long otherId = other.getDailyRecordId();
@@ -49,19 +58,19 @@ class TimelineQueryPersistenceIntegrationTest {
         em.flush();
         em.clear();
 
-        assertThat(dailyRecordRepository.findByUserIdOrderByRecordDateDescDailyRecordIdDesc(OWNER_ID))
+        assertThat(dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(OWNER_ID))
                 .extracting(DailyRecord::getDailyRecordId)
                 .containsExactly(newerId, olderId);
-        assertThat(dailyRecordRepository.findByDailyRecordIdAndUserId(newerId, OWNER_ID))
+        assertThat(dailyRecordRepository.findByDailyRecordIdAndSubjectId(newerId, OWNER_ID))
                 .get()
                 .extracting(DailyRecord::getDailyRecordId)
                 .isEqualTo(newerId);
-        assertThat(dailyRecordRepository.findByDailyRecordIdAndUserId(otherId, OWNER_ID)).isEmpty();
-        assertThat(dailyRecordRepository.findByUserIdAndRecordDate(OWNER_ID, LocalDate.of(2026, 7, 22)))
+        assertThat(dailyRecordRepository.findByDailyRecordIdAndSubjectId(otherId, OWNER_ID)).isEmpty();
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(OWNER_ID, LocalDate.of(2026, 7, 22)))
                 .get()
                 .extracting(DailyRecord::getDailyRecordId)
                 .isEqualTo(newerId);
-        assertThat(dailyRecordRepository.findByUserIdAndRecordDate(OTHER_USER_ID, LocalDate.of(2026, 7, 22)))
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(OTHER_SUBJECT_ID, LocalDate.of(2026, 7, 22)))
                 .get()
                 .extracting(DailyRecord::getDailyRecordId)
                 .isEqualTo(otherId);
@@ -69,6 +78,7 @@ class TimelineQueryPersistenceIntegrationTest {
 
     @Test
     void eventBulkQuery_filtersRequestedRecordsAndUsesStableDisplayOrder() {
+        ensureExists(jdbcTemplate, EVENT_OWNER_ID);
         DailyRecord firstRecord = dailyRecordRepository.save(record(EVENT_OWNER_ID, LocalDate.of(2026, 7, 20)));
         DailyRecord secondRecord = dailyRecordRepository.save(record(EVENT_OWNER_ID, LocalDate.of(2026, 7, 21)));
         DailyRecord excludedRecord = dailyRecordRepository.save(record(EVENT_OWNER_ID, LocalDate.of(2026, 7, 22)));
@@ -94,8 +104,8 @@ class TimelineQueryPersistenceIntegrationTest {
                         secondRecordEvent.getTimelineEventId());
     }
 
-    private DailyRecord record(Long userId, LocalDate recordDate) {
-        return DailyRecord.createDraft(userId, recordDate, recordDate.atTime(12, 0), "Asia/Seoul");
+    private DailyRecord record(UUID subjectId, LocalDate recordDate) {
+        return DailyRecord.createDraft(subjectId, recordDate, recordDate.atTime(12, 0), "Asia/Seoul");
     }
 
     private TimelineEvent event(DailyRecord record, int hour, String title) {

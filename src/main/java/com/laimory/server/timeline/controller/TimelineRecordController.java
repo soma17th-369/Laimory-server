@@ -11,6 +11,7 @@ import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
 import com.laimory.server.timeline.service.TimelineSaveService;
 import java.time.LocalDate;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,8 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 확정 타임라인 기록 조회·편집 API 구현. HTTP 문서·계약은 {@link TimelineRecordApi}.
  *
- * <p>userId는 클라이언트가 보내는 값이 아니라 <b>인증된 JWT principal({@code Long})을 컨트롤러가 서비스에
- * 전달</b>한다 — 소유권 검사·S3 key 유도는 전부 이 값 기준이다.
+ * <p>컨트롤러 파라미터의 subjectId는 클라이언트 값이 아니라 {@code @CurrentSubject}가 JWT principal을
+ * 해석한 결과다. 소유권 검사·S3 key 유도는 전부 이 subject를 기준으로 한다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -32,78 +33,78 @@ public class TimelineRecordController implements TimelineRecordApi {
 
     @Override
     public ResponseEntity<ApiResponse<DailyTimelinesResponse>> getDailyTimelines(
-            String applicationVersion, Long userId) {
+            String applicationVersion, UUID subjectId) {
         return ResponseEntity.ok(ApiResponse.success(
-                dailyTimelineService.getDailyTimelines(applicationVersion, userId)));
+                dailyTimelineService.getDailyTimelines(applicationVersion, subjectId)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimeline(
-            String applicationVersion, Long userId, Long dailyRecordId) {
+            String applicationVersion, UUID subjectId, Long dailyRecordId) {
         return ResponseEntity.ok(ApiResponse.success(
-                dailyTimelineService.getDailyTimeline(applicationVersion, userId, dailyRecordId)));
+                dailyTimelineService.getDailyTimeline(applicationVersion, subjectId, dailyRecordId)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimelineByDate(
-            String applicationVersion, Long userId, LocalDate recordDate) {
+            String applicationVersion, UUID subjectId, LocalDate recordDate) {
         return ResponseEntity.ok(ApiResponse.success(
-                dailyTimelineService.getDailyTimeline(applicationVersion, userId, recordDate)));
+                dailyTimelineService.getDailyTimeline(applicationVersion, subjectId, recordDate)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<TimelineEventResponse>> getTimelineEvent(
-            String applicationVersion, Long userId, Long timelineEventId) {
+            String applicationVersion, UUID subjectId, Long timelineEventId) {
         return ResponseEntity.ok(ApiResponse.success(
-                dailyTimelineService.getTimelineEvent(applicationVersion, userId, timelineEventId)));
+                dailyTimelineService.getTimelineEvent(applicationVersion, subjectId, timelineEventId)));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
-            String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventRequest request) {
-        timelineEventEditService.updateEvent(applicationVersion, userId, timelineEventId, request);
+            String applicationVersion, UUID subjectId, Long timelineEventId, UpdateTimelineEventRequest request) {
+        timelineEventEditService.updateEvent(applicationVersion, subjectId, timelineEventId, request);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
-            String applicationVersion, Long userId, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
-        timelineEventEditService.updateMemo(applicationVersion, userId, timelineEventId, request.memo());
+            String applicationVersion, UUID subjectId, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
+        timelineEventEditService.updateMemo(applicationVersion, subjectId, timelineEventId, request.memo());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
-            String applicationVersion, Long userId, Long timelineEventId) {
-        timelineDeletionService.deleteEvent(applicationVersion, userId, timelineEventId);
+            String applicationVersion, UUID subjectId, Long timelineEventId) {
+        timelineDeletionService.deleteEvent(applicationVersion, subjectId, timelineEventId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> detachTimelineEventItem(
-            String applicationVersion, Long userId, Long timelineEventId, Long timelineItemId) {
-        timelineDeletionService.detachEventItem(applicationVersion, userId, timelineEventId, timelineItemId);
+            String applicationVersion, UUID subjectId, Long timelineEventId, Long timelineItemId) {
+        timelineDeletionService.detachEventItem(applicationVersion, subjectId, timelineEventId, timelineItemId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
-            String applicationVersion, Long userId, Long dailyRecordId) {
-        timelineDeletionService.deleteDailyRecord(applicationVersion, userId, dailyRecordId);
+            String applicationVersion, UUID subjectId, Long dailyRecordId) {
+        timelineDeletionService.deleteDailyRecord(applicationVersion, subjectId, dailyRecordId);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
-            String applicationVersion, Long userId, LocalDate recordDate) {
-        timelineDeletionService.deleteDailyRecordByDate(applicationVersion, userId, recordDate);
+            String applicationVersion, UUID subjectId, LocalDate recordDate) {
+        timelineDeletionService.deleteDailyRecordByDate(applicationVersion, subjectId, recordDate);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @Override
     public ResponseEntity<ApiResponse<Void>> saveDailyRecord(
-            String applicationVersion, Long userId, LocalDate recordDate) {
-        timelineSaveService.save(applicationVersion, userId, recordDate);
+            String applicationVersion, UUID subjectId, LocalDate recordDate) {
+        timelineSaveService.save(applicationVersion, subjectId, recordDate);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

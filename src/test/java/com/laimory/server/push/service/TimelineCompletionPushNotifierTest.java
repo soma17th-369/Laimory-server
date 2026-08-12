@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,6 +15,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.push.PushMessageSender;
+import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
 import com.laimory.server.timeline.TaskStatus;
@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +41,7 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class TimelineCompletionPushNotifierTest {
 
-    private static final long USER_ID = 7L;
+    private static final UUID SUBJECT_ID = TestSubjects.id(7L);
     private static final String TASK_ID = "t-1";
     /** 고정 Clock — invalid 정리에 전달되는 snapshot 시각이 이 값이어야 한다. */
     private static final Clock FIXED_CLOCK =
@@ -77,12 +78,12 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_sendsToAllOwnerFids() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID))
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
         when(pushMessageSender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2")))
                 .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
-        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
+        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
         verify(pushMessageSender).send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
         verify(pushMetrics).record(new PushSendResult(2, 2, 0, List.of()));
@@ -98,9 +99,9 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_noRegistrations_skipsSendEntirely() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID)).thenReturn(List.of());
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID)).thenReturn(List.of());
 
-        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED);
+        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
 
         verify(pushMessageSender, never()).send(any(), any(), anyList());
         verify(pushMetrics, never()).record(any());
@@ -108,12 +109,12 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_removesOnlyInvalidFids_withSendSnapshotGuard() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID))
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2", "fid-3"));
         when(pushMessageSender.send(any(), any(), anyList()))
                 .thenReturn(new PushSendResult(3, 1, 2, List.of("fid-2")));
 
-        notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS);
+        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
         // snapshot(조회 시각)이 함께 전달돼 그 이후 재등록된 같은 FID 행은 삭제되지 않는다.
         verify(pushRegistrationService).removeInvalidRegistrations(List.of("fid-2"), SNAPSHOT_AT);
@@ -121,10 +122,10 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_registrationLookupFailure_isIsolated() {
-        when(pushRegistrationService.findFirebaseInstallationIds(anyLong()))
+        when(pushRegistrationService.findFirebaseInstallationIds(any()))
                 .thenThrow(new RuntimeException("db down"));
 
-        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
+        assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
         verify(pushMessageSender, never()).send(any(), any(), anyList());
         verify(pushMetrics, never()).record(any());
@@ -132,10 +133,10 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_sendFailure_isIsolatedAndSkipsCleanup() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID)).thenReturn(List.of("fid-1"));
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID)).thenReturn(List.of("fid-1"));
         when(pushMessageSender.send(any(), any(), anyList())).thenThrow(new RuntimeException("fcm down"));
 
-        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.FAILED))
+        assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED))
                 .doesNotThrowAnyException();
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
         verify(pushMetrics, never()).record(any());
@@ -143,14 +144,14 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_cleanupFailure_isIsolated() {
-        when(pushRegistrationService.findFirebaseInstallationIds(USER_ID))
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
         when(pushMessageSender.send(any(), any(), anyList()))
                 .thenReturn(new PushSendResult(2, 1, 1, List.of("fid-1")));
         doThrow(new RuntimeException("db down"))
                 .when(pushRegistrationService).removeInvalidRegistrations(anyCollection(), any());
 
-        assertThatCode(() -> notifier().notifyAsync(USER_ID, TASK_ID, TaskStatus.SUCCESS))
+        assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
         verify(pushMetrics).record(new PushSendResult(2, 1, 1, List.of("fid-1")));
         assertThat(logAppender.list)

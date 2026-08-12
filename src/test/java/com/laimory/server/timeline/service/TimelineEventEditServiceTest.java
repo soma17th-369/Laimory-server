@@ -22,6 +22,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +42,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 class TimelineEventEditServiceTest {
 
     private static final String VERSION = "v1";
-    private static final long USER_ID = 7L;
+    private static final java.util.UUID SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(7L);
+    private static final java.util.UUID OTHER_SUBJECT_ID =
+            com.laimory.server.testsupport.TestSubjects.id(999L);
     private static final Long EVENT_ID = 11L;
     private static final Long RECORD_ID = 100L;
     private static final int MAX_PHOTO_COUNT = 2;
@@ -78,7 +82,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_unknownEventPrecedesRequestValidation() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -91,9 +95,9 @@ class TimelineEventEditServiceTest {
     void updateEvent_missingOrForeignRecordIsHiddenBeforeRequestValidation() {
         TimelineEvent event = originalEvent();
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(999L)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -105,12 +109,12 @@ class TimelineEventEditServiceTest {
     @Test
     void updateEvent_savedRecordPrecedesRequestValidation() {
         TimelineEvent event = originalEvent();
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, null))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, null))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1003);
@@ -128,11 +132,11 @@ class TimelineEventEditServiceTest {
                 TimelineEventType.MEAL, "  a  ", "   ", NEW_START, NEW_START,
                 null, false, List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         TimelineEventEditCommand command = commandCaptor.getValue();
         assertThat(command.eventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(command.title()).isEqualTo("a");
@@ -150,11 +154,11 @@ class TimelineEventEditServiceTest {
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, " 앞뒤 공백 메모 ", true, List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().memoPresent()).isTrue();
         assertThat(commandCaptor.getValue().memo()).isEqualTo(" 앞뒤 공백 메모 ");
     }
@@ -167,11 +171,11 @@ class TimelineEventEditServiceTest {
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, memo, true, List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().memoPresent()).isTrue();
         assertThat(commandCaptor.getValue().memo()).isNull();
     }
@@ -182,7 +186,7 @@ class TimelineEventEditServiceTest {
                                                            UpdateTimelineEventRequest request) {
         stubOwnedDraftEvent();
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(transactionService);
@@ -195,7 +199,7 @@ class TimelineEventEditServiceTest {
                 null, "제목", null, NEW_START, null, "m".repeat(501), true,
                 List.of(photo(RAW_ID_1, FILENAME_1, "content://first")));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(transactionService);
@@ -211,7 +215,7 @@ class TimelineEventEditServiceTest {
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, null, false, photos);
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(transactionService);
@@ -225,7 +229,7 @@ class TimelineEventEditServiceTest {
                 null, "제목", null, NEW_START, null, null, false,
                 List.of(samePhoto, samePhoto, samePhoto));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_COUNT_EXCEEDED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1004);
@@ -244,7 +248,7 @@ class TimelineEventEditServiceTest {
                 null, "제목", null, NEW_START, null, null, false,
                 List.of(photo(invalidRawId, FILENAME_1, "content://photo")));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, request))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .satisfies(e -> assertThat(e.getMessage()).doesNotContain(invalidRawId));
 
@@ -261,11 +265,11 @@ class TimelineEventEditServiceTest {
         UpdateTimelineEventRequest request = request(
                 null, titleWithPii, null, NEW_START, null, memoWithPii, true, List.of());
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().title()).isEqualTo(titleWithPii);
         assertThat(commandCaptor.getValue().memo()).isEqualTo(memoWithPii);
     }
@@ -276,7 +280,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         String memoWithPii = "연락처 010-1234-5678 저장";
 
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, memoWithPii);
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, memoWithPii);
 
         assertThat(event.getMemo()).isEqualTo(memoWithPii);
     }
@@ -293,11 +297,11 @@ class TimelineEventEditServiceTest {
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, null, false, List.of(first, duplicate));
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), commandCaptor.capture());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().photosToAdd()).containsExactly(
                 new TimelineEventEditCommand.PhotoToAdd(
                         RAW_ID_1, NEW_START, null, FILENAME_1, "content://first", 37.1, 127.1));
@@ -310,18 +314,18 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = requestWithOnePhoto();
 
-        service.updateEvent(VERSION, USER_ID, EVENT_ID, request);
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
-        verify(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), any());
     }
 
     @Test
     void updateEvent_writerFailurePropagates() {
         stubOwnedDraftEvent();
         IllegalStateException failure = new IllegalStateException("writer failed");
-        doThrow(failure).when(transactionService).updateEvent(eq(USER_ID), eq(EVENT_ID), any());
+        doThrow(failure).when(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), any());
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, USER_ID, EVENT_ID, requestWithOnePhoto()))
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, requestWithOnePhoto()))
                 .isSameAs(failure);
     }
 
@@ -331,7 +335,7 @@ class TimelineEventEditServiceTest {
     void updateMemo_storesRawTextAndDoesNotUsePatchWriter() {
         TimelineEvent event = stubOwnedDraftEvent();
 
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, " 앞뒤 공백 메모 ");
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, " 앞뒤 공백 메모 ");
 
         assertThat(event.getMemo()).isEqualTo(" 앞뒤 공백 메모 ");
         assertThat(event.getTitle()).isEqualTo("원래 제목");
@@ -346,7 +350,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
 
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, memo);
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, memo);
 
         assertThat(event.getMemo()).isNull();
     }
@@ -356,11 +360,11 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
 
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, " ".repeat(501));
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, " ".repeat(501));
         assertThat(event.getMemo()).isNull();
 
         String maximumMemo = "가".repeat(500);
-        service.updateMemo(VERSION, USER_ID, EVENT_ID, maximumMemo);
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, maximumMemo);
         assertThat(event.getMemo()).isEqualTo(maximumMemo);
     }
 
@@ -369,7 +373,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "memo", "기존 메모");
 
-        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(501)))
+        assertThatThrownBy(() -> service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, "a".repeat(501)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
@@ -379,12 +383,12 @@ class TimelineEventEditServiceTest {
     @Test
     void updateMemo_savedRecordRejectionPrecedesMemoValidation() {
         TimelineEvent event = originalEvent();
-        DailyRecord saved = draftRecordOf(USER_ID);
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "a".repeat(501)))
+        assertThatThrownBy(() -> service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, "a".repeat(501)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
 
@@ -395,7 +399,7 @@ class TimelineEventEditServiceTest {
     void updateMemo_hidesUnknownEventAs404() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.updateMemo(VERSION, USER_ID, EVENT_ID, "메모"))
+        assertThatThrownBy(() -> service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, "메모"))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.TIMELINE_EVENT_NOT_FOUND);
                     assertThat(exception.getErrorCode()).isEqualTo(-404);
@@ -407,7 +411,7 @@ class TimelineEventEditServiceTest {
     private TimelineEvent stubOwnedDraftEvent() {
         TimelineEvent event = originalEvent();
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(USER_ID)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
         return event;
     }
 
@@ -418,9 +422,9 @@ class TimelineEventEditServiceTest {
         return event;
     }
 
-    private DailyRecord draftRecordOf(long userId) {
+    private DailyRecord draftRecordOf(java.util.UUID subjectId) {
         DailyRecord record = DailyRecord.createDraft(
-                userId, RECORD_DATE, LocalDateTime.of(2026, 7, 8, 12, 0), "Asia/Seoul");
+                subjectId, RECORD_DATE, LocalDateTime.of(2026, 7, 8, 12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);
         return record;
     }

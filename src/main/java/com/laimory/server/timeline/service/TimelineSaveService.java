@@ -6,6 +6,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.LocalDate;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -42,17 +43,17 @@ public class TimelineSaveService {
      *
      * @throws BusinessException 없음·비소유 404 {@code -404}, 이미 SAVED 409 {@code -1003}
      */
-    public void save(String applicationVersion, long userId, LocalDate recordDate) {
+    public void save(String applicationVersion, UUID subjectId, LocalDate recordDate) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        DailyRecord record = dailyRecordService.findByUserIdAndRecordDate(userId, recordDate)
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
 
         Long dailyRecordId = record.getDailyRecordId();
-        timelineSaveTransactionService.save(userId, dailyRecordId);
-        requestUserMemoryUpdate(userId, dailyRecordId);
+        timelineSaveTransactionService.save(subjectId, dailyRecordId);
+        requestUserMemoryUpdate(subjectId, dailyRecordId);
     }
 
     /**
@@ -66,13 +67,12 @@ public class TimelineSaveService {
      * <p>실패해도 저장 응답을 깨지 않는다 — 그 날치 User Memory 반영만 누락되고 사용자의 저장은 이미
      * 커밋됐다. 누락 빈도를 판단할 수 있도록 식별자와 함께 남긴다.
      */
-    private void requestUserMemoryUpdate(long userId, Long dailyRecordId) {
+    private void requestUserMemoryUpdate(UUID subjectId, Long dailyRecordId) {
         try {
-            userMemoryUpdateWorker.enqueue(new UserMemoryUpdatePending(userId, dailyRecordId));
+            userMemoryUpdateWorker.enqueue(new UserMemoryUpdatePending(subjectId, dailyRecordId));
         } catch (RuntimeException e) {
             // Redis 장애 등으로 큐에 못 넣으면 그 날치 갱신은 누락된다(저장은 이미 완료).
-            log.error("User Memory 갱신 대기 등록 실패(저장은 완료): userId={} dailyRecordId={}",
-                    userId, dailyRecordId, e);
+            log.error("User Memory 갱신 대기 등록 실패(저장은 완료): dailyRecordId={}", dailyRecordId, e);
         }
     }
 }

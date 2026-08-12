@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,8 +19,8 @@ public class TimelineDraftTaskListService {
 
     private final TimelineTaskService timelineTaskService;
 
-    public DraftTaskListResponse list(String applicationVersion, long userId) {
+    public DraftTaskListResponse list(String applicationVersion, UUID subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return new DraftTaskListResponse(timelineTaskService.findProcessingTaskIds(userId));
+        return new DraftTaskListResponse(timelineTaskService.findProcessingTaskIds(subjectId));
     }
 }

@@ -32,8 +32,8 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 version별 동작은 service가 결정한다.
 
 보호 operation 17개(timeline 15 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
-401 응답을 문서화하고, userId principal은 `@Parameter(hidden = true)`라 OpenAPI parameter에 나타나지
-않는다(클라이언트 입력이 아님). 인증 흐름 상세는
+401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject UUID subjectId` parameter로 주입돼 OpenAPI
+parameter에 나타나지 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 `POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
@@ -53,7 +53,7 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`다.
 하루 단건의 날짜 기반 공개 계약은
-`GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(principal userId, recordDate)`가
+`GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(request subjectId, recordDate)`가
 일치하는 DRAFT/SAVED record를 반환한다. 기존
 `GET /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 응답·소유권 계약으로 동작하지만
 Android 전환 동안만 유지하는 deprecated 호환 API다. 없음·비소유는 두 경로 모두 같은 404 `-404`로

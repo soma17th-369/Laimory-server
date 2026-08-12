@@ -142,13 +142,13 @@ public class UserMemoryUpdateWorker {
             log.warn("User Memory 갱신 대기 큐가 조회 상한을 넘었습니다: pendingDays={} scanned={} limit={}",
                     scan.total(), scan.scanned().size(), SCAN_LIMIT);
         }
-        Map<Long, List<UserMemoryUpdatePending>> byUser = scan.scanned().stream()
-                .collect(Collectors.groupingBy(UserMemoryUpdatePending::userId,
+        Map<UUID, List<UserMemoryUpdatePending>> byUser = scan.scanned().stream()
+                .collect(Collectors.groupingBy(UserMemoryUpdatePending::subjectId,
                         LinkedHashMap::new, Collectors.toList()));
         int dispatchedUsers = 0;
         int dispatchedDays = 0;
         int abandonedDays = 0;
-        for (Map.Entry<Long, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
+        for (Map.Entry<UUID, List<UserMemoryUpdatePending>> entry : byUser.entrySet()) {
             // 상한은 여기서 안 자른다 — 어느 날을 실을지는 record_date를 아는 dispatch가 고른다.
             List<UserMemoryUpdatePending> pendingOfUser = entry.getValue();
             try {
@@ -160,8 +160,7 @@ public class UserMemoryUpdateWorker {
                 }
             } catch (RuntimeException e) {
                 // 한 사용자의 실패가 나머지 드레인을 막지 않는다.
-                log.error("User Memory 갱신 접수 실패: userId={} pendingDays={}",
-                        entry.getKey(), pendingOfUser.size(), e);
+                log.error("User Memory 갱신 접수 실패: pendingDays={}", pendingOfUser.size(), e);
             }
         }
         // pendingDays가 곧 큐 적체다. deferredDays가 계속 남으면 하루 1회 주기가 부족하다는 신호다.
@@ -179,25 +178,25 @@ public class UserMemoryUpdateWorker {
      *
      * @param pending 그 사용자의 미반영 날 전부. 상한을 적용해 실을 날을 고르는 것은 {@link #dispatch}다
      */
-    private Outcome process(long userId, List<UserMemoryUpdatePending> pending) {
+    private Outcome process(UUID subjectId, List<UserMemoryUpdatePending> pending) {
         String taskId = UUID.randomUUID().toString();
-        if (!taskStore.acquireGuard(userId, taskId, TASK_TTL)) {
+        if (!taskStore.acquireGuard(subjectId, taskId, TASK_TTL)) {
             return Outcome.of(Status.GUARD_BUSY);
         }
 
         try {
-            return dispatch(userId, pending, taskId);
+            return dispatch(subjectId, pending, taskId);
         } catch (TimelineAiDispatchRejectedException e) {
             // 4xx = 미접수 확정. 결과가 올 일이 없으므로 task를 남기지 않는다 — 다만 날은 큐에 남긴다.
             // guard는 TTL에 맡긴다(같은 실행에서 다시 보내 봐야 같은 payload라 또 4xx다).
             taskStore.delete(taskId);
-            log.error("User Memory 갱신 접수 거절: userId={} pendingDays={} taskId={}",
-                    userId, pending.size(), taskId, e);
+            log.error("User Memory 갱신 접수 거절: pendingDays={} taskId={}",
+                    pending.size(), taskId, e);
             return Outcome.of(Status.REJECTED);
         } catch (RuntimeException e) {
             // AI가 이미 받았을 수 있으므로 task와 guard를 남긴다(결과가 오면 정상 종결된다).
-            log.error("User Memory 갱신 접수 결과 불명: userId={} pendingDays={} taskId={}",
-                    userId, pending.size(), taskId, e);
+            log.error("User Memory 갱신 접수 결과 불명: pendingDays={} taskId={}",
+                    pending.size(), taskId, e);
             return Outcome.of(Status.UNKNOWN);
         }
     }
@@ -211,10 +210,10 @@ public class UserMemoryUpdateWorker {
      * 생긴다 — 요청 안에서만 정렬해서는 실행을 넘나드는 순서가 안 잡힌다. 그래서 record_date 오름차순
      * 조회 결과에서 앞의 {@link #MAX_DAILY_TIMELINES}일을 고른다.
      */
-    private Outcome dispatch(long userId, List<UserMemoryUpdatePending> pending, String taskId) {
+    private Outcome dispatch(UUID subjectId, List<UserMemoryUpdatePending> pending, String taskId) {
         List<Long> pendingIds = pending.stream().map(UserMemoryUpdatePending::dailyRecordId).toList();
         // record_date 오름차순 한 번의 질의. 삭제된 하루는 결과에서 빠지므로 차집합이 곧 사라진 날이다.
-        List<DailyRecord> found = dailyRecordService.findAllByUserIdAndIdsOrderByRecordDate(userId, pendingIds);
+        List<DailyRecord> found = dailyRecordService.findAllBySubjectIdAndIdsOrderByRecordDate(subjectId, pendingIds);
 
         Set<Long> foundIds = found.stream().map(DailyRecord::getDailyRecordId).collect(Collectors.toSet());
         List<Long> missing = pendingIds.stream().filter(id -> !foundIds.contains(id)).toList();
@@ -222,8 +221,8 @@ public class UserMemoryUpdateWorker {
             // 저장 후 사용자가 하루 기록을 지웠다 — 갱신할 재료가 없으니 다시 시도할 이유도 없다.
             // 남겨 두면 큐를 빠져나갈 길이 없어 retention까지 매 실행 사용자당 상한을 갉아먹는다.
             // 일부만 사라진 경우도 같다 — 접수 body에서 빠지는 순간 결과 endpoint가 지울 근거를 잃는다.
-            pendingStore.removeAll(userId, missing);
-            log.info("User Memory 갱신 재료 없음(큐에서 제거): userId={} days={}", userId, missing.size());
+            pendingStore.removeAll(subjectId, missing);
+            log.info("User Memory 갱신 재료 없음(큐에서 제거): days={}", missing.size());
         }
         if (found.isEmpty()) {
             // task는 아직 저장 전이고, guard는 TTL이 반납한다(그 사용자에게 이번 실행에 할 일이 없다).
@@ -233,7 +232,7 @@ public class UserMemoryUpdateWorker {
         List<DailyRecord> records = found.stream().limit(MAX_DAILY_TIMELINES).toList();
 
         String taskToken = TaskTokens.generate();
-        var baseMemory = userMemoryService.find(userId);
+        var baseMemory = userMemoryService.find(subjectId);
         // AI body에 실리는 base 문서·Event text만 치환한다. baseMemoryHash는 반드시 DB 원본으로 계산해야
         // 결과 endpoint의 지문 대조가 유지된다(§2.5). redacted DTO를 task 저장 전에 완성하므로 redaction
         // 실패는 task 저장·dispatch 없이 전파돼 pending이 그대로 남는다(원문 fallback 금지).
@@ -241,12 +240,12 @@ public class UserMemoryUpdateWorker {
                 baseMemory.map(memory -> privacyRedactor.redactTree(memory).node()).orElse(null),
                 records.stream().map(this::toDailyTimeline).toList());
         // 접수 시각은 여기서 찍는다 — 배치 진입 시각을 쓰면 밀린 시간까지 AI 소요로 집계된다.
-        taskStore.save(taskId, new UserMemoryUpdateTask(userId,
+        taskStore.save(taskId, new UserMemoryUpdateTask(subjectId,
                 records.stream().map(DailyRecord::getDailyRecordId).toList(),
                 TaskTokens.hash(taskToken), clock.instant(), UserMemoryDigest.of(baseMemory)), TASK_TTL);
 
         dispatcher.dispatch(redactedRequest);
-        log.info("User Memory 갱신 접수 요청: userId={} days={} taskId={}", userId, records.size(), taskId);
+        log.info("User Memory 갱신 접수 요청: days={} taskId={}", records.size(), taskId);
         return new Outcome(Status.ACCEPTED, records.size(), missing.size());
     }
 

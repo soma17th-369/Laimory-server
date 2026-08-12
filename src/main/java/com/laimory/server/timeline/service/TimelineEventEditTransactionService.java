@@ -19,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -41,10 +42,10 @@ public class TimelineEventEditTransactionService {
 
     /** 소유권·DRAFT를 재확인하고 Event 필드와 수동 PHOTO graph를 원자적으로 반영한다. */
     @Transactional
-    public void updateEvent(long userId, Long timelineEventId, TimelineEventEditCommand command) {
+    public void updateEvent(UUID subjectId, Long timelineEventId, TimelineEventEditCommand command) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        DailyRecord record = requireOwnedDraftRecord(userId, event.getDailyRecordId());
+        DailyRecord record = requireOwnedDraftRecord(subjectId, event.getDailyRecordId());
 
         PhotoChanges photoChanges = resolvePhotoChanges(record, timelineEventId, command.photosToAdd());
 
@@ -62,7 +63,7 @@ public class TimelineEventEditTransactionService {
         for (TimelineEventEditCommand.PhotoToAdd photo : photoChanges.newPhotos()) {
             PhotoPayload payload = new PhotoPayload(
                     photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
-                    null, photoUrlService.buildUrl(photo.filename(), userId));
+                    null, photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
             TimelineItem item = timelineItemService.save(TimelineItem.of(
                     ItemType.PHOTO, photo.rawId(), photo.startAt(), photo.endAt(),
                     objectMapper.valueToTree(payload)));
@@ -135,9 +136,9 @@ public class TimelineEventEditTransactionService {
         return new PhotoChanges(existingItemIdsToLink, newPhotos);
     }
 
-    private DailyRecord requireOwnedDraftRecord(long userId, Long dailyRecordId) {
+    private DailyRecord requireOwnedDraftRecord(UUID subjectId, Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
-                .filter(owned -> owned.getUserId() == userId)
+                .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);

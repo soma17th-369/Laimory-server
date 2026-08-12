@@ -20,7 +20,8 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 - `/a/api/{version}`은 사용자가 `Authorization: Bearer <access-token>`으로 접근하는 인증 영역이다.
   유효한 자체 access JWT 없이는 401 `-2001` envelope로 거절된다(`WWW-Authenticate: Bearer`).
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
-- 인증된 principal(`Long` userId)이 controller `@AuthenticationPrincipal`로 주입돼 service까지 전달된다.
+- 인증 principal은 `Long` userId다. timeline/push controller의 콘텐츠 owner parameter는
+  `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로 변환해 주입한다.
 
 ## Current Implementation
 
@@ -71,22 +72,22 @@ OAuth/OIDC 핸드셰이크 실패, 성공 handler의 handoff context 누락과 �
 로그인 완료 예외 ERROR+stacktrace 진단 로그는 서로 독립적으로 유지한다. 정상 성공은 `app_code`
 handoff를 그대로 사용한다.
 
-## userId Propagation
+## Principal and Subject Propagation
 
-- 13개 timeline 보호 API(`draft 생성/photo presign/polling/진행 작업 목록` + `DailyRecord 전체/날짜 단건/
-  deprecated ID 단건 조회` + `Event 조회/수정/메모/삭제` + `DailyRecord 날짜/deprecated ID 삭제`)의
-  controller가 principal userId를 service 체인에 전달한다 — draft/record/staging/S3 key/
-  polling·직접 조회 결과가 전부 같은 userId에 귀속된다.
-- Redis draft task는 owner(`userId`)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
+- timeline/push 보호 API의 `@CurrentSubject` MVC resolver는 SecurityContext의 raw `Long` principal을
+  `SubjectMappingService.getRequired`로 매 요청 한 번 해석한다. mapping 누락·서비스 부재는 자동 생성
+  없이 fail-closed하고, controller부터 service/repository까지 Java `UUID`만 전달한다.
+- Redis draft task는 owner(UUIDv4 subject)를 세 상태(PROCESSING/SUCCESS/FAILED) 모두 보존한다.
   polling은 상태 분기 전에 owner를 대조하고 타 사용자 task는 404 `-1001`로 은닉한다.
-- 진행 작업 목록은 principal userId로만 사용자별 index key를 조립하고(client 제공 userId 없음), 후보
+- 진행 작업 목록은 request subjectId의 canonical UUID 문자열로 subject index key를 조립하고(client 제공
+  식별자 없음), 후보
   task JSON의 owner를 재검증한다 — 타 사용자 task는 오류 없이 제외해 존재까지 비노출한다.
 - AI callback(`/s/api`)은 Bearer 대상이 아니다 — request principal 없이 task 저장 owner로
-  Redis terminal 전이를 수행한다.
+  Redis terminal 전이와 subject 기반 FID 조회를 수행한다.
 - 고정 fallback(`TimelineDefaults.DEFAULT_USER_ID=0`)은 제거됐다. 기존 user 0 데이터는 인증 API에서
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
-- 콘텐츠 subject(`SubjectId`, `user_subject_links` — #282)는 principal이 아니다. 인증·전파 대상은
-  raw `Long` userId 그대로이며, 콘텐츠 owner·PHOTO 호출 경로의 subject 전환은 후속(#283~)이다.
+- 콘텐츠 subject는 JWT principal이 아니다. 인증 filter와 access/refresh 도메인은 raw `Long` userId를
+  유지하고, 콘텐츠 API의 MVC 경계 뒤에서만 UUID subjectId를 사용한다.
 
 ## Invariants
 
@@ -94,10 +95,11 @@ handoff를 그대로 사용한다.
 - access token에 PII를 넣거나 raw refresh/App Code를 저장하지 않는다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
-- principal은 별도 래퍼 없는 `Long` userId다 — `@AuthenticationPrincipal(errorOnInvalidType = true) Long`과
-  1:1이어야 한다(String principal을 만드는 테스트 헬퍼 `user()` 사용 금지, `AuthTestSupport` 사용).
+- SecurityContext principal은 별도 래퍼 없는 `Long` userId다. 콘텐츠 controller는 이를 직접 parameter로
+  받지 않고 `@CurrentSubject UUID subjectId`를 받는다(String principal을 만드는 테스트 헬퍼 `user()` 사용 금지,
+  `AuthTestSupport` 사용).
 - access JWT의 `sub` claim은 raw userId다 — 콘텐츠 subject를 token·principal에 넣지 않으며,
-  #282는 인증 계약과 인증 도메인 스키마(users·refresh_tokens)를 바꾸지 않는다.
+  subject 전환은 인증 계약과 인증 도메인 스키마(users·refresh_tokens)를 바꾸지 않는다.
 
 ## Update When
 

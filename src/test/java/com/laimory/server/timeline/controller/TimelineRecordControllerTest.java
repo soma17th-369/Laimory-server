@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.controller;
 
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
+import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -39,10 +40,13 @@ import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
 import com.laimory.server.timeline.service.TimelineEventEditService;
 import com.laimory.server.timeline.service.TimelineSaveService;
+import com.laimory.server.user.SubjectMappingService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -62,6 +66,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class TimelineRecordControllerTest {
 
     private static final long USER_ID = 7L;
+    private static final UUID SUBJECT_ID = id(USER_ID);
     private static final LocalDate RECORD_DATE = LocalDate.parse("2026-07-08");
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
@@ -97,6 +102,13 @@ class TimelineRecordControllerTest {
 
     @MockitoBean
     private TimelineSaveService timelineSaveService;
+    @MockitoBean
+    private SubjectMappingService subjectMappingService;
+
+    @BeforeEach
+    void resolveSubject() {
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+    }
 
     private TimelineEventResponse updatedEvent() {
         TimelineItemResponse item = new TimelineItemResponse(
@@ -119,7 +131,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void getDailyTimelines_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
-        when(dailyTimelineService.getDailyTimelines(any(), anyLong()))
+        when(dailyTimelineService.getDailyTimelines(any(), any()))
                 .thenReturn(new DailyTimelinesResponse(List.of(dailyTimeline())));
 
         mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
@@ -141,12 +153,12 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].payload.photoUrl")
                         .value("https://cdn.example/u.jpg"));
 
-        verify(dailyTimelineService).getDailyTimelines("v1", USER_ID);
+        verify(dailyTimelineService).getDailyTimelines("v1", SUBJECT_ID);
     }
 
     @Test
     void getDailyTimelines_returnsEmptyArrayWhenUserHasNoRecords() throws Exception {
-        when(dailyTimelineService.getDailyTimelines(any(), anyLong()))
+        when(dailyTimelineService.getDailyTimelines(any(), any()))
                 .thenReturn(new DailyTimelinesResponse(List.of()));
 
         mockMvc.perform(get(DAILY_RECORDS_PATH).with(authenticatedUser(USER_ID)))
@@ -158,7 +170,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void getDailyTimelineById_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
-        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
+        when(dailyTimelineService.getDailyTimeline(any(), any(), anyLong()))
                 .thenReturn(dailyTimeline());
 
         mockMvc.perform(get(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
@@ -171,12 +183,12 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.events[0].items[0].itemType").value("PHOTO"))
                 .andExpect(jsonPath("$.body.events[0].items[0].payload.filename").value("u.jpg"));
 
-        verify(dailyTimelineService).getDailyTimeline("v1", USER_ID, 77L);
+        verify(dailyTimelineService).getDailyTimeline("v1", SUBJECT_ID, 77L);
     }
 
     @Test
     void getDailyTimelineById_mapsNotFoundTo404() throws Exception {
-        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), anyLong()))
+        when(dailyTimelineService.getDailyTimeline(any(), any(), anyLong()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
 
         mockMvc.perform(get(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
@@ -187,7 +199,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void getDailyTimelineByDate_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
-        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), any(LocalDate.class)))
+        when(dailyTimelineService.getDailyTimeline(any(), any(), any(LocalDate.class)))
                 .thenReturn(dailyTimeline());
 
         mockMvc.perform(get(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
@@ -199,12 +211,12 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.events[0].timelineEventId").value(11))
                 .andExpect(jsonPath("$.body.events[0].items[0].timelineItemId").value(21));
 
-        verify(dailyTimelineService).getDailyTimeline("v1", USER_ID, RECORD_DATE);
+        verify(dailyTimelineService).getDailyTimeline("v1", SUBJECT_ID, RECORD_DATE);
     }
 
     @Test
     void getDailyTimelineByDate_mapsNotFoundTo404() throws Exception {
-        when(dailyTimelineService.getDailyTimeline(any(), anyLong(), any(LocalDate.class)))
+        when(dailyTimelineService.getDailyTimeline(any(), any(), any(LocalDate.class)))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
 
         mockMvc.perform(get(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
@@ -225,7 +237,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void getTimelineEvent_returns200WithNestedItemsAndPassesPrincipal() throws Exception {
-        when(dailyTimelineService.getTimelineEvent(any(), anyLong(), anyLong()))
+        when(dailyTimelineService.getTimelineEvent(any(), any(), anyLong()))
                 .thenReturn(updatedEvent());
 
         mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
@@ -238,12 +250,12 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
                 .andExpect(jsonPath("$.body.items[0].payload.filename").value("u.jpg"));
 
-        verify(dailyTimelineService).getTimelineEvent("v1", USER_ID, 11L);
+        verify(dailyTimelineService).getTimelineEvent("v1", SUBJECT_ID, 11L);
     }
 
     @Test
     void getTimelineEvent_mapsNotFoundTo404() throws Exception {
-        when(dailyTimelineService.getTimelineEvent(any(), anyLong(), anyLong()))
+        when(dailyTimelineService.getTimelineEvent(any(), any(), anyLong()))
                 .thenThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
 
         mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
@@ -281,7 +293,7 @@ class TimelineRecordControllerTest {
 
         // 구버전 4키 요청은 그대로 호환한다. optional 키 누락은 eventType/memo 유지와 PHOTO no-op으로 전달된다.
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         assertThat(request.getValue().title()).isEqualTo("카페에서 휴식");
         assertThat(request.getValue().subtitle()).isEqualTo("성수동");
         assertThat(request.getValue().startAt()).isEqualTo(LocalDateTime.parse("2026-07-08T14:00:00"));
@@ -323,7 +335,7 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value(0));
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         assertThat(request.getValue().subtitle()).isNull();
         assertThat(request.getValue().endAt()).isNull();
     }
@@ -337,7 +349,7 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value(0));
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         assertThat(request.getValue().eventType()).isEqualTo(TimelineEventType.MEAL);
     }
 
@@ -376,7 +388,7 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk());
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         assertThat(request.getValue().memoPresent()).isTrue();
         assertThat(request.getValue().memo()).isNull();
     }
@@ -413,7 +425,7 @@ class TimelineRecordControllerTest {
                 .andExpect(status().isOk());
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
-        verify(timelineEventEditService).updateEvent(eq("v1"), eq(USER_ID), eq(11L), request.capture());
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         UpdateTimelineEventRequest parsed = request.getValue();
         assertThat(parsed.memoPresent()).isTrue();
         assertThat(parsed.memo()).isEqualTo("사진을 정리했다.");
@@ -449,7 +461,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("title is required"))
-                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isBadRequest())
@@ -460,7 +472,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
-                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isNotFound())
@@ -470,7 +482,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_mapsSavedConflictTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
                 .andExpect(status().isConflict())
@@ -480,7 +492,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
         doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20))
-                .when(timelineEventEditService).updateEvent(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
@@ -500,7 +512,7 @@ class TimelineRecordControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // memo는 컨트롤러에서 trim 없이 그대로 서비스에 전달된다(제거/보존 판정은 서비스 책임).
-        verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), eq(" 원문 보존 메모 "));
+        verify(timelineEventEditService).updateMemo(eq("v1"), eq(SUBJECT_ID), eq(11L), eq(" 원문 보존 메모 "));
     }
 
     @Test
@@ -511,13 +523,13 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineEventEditService).updateMemo(eq("v1"), eq(USER_ID), eq(11L), isNull());
+        verify(timelineEventEditService).updateMemo(eq("v1"), eq(SUBJECT_ID), eq(11L), isNull());
     }
 
     @Test
     void updateTimelineEventMemo_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("memo is too long: length=501"))
-                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateMemo(any(), any(), any(), any());
 
         String body = """
                 {"memo": "x"}
@@ -531,7 +543,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEventMemo_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
-                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateMemo(any(), any(), any(), any());
 
         String body = """
                 {"memo": "m"}
@@ -544,7 +556,7 @@ class TimelineRecordControllerTest {
     @Test
     void updateTimelineEventMemo_mapsSavedConflictTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineEventEditService).updateMemo(any(), anyLong(), any(), any());
+                .when(timelineEventEditService).updateMemo(any(), any(), any(), any());
 
         String body = """
                 {"memo": "m"}
@@ -565,13 +577,13 @@ class TimelineRecordControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이다.
-        verify(timelineDeletionService).deleteEvent(eq("v1"), eq(USER_ID), eq(11L));
+        verify(timelineDeletionService).deleteEvent(eq("v1"), eq(SUBJECT_ID), eq(11L));
     }
 
     @Test
     void deleteTimelineEvent_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
-                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+                .when(timelineDeletionService).deleteEvent(any(), any(), any());
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
@@ -581,7 +593,7 @@ class TimelineRecordControllerTest {
     @Test
     void deleteTimelineEvent_mapsSavedConflictTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+                .when(timelineDeletionService).deleteEvent(any(), any(), any());
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
@@ -591,7 +603,7 @@ class TimelineRecordControllerTest {
     @Test
     void deleteTimelineEvent_mapsUnexpectedTransactionFailureTo500() throws Exception {
         doThrow(new RuntimeException("db down"))
-                .when(timelineDeletionService).deleteEvent(any(), anyLong(), any());
+                .when(timelineDeletionService).deleteEvent(any(), any(), any());
 
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isInternalServerError())
@@ -609,13 +621,13 @@ class TimelineRecordControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이다.
-        verify(timelineDeletionService).detachEventItem(eq("v1"), eq(USER_ID), eq(11L), eq(21L));
+        verify(timelineDeletionService).detachEventItem(eq("v1"), eq(SUBJECT_ID), eq(11L), eq(21L));
     }
 
     @Test
     void detachTimelineEventItem_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND))
-                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+                .when(timelineDeletionService).detachEventItem(any(), any(), any(), any());
 
         mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
@@ -625,7 +637,7 @@ class TimelineRecordControllerTest {
     @Test
     void detachTimelineEventItem_mapsNonPhotoRejectionTo400() throws Exception {
         doThrow(new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_PHOTO))
-                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+                .when(timelineDeletionService).detachEventItem(any(), any(), any(), any());
 
         mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadRequest())
@@ -635,7 +647,7 @@ class TimelineRecordControllerTest {
     @Test
     void detachTimelineEventItem_mapsSavedConflictTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).detachEventItem(any(), anyLong(), any(), any());
+                .when(timelineDeletionService).detachEventItem(any(), any(), any(), any());
 
         mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
@@ -652,13 +664,13 @@ class TimelineRecordControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(USER_ID), eq(77L));
+        verify(timelineDeletionService).deleteDailyRecord(eq("v1"), eq(SUBJECT_ID), eq(77L));
     }
 
     @Test
     void deleteDailyRecordById_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
-                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
+                .when(timelineDeletionService).deleteDailyRecord(any(), any(), any());
 
         mockMvc.perform(delete(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
@@ -668,7 +680,7 @@ class TimelineRecordControllerTest {
     @Test
     void deleteDailyRecordById_mapsUnexpectedTransactionFailureTo500() throws Exception {
         doThrow(new RuntimeException("db down"))
-                .when(timelineDeletionService).deleteDailyRecord(any(), anyLong(), any());
+                .when(timelineDeletionService).deleteDailyRecord(any(), any(), any());
 
         mockMvc.perform(delete(DAILY_RECORD_ID_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isInternalServerError())
@@ -683,13 +695,13 @@ class TimelineRecordControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineDeletionService).deleteDailyRecordByDate("v1", USER_ID, RECORD_DATE);
+        verify(timelineDeletionService).deleteDailyRecordByDate("v1", SUBJECT_ID, RECORD_DATE);
     }
 
     @Test
     void deleteDailyRecordByDate_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
-                .when(timelineDeletionService).deleteDailyRecordByDate(any(), anyLong(), any(LocalDate.class));
+                .when(timelineDeletionService).deleteDailyRecordByDate(any(), any(), any(LocalDate.class));
 
         mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
@@ -699,7 +711,7 @@ class TimelineRecordControllerTest {
     @Test
     void deleteDailyRecordByDate_mapsSavedConflictTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).deleteDailyRecordByDate(any(), anyLong(), any(LocalDate.class));
+                .when(timelineDeletionService).deleteDailyRecordByDate(any(), any(), any(LocalDate.class));
 
         mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())
@@ -734,13 +746,13 @@ class TimelineRecordControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineSaveService).save("v1", USER_ID, RECORD_DATE);
+        verify(timelineSaveService).save("v1", SUBJECT_ID, RECORD_DATE);
     }
 
     @Test
     void saveDailyRecord_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
-                .when(timelineSaveService).save(any(), anyLong(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
 
         mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
@@ -750,7 +762,7 @@ class TimelineRecordControllerTest {
     @Test
     void saveDailyRecord_mapsAlreadySavedTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineSaveService).save(any(), anyLong(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
 
         mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isConflict())

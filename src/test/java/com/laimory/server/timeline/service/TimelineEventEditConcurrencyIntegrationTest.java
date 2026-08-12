@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
+import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -13,12 +15,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -50,14 +54,19 @@ class TimelineEventEditConcurrencyIntegrationTest {
     private TimelineEventRepository timelineEventRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    private static final UUID SUBJECT_ID = id(14L);
 
     private Long eventId;
 
     @BeforeEach
     void setUp() {
         deleteFixtureRecord();
+        ensureExists(jdbcTemplate, SUBJECT_ID);
         DailyRecord record = dailyRecordRepository.save(
-                DailyRecord.createDraft(0L, DATE, DATE.atTime(12, 0), ZONE));
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(12, 0), ZONE));
         eventId = timelineEventRepository.save(
                         TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "원래 제목", "원래 부제", null))
                 .getTimelineEventId();
@@ -66,10 +75,11 @@ class TimelineEventEditConcurrencyIntegrationTest {
     @AfterEach
     void cleanUp() {
         deleteFixtureRecord();
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 
     private void deleteFixtureRecord() {
-        dailyRecordService.findByUserIdAndRecordDate(0L, DATE)
+        dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())); // FK cascade로 이벤트도 삭제
     }
 

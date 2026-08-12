@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -51,34 +53,38 @@ class TimelineDraftPreparationIntegrationTest {
     private DailyRecordRepository dailyRecordRepository;
     @Autowired
     private TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private long userId;
+    private UUID subjectId;
     private String taskId;
 
     @BeforeEach
     void setUp() {
-        userId = Math.abs(UUID.randomUUID().getLeastSignificantBits() % 1_000_000_000L);
+        subjectId = UUID.randomUUID();
+        ensureExists(jdbcTemplate, subjectId);
         taskId = UUID.randomUUID().toString();
     }
 
     @AfterEach
     void cleanUp() {
         timelineDraftSourceItemRepository.deleteByTaskId(taskId);
-        dailyRecordRepository.findByUserIdAndRecordDate(userId, DATE)
+        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
     @Test
     void savedRecordRecheck_rollsBackMetadataUpdate_andKeepsSourcesEmpty() {
         // AI final write가 SAVED로 만든 record를 재현한다(서버 경로에는 SAVED 전이가 없어 reflection으로 구성).
-        DailyRecord saved = DailyRecord.createDraft(userId, DATE, ORIGINAL_AT, ORIGINAL_ZONE);
+        DailyRecord saved = DailyRecord.createDraft(subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         long recordId = dailyRecordRepository.save(saved).getDailyRecordId();
 
         assertThatThrownBy(() -> timelineDraftPreparationService.prepareDraft(
-                userId, DATE, DATE.atTime(23, 59), "UTC", List.of(sourceRow("raw-1"))))
+                subjectId, DATE, DATE.atTime(23, 59), "UTC", List.of(sourceRow("raw-1"))))
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
                         assertThat(exception.getExceptionType())
                                 .isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
@@ -99,7 +105,7 @@ class TimelineDraftPreparationIntegrationTest {
         List<TimelineDraftSourceItem> rows = rawIds.stream().map(this::sourceRow).toList();
 
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
-                userId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, rows);
+                subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, rows);
 
         assertThat(dailyRecordId).isPositive();
         List<TimelineDraftSourceItem> saved = timelineDraftSourceItemRepository.findByTaskId(taskId);
@@ -108,7 +114,7 @@ class TimelineDraftPreparationIntegrationTest {
                 .containsExactlyElementsOf(rawIds);
         assertThat(saved).extracting(TimelineDraftSourceItem::getTimelineDraftSourceItemId).isSorted();
         assertThat(saved).allSatisfy(row -> {
-            assertThat(row.getUserId()).isEqualTo(userId);
+            assertThat(row.getSubjectId()).isEqualTo(subjectId);
             assertThat(row.getItemType()).isEqualTo(ItemType.CALENDAR);
             assertThat(row.getStartAt()).isEqualTo(DATE.atTime(9, 0));
             assertThat(row.getEndAt()).isNull();
@@ -124,16 +130,16 @@ class TimelineDraftPreparationIntegrationTest {
         // (task_id, raw_id) unique 위반이 source 저장 중간에 터지면 신규 record와 먼저 INSERT된 source까지
         // 전부 원복돼야 한다(부분 저장 금지).
         assertThatThrownBy(() -> timelineDraftPreparationService.prepareDraft(
-                userId, DATE, ORIGINAL_AT, ORIGINAL_ZONE,
+                subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE,
                 List.of(sourceRow("raw-dup"), sourceRow("raw-dup"))))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(dailyRecordRepository.findByUserIdAndRecordDate(userId, DATE)).isEmpty();
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)).isEmpty();
         assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
     }
 
     private TimelineDraftSourceItem sourceRow(String rawId) {
-        return TimelineDraftSourceItem.of(taskId, userId, ItemType.CALENDAR, rawId,
+        return TimelineDraftSourceItem.of(taskId, subjectId, ItemType.CALENDAR, rawId,
                 DATE.atTime(9, 0), null,
                 objectMapper.valueToTree(new CalendarPayload("회의", null, null, null)));
     }

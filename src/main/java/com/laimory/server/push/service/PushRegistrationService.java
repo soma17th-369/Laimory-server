@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -22,21 +23,21 @@ public class PushRegistrationService {
     private final Clock clock;
 
     /** 등록·갱신·계정 전환(원자 재결합). 같은 사용자·FID 재등록은 멱등 성공이며 freshness만 갱신된다. */
-    public void register(String applicationVersion, long userId, String firebaseInstallationId) {
+    public void register(String applicationVersion, UUID subjectId, String firebaseInstallationId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         validate(firebaseInstallationId);
-        pushRegistrationRepository.upsert(userId, firebaseInstallationId, LocalDateTime.now(clock));
+        pushRegistrationRepository.upsert(subjectId.toString(), firebaseInstallationId, LocalDateTime.now(clock));
     }
 
     /** owner 조건 해제 — 미존재 등록도 성공(멱등). 계정 전환으로 재결합된 등록은 이전 사용자가 못 지운다. */
-    public void unregister(String applicationVersion, long userId, String firebaseInstallationId) {
+    public void unregister(String applicationVersion, UUID subjectId, String firebaseInstallationId) {
         validate(firebaseInstallationId);
-        pushRegistrationRepository.deleteByUserIdAndFirebaseInstallationId(userId, firebaseInstallationId);
+        pushRegistrationRepository.deleteBySubjectIdAndFirebaseInstallationId(subjectId, firebaseInstallationId);
     }
 
     /** 사용자의 활성 설치 전체 FID(발송 대상). */
-    public List<String> findFirebaseInstallationIds(long userId) {
-        return pushRegistrationRepository.findAllFirebaseInstallationIdsByUserId(userId);
+    public List<String> findFirebaseInstallationIds(UUID subjectId) {
+        return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
     }
 
     /**

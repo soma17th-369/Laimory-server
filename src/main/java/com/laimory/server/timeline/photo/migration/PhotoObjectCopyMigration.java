@@ -1,12 +1,12 @@
 package com.laimory.server.timeline.photo.migration;
 
-import com.laimory.server.common.id.SubjectId;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.UserRepository;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -65,7 +65,7 @@ class PhotoObjectCopyMigration {
         long objectsCopied = 0;
         long objectsAlreadyPresent = 0;
         for (Long userId : userIds) {
-            SubjectId subjectId = subjectMappingService.getRequired(userId);
+            UUID subjectId = subjectMappingService.getRequired(userId);
             String sourcePrefix = PhotoObjectKeys.sha256hex(userId) + "/photos/";
             String targetPrefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
 

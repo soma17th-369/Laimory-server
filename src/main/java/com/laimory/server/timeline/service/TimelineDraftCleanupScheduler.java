@@ -107,6 +107,6 @@ public class TimelineDraftCleanupScheduler {
             log.warn("PHOTO payload filename 없음, S3 삭제 건너뜀: id={}", row.getTimelineDraftSourceItemId());
             return;
         }
-        s3PhotoStorageService.delete(PhotoObjectKeys.fullKey(photo.filename(), row.getUserId()));
+        s3PhotoStorageService.delete(PhotoObjectKeys.subjectFullKey(photo.filename(), row.getSubjectId()));
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -21,22 +22,22 @@ public class UserMemoryService {
     private final Clock clock;
 
     /** 사용자의 User Memory 문서. 행이 없으면(=아직 메모리 없음) 빈 Optional이다. */
-    public Optional<JsonNode> find(long userId) {
-        return userMemoryRepository.findById(userId).map(UserMemory::getMemory);
+    public Optional<JsonNode> find(UUID subjectId) {
+        return userMemoryRepository.findById(subjectId).map(UserMemory::getMemory);
     }
 
     /**
      * 문서를 통째로 교체한다. {@code null}과 JSON {@code null}은 "메모리 없음"으로 보고 행을 지운다 —
      * 의미 없는 행을 남기지 않기 위한 결정이며, 그 외 모든 JSON(객체·배열·스칼라)은 그대로 저장한다.
      *
-     * <p>사용자 존재 여부는 확인하지 않는다. {@code user_id}는 FK 없는 soft-owner이고 호출자는 이미
-     * 인증된 principal userId를 갖고 있다.
+     * <p>사용자 존재 여부는 확인하지 않는다. {@code subject_id}는
+     * {@code user_subject_links.subject_id}를 참조하며 호출자가 인증 경계에서 해석한 subject만 넘긴다.
      */
-    public void replace(long userId, JsonNode memory) {
+    public void replace(UUID subjectId, JsonNode memory) {
         if (memory == null || memory.isNull()) {
-            userMemoryRepository.deleteByUserId(userId);
+            userMemoryRepository.deleteBySubjectId(subjectId.toString());
             return;
         }
-        userMemoryRepository.upsert(userId, memory.toString(), LocalDateTime.now(clock));
+        userMemoryRepository.upsert(subjectId.toString(), memory.toString(), LocalDateTime.now(clock));
     }
 }

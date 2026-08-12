@@ -3,8 +3,6 @@ package com.laimory.server.timeline.photo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.laimory.server.common.id.SubjectId;
-import java.nio.ByteBuffer;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -22,12 +20,8 @@ class PhotoObjectKeysTest {
     private static final String SHA256_OF_UUID_STRING =
             "16362f566387b3cf5a6e92fb0a986c76ca20eb3a0c12cbdfbd0b29501e0c18df";
 
-    private static SubjectId subjectIdOf(String uuidLiteral) {
-        UUID uuid = UUID.fromString(uuidLiteral);
-        return SubjectId.fromBytes(ByteBuffer.allocate(16)
-                .putLong(uuid.getMostSignificantBits())
-                .putLong(uuid.getLeastSignificantBits())
-                .array());
+    private static UUID subjectIdOf(String uuidLiteral) {
+        return UUID.fromString(uuidLiteral);
     }
 
     @Test
@@ -99,8 +93,8 @@ class PhotoObjectKeysTest {
 
     @Test
     void subjectNamespace_stableForSameSubjectAndDiffersAcrossSubjects() {
-        SubjectId subject = subjectIdOf(SUBJECT_UUID);
-        SubjectId other = subjectIdOf("9b2e8f1a-6c3d-4b7e-8f1a-2c3d4e5f6a7b");
+        UUID subject = subjectIdOf(SUBJECT_UUID);
+        UUID other = subjectIdOf("9b2e8f1a-6c3d-4b7e-8f1a-2c3d4e5f6a7b");
 
         assertThat(PhotoObjectKeys.subjectNamespace(subject))
                 .isEqualTo(PhotoObjectKeys.subjectNamespace(subject));
@@ -111,7 +105,7 @@ class PhotoObjectKeysTest {
     @Test
     void subjectFullKey_usesSubjectNamespaceWithoutExposingIdentifiers() {
         String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
-        SubjectId subject = subjectIdOf(SUBJECT_UUID);
+        UUID subject = subjectIdOf(SUBJECT_UUID);
 
         String key = PhotoObjectKeys.subjectFullKey(filename, subject);
 

@@ -1,5 +1,7 @@
 package com.laimory.server.timeline.entity;
 
+import java.util.UUID;
+
 /**
  * User Memory 갱신이 아직 반영되지 않은 하루. 사용자 guard를 못 잡았거나 AI가 실패를 통보했을 때
  * 큐에 남고, 하루 1회 배치가 다시 시도한다.
@@ -12,13 +14,13 @@ package com.laimory.server.timeline.entity;
  * 다시 기록돼도 시한이 연장되지 않아야 하기 때문이다.
  */
 public record UserMemoryUpdatePending(
-        long userId,
+        UUID subjectId,
         long dailyRecordId
 ) {
 
     public UserMemoryUpdatePending {
-        if (userId <= 0) {
-            throw new IllegalArgumentException("userId는 양수여야 합니다");
+        if (subjectId == null) {
+            throw new IllegalArgumentException("subjectId는 필수입니다");
         }
         if (dailyRecordId <= 0) {
             throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
