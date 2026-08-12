@@ -36,7 +36,8 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 
 /**
  * legacy→subject S3 object copy·검증 도구 단위 검증(mock S3) — delete job preflight fail-closed,
- * copy/head 호출·검증, 멱등 skip, 크기 불일치 fail-closed, 예외 메시지 무식별자.
+ * copy/head 호출·검증(크기+contentType), 멱등 skip, contentType drift 재복사 교정, 크기·copy 후
+ * 검증 불일치 fail-closed, 예외 메시지 무식별자(contentType 값 포함).
  */
 class PhotoObjectCopyMigrationTest {
 
@@ -57,8 +58,12 @@ class PhotoObjectCopyMigrationTest {
     private final String legacyPrefix = PhotoObjectKeys.sha256hex(USER_ID) + "/photos/";
     private final String subjectPrefix = PhotoObjectKeys.subjectNamespace(subject) + "/photos/";
 
-    /** mock 버킷 상태(key → size). listObjectsV2/headObject/copyObject 스텁이 공유한다. */
-    private final Map<String, Long> bucketContents = new HashMap<>();
+    /** mock 버킷 상태(key → size·contentType). listObjectsV2/headObject/copyObject 스텁이 공유한다. */
+    private final Map<String, StoredObject> bucketContents = new HashMap<>();
+
+    /** mock S3 object metadata — CopyObject 기본(MetadataDirective=COPY)처럼 통째로 복제된다. */
+    private record StoredObject(long size, String contentType) {
+    }
 
     private static SubjectId subjectIdOf(String uuidLiteral) {
         UUID uuid = UUID.fromString(uuidLiteral);
@@ -77,17 +82,23 @@ class PhotoObjectCopyMigrationTest {
             ListObjectsV2Request request = invocation.getArgument(0);
             List<S3Object> contents = bucketContents.entrySet().stream()
                     .filter(entry -> entry.getKey().startsWith(request.prefix()))
-                    .map(entry -> S3Object.builder().key(entry.getKey()).size(entry.getValue()).build())
+                    .map(entry -> S3Object.builder()
+                            .key(entry.getKey())
+                            .size(entry.getValue().size())
+                            .build())
                     .toList();
             return ListObjectsV2Response.builder().contents(contents).build();
         });
         when(s3Client.headObject(any(HeadObjectRequest.class))).thenAnswer(invocation -> {
             HeadObjectRequest request = invocation.getArgument(0);
-            Long size = bucketContents.get(request.key());
-            if (size == null) {
+            StoredObject stored = bucketContents.get(request.key());
+            if (stored == null) {
                 throw NoSuchKeyException.builder().build();
             }
-            return HeadObjectResponse.builder().contentLength(size).build();
+            return HeadObjectResponse.builder()
+                    .contentLength(stored.size())
+                    .contentType(stored.contentType())
+                    .build();
         });
         when(s3Client.copyObject(any(CopyObjectRequest.class))).thenAnswer(invocation -> {
             CopyObjectRequest request = invocation.getArgument(0);
@@ -108,8 +119,8 @@ class PhotoObjectCopyMigrationTest {
 
     @Test
     void copyVerify_copiesEachLegacyObjectToSubjectKeyAndVerifiesSize() {
-        bucketContents.put(legacyPrefix + "a.jpg", 10L);
-        bucketContents.put(legacyPrefix + "b.png", 20L);
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
+        bucketContents.put(legacyPrefix + "b.png", new StoredObject(20L, "image/png"));
 
         PhotoObjectCopyMigration.Result result = migration.execute();
 
@@ -131,10 +142,11 @@ class PhotoObjectCopyMigrationTest {
     }
 
     @Test
-    void copyVerify_skipsObjectAlreadyCopiedWithSameSize() {
-        bucketContents.put(legacyPrefix + "a.jpg", 10L);
-        bucketContents.put(legacyPrefix + "b.png", 20L);
-        bucketContents.put(subjectPrefix + "a.jpg", 10L); // 이전 실행이 이미 복사한 object
+    void copyVerify_skipsObjectAlreadyCopiedWithSameSizeAndContentType() {
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
+        bucketContents.put(legacyPrefix + "b.png", new StoredObject(20L, "image/png"));
+        // 이전 실행이 이미 복사한 object — 크기·contentType 모두 일치
+        bucketContents.put(subjectPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
 
         PhotoObjectCopyMigration.Result result = migration.execute();
 
@@ -148,8 +160,9 @@ class PhotoObjectCopyMigrationTest {
 
     @Test
     void copyVerify_existingTargetWithDifferentSize_failsClosedWithoutCopy() {
-        bucketContents.put(legacyPrefix + "a.jpg", 10L);
-        bucketContents.put(subjectPrefix + "a.jpg", 99L); // 크기 불일치 target
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
+        // 크기 불일치 target
+        bucketContents.put(subjectPrefix + "a.jpg", new StoredObject(99L, "image/jpeg"));
 
         assertThatThrownBy(migration::execute)
                 .isInstanceOf(PhotoMigrationAbortedException.class)
@@ -159,12 +172,32 @@ class PhotoObjectCopyMigrationTest {
     }
 
     @Test
+    void copyVerify_existingTargetWithSameSizeDifferentContentType_recopiesAndVerifies() {
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
+        // 크기는 같지만 contentType이 다른 기존 target — alreadyPresent skip이 아니라 재복사로 교정해야 한다.
+        bucketContents.put(subjectPrefix + "a.jpg", new StoredObject(10L, "application/octet-stream"));
+
+        PhotoObjectCopyMigration.Result result = migration.execute();
+
+        assertThat(result.objectsListed()).isEqualTo(1);
+        assertThat(result.objectsCopied()).isEqualTo(1);
+        assertThat(result.objectsAlreadyPresent()).isZero();
+        ArgumentCaptor<CopyObjectRequest> copies = ArgumentCaptor.forClass(CopyObjectRequest.class);
+        verify(s3Client).copyObject(copies.capture());
+        assertThat(copies.getValue().sourceKey()).isEqualTo(legacyPrefix + "a.jpg");
+        assertThat(copies.getValue().destinationKey()).isEqualTo(subjectPrefix + "a.jpg");
+        // 재복사가 source metadata로 target을 교정했다(CopyObject 기본 MetadataDirective=COPY).
+        assertThat(bucketContents.get(subjectPrefix + "a.jpg"))
+                .isEqualTo(new StoredObject(10L, "image/jpeg"));
+    }
+
+    @Test
     void copyVerify_verificationAfterCopyMismatch_failsClosed() {
-        bucketContents.put(legacyPrefix + "a.jpg", 10L);
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
         // copy가 성공 응답을 주지만 target 크기가 어긋나는 상황을 시뮬레이션한다.
         when(s3Client.copyObject(any(CopyObjectRequest.class))).thenAnswer(invocation -> {
             CopyObjectRequest request = invocation.getArgument(0);
-            bucketContents.put(request.destinationKey(), 5L);
+            bucketContents.put(request.destinationKey(), new StoredObject(5L, "image/jpeg"));
             return CopyObjectResponse.builder().build();
         });
 
@@ -175,8 +208,44 @@ class PhotoObjectCopyMigrationTest {
     }
 
     @Test
+    void copyVerify_contentTypeMismatchAfterCopy_failsClosedWithoutContentTypeValue() {
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
+        // copy가 성공 응답을 주지만 target contentType이 보존되지 않는 상황을 시뮬레이션한다.
+        when(s3Client.copyObject(any(CopyObjectRequest.class))).thenAnswer(invocation -> {
+            CopyObjectRequest request = invocation.getArgument(0);
+            bucketContents.put(request.destinationKey(),
+                    new StoredObject(10L, "application/octet-stream"));
+            return CopyObjectResponse.builder().build();
+        });
+
+        assertThatThrownBy(migration::execute)
+                .isInstanceOf(PhotoMigrationAbortedException.class)
+                .hasMessageContaining("mismatches=1")
+                .satisfies(PhotoObjectCopyMigrationTest::assertMessageHasNoIdentifiers)
+                // contentType 값 자체도 미출력 — 불일치 여부(건수)만 보고한다.
+                .satisfies(thrown -> assertThat(thrown.getMessage())
+                        .doesNotContain("image/jpeg")
+                        .doesNotContain("application/octet-stream"));
+    }
+
+    @Test
+    void copyVerify_sourceObjectGoneBetweenListAndHead_failsClosed() {
+        // 목록에는 있으나 HEAD 시점에 사라진 source object — fail-closed 중단.
+        when(s3Client.listObjectsV2(any(ListObjectsV2Request.class)))
+                .thenReturn(ListObjectsV2Response.builder()
+                        .contents(S3Object.builder().key(legacyPrefix + "a.jpg").size(10L).build())
+                        .build());
+
+        assertThatThrownBy(migration::execute)
+                .isInstanceOf(PhotoMigrationAbortedException.class)
+                .hasMessageContaining("mismatches=1")
+                .satisfies(PhotoObjectCopyMigrationTest::assertMessageHasNoIdentifiers);
+        verify(s3Client, never()).copyObject(any(CopyObjectRequest.class));
+    }
+
+    @Test
     void missingSubjectMapping_propagatesWithoutIdentifierInMessage() {
-        bucketContents.put(legacyPrefix + "a.jpg", 10L);
+        bucketContents.put(legacyPrefix + "a.jpg", new StoredObject(10L, "image/jpeg"));
         when(subjectMappingService.getRequired(USER_ID))
                 .thenThrow(new IllegalStateException("subject mapping missing for authenticated user"));
 
