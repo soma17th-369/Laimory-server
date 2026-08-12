@@ -278,4 +278,19 @@ class SubjectMigrationIntegrationTest {
                 .hasMessageContaining("memoryDocuments=1")
                 .hasMessageContaining("memoryDocumentMismatch=1");
     }
+
+    @Test
+    void verifyOwners_memoryDocumentDiffersOnlyByLetterCase_abortsFailClosed() {
+        long userId = provisionUserWithMapping();
+        userMemoryRepository.upsert(userId, "{\"summary\": \"CaseSensitive\"}",
+                LocalDateTime.now());
+        ownerBackfill.execute();
+
+        jdbcTemplate.update("UPDATE user_memory_documents SET memory = ? WHERE subject_id = ?",
+                "{\"summary\": \"casesensitive\"}", subjectBytesOf(userId));
+
+        assertThatThrownBy(ownerBackfill::verify)
+                .isInstanceOf(SubjectMigrationAbortedException.class)
+                .hasMessageContaining("memoryDocumentMismatch=1");
+    }
 }

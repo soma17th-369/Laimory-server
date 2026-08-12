@@ -15,7 +15,7 @@ subject schema·PHOTO namespace 전환(#280 Epic)의 **forward 전용** quiescen
 | `.github/workflows/deploy.yml` | `dev` push 자동 배포. repo variable `DEPLOY_PAUSED=true`면 push 배포 skip(컨테이너·`.env` 불변). `workflow_dispatch` input `image_sha`+`image_digest`가 deploy-existing(빌드 없이 기록한 exact ECR image를 digest로 배포, pause 무시) |
 | `.github/workflows/build-only.yml` | `workflow_dispatch` input `image_sha` — exact SHA checkout 검증 후 docker build + ECR push만(배포 없음), summary에 SHA tag·digest 기록 |
 | `app.subject.migration.mode` | `backfill-mappings` / `backfill-owners` / `verify-owners` — one-shot 도구(#285, `user/migration/`) |
-| `app.photo.migration.mode` | `copy-verify` / `rewrite-urls` — one-shot 도구(#284, `timeline/photo/migration/`). subject 모드와 동시 설정은 기동 실패(상호 배타) |
+| `app.photo.migration.mode` | `copy-verify` / `rewrite-urls` / `delete-legacy` — one-shot 도구(#284/#285, `timeline/photo/migration/`). subject 모드와 동시 설정은 기동 실패(상호 배타) |
 | dev WAS | 컨테이너 이름 `laimory`, env는 `/home/ubuntu/app/.env` 단일 권위, ECR repo `laimory`(ap-northeast-2) |
 | 배치 | draft cleanup 04:00·User Memory 04:30(JVM TZ), photo delete 03:00 Asia/Seoul. draft/UM task·guard TTL 3분 |
 
@@ -87,7 +87,37 @@ gh variable set DEPLOY_PAUSED --repo soma17th-369/Laimory-server --body true
 gh variable get DEPLOY_PAUSED --repo soma17th-369/Laimory-server   # true 확인
 ```
 
-pause 중 push 배포는 workflow 레벨에서 skip되어 실행 중 컨테이너와 `.env`(`APP_COMMIT_SHA`)가 불변이다.
+pause는 이미 gate를 통과한 run에 소급 적용되지 않는다. pause 설정 전에 시작한 running/queued run을
+전부 기다린 뒤 active run 0건을 확인한다.
+
+```bash
+ACTIVE_RUNS=$(gh run list --repo soma17th-369/Laimory-server --workflow deploy.yml --limit 100 \
+  --json databaseId,status \
+  --jq '.[] | select(.status == "in_progress" or .status == "queued" or .status == "requested" or .status == "waiting" or .status == "pending") | .databaseId')
+for RUN_ID in $ACTIVE_RUNS; do
+  gh run watch "$RUN_ID" --repo soma17th-369/Laimory-server --compact
+done
+test "$(gh run list --repo soma17th-369/Laimory-server --workflow deploy.yml --limit 100 \
+  --json status \
+  --jq '[.[] | select(.status == "in_progress" or .status == "queued" or .status == "requested" or .status == "waiting" or .status == "pending")] | length')" -eq 0
+```
+
+dev WAS에서 `.env`와 실행 중 컨테이너의 SHA가 같음을 확인하고 그 40자 SHA를 기록한다(비밀 아님).
+3단계에서 stop 직전에 같은 값인지 다시 확인한다.
+
+```bash
+# dev WAS SSM 세션
+ENV_SHA=$(sed -n 's/^APP_COMMIT_SHA=//p' /home/ubuntu/app/.env)
+CONTAINER_SHA=$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' laimory \
+  | sed -n 's/^APP_COMMIT_SHA=//p')
+test "$(printf '%s' "$ENV_SHA" | wc -l)" -eq 0
+printf '%s' "$ENV_SHA" | grep -Eq '^[0-9a-f]{40}$'
+test "$ENV_SHA" = "$CONTAINER_SHA"
+printf 'stable old image SHA: %s\n' "$ENV_SHA"
+```
+
+이후 새 push 배포는 workflow 레벨에서 skip되어 실행 중 컨테이너와 `.env`가 불변이다. pause를
+무시하는 manual `workflow_dispatch`는 cutover의 9단계 전까지 실행하지 않는다.
 
 ## 2) #283 merge와 build-only
 
@@ -115,6 +145,10 @@ aws ecr describe-images --repository-name laimory --region ap-northeast-2 \
 
 ```bash
 # dev WAS SSM 세션
+EXPECTED_OLD_SHA=<1단계에서 기록한 40자 SHA>
+grep -qxF "APP_COMMIT_SHA=$EXPECTED_OLD_SHA" /home/ubuntu/app/.env
+sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' laimory \
+  | grep -qxF "APP_COMMIT_SHA=$EXPECTED_OLD_SHA"
 sudo docker stop laimory && sudo docker rm laimory
 ```
 
@@ -147,11 +181,13 @@ sudo docker pull "$IMG"
 
 # ① users 전 행 mapping 보충(멱등) — 종료 시 users:mappings 1:1 검증, 불일치면 exit 1
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=backfill-mappings
 
 # ② owner backfill(멱등) — NULL subject_id 채움 + user_memories→user_memory_documents 복사,
 #    종료 시 NULL/cross-owner 0건·문서 subject/JSON/감사 컬럼 동등성 검증
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=backfill-owners
 ```
 
@@ -163,10 +199,12 @@ sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
 ```bash
 # ① legacy → subject namespace S3 copy + 존재·크기·Content-Type 검증(멱등)
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
   --app.photo.migration.mode=copy-verify
 
 # ② staging/final materialized photoUrl rewrite(단일 transaction, 멱등)
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
   --app.photo.migration.mode=rewrite-urls
 ```
 
@@ -200,6 +238,7 @@ ALTER TABLE push_registrations
 ```bash
 # backfill 없이 검증만 재수행(NULL/cross-owner/document 동등성 불일치면 exit 1)
 sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
   --app.subject.migration.mode=verify-owners
 ```
 
@@ -285,10 +324,16 @@ gh variable set DEPLOY_PAUSED --repo soma17th-369/Laimory-server --body false
 이 삭제가 끝나면 phase-1 image로의 code rollback은 불가능하다.
 
 ```bash
-# ① 구 photo object 삭제 — legacy namespace prefix별 count 기록 후 삭제(사전 승인 필수)
-aws s3 ls "s3://<PHOTO_BUCKET>/<legacy sha256hex(userId) namespace>/photos/" --recursive | wc -l
-aws s3 rm  "s3://<PHOTO_BUCKET>/<legacy sha256hex(userId) namespace>/photos/" --recursive
+# ① 구 photo object 삭제(사전 승인 필수) — users 전 행을 순회해 source↔target의
+#    크기·Content-Type을 전부 다시 검증한 뒤 source를 삭제하고 전체 legacy 잔여 0건 확인
+sudo docker run --rm --network host --env-file "$ENV_FILE" "$IMG" \
+  --spring.main.web-application-type=none --app.push.mode=noop \
+  --app.photo.migration.mode=delete-legacy
 ```
+
+`delete-legacy`는 전체 target 동등성 검증이 끝나기 전에는 어떤 source도 삭제하지 않는다. S3 verbose
+delete 응답의 error·미보고 key 또는 삭제 후 known-user legacy prefix 잔여가 하나라도 있으면 exit 1이다.
+성공 로그의 `objectsVerified=objectsDeleted`, `objectsRemaining=0`을 확인한 뒤에만 legacy DB 삭제로 간다.
 
 ```sql
 -- ② legacy user_id 컬럼·user_memories 테이블 삭제(사전 승인 필수).

@@ -124,7 +124,7 @@ class SubjectOwnerBackfillMigration {
                       FROM user_memories m
                       JOIN user_memory_documents d ON d.subject_id = ?
                      WHERE m.user_id = ?
-                       AND CAST(m.memory AS CHAR) = CAST(d.memory AS CHAR)
+                       AND CAST(m.memory AS BINARY) = CAST(d.memory AS BINARY)
                        AND m.created_at = d.created_at
                        AND m.updated_at = d.updated_at
                        AND (m.modified_by <=> d.modified_by)

@@ -21,15 +21,18 @@ class PhotoMigrationRunner implements ApplicationRunner {
     private final PhotoMigrationMode mode;
     private final PhotoObjectCopyMigration copyMigration;
     private final PhotoUrlRewriteMigration rewriteMigration;
+    private final LegacyPhotoObjectDeleteMigration deleteMigration;
     private final IntConsumer exitHandler;
 
     PhotoMigrationRunner(PhotoMigrationMode mode,
                          PhotoObjectCopyMigration copyMigration,
                          PhotoUrlRewriteMigration rewriteMigration,
+                         LegacyPhotoObjectDeleteMigration deleteMigration,
                          IntConsumer exitHandler) {
         this.mode = mode;
         this.copyMigration = copyMigration;
         this.rewriteMigration = rewriteMigration;
+        this.deleteMigration = deleteMigration;
         this.exitHandler = exitHandler;
     }
 
@@ -41,6 +44,7 @@ class PhotoMigrationRunner implements ApplicationRunner {
             switch (mode) {
                 case COPY_VERIFY -> logCopyResult(copyMigration.execute());
                 case REWRITE_URLS -> logRewriteResult(rewriteMigration.execute());
+                case DELETE_LEGACY -> logDeleteResult(deleteMigration.execute());
             }
             exitCode = 0;
         } catch (PhotoMigrationAbortedException e) {
@@ -66,5 +70,11 @@ class PhotoMigrationRunner implements ApplicationRunner {
                 result.usersProcessed(), result.stagingRowsExamined(), result.stagingRowsRewritten(),
                 result.stagingRowsAlreadyTarget(), result.finalRowsExamined(),
                 result.finalRowsRewritten(), result.finalRowsAlreadyTarget());
+    }
+
+    private void logDeleteResult(LegacyPhotoObjectDeleteMigration.Result result) {
+        log.info("legacy photo object 삭제 완료: usersProcessed={} objectsVerified={} "
+                        + "objectsDeleted={} objectsRemaining=0",
+                result.usersProcessed(), result.objectsVerified(), result.objectsDeleted());
     }
 }

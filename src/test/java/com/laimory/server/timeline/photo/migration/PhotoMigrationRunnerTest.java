@@ -25,6 +25,8 @@ class PhotoMigrationRunnerTest {
 
     private final PhotoObjectCopyMigration copyMigration = mock(PhotoObjectCopyMigration.class);
     private final PhotoUrlRewriteMigration rewriteMigration = mock(PhotoUrlRewriteMigration.class);
+    private final LegacyPhotoObjectDeleteMigration deleteMigration =
+            mock(LegacyPhotoObjectDeleteMigration.class);
     private final List<Integer> exitCodes = new ArrayList<>();
 
     private final ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
@@ -41,7 +43,8 @@ class PhotoMigrationRunnerTest {
     }
 
     private PhotoMigrationRunner runner(PhotoMigrationMode mode) {
-        return new PhotoMigrationRunner(mode, copyMigration, rewriteMigration, exitCodes::add);
+        return new PhotoMigrationRunner(mode, copyMigration, rewriteMigration, deleteMigration,
+                exitCodes::add);
     }
 
     private String allLogText() {
@@ -59,6 +62,7 @@ class PhotoMigrationRunnerTest {
 
         verify(copyMigration).execute();
         verifyNoInteractions(rewriteMigration);
+        verifyNoInteractions(deleteMigration);
         assertThat(exitCodes).containsExactly(0);
         assertThat(allLogText())
                 .contains("usersProcessed=2")
@@ -75,10 +79,28 @@ class PhotoMigrationRunnerTest {
 
         verify(rewriteMigration).execute();
         verifyNoInteractions(copyMigration);
+        verifyNoInteractions(deleteMigration);
         assertThat(exitCodes).containsExactly(0);
         assertThat(allLogText())
                 .contains("stagingRewritten=3")
                 .contains("finalRewritten=4");
+    }
+
+    @Test
+    void deleteLegacy_runsVerifiedDelete() {
+        when(deleteMigration.execute())
+                .thenReturn(new LegacyPhotoObjectDeleteMigration.Result(2, 5, 5, 0));
+
+        runner(PhotoMigrationMode.DELETE_LEGACY).run(new DefaultApplicationArguments());
+
+        verify(deleteMigration).execute();
+        verifyNoInteractions(copyMigration, rewriteMigration);
+        assertThat(exitCodes).containsExactly(0);
+        assertThat(allLogText())
+                .contains("usersProcessed=2")
+                .contains("objectsVerified=5")
+                .contains("objectsDeleted=5")
+                .contains("objectsRemaining=0");
     }
 
     @Test
