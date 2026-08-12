@@ -12,6 +12,8 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -124,6 +126,25 @@ class SubjectMappingServiceTest {
         assertThat(result).isEqualTo(subject);
         verify(userSubjectLinkRepository, never()).rekey(any(), any(), anyShort());
         verify(userSubjectLinkRepository, never()).saveAndFlush(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "01890f7e-7bcd-7cc0-98c4-dc0c0c07398f", // version 7, RFC 4122 variant
+            "01890f7e-7bcd-4cc0-18c4-dc0c0c07398f"  // version 4, non-RFC variant
+    })
+    void getRequired_currentHitWithInvalidSubjectUuid_failsClosedWithoutIdentifiers(String rawSubject) {
+        UUID invalidSubject = UUID.fromString(rawSubject);
+        when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
+        when(userSubjectLinkRepository.findById(lookupKey(1)))
+                .thenReturn(Optional.of(UserSubjectLink.of(
+                        lookupKey(1), invalidSubject, CURRENT_VERSION)));
+
+        assertThatThrownBy(() -> subjectMappingService.getRequired(USER_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("subject mapping contains an invalid UUIDv4")
+                .satisfies(e -> assertThat(e.getMessage())
+                        .doesNotContain(String.valueOf(USER_ID), invalidSubject.toString()));
     }
 
     @Test

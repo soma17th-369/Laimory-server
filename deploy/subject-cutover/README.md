@@ -24,10 +24,33 @@ migration 모드는 **반드시 한 번에 하나만** 실행한다(도구가 �
 
 ## 0) 사전조건
 
-아래 count만 사전에 확인한다. UUID column DDL은 현재 배포 image가 `BINARY(16)`을 사용하므로 서비스가
-살아 있는 동안 실행하지 않고, 3단계에서 구 컨테이너를 중지한 뒤 3.1단계에서 적용한다.
+dev DB에는 #285의 additive DDL(`BINARY(16)` subject column 3개와 `user_memory_documents`)이 이미
+적용됐다. 아래 preflight로 그 선행 schema와 빈 User Memory 결정을 다시 확인한다. UUID 문자열 전환은
+현재 배포 image와 호환되지 않으므로 서비스가 살아 있는 동안 실행하지 않고, 3단계에서 구 컨테이너를
+중지한 뒤 3.1단계에서 적용한다.
 
 ```sql
+-- additive DDL 선행조건. 결과가 각각 4, 2, 2, 1이 아니면 중단한다.
+SELECT COUNT(*) FROM information_schema.columns
+WHERE table_schema = DATABASE()
+  AND column_type = 'binary(16)'
+  AND ((table_name = 'user_subject_links' AND column_name = 'subject_id' AND is_nullable = 'NO')
+    OR (table_name = 'daily_records' AND column_name = 'subject_id' AND is_nullable = 'YES')
+    OR (table_name = 'timeline_draft_source_items' AND column_name = 'subject_id' AND is_nullable = 'YES')
+    OR (table_name = 'push_registrations' AND column_name = 'subject_id' AND is_nullable = 'YES'));
+SELECT COUNT(*) FROM information_schema.table_constraints
+WHERE constraint_schema = DATABASE()
+  AND constraint_type = 'FOREIGN KEY'
+  AND ((table_name = 'daily_records' AND constraint_name = 'fk_daily_records_subject')
+    OR (table_name = 'timeline_draft_source_items'
+        AND constraint_name = 'fk_draft_source_items_subject'));
+SELECT COUNT(*) FROM information_schema.statistics
+WHERE table_schema = DATABASE()
+  AND table_name = 'daily_records'
+  AND index_name = 'uq_daily_records_subject_date';
+SELECT COUNT(*) FROM information_schema.tables
+WHERE table_schema = DATABASE() AND table_name = 'user_memory_documents';
+
 -- 두 User Memory 테이블은 공개 전 빈 상태라는 결정의 검증. 하나라도 0이 아니면 중단한다.
 SELECT COUNT(*) FROM user_memories;          -- 0
 SELECT COUNT(*) FROM user_memory_documents; -- 0
@@ -200,6 +223,10 @@ WHERE (subject_id IS NULL) <> (subject_id_varchar IS NULL)
    OR (subject_id IS NOT NULL
        AND LOWER(REPLACE(subject_id_varchar, '-', '')) <> LOWER(HEX(subject_id)));
 
+-- quiesce 뒤 최종 확인. 하나라도 0이 아니면 DROP/PK 변경을 시작하지 않고 중단한다.
+SELECT COUNT(*) FROM user_memories;          -- 0
+SELECT COUNT(*) FROM user_memory_documents; -- 0
+
 -- 참조 제약/index를 먼저 내린 뒤 parent와 child를 문자열 컬럼으로 교체한다.
 ALTER TABLE daily_records
     DROP FOREIGN KEY fk_daily_records_subject,
@@ -207,7 +234,7 @@ ALTER TABLE daily_records
 ALTER TABLE timeline_draft_source_items
     DROP FOREIGN KEY fk_draft_source_items_subject,
     DROP KEY fk_draft_source_items_subject;
--- 0단계에서 0행을 확인한 document table도 parent FK를 참조하므로 parent 변경 전에 제거한다.
+-- 바로 위에서 0행을 재확인한 document table도 parent FK를 참조하므로 parent 변경 전에 제거한다.
 DROP TABLE user_memory_documents;
 
 ALTER TABLE user_subject_links
@@ -235,7 +262,7 @@ ALTER TABLE push_registrations
     CHANGE COLUMN subject_id_varchar subject_id
         VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL;
 
--- 0단계에서 빈 상태를 확인한 기존 table은 복사 없이 PK를 직접 바꾼다.
+-- 바로 위에서 빈 상태를 재확인한 기존 table은 복사 없이 PK를 직접 바꾼다.
 ALTER TABLE user_memories
     DROP PRIMARY KEY,
     DROP COLUMN user_id,
