@@ -1,7 +1,7 @@
 name: Build-only image push (ECR)
 
-# #285 quiescent cutover 지원: 지정한 exact commit SHA를 checkout해 기존 deploy와 동일한
-# docker build + ECR push만 수행한다(SSM 배포 없음). push된 SHA tag와 ECR digest를 summary에
+# 지정한 exact commit SHA를 checkout해 기존 deploy와 동일한 docker build + ECR push만 수행한다
+# (SSM 배포 없음). push된 SHA tag와 ECR digest를 summary에
 # 기록하며, 두 값을 deploy.yml manual deploy-existing에 넣어 동일 image를 digest로 배포한다.
 # deploy.yml push trigger paths와 무관하며 pause gate(DEPLOY_PAUSED)의 영향도 받지 않는다.
 on:

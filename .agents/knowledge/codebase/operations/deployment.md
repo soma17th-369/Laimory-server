@@ -170,15 +170,16 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
 - nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
 - repository에는 production application deploy workflow가 없다.
 
-subject cutover(#285)용 수동 배포 계약은 `deploy/subject-cutover/README.md`가 소유한다.
-`DEPLOY_PAUSED=true`면 `dev` push 실행은 build·SSM 전송 없이 skip되어 기존 container와
+maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실행은 build·SSM 전송 없이 skip되어 기존 container와
 `.env`를 유지하며, manual dispatch는 pause를 무시한다. `build-only.yml`은 입력받은 exact
 40-char commit SHA를 checkout했는지 확인한 뒤 ECR push만 하고 SHA tag·digest를 summary에
 기록한다. `deploy.yml` deploy-existing은 SHA tag가 가리키는 ECR digest를 기록된
 `image_digest`와 SSM 전에 비교하고, 일치한 image만 tag가 아닌 digest reference로 pull·기동한다.
 SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ecr:BatchGetImage`를 사용한다.
-`ecr:DescribeImages` 추가 권한은 요구하지 않는다. 이 수동 경로는 forward cutover용이며 legacy
-rollback은 지원하지 않는다.
+`ecr:DescribeImages` 추가 권한은 요구하지 않는다. 자동 rollback은 없으며 운영자가 승인한 exact image를
+수동 재배포하는 경로다.
+`DEPLOY_PAUSED`는 이미 pause gate를 통과한 run에 소급되지 않으므로 maintenance 시작 전 진행 중인
+application deploy run이 0건인지 확인한다.
 
 ## Invariants
 

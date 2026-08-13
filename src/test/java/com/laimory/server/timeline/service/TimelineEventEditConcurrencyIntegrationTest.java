@@ -42,7 +42,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Tag("integration")
 class TimelineEventEditConcurrencyIntegrationTest {
 
-    // 콜백 통합 테스트의 고정 날짜(2000-01-01)와 (user_id, record_date) 유니크 충돌을 피한다.
+    // 콜백 통합 테스트의 고정 날짜(2000-01-01)와 (subject_id, record_date) 유니크 충돌을 피한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 2);
     private static final String ZONE = "Asia/Seoul";
 

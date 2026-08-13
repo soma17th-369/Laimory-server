@@ -117,7 +117,7 @@ class TimelineDraftCleanupSchedulerTest {
 
         scheduler(7L).cleanupExpiredDrafts();
 
-        // filename → fullKey({sha256hex(userId)}/photos/{filename}) 복원해 S3 삭제.
+        // filename과 subjectId로 full object key를 복원해 S3에서 삭제한다.
         verify(s3PhotoStorageService).delete(PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID));
         verify(timelineDraftSourceItemService).deleteById(10L);
     }

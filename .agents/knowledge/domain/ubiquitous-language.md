@@ -86,7 +86,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 파일명 | filename | 현재 구현 | DB에 저장하는 `{uuidv7}.{jpg|png|webp}` 형식의 최소 사진 식별자다. |
 | 클라이언트 사진 URI | clientPhotoUri | 현재 구현 | 기기 로컬 URI다. 서버는 해석하지 않고 저장·echo하며 `photoUrl`과 다른 layer다. storage redaction에서 원문을 보존하는 유일한 제외 필드지만, AI 입력 조회 응답에서는 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 치환한다(DB·앱 응답은 원문). |
-| 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. legacy userId namespace 함수는 cutover migration/정리에만 남아 있다. |
+| 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
 | 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. 행 존재가 대기 상태이며 job은 원 Item을 FK로 참조한다. S3 삭제 성공 시 job과 Item을 한 transaction에서 최종 hard delete한다. |
@@ -118,7 +118,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 규칙 | 상태 | 설명 |
 |---|---|---|
-| Daily Record 유일성 | 현재 구현 | `UNIQUE(subject_id, record_date)`다. legacy `user_id` unique는 cutover 정리 전까지만 공존한다. |
+| Daily Record 유일성 | 현재 구현 | `UNIQUE(subject_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |

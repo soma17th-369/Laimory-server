@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -135,7 +134,7 @@ class TimelineEventEditTransactionServiceTest {
         assertThat(event.getMemo()).isEqualTo("기존 메모");
         verify(timelineItemService, never()).save(any());
         verify(timelineEventItemService, never()).saveAll(anyList());
-        verify(photoUrlService, never()).buildUrl(any(), anyLong());
+        verify(photoUrlService, never()).buildSubjectUrl(any(), any());
     }
 
     @Test
@@ -158,7 +157,7 @@ class TimelineEventEditTransactionServiceTest {
             assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
             assertThat(link.getTimelineItemId()).isEqualTo(20L);
         });
-        verify(photoUrlService, never()).buildUrl(any(), anyLong());
+        verify(photoUrlService, never()).buildSubjectUrl(any(), any());
     }
 
     @Test
@@ -304,6 +303,6 @@ class TimelineEventEditTransactionServiceTest {
     private void verifyNoWrites() {
         verify(timelineItemService, never()).save(any());
         verify(timelineEventItemService, never()).saveAll(anyList());
-        verify(photoUrlService, never()).buildUrl(any(), anyLong());
+        verify(photoUrlService, never()).buildSubjectUrl(any(), any());
     }
 }
