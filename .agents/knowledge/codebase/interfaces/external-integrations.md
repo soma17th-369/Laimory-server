@@ -75,16 +75,10 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 
 - client는 server-issued presigned PUT URL로 S3에 직접 업로드한다.
 - signature는 content type과 content length를 묶는다.
-- object key namespace 규칙은 둘이 공존한다. live caller(presign/enrich/Event PATCH/cleanup/delete job)는
-  subject 기반 `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`
-  (`PhotoObjectKeys.subjectFullKey`, `PhotoUrlService.buildSubjectUrl`)을 쓴다. legacy
-  `{sha256hex(userId)}/photos/{filename}` helper는 cutover migration 전용이다.
-- legacy→subject 전환용 in-app migration 도구가 `app.photo.migration.mode`
-  property(`copy-verify|rewrite-urls|delete-legacy`)로 게이트된다 — property 부재 시 빈 자체가 없고, 실행 후
-  exit code와 함께 종료하는 one-shot이며 로그는 건수만 남긴다(식별자 미출력). 역방향(rollback)
-  모드는 없다. `delete-legacy`는 users 전 행을 순회해 source↔subject target의 크기·Content-Type을
-  전체 재검증한 뒤에만 source를 삭제하고 known-user legacy prefix 잔여 0건을 fail-closed로 확인한다
-  (cutover 검증 후 별도 승인 대상, #285 runbook).
+- object key namespace는 subject 기반
+  `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}` 단일 규칙이다.
+  presign/enrich/Event PATCH/cleanup/delete job 모두 `PhotoObjectKeys.subjectFullKey`과
+  `PhotoUrlService.buildSubjectUrl`을 사용한다.
 - response/AI가 쓰는 `photoUrl`은 unsigned CloudFront URL이며 payload에 materialize한다.
 - Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내는 계약이다. 서버는 object 존재 여부를
   HEAD하지 않고, 입력에 `description`·`photoUrl`을 받지 않으며 `description=null`과 server-derived

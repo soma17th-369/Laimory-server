@@ -10,7 +10,7 @@
 # region/runtime-role 일치, secret read, DB_* presence와 user_subject_links schema 검사의 fail-closed·값 비출력.
 # T5e(#282 리뷰): secret 내용 계약 — 앱 parse()와 동일 규칙(JSON object·version·32-byte key·previous 쌍·
 # SecretString 부재)의 fail-closed·항목 이름만 진단·payload 비출력, SPRING_PROFILES_ACTIVE docker 가드.
-# T0(#285): workflow 레벨 계약 — manual deploy-existing(workflow_dispatch + required SHA/digest),
+# T0: workflow 레벨 계약 — manual deploy-existing(workflow_dispatch + required SHA/digest),
 # push pause gate, dispatch build skip, SSM 전 ECR tag↔digest 일치 검증, digest pull,
 # build-only.yml의 exact SHA checkout·digest 기록.
 #
@@ -40,7 +40,7 @@ file_mode() {
 }
 
 # --- 1. production script 본문 추출(러너의 YAML 디코딩과 동일하게 YAML 파서 사용) ---
-# T0(#285): workflow 레벨 계약(pause gate·deploy-existing dispatch·build-only)도 같은 파서로 검증한다.
+# T0: workflow 레벨 계약(pause gate·deploy-existing dispatch·build-only)도 같은 파서로 검증한다.
 [ -f "$BUILD_ONLY" ] || fail "build-only workflow file missing: $BUILD_ONLY"
 ruby -ryaml -e '
   q = 39.chr
@@ -139,7 +139,7 @@ grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'varchar(36)'" "$SCRIPT_F
 grep -Fq "CHARACTER_SET_NAME = 'ascii' AND COLLATION_NAME = 'ascii_bin'" "$SCRIPT_FILE" \
   || fail "T5d: subject schema preflight must require ascii/ascii_bin"
 if grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'binary(16)'" "$SCRIPT_FILE"; then
-  fail "T5d: subject schema preflight must not retain the pre-cutover BINARY(16) contract"
+  fail "T5d: subject schema preflight must not retain the obsolete BINARY(16) contract"
 fi
 
 # manual deploy-existing는 tag가 아닌 기록한 digest reference를 remote pull/run에 쓴다.

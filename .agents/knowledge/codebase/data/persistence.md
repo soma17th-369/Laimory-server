@@ -74,8 +74,7 @@ job 삭제도 rollback된다. 상태·시도 횟수·backoff·lease·error·완�
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
 쓴다(테이블 기본은 `_unicode_ci`). `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`이 FK 없는
-owner이고 조회 index를 가진다. legacy `user_id`는 cutover 정리 전 nullable migration column일 뿐 live
-read/write에 쓰지 않는다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭제다. 쓰기는 repository의
+owner이고 조회 index를 가진다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭제다. 쓰기는 repository의
 `INSERT ... ON DUPLICATE KEY UPDATE` native upsert(저장소 첫 native query — 등록·계정 전환 재결합을
 한 문장으로 원자화, read-then-insert+unique 예외 복구 금지)와 조건부 delete뿐이라 JPA auditing이
 돌지 않고 감사 컬럼(`created_at`/`updated_at`)은 upsert SQL이 직접 채운다(`modified_by` NULL).
@@ -120,18 +119,8 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 `push_registrations.subject_id`는 NOT NULL·조회 index를 가지되 기존 soft-owner 방침대로 FK는 없다.
 `user_memories`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
-명시 삭제 후 mapping을 마지막에 지우는 계약이다. legacy `user_id` 컬럼은
-cutover 검증·정리 전까지만 nullable 상태로 남고 live application 경로에는 매핑되지 않는다.
-채우기는 `app.subject.migration.mode` property로 게이트되는 one-shot backfill 도구
-(`user/migration/`, #284 photo 도구와 같은 패턴 — `backfill-mappings`는
-`SubjectMappingService.createIfAbsent`로 `users` 전 행 mapping 보충+1:1 검증, `backfill-owners`는
-native SQL로 NULL owner를 채우고 cross-owner를 검증하며, `verify-owners`는 검증만)가 담당한다.
-빈 legacy `user_memories`는 별도 document table로 복사하지 않고 PK를 subject로 직접 전환한다.
-owner 검증은 NULL과 행 수만 보지 않고 legacy `user_id`를 mapping으로 해석해
-DailyRecord/staging/push의 cross-owner 0건을 확인한다. photo 모드와 동시 설정은 기동 실패다(상호 배타 — 둘 다
-one-shot exit).
-NOT NULL 확정·legacy `user_id` nullable화·Redis namespace 폐기·legacy 삭제 순서는
-`deploy/subject-cutover/README.md` runbook이 소유한다(forward 전용 — rollback 미지원).
+명시 삭제 후 mapping을 마지막에 지우는 계약이다. 이 네 owner 테이블에는 raw `user_id` 컬럼이 없고
+runtime repository/entity도 subject만 읽고 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
@@ -172,20 +161,11 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 과거 같은 날짜 작업 admission에 쓰던 `timeline:date-guard:*` key는 더 이상 application key 계약이
 아니다. 배포 전에 남은 key는 읽거나 일괄 삭제하지 않으며 설정돼 있던 TTL로 자연 만료한다.
 
-subject cutover(#285)에서 legacy user-owner 형식의 draft task/index와 User Memory
-pending/guard/task namespace는 count 기록 후 폐기한다. `RedisGateway`에 SCAN primitive가 없어
-코드가 아닌 runbook(`deploy/subject-cutover/README.md`)의 수동 redis-cli 절차로 수행하며, 기존
-Redis owner 데이터를 subject 형식으로 이관하지 않는다(pre-release — 보존할 사용자 상태 없음 전제).
-
 ### S3
 
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
 full key는 DB column으로 저장하지 않는다. live 경로와 저장된 `photoUrl`은 subject 기반
-`{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}`이다. legacy
-`{sha256hex(userId)}/photos/{filename}` helper는 migration 도구(`app.photo.migration.mode` 게이트,
-`timeline/photo/migration/`)만 사용한다. cutover 후 `delete-legacy` one-shot은 users 전 행의
-source↔target metadata를 전체 재검증하고 legacy source를
-삭제한 뒤 known-user legacy prefix 잔여 0건을 확인한다.
+`{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}` 단일 규칙을 사용한다.
 Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를 조회하지 않는다.
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를

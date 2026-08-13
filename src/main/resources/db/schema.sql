@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS app_config (
 -- 애플리케이션 HMAC-SHA-256("content-subject-lookup:v1" || userId 8-byte BE) 결과라, DB 단독
 -- 유출로는 후보 userId 대입이 어렵다. 감사 컬럼·auto-increment surrogate·정밀 생성 시각을 의도적으로
 -- 두지 않는다(행 자체가 최소 정보 원칙 대상). rotation은 PK·lookup_key_version만 원자 교체한다(subject 불변).
--- (#285: 콘텐츠 테이블의 subject FK가 참조하므로 파일 안에서 그 테이블들보다 먼저 정의한다 — 정의 내용 불변.)
+-- 콘텐츠 테이블의 subject FK가 참조하므로 파일 안에서 그 테이블들보다 먼저 정의한다.
 CREATE TABLE IF NOT EXISTS user_subject_links (
     user_lookup_key BINARY(32) NOT NULL,             -- HMAC-SHA-256 lookup key(Secrets Manager 비밀키 기반)
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- canonical lowercase UUIDv4
@@ -24,12 +24,9 @@ CREATE TABLE IF NOT EXISTS user_subject_links (
     UNIQUE KEY uq_user_subject_links_subject (subject_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- #283 activation schema: subject_id가 owner authority다. legacy user_id는 cutover 검증·즉시 삭제 전
--- migration 도구 호환을 위해 nullable로만 남긴다. CREATE TABLE IF NOT EXISTS는
--- 기존 live DB를 바꾸지 않으므로 live dev DB에는 deploy/subject-cutover/README.md의 수동 ALTER를 적용한다.
+-- subject_id가 콘텐츠 owner authority다.
 CREATE TABLE IF NOT EXISTS daily_records (
     daily_record_id BIGINT NOT NULL AUTO_INCREMENT,
-    user_id BIGINT NULL,                             -- cutover migration 전용 legacy owner(#283 writer는 미사용)
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 콘텐츠 owner authority
     record_date DATE NOT NULL,
     record_at DATETIME NOT NULL,                     -- 클라가 보낸 기록 벽시계 시각(같은 날 여러 task면 마지막에 finalize된 값). record_timezone과 짝지어 절대시각 복원
@@ -41,8 +38,6 @@ CREATE TABLE IF NOT EXISTS daily_records (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (daily_record_id),
-    UNIQUE KEY uq_daily_records_user_date (user_id, record_date),
-    -- #285 additive: cutover 후 (subject, 날짜) 유일성 authority. NULL 다중 허용이라 activation 전 무해.
     UNIQUE KEY uq_daily_records_subject_date (subject_id, record_date),
     -- mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 RESTRICT(계획 §2.4 — 탈퇴는 콘텐츠 명시 삭제 후 mapping 삭제).
     CONSTRAINT fk_daily_records_subject
@@ -131,7 +126,6 @@ CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
 CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     timeline_draft_source_item_id BIGINT NOT NULL AUTO_INCREMENT,
     task_id VARCHAR(36) NOT NULL,
-    user_id BIGINT NULL,                             -- cutover migration 전용 legacy owner(#283 writer는 미사용)
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 콘텐츠 owner authority
     item_type VARCHAR(32) NOT NULL,                  -- 타입 권위(payload 밖). client discriminator 그대로
     -- rawId는 대소문자 구분 opaque 식별자 → binary collation(테이블 기본 _unicode_ci와 달리). 아래 (task_id, raw_id)
@@ -147,8 +141,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     PRIMARY KEY (timeline_draft_source_item_id),
     UNIQUE KEY uq_draft_source_task_raw (task_id, raw_id), -- leftmost prefix가 task_id 조회 index를 겸한다
     KEY idx_draft_source_created (created_at),       -- cleanup 보관기간 스캔용
-    -- #285 additive: FK가 만드는 implicit index 외 별도 조회 index는 두지 않는다(조회는 task_id 경유 —
-    -- 기존 user_id도 단독 index 없음).
+    -- FK가 만드는 implicit index 외 별도 조회 index는 두지 않는다(조회는 task_id 경유).
     CONSTRAINT fk_draft_source_items_subject
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -168,7 +161,7 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- User Memory 정본. 공개 전 빈 테이블의 owner PK를 user_id에서 subject_id로 직접 전환한다.
+-- User Memory 정본. subject_id가 owner PK다.
 CREATE TABLE IF NOT EXISTS user_memories (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     memory JSON NOT NULL,                            -- 서버는 내부 구조·버전을 해석하지 않는다(전체 교체만)
@@ -205,7 +198,6 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 -- 쓰기는 native upsert(등록·계정 전환 재결합 원자화 — JPA auditing 미적용, 감사 컬럼은 upsert가 직접 채움).
 CREATE TABLE IF NOT EXISTS push_registrations (
     push_registration_id BIGINT NOT NULL AUTO_INCREMENT,
-    user_id BIGINT NULL,                             -- cutover migration 전용 legacy owner(#283 writer는 미사용)
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- owner authority. 기존 soft-owner 방침대로 FK 없음
     firebase_installation_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     last_registered_at DATETIME(6) NOT NULL,         -- Android가 FID를 서버와 마지막으로 동기화한 시각(후속 stale 정리 기준)
@@ -215,7 +207,6 @@ CREATE TABLE IF NOT EXISTS push_registrations (
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (push_registration_id),
     UNIQUE KEY uq_push_registrations_fid (firebase_installation_id),
-    KEY idx_push_registrations_user (user_id),       -- cutover migration/legacy 정리 전용
     KEY idx_push_registrations_subject (subject_id)  -- subject의 활성 설치 전체 발송 조회용
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

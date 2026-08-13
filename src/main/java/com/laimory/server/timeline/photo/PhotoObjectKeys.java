@@ -3,7 +3,6 @@ package com.laimory.server.timeline.photo;
 import com.laimory.server.common.id.UuidV7;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -13,17 +12,8 @@ import java.util.UUID;
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
  *
- * <p>DB에는 파일명({@code uuidv7.jpg})만 저장하고, 전체 S3 key는 소유자 식별자로부터 파생한다. 날짜 폴더는
- * 두지 않으며 namespace 규칙이 legacy/subject 둘이다(#284, 계획 §2.7).
- *
- * <ul>
- *   <li><b>legacy</b>: {@code {sha256hex(userId)}/photos/{filename}} — 숫자 userId 기반이라 후보 대입이
- *       가능하다. migration과 legacy 정리 경로만 사용한다
- *       ({@link #fullKey}, {@link #sha256hex}).</li>
- *   <li><b>subject</b>: {@code {hex(SHA-256(subjectId 16 bytes))}/photos/{filename}} — UUIDv4 subject
- *       기반이라 후보 열거가 현실적으로 불가능하다. live 경로와 migration 도구가 사용한다
- *       ({@link #subjectFullKey}, {@link #subjectNamespace}).</li>
- * </ul>
+ * <p>DB에는 파일명({@code uuidv7.jpg})만 저장하고, 전체 S3 key는 UUIDv4 subject의 canonical 16바이트로부터
+ * 파생한다. 날짜 폴더는 두지 않는다.
  */
 public final class PhotoObjectKeys {
 
@@ -53,18 +43,6 @@ public final class PhotoObjectKeys {
     }
 
     /**
-     * <b>legacy</b> — 파일명과 raw 사용자 id로부터 전체 S3 객체 key를 만든다.
-     * migration과 legacy 정리 경로만 사용한다.
-     *
-     * @param filename 파일명(예: {@code uuidv7.jpg})
-     * @param userId   사용자 id
-     * @return {@code {sha256hex(userId)}/photos/{filename}}
-     */
-    public static String fullKey(String filename, long userId) {
-        return sha256hex(userId) + "/photos/" + filename;
-    }
-
-    /**
      * subject 기반 파일명 → 전체 S3 객체 key. live 경로의 정본이다.
      *
      * @param filename  파일명(예: {@code uuidv7.jpg})
@@ -73,16 +51,6 @@ public final class PhotoObjectKeys {
      */
     public static String subjectFullKey(String filename, UUID subjectId) {
         return subjectNamespace(subjectId) + "/photos/" + filename;
-    }
-
-    /**
-     * <b>legacy</b> — raw 사용자 id의 SHA-256 해시를 64자 소문자 hex로 반환한다(legacy namespace).
-     *
-     * @param userId 사용자 id
-     * @return {@code Long.toString(userId)}(UTF-8)의 SHA-256, 64자 소문자 hex
-     */
-    public static String sha256hex(long userId) {
-        return sha256hexOf(Long.toString(userId).getBytes(StandardCharsets.UTF_8));
     }
 
     /**
