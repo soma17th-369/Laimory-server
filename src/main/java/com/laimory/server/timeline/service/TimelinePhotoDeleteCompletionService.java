@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>job FK가 원문 Item의 선삭제를 막으므로 job을 먼저 지우고 Item을 지운다. Item 삭제가 실패하면 같은
  * transaction에서 job 삭제도 rollback되어 다음 worker 실행이 S3의 미존재 성공 의미로 다시 수렴한다.
+ * 늦은 중복 completion은 선행 row lock 없이 동일 ID 삭제를 반복하고 영향 행 수 0으로 수렴한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -29,24 +30,11 @@ public class TimelinePhotoDeleteCompletionService {
                 .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
                 .distinct()
                 .toList();
-        List<TimelinePhotoDeleteJob> existingJobs = timelinePhotoDeleteJobService
-                .findExistingForCompletion(jobIds);
-        if (existingJobs.isEmpty()) {
-            return 0;
-        }
-
-        List<Long> existingJobIds = existingJobs.stream()
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .distinct()
-                .toList();
-        List<Long> itemIds = existingJobs.stream()
+        List<Long> itemIds = succeededJobs.stream()
                 .map(TimelinePhotoDeleteJob::getTimelineItemId)
                 .distinct()
                 .toList();
-        int deletedJobs = timelinePhotoDeleteJobService.deleteSucceeded(existingJobIds);
-        if (deletedJobs != existingJobIds.size()) {
-            throw new IllegalStateException("PHOTO delete job completion count mismatch");
-        }
+        int deletedJobs = timelinePhotoDeleteJobService.deleteSucceeded(jobIds);
         timelineItemService.deleteByIds(itemIds);
         return deletedJobs;
     }

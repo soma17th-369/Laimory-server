@@ -12,6 +12,7 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.TimelineDraftSourceItemService;
+import com.laimory.server.timeline.service.TimelinePhotoDeleteCompletionService;
 import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService;
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -44,6 +45,9 @@ class DistributedScheduledClaimIntegrationTest {
 
     @Autowired
     private TimelinePhotoDeleteJobService photoJobService;
+
+    @Autowired
+    private TimelinePhotoDeleteCompletionService photoCompletionService;
 
     @Autowired
     private TimelineDraftSourceItemService draftSourceItemService;
@@ -99,6 +103,20 @@ class DistributedScheduledClaimIntegrationTest {
     }
 
     @Test
+    void duplicatePhotoCompletionsConvergeWithoutPessimisticPreLock() throws Exception {
+        long itemId = savePhotoItem(ROW_COUNT + 1);
+        photoItemIds = List.of(itemId);
+        assertThat(photoJobService.insertIfAbsent(itemId, "claim-test/photos/completion.jpg")).isTrue();
+        TimelinePhotoDeleteJob job = photoJobRepository.findAll().getFirst();
+
+        List<Integer> completed = runConcurrently(() -> photoCompletionService.completeSucceeded(List.of(job)));
+
+        assertThat(completed).containsExactlyInAnyOrder(1, 0);
+        assertThat(photoJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isEmpty();
+        assertThat(timelineItemRepository.findById(itemId)).isEmpty();
+    }
+
+    @Test
     void draftWorkersClaimDisjointBoundedBatchesAndDoNotReclaimThemSameDay() throws Exception {
         for (int index = 0; index < ROW_COUNT; index++) {
             draftSourceItemRepository.save(TimelineDraftSourceItem.of(
@@ -140,15 +158,19 @@ class DistributedScheduledClaimIntegrationTest {
     }
 
     private <T> List<List<T>> claimConcurrently(Supplier<List<T>> claim) throws Exception {
+        return runConcurrently(claim);
+    }
+
+    private <T> List<T> runConcurrently(Supplier<T> operation) throws Exception {
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<List<T>> first = executor.submit(() -> {
+            Future<T> first = executor.submit(() -> {
                 start.await();
-                return claim.get();
+                return operation.get();
             });
-            Future<List<T>> second = executor.submit(() -> {
+            Future<T> second = executor.submit(() -> {
                 start.await();
-                return claim.get();
+                return operation.get();
             });
             start.countDown();
             return List.of(first.get(), second.get());

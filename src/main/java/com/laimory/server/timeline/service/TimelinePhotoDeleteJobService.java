@@ -72,14 +72,6 @@ public class TimelinePhotoDeleteJobService {
         return timelinePhotoDeleteJobRepository.findOldestCreatedAt();
     }
 
-    /** completion transaction에서 아직 남아 있는 성공 작업을 row lock으로 직렬화한다. */
-    public List<TimelinePhotoDeleteJob> findExistingForCompletion(Collection<Long> jobIds) {
-        if (jobIds == null || jobIds.isEmpty()) {
-            return List.of();
-        }
-        return timelinePhotoDeleteJobRepository.findAllExistingForUpdate(jobIds);
-    }
-
     /** S3 삭제에 성공한 작업만 ID로 제거한다. 빈 입력은 no-op이다. */
     public int deleteSucceeded(Collection<Long> jobIds) {
         if (jobIds == null || jobIds.isEmpty()) {
