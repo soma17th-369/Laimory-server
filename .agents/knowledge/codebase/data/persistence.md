@@ -30,9 +30,10 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
-  성공 시 Item과 행 삭제)
+  `available_at`=다음 claim eligibility, 성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
-  v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지)
+  v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, `cleanup_available_at`=retention cleanup
+  eligibility)
 - `users`, `refresh_tokens`
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
@@ -60,16 +61,22 @@ FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환
 재작성하도록 기본/docker JDBC URL 모두 `rewriteBatchedStatements=true`를 사용한다. 이 native writer는 JPA
 auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.now()`를 batch 시작 전에 한 번 캡처해
 `created_at`/`updated_at` 파라미터로 바인딩하고 `modified_by`는 NULL로 둔다. task 단위 조회·채택
-삭제·cleanup은 기존 JPA repository가 담당한다.
+삭제·cleanup은 기존 JPA repository가 담당한다. `cleanup_available_at`은 INSERT에서 생략하고 DB의
+`DEFAULT CURRENT_TIMESTAMP(6)`로 최초 eligibility를 채운다.
 
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
 가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접
 채운다. worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
-`created_at, timeline_photo_delete_job_id` oldest-first 최대 1,000개를 한 번 읽고, S3 성공 job을 먼저
-지운 뒤 해당 Item을 같은 transaction에서 지운다. 실패분과 1,000개 초과분은 기본 cadence상 다음 날
-실행까지 남는다. 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며, Item 삭제가 실패하면
-job 삭제도 rollback된다. 상태·시도 횟수·backoff·lease·error·완료 이력 column은 없다.
+모든 process에서 발화한다. 각 bounded worker는 짧은 transaction으로
+`available_at <= :eligibleAt` 행을 `(available_at, created_at, PK)` 순서로 최대 250개
+`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `available_at`을 다음 calendar day 00:00
+`Asia/Seoul`로 옮긴 뒤 commit한다. `eligibleAt`과 다음 시각은 같은 application Clock instant를 KST로
+변환해 parameter로 바인딩하며 DB `NOW()`를 eligibility 비교에 쓰지 않는다. 그 뒤 transaction 밖에서
+S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을 같은 completion transaction에서 지운다.
+실패·crash 행은 다음 일일 실행까지 남고, 이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다.
+실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며, Item 삭제가 실패하면 job 삭제도
+rollback된다. 상태·시도 횟수·backoff·token·lease·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -174,13 +181,17 @@ Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서�
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
 보존할 수 있으며 서버는 pending delete key를 조회해 차단하지 않는다.
 
-삭제는 두 경로다. draft cleanup은 단건 `DeleteObject`(전역 client 설정 그대로) 뒤 source row를 지운다.
+삭제는 두 경로다. draft cleanup은 만료·eligible source row를 250개 단위 `SKIP LOCKED`로 claim하고
+PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
+delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
+명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
 Event/DailyRecord 삭제는 root/junction/non-PHOTO orphan hard delete와 함께 MySQL job을 만들고 유효한
 orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
 `DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
 apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 확인된 job과 그 PHOTO Item만
-별도 transaction에서 지운다. 일일 실행은 한 요청만 보내므로 객체별 Error·응답 누락·SDK 예외와 1,000개
-초과분은 두 행을 남겨 다음 날 실행에서 재시도·처리한다. PHOTO payload가 깨졌거나 filename/object key를
+별도 transaction에서 지운다. process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
+여러 process가 같은 claim protocol에 참여한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
+실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
 
 ## Invariants

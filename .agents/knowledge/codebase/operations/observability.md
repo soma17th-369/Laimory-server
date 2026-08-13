@@ -199,6 +199,9 @@ Spring JSON stdout
   - `laimory.timeline.photo.delete.batch.duration`: S3 DeleteObjects batch 호출 시간
   - `laimory.timeline.photo.delete.enqueue{result=scheduled|shared_retained|invalid_skipped}`:
     root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
+  - `laimory.timeline.photo.delete.job{state=claimed|deferred|completed}`: MySQL claim, 다음 일일 실행 이월,
+    실제 DB completion row 수
+  - `laimory.timeline.draft.cleanup.row{state=claimed|deferred|completed}`: draft retention cleanup row 수
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
@@ -230,10 +233,11 @@ Spring JSON stdout
 - PHOTO delete worker가 꺼져 있어도 pending/oldest gauge는 등록돼 schema-first rollout 중 backlog를
   관측한다. pending job마다 원문 PHOTO Item도 보존돼 있다. gauge DB 조회 실패는 scrape 전체 실패 대신
   NaN이고 empty queue의 두 값은 0이다.
-- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`, oldest 최대 1,000개라 정상
-  job도 최대 약 24시간 대기한다. `laimory.timeline.photo.delete.oldest.age`가 108,000초(30시간)를 넘는
-  상태가 15분 지속되면 warning이며 Overview dashboard도 같은 30시간부터 red다. 이는 실패·일일 1,000개
-  초과 이월 또는 03:00 실행 누락을 조사하는 신호다. 스케줄은 missed run을 catch-up하지 않고 job을 다음
+- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, process당 concurrency 1,
+  batch 250, 최대 4 batch/60초다. 정상 job도 최대 약 24시간 대기한다.
+  `laimory.timeline.photo.delete.oldest.age`가 108,000초(30시간)를 넘는 상태가 15분 지속되면 warning이며
+  Overview dashboard도 같은 30시간부터 red다. 이는 반복 실패, 전체 process의 run budget 초과 또는
+  03:00 실행 누락을 조사하는 신호다. 스케줄은 missed run을 catch-up하지 않고 job을 다음
   실행까지 MySQL에 보존한다. cron/zone override로 이 cadence를 바꾸면 임계치 의미도 함께 재검토한다.
 
 ## Dev Metrics Assets

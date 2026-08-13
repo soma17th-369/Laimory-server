@@ -29,7 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
  * timeline_draft_source_items의 Hibernate @JdbcTypeCode(JSON) ↔ MySQL 실 왕복 검증.
  * - ddl-auto=validate이므로 컨텍스트 기동 자체가 엔티티↔DDL 정합을 검증한다(audit/item_type 컬럼 포함).
  * - flush+clear로 1차 캐시를 비워 payload를 DB JSON에서 실제로 재역직렬화하게 한다.
- * - cleanup이 쓰는 findByCreatedAtBefore의 strict {@code <} 경계와 단일 행 삭제도 실 쿼리로 고정한다.
+ * - cleanup claim의 strict {@code <} cutoff와 bulk 삭제도 실 쿼리로 고정한다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -94,6 +94,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
         assertThat(reloaded.getModifiedBy()).isNull();
+        assertThat(reloaded.getCleanupAvailableAt()).isNotNull();
     }
 
     @Test
@@ -141,7 +142,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
     }
 
     @Test
-    void findCreatedBefore_isStrictlyBeforeCutoff_andDeleteByIdRemovesOnlyThatRow() {
+    void cleanupClaim_isStrictlyBeforeCutoff_andBulkDeleteRemovesOnlySelectedRow() {
         String taskId = "33333333-3333-3333-3333-333333333333";
         TimelineDraftSourceItem before = timelineDraftSourceItemRepository.save(sourceItem(taskId, "raw-before"));
         TimelineDraftSourceItem exact = timelineDraftSourceItemRepository.save(sourceItem(taskId, "raw-exact"));
@@ -156,14 +157,16 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         em.clear();
 
         // strict < : 정확히 cutoff인 행은 아직 만료가 아니다. 공유 로컬 DB의 무관한 행은 taskId로 걸러 판정한다.
-        List<Long> expiredIds = timelineDraftSourceItemRepository.findByCreatedAtBefore(cutoff).stream()
+        List<Long> expiredIds = timelineDraftSourceItemRepository.findExpiredForUpdateSkipLocked(
+                        cutoff, LocalDateTime.now().plusDays(1), 1_000).stream()
                 .filter(row -> taskId.equals(row.getTaskId()))
                 .map(TimelineDraftSourceItem::getTimelineDraftSourceItemId)
                 .toList();
         assertThat(expiredIds).containsExactly(before.getTimelineDraftSourceItemId());
 
         // cleanup은 S3 삭제에 성공한 행만 PK로 지운다 — 지정한 한 행 외에는 남아야 한다.
-        timelineDraftSourceItemRepository.deleteById(before.getTimelineDraftSourceItemId());
+        assertThat(timelineDraftSourceItemRepository.deleteAllByIdIn(
+                List.of(before.getTimelineDraftSourceItemId()))).isEqualTo(1);
         em.flush();
         em.clear();
 

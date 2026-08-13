@@ -43,6 +43,9 @@ class TimelinePhotoDeleteMetricsTest {
         metrics.recordEnqueueScheduled(4);
         metrics.recordEnqueueSharedRetained(5);
         metrics.recordEnqueueInvalidSkipped(6);
+        metrics.recordClaimed(7);
+        metrics.recordDeferred(8);
+        metrics.recordCompleted(9);
         Timer.Sample sample = metrics.startBatch();
         meterClock.add(Duration.ofMillis(1_250));
         metrics.recordBatch(sample);
@@ -80,6 +83,15 @@ class TimelinePhotoDeleteMetricsTest {
                         .timer()
                         .totalTime(TimeUnit.MILLISECONDS))
                 .isEqualTo(1_250);
+        assertThat(registry.get(TimelinePhotoDeleteMetrics.DELETE_JOB)
+                        .tag("state", "claimed").counter().count())
+                .isEqualTo(7);
+        assertThat(registry.get(TimelinePhotoDeleteMetrics.DELETE_JOB)
+                        .tag("state", "deferred").counter().count())
+                .isEqualTo(8);
+        assertThat(registry.get(TimelinePhotoDeleteMetrics.DELETE_JOB)
+                        .tag("state", "completed").counter().count())
+                .isEqualTo(9);
     }
 
     @Test

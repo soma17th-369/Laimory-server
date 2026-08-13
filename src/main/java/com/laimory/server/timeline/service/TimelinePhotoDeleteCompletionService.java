@@ -20,23 +20,34 @@ public class TimelinePhotoDeleteCompletionService {
     private final TimelineItemService timelineItemService;
 
     @Transactional
-    public void completeSucceeded(List<TimelinePhotoDeleteJob> succeededJobs) {
+    public int completeSucceeded(List<TimelinePhotoDeleteJob> succeededJobs) {
         if (succeededJobs.isEmpty()) {
-            return;
+            return 0;
         }
 
         List<Long> jobIds = succeededJobs.stream()
                 .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
                 .distinct()
                 .toList();
-        List<Long> itemIds = succeededJobs.stream()
+        List<TimelinePhotoDeleteJob> existingJobs = timelinePhotoDeleteJobService
+                .findExistingForCompletion(jobIds);
+        if (existingJobs.isEmpty()) {
+            return 0;
+        }
+
+        List<Long> existingJobIds = existingJobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
+                .distinct()
+                .toList();
+        List<Long> itemIds = existingJobs.stream()
                 .map(TimelinePhotoDeleteJob::getTimelineItemId)
                 .distinct()
                 .toList();
-        int deletedJobs = timelinePhotoDeleteJobService.deleteSucceeded(jobIds);
-        if (deletedJobs != jobIds.size()) {
+        int deletedJobs = timelinePhotoDeleteJobService.deleteSucceeded(existingJobIds);
+        if (deletedJobs != existingJobIds.size()) {
             throw new IllegalStateException("PHOTO delete job completion count mismatch");
         }
         timelineItemService.deleteByIds(itemIds);
+        return deletedJobs;
     }
 }

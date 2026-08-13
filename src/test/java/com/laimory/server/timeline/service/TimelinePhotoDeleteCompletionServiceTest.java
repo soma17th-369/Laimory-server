@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -39,23 +40,38 @@ class TimelinePhotoDeleteCompletionServiceTest {
     }
 
     @Test
-    void completeSucceeded_deletesJobsBeforeOriginalItems() {
+    void completeSucceeded_locksExistingJobsThenDeletesJobsBeforeOriginalItems() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
-        when(first.getTimelineItemId()).thenReturn(101L);
         when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(jobService.findExistingForCompletion(List.of(11L, 12L)))
+                .thenReturn(List.of(first, second));
+        when(first.getTimelineItemId()).thenReturn(101L);
         when(second.getTimelineItemId()).thenReturn(102L);
         when(jobService.deleteSucceeded(List.of(11L, 12L))).thenReturn(2);
 
-        service.completeSucceeded(List.of(first, second));
+        assertThat(service.completeSucceeded(List.of(first, second))).isEqualTo(2);
 
         InOrder order = inOrder(jobService, timelineItemService);
+        order.verify(jobService).findExistingForCompletion(List.of(11L, 12L));
         order.verify(jobService).deleteSucceeded(List.of(11L, 12L));
         order.verify(timelineItemService).deleteByIds(List.of(101L, 102L));
     }
 
     @Test
-    void completeSucceeded_jobCountMismatchDoesNotDeleteItems() {
+    void completeSucceeded_alreadyCompletedRaceIsIdempotent() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(jobService.findExistingForCompletion(List.of(11L))).thenReturn(List.of());
+
+        assertThat(service.completeSucceeded(List.of(first))).isZero();
+
+        verify(jobService, never()).deleteSucceeded(List.of(11L));
+        verifyNoInteractions(timelineItemService);
+    }
+
+    @Test
+    void completeSucceeded_internalCountMismatchDoesNotDeleteItems() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(jobService.findExistingForCompletion(List.of(11L))).thenReturn(List.of(first));
         when(first.getTimelineItemId()).thenReturn(101L);
         when(jobService.deleteSucceeded(List.of(11L))).thenReturn(0);
 
@@ -68,7 +84,7 @@ class TimelinePhotoDeleteCompletionServiceTest {
 
     @Test
     void completeSucceeded_emptyInputIsNoOp() {
-        service.completeSucceeded(List.of());
+        assertThat(service.completeSucceeded(List.of())).isZero();
 
         verifyNoInteractions(jobService, timelineItemService);
     }

@@ -64,6 +64,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         TimelinePhotoDeleteJob saved = repository.findAll().getFirst();
         assertThat(saved.getTimelineItemId()).isEqualTo(itemId);
         assertThat(saved.getObjectKey()).isEqualTo("user-hash/photos/one.jpg");
+        assertThat(saved.getAvailableAt()).isNotNull();
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
         assertThat(saved.getModifiedBy()).isNull();
@@ -82,6 +83,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
                 "timeline_photo_delete_job_id",
                 "timeline_item_id",
                 "object_key",
+                "available_at",
                 "created_at",
                 "updated_at",
                 "modified_by");
@@ -115,7 +117,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
     }
 
     @Test
-    void findOldest_ordersByCreatedAtThenId_andReportsQueueSummary() {
+    void claimEligible_ordersByCreatedAtThenId_andReportsQueueSummary() {
         long thirdItemId = savePhotoItem("three");
         long firstItemId = savePhotoItem("oldest-first");
         long secondItemId = savePhotoItem("oldest-second");
@@ -130,10 +132,13 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         setCreatedAt(newestJobId, NEWEST);
         setCreatedAt(oldestFirstJobId, OLDEST);
         setCreatedAt(oldestSecondJobId, OLDEST);
+        setAvailableAt(newestJobId, OLDEST.minusDays(1));
+        setAvailableAt(oldestFirstJobId, OLDEST.minusDays(1));
+        setAvailableAt(oldestSecondJobId, OLDEST.minusDays(1));
         em.flush();
         em.clear();
 
-        assertThat(service.findOldest(2))
+        assertThat(service.claimEligible(2))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(firstItemId, secondItemId);
         assertThat(service.countPending()).isEqualTo(3);
@@ -195,6 +200,17 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
                         where timeline_photo_delete_job_id = :jobId
                         """)
                 .setParameter("createdAt", createdAt)
+                .setParameter("jobId", jobId)
+                .executeUpdate();
+    }
+
+    private void setAvailableAt(long jobId, LocalDateTime availableAt) {
+        em.createNativeQuery("""
+                        update timeline_photo_delete_jobs
+                        set available_at = :availableAt
+                        where timeline_photo_delete_job_id = :jobId
+                        """)
+                .setParameter("availableAt", availableAt)
                 .setParameter("jobId", jobId)
                 .executeUpdate();
     }

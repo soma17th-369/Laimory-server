@@ -1,12 +1,13 @@
 package com.laimory.server.timeline.repository;
 
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -30,9 +31,26 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     int insertIfAbsent(@Param("timelineItemId") long timelineItemId,
                        @Param("objectKey") String objectKey);
 
+    @Query(value = "select * from timeline_photo_delete_jobs "
+            + "where available_at <= :eligibleAt "
+            + "order by available_at, created_at, timeline_photo_delete_job_id "
+            + "limit :limit for update skip locked",
+            nativeQuery = true)
+    List<TimelinePhotoDeleteJob> findEligibleForUpdateSkipLocked(
+            @Param("eligibleAt") LocalDateTime eligibleAt,
+            @Param("limit") int limit);
+
+    @Modifying
+    @Query("update TimelinePhotoDeleteJob j set j.availableAt = :nextAvailableAt "
+            + "where j.timelinePhotoDeleteJobId in :jobIds")
+    int deferUntil(@Param("jobIds") Collection<Long> jobIds,
+                   @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select j from TimelinePhotoDeleteJob j "
-            + "order by j.createdAt asc, j.timelinePhotoDeleteJobId asc")
-    List<TimelinePhotoDeleteJob> findOldest(Pageable pageable);
+            + "where j.timelinePhotoDeleteJobId in :jobIds "
+            + "order by j.timelinePhotoDeleteJobId")
+    List<TimelinePhotoDeleteJob> findAllExistingForUpdate(@Param("jobIds") Collection<Long> jobIds);
 
     @Query("select min(j.createdAt) from TimelinePhotoDeleteJob j")
     Optional<LocalDateTime> findOldestCreatedAt();

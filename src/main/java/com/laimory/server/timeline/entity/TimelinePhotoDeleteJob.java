@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.time.LocalDateTime;
 import lombok.Getter;
 
 /**
@@ -29,8 +30,8 @@ import lombok.Getter;
                         columnNames = "object_key")
         },
         indexes = @Index(
-                name = "idx_timeline_photo_delete_jobs_created",
-                columnList = "created_at, timeline_photo_delete_job_id")
+                name = "idx_timeline_photo_delete_jobs_available",
+                columnList = "available_at, created_at, timeline_photo_delete_job_id")
 )
 @Getter
 public class TimelinePhotoDeleteJob extends BaseEntity {
@@ -47,6 +48,10 @@ public class TimelinePhotoDeleteJob extends BaseEntity {
     /** worker가 삭제할 full S3 object key. 로그·metric·exception message에 노출하지 않는다. */
     @Column(name = "object_key", nullable = false, length = 255)
     private String objectKey;
+
+    /** 이 시각부터 다음 worker claim 대상이 된다. DB default는 구 binary enqueue 호환에도 필요하다. */
+    @Column(name = "available_at", nullable = false, insertable = false)
+    private LocalDateTime availableAt;
 
     protected TimelinePhotoDeleteJob() {
     }

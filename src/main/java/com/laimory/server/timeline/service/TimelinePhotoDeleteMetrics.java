@@ -24,12 +24,16 @@ public class TimelinePhotoDeleteMetrics {
     static final String DELETE_OLDEST_AGE = "laimory.timeline.photo.delete.oldest.age";
     static final String DELETE_BATCH_DURATION = "laimory.timeline.photo.delete.batch.duration";
     static final String DELETE_ENQUEUE = "laimory.timeline.photo.delete.enqueue";
+    static final String DELETE_JOB = "laimory.timeline.photo.delete.job";
 
     private final Counter attemptSuccess;
     private final Counter attemptFailed;
     private final Counter enqueueScheduled;
     private final Counter enqueueSharedRetained;
     private final Counter enqueueInvalidSkipped;
+    private final Counter jobClaimed;
+    private final Counter jobDeferred;
+    private final Counter jobCompleted;
     private final Timer batchDuration;
     private final MeterRegistry meterRegistry;
     private final TimelinePhotoDeleteJobService jobService;
@@ -47,6 +51,9 @@ public class TimelinePhotoDeleteMetrics {
         this.enqueueScheduled = enqueueCounter(meterRegistry, "scheduled");
         this.enqueueSharedRetained = enqueueCounter(meterRegistry, "shared_retained");
         this.enqueueInvalidSkipped = enqueueCounter(meterRegistry, "invalid_skipped");
+        this.jobClaimed = jobCounter(meterRegistry, "claimed");
+        this.jobDeferred = jobCounter(meterRegistry, "deferred");
+        this.jobCompleted = jobCounter(meterRegistry, "completed");
         this.batchDuration = Timer.builder(DELETE_BATCH_DURATION)
                 .description("S3 PHOTO delete batch call duration")
                 .register(meterRegistry);
@@ -72,6 +79,13 @@ public class TimelinePhotoDeleteMetrics {
                 .register(registry);
     }
 
+    private static Counter jobCounter(MeterRegistry registry, String state) {
+        return Counter.builder(DELETE_JOB)
+                .description("PHOTO delete job lifecycle transitions")
+                .tag("state", state)
+                .register(registry);
+    }
+
     public void recordAttemptSuccess(int count) {
         increment(attemptSuccess, count);
     }
@@ -90,6 +104,18 @@ public class TimelinePhotoDeleteMetrics {
 
     public void recordEnqueueInvalidSkipped(int count) {
         increment(enqueueInvalidSkipped, count);
+    }
+
+    public void recordClaimed(int count) {
+        increment(jobClaimed, count);
+    }
+
+    public void recordDeferred(int count) {
+        increment(jobDeferred, count);
+    }
+
+    public void recordCompleted(int count) {
+        increment(jobCompleted, count);
     }
 
     public Timer.Sample startBatch() {

@@ -129,7 +129,9 @@ public class UserMemoryUpdateWorker {
      * 그 날은 복구되지 않는다. 걷어내는 경우는 <b>갱신할 재료가 사라졌을 때 하나뿐이며</b>, 그 판정은
      * 재료를 실제로 읽는 {@link #dispatch}가 한다.
      */
-    @Scheduled(cron = "${app.user-memory.update.cron:0 30 4 * * *}")
+    @Scheduled(
+            cron = "${app.user-memory.update.cron:0 30 4 * * *}",
+            zone = "${app.user-memory.update.zone:Asia/Seoul}")
     public void dispatchPendingUpdates() {
         Instant now = clock.instant();
         UserMemoryUpdatePendingStore.PendingScan scan = pendingStore.findPending(now, SCAN_LIMIT);

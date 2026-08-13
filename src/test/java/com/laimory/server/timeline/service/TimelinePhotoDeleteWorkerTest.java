@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -16,6 +17,7 @@ import io.micrometer.core.instrument.Timer;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,7 +51,12 @@ class TimelinePhotoDeleteWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new TimelinePhotoDeleteWorker(
-                jobService, completionService, s3PhotoStorageService, properties, metrics);
+                jobService, completionService, s3PhotoStorageService, properties, metrics, Runnable::run);
+        lenient().when(properties.getConcurrency()).thenReturn(1);
+        lenient().when(properties.getMaxBatchesPerRun()).thenReturn(1);
+        lenient().when(properties.getMaxRunDuration()).thenReturn(Duration.ofSeconds(60));
+        lenient().when(completionService.completeSucceeded(anyList()))
+                .thenAnswer(invocation -> invocation.<List<?>>getArgument(0).size());
     }
 
     @Test
@@ -64,8 +71,8 @@ class TimelinePhotoDeleteWorkerTest {
     @Test
     void emptyQueueSkipsS3AndMetrics() {
         when(properties.isWorkerEnabled()).thenReturn(true);
-        when(properties.getBatchSize()).thenReturn(1_000);
-        when(jobService.findOldest(1_000)).thenReturn(List.of());
+        when(properties.getBatchSize()).thenReturn(250);
+        when(jobService.claimEligible(250)).thenReturn(List.of());
 
         worker.deletePendingPhotoObjects();
 
@@ -89,6 +96,9 @@ class TimelinePhotoDeleteWorkerTest {
         verify(completionService).completeSucceeded(List.of(first, second));
         verify(metrics).recordAttemptSuccess(2);
         verify(metrics).recordAttemptFailed(0);
+        verify(metrics).recordClaimed(2);
+        verify(metrics).recordCompleted(2);
+        verify(metrics).recordDeferred(0);
         verify(metrics).recordBatch(batchSample);
     }
 
@@ -111,6 +121,8 @@ class TimelinePhotoDeleteWorkerTest {
         verify(completionService).completeSucceeded(List.of(deleted));
         verify(metrics).recordAttemptSuccess(1);
         verify(metrics).recordAttemptFailed(2);
+        verify(metrics).recordCompleted(1);
+        verify(metrics).recordDeferred(2);
         verify(metrics).recordBatch(batchSample);
     }
 
@@ -181,13 +193,33 @@ class TimelinePhotoDeleteWorkerTest {
         verify(completionService).completeSucceeded(List.of(job));
         verify(metrics).recordAttemptSuccess(1);
         verify(metrics).recordAttemptFailed(0);
+        verify(metrics).recordDeferred(1);
         verify(metrics).recordBatch(batchSample);
+    }
+
+    @Test
+    void allWorkerSlotsShareProcessWideBatchBudget() {
+        TimelinePhotoDeleteJob job = job(71L, "hash/photos/deleted.jpg");
+        when(properties.isWorkerEnabled()).thenReturn(true);
+        when(properties.getConcurrency()).thenReturn(2);
+        when(properties.getMaxBatchesPerRun()).thenReturn(4);
+        when(properties.getBatchSize()).thenReturn(250);
+        when(jobService.claimEligible(250)).thenReturn(List.of(job));
+        when(metrics.startBatch()).thenReturn(batchSample);
+        when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
+                .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
+
+        worker.deletePendingPhotoObjects();
+
+        verify(jobService, org.mockito.Mockito.times(4)).claimEligible(250);
+        verify(s3PhotoStorageService, org.mockito.Mockito.times(4))
+                .deleteAll(List.of("hash/photos/deleted.jpg"));
     }
 
     private void enableWithJobs(TimelinePhotoDeleteJob... jobs) {
         when(properties.isWorkerEnabled()).thenReturn(true);
-        when(properties.getBatchSize()).thenReturn(1_000);
-        when(jobService.findOldest(1_000)).thenReturn(List.of(jobs));
+        when(properties.getBatchSize()).thenReturn(250);
+        when(jobService.claimEligible(250)).thenReturn(List.of(jobs));
         when(metrics.startBatch()).thenReturn(batchSample);
     }
 

@@ -2,13 +2,16 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** timeline_photo_delete_jobs leaf 서비스. enqueue, oldest 조회와 성공 행 삭제만 소유한다. */
 @Service
@@ -17,8 +20,10 @@ public class TimelinePhotoDeleteJobService {
 
     private static final int MAX_BATCH_SIZE = 1_000;
     private static final int MAX_OBJECT_KEY_LENGTH = 255;
+    private static final ZoneId WORKER_ZONE = ZoneId.of("Asia/Seoul");
 
     private final TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
+    private final Clock clock;
 
     /**
      * 같은 Item 또는 object의 기존 작업을 보존하면서 없을 때만 enqueue한다.
@@ -31,12 +36,32 @@ public class TimelinePhotoDeleteJobService {
         return timelinePhotoDeleteJobRepository.insertIfAbsent(timelineItemId, objectKey) == 1;
     }
 
-    /** 오래된 순(created_at, PK)으로 최대 {@code limit}개를 조회한다. */
-    public List<TimelinePhotoDeleteJob> findOldest(int limit) {
+    /**
+     * 현재 eligible한 작업을 row lock으로 분리하고 다음 일일 실행 전 eligibility 시각으로 미룬다.
+     * 반환 시 transaction과 row lock은 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
+     */
+    @Transactional
+    public List<TimelinePhotoDeleteJob> claimEligible(int limit) {
         if (limit < 1 || limit > MAX_BATCH_SIZE) {
             throw new IllegalArgumentException("limit must be between 1 and " + MAX_BATCH_SIZE);
         }
-        return timelinePhotoDeleteJobRepository.findOldest(PageRequest.of(0, limit));
+        ZonedDateTime now = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE);
+        LocalDateTime eligibleAt = now.toLocalDateTime();
+        LocalDateTime nextAvailableAt = now.toLocalDate().plusDays(1).atStartOfDay();
+        List<TimelinePhotoDeleteJob> jobs = timelinePhotoDeleteJobRepository
+                .findEligibleForUpdateSkipLocked(eligibleAt, limit);
+        if (jobs.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> jobIds = jobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
+                .toList();
+        int deferred = timelinePhotoDeleteJobRepository.deferUntil(jobIds, nextAvailableAt);
+        if (deferred != jobIds.size()) {
+            throw new IllegalStateException("PHOTO delete job claim count mismatch");
+        }
+        return List.copyOf(jobs);
     }
 
     public long countPending() {
@@ -45,6 +70,14 @@ public class TimelinePhotoDeleteJobService {
 
     public Optional<LocalDateTime> findOldestCreatedAt() {
         return timelinePhotoDeleteJobRepository.findOldestCreatedAt();
+    }
+
+    /** completion transaction에서 아직 남아 있는 성공 작업을 row lock으로 직렬화한다. */
+    public List<TimelinePhotoDeleteJob> findExistingForCompletion(Collection<Long> jobIds) {
+        if (jobIds == null || jobIds.isEmpty()) {
+            return List.of();
+        }
+        return timelinePhotoDeleteJobRepository.findAllExistingForUpdate(jobIds);
     }
 
     /** S3 삭제에 성공한 작업만 ID로 제거한다. 빈 입력은 no-op이다. */

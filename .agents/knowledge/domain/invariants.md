@@ -98,12 +98,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   full object key와 원문 Item PK를 `timeline_photo_delete_jobs`에 insert한다. 같은 commit에서
   root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
   Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
-- DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 환경당 단일 worker의 기본 스케줄은
-  매일 03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. 한 번에 oldest job 최대 1,000개를
-  `DeleteObjects`로 처리해 `Deleted`로 확인된 job과 그 원문 PHOTO Item만 한 transaction에서 지운다.
-  Error·응답 누락·SDK 예외와 1,000개 초과분은 기본 cadence상 다음 날 실행에서 재시도·처리한다.
+- DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
+  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. 각 worker는 외부 I/O 전에 짧은
+  transaction에서 eligible job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고 `available_at`을
+  다음 KST calendar day 00:00으로 옮긴다. commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
+  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 다음 일일
+  실행에서 재시도하고, 이미 다른 worker가 완료한 행은 오류가 아니라 idempotent 완료로 수렴한다.
   애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다.
-  state/attempt/backoff/lease/error/completed 이력과 Redis queue는 두지 않는다.
+  state/attempt/backoff/token/lease/error/completed 이력과 Redis queue는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
   진행한다(orphan 허용 — draft cleanup과 동일 규칙).
 - 같은 날짜의 draft(AI 작업), Event PATCH의 수동 PHOTO 추가, Event/DailyRecord 삭제 사이에는 공통

@@ -175,12 +175,13 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - DailyRecord 삭제 transaction은 record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문
   PHOTO Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
   Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
-- Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 현재 REST
-  프로세스의 환경당 단일 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override
-  가능)에 oldest job 최대 1,000개를 verbose `DeleteObjects`로 한 번 처리하고 `Deleted` job과 원문 PHOTO
-  Item만 한 transaction에서 최종 삭제한다. Error·응답 누락·SDK 예외와 1,000개 초과분은 기본 cadence상
-  다음 날 실행에서 재시도·처리한다. 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은
-  다음 실행까지 MySQL에 남는다.
+- Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 모든 REST
+  process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
+  eligible job을 250개 단위 `FOR UPDATE SKIP LOCKED`로 나눠 claim한다. claim transaction이
+  `available_at`을 다음 KST calendar day 00:00으로 옮기고 commit한 뒤 verbose `DeleteObjects`를 호출하며,
+  `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. process당 concurrency 1,
+  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외·crash job은 다음 일일 실행에서 재시도한다.
+  실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은 다음 실행까지 MySQL에 남는다.
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신
 

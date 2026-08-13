@@ -103,11 +103,13 @@ CREATE TABLE IF NOT EXISTS timeline_event_items (
 
 -- 마지막 Event 참조가 사라지는 PHOTO의 S3 삭제 의무와 원문 Item을 MySQL commit과 함께 보존하는 작업 테이블.
 -- 원 TimelineItem은 job이 존재하는 동안 남고, worker가 S3 성공 뒤 job→Item 순서로 한 transaction에서 지운다.
--- 행 존재가 처리 대기 상태이며 완료 시 Item과 행을 함께 삭제한다(state/retry/lease/error 이력 없음).
+-- 행 존재가 처리 대기 상태다. available_at은 여러 process/thread의 같은 날 중복 선택을 막고,
+-- 실패·crash 행을 다음 일일 실행에서 다시 선택하기 위한 최소 eligibility 표시다.
 CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
     timeline_photo_delete_job_id BIGINT NOT NULL AUTO_INCREMENT,
     timeline_item_id BIGINT NOT NULL,
     object_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    available_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
@@ -115,7 +117,8 @@ CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
     PRIMARY KEY (timeline_photo_delete_job_id),
     UNIQUE KEY uq_timeline_photo_delete_jobs_item (timeline_item_id),
     UNIQUE KEY uq_timeline_photo_delete_jobs_object (object_key),
-    KEY idx_timeline_photo_delete_jobs_created (created_at, timeline_photo_delete_job_id),
+    KEY idx_timeline_photo_delete_jobs_available
+        (available_at, created_at, timeline_photo_delete_job_id),
     CONSTRAINT fk_timeline_photo_delete_jobs_item
         FOREIGN KEY (timeline_item_id) REFERENCES timeline_items (timeline_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -134,13 +137,17 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
     start_at DATETIME NULL,                          -- nullable: 시간 미상 아이템 허용
     end_at DATETIME NULL,
     payload JSON NOT NULL,                           -- 타입 정보 없는 raw JSON
+    -- 여러 process/thread cleanup의 같은 날 중복 선택 방지 + 실패 행의 다음 일일 실행 재시도 시각.
+    cleanup_available_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_draft_source_item_id),
     UNIQUE KEY uq_draft_source_task_raw (task_id, raw_id), -- leftmost prefix가 task_id 조회 index를 겸한다
-    KEY idx_draft_source_created (created_at),       -- cleanup 보관기간 스캔용
+    KEY idx_draft_source_created (created_at),
+    KEY idx_draft_source_cleanup
+        (cleanup_available_at, created_at, timeline_draft_source_item_id),
     -- FK가 만드는 implicit index 외 별도 조회 index는 두지 않는다(조회는 task_id 경유).
     CONSTRAINT fk_draft_source_items_subject
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
