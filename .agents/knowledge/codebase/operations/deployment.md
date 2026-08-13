@@ -178,6 +178,8 @@ maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실
 SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ecr:BatchGetImage`를 사용한다.
 `ecr:DescribeImages` 추가 권한은 요구하지 않는다. 자동 rollback은 없으며 운영자가 승인한 exact image를
 수동 재배포하는 경로다.
+`DEPLOY_PAUSED`는 이미 pause gate를 통과한 run에 소급되지 않으므로 maintenance 시작 전 진행 중인
+application deploy run이 0건인지 확인한다.
 
 ## Invariants
 

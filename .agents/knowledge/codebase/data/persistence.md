@@ -160,6 +160,8 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 
 과거 같은 날짜 작업 admission에 쓰던 `timeline:date-guard:*` key는 더 이상 application key 계약이
 아니다. 배포 전에 남은 key는 읽거나 일괄 삭제하지 않으며 설정돼 있던 TTL로 자연 만료한다.
+`RedisGateway`에는 keyspace `SCAN` primitive가 없으므로 namespace 전체 점검·삭제가 불가피하면
+대상과 건수를 확인한 별도 승인 수동 `redis-cli` 작업으로 수행한다.
 
 ### S3
 

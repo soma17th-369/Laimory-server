@@ -70,8 +70,8 @@ class PhotoUploadServiceTest {
     }
 
     @Test
-    void createUploads_fullKeyUsesCallerUserIdHashNamespace() {
-        // full key의 hash namespace는 호출자(인증 principal) userId에서 파생된다 — 고정 0 fallback 회귀 방지.
+    void createUploads_fullKeyUsesCallerSubjectNamespace() {
+        // full key의 hash namespace는 호출자의 subjectId에서 파생된다 — 다른 owner namespace 사용 회귀 방지.
         when(storage.generatePresignedPutUrl(anyString(), anyString(), anyLong()))
                 .thenReturn("https://example/put");
 
