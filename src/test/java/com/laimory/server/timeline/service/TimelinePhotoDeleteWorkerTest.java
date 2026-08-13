@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
@@ -10,19 +12,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.config.TimelineWorkerExecutorConfig;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
 import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.time.Duration;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import software.amazon.awssdk.core.exception.SdkClientException;
 
 @ExtendWith(MockitoExtension.class)
@@ -214,6 +222,56 @@ class TimelinePhotoDeleteWorkerTest {
         verify(jobService, org.mockito.Mockito.times(4)).claimEligible(250);
         verify(s3PhotoStorageService, org.mockito.Mockito.times(4))
                 .deleteAll(List.of("hash/photos/deleted.jpg"));
+    }
+
+    @Test
+    void concurrencyTwoUsesConfiguredExecutorToProcessDifferentBatchesInParallel() throws Exception {
+        TimelinePhotoDeleteJob first = job(81L, "hash/photos/first.jpg");
+        TimelinePhotoDeleteJob second = job(82L, "hash/photos/second.jpg");
+        TimelinePhotoDeleteWorkerProperties concurrentProperties =
+                new TimelinePhotoDeleteWorkerProperties(true, 250, 2, 2, Duration.ofSeconds(60));
+        ThreadPoolTaskExecutor executor = new TimelineWorkerExecutorConfig()
+                .timelinePhotoDeleteWorkerExecutor(concurrentProperties);
+        executor.initialize();
+
+        CountDownLatch bothSlotsClaiming = new CountDownLatch(2);
+        AtomicInteger claimOrder = new AtomicInteger();
+        Set<String> claimThreadNames = ConcurrentHashMap.newKeySet();
+        when(jobService.claimEligible(250)).thenAnswer(invocation -> {
+            int order = claimOrder.getAndIncrement();
+            claimThreadNames.add(Thread.currentThread().getName());
+            bothSlotsClaiming.countDown();
+            if (!bothSlotsClaiming.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("both worker slots did not start");
+            }
+            return order == 0 ? List.of(first) : List.of(second);
+        });
+        when(metrics.startBatch()).thenReturn(batchSample);
+        when(s3PhotoStorageService.deleteAll(anyList())).thenAnswer(invocation -> {
+            List<String> keys = invocation.getArgument(0);
+            return result(Set.copyOf(keys), Map.of(), Set.of());
+        });
+        worker = new TimelinePhotoDeleteWorker(
+                jobService,
+                completionService,
+                s3PhotoStorageService,
+                concurrentProperties,
+                metrics,
+                executor);
+
+        try {
+            worker.deletePendingPhotoObjects();
+
+            await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+                verify(completionService).completeSucceeded(List.of(first));
+                verify(completionService).completeSucceeded(List.of(second));
+                assertThat(claimThreadNames)
+                        .hasSize(2)
+                        .allMatch(name -> name.startsWith("photo-delete-"));
+            });
+        } finally {
+            executor.shutdown();
+        }
     }
 
     private void enableWithJobs(TimelinePhotoDeleteJob... jobs) {

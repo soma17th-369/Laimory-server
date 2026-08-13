@@ -22,6 +22,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,10 +92,10 @@ class DistributedScheduledClaimIntegrationTest {
 
         List<List<TimelinePhotoDeleteJob>> claims = claimConcurrently(
                 () -> photoJobService.claimEligible(ROW_COUNT / 2));
-        assertDisjointAndComplete(
-                claims.get(0).stream().map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId).toList(),
-                claims.get(1).stream().map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId).toList());
-        assertThat(photoJobService.claimEligible(ROW_COUNT)).isEmpty();
+        assertDisjointAndEventuallyDrained(
+                claims,
+                () -> photoJobService.claimEligible(ROW_COUNT),
+                TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
     }
 
     @Test
@@ -115,10 +116,10 @@ class DistributedScheduledClaimIntegrationTest {
 
         List<List<TimelineDraftSourceItem>> claims = claimConcurrently(
                 () -> draftSourceItemService.claimExpired(cutoff, ROW_COUNT / 2));
-        assertDisjointAndComplete(
-                claims.get(0).stream().map(TimelineDraftSourceItem::getTimelineDraftSourceItemId).toList(),
-                claims.get(1).stream().map(TimelineDraftSourceItem::getTimelineDraftSourceItemId).toList());
-        assertThat(draftSourceItemService.claimExpired(cutoff, ROW_COUNT)).isEmpty();
+        assertDisjointAndEventuallyDrained(
+                claims,
+                () -> draftSourceItemService.claimExpired(cutoff, ROW_COUNT),
+                TimelineDraftSourceItem::getTimelineDraftSourceItemId);
     }
 
     private long savePhotoItem(int index) {
@@ -154,12 +155,31 @@ class DistributedScheduledClaimIntegrationTest {
         }
     }
 
-    private void assertDisjointAndComplete(List<Long> first, List<Long> second) {
-        assertThat(first).hasSize(ROW_COUNT / 2);
-        assertThat(second).hasSize(ROW_COUNT / 2);
-        assertThat(first).doesNotContainAnyElementsOf(second);
-        Set<Long> union = new HashSet<>(first);
-        union.addAll(second);
-        assertThat(union).hasSize(ROW_COUNT);
+    /**
+     * SKIP LOCKED는 겹치지 않는 claim을 보장하지만 경합 중인 한 호출이 LIMIT를 모두 채우지는 않을 수 있다.
+     * 최초 동시 claim과 후속 drain 전체에서 각 ID가 한 번만 나오고 같은 날 queue가 비는지를 검증한다.
+     */
+    private <T> void assertDisjointAndEventuallyDrained(
+            List<List<T>> initialClaims,
+            Supplier<List<T>> nextClaim,
+            Function<T, Long> idExtractor) {
+        Set<Long> claimedIds = new HashSet<>();
+        initialClaims.forEach(batch -> addDisjoint(claimedIds, batch, idExtractor));
+
+        int followUpClaims = 0;
+        List<T> batch = nextClaim.get();
+        while (!batch.isEmpty()) {
+            assertThat(followUpClaims++).isLessThan(ROW_COUNT);
+            addDisjoint(claimedIds, batch, idExtractor);
+            batch = nextClaim.get();
+        }
+        assertThat(claimedIds).hasSize(ROW_COUNT);
+    }
+
+    private <T> void addDisjoint(Set<Long> claimedIds, List<T> batch, Function<T, Long> idExtractor) {
+        List<Long> batchIds = batch.stream().map(idExtractor).toList();
+        assertThat(batchIds).doesNotHaveDuplicates();
+        assertThat(claimedIds).doesNotContainAnyElementsOf(batchIds);
+        claimedIds.addAll(batchIds);
     }
 }

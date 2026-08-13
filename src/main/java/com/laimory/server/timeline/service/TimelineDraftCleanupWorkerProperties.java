@@ -8,6 +8,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class TimelineDraftCleanupWorkerProperties {
 
+    /**
+     * PROCESSING draft task의 TTL은 3분이므로 retention은 그보다 충분히 길어야 한다. 최소 1일을 강제해
+     * in-flight source가 cleanup cutoff에 걸리지 않게 한다. AI가 채택한 source는 final 저장 transaction에서
+     * 이미 삭제되므로, 이 조건 아래 cleanup 대상은 omitted/failed task의 잔여 staging row뿐이다.
+     */
     private static final long MIN_RETENTION_DAYS = 1;
     private static final int MAX_BATCH_SIZE = 1_000;
     private static final int MAX_CONCURRENCY = 2;
