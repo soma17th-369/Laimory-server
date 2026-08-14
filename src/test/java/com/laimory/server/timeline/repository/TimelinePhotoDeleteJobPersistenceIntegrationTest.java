@@ -110,14 +110,14 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         assertThat(service.insertIfAbsent(firstItemId, "user-hash/photos/other.jpg")).isFalse();
         assertThat(service.insertIfAbsent(secondItemId, "user-hash/photos/first.jpg")).isFalse();
 
-        assertThat(service.countPending()).isEqualTo(1);
+        assertThat(repository.count()).isEqualTo(1);
         TimelinePhotoDeleteJob saved = repository.findAll().getFirst();
         assertThat(saved.getTimelineItemId()).isEqualTo(firstItemId);
         assertThat(saved.getObjectKey()).isEqualTo("user-hash/photos/first.jpg");
     }
 
     @Test
-    void claimEligible_ordersByCreatedAtThenId_andReportsQueueSummary() {
+    void claimEligible_ordersByCreatedAtThenId() {
         long thirdItemId = savePhotoItem("three");
         long firstItemId = savePhotoItem("oldest-first");
         long secondItemId = savePhotoItem("oldest-second");
@@ -141,8 +141,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         assertThat(service.claimEligible(2))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(firstItemId, secondItemId);
-        assertThat(service.countPending()).isEqualTo(3);
-        assertThat(service.findOldestCreatedAt()).contains(OLDEST);
+        assertThat(repository.count()).isEqualTo(3);
     }
 
     @Test
@@ -157,15 +156,9 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
 
         assertThat(service.deleteByIds(List.of())).isZero();
         assertThat(service.deleteByIds(List.of(succeededId, Long.MAX_VALUE))).isEqualTo(1);
-        assertThat(service.countPending()).isEqualTo(1);
+        assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findAll().getFirst().getTimelineItemId()).isEqualTo(keepItemId);
         assertThat(timelineItemRepository.findById(deleteItemId)).isPresent();
-    }
-
-    @Test
-    void emptyQueue_hasZeroCountAndNoOldestTimestamp() {
-        assertThat(service.countPending()).isZero();
-        assertThat(service.findOldestCreatedAt()).isEmpty();
     }
 
     private long idForItem(List<TimelinePhotoDeleteJob> jobs, long timelineItemId) {

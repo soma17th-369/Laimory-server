@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -8,12 +9,13 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** timeline_photo_delete_jobs leaf 서비스. enqueue, claim, 조회와 job 행 삭제만 소유한다. */
+/** PHOTO delete job의 enqueue, claim, orphan 재검증과 완료 transaction을 소유한다. */
 @Service
 @RequiredArgsConstructor
 public class TimelinePhotoDeleteJobService {
@@ -23,6 +25,8 @@ public class TimelinePhotoDeleteJobService {
     private static final ZoneId WORKER_ZONE = ZoneId.of("Asia/Seoul");
 
     private final TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
+    private final TimelineEventItemService timelineEventItemService;
+    private final TimelineItemService timelineItemService;
     private final Clock clock;
 
     /**
@@ -68,20 +72,77 @@ public class TimelinePhotoDeleteJobService {
         return List.copyOf(jobs);
     }
 
-    public long countPending() {
-        return timelinePhotoDeleteJobRepository.count();
-    }
-
-    public Optional<LocalDateTime> findOldestCreatedAt() {
-        return timelinePhotoDeleteJobRepository.findOldestCreatedAt();
-    }
-
     /** 완료되거나 재연결되어 취소된 작업을 ID로 제거한다. 빈 입력은 no-op이다. */
     public int deleteByIds(Collection<Long> jobIds) {
         if (jobIds == null || jobIds.isEmpty()) {
             return 0;
         }
         return timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(jobIds);
+    }
+
+    /**
+     * claimed job이 S3 삭제 직전에도 orphan인지 재검증한다. 다른 Event에 다시 연결된 Item의 job은 같은
+     * transaction에서 취소하고 S3 대상에서 제외한다.
+     */
+    @Transactional
+    public ValidationResult retainOrphanJobs(List<TimelinePhotoDeleteJob> claimedJobs) {
+        if (claimedJobs.isEmpty()) {
+            return new ValidationResult(List.of(), 0);
+        }
+
+        List<Long> itemIds = claimedJobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelineItemId)
+                .distinct()
+                .toList();
+        Set<Long> linkedItemIds = timelineEventItemService.findByTimelineItemIds(itemIds).stream()
+                .map(TimelineEventItem::getTimelineItemId)
+                .collect(Collectors.toSet());
+        if (linkedItemIds.isEmpty()) {
+            return new ValidationResult(List.copyOf(claimedJobs), 0);
+        }
+
+        List<Long> relinkedJobIds = claimedJobs.stream()
+                .filter(job -> linkedItemIds.contains(job.getTimelineItemId()))
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
+                .distinct()
+                .toList();
+        int cancelled = deleteByIds(relinkedJobIds);
+        List<TimelinePhotoDeleteJob> orphanJobs = claimedJobs.stream()
+                .filter(job -> !linkedItemIds.contains(job.getTimelineItemId()))
+                .toList();
+        return new ValidationResult(List.copyOf(orphanJobs), cancelled);
+    }
+
+    /**
+     * S3 삭제가 확인된 job과 원문 PHOTO Item을 같은 transaction에서 완료한다. job FK가 Item의 선삭제를
+     * 막으므로 job을 먼저 지우고 Item을 지운다. 늦은 중복 completion은 job 삭제 0건으로 수렴한다.
+     */
+    @Transactional
+    public int completeSucceeded(List<TimelinePhotoDeleteJob> succeededJobs) {
+        if (succeededJobs.isEmpty()) {
+            return 0;
+        }
+
+        List<Long> jobIds = succeededJobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
+                .distinct()
+                .toList();
+        List<Long> itemIds = succeededJobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelineItemId)
+                .distinct()
+                .toList();
+        int deletedJobs = deleteByIds(jobIds);
+        if (deletedJobs == 0) {
+            return 0;
+        }
+        if (deletedJobs != jobIds.size()) {
+            throw new IllegalStateException("PHOTO delete job completion count mismatch");
+        }
+        timelineItemService.deleteByIds(itemIds);
+        return deletedJobs;
+    }
+
+    public record ValidationResult(List<TimelinePhotoDeleteJob> orphanJobs, int cancelledJobs) {
     }
 
     private void requireValidTimelineItemId(long timelineItemId) {

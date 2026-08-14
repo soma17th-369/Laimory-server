@@ -4,7 +4,6 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -44,9 +43,6 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
             + "where j.timelinePhotoDeleteJobId in :jobIds")
     int deferUntil(@Param("jobIds") Collection<Long> jobIds,
                    @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
-
-    @Query("select min(j.createdAt) from TimelinePhotoDeleteJob j")
-    Optional<LocalDateTime> findOldestCreatedAt();
 
     @Modifying
     @Transactional

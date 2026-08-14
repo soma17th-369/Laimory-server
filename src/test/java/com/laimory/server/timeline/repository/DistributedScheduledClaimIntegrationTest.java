@@ -12,7 +12,6 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.TimelineDraftSourceItemService;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteCompletionService;
 import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService;
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -45,9 +44,6 @@ class DistributedScheduledClaimIntegrationTest {
 
     @Autowired
     private TimelinePhotoDeleteJobService photoJobService;
-
-    @Autowired
-    private TimelinePhotoDeleteCompletionService photoCompletionService;
 
     @Autowired
     private TimelineDraftSourceItemService draftSourceItemService;
@@ -109,7 +105,7 @@ class DistributedScheduledClaimIntegrationTest {
         assertThat(photoJobService.insertIfAbsent(itemId, "claim-test/photos/completion.jpg")).isTrue();
         TimelinePhotoDeleteJob job = photoJobRepository.findAll().getFirst();
 
-        List<Integer> completed = runConcurrently(() -> photoCompletionService.completeSucceeded(List.of(job)));
+        List<Integer> completed = runConcurrently(() -> photoJobService.completeSucceeded(List.of(job)));
 
         assertThat(completed).containsExactlyInAnyOrder(1, 0);
         assertThat(photoJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isEmpty();

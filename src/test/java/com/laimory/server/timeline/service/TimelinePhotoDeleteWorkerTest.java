@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.awaitility.Awaitility.await;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -16,8 +15,7 @@ import com.laimory.server.config.TimelineWorkerExecutorConfig;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteValidationService.ValidationResult;
-import io.micrometer.core.instrument.Timer;
+import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService.ValidationResult;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -41,36 +39,23 @@ class TimelinePhotoDeleteWorkerTest {
     private TimelinePhotoDeleteJobService jobService;
 
     @Mock
-    private TimelinePhotoDeleteValidationService validationService;
-
-    @Mock
-    private TimelinePhotoDeleteCompletionService completionService;
-
-    @Mock
     private S3PhotoStorageService s3PhotoStorageService;
 
     @Mock
     private TimelinePhotoDeleteWorkerProperties properties;
-
-    @Mock
-    private TimelinePhotoDeleteMetrics metrics;
-
-    @Mock
-    private Timer.Sample batchSample;
 
     private TimelinePhotoDeleteWorker worker;
 
     @BeforeEach
     void setUp() {
         worker = new TimelinePhotoDeleteWorker(
-                jobService, validationService, completionService,
-                s3PhotoStorageService, properties, metrics, Runnable::run);
+                jobService, s3PhotoStorageService, properties, Runnable::run);
         lenient().when(properties.getConcurrency()).thenReturn(1);
         lenient().when(properties.getMaxBatchesPerRun()).thenReturn(1);
         lenient().when(properties.getMaxRunDuration()).thenReturn(Duration.ofSeconds(60));
-        lenient().when(completionService.completeSucceeded(anyList()))
+        lenient().when(jobService.completeSucceeded(anyList()))
                 .thenAnswer(invocation -> invocation.<List<?>>getArgument(0).size());
-        lenient().when(validationService.retainOrphanJobs(anyList()))
+        lenient().when(jobService.retainOrphanJobs(anyList()))
                 .thenAnswer(invocation -> new ValidationResult(invocation.getArgument(0), 0));
     }
 
@@ -80,48 +65,46 @@ class TimelinePhotoDeleteWorkerTest {
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(jobService, s3PhotoStorageService, metrics);
+        verifyNoInteractions(jobService, s3PhotoStorageService);
     }
 
     @Test
-    void emptyQueueSkipsS3AndMetrics() {
+    void emptyQueueSkipsS3() {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.claimEligible(250)).thenReturn(List.of());
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(s3PhotoStorageService, metrics);
-        verifyNoInteractions(completionService);
+        verifyNoInteractions(s3PhotoStorageService);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
     void relinkedJobsAreCancelledAndExcludedBeforeS3Delete() {
         TimelinePhotoDeleteJob relinked = job(15L, "hash/photos/relinked.jpg");
         enableWithJobs(relinked);
-        when(validationService.retainOrphanJobs(List.of(relinked)))
+        when(jobService.retainOrphanJobs(List.of(relinked)))
                 .thenReturn(new ValidationResult(List.of(), 1));
 
         worker.deletePendingPhotoObjects();
 
-        verify(validationService).retainOrphanJobs(List.of(relinked));
-        verifyNoInteractions(s3PhotoStorageService, completionService);
-        verify(metrics).recordClaimed(1);
-        verify(metrics, never()).startBatch();
+        verify(jobService).retainOrphanJobs(List.of(relinked));
+        verifyNoInteractions(s3PhotoStorageService);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
     void orphanValidationFailureKeepsJobsAndSkipsS3Delete() {
         TimelinePhotoDeleteJob job = job(16L, "hash/photos/validation-failed.jpg");
         enableWithJobs(job);
-        when(validationService.retainOrphanJobs(List.of(job)))
+        when(jobService.retainOrphanJobs(List.of(job)))
                 .thenThrow(new IllegalStateException("db unavailable"));
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(s3PhotoStorageService, completionService);
-        verify(metrics).recordDeferred(1);
-        verify(metrics, never()).startBatch();
+        verifyNoInteractions(s3PhotoStorageService);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
@@ -137,13 +120,7 @@ class TimelinePhotoDeleteWorkerTest {
                         Set.of()));
         worker.deletePendingPhotoObjects();
 
-        verify(completionService).completeSucceeded(List.of(first, second));
-        verify(metrics).recordAttemptSuccess(2);
-        verify(metrics).recordAttemptFailed(0);
-        verify(metrics).recordClaimed(2);
-        verify(metrics).recordCompleted(2);
-        verify(metrics).recordDeferred(0);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService).completeSucceeded(List.of(first, second));
     }
 
     @Test
@@ -162,12 +139,7 @@ class TimelinePhotoDeleteWorkerTest {
                         Set.of("hash/photos/unreported.jpg")));
         worker.deletePendingPhotoObjects();
 
-        verify(completionService).completeSucceeded(List.of(deleted));
-        verify(metrics).recordAttemptSuccess(1);
-        verify(metrics).recordAttemptFailed(2);
-        verify(metrics).recordCompleted(1);
-        verify(metrics).recordDeferred(2);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService).completeSucceeded(List.of(deleted));
     }
 
     @Test
@@ -182,10 +154,7 @@ class TimelinePhotoDeleteWorkerTest {
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(completionService);
-        verify(metrics).recordAttemptSuccess(0);
-        verify(metrics).recordAttemptFailed(1);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
@@ -200,14 +169,11 @@ class TimelinePhotoDeleteWorkerTest {
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(completionService);
-        verify(metrics).recordAttemptSuccess(0);
-        verify(metrics).recordAttemptFailed(1);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
-    void sdkExceptionLeavesAllJobsAndStopsBatchTimer() {
+    void sdkExceptionLeavesAllJobsForRetry() {
         TimelinePhotoDeleteJob first = job(51L, "hash/photos/first.jpg");
         TimelinePhotoDeleteJob second = job(52L, "hash/photos/second.jpg");
         enableWithJobs(first, second);
@@ -217,10 +183,7 @@ class TimelinePhotoDeleteWorkerTest {
 
         worker.deletePendingPhotoObjects();
 
-        verifyNoInteractions(completionService);
-        verify(metrics, never()).recordAttemptSuccess(anyInt());
-        verify(metrics).recordAttemptFailed(2);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService, never()).completeSucceeded(anyList());
     }
 
     @Test
@@ -230,15 +193,11 @@ class TimelinePhotoDeleteWorkerTest {
         when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
                 .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
         doThrow(new IllegalStateException("db unavailable"))
-                .when(completionService).completeSucceeded(List.of(job));
+                .when(jobService).completeSucceeded(List.of(job));
 
         assertThatCode(worker::deletePendingPhotoObjects).doesNotThrowAnyException();
 
-        verify(completionService).completeSucceeded(List.of(job));
-        verify(metrics).recordAttemptSuccess(1);
-        verify(metrics).recordAttemptFailed(0);
-        verify(metrics).recordDeferred(1);
-        verify(metrics).recordBatch(batchSample);
+        verify(jobService).completeSucceeded(List.of(job));
     }
 
     @Test
@@ -249,7 +208,6 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.getMaxBatchesPerRun()).thenReturn(4);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.claimEligible(250)).thenReturn(List.of(job));
-        lenient().when(metrics.startBatch()).thenReturn(batchSample);
         when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
                 .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
 
@@ -282,26 +240,22 @@ class TimelinePhotoDeleteWorkerTest {
             }
             return order == 0 ? List.of(first) : List.of(second);
         });
-        when(metrics.startBatch()).thenReturn(batchSample);
         when(s3PhotoStorageService.deleteAll(anyList())).thenAnswer(invocation -> {
             List<String> keys = invocation.getArgument(0);
             return result(Set.copyOf(keys), Map.of(), Set.of());
         });
         worker = new TimelinePhotoDeleteWorker(
                 jobService,
-                validationService,
-                completionService,
                 s3PhotoStorageService,
                 concurrentProperties,
-                metrics,
                 executor);
 
         try {
             worker.deletePendingPhotoObjects();
 
             await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
-                verify(completionService).completeSucceeded(List.of(first));
-                verify(completionService).completeSucceeded(List.of(second));
+                verify(jobService).completeSucceeded(List.of(first));
+                verify(jobService).completeSucceeded(List.of(second));
                 assertThat(claimThreadNames)
                         .hasSize(2)
                         .allMatch(name -> name.startsWith("photo-delete-"));
@@ -315,7 +269,6 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.claimEligible(250)).thenReturn(List.of(jobs));
-        lenient().when(metrics.startBatch()).thenReturn(batchSample);
     }
 
     private TimelinePhotoDeleteJob job(long id, String objectKey) {

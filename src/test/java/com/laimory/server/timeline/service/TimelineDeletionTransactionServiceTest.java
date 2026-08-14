@@ -42,8 +42,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 삭제 DB transaction 단위 검증.
  *
  * <p>소유권·DRAFT를 재확인하고 마지막 참조가 사라지는 PHOTO의 delete job을 root hard delete보다 먼저
- * enqueue한다. shared PHOTO는 유지하고, 손상 payload는 job만 생략하며 결과 건수로 commit 이후 metrics에
- * 전달할 결정을 반환한다.
+ * enqueue한다. shared PHOTO는 유지하고, 손상 payload는 job만 생략하며 commit 이후 로그에 남길 결과
+ * 건수를 반환한다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineDeletionTransactionServiceTest {

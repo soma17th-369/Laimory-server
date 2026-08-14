@@ -74,9 +74,7 @@ class TimelineDeletionCascadeIntegrationTest {
     @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
-    private TimelinePhotoDeleteCompletionService timelinePhotoDeleteCompletionService;
-    @Autowired
-    private TimelinePhotoDeleteValidationService timelinePhotoDeleteValidationService;
+    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -270,7 +268,7 @@ class TimelineDeletionCascadeIntegrationTest {
         timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
 
-        timelinePhotoDeleteCompletionService.completeSucceeded(List.of(job));
+        timelinePhotoDeleteJobService.completeSucceeded(List.of(job));
 
         assertThat(findFixturePhotoDeleteJobs()).isEmpty();
         assertThat(timelineItemRepository.findById(itemId)).isEmpty();
@@ -286,7 +284,7 @@ class TimelineDeletionCascadeIntegrationTest {
         doThrow(new IllegalStateException("forced completion item delete failure"))
                 .when(timelineItemService).deleteByIds(List.of(itemId));
 
-        assertThatThrownBy(() -> timelinePhotoDeleteCompletionService.completeSucceeded(List.of(job)))
+        assertThatThrownBy(() -> timelinePhotoDeleteJobService.completeSucceeded(List.of(job)))
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(timelinePhotoDeleteJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isPresent();
@@ -334,8 +332,8 @@ class TimelineDeletionCascadeIntegrationTest {
         }
 
         TimelinePhotoDeleteJob staleJob = findFixturePhotoDeleteJobs().getFirst();
-        TimelinePhotoDeleteValidationService.ValidationResult validation =
-                timelinePhotoDeleteValidationService.retainOrphanJobs(List.of(staleJob));
+        TimelinePhotoDeleteJobService.ValidationResult validation =
+                timelinePhotoDeleteJobService.retainOrphanJobs(List.of(staleJob));
 
         assertThat(validation.orphanJobs()).isEmpty();
         assertThat(validation.cancelledJobs()).isEqualTo(1);
@@ -343,7 +341,7 @@ class TimelineDeletionCascadeIntegrationTest {
         assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId))
                 .extracting(TimelineEventItem::getTimelineItemId)
                 .containsExactly(itemId);
-        assertThat(timelinePhotoDeleteCompletionService.completeSucceeded(List.of(staleJob))).isZero();
+        assertThat(timelinePhotoDeleteJobService.completeSucceeded(List.of(staleJob))).isZero();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
     }
 }

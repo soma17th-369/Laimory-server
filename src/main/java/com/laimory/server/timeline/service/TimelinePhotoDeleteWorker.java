@@ -4,8 +4,7 @@ import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteValidationService.ValidationResult;
-import io.micrometer.core.instrument.Timer;
+import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService.ValidationResult;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,28 +32,19 @@ public class TimelinePhotoDeleteWorker {
     private static final int MAX_LOGGED_ERROR_CODE_LENGTH = 64;
 
     private final TimelinePhotoDeleteJobService jobService;
-    private final TimelinePhotoDeleteValidationService validationService;
-    private final TimelinePhotoDeleteCompletionService completionService;
     private final S3PhotoStorageService s3PhotoStorageService;
     private final TimelinePhotoDeleteWorkerProperties properties;
-    private final TimelinePhotoDeleteMetrics metrics;
     private final TaskExecutor workerExecutor;
     private final AtomicBoolean runActive = new AtomicBoolean();
 
     public TimelinePhotoDeleteWorker(
             TimelinePhotoDeleteJobService jobService,
-            TimelinePhotoDeleteValidationService validationService,
-            TimelinePhotoDeleteCompletionService completionService,
             S3PhotoStorageService s3PhotoStorageService,
             TimelinePhotoDeleteWorkerProperties properties,
-            TimelinePhotoDeleteMetrics metrics,
             @Qualifier("timelinePhotoDeleteWorkerExecutor") TaskExecutor workerExecutor) {
         this.jobService = jobService;
-        this.validationService = validationService;
-        this.completionService = completionService;
         this.s3PhotoStorageService = s3PhotoStorageService;
         this.properties = properties;
-        this.metrics = metrics;
         this.workerExecutor = workerExecutor;
     }
 
@@ -73,24 +63,33 @@ public class TimelinePhotoDeleteWorker {
         ScheduledWorkerRunBudget budget = new ScheduledWorkerRunBudget(
                 properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
         AtomicInteger remainingSlots = new AtomicInteger(properties.getConcurrency());
+        RunSummary summary = new RunSummary();
+        log.info("PHOTO 삭제 worker run 시작: batchSize={} concurrency={} maxBatches={} maxRunDurationMs={}",
+                properties.getBatchSize(), properties.getConcurrency(), properties.getMaxBatchesPerRun(),
+                properties.getMaxRunDuration().toMillis());
         for (int slot = 0; slot < properties.getConcurrency(); slot++) {
             try {
-                workerExecutor.execute(() -> runWorkerSlot(budget, remainingSlots));
+                workerExecutor.execute(() -> runWorkerSlot(budget, remainingSlots, summary));
             } catch (RuntimeException exception) {
+                summary.recordWorkerError();
                 log.warn("PHOTO 삭제 worker task 제출 실패: exceptionType={}",
                         exception.getClass().getSimpleName());
-                workerSlotFinished(remainingSlots);
+                workerSlotFinished(remainingSlots, summary);
             }
         }
     }
 
-    private void runWorkerSlot(ScheduledWorkerRunBudget budget, AtomicInteger remainingSlots) {
+    private void runWorkerSlot(
+            ScheduledWorkerRunBudget budget,
+            AtomicInteger remainingSlots,
+            RunSummary summary) {
         try {
             while (budget.tryAcquireBatch()) {
                 List<TimelinePhotoDeleteJob> jobs;
                 try {
                     jobs = jobService.claimEligible(properties.getBatchSize());
                 } catch (RuntimeException exception) {
+                    summary.recordClaimError();
                     log.warn("PHOTO 삭제 job claim 실패: exceptionType={}",
                             exception.getClass().getSimpleName());
                     return;
@@ -98,29 +97,32 @@ public class TimelinePhotoDeleteWorker {
                 if (jobs.isEmpty()) {
                     return;
                 }
-                metrics.recordClaimed(jobs.size());
-                processClaimedBatch(jobs);
+                summary.record(processClaimedBatch(jobs));
             }
         } finally {
-            workerSlotFinished(remainingSlots);
+            workerSlotFinished(remainingSlots, summary);
         }
     }
 
-    private void workerSlotFinished(AtomicInteger remainingSlots) {
+    private void workerSlotFinished(AtomicInteger remainingSlots, RunSummary summary) {
         if (remainingSlots.decrementAndGet() == 0) {
             runActive.set(false);
+            summary.logCompleted();
         }
     }
 
-    private void processClaimedBatch(List<TimelinePhotoDeleteJob> jobs) {
+    private BatchResult processClaimedBatch(List<TimelinePhotoDeleteJob> jobs) {
+        long startedAtNanos = System.nanoTime();
         ValidationResult validation;
         try {
-            validation = validationService.retainOrphanJobs(jobs);
+            validation = jobService.retainOrphanJobs(jobs);
         } catch (RuntimeException exception) {
-            metrics.recordDeferred(jobs.size());
-            log.warn("PHOTO 삭제 전 orphan 재검증 실패(job 유지): claimed={} exceptionType={}",
-                    jobs.size(), exception.getClass().getSimpleName());
-            return;
+            BatchResult result = BatchResult.validationFailed(jobs.size(), elapsedMillis(startedAtNanos));
+            log.warn("PHOTO 삭제 batch orphan 재검증 실패(job 유지): claimed={} deferred={} "
+                            + "durationMs={} exceptionType={}",
+                    result.claimed(), result.deferred(), result.durationMs(),
+                    exception.getClass().getSimpleName());
+            return result;
         }
         List<TimelinePhotoDeleteJob> orphanJobs = validation.orphanJobs();
         if (validation.cancelledJobs() > 0) {
@@ -128,24 +130,28 @@ public class TimelinePhotoDeleteWorker {
                     jobs.size(), validation.cancelledJobs());
         }
         if (orphanJobs.isEmpty()) {
-            return;
+            BatchResult result = BatchResult.completedWithoutS3(
+                    jobs.size(), validation.cancelledJobs(), elapsedMillis(startedAtNanos));
+            logBatchCompleted(result, Map.of());
+            return result;
         }
 
         List<String> objectKeys = orphanJobs.stream()
                 .map(TimelinePhotoDeleteJob::getObjectKey)
                 .toList();
         BatchDeleteResult result;
-        Timer.Sample sample = metrics.startBatch();
         try {
             result = s3PhotoStorageService.deleteAll(objectKeys);
         } catch (RuntimeException exception) {
-            metrics.recordAttemptFailed(orphanJobs.size());
-            metrics.recordDeferred(orphanJobs.size());
-            log.warn("PHOTO 삭제 batch 호출 실패(job 유지): requested={} exceptionType={}",
-                    orphanJobs.size(), exception.getClass().getSimpleName());
-            return;
-        } finally {
-            metrics.recordBatch(sample);
+            BatchResult batchResult = BatchResult.s3Failed(
+                    jobs.size(), validation.cancelledJobs(), orphanJobs.size(),
+                    elapsedMillis(startedAtNanos));
+            log.warn("PHOTO 삭제 batch S3 호출 실패(job 유지): claimed={} relinkedCancelled={} "
+                            + "requested={} s3Failed={} deferred={} durationMs={} exceptionType={}",
+                    batchResult.claimed(), batchResult.relinkedCancelled(), batchResult.requested(),
+                    batchResult.s3Failed(), batchResult.deferred(), batchResult.durationMs(),
+                    exception.getClass().getSimpleName());
+            return batchResult;
         }
 
         Set<String> deletedObjectKeys = result.deletedObjectKeys();
@@ -153,31 +159,154 @@ public class TimelinePhotoDeleteWorker {
                 .filter(job -> deletedObjectKeys.contains(job.getObjectKey()))
                 .toList();
         int failed = orphanJobs.size() - succeededJobs.size();
-        metrics.recordAttemptSuccess(succeededJobs.size());
-        metrics.recordAttemptFailed(failed);
 
         int completed = 0;
         try {
             if (!succeededJobs.isEmpty()) {
-                completed = completionService.completeSucceeded(succeededJobs);
+                completed = jobService.completeSucceeded(succeededJobs);
             }
         } catch (RuntimeException exception) {
-            metrics.recordDeferred(orphanJobs.size());
-            log.warn("PHOTO 삭제 성공 Item/job 정리 실패(둘 다 유지): succeeded={} exceptionType={}",
-                    succeededJobs.size(), exception.getClass().getSimpleName());
-            return;
+            BatchResult batchResult = BatchResult.completionFailed(
+                    jobs.size(), validation.cancelledJobs(), orphanJobs.size(),
+                    succeededJobs.size(), failed, result.unreportedObjectKeys().size(),
+                    elapsedMillis(startedAtNanos));
+            log.warn("PHOTO 삭제 batch DB 완료 실패(Item/job 유지): claimed={} relinkedCancelled={} "
+                            + "requested={} s3Succeeded={} s3Failed={} unreported={} deferred={} "
+                            + "durationMs={} exceptionType={}",
+                    batchResult.claimed(), batchResult.relinkedCancelled(), batchResult.requested(),
+                    batchResult.s3Succeeded(), batchResult.s3Failed(), batchResult.unreported(),
+                    batchResult.deferred(), batchResult.durationMs(), exception.getClass().getSimpleName());
+            return batchResult;
         }
-        metrics.recordCompleted(completed);
         // completion이 0인 성공 job은 다른 at-least-once worker가 이미 완료한 정상 경쟁일 수 있다.
         // 다음 실행에 실제로 남겨 둔 것은 S3가 실패/누락으로 분류한 job뿐이다.
-        metrics.recordDeferred(failed);
 
         Map<String, Long> errorCodeCounts = result.errorCodeByObjectKey().values().stream()
                 .map(code -> LogSanitizer.sanitize(code, MAX_LOGGED_ERROR_CODE_LENGTH))
                 .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
-        log.info("PHOTO 삭제 batch 완료: claimed={} relinkedCancelled={} requested={} succeeded={} failed={} "
-                        + "unreported={} completed={} errorCodes={}",
+        BatchResult batchResult = BatchResult.completed(
                 jobs.size(), validation.cancelledJobs(), orphanJobs.size(), succeededJobs.size(), failed,
-                result.unreportedObjectKeys().size(), completed, errorCodeCounts);
+                result.unreportedObjectKeys().size(), completed, elapsedMillis(startedAtNanos));
+        logBatchCompleted(batchResult, errorCodeCounts);
+        return batchResult;
+    }
+
+    private void logBatchCompleted(BatchResult result, Map<String, Long> errorCodeCounts) {
+        log.info("PHOTO 삭제 batch 완료: claimed={} relinkedCancelled={} requested={} s3Succeeded={} "
+                        + "s3Failed={} unreported={} dbCompleted={} deferred={} durationMs={} errorCodes={}",
+                result.claimed(), result.relinkedCancelled(), result.requested(), result.s3Succeeded(),
+                result.s3Failed(), result.unreported(), result.dbCompleted(), result.deferred(),
+                result.durationMs(), errorCodeCounts);
+    }
+
+    private static long elapsedMillis(long startedAtNanos) {
+        return Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000);
+    }
+
+    private record BatchResult(
+            int claimed,
+            int relinkedCancelled,
+            int requested,
+            int s3Succeeded,
+            int s3Failed,
+            int unreported,
+            int dbCompleted,
+            int deferred,
+            int validationErrors,
+            int s3Errors,
+            int databaseErrors,
+            long durationMs) {
+
+        private static BatchResult validationFailed(int claimed, long durationMs) {
+            return new BatchResult(claimed, 0, 0, 0, 0, 0, 0, claimed, 1, 0, 0, durationMs);
+        }
+
+        private static BatchResult completedWithoutS3(int claimed, int cancelled, long durationMs) {
+            return new BatchResult(claimed, cancelled, 0, 0, 0, 0, 0, 0, 0, 0, 0, durationMs);
+        }
+
+        private static BatchResult s3Failed(int claimed, int cancelled, int requested, long durationMs) {
+            return new BatchResult(
+                    claimed, cancelled, requested, 0, requested, 0, 0, requested, 0, 1, 0, durationMs);
+        }
+
+        private static BatchResult completionFailed(
+                int claimed,
+                int cancelled,
+                int requested,
+                int s3Succeeded,
+                int s3Failed,
+                int unreported,
+                long durationMs) {
+            return new BatchResult(
+                    claimed, cancelled, requested, s3Succeeded, s3Failed, unreported,
+                    0, requested, 0, 0, 1, durationMs);
+        }
+
+        private static BatchResult completed(
+                int claimed,
+                int cancelled,
+                int requested,
+                int s3Succeeded,
+                int s3Failed,
+                int unreported,
+                int dbCompleted,
+                long durationMs) {
+            return new BatchResult(
+                    claimed, cancelled, requested, s3Succeeded, s3Failed, unreported,
+                    dbCompleted, s3Failed, 0, 0, 0, durationMs);
+        }
+    }
+
+    private static final class RunSummary {
+
+        private final long startedAtNanos = System.nanoTime();
+        private int batches;
+        private int claimed;
+        private int relinkedCancelled;
+        private int requested;
+        private int s3Succeeded;
+        private int s3Failed;
+        private int unreported;
+        private int dbCompleted;
+        private int deferred;
+        private int validationErrors;
+        private int claimErrors;
+        private int s3Errors;
+        private int databaseErrors;
+        private int workerErrors;
+
+        private synchronized void record(BatchResult result) {
+            batches++;
+            claimed += result.claimed();
+            relinkedCancelled += result.relinkedCancelled();
+            requested += result.requested();
+            s3Succeeded += result.s3Succeeded();
+            s3Failed += result.s3Failed();
+            unreported += result.unreported();
+            dbCompleted += result.dbCompleted();
+            deferred += result.deferred();
+            validationErrors += result.validationErrors();
+            s3Errors += result.s3Errors();
+            databaseErrors += result.databaseErrors();
+        }
+
+        private synchronized void recordWorkerError() {
+            workerErrors++;
+        }
+
+        private synchronized void recordClaimError() {
+            claimErrors++;
+        }
+
+        private synchronized void logCompleted() {
+            log.info("PHOTO 삭제 worker run 완료: batches={} claimed={} relinkedCancelled={} requested={} "
+                            + "s3Succeeded={} s3Failed={} unreported={} dbCompleted={} deferred={} "
+                            + "claimErrors={} validationErrors={} s3Errors={} databaseErrors={} "
+                            + "workerErrors={} durationMs={}",
+                    batches, claimed, relinkedCancelled, requested, s3Succeeded, s3Failed, unreported,
+                    dbCompleted, deferred, claimErrors, validationErrors, s3Errors, databaseErrors, workerErrors,
+                    elapsedMillis(startedAtNanos));
+        }
     }
 }

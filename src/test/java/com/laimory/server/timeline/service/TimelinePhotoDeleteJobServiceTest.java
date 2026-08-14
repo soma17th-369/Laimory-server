@@ -2,10 +2,14 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -16,6 +20,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -29,6 +34,12 @@ class TimelinePhotoDeleteJobServiceTest {
     private TimelinePhotoDeleteJobRepository repository;
 
     @Mock
+    private TimelineEventItemService timelineEventItemService;
+
+    @Mock
+    private TimelineItemService timelineItemService;
+
+    @Mock
     private TimelinePhotoDeleteJob first;
 
     @Mock
@@ -38,7 +49,8 @@ class TimelinePhotoDeleteJobServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelinePhotoDeleteJobService(repository, CLOCK);
+        service = new TimelinePhotoDeleteJobService(
+                repository, timelineEventItemService, timelineItemService, CLOCK);
     }
 
     @Test
@@ -100,5 +112,83 @@ class TimelinePhotoDeleteJobServiceTest {
         assertThat(service.deleteByIds(List.of())).isZero();
 
         verify(repository, never()).deleteAllByJobIdIn(List.of());
+    }
+
+    @Test
+    void retainOrphanJobs_cancelsRelinkedJobsAndReturnsOnlyCurrentOrphans() {
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(second.getTimelineItemId()).thenReturn(102L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(101L, 102L)))
+                .thenReturn(List.of(TimelineEventItem.of(22L, 102L)));
+        when(repository.deleteAllByJobIdIn(List.of(12L))).thenReturn(1);
+
+        TimelinePhotoDeleteJobService.ValidationResult result =
+                service.retainOrphanJobs(List.of(first, second));
+
+        assertThat(result.orphanJobs()).containsExactly(first);
+        assertThat(result.cancelledJobs()).isEqualTo(1);
+    }
+
+    @Test
+    void retainOrphanJobs_keepsAllJobsWhenNoItemIsLinked() {
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(101L))).thenReturn(List.of());
+
+        TimelinePhotoDeleteJobService.ValidationResult result =
+                service.retainOrphanJobs(List.of(first));
+
+        assertThat(result.orphanJobs()).containsExactly(first);
+        assertThat(result.cancelledJobs()).isZero();
+        verify(repository, never()).deleteAllByJobIdIn(List.of());
+    }
+
+    @Test
+    void completeSucceeded_deletesJobsBeforeOriginalItemsWithoutPreLockRead() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(second.getTimelineItemId()).thenReturn(102L);
+        when(repository.deleteAllByJobIdIn(List.of(11L, 12L))).thenReturn(2);
+
+        assertThat(service.completeSucceeded(List.of(first, second))).isEqualTo(2);
+
+        InOrder order = inOrder(repository, timelineItemService);
+        order.verify(repository).deleteAllByJobIdIn(List.of(11L, 12L));
+        order.verify(timelineItemService).deleteByIds(List.of(101L, 102L));
+    }
+
+    @Test
+    void completeSucceeded_alreadyCompletedRaceStillConvergesWithoutError() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(0);
+
+        assertThat(service.completeSucceeded(List.of(first))).isZero();
+
+        verify(timelineItemService, never()).deleteByIds(List.of(101L));
+    }
+
+    @Test
+    void completeSucceeded_partialJobDeleteRollsBackInsteadOfDeletingAmbiguousItems() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(second.getTimelineItemId()).thenReturn(102L);
+        when(repository.deleteAllByJobIdIn(List.of(11L, 12L))).thenReturn(1);
+
+        assertThatThrownBy(() -> service.completeSucceeded(List.of(first, second)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("PHOTO delete job completion count mismatch");
+
+        verify(timelineItemService, never()).deleteByIds(List.of(101L, 102L));
+    }
+
+    @Test
+    void lifecycleOperations_emptyInputAreNoOp() {
+        assertThat(service.retainOrphanJobs(List.of()).orphanJobs()).isEmpty();
+        assertThat(service.completeSucceeded(List.of())).isZero();
+
+        verifyNoInteractions(timelineEventItemService, timelineItemService);
     }
 }
