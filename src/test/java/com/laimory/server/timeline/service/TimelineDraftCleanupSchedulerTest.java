@@ -35,10 +35,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** cleanup worker의 cutoff, S3 batch, 부분 실패와 malformed 정책을 인프라 없이 검증한다. */
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class TimelineDraftCleanupSchedulerTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -56,9 +58,6 @@ class TimelineDraftCleanupSchedulerTest {
 
     @Mock
     private TimelineDraftCleanupWorkerProperties properties;
-
-    @Mock
-    private TimelineDraftCleanupMetrics metrics;
 
     @BeforeEach
     void setUp() {
@@ -93,12 +92,10 @@ class TimelineDraftCleanupSchedulerTest {
 
         verify(s3PhotoStorageService).deleteAll(List.of(objectKey));
         verify(timelineDraftSourceItemService).deleteClaimed(Set.of(10L));
-        verify(metrics).recordCompleted(1);
-        verify(metrics).recordDeferred(0);
     }
 
     @Test
-    void cleanup_partialS3Result_keepsFailedPhotoAndDeletesOtherRows() {
+    void cleanup_partialS3Result_keepsFailedPhotoAndLogsRunSummary(CapturedOutput output) {
         TimelineDraftSourceItem deleted = photoRow(20L, FILENAME);
         TimelineDraftSourceItem failed = photoRow(21L, "failed.jpg");
         TimelineDraftSourceItem stay = stayRow(22L);
@@ -113,7 +110,11 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler().cleanupExpiredDrafts();
 
         verify(timelineDraftSourceItemService).deleteClaimed(Set.of(22L, 20L));
-        verify(metrics).recordDeferred(1);
+        assertThat(output)
+                .contains("draft cleanup batch 완료: claimed=3, succeeded=2, failed=1, deleted=2")
+                .contains("photoDeleteRequested=2, photoDeleteSucceeded=1, photoDeleteFailed=1")
+                .contains("draft cleanup run 완료: batches=1, claimed=3, succeeded=2, failed=1, deleted=2")
+                .contains("workerErrors=0, durationMs=");
     }
 
     @Test
@@ -129,7 +130,6 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler().cleanupExpiredDrafts();
 
         verify(timelineDraftSourceItemService).deleteClaimed(Set.of(31L));
-        verify(metrics).recordDeferred(1);
     }
 
     @Test
@@ -164,7 +164,6 @@ class TimelineDraftCleanupSchedulerTest {
                 MAPPER,
                 FIXED,
                 properties,
-                metrics,
                 Runnable::run);
     }
 

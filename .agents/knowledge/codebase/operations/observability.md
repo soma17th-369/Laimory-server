@@ -201,7 +201,6 @@ Spring JSON stdout
     root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.timeline.photo.delete.job{state=claimed|deferred|completed}`: MySQL claim, 다음 일일 실행 이월,
     실제 DB completion row 수
-  - `laimory.timeline.draft.cleanup.row{state=claimed|deferred|completed}`: draft retention cleanup row 수
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
@@ -239,6 +238,9 @@ Spring JSON stdout
   Overview dashboard도 같은 30시간부터 red다. 이는 반복 실패, 전체 process의 run budget 초과 또는
   03:00 실행 누락을 조사하는 신호다. 스케줄은 missed run을 catch-up하지 않고 job을 다음
   실행까지 MySQL에 보존한다. cron/zone override로 이 cadence를 바꾸면 임계치 의미도 함께 재검토한다.
+- draft retention cleanup은 custom meter를 등록하지 않는다. 각 process가 run 시작 설정과 batch/run 종료의
+  claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
+  소요 시간을 key=value 형태의 application log message로 남긴다.
 
 ## Dev Metrics Assets
 
