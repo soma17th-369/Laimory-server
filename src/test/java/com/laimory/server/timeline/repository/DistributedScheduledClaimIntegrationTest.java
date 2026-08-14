@@ -199,6 +199,9 @@ class DistributedScheduledClaimIntegrationTest {
     }
 
     private <T> void addDisjoint(Set<Long> claimedIds, List<T> batch, Function<T, Long> idExtractor) {
+        if (batch.isEmpty()) {
+            return;
+        }
         List<Long> batchIds = batch.stream().map(idExtractor).toList();
         assertThat(batchIds).doesNotHaveDuplicates();
         assertThat(claimedIds).doesNotContainAnyElementsOf(batchIds);
