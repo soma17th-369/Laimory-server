@@ -15,8 +15,9 @@ import lombok.Getter;
 /**
  * 마지막 TimelineItem 참조가 사라진 PHOTO의 S3 삭제 작업.
  *
- * <p>행 존재 자체가 처리 대기 상태다. 원 TimelineItem은 job이 있는 동안 보존되며, worker가 S3 삭제 성공
- * 뒤 job과 Item을 한 DB transaction에서 최종 hard delete한다.
+ * <p>행 존재 자체가 처리 대기 상태다. 원 TimelineItem은 job이 있는 동안 보존되며, 신규 job은 동시
+ * request transaction이 수렴하도록 다음 날부터 claim한다. worker는 현재 association을 재확인한 뒤 S3
+ * 삭제에 성공한 job과 Item을 한 DB transaction에서 최종 hard delete한다.
  */
 @Entity
 @Table(

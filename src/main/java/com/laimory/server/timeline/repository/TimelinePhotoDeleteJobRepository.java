@@ -23,11 +23,12 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     @Modifying
     @Transactional
     @Query(value = "insert ignore into timeline_photo_delete_jobs "
-            + "(timeline_item_id, object_key, created_at, updated_at) "
-            + "values (:timelineItemId, :objectKey, current_timestamp(6), current_timestamp(6))",
+            + "(timeline_item_id, object_key, available_at, created_at, updated_at) "
+            + "values (:timelineItemId, :objectKey, :availableAt, current_timestamp(6), current_timestamp(6))",
             nativeQuery = true)
     int insertIfAbsent(@Param("timelineItemId") long timelineItemId,
-                       @Param("objectKey") String objectKey);
+                       @Param("objectKey") String objectKey,
+                       @Param("availableAt") LocalDateTime availableAt);
 
     @Query(value = "select * from timeline_photo_delete_jobs "
             + "where available_at <= :eligibleAt "

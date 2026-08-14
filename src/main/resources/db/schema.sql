@@ -103,8 +103,9 @@ CREATE TABLE IF NOT EXISTS timeline_event_items (
 
 -- 마지막 Event 참조가 사라지는 PHOTO의 S3 삭제 의무와 원문 Item을 MySQL commit과 함께 보존하는 작업 테이블.
 -- 원 TimelineItem은 job이 존재하는 동안 남고, worker가 S3 성공 뒤 job→Item 순서로 한 transaction에서 지운다.
--- 행 존재가 처리 대기 상태다. available_at은 여러 process/thread의 같은 날 중복 선택을 막고,
--- 실패·crash 행을 다음 일일 실행에서 다시 선택하기 위한 최소 eligibility 표시다.
+-- 행 존재가 처리 대기 상태다. 신규 writer는 available_at을 다음 Seoul calendar day로 명시해 동시 request
+-- transaction이 먼저 수렴하게 한다. default는 구 binary INSERT 호환용이다. claim은 여러 process/thread의
+-- 같은 날 중복 선택을 막고 실패·crash 행을 다음 일일 실행에서 다시 선택하게 한다.
 CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
     timeline_photo_delete_job_id BIGINT NOT NULL AUTO_INCREMENT,
     timeline_item_id BIGINT NOT NULL,

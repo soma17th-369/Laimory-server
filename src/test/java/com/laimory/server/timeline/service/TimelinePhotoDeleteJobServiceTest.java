@@ -42,8 +42,9 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void insertIfAbsent_reportsWhetherRepositoryInserted() {
-        when(repository.insertIfAbsent(1L, "hash/photos/photo.jpg")).thenReturn(1, 0);
+    void insertIfAbsent_defersNewJobToNextSeoulCalendarDayAndReportsWhetherInserted() {
+        LocalDateTime initialAvailableAt = LocalDateTime.of(2026, 8, 15, 0, 0);
+        when(repository.insertIfAbsent(1L, "hash/photos/photo.jpg", initialAvailableAt)).thenReturn(1, 0);
 
         assertThat(service.insertIfAbsent(1L, "hash/photos/photo.jpg")).isTrue();
         assertThat(service.insertIfAbsent(1L, "hash/photos/photo.jpg")).isFalse();
@@ -58,9 +59,12 @@ class TimelinePhotoDeleteJobServiceTest {
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> service.insertIfAbsent(1L, " "));
 
-        verify(repository, never()).insertIfAbsent(0L, "hash/photos/photo.jpg");
-        verify(repository, never()).insertIfAbsent(1L, "한글/photos/photo.jpg");
-        verify(repository, never()).insertIfAbsent(1L, " ");
+        verify(repository, never()).insertIfAbsent(
+                0L, "hash/photos/photo.jpg", LocalDateTime.of(2026, 8, 15, 0, 0));
+        verify(repository, never()).insertIfAbsent(
+                1L, "한글/photos/photo.jpg", LocalDateTime.of(2026, 8, 15, 0, 0));
+        verify(repository, never()).insertIfAbsent(
+                1L, " ", LocalDateTime.of(2026, 8, 15, 0, 0));
     }
 
     @Test
@@ -92,8 +96,8 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void deleteSucceeded_skipsEmptyInput() {
-        assertThat(service.deleteSucceeded(List.of())).isZero();
+    void deleteByIds_skipsEmptyInput() {
+        assertThat(service.deleteByIds(List.of())).isZero();
 
         verify(repository, never()).deleteAllByJobIdIn(List.of());
     }

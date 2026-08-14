@@ -1,7 +1,10 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -42,12 +45,12 @@ class TimelinePhotoDeleteCompletionServiceTest {
         when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
         when(first.getTimelineItemId()).thenReturn(101L);
         when(second.getTimelineItemId()).thenReturn(102L);
-        when(jobService.deleteSucceeded(List.of(11L, 12L))).thenReturn(2);
+        when(jobService.deleteByIds(List.of(11L, 12L))).thenReturn(2);
 
         assertThat(service.completeSucceeded(List.of(first, second))).isEqualTo(2);
 
         InOrder order = inOrder(jobService, timelineItemService);
-        order.verify(jobService).deleteSucceeded(List.of(11L, 12L));
+        order.verify(jobService).deleteByIds(List.of(11L, 12L));
         order.verify(timelineItemService).deleteByIds(List.of(101L, 102L));
     }
 
@@ -55,13 +58,27 @@ class TimelinePhotoDeleteCompletionServiceTest {
     void completeSucceeded_alreadyCompletedRaceStillConvergesWithoutError() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
         when(first.getTimelineItemId()).thenReturn(101L);
-        when(jobService.deleteSucceeded(List.of(11L))).thenReturn(0);
+        when(jobService.deleteByIds(List.of(11L))).thenReturn(0);
 
         assertThat(service.completeSucceeded(List.of(first))).isZero();
 
-        InOrder order = inOrder(jobService, timelineItemService);
-        order.verify(jobService).deleteSucceeded(List.of(11L));
-        order.verify(timelineItemService).deleteByIds(List.of(101L));
+        verify(jobService).deleteByIds(List.of(11L));
+        verify(timelineItemService, never()).deleteByIds(List.of(101L));
+    }
+
+    @Test
+    void completeSucceeded_partialJobDeleteRollsBackInsteadOfDeletingAmbiguousItems() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(second.getTimelineItemId()).thenReturn(102L);
+        when(jobService.deleteByIds(List.of(11L, 12L))).thenReturn(1);
+
+        assertThatThrownBy(() -> service.completeSucceeded(List.of(first, second)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("PHOTO delete job completion count mismatch");
+
+        verify(timelineItemService, never()).deleteByIds(List.of(101L, 102L));
     }
 
     @Test

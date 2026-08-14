@@ -4,6 +4,7 @@ import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
+import com.laimory.server.timeline.service.TimelinePhotoDeleteValidationService.ValidationResult;
 import io.micrometer.core.instrument.Timer;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,7 @@ public class TimelinePhotoDeleteWorker {
     private static final int MAX_LOGGED_ERROR_CODE_LENGTH = 64;
 
     private final TimelinePhotoDeleteJobService jobService;
+    private final TimelinePhotoDeleteValidationService validationService;
     private final TimelinePhotoDeleteCompletionService completionService;
     private final S3PhotoStorageService s3PhotoStorageService;
     private final TimelinePhotoDeleteWorkerProperties properties;
@@ -41,12 +43,14 @@ public class TimelinePhotoDeleteWorker {
 
     public TimelinePhotoDeleteWorker(
             TimelinePhotoDeleteJobService jobService,
+            TimelinePhotoDeleteValidationService validationService,
             TimelinePhotoDeleteCompletionService completionService,
             S3PhotoStorageService s3PhotoStorageService,
             TimelinePhotoDeleteWorkerProperties properties,
             TimelinePhotoDeleteMetrics metrics,
             @Qualifier("timelinePhotoDeleteWorkerExecutor") TaskExecutor workerExecutor) {
         this.jobService = jobService;
+        this.validationService = validationService;
         this.completionService = completionService;
         this.s3PhotoStorageService = s3PhotoStorageService;
         this.properties = properties;
@@ -109,7 +113,25 @@ public class TimelinePhotoDeleteWorker {
     }
 
     private void processClaimedBatch(List<TimelinePhotoDeleteJob> jobs) {
-        List<String> objectKeys = jobs.stream()
+        ValidationResult validation;
+        try {
+            validation = validationService.retainOrphanJobs(jobs);
+        } catch (RuntimeException exception) {
+            metrics.recordDeferred(jobs.size());
+            log.warn("PHOTO 삭제 전 orphan 재검증 실패(job 유지): claimed={} exceptionType={}",
+                    jobs.size(), exception.getClass().getSimpleName());
+            return;
+        }
+        List<TimelinePhotoDeleteJob> orphanJobs = validation.orphanJobs();
+        if (validation.cancelledJobs() > 0) {
+            log.info("PHOTO 삭제 job 재연결 취소: claimed={} cancelled={}",
+                    jobs.size(), validation.cancelledJobs());
+        }
+        if (orphanJobs.isEmpty()) {
+            return;
+        }
+
+        List<String> objectKeys = orphanJobs.stream()
                 .map(TimelinePhotoDeleteJob::getObjectKey)
                 .toList();
         BatchDeleteResult result;
@@ -117,20 +139,20 @@ public class TimelinePhotoDeleteWorker {
         try {
             result = s3PhotoStorageService.deleteAll(objectKeys);
         } catch (RuntimeException exception) {
-            metrics.recordAttemptFailed(jobs.size());
-            metrics.recordDeferred(jobs.size());
+            metrics.recordAttemptFailed(orphanJobs.size());
+            metrics.recordDeferred(orphanJobs.size());
             log.warn("PHOTO 삭제 batch 호출 실패(job 유지): requested={} exceptionType={}",
-                    jobs.size(), exception.getClass().getSimpleName());
+                    orphanJobs.size(), exception.getClass().getSimpleName());
             return;
         } finally {
             metrics.recordBatch(sample);
         }
 
         Set<String> deletedObjectKeys = result.deletedObjectKeys();
-        List<TimelinePhotoDeleteJob> succeededJobs = jobs.stream()
+        List<TimelinePhotoDeleteJob> succeededJobs = orphanJobs.stream()
                 .filter(job -> deletedObjectKeys.contains(job.getObjectKey()))
                 .toList();
-        int failed = jobs.size() - succeededJobs.size();
+        int failed = orphanJobs.size() - succeededJobs.size();
         metrics.recordAttemptSuccess(succeededJobs.size());
         metrics.recordAttemptFailed(failed);
 
@@ -140,7 +162,7 @@ public class TimelinePhotoDeleteWorker {
                 completed = completionService.completeSucceeded(succeededJobs);
             }
         } catch (RuntimeException exception) {
-            metrics.recordDeferred(jobs.size());
+            metrics.recordDeferred(orphanJobs.size());
             log.warn("PHOTO 삭제 성공 Item/job 정리 실패(둘 다 유지): succeeded={} exceptionType={}",
                     succeededJobs.size(), exception.getClass().getSimpleName());
             return;
@@ -153,8 +175,9 @@ public class TimelinePhotoDeleteWorker {
         Map<String, Long> errorCodeCounts = result.errorCodeByObjectKey().values().stream()
                 .map(code -> LogSanitizer.sanitize(code, MAX_LOGGED_ERROR_CODE_LENGTH))
                 .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
-        log.info("PHOTO 삭제 batch 완료: requested={} succeeded={} failed={} unreported={} completed={} errorCodes={}",
-                jobs.size(), succeededJobs.size(), failed, result.unreportedObjectKeys().size(), completed,
-                errorCodeCounts);
+        log.info("PHOTO 삭제 batch 완료: claimed={} relinkedCancelled={} requested={} succeeded={} failed={} "
+                        + "unreported={} completed={} errorCodes={}",
+                jobs.size(), validation.cancelledJobs(), orphanJobs.size(), succeededJobs.size(), failed,
+                result.unreportedObjectKeys().size(), completed, errorCodeCounts);
     }
 }

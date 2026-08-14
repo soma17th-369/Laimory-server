@@ -16,6 +16,7 @@ import com.laimory.server.config.TimelineWorkerExecutorConfig;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
+import com.laimory.server.timeline.service.TimelinePhotoDeleteValidationService.ValidationResult;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.List;
@@ -40,6 +41,9 @@ class TimelinePhotoDeleteWorkerTest {
     private TimelinePhotoDeleteJobService jobService;
 
     @Mock
+    private TimelinePhotoDeleteValidationService validationService;
+
+    @Mock
     private TimelinePhotoDeleteCompletionService completionService;
 
     @Mock
@@ -59,12 +63,15 @@ class TimelinePhotoDeleteWorkerTest {
     @BeforeEach
     void setUp() {
         worker = new TimelinePhotoDeleteWorker(
-                jobService, completionService, s3PhotoStorageService, properties, metrics, Runnable::run);
+                jobService, validationService, completionService,
+                s3PhotoStorageService, properties, metrics, Runnable::run);
         lenient().when(properties.getConcurrency()).thenReturn(1);
         lenient().when(properties.getMaxBatchesPerRun()).thenReturn(1);
         lenient().when(properties.getMaxRunDuration()).thenReturn(Duration.ofSeconds(60));
         lenient().when(completionService.completeSucceeded(anyList()))
                 .thenAnswer(invocation -> invocation.<List<?>>getArgument(0).size());
+        lenient().when(validationService.retainOrphanJobs(anyList()))
+                .thenAnswer(invocation -> new ValidationResult(invocation.getArgument(0), 0));
     }
 
     @Test
@@ -86,6 +93,35 @@ class TimelinePhotoDeleteWorkerTest {
 
         verifyNoInteractions(s3PhotoStorageService, metrics);
         verifyNoInteractions(completionService);
+    }
+
+    @Test
+    void relinkedJobsAreCancelledAndExcludedBeforeS3Delete() {
+        TimelinePhotoDeleteJob relinked = job(15L, "hash/photos/relinked.jpg");
+        enableWithJobs(relinked);
+        when(validationService.retainOrphanJobs(List.of(relinked)))
+                .thenReturn(new ValidationResult(List.of(), 1));
+
+        worker.deletePendingPhotoObjects();
+
+        verify(validationService).retainOrphanJobs(List.of(relinked));
+        verifyNoInteractions(s3PhotoStorageService, completionService);
+        verify(metrics).recordClaimed(1);
+        verify(metrics, never()).startBatch();
+    }
+
+    @Test
+    void orphanValidationFailureKeepsJobsAndSkipsS3Delete() {
+        TimelinePhotoDeleteJob job = job(16L, "hash/photos/validation-failed.jpg");
+        enableWithJobs(job);
+        when(validationService.retainOrphanJobs(List.of(job)))
+                .thenThrow(new IllegalStateException("db unavailable"));
+
+        worker.deletePendingPhotoObjects();
+
+        verifyNoInteractions(s3PhotoStorageService, completionService);
+        verify(metrics).recordDeferred(1);
+        verify(metrics, never()).startBatch();
     }
 
     @Test
@@ -213,7 +249,7 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.getMaxBatchesPerRun()).thenReturn(4);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.claimEligible(250)).thenReturn(List.of(job));
-        when(metrics.startBatch()).thenReturn(batchSample);
+        lenient().when(metrics.startBatch()).thenReturn(batchSample);
         when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
                 .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
 
@@ -253,6 +289,7 @@ class TimelinePhotoDeleteWorkerTest {
         });
         worker = new TimelinePhotoDeleteWorker(
                 jobService,
+                validationService,
                 completionService,
                 s3PhotoStorageService,
                 concurrentProperties,
@@ -278,12 +315,12 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.claimEligible(250)).thenReturn(List.of(jobs));
-        when(metrics.startBatch()).thenReturn(batchSample);
+        lenient().when(metrics.startBatch()).thenReturn(batchSample);
     }
 
     private TimelinePhotoDeleteJob job(long id, String objectKey) {
         TimelinePhotoDeleteJob job = org.mockito.Mockito.mock(TimelinePhotoDeleteJob.class);
-        when(job.getObjectKey()).thenReturn(objectKey);
+        lenient().when(job.getObjectKey()).thenReturn(objectKey);
         lenient().when(job.getTimelinePhotoDeleteJobId()).thenReturn(id);
         return job;
     }

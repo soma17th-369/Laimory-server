@@ -146,7 +146,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
     }
 
     @Test
-    void deleteSucceeded_removesOnlyGivenRows_andEmptyInputIsNoOp() {
+    void deleteByIds_removesOnlyGivenRows_andEmptyInputIsNoOp() {
         long deleteItemId = savePhotoItem("delete");
         long keepItemId = savePhotoItem("keep");
         service.insertIfAbsent(deleteItemId, "user-hash/photos/delete.jpg");
@@ -155,8 +155,8 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         List<TimelinePhotoDeleteJob> inserted = repository.findAll();
         long succeededId = idForItem(inserted, deleteItemId);
 
-        assertThat(service.deleteSucceeded(List.of())).isZero();
-        assertThat(service.deleteSucceeded(List.of(succeededId, Long.MAX_VALUE))).isEqualTo(1);
+        assertThat(service.deleteByIds(List.of())).isZero();
+        assertThat(service.deleteByIds(List.of(succeededId, Long.MAX_VALUE))).isEqualTo(1);
         assertThat(service.countPending()).isEqualTo(1);
         assertThat(repository.findAll().getFirst().getTimelineItemId()).isEqualTo(keepItemId);
         assertThat(timelineItemRepository.findById(deleteItemId)).isPresent();

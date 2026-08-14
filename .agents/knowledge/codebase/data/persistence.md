@@ -67,16 +67,22 @@ auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.no
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
 가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접
-채운다. worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
+채운다. 신규 writer는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하도록 `available_at`을 다음
+Seoul calendar day 00:00으로 명시한다(DB default current timestamp는 구 binary 호환용). worker는
+checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
 모든 process에서 발화한다. 각 bounded worker는 짧은 transaction으로
 `available_at <= :eligibleAt` 행을 `(available_at, created_at, PK)` 순서로 최대 250개
 `FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `available_at`을 다음 calendar day 00:00
 `Asia/Seoul`로 옮긴 뒤 commit한다. `eligibleAt`과 다음 시각은 같은 application Clock instant를 KST로
-변환해 parameter로 바인딩하며 DB `NOW()`를 eligibility 비교에 쓰지 않는다. 그 뒤 transaction 밖에서
-S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을 같은 completion transaction에서 지운다.
+변환해 parameter로 바인딩하며 DB `NOW()`를 eligibility 비교에 쓰지 않는다. 그 뒤 현재 junction을
+재확인해 다시 연결된 Item의 job을 취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공
+job을 먼저 지운 뒤 해당 Item을 같은 completion transaction에서 지운다. job 삭제가 0건이면 재연결 취소나
+선행 completion일 수 있으므로 Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다.
 실패·crash 행은 다음 일일 실행까지 남고, 이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다.
 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며, Item 삭제가 실패하면 job 삭제도
-rollback된다. 상태·시도 횟수·backoff·token·lease·error·완료 이력 column은 없다.
+rollback된다. 삭제 job 생성 뒤 request transaction의 stale snapshot으로 Item이 재연결돼도 다음 날
+pre-S3 association 재검증에서 job을 취소한다. 상태·시도 횟수·backoff·token·lease·error·완료 이력
+column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -188,8 +194,9 @@ delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orph
 Event/DailyRecord 삭제는 root/junction/non-PHOTO orphan hard delete와 함께 MySQL job을 만들고 유효한
 orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
 `DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
-apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 확인된 job과 그 PHOTO Item만
-별도 transaction에서 지운다. process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
+apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 S3 직전 현재 association을 재확인해
+linked Item job을 취소하며, `Deleted`로 확인된 orphan job과 그 PHOTO Item만 별도 transaction에서 지운다.
+process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
 여러 process가 같은 claim protocol에 참여한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
@@ -221,8 +228,9 @@ apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. `Deleted`로 �
   Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`로 소멸하고(JPA cascade 없음),
   Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
   분류한다. non-PHOTO와 job을 만들 수 없는 손상 PHOTO만 즉시 삭제하고, 유효한 PHOTO는 job과 함께
-  보존한다(다른 Event에도 연결된 shared Item·PHOTO는 유지). S3 작업 권위는 MySQL job row이며 worker
-  성공 시 Item과 row를 한 transaction에서 삭제하고 실패 시 둘 다 보존한다.
+  보존한다(다른 Event에도 연결된 shared Item·PHOTO는 유지). S3 작업 권위는 MySQL job row이며 worker는
+  S3 호출 직전 현재 association을 재확인해 linked Item의 job을 취소한다. orphan job만 S3 처리하고 성공 시
+  Item과 row를 한 transaction에서 삭제하며 실패 시 둘 다 보존한다.
 
 ## Known Gaps
 
