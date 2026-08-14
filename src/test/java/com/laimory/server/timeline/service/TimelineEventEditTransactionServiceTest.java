@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,6 +64,8 @@ class TimelineEventEditTransactionServiceTest {
     @Mock
     private TimelineItemService timelineItemService;
     @Mock
+    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @Mock
     private PhotoUrlService photoUrlService;
 
     private TimelineEventEditTransactionService service;
@@ -74,8 +77,11 @@ class TimelineEventEditTransactionServiceTest {
                 dailyRecordService,
                 timelineEventItemService,
                 timelineItemService,
+                timelinePhotoDeleteJobService,
                 photoUrlService,
                 new ObjectMapper());
+        lenient().when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), any()))
+                .thenReturn(Optional.empty());
     }
 
     @Test
@@ -158,6 +164,44 @@ class TimelineEventEditTransactionServiceTest {
             assertThat(link.getTimelineItemId()).isEqualTo(20L);
         });
         verify(photoUrlService, never()).buildSubjectUrl(any(), any());
+    }
+
+    @Test
+    void updateEvent_pendingDeleteJob_relinksPreservedItemWithoutCreatingDuplicate() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        stubRecordGraph(List.of(event), List.of(), List.of());
+        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
+                .thenReturn(Optional.of(31L));
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID,
+                command(false, null, List.of(photo(RAW_ID, FILENAME))));
+
+        verify(timelineItemService, never()).save(any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineEventItem>> linksCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineEventItemService).saveAll(linksCaptor.capture());
+        assertThat(linksCaptor.getValue()).singleElement().satisfies(link -> {
+            assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
+            assertThat(link.getTimelineItemId()).isEqualTo(31L);
+        });
+    }
+
+    @Test
+    void updateEvent_processingDeleteJob_is409BeforeEventMutation() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+        stubRecordGraph(List.of(event), List.of(), List.of());
+        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
+                .thenThrow(new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+
+        assertThatThrownBy(() -> service.updateEvent(
+                SUBJECT_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getExceptionType())
+                                .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+
+        assertOriginalState(event, "기존 메모");
+        verifyNoWrites();
     }
 
     @Test

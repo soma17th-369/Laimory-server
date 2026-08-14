@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -64,6 +65,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         TimelinePhotoDeleteJob saved = repository.findAll().getFirst();
         assertThat(saved.getTimelineItemId()).isEqualTo(itemId);
         assertThat(saved.getObjectKey()).isEqualTo("user-hash/photos/one.jpg");
+        assertThat(saved.getStatus()).isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
         assertThat(saved.getAvailableAt()).isNotNull();
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
@@ -83,6 +85,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
                 "timeline_photo_delete_job_id",
                 "timeline_item_id",
                 "object_key",
+                "status",
                 "available_at",
                 "created_at",
                 "updated_at",
@@ -141,6 +144,11 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         assertThat(service.claimEligible(2))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(firstItemId, secondItemId);
+        em.flush();
+        em.clear();
+        assertThat(repository.findAllById(List.of(oldestFirstJobId, oldestSecondJobId)))
+                .extracting(TimelinePhotoDeleteJob::getStatus)
+                .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
         assertThat(repository.count()).isEqualTo(3);
     }
 

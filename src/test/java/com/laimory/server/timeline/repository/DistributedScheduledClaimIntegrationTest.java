@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
@@ -96,6 +97,9 @@ class DistributedScheduledClaimIntegrationTest {
                 claims,
                 () -> photoJobService.claimEligible(ROW_COUNT),
                 TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
+        assertThat(photoJobRepository.findAll())
+                .extracting(TimelinePhotoDeleteJob::getStatus)
+                .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
     }
 
     @Test

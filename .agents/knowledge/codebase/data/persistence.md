@@ -67,22 +67,25 @@ auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.no
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
 가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접
-채운다. 신규 writer는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하도록 `available_at`을 다음
+채운다. `status`는 `PENDING`/`PROCESSING` 두 값이고 default `PENDING`은 기존 행 backfill과 구 binary
+INSERT 호환용이다. 신규 writer는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하도록 `available_at`을 다음
 Seoul calendar day 00:00으로 명시한다(DB default current timestamp는 구 binary 호환용). worker는
 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
 모든 process에서 발화한다. 각 bounded worker는 짧은 transaction으로
 `available_at <= :eligibleAt` 행을 `(available_at, created_at, PK)` 순서로 최대 250개
-`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `available_at`을 다음 calendar day 00:00
+`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `status=PROCESSING`과 `available_at`을 다음 calendar day 00:00
 `Asia/Seoul`로 옮긴 뒤 commit한다. `eligibleAt`과 다음 시각은 같은 application Clock instant를 KST로
 변환해 parameter로 바인딩하며 DB `NOW()`를 eligibility 비교에 쓰지 않는다. 그 뒤 현재 junction을
 재확인해 다시 연결된 Item의 job을 취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공
 job을 먼저 지운 뒤 해당 Item을 같은 completion transaction에서 지운다. job 삭제가 0건이면 재연결 취소나
 선행 completion일 수 있으므로 Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다.
-실패·crash 행은 다음 일일 실행까지 남고, 이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다.
+명시적 실패·응답 누락·SDK 예외는 `PENDING`으로 되돌리고, crash 행은 `PROCESSING`으로 다음 일일 실행까지
+남는다. 둘 다 `available_at` 만료 뒤 재claim되며 이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다.
 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며, Item 삭제가 실패하면 job 삭제도
-rollback된다. 삭제 job 생성 뒤 request transaction의 stale snapshot으로 Item이 재연결돼도 다음 날
-pre-S3 association 재검증에서 job을 취소한다. 상태·시도 횟수·backoff·token·lease·error·완료 이력
-column은 없다.
+rollback된다. Event PATCH는 subject+filename의 full object key로 job을 locking read한다. `PENDING` 또는
+만료된 `PROCESSING`이면 job을 취소하고 보존 Item의 PHOTO/rawId 일치를 확인해 같은 Item을 재연결한다.
+유효한 `PROCESSING`이면 409 `-1019`로 거절한다. pre-S3 association 재검증은 다른 재연결 경로의 방어선으로
+계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -185,7 +188,7 @@ Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서�
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
-보존할 수 있으며 서버는 pending delete key를 조회해 차단하지 않는다.
+보존할 수 있다. 서버는 pending delete key를 조회해 대기 job은 취소·재연결하고 처리 중이면 409로 거절한다.
 
 삭제는 두 경로다. draft cleanup은 만료·eligible source row를 250개 단위 `SKIP LOCKED`로 claim하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk

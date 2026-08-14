@@ -117,6 +117,7 @@ public class TimelinePhotoDeleteWorker {
         try {
             validation = jobService.retainOrphanJobs(jobs);
         } catch (RuntimeException exception) {
+            markPendingForRetry(jobs);
             BatchResult result = BatchResult.validationFailed(jobs.size(), elapsedMillis(startedAtNanos));
             log.warn("PHOTO 삭제 batch orphan 재검증 실패(job 유지): claimed={} deferred={} "
                             + "durationMs={} exceptionType={}",
@@ -143,6 +144,7 @@ public class TimelinePhotoDeleteWorker {
         try {
             result = s3PhotoStorageService.deleteAll(objectKeys);
         } catch (RuntimeException exception) {
+            markPendingForRetry(orphanJobs);
             BatchResult batchResult = BatchResult.s3Failed(
                     jobs.size(), validation.cancelledJobs(), orphanJobs.size(),
                     elapsedMillis(startedAtNanos));
@@ -158,6 +160,9 @@ public class TimelinePhotoDeleteWorker {
         List<TimelinePhotoDeleteJob> succeededJobs = orphanJobs.stream()
                 .filter(job -> deletedObjectKeys.contains(job.getObjectKey()))
                 .toList();
+        List<TimelinePhotoDeleteJob> retryJobs = orphanJobs.stream()
+                .filter(job -> !deletedObjectKeys.contains(job.getObjectKey()))
+                .toList();
         int failed = orphanJobs.size() - succeededJobs.size();
 
         int completed = 0;
@@ -166,6 +171,7 @@ public class TimelinePhotoDeleteWorker {
                 completed = jobService.completeSucceeded(succeededJobs);
             }
         } catch (RuntimeException exception) {
+            markPendingForRetry(orphanJobs);
             BatchResult batchResult = BatchResult.completionFailed(
                     jobs.size(), validation.cancelledJobs(), orphanJobs.size(),
                     succeededJobs.size(), failed, result.unreportedObjectKeys().size(),
@@ -178,6 +184,7 @@ public class TimelinePhotoDeleteWorker {
                     batchResult.deferred(), batchResult.durationMs(), exception.getClass().getSimpleName());
             return batchResult;
         }
+        markPendingForRetry(retryJobs);
         // completion이 0인 성공 job은 다른 at-least-once worker가 이미 완료한 정상 경쟁일 수 있다.
         // 다음 실행에 실제로 남겨 둔 것은 S3가 실패/누락으로 분류한 job뿐이다.
 
@@ -189,6 +196,19 @@ public class TimelinePhotoDeleteWorker {
                 result.unreportedObjectKeys().size(), completed, elapsedMillis(startedAtNanos));
         logBatchCompleted(batchResult, errorCodeCounts);
         return batchResult;
+    }
+
+    /** retry 상태 전환 실패 시에도 job은 PROCESSING+다음 available_at으로 남아 다음 일일 claim에서 복구된다. */
+    private void markPendingForRetry(List<TimelinePhotoDeleteJob> jobs) {
+        if (jobs.isEmpty()) {
+            return;
+        }
+        try {
+            jobService.markPendingForRetry(jobs);
+        } catch (RuntimeException exception) {
+            log.warn("PHOTO 삭제 job PENDING 전환 실패(다음 availableAt에 재claim): count={} exceptionType={}",
+                    jobs.size(), exception.getClass().getSimpleName());
+        }
     }
 
     private void logBatchCompleted(BatchResult result, Map<String, Long> errorCodeCounts) {

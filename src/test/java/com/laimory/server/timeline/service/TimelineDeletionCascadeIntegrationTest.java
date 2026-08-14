@@ -8,6 +8,7 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -23,6 +24,7 @@ import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -75,6 +77,8 @@ class TimelineDeletionCascadeIntegrationTest {
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @Autowired
+    private TimelineEventEditTransactionService timelineEventEditTransactionService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -289,6 +293,83 @@ class TimelineDeletionCascadeIntegrationTest {
 
         assertThat(timelinePhotoDeleteJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isPresent();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
+    }
+
+    @Test
+    void eventPatch_pendingDeleteJob_cancelsJobAndRelinksPreservedItem() {
+        Long deletedEventId = saveEvent("삭제 대상", 9);
+        Long relinkEventId = saveEvent("재연결 대상", 10);
+        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b63";
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b64.jpg";
+        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
+
+        assertThat(findFixturePhotoDeleteJobs())
+                .singleElement()
+                .extracting(TimelinePhotoDeleteJob::getStatus)
+                .isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
+
+        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+                rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
+                null, null);
+        timelineEventEditTransactionService.updateEvent(
+                subjectId,
+                relinkEventId,
+                new TimelineEventEditCommand(
+                        TimelineEventType.UNKNOWN,
+                        "재연결 대상",
+                        null,
+                        DATE.atTime(10, 0),
+                        null,
+                        false,
+                        null,
+                        List.of(photo)));
+
+        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
+        assertThat(timelineItemRepository.findById(itemId)).isPresent();
+        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId))
+                .extracting(TimelineEventItem::getTimelineItemId)
+                .containsExactly(itemId);
+        assertThat(fixtureItemIds).containsExactly(itemId);
+    }
+
+    @Test
+    void eventPatch_activeProcessingDeleteJob_is409AndDoesNotRelink() {
+        Long deletedEventId = saveEvent("삭제 대상", 9);
+        Long relinkEventId = saveEvent("재연결 대상", 10);
+        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b65";
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b66.jpg";
+        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
+        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
+        jdbcTemplate.update(
+                "update timeline_photo_delete_jobs set status = 'PROCESSING', available_at = ? "
+                        + "where timeline_photo_delete_job_id = ?",
+                LocalDateTime.now().plusDays(1), job.getTimelinePhotoDeleteJobId());
+
+        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+                rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
+                null, null);
+        TimelineEventEditCommand command = new TimelineEventEditCommand(
+                TimelineEventType.UNKNOWN,
+                "재연결 대상",
+                null,
+                DATE.atTime(10, 0),
+                null,
+                false,
+                null,
+                List.of(photo));
+
+        assertThatThrownBy(() -> timelineEventEditTransactionService.updateEvent(
+                subjectId, relinkEventId, command))
+                .isInstanceOfSatisfying(
+                        com.laimory.server.common.error.BusinessException.class,
+                        exception -> assertThat(exception.getExceptionType())
+                                .isEqualTo(com.laimory.server.common.error.ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+
+        assertThat(findFixturePhotoDeleteJobs()).hasSize(1);
+        assertThat(timelineItemRepository.findById(itemId)).isPresent();
+        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId)).isEmpty();
     }
 
     @Test

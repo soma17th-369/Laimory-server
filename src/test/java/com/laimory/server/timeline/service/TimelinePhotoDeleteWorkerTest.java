@@ -105,6 +105,7 @@ class TimelinePhotoDeleteWorkerTest {
 
         verifyNoInteractions(s3PhotoStorageService);
         verify(jobService, never()).completeSucceeded(anyList());
+        verify(jobService).markPendingForRetry(List.of(job));
     }
 
     @Test
@@ -140,6 +141,7 @@ class TimelinePhotoDeleteWorkerTest {
         worker.deletePendingPhotoObjects();
 
         verify(jobService).completeSucceeded(List.of(deleted));
+        verify(jobService).markPendingForRetry(List.of(error, unreported));
     }
 
     @Test
@@ -155,6 +157,7 @@ class TimelinePhotoDeleteWorkerTest {
         worker.deletePendingPhotoObjects();
 
         verify(jobService, never()).completeSucceeded(anyList());
+        verify(jobService).markPendingForRetry(List.of(error));
     }
 
     @Test
@@ -170,6 +173,7 @@ class TimelinePhotoDeleteWorkerTest {
         worker.deletePendingPhotoObjects();
 
         verify(jobService, never()).completeSucceeded(anyList());
+        verify(jobService).markPendingForRetry(List.of(unreported));
     }
 
     @Test
@@ -184,6 +188,7 @@ class TimelinePhotoDeleteWorkerTest {
         worker.deletePendingPhotoObjects();
 
         verify(jobService, never()).completeSucceeded(anyList());
+        verify(jobService).markPendingForRetry(List.of(first, second));
     }
 
     @Test
@@ -198,6 +203,7 @@ class TimelinePhotoDeleteWorkerTest {
         assertThatCode(worker::deletePendingPhotoObjects).doesNotThrowAnyException();
 
         verify(jobService).completeSucceeded(List.of(job));
+        verify(jobService).markPendingForRetry(List.of(job));
     }
 
     @Test

@@ -11,6 +11,7 @@ import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -37,6 +38,7 @@ public class TimelineEventEditTransactionService {
     private final DailyRecordService dailyRecordService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
+    private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     private final PhotoUrlService photoUrlService;
     private final ObjectMapper objectMapper;
 
@@ -112,7 +114,9 @@ public class TimelineEventEditTransactionService {
                 throw new IllegalArgumentException("rawId is already used by a non-PHOTO item");
             }
             if (candidates.isEmpty()) {
-                newPhotos.add(requested);
+                String objectKey = PhotoObjectKeys.subjectFullKey(requested.filename(), record.getSubjectId());
+                timelinePhotoDeleteJobService.cancelPendingForRelink(objectKey, requested.rawId())
+                        .ifPresentOrElse(existingItemIdsToLink::add, () -> newPhotos.add(requested));
                 continue;
             }
 

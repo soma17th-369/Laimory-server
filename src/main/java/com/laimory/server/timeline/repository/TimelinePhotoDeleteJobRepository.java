@@ -1,16 +1,18 @@
 package com.laimory.server.timeline.repository;
 
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
-/** timeline_photo_delete_jobs 저장소. 행과 원문 PHOTO Item의 존재가 S3 삭제 대기 상태다. */
+/** timeline_photo_delete_jobs 저장소. 행과 원문 PHOTO Item이 S3 삭제 의무를 보존한다. */
 public interface TimelinePhotoDeleteJobRepository extends JpaRepository<TimelinePhotoDeleteJob, Long> {
 
     /**
@@ -39,10 +41,24 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
             @Param("limit") int limit);
 
     @Modifying
-    @Query("update TimelinePhotoDeleteJob j set j.availableAt = :nextAvailableAt "
+    @Query("update TimelinePhotoDeleteJob j "
+            + "set j.status = :status, j.availableAt = :nextAvailableAt "
             + "where j.timelinePhotoDeleteJobId in :jobIds")
-    int deferUntil(@Param("jobIds") Collection<Long> jobIds,
-                   @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
+    int markProcessingUntil(@Param("jobIds") Collection<Long> jobIds,
+                            @Param("status") TimelinePhotoDeleteJobStatus status,
+                            @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
+
+    @Query(value = "select * from timeline_photo_delete_jobs "
+            + "where object_key = :objectKey for update",
+            nativeQuery = true)
+    Optional<TimelinePhotoDeleteJob> findByObjectKeyForUpdate(@Param("objectKey") String objectKey);
+
+    @Modifying
+    @Query("update TimelinePhotoDeleteJob j set j.status = :pending "
+            + "where j.timelinePhotoDeleteJobId in :jobIds and j.status = :processing")
+    int markPending(@Param("jobIds") Collection<Long> jobIds,
+                    @Param("pending") TimelinePhotoDeleteJobStatus pending,
+                    @Param("processing") TimelinePhotoDeleteJobStatus processing);
 
     @Modifying
     @Transactional

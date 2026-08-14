@@ -9,7 +9,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -17,6 +22,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,6 +50,9 @@ class TimelinePhotoDeleteJobServiceTest {
 
     @Mock
     private TimelinePhotoDeleteJob second;
+
+    @Mock
+    private TimelineItem item;
 
     private TimelinePhotoDeleteJobService service;
 
@@ -86,13 +95,16 @@ class TimelinePhotoDeleteJobServiceTest {
         LocalDateTime eligibleAt = LocalDateTime.of(2026, 8, 14, 3, 30);
         when(repository.findEligibleForUpdateSkipLocked(eligibleAt, 250))
                 .thenReturn(List.of(first, second));
-        when(repository.deferUntil(List.of(11L, 12L), LocalDateTime.of(2026, 8, 15, 0, 0)))
+        when(repository.markProcessingUntil(
+                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING,
+                LocalDateTime.of(2026, 8, 15, 0, 0)))
                 .thenReturn(2);
 
         assertThat(service.claimEligible(250)).containsExactly(first, second);
 
-        verify(repository).deferUntil(
-                List.of(11L, 12L), LocalDateTime.of(2026, 8, 15, 0, 0));
+        verify(repository).markProcessingUntil(
+                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING,
+                LocalDateTime.of(2026, 8, 15, 0, 0));
     }
 
     @Test
@@ -102,9 +114,54 @@ class TimelinePhotoDeleteJobServiceTest {
                 .thenReturn(List.of());
 
         assertThat(service.claimEligible(250)).isEmpty();
-        verify(repository, never()).deferUntil(List.of(), LocalDateTime.of(2026, 8, 15, 0, 0));
+        verify(repository, never()).markProcessingUntil(
+                List.of(), TimelinePhotoDeleteJobStatus.PROCESSING,
+                LocalDateTime.of(2026, 8, 15, 0, 0));
         assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(0));
         assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(1_001));
+    }
+
+    @Test
+    void markPendingForRetry_changesOnlyProcessingJobs() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        when(repository.markPending(
+                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PENDING,
+                TimelinePhotoDeleteJobStatus.PROCESSING)).thenReturn(2);
+
+        assertThat(service.markPendingForRetry(List.of(first, second))).isEqualTo(2);
+    }
+
+    @Test
+    void cancelPendingForRelink_deletesJobAndReturnsPreservedPhotoItem() {
+        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
+                .thenReturn(Optional.of(first));
+        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PENDING);
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(timelineItemService.findById(101L)).thenReturn(Optional.of(item));
+        when(item.getItemType()).thenReturn(ItemType.PHOTO);
+        when(item.getRawId()).thenReturn("raw-photo");
+        when(item.getTimelineItemId()).thenReturn(101L);
+        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(1);
+
+        assertThat(service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
+                .contains(101L);
+    }
+
+    @Test
+    void cancelPendingForRelink_rejectsActiveProcessingJob() {
+        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
+                .thenReturn(Optional.of(first));
+        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PROCESSING);
+        when(first.getAvailableAt()).thenReturn(LocalDateTime.of(2026, 8, 15, 0, 0));
+
+        assertThatThrownBy(() -> service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getExceptionType())
+                                .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+
+        verify(timelineItemService, never()).findById(org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test

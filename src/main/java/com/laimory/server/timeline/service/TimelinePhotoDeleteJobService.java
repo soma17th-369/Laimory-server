@@ -1,6 +1,11 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -9,6 +14,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -65,11 +71,58 @@ public class TimelinePhotoDeleteJobService {
         List<Long> jobIds = jobs.stream()
                 .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
                 .toList();
-        int deferred = timelinePhotoDeleteJobRepository.deferUntil(jobIds, nextAvailableAt);
+        int deferred = timelinePhotoDeleteJobRepository.markProcessingUntil(
+                jobIds, TimelinePhotoDeleteJobStatus.PROCESSING, nextAvailableAt);
         if (deferred != jobIds.size()) {
             throw new IllegalStateException("PHOTO delete job claim count mismatch");
         }
         return List.copyOf(jobs);
+    }
+
+    /** S3 실패·검증 실패 job을 PATCH가 다시 취소할 수 있는 PENDING으로 되돌린다. */
+    @Transactional
+    public int markPendingForRetry(Collection<TimelinePhotoDeleteJob> jobs) {
+        if (jobs == null || jobs.isEmpty()) {
+            return 0;
+        }
+        List<Long> jobIds = jobs.stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
+                .distinct()
+                .toList();
+        return timelinePhotoDeleteJobRepository.markPending(
+                jobIds, TimelinePhotoDeleteJobStatus.PENDING, TimelinePhotoDeleteJobStatus.PROCESSING);
+    }
+
+    /**
+     * Event PATCH가 같은 object의 삭제 대기 job을 취소하고 보존 Item을 재사용한다.
+     * 유효한 PROCESSING job은 S3 삭제 중이므로 같은 object를 새 Item으로 만들지 않게 409로 거절한다.
+     */
+    @Transactional
+    public Optional<Long> cancelPendingForRelink(String objectKey, String rawId) {
+        requireValidObjectKey(objectKey);
+        TimelinePhotoDeleteJob job = timelinePhotoDeleteJobRepository.findByObjectKeyForUpdate(objectKey)
+                .orElse(null);
+        if (job == null) {
+            return Optional.empty();
+        }
+
+        LocalDateTime now = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE).toLocalDateTime();
+        if (job.getStatus() == TimelinePhotoDeleteJobStatus.PROCESSING
+                && job.getAvailableAt().isAfter(now)) {
+            throw new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
+        }
+
+        TimelineItem item = timelineItemService.findById(job.getTimelineItemId())
+                .orElseThrow(() -> new IllegalStateException("PHOTO delete job item not found"));
+        if (item.getItemType() != ItemType.PHOTO || !item.getRawId().equals(rawId)) {
+            throw new IllegalArgumentException("filename is already used by another timeline item");
+        }
+
+        int deleted = deleteByIds(List.of(job.getTimelinePhotoDeleteJobId()));
+        if (deleted != 1) {
+            throw new IllegalStateException("PHOTO delete job cancellation count mismatch");
+        }
+        return Optional.of(item.getTimelineItemId());
     }
 
     /** 완료되거나 재연결되어 취소된 작업을 ID로 제거한다. 빈 입력은 no-op이다. */

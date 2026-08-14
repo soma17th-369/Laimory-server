@@ -159,8 +159,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   payload는 `filename`·`clientPhotoUri`·좌표만 받아 `description=null`과 server-derived `photoUrl`로 저장한다.
 - 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
   응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 이미 업로드를 마친 **동일
-  pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있으며, 서버는 pending delete
-  key 재사용을 별도로 조회·차단하지 않는다.
+  pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있다. 서버는 full object key의
+  `PENDING` delete job을 취소하고 job이 보존하던 같은 rawId PHOTO Item을 재연결한다. 유효한
+  `PROCESSING` job이면 새 Item을 만들지 않고 409 `-1019`로 거절한다.
 
 ### Delete
 
@@ -178,9 +179,11 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 모든 REST
   process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
   eligible job을 250개 단위 `FOR UPDATE SKIP LOCKED`로 나눠 claim한다. claim transaction이
-  `available_at`을 다음 KST calendar day 00:00으로 옮기고 commit한 뒤 verbose `DeleteObjects`를 호출하며,
+  `status=PROCESSING`과 `available_at`을 다음 KST calendar day 00:00으로 기록하고 commit한 뒤 verbose
+  `DeleteObjects`를 호출하며,
   `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. process당 concurrency 1,
-  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외·crash job은 다음 일일 실행에서 재시도한다.
+  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 만료된
+  `PROCESSING`으로 다음 일일 실행에서 재claim한다.
   실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은 다음 실행까지 MySQL에 남는다.
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신
