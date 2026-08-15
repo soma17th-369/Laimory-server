@@ -23,49 +23,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class RedisGateway {
 
-    // task JSON과 두 인덱스(전역 관측 + 사용자별 조회)를 한 원자 경계에서 갱신한다. 셋을 별도 명령으로
-    // 쓰면 앱/Redis 장애 사이에 task와 인덱스가 어긋나 stuck gauge가 거짓말하거나 목록 후보가 유실된다.
-    // 두 번째 sorted set(KEYS[3])은 값과 같은 TTL로 매번 PEXPIRE한다 — 마지막 추가 뒤 TTL 동안
-    // 비활성인 key만 자연 소멸한다(member별 TTL 아님). Lua 안에서 값 JSON은 decode하지 않는다.
-    private static final RedisScript<Long> SET_AND_SORTED_SETS_ADD = new DefaultRedisScript<>("""
-            redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
-            redis.call('zadd', KEYS[2], ARGV[3], ARGV[4])
-            redis.call('zadd', KEYS[3], ARGV[3], ARGV[4])
-            return redis.call('pexpire', KEYS[3], ARGV[1])
-            """, Long.class);
-
-    private static final RedisScript<Long> SET_AND_SORTED_SETS_REMOVE = new DefaultRedisScript<>("""
-            redis.call('psetex', KEYS[1], ARGV[1], ARGV[2])
-            redis.call('zrem', KEYS[2], ARGV[3])
-            return redis.call('zrem', KEYS[3], ARGV[3])
-            """, Long.class);
-
-    private static final RedisScript<Long> COMPARE_AND_SET_AND_SORTED_SETS_ADD = new DefaultRedisScript<>("""
+    // token/stage와 terminal 전이는 task JSON 한 key만 compare-and-set한다. 보조 processing index는
+    // task write 성공 뒤 native command로 갱신·보정하므로 script의 원자 경계에 포함하지 않는다.
+    private static final RedisScript<Long> COMPARE_AND_SET = new DefaultRedisScript<>("""
             if redis.call('get', KEYS[1]) ~= ARGV[1] then
                 return 0
             end
-            redis.call('psetex', KEYS[1], ARGV[2], ARGV[3])
-            redis.call('zadd', KEYS[2], ARGV[4], ARGV[5])
-            redis.call('zadd', KEYS[3], ARGV[4], ARGV[5])
-            redis.call('pexpire', KEYS[3], ARGV[2])
+            redis.call('set', KEYS[1], ARGV[2], 'PX', ARGV[3])
             return 1
-            """, Long.class);
-
-    private static final RedisScript<Long> COMPARE_AND_SET_AND_SORTED_SETS_REMOVE = new DefaultRedisScript<>("""
-            if redis.call('get', KEYS[1]) ~= ARGV[1] then
-                return 0
-            end
-            redis.call('psetex', KEYS[1], ARGV[2], ARGV[3])
-            redis.call('zrem', KEYS[2], ARGV[4])
-            redis.call('zrem', KEYS[3], ARGV[4])
-            return 1
-            """, Long.class);
-
-    // task TTL보다 오래된 고아 member를 먼저 제거한 뒤, 아직 유효하지만 stuck threshold를 넘긴
-    // member 수를 한 번의 Redis 왕복으로 센다.
-    private static final RedisScript<Long> PRUNE_AND_COUNT_SORTED_SET = new DefaultRedisScript<>("""
-            redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
-            return redis.call('zcount', KEYS[1], '(' .. ARGV[1], ARGV[2])
             """, Long.class);
 
     private final StringRedisTemplate template;
@@ -97,59 +62,11 @@ public class RedisGateway {
         return template.opsForValue().getAndDelete(prefix + logicalKey);
     }
 
-    /**
-     * TTL 값 저장과 두 sorted set의 같은 member/score 추가를 한 Lua 실행으로 원자 수행한다.
-     * {@code logicalExpiringSortedSetKey}에는 값과 같은 TTL을 매번 PEXPIRE로 갱신한다 — 마지막 추가 뒤
-     * TTL 동안 비활성인 key만 자연 소멸한다(member별 TTL이 아니다).
-     *
-     * <p>세 키 모두 prefix 없는 논리 키이며, score는 epoch milliseconds처럼 호출부가 정한 단위를 쓴다.
-     */
-    public void setAndAddToSortedSets(String logicalValueKey, String value, Duration ttl,
-                                      String logicalSortedSetKey, String logicalExpiringSortedSetKey,
-                                      String member, long score) {
-        Long result = template.execute(SET_AND_SORTED_SETS_ADD,
-                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey,
-                        prefix + logicalExpiringSortedSetKey),
-                String.valueOf(ttl.toMillis()), value, String.valueOf(score), member);
-        requireScriptResult(result, logicalValueKey);
-    }
-
-    /** TTL 값 저장과 두 sorted set의 member 제거를 한 Lua 실행으로 원자 수행한다(TTL은 연장하지 않음). */
-    public void setAndRemoveFromSortedSets(String logicalValueKey, String value, Duration ttl,
-                                           String logicalFirstSortedSetKey, String logicalSecondSortedSetKey,
-                                           String member) {
-        Long result = template.execute(SET_AND_SORTED_SETS_REMOVE,
-                List.of(prefix + logicalValueKey, prefix + logicalFirstSortedSetKey,
-                        prefix + logicalSecondSortedSetKey),
-                String.valueOf(ttl.toMillis()), value, member);
-        requireScriptResult(result, logicalValueKey);
-    }
-
-    /**
-     * 현재 값이 {@code expectedValue}와 같을 때만 새 PROCESSING 값과 두 index를 한 Lua 실행으로 갱신한다.
-     * task 단계 전이의 optimistic CAS 경계다.
-     */
-    public boolean compareAndSetAndAddToSortedSets(
-            String logicalValueKey, String expectedValue, String newValue, Duration ttl,
-            String logicalSortedSetKey, String logicalExpiringSortedSetKey, String member, long score) {
-        Long result = template.execute(COMPARE_AND_SET_AND_SORTED_SETS_ADD,
-                List.of(prefix + logicalValueKey, prefix + logicalSortedSetKey,
-                        prefix + logicalExpiringSortedSetKey),
-                expectedValue, String.valueOf(ttl.toMillis()), newValue, String.valueOf(score), member);
-        return requireScriptResult(result, logicalValueKey) == 1;
-    }
-
-    /**
-     * 현재 값이 {@code expectedValue}와 같을 때만 terminal 값을 저장하고 두 processing index에서 제거한다.
-     */
-    public boolean compareAndSetAndRemoveFromSortedSets(
-            String logicalValueKey, String expectedValue, String newValue, Duration ttl,
-            String logicalFirstSortedSetKey, String logicalSecondSortedSetKey, String member) {
-        Long result = template.execute(COMPARE_AND_SET_AND_SORTED_SETS_REMOVE,
-                List.of(prefix + logicalValueKey, prefix + logicalFirstSortedSetKey,
-                        prefix + logicalSecondSortedSetKey),
-                expectedValue, String.valueOf(ttl.toMillis()), newValue, member);
-        return requireScriptResult(result, logicalValueKey) == 1;
+    /** 현재 값이 {@code expectedValue}와 같을 때만 새 값과 TTL로 교체한다. missing key는 실패한다. */
+    public boolean compareAndSet(String logicalKey, String expectedValue, String newValue, Duration ttl) {
+        Long result = template.execute(COMPARE_AND_SET,
+                List.of(prefix + logicalKey), expectedValue, newValue, String.valueOf(ttl.toMillis()));
+        return requireScriptResult(result, logicalKey) == 1;
     }
 
     /**
@@ -203,6 +120,14 @@ public class RedisGateway {
         template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
     }
 
+    /** sorted set member를 추가하거나 기존 member의 score를 갱신한다(ZADD). */
+    public void addToSortedSet(String logicalSortedSetKey, String member, long score) {
+        Boolean added = template.opsForZSet().add(prefix + logicalSortedSetKey, member, score);
+        if (added == null) {
+            throw new IllegalStateException("Redis zadd가 null을 반환했습니다: " + logicalSortedSetKey);
+        }
+    }
+
     /** {@code score <= expiredScore}인 member를 제거하고 제거 수를 반환한다(ZREMRANGEBYSCORE). */
     public long pruneSortedSetByScore(String logicalSortedSetKey, long expiredScore) {
         Long removed = template.opsForZSet()
@@ -239,9 +164,9 @@ public class RedisGateway {
         return count;
     }
 
-    /** key에 TTL을 다시 건다(PEXPIRE). key가 없으면 아무 일도 일어나지 않는다. */
-    public void expire(String logicalKey, Duration ttl) {
-        template.expire(prefix + logicalKey, ttl);
+    /** key에 TTL을 다시 걸고 성공 여부를 반환한다(PEXPIRE). key가 없으면 false다. */
+    public boolean expire(String logicalKey, Duration ttl) {
+        return Boolean.TRUE.equals(template.expire(prefix + logicalKey, ttl));
     }
 
 
@@ -254,18 +179,6 @@ public class RedisGateway {
             throw new IllegalStateException("Redis zrem이 null을 반환했습니다: " + logicalSortedSetKey);
         }
         return removed;
-    }
-
-    /**
-     * {@code score <= expiredScore} member를 제거하고
-     * {@code expiredScore < score <= inclusiveUpperScore} member 수를 반환한다.
-     */
-    public long pruneAndCountSortedSet(String logicalSortedSetKey, long expiredScore,
-                                       long inclusiveUpperScore) {
-        Long result = template.execute(PRUNE_AND_COUNT_SORTED_SET,
-                List.of(prefix + logicalSortedSetKey),
-                String.valueOf(expiredScore), String.valueOf(inclusiveUpperScore));
-        return requireScriptResult(result, logicalSortedSetKey);
     }
 
     private static long requireScriptResult(Long result, String logicalKey) {

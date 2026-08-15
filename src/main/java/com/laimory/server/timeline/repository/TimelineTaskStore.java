@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -24,10 +26,9 @@ import org.springframework.stereotype.Component;
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  *
  * <p><b>불변식:</b> task JSON의 status/owner가 유일한 권위다. 전역/사용자 index는 각각 관측·조회
- * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. PROCESSING 저장은 task JSON+전역 index ZADD+
- * 사용자 index ZADD(+key TTL 갱신)를, terminal 저장은 task JSON+두 index ZREM을 각각 한 Lua 실행
- * 경계로 수행한다. 서버간 stage와 callback terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는
- * {@link #replaceIfUnchanged} CAS를 사용한다.
+ * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. 서버간 stage와 callback terminal 전이는 현재
+ * task JSON 전체를 기대값으로 비교하는 {@link #replaceIfUnchanged} 단일-key CAS를 사용한다. processing
+ * index는 task write 뒤 native command로 갱신하며, 실패하면 최신 task JSON을 기준으로 멱등 보정한다.
  */
 @Slf4j
 @Component
@@ -38,8 +39,12 @@ public class TimelineTaskStore {
     static final String PROCESSING_INDEX_KEY = "timeline:draft-task:processing-index";
     private static final String USER_PROCESSING_INDEX_KEY_PREFIX = "timeline:draft-task:user:";
     private static final String USER_PROCESSING_INDEX_KEY_SUFFIX = ":processing";
+    private static final String INDEX_REPAIR_METRIC = "laimory.timeline.task.index.repair";
+    private static final String GLOBAL_INDEX = "global";
+    private static final String USER_INDEX = "user";
     private final RedisGateway redis;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     /** subject별 진행 작업 index의 논리 키. */
     static String subjectProcessingIndexKey(UUID subjectId) {
@@ -50,20 +55,9 @@ public class TimelineTaskStore {
     public void save(String taskId, TimelineDraftTask task, Duration ttl) {
         try {
             String json = objectMapper.writeValueAsString(task);
-            String userIndexKey = subjectProcessingIndexKey(task.subjectId());
-            if (task.status() == TaskStatus.PROCESSING) {
-                if (task.processingStartedAt() == null) {
-                    throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
-                }
-                // 사용자 index key TTL은 task와 같은 값으로 ZADD마다 갱신된다(gateway PEXPIRE) — 새 task가
-                // 추가될 때마다 key deadline이 밀려 어떤 active member보다 먼저 key가 사라지지 않는다.
-                redis.setAndAddToSortedSets(KEY_PREFIX + taskId, json, ttl,
-                        PROCESSING_INDEX_KEY, userIndexKey, taskId,
-                        task.processingStartedAt().toEpochMilli());
-            } else {
-                redis.setAndRemoveFromSortedSets(KEY_PREFIX + taskId, json, ttl,
-                        PROCESSING_INDEX_KEY, userIndexKey, taskId);
-            }
+            requireProcessingStartedAt(task, taskId);
+            redis.set(KEY_PREFIX + taskId, json, ttl);
+            syncIndexes(taskId, task, ttl);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
         }
@@ -87,22 +81,91 @@ public class TimelineTaskStore {
         try {
             String expectedJson = objectMapper.writeValueAsString(expected);
             String replacementJson = objectMapper.writeValueAsString(replacement);
-            String userIndexKey = subjectProcessingIndexKey(replacement.subjectId());
-            if (replacement.status() == TaskStatus.PROCESSING) {
-                if (replacement.processingStartedAt() == null) {
-                    throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
-                }
-                return redis.compareAndSetAndAddToSortedSets(
-                        KEY_PREFIX + taskId, expectedJson, replacementJson, ttl,
-                        PROCESSING_INDEX_KEY, userIndexKey, taskId,
-                        replacement.processingStartedAt().toEpochMilli());
+            requireProcessingStartedAt(replacement, taskId);
+            if (!redis.compareAndSet(KEY_PREFIX + taskId, expectedJson, replacementJson, ttl)) {
+                return false;
             }
-            return redis.compareAndSetAndRemoveFromSortedSets(
-                    KEY_PREFIX + taskId, expectedJson, replacementJson, ttl,
-                    PROCESSING_INDEX_KEY, userIndexKey, taskId);
+            syncIndexes(taskId, replacement, ttl);
+            return true;
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
         }
+    }
+
+    private static void requireProcessingStartedAt(TimelineDraftTask task, String taskId) {
+        if (task.status() == TaskStatus.PROCESSING && task.processingStartedAt() == null) {
+            throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);
+        }
+    }
+
+    private void syncIndexes(String taskId, TimelineDraftTask task, Duration ttl) {
+        String userIndexKey = subjectProcessingIndexKey(task.subjectId());
+        if (task.status() == TaskStatus.PROCESSING) {
+            long score = task.processingStartedAt().toEpochMilli();
+            runIndexCommand(taskId, task, ttl, GLOBAL_INDEX, "add",
+                    () -> redis.addToSortedSet(PROCESSING_INDEX_KEY, taskId, score));
+            runIndexCommand(taskId, task, ttl, USER_INDEX, "add",
+                    () -> redis.addToSortedSet(userIndexKey, taskId, score));
+            try {
+                if (!redis.expire(userIndexKey, ttl)) {
+                    repairIndex(taskId, task, ttl, USER_INDEX, "expire", null);
+                }
+            } catch (RuntimeException primaryFailure) {
+                repairIndex(taskId, task, ttl, USER_INDEX, "expire", primaryFailure);
+            }
+            return;
+        }
+
+        runIndexCommand(taskId, task, ttl, GLOBAL_INDEX, "remove",
+                () -> redis.removeFromSortedSet(PROCESSING_INDEX_KEY, List.of(taskId)));
+        runIndexCommand(taskId, task, ttl, USER_INDEX, "remove",
+                () -> redis.removeFromSortedSet(userIndexKey, List.of(taskId)));
+    }
+
+    private void runIndexCommand(String taskId, TimelineDraftTask writtenTask, Duration ttl,
+                                 String index, String operation, Runnable command) {
+        try {
+            command.run();
+        } catch (RuntimeException primaryFailure) {
+            repairIndex(taskId, writtenTask, ttl, index, operation, primaryFailure);
+        }
+    }
+
+    /** 실패·응답 유실 뒤 최신 권위 task를 읽어 해당 index 하나만 현재 상태로 수렴시킨다. */
+    private void repairIndex(String taskId, TimelineDraftTask writtenTask, Duration ttl,
+                             String index, String operation, RuntimeException primaryFailure) {
+        try {
+            Optional<TimelineDraftTask> latest = find(taskId);
+            if (latest.isPresent() && latest.get().status() == TaskStatus.PROCESSING) {
+                TimelineDraftTask latestTask = latest.get();
+                long score = latestTask.processingStartedAt().toEpochMilli();
+                String indexKey = GLOBAL_INDEX.equals(index)
+                        ? PROCESSING_INDEX_KEY : subjectProcessingIndexKey(latestTask.subjectId());
+                redis.addToSortedSet(indexKey, taskId, score);
+                if (USER_INDEX.equals(index) && !redis.expire(indexKey, ttl)) {
+                    throw new IllegalStateException("Redis user processing index TTL 보정에 실패했습니다");
+                }
+            } else {
+                String indexKey = GLOBAL_INDEX.equals(index)
+                        ? PROCESSING_INDEX_KEY : subjectProcessingIndexKey(writtenTask.subjectId());
+                redis.removeFromSortedSet(indexKey, List.of(taskId));
+            }
+            recordRepair(index, operation, "success");
+        } catch (RuntimeException repairFailure) {
+            recordRepair(index, operation, "failed");
+            log.warn("draft task index repair failed: index={} operation={} primaryFailure={} repairFailure={}",
+                    index, operation,
+                    primaryFailure == null ? "missing-key" : primaryFailure.getClass().getSimpleName(),
+                    repairFailure.getClass().getSimpleName());
+        }
+    }
+
+    private void recordRepair(String index, String operation, String result) {
+        Counter.builder(INDEX_REPAIR_METRIC)
+                .description("Timeline task processing index repair attempts")
+                .tags("index", index, "operation", operation, "result", result)
+                .register(meterRegistry)
+                .increment();
     }
 
     /**
@@ -173,8 +236,7 @@ public class TimelineTaskStore {
      */
     public long countStuckProcessing(Instant now, Duration stuckAfter, Duration processingTtl) {
         long nowMillis = now.toEpochMilli();
-        return redis.pruneAndCountSortedSet(PROCESSING_INDEX_KEY,
-                nowMillis - processingTtl.toMillis(),
-                nowMillis - stuckAfter.toMillis());
+        redis.pruneSortedSetByScore(PROCESSING_INDEX_KEY, nowMillis - processingTtl.toMillis());
+        return redis.countSortedSetByScore(PROCESSING_INDEX_KEY, nowMillis - stuckAfter.toMillis());
     }
 }
