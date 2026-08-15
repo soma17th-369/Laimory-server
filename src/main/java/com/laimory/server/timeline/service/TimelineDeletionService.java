@@ -37,7 +37,6 @@ public class TimelineDeletionService {
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
     private final TimelineDeletionTransactionService timelineDeletionTransactionService;
-    private final TimelinePhotoDeleteMetrics timelinePhotoDeleteMetrics;
 
     /** Event/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
     public void deleteEvent(String applicationVersion, UUID subjectId, Long timelineEventId) {
@@ -85,16 +84,14 @@ public class TimelineDeletionService {
                 () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
     }
 
-    /** PHOTO job enqueue + hard delete transaction 결과를 metric과 안전한 구조화 로그에 반영한다. */
+    /** PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */
     private void executeDelete(String target, Long targetId,
                                Supplier<TimelineDeletionTransactionService.DeletionResult> dbDelete) {
         long totalStartNanos = System.nanoTime();
         TimelineDeletionTransactionService.DeletionResult result = dbDelete.get();
-        timelinePhotoDeleteMetrics.recordEnqueueScheduled(result.scheduled());
-        timelinePhotoDeleteMetrics.recordEnqueueSharedRetained(result.sharedRetained());
-        timelinePhotoDeleteMetrics.recordEnqueueInvalidSkipped(result.invalidSkipped());
-        log.info("timeline DB 삭제 commit 완료: target={} id={} totalElapsedMs={}",
-                target, targetId,
+        log.info("timeline DB 삭제 commit 완료: target={} id={} photoDeleteScheduled={} "
+                        + "sharedPhotoRetained={} invalidPhotoSkipped={} totalElapsedMs={}",
+                target, targetId, result.scheduled(), result.sharedRetained(), result.invalidSkipped(),
                 Duration.ofNanos(System.nanoTime() - totalStartNanos).toMillis());
     }
 

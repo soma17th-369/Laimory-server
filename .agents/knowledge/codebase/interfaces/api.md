@@ -78,7 +78,9 @@ Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. E
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
-`body=null`이다. 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
+`body=null`이다. `photosToAdd`의 full object key에 `PENDING` PHOTO delete job이 있으면 job을 취소하고
+보존 Item을 재연결하며, 유효한 `PROCESSING`이면 같은 object key 생성을 막고 409 `-1019`를 반환한다.
+기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}`와 날짜 기반
 `DELETE /a/api/{version}/timeline/daily-records/{recordDate}`는 필요한 PHOTO S3 삭제 작업·원문

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -64,6 +65,8 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         TimelinePhotoDeleteJob saved = repository.findAll().getFirst();
         assertThat(saved.getTimelineItemId()).isEqualTo(itemId);
         assertThat(saved.getObjectKey()).isEqualTo("user-hash/photos/one.jpg");
+        assertThat(saved.getStatus()).isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
+        assertThat(saved.getAvailableAt()).isNotNull();
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
         assertThat(saved.getModifiedBy()).isNull();
@@ -82,6 +85,8 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
                 "timeline_photo_delete_job_id",
                 "timeline_item_id",
                 "object_key",
+                "status",
+                "available_at",
                 "created_at",
                 "updated_at",
                 "modified_by");
@@ -108,14 +113,14 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         assertThat(service.insertIfAbsent(firstItemId, "user-hash/photos/other.jpg")).isFalse();
         assertThat(service.insertIfAbsent(secondItemId, "user-hash/photos/first.jpg")).isFalse();
 
-        assertThat(service.countPending()).isEqualTo(1);
+        assertThat(repository.count()).isEqualTo(1);
         TimelinePhotoDeleteJob saved = repository.findAll().getFirst();
         assertThat(saved.getTimelineItemId()).isEqualTo(firstItemId);
         assertThat(saved.getObjectKey()).isEqualTo("user-hash/photos/first.jpg");
     }
 
     @Test
-    void findOldest_ordersByCreatedAtThenId_andReportsQueueSummary() {
+    void claimEligible_ordersByCreatedAtThenId() {
         long thirdItemId = savePhotoItem("three");
         long firstItemId = savePhotoItem("oldest-first");
         long secondItemId = savePhotoItem("oldest-second");
@@ -130,18 +135,25 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         setCreatedAt(newestJobId, NEWEST);
         setCreatedAt(oldestFirstJobId, OLDEST);
         setCreatedAt(oldestSecondJobId, OLDEST);
+        setAvailableAt(newestJobId, OLDEST.minusDays(1));
+        setAvailableAt(oldestFirstJobId, OLDEST.minusDays(1));
+        setAvailableAt(oldestSecondJobId, OLDEST.minusDays(1));
         em.flush();
         em.clear();
 
-        assertThat(service.findOldest(2))
+        assertThat(service.claimEligible(2))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(firstItemId, secondItemId);
-        assertThat(service.countPending()).isEqualTo(3);
-        assertThat(service.findOldestCreatedAt()).contains(OLDEST);
+        em.flush();
+        em.clear();
+        assertThat(repository.findAllById(List.of(oldestFirstJobId, oldestSecondJobId)))
+                .extracting(TimelinePhotoDeleteJob::getStatus)
+                .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
+        assertThat(repository.count()).isEqualTo(3);
     }
 
     @Test
-    void deleteSucceeded_removesOnlyGivenRows_andEmptyInputIsNoOp() {
+    void deleteByIds_removesOnlyGivenRows_andEmptyInputIsNoOp() {
         long deleteItemId = savePhotoItem("delete");
         long keepItemId = savePhotoItem("keep");
         service.insertIfAbsent(deleteItemId, "user-hash/photos/delete.jpg");
@@ -150,17 +162,11 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         List<TimelinePhotoDeleteJob> inserted = repository.findAll();
         long succeededId = idForItem(inserted, deleteItemId);
 
-        assertThat(service.deleteSucceeded(List.of())).isZero();
-        assertThat(service.deleteSucceeded(List.of(succeededId, Long.MAX_VALUE))).isEqualTo(1);
-        assertThat(service.countPending()).isEqualTo(1);
+        assertThat(service.deleteByIds(List.of())).isZero();
+        assertThat(service.deleteByIds(List.of(succeededId, Long.MAX_VALUE))).isEqualTo(1);
+        assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findAll().getFirst().getTimelineItemId()).isEqualTo(keepItemId);
         assertThat(timelineItemRepository.findById(deleteItemId)).isPresent();
-    }
-
-    @Test
-    void emptyQueue_hasZeroCountAndNoOldestTimestamp() {
-        assertThat(service.countPending()).isZero();
-        assertThat(service.findOldestCreatedAt()).isEmpty();
     }
 
     private long idForItem(List<TimelinePhotoDeleteJob> jobs, long timelineItemId) {
@@ -195,6 +201,17 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
                         where timeline_photo_delete_job_id = :jobId
                         """)
                 .setParameter("createdAt", createdAt)
+                .setParameter("jobId", jobId)
+                .executeUpdate();
+    }
+
+    private void setAvailableAt(long jobId, LocalDateTime availableAt) {
+        em.createNativeQuery("""
+                        update timeline_photo_delete_jobs
+                        set available_at = :availableAt
+                        where timeline_photo_delete_job_id = :jobId
+                        """)
+                .setParameter("availableAt", availableAt)
                 .setParameter("jobId", jobId)
                 .executeUpdate();
     }

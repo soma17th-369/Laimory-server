@@ -29,10 +29,26 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
     @Transactional
     void deleteByTaskIdAndRawIdIn(String taskId, Collection<String> rawIds);
 
-    /**
-     * 보관기간 초과(created_at < cutoff) 행을 조회한다(cleanup 스케줄러용). 행마다 S3 사진 객체를 먼저 지운 뒤
-     * 개별 삭제하므로 bulk delete가 아니라 조회로 받는다.
-     */
-    List<TimelineDraftSourceItem> findByCreatedAtBefore(LocalDateTime cutoff);
+    @Query(value = "select * from timeline_draft_source_items "
+            + "where created_at < :cutoff and cleanup_available_at <= :eligibleAt "
+            + "order by cleanup_available_at, created_at, timeline_draft_source_item_id "
+            + "limit :limit for update skip locked",
+            nativeQuery = true)
+    List<TimelineDraftSourceItem> findExpiredForUpdateSkipLocked(
+            @Param("cutoff") LocalDateTime cutoff,
+            @Param("eligibleAt") LocalDateTime eligibleAt,
+            @Param("limit") int limit);
+
+    @Modifying
+    @Query("update TimelineDraftSourceItem source "
+            + "set source.cleanupAvailableAt = :nextAvailableAt "
+            + "where source.timelineDraftSourceItemId in :ids")
+    int deferCleanupUntil(@Param("ids") Collection<Long> ids,
+                          @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
+
+    @Modifying
+    @Transactional
+    @Query("delete from TimelineDraftSourceItem source where source.timelineDraftSourceItemId in :ids")
+    int deleteAllByIdIn(@Param("ids") Collection<Long> ids);
 
 }

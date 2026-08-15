@@ -67,8 +67,10 @@ PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 co
 영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴하고, 마지막 참조 판정은 best-effort 일반
 읽기라 경합 시 job 없는 orphan Item이 남을 수 있다(orphan 스위퍼 후속 과제가 수렴 담당). 마지막 참조
 PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
-request transaction에 포함하지 않고 현재 REST 프로세스의 단일 scheduled worker가
-MySQL job을 oldest-first로 읽어, 성공 job과 원문 PHOTO Item을 별도 transaction에서 함께 제거한다.
+request transaction에 포함하지 않는다. 모든 REST 프로세스의 bounded worker가 eligible MySQL job을
+`FOR UPDATE SKIP LOCKED`로 나눠 `PROCESSING` claim하고, 성공 job과 원문 PHOTO Item을 별도 transaction에서
+함께 제거한다. Event PATCH는 같은 object key의 `PENDING` job을 취소해 보존 Item을 재연결하고,
+`PROCESSING`이면 409로 거절한다.
 
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.

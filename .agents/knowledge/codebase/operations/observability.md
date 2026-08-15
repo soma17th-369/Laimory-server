@@ -193,12 +193,6 @@ Spring JSON stdout
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
-  - `laimory.timeline.photo.delete.attempt{result=success|failed}`: object별 S3 삭제 결과
-  - `laimory.timeline.photo.delete.pending`: MySQL PHOTO delete-job 대기 행 수
-  - `laimory.timeline.photo.delete.oldest.age`: 가장 오래된 PHOTO delete-job 대기 초
-  - `laimory.timeline.photo.delete.batch.duration`: S3 DeleteObjects batch 호출 시간
-  - `laimory.timeline.photo.delete.enqueue{result=scheduled|shared_retained|invalid_skipped}`:
-    root/non-PHOTO hard delete commit 뒤 확정된 PHOTO job enqueue·Item 보존 결정
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
@@ -227,14 +221,14 @@ Spring JSON stdout
 - management child context에는 application의 `TransactionIdFilter`가 등록되지 않는다. 방어적으로
   health/prometheus exact path도 정상 access log 제외 목록에 유지한다.
 - 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
-- PHOTO delete worker가 꺼져 있어도 pending/oldest gauge는 등록돼 schema-first rollout 중 backlog를
-  관측한다. pending job마다 원문 PHOTO Item도 보존돼 있다. gauge DB 조회 실패는 scrape 전체 실패 대신
-  NaN이고 empty queue의 두 값은 0이다.
-- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`, oldest 최대 1,000개라 정상
-  job도 최대 약 24시간 대기한다. `laimory.timeline.photo.delete.oldest.age`가 108,000초(30시간)를 넘는
-  상태가 15분 지속되면 warning이며 Overview dashboard도 같은 30시간부터 red다. 이는 실패·일일 1,000개
-  초과 이월 또는 03:00 실행 누락을 조사하는 신호다. 스케줄은 missed run을 catch-up하지 않고 job을 다음
-  실행까지 MySQL에 보존한다. cron/zone override로 이 cadence를 바꾸면 임계치 의미도 함께 재검토한다.
+- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, process당 concurrency 1,
+  batch 250, 최대 4 batch/60초다. 정상 job도 최대 약 24시간 대기하며 missed run을 catch-up하지 않고
+  다음 실행까지 MySQL에 보존한다. 이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
+  각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
+  DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
+- draft retention cleanup도 custom meter를 등록하지 않는다. 각 process가 run 시작 설정과 batch/run 종료의
+  claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
+  소요 시간을 key=value application log로 남긴다.
 
 ## Dev Metrics Assets
 

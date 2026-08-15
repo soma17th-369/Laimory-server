@@ -89,7 +89,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
-| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. 행 존재가 대기 상태이며 job은 원 Item을 FK로 참조한다. S3 삭제 성공 시 job과 Item을 한 transaction에서 최종 hard delete한다. |
+| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 Event PATCH가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태이고 `available_at`은 다음 claim 가능 시각이다. job은 원 Item을 FK로 참조하며 신규 job은 다음 날부터 claim한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
 
 ## AI 타임라인 이벤트 생성
 

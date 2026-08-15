@@ -3,19 +3,27 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemBatchRepository;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemRepository;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** timeline_draft_source_items leaf 서비스. INSERT는 JDBC batch, 조회·삭제는 JPA repository를 사용한다. */
 @Service
 @RequiredArgsConstructor
 public class TimelineDraftSourceItemService {
 
+    private static final int MAX_CLEANUP_BATCH_SIZE = 1_000;
+    private static final ZoneId CLEANUP_ZONE = ZoneId.of("Asia/Seoul");
+
     private final TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
     private final TimelineDraftSourceItemBatchRepository timelineDraftSourceItemBatchRepository;
+    private final Clock clock;
 
     public void saveAll(List<TimelineDraftSourceItem> items) {
         timelineDraftSourceItemBatchRepository.insertAll(items);
@@ -40,13 +48,35 @@ public class TimelineDraftSourceItemService {
         timelineDraftSourceItemRepository.deleteByTaskIdAndRawIdIn(taskId, rawIds);
     }
 
-    /** 보관기간 초과(created_at < cutoff) draft 행을 조회한다(cleanup 스케줄러가 행별 S3 삭제 후 개별 삭제). */
-    public List<TimelineDraftSourceItem> findCreatedBefore(LocalDateTime cutoff) {
-        return timelineDraftSourceItemRepository.findByCreatedAtBefore(cutoff);
+    /** 만료되고 eligible한 행을 짧게 claim하고 다음 일일 실행 전까지 재선택되지 않게 미룬다. */
+    @Transactional
+    public List<TimelineDraftSourceItem> claimExpired(LocalDateTime cutoff, int limit) {
+        if (limit < 1 || limit > MAX_CLEANUP_BATCH_SIZE) {
+            throw new IllegalArgumentException("limit must be between 1 and " + MAX_CLEANUP_BATCH_SIZE);
+        }
+        ZonedDateTime now = ZonedDateTime.ofInstant(clock.instant(), CLEANUP_ZONE);
+        LocalDateTime eligibleAt = now.toLocalDateTime();
+        LocalDateTime nextAvailableAt = now.toLocalDate().plusDays(1).atStartOfDay();
+        List<TimelineDraftSourceItem> rows = timelineDraftSourceItemRepository
+                .findExpiredForUpdateSkipLocked(cutoff, eligibleAt, limit);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = rows.stream()
+                .map(TimelineDraftSourceItem::getTimelineDraftSourceItemId)
+                .toList();
+        int deferred = timelineDraftSourceItemRepository.deferCleanupUntil(ids, nextAvailableAt);
+        if (deferred != ids.size()) {
+            throw new IllegalStateException("draft cleanup claim count mismatch");
+        }
+        return List.copyOf(rows);
     }
 
-    /** draft 행 하나를 PK로 삭제한다(cleanup이 S3 객체 삭제 성공한 행만 지울 때 사용). */
-    public void deleteById(Long id) {
-        timelineDraftSourceItemRepository.deleteById(id);
+    /** S3 삭제 성공 또는 S3 삭제가 필요 없는 만료 행을 한 transaction에서 지운다. */
+    public int deleteClaimed(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        return timelineDraftSourceItemRepository.deleteAllByIdIn(ids);
     }
 }

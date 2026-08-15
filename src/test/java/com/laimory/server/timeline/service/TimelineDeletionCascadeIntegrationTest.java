@@ -8,6 +8,7 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
+import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -23,10 +24,16 @@ import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -36,6 +43,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 삭제 DB 트랜잭션 bean ↔ 실 MySQL N:M cascade/orphan 계약 검증(mockito론 못 잡음):
@@ -67,9 +76,13 @@ class TimelineDeletionCascadeIntegrationTest {
     @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
-    private TimelinePhotoDeleteCompletionService timelinePhotoDeleteCompletionService;
+    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @Autowired
+    private TimelineEventEditTransactionService timelineEventEditTransactionService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     @MockitoSpyBean
     private TimelineItemService timelineItemService;
 
@@ -259,7 +272,7 @@ class TimelineDeletionCascadeIntegrationTest {
         timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
 
-        timelinePhotoDeleteCompletionService.completeSucceeded(List.of(job));
+        timelinePhotoDeleteJobService.completeSucceeded(List.of(job));
 
         assertThat(findFixturePhotoDeleteJobs()).isEmpty();
         assertThat(timelineItemRepository.findById(itemId)).isEmpty();
@@ -275,10 +288,141 @@ class TimelineDeletionCascadeIntegrationTest {
         doThrow(new IllegalStateException("forced completion item delete failure"))
                 .when(timelineItemService).deleteByIds(List.of(itemId));
 
-        assertThatThrownBy(() -> timelinePhotoDeleteCompletionService.completeSucceeded(List.of(job)))
+        assertThatThrownBy(() -> timelinePhotoDeleteJobService.completeSucceeded(List.of(job)))
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(timelinePhotoDeleteJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isPresent();
+        assertThat(timelineItemRepository.findById(itemId)).isPresent();
+    }
+
+    @Test
+    void eventPatch_pendingDeleteJob_cancelsJobAndRelinksPreservedItem() {
+        Long deletedEventId = saveEvent("삭제 대상", 9);
+        Long relinkEventId = saveEvent("재연결 대상", 10);
+        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b63";
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b64.jpg";
+        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
+
+        assertThat(findFixturePhotoDeleteJobs())
+                .singleElement()
+                .extracting(TimelinePhotoDeleteJob::getStatus)
+                .isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
+
+        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+                rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
+                null, null);
+        timelineEventEditTransactionService.updateEvent(
+                subjectId,
+                relinkEventId,
+                new TimelineEventEditCommand(
+                        TimelineEventType.UNKNOWN,
+                        "재연결 대상",
+                        null,
+                        DATE.atTime(10, 0),
+                        null,
+                        false,
+                        null,
+                        List.of(photo)));
+
+        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
+        assertThat(timelineItemRepository.findById(itemId)).isPresent();
+        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId))
+                .extracting(TimelineEventItem::getTimelineItemId)
+                .containsExactly(itemId);
+        assertThat(fixtureItemIds).containsExactly(itemId);
+    }
+
+    @Test
+    void eventPatch_activeProcessingDeleteJob_is409AndDoesNotRelink() {
+        Long deletedEventId = saveEvent("삭제 대상", 9);
+        Long relinkEventId = saveEvent("재연결 대상", 10);
+        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b65";
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b66.jpg";
+        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
+        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
+        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
+        jdbcTemplate.update(
+                "update timeline_photo_delete_jobs set status = 'PROCESSING', available_at = ? "
+                        + "where timeline_photo_delete_job_id = ?",
+                LocalDateTime.now().plusDays(1), job.getTimelinePhotoDeleteJobId());
+
+        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+                rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
+                null, null);
+        TimelineEventEditCommand command = new TimelineEventEditCommand(
+                TimelineEventType.UNKNOWN,
+                "재연결 대상",
+                null,
+                DATE.atTime(10, 0),
+                null,
+                false,
+                null,
+                List.of(photo));
+
+        assertThatThrownBy(() -> timelineEventEditTransactionService.updateEvent(
+                subjectId, relinkEventId, command))
+                .isInstanceOfSatisfying(
+                        com.laimory.server.common.error.BusinessException.class,
+                        exception -> assertThat(exception.getExceptionType())
+                                .isEqualTo(com.laimory.server.common.error.ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+
+        assertThat(findFixturePhotoDeleteJobs()).hasSize(1);
+        assertThat(timelineItemRepository.findById(itemId)).isPresent();
+        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId)).isEmpty();
+    }
+
+    @Test
+    void relinkCommittedAfterOrphanSnapshot_cancelsJobBeforeS3AndFencesLateCompletion() throws Exception {
+        Long targetEventId = saveEvent("삭제와 경합", 9);
+        Long relinkEventId = saveEvent("재연결 대상", 10);
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b62.jpg";
+        Long itemId = savePhotoLinkedTo("raw-relinked", filename, 9, targetEventId);
+        CountDownLatch patchReadOldLink = new CountDownLatch(1);
+        CountDownLatch deletionCommitted = new CountDownLatch(1);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+            Future<?> staleRelink = executor.submit(() -> transaction.executeWithoutResult(status -> {
+                Integer oldLinkCount = jdbcTemplate.queryForObject(
+                        "select count(*) from timeline_event_items "
+                                + "where timeline_event_id = ? and timeline_item_id = ?",
+                        Integer.class, targetEventId, itemId);
+                assertThat(oldLinkCount).isEqualTo(1);
+                patchReadOldLink.countDown();
+                try {
+                    if (!deletionCommitted.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("deletion did not commit");
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("relink interrupted", exception);
+                }
+                jdbcTemplate.update(
+                        "insert into timeline_event_items (timeline_event_id, timeline_item_id) values (?, ?)",
+                        relinkEventId, itemId);
+            }));
+
+            assertThat(patchReadOldLink.await(5, TimeUnit.SECONDS)).isTrue();
+            try {
+                timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
+            } finally {
+                deletionCommitted.countDown();
+            }
+            staleRelink.get();
+        }
+
+        TimelinePhotoDeleteJob staleJob = findFixturePhotoDeleteJobs().getFirst();
+        TimelinePhotoDeleteJobService.ValidationResult validation =
+                timelinePhotoDeleteJobService.retainOrphanJobs(List.of(staleJob));
+
+        assertThat(validation.orphanJobs()).isEmpty();
+        assertThat(validation.cancelledJobs()).isEqualTo(1);
+        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
+        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId))
+                .extracting(TimelineEventItem::getTimelineItemId)
+                .containsExactly(itemId);
+        assertThat(timelinePhotoDeleteJobService.completeSucceeded(List.of(staleJob))).isZero();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
     }
 }

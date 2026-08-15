@@ -22,7 +22,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.DeletedObject;
@@ -33,7 +32,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequ
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
- * S3PhotoStorageService 단위 검증. S3Presigner/S3Client를 모킹해 presign/deleteObject/deleteObjects
+ * S3PhotoStorageService 단위 검증. S3Presigner/S3Client를 모킹해 presign/deleteObjects
  * 인자를 캡처한다. 인프라 0(실 S3 객체 금지 — 1,001개 chunk도 mock으로 검증).
  */
 @ExtendWith(MockitoExtension.class)
@@ -119,20 +118,6 @@ class S3PhotoStorageServiceTest {
         throw new IllegalStateException("query param not found: " + key + " in " + url);
     }
 
-    @Test
-    void delete_deletesObjectWithExpectedBucketAndKey() {
-        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
-        String objectKey = "deadbeef/photos/b.jpg";
-
-        service.delete(objectKey);
-
-        ArgumentCaptor<DeleteObjectRequest> requestCaptor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
-        verify(s3Client).deleteObject(requestCaptor.capture());
-        DeleteObjectRequest request = requestCaptor.getValue();
-        assertThat(request.bucket()).isEqualTo(BUCKET);
-        assertThat(request.key()).isEqualTo(objectKey);
-    }
-
     // --- deleteAll (DeleteObjects 배치) ---
 
     private static List<String> keys(int count) {
@@ -162,7 +147,7 @@ class S3PhotoStorageServiceTest {
         assertThat(request.bucket()).isEqualTo(BUCKET);
         assertThat(requestedKeys(request)).containsExactly("deadbeef/photos/a.jpg", "deadbeef/photos/b.jpg");
         assertThat(request.delete().quiet()).isFalse();
-        // 타임아웃은 요청 단위 override로만 조인다(전역 클라이언트 설정·단건 delete 불변).
+        // 타임아웃은 finalized/draft batch 요청 단위 override로만 조인다(전역 client 불변).
         assertThat(request.overrideConfiguration()).hasValueSatisfying(override -> {
             assertThat(override.apiCallTimeout()).contains(Duration.ofSeconds(10));
             assertThat(override.apiCallAttemptTimeout()).contains(Duration.ofSeconds(3));
