@@ -193,6 +193,9 @@ Spring JSON stdout
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
+  - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
+    task write 뒤 processing index 명령 실패·응답 유실 또는 사용자 index PEXPIRE=false를 최신 task
+    기준으로 보정한 시도 수. 식별자와 Redis key는 tag에 넣지 않는다
   - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
@@ -212,7 +215,7 @@ Spring JSON stdout
     (Resilience4j binder의 state/calls gauge와 별도, 의미 중복 계수 없음)
 - Reactor Netty native `reactor.netty.connection.provider.*`(total/active/idle/pending/max/max.pending)는
   전용 pool 이름 `kakao-local`로 활성화돼 있다(kakao mode 한정).
-- custom label은 고정 `result`·`operation`, build info의 `commit`, geo 전용
+- custom label은 고정 `result`·`operation`·`index`, build info의 `commit`, geo 전용
   `outcome`/`failure_kind`/`endpoint`/`attempt`/`from`/`to`만 사용한다.
   userId/taskId/transactionId/FID/subject/lookup key/좌표/주소/raw URL·query/
   자유 입력/exception message는 tag로 쓰지 않는다.

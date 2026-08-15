@@ -57,11 +57,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
-   같은 저장 Lua가 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
-   (`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)에 시작 시각 score로 taskId를 추가하고 subject index
-   key TTL을 PROCESSING TTL로 갱신하며, terminal 저장 Lua가 두 index에서 함께 제거한다. 전역 index는
-   90초 초과 stuck gauge에만, 사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·
-   callback 계약의 권위는 기존 JSON이다.
+   task JSON 저장 뒤 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
+   (`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)를 native Redis 명령으로 갱신한다.
+   PROCESSING은 두 index에 시작 시각 score로 taskId를 ZADD하고 subject index key TTL을 PROCESSING
+   TTL로 갱신하며, terminal은 두 index에서 ZREM한다. 각 index 명령 실패·응답 유실과 PEXPIRE=false는
+   최신 task JSON을 다시 읽어 해당 index를 멱등 보정한다. 전역 index는 90초 초과 stuck gauge에만,
+   사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·callback 계약의 권위는 JSON이다.
 8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
    기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
    (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
@@ -238,9 +239,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - **이 큐는 Lua를 쓰지 않는다.** 기대는 동시성 보장이 전부 단일 명령에서 나온다 — 중복 적재는
   `ZADD NX`가, 목록의 일관성은 `ZRANGEBYSCORE` 한 번이, 배치 실행 중 삽입은 목록과 개수가 공유하는
   score 상한(`now`)이 막는다. 청소(`ZREMRANGEBYSCORE`)가 건드리는 범위는 추가되는 score와 retention
-  만큼 떨어져 있어 서로를 지우지 못한다. 여러 명령을 한 원자 경계로 묶을 이유가 없어, Redis를 그동안
-  붙잡는 스크립트 대신 평범한 명령을 쓴다(draft task의 Lua는 값과 index 2개가 어긋나면 안 되는
-  경우라 성격이 다르다).
+  만큼 떨어져 있어 서로를 지우지 못한다. 여러 명령을 한 원자 경계로 묶을 이유가 없어 평범한 명령을
+  쓴다. draft task도 단일-winner가 필요한 task JSON 전이에만 단일-key Lua CAS를 유지하고, 보조
+  processing index는 native 명령과 최신 task 기준 보정으로 수렴시킨다.
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 밀려 있는 동안 앞선 날짜의 갱신이 문서를
   바꾸므로, 미리 조립해 두면 낡은 문서를 base로 삼게 되고 미루는 것 자체가 무의미해진다.
 - 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와

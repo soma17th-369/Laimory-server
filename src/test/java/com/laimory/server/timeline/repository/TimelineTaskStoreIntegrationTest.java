@@ -1,12 +1,12 @@
 package com.laimory.server.timeline.repository;
 
+import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
+import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import static com.laimory.server.testsupport.TaskTokenFixtures.tokenHashes;
-import static com.laimory.server.testsupport.TestSubjects.id;
-
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.time.Duration;
 import java.time.Instant;
@@ -242,6 +242,59 @@ class TimelineTaskStoreIntegrationTest {
     }
 
     @Test
+    void replaceIfUnchanged_missingTaskDoesNotResurrectIt() {
+        String taskId = "it-missing-cas-" + UUID.randomUUID();
+        TimelineDraftTask expected = TimelineDraftTask.processing(
+                SUBJECT, 42L, null, tokenHashes("old"), Instant.now());
+        TimelineDraftTask replacement = expected.withTokenAndStage(
+                tokenHashes("next"), ProcessStage.RESULT_PENDING);
+
+        assertThat(timelineTaskStore.replaceIfUnchanged(
+                taskId, expected, replacement, Duration.ofMinutes(3))).isFalse();
+        assertThat(timelineTaskStore.find(taskId)).isEmpty();
+    }
+
+    @Test
+    void replaceIfUnchanged_concurrentRequestsHaveOneWinner() throws Exception {
+        UUID user = uniqueSubjectId();
+        String taskId = "it-cas-race-" + UUID.randomUUID();
+        TimelineDraftTask expected = TimelineDraftTask.processing(
+                user, 42L, null, tokenHashes("old"), Instant.now());
+        TimelineDraftTask first = expected.withTokenAndStage(
+                tokenHashes("first"), ProcessStage.RESULT_PENDING);
+        TimelineDraftTask second = expected.withTokenAndStage(
+                tokenHashes("second"), ProcessStage.RESULT_PENDING);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            timelineTaskStore.save(taskId, expected, Duration.ofMinutes(3));
+            Future<Boolean> firstResult = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return timelineTaskStore.replaceIfUnchanged(
+                        taskId, expected, first, Duration.ofMinutes(3));
+            });
+            Future<Boolean> secondResult = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return timelineTaskStore.replaceIfUnchanged(
+                        taskId, expected, second, Duration.ofMinutes(3));
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            assertThat(List.of(firstResult.get(5, TimeUnit.SECONDS),
+                    secondResult.get(5, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+            assertThat(timelineTaskStore.find(taskId).orElseThrow()).isIn(first, second);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+            cleanupTask(user, taskId);
+        }
+    }
+
+    @Test
     void userIndex_returnsOwnedProcessingNewestFirst_andIsolatesUsers() {
         // T1·T5·T6: 같은 사용자의 복수 task는 덮어쓰지 않고 전부 score(processingStartedAt) 내림차순으로
         // 반환하며, 다른 사용자의 유효 PROCESSING task는 절대 섞이지 않는다(키 자체가 사용자별).
@@ -356,8 +409,8 @@ class TimelineTaskStoreIntegrationTest {
 
     @Test
     void userIndex_terminalJsonWithLeftoverMember_isExcludedAndPruned() throws Exception {
-        // T18c(권위 JSON이 terminal인 경우)·T9: 3-key Lua 밖에서 task JSON만 terminal로 바뀐 부분 실패/
-        // legacy 상황을 시뮬레이션한다 — 목록은 index가 아니라 JSON 권위를 따라 제외하고 member를 정리한다.
+        // T18c(권위 JSON이 terminal인 경우)·T9: task write 뒤 index 제거가 실패한 상황을 시뮬레이션한다 —
+        // 목록은 index가 아니라 JSON 권위를 따라 제외하고 member를 정리한다.
         UUID user = uniqueSubjectId();
         String taskId = "it-leftover-" + UUID.randomUUID();
         try {
@@ -384,7 +437,6 @@ class TimelineTaskStoreIntegrationTest {
         Instant now = Instant.now();
         String a1 = "it-owner-" + UUID.randomUUID();
         String b1 = "it-owner-" + UUID.randomUUID();
-        String dummyValueKey = "timeline:draft-task:it-dummy-" + UUID.randomUUID();
         String userAIndexKey = TimelineTaskStore.subjectProcessingIndexKey(userA);
         try {
             timelineTaskStore.save(a1, TimelineDraftTask.processing(userA, 42L, null, tokenHashes("h"), now),
@@ -392,15 +444,13 @@ class TimelineTaskStoreIntegrationTest {
             timelineTaskStore.save(b1, TimelineDraftTask.processing(userB, 43L, null, tokenHashes("h"), now),
                     Duration.ofMinutes(3));
             // 오염 주입: b1 member를 userA index에만 추가한다(b1 task JSON·userB index는 건드리지 않음).
-            redisGateway.setAndAddToSortedSets(dummyValueKey, "x", Duration.ofMinutes(3),
-                    userAIndexKey, userAIndexKey, b1, now.plusMillis(10).toEpochMilli());
+            redisGateway.addToSortedSet(userAIndexKey, b1, now.plusMillis(10).toEpochMilli());
 
             assertThat(timelineTaskStore.findProcessingTaskIds(userA)).containsExactly(a1);
             assertThat(redisGateway.getSortedSetReverseRange(userAIndexKey)).containsExactly(a1);
             // 소유자 쪽은 영향이 없다 — b1은 계속 userB에서만 재발견된다.
             assertThat(timelineTaskStore.findProcessingTaskIds(userB)).containsExactly(b1);
         } finally {
-            redisGateway.delete(dummyValueKey);
             cleanupTask(userA, a1);
             cleanupTask(userB, b1);
         }

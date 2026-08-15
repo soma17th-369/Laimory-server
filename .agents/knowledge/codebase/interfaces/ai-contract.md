@@ -74,7 +74,9 @@ INPUT_PENDING
   → SUCCESS
 ```
 
-- token hash+stage 교체와 terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는 Redis Lua CAS다.
+- token hash+stage 교체와 terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는 단일-key Redis
+  Lua CAS다. missing task는 CAS에 실패해 만료 task를 부활시키지 않는다. processing index는 이 원자
+  경계 밖의 보조 데이터이며 task write 뒤 native 명령과 최신 task 기준 보정으로 수렴한다.
 - 외부 polling 상태는 계속 `PROCESSING`/`SUCCESS`/`FAILED`만 노출한다.
 
 ### 3. 입력 조회 (AI → API)
