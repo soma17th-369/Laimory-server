@@ -3,6 +3,8 @@ package com.laimory.server.arch;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.push.controller.PushRegistrationApi;
+import com.laimory.server.terms.controller.PublicTermApi;
+import com.laimory.server.terms.controller.TermAgreementApi;
 import com.laimory.server.timeline.controller.TimelineApi;
 import com.laimory.server.timeline.controller.TimelineRecordApi;
 import com.laimory.server.user.CurrentSubject;
@@ -22,7 +24,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
- * {@code /a/api} 보호 API 19개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
+ * {@code /a/api} 보호 API 21개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
@@ -34,7 +36,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 class ApiAuthenticationContractTest {
 
     static Stream<Method> protectedOperations() {
-        return Stream.of(TimelineApi.class, TimelineRecordApi.class, PushRegistrationApi.class, UserApi.class)
+        return Stream.of(TimelineApi.class, TimelineRecordApi.class, PushRegistrationApi.class, UserApi.class,
+                        TermAgreementApi.class)
                 .flatMap(api -> Arrays.stream(api.getDeclaredMethods()))
                 .filter(method -> !method.isSynthetic());
     }
@@ -85,9 +88,16 @@ class ApiAuthenticationContractTest {
     }
 
     @Test
-    void protectedOperationCount_isNineteen() {
+    void protectedOperationCount_isTwentyOne() {
         // timeline 16개(날짜 GET/DELETE·저장 POST·Event 단건 GET·Event Item 연결 해제·월별 GET 포함)
-        // + push-registrations PUT/DELETE 2개 + users GET /me 1개.
-        assertThat(protectedOperations().count()).isEqualTo(19);
+        // + push-registrations PUT/DELETE 2개 + users GET /me 1개 + terms agreements GET/POST 2개.
+        assertThat(protectedOperations().count()).isEqualTo(21);
+    }
+
+    @Test
+    void publicTermApi_staysOutsideBearerContract() {
+        // 공개 약관 조회는 보호 operation 목록 밖이다 — class-level bearer 문서가 없어야
+        // public prefix(/api)와 문서·실제 enforcement가 어긋나지 않는다.
+        assertThat(PublicTermApi.class.getAnnotation(SecurityRequirement.class)).isNull();
     }
 }

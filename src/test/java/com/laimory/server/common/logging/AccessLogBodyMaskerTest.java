@@ -143,7 +143,9 @@ class AccessLogBodyMaskerTest {
                 "/a/api/v1/timeline/daily-records",
                 "/a/api/v3/timeline/daily-records/2026-08-11",
                 "/a/api/v1/timeline/daily-records/by-id/42",
-                "/a/api/v1/timeline/events/42");
+                "/a/api/v1/timeline/events/42",
+                "/api/v1/terms",                               // 약관 원문 전체(공개 조회)
+                "/a/api/v1/terms/agreements");                 // 약관 원문 전체(동의 이력)
     }
 
     @Test
@@ -200,6 +202,19 @@ class AccessLogBodyMaskerTest {
         assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts"),
                 jsonResponse(), bytes("{\"tasks\":[]}"), false))
                 .isEqualTo("{\"tasks\":[]}");
+    }
+
+    @Test
+    void termAgreementPostRequestKeepsFieldLevelMasking() {
+        // 동의 POST request에는 약관 원문이 없고 type/version뿐 — 전체 치환 대상이 아니라 일반 JSON 규칙이다.
+        assertThat(maskRequest("POST", "/a/api/v1/terms/agreements",
+                "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}"))
+                .contains("\"termType\":\"TERMS_OF_SERVICE\"")
+                .contains("\"version\":\"2026-08-15\"");
+        // 같은 경로라도 GET response만 전체 치환된다(위 privacyResponsePaths 참여) — POST response는 body=null이라 대상 아님.
+        assertThat(masker.maskResponse(new MockHttpServletRequest("POST", "/a/api/v1/terms/agreements"),
+                jsonResponse(), bytes("{\"header\":{\"code\":0}}"), false))
+                .isEqualTo("{\"header\":{\"code\":0}}");
     }
 
     @Test

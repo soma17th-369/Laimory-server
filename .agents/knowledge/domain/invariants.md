@@ -207,6 +207,35 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 
+### Terms
+
+- 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
+  본문·버전·효력일을 바꾸는 API는 없다.
+- 현재 문서는 `effective_at <= now(KST)`인 종류별 최신 행으로만 계산한다(별도 active flag 없음).
+  `(term_type, version)`·`(term_type, effective_at)` UNIQUE가 버전 식별과 동시 최신 모호성을 DB에서
+  차단한다.
+- 약관 시각(`effective_at`·`accepted_at`)은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 판정·기록은
+  캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
+- 공개 응답과 필수 판정의 stage/required/화면 순서는 `TermType` enum mapping이 권위다. DB denormalized
+  `stage`/`required`는 사본이며 불일치는 `TermCatalogReadiness`가 잘못된 seed로 경보한다(조용한 정상 취급
+  금지).
+- 동의 등록은 all-or-nothing이다 — 제출 전부가 검증 시각의 현재 버전일 때만 한 DB transaction으로
+  기록하고, 하나라도 미존재·stale이면 0건 기록 + 409 `-3002`다. 수락 시각은 서버가 batch당 한 번 캡처한
+  KST 값이고 같은 버전 재전송은 native insert-if-absent(멱등)라 최초 수락 시각을 덮어쓰지 않는다
+  (save 반복 + unique 예외 catch 금지 — rollback-only 오염 방지).
+- 동의가 남아 있는 문서 행은 삭제할 수 없다(FK `ON DELETE RESTRICT`) — 이력 재구성 권위 보존.
+- `/a/api` LOGIN gate와 draft 생성·사진 presign의 `TIMELINE_FIRST_CREATE` gate는 controller 진입 전
+  interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
+  기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
+- exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
+  등록/이력·내 회원 조회·push 등록 PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer
+  인증(401)은 그대로 요구한다. 후속 #305 탈퇴 endpoint가 같은 annotation을 재사용한다.
+- 기대 필수 종류 중 current 문서가 없거나 enum mapping이 깨진 stage는 부분 강제하지 않고 전체를
+  fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
+  ERROR log로만 경보한다.
+- 약관 원문은 access log에 복제하지 않는다 — 두 GET response(`/api/{v}/terms`,
+  `/a/api/{v}/terms/agreements`)는 body 크기·parse 성공과 무관하게 전체 placeholder로 치환한다.
+
 ### Authentication
 
 - 사용자는 `(provider, provider_user_id)`로만 결합하며 email로 provider account를 merge하지 않는다.

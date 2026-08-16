@@ -48,6 +48,16 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 `JwtTokens`는 양수 userId만 발급·인증한다 — 0·음수 subject는 유효한 서명이 있어도 실패 처리해
 과거 user 0 데이터 접근을 차단한다. 매 요청 user row 조회는 없다(stateless access token 계약 유지).
 
+인증을 통과한 `/a/api` HandlerMethod에는 약관 gate(#303)가 이어진다 — `TermsEnforcementInterceptor`가
+controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` 필수 약관 동의를 검사하고
+미동의는 403 `-3001`이다(401 인증 계약과 독립 — bearer 실패가 항상 먼저다). exemption은 raw path
+allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·users GET /me·
+push-registrations PUT/DELETE — 후속 #305 탈퇴가 재사용). draft 생성·사진 presign은
+`@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
+필수 문서 + 동의 existence 1회)이고 TTL cache가 없으며, catalog 미준비 stage(seed/activation 누락·
+mapping 불일치)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness` metric·bounded log 경보).
+token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니다.
+
 구현된 로그인·token 기능:
 
 1. Google/Kakao OIDC login에서 provider `sub`로 user를 찾거나 만든다.

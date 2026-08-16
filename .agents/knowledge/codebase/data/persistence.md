@@ -38,6 +38,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
+- `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
 `CREATE TABLE IF NOT EXISTS`라 기존 table을 변경하지 않으며 migration framework는 없다.
@@ -147,6 +148,24 @@ runtime repository/entity도 subject만 읽고 쓴다.
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
 `TimelineEventType`이며, 결과 저장 transaction은 allowlist literal만 INSERT한다(미지원 literal은 결과 저장
 400 — 새 literal 활성화 순서는 "Server enum 배포 → AI writer 활성화").
+
+`term_documents`(#303)는 버전별 불변 약관 문서다. 게시 행 UPDATE·삭제 API가 없고 개정은 새 행 INSERT이며,
+현재 문서는 `effective_at <= now(KST)`의 종류별 최신 행으로 계산한다(별도 active flag 없음).
+`(term_type, version)`·`(term_type, effective_at)` UNIQUE와 `(stage, effective_at, term_type)` 조회
+index를 가진다. `version`은 exact-match 식별자라 컬럼 단위 `utf8mb4_bin`이다(raw_id·FID 선례).
+`effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
+`stage`/`required`/`display_order`는 코드 `TermType` mapping의 denormalized 사본이라 entity도 stage를
+enum이 아닌 String으로 매핑한다(소비자가 정합성 검사뿐이고 오타 seed가 공개 조회 hydration을 깨지 않게).
+운영 seed는 앱 배포 전 수동 INSERT이며 승인 원문만 넣는다.
+
+`term_agreements`(#303)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(FK 없음 —
+`refresh_tokens` 선례, 탈퇴 후 보존 정책 #302/#305 확정 전 최소 결정)이고
+`(user_id, term_document_id)` UNIQUE + `(user_id, accepted_at, term_agreement_id)` 이력 index를 가진다.
+문서 FK는 `ON DELETE RESTRICT`다(동의가 남은 문서 삭제 금지). 쓰기는 repository의 native
+`INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
+(`modified_by` NULL), 재전송·동시 동일 batch가 unique 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
+않는다. `accepted_at`은 서버가 batch당 한 번 캡처한 KST 벽시계다. entity는 조회·validate용 read model이다.
+live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다(`ddl-auto=validate`).
 
 ### Redis
 

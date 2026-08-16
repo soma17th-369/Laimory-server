@@ -48,12 +48,16 @@ final class AccessLogBodyMasker {
 
     // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건.
     // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
+    // 약관 두 GET은 법률 원문 전체를 담으므로 body 크기·JSON parse 성공 여부와 무관하게 전체 치환한다
+    // (동의 POST request에는 원문이 없고 type/version뿐이라 기존 field-level 규칙을 유지한다).
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/by-id/[^/]+$")),
-            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")));
+            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")),
+            new PrivacyBodyPath("GET", Pattern.compile("^/api/v\\d+/terms$")),
+            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/terms/agreements$")));
     private static final Set<String> EXACT_SECRET_NAMES =
             Set.of("appcode", "appverifier", "uploadurl", "firebaseinstallationid");
     private static final List<String> CONTAINED_SECRET_NAMES =

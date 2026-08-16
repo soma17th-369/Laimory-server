@@ -14,6 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.laimory.server.common.logging.RequestLogAttributes;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.terms.service.TermsEnforcementService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.service.PhotoUploadService;
@@ -63,6 +64,9 @@ class GlobalExceptionHandlerTest {
     private PhotoUploadService photoUploadService;
     @MockitoBean
     private SubjectMappingService subjectMappingService;
+    // 약관 gate interceptor(#303)가 슬라이스에도 적용된다 — 기본 no-op mock이면 gate 통과.
+    @MockitoBean
+    private TermsEnforcementService termsEnforcementService;
 
     @BeforeEach
     void resolveSubject() {

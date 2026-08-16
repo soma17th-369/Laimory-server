@@ -31,8 +31,8 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 19개(timeline 16 + push-registrations PUT/DELETE + users GET /me)는 `bearerAuth`
-security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
+보호 operation 21개(timeline 16 + push-registrations PUT/DELETE + users GET /me + terms agreements
+GET/POST)는 `bearerAuth` security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
 입력이 아님). 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -145,6 +145,29 @@ request body(`firebaseInstallationId`)로 받는다 — access log·프록시 UR
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
+
+`GET /api/{version}/terms?stage=LOGIN|TIMELINE_FIRST_CREATE`(#303)는 로그인 전 화면에서도 쓰는 public
+약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음). `stage`는 필수 enum query이고
+누락·미지원 값은 400 `-400`이다. 응답 `terms[]`는 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
+버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
+`termType`·`version`·`title`·`content`·`required`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
+`required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
+(activation 전 rollout) 404/500이 아니라 200과 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다.
+
+`POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
+도메인이라 hidden `@AuthenticationPrincipal Long userId`). body `agreements[]`의 각
+`(termType, version)`은 조회 응답 값을 그대로 회신한다. 배열 누락/빈 배열·항목 필드 누락·동일 pair
+중복·미지원 termType literal은 400 `-400`, 하나라도 존재하지 않거나 현재 버전이 아니면 전체 미기록 +
+409 `-3002`(재조회 신호)다. 전부 현재 버전이면 한 DB transaction으로 기록하고 성공은 `200 + body=null`
+이다. 수락 시각은 서버가 batch당 한 번 캡처한 KST 벽시계이며 같은 버전 재전송은 멱등 성공(최초 수락
+시각 불변)이다. 동의 철회 API는 없다. `GET /a/api/{version}/terms/agreements`는 회원에게 남아 있는
+전체 동의 이력을 `acceptedAt DESC`(PK DESC tie-breaker)로 반환한다 — 각 원소는 문서 필드 전체 +
+`acceptedAt`이고, 이력이 없으면 404가 아니라 200과 `agreements=[]`다. 두 약관 GET response는 access
+log에서 전체 마스킹된다(원문 비복제 — [observability](../operations/observability.md)).
+
+미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
+403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption과 fail-open
+계약은 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions
 
