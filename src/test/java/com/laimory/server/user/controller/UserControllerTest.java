@@ -53,7 +53,6 @@ class UserControllerTest {
         // 인증 게이트: 무인증 요청은 컨트롤러/서비스에 도달하지 못하고 401 ERROR_2001 envelope로 거절된다.
         mockMvc.perform(get(PATH))
                 .andExpect(status().isUnauthorized())
-                .andExpect(header().string("WWW-Authenticate", "Bearer"))
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
 
@@ -99,8 +98,6 @@ class UserControllerTest {
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isUnauthorized())
-                // EntryPoint 경로(무토큰/무효 토큰)와 같은 Bearer challenge 헤더 — 두 경로가 외부에서 구분되지 않는다.
-                .andExpect(header().string("WWW-Authenticate", "Bearer"))
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }

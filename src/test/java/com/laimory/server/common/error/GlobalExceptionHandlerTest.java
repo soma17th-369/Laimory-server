@@ -84,27 +84,6 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void business401_bearerChallengeOnlyForApiAuthenticationRequired() throws Exception {
-        // -2001 수렴 경로(예: /users/me 회원 행 없음)는 EntryPoint와 같은 Bearer challenge 헤더를 유지하고,
-        // Bearer 보호 자원 계약이 아닌 다른 401 타입(task token 등)에는 붙이지 않는다.
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
-                .thenThrow(new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED))
-                .thenThrow(new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH));
-
-        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string("WWW-Authenticate", "Bearer"))
-                .andExpect(jsonPath("$.header.code").value(-2001));
-
-        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().doesNotExist("WWW-Authenticate"))
-                .andExpect(jsonPath("$.header.code").value(-1002));
-    }
-
-    @Test
     void illegalArgument_mapsToError0400_andForwardsDetailToAccessLog() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordAt is required"));

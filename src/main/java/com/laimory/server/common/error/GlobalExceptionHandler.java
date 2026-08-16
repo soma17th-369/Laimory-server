@@ -78,14 +78,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     ResponseEntity<ApiResponse<Void>> onBusiness(BusinessException e, HttpServletRequest request) {
         ExceptionType type = e.getExceptionType();
-        ResponseEntity.BodyBuilder response = ResponseEntity.status(type.status());
-        if (type == ExceptionType.API_AUTHENTICATION_REQUIRED) {
-            // Bearer 401 계약(RFC 6750): EntryPoint(무토큰/무효 토큰)와 같은 challenge 헤더를 유지해
-            // 서비스 수렴 경로(예: /users/me의 회원 행 없음)가 외부에서 구분되지 않게 한다. 다른 401
-            // 타입(task token·app code·refresh)은 Bearer 보호 자원 계약이 아니므로 붙이지 않는다.
-            response.header(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
-        }
-        return response.body(errorEnvelope(type, e.getArgs(), request, null));
+        return ResponseEntity.status(type.status())
+                .body(errorEnvelope(type, e.getArgs(), request, null));
     }
 
     // ── (C) 프로그램적 검증 실패 → 400 (메시지는 로그만, 클라이언트엔 i18n 제네릭 문구) ──
