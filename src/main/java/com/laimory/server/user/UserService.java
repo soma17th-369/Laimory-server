@@ -1,5 +1,7 @@
 package com.laimory.server.user;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,17 @@ public class UserService {
                                 .orElseThrow(() -> e);
                     }
                 });
+    }
+
+    /**
+     * 인증 userId의 회원을 조회한다(내 회원 정보 응답 구성용). 유효하게 서명된 토큰이라도 회원 행이 없으면
+     * 기존 401 계약({@code -2001})으로 수렴시켜 탈퇴 여부·내부 식별자 존재를 노출하지 않는다 —
+     * userId는 예외 message·log에 넣지 않는다.
+     */
+    public User getProfile(String applicationVersion, Long userId) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED));
     }
 
     private User refreshKakaoNickname(User user, Provider provider, String nickname) {

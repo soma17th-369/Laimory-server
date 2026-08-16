@@ -22,6 +22,8 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
 - 인증 principal은 `Long` userId다. timeline/push controller의 콘텐츠 owner parameter는
   `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로 변환해 주입한다.
+  회원 account controller(`GET /a/api/{version}/users/me`)는 subject 변환 없이 hidden
+  `@AuthenticationPrincipal Long userId`를 직접 받는다.
 
 ## Current Implementation
 
@@ -88,6 +90,9 @@ handoff를 그대로 사용한다.
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
 - 콘텐츠 subject는 JWT principal이 아니다. 인증 filter와 access/refresh 도메인은 raw `Long` userId를
   유지하고, 콘텐츠 API의 MVC 경계 뒤에서만 UUID subjectId를 사용한다.
+- 회원 account API(`GET /a/api/{version}/users/me`)는 principal userId로 users 행을 endpoint 안에서
+  조회한다 — 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로 수렴한다(존재 비노출).
+  인증 filter 자체는 여전히 user row 조회 없이 stateless다.
 
 ## Invariants
 
@@ -95,9 +100,10 @@ handoff를 그대로 사용한다.
 - access token에 PII를 넣거나 raw refresh/App Code를 저장하지 않는다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
-- SecurityContext principal은 별도 래퍼 없는 `Long` userId다. 콘텐츠 controller는 이를 직접 parameter로
-  받지 않고 `@CurrentSubject UUID subjectId`를 받는다(String principal을 만드는 테스트 헬퍼 `user()` 사용 금지,
-  `AuthTestSupport` 사용).
+- SecurityContext principal은 별도 래퍼 없는 `Long` userId다. 보호 operation의 principal parameter는
+  정확히 하나다 — 콘텐츠·push controller는 `@CurrentSubject UUID subjectId`를, 회원 account controller는
+  hidden `@AuthenticationPrincipal Long userId`를 받는다(String principal을 만드는 테스트 헬퍼 `user()`
+  사용 금지, `AuthTestSupport` 사용).
 - access JWT의 `sub` claim은 raw userId다 — 콘텐츠 subject를 token·principal에 넣지 않으며,
   subject 전환은 인증 계약과 인증 도메인 스키마(users·refresh_tokens)를 바꾸지 않는다.
 

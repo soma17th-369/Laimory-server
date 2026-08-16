@@ -31,10 +31,11 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 18개(timeline 16 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
-401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject UUID subjectId` parameter로 주입돼 OpenAPI
-parameter에 나타나지 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
-[authentication runtime](../runtime/authentication.md)이 소유한다.
+보호 operation 19개(timeline 16 + push-registrations PUT/DELETE + users GET /me)는 `bearerAuth`
+security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
+콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
+`@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
+입력이 아님). 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 `POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
 timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). `rawId`는 canonical lowercase
@@ -139,6 +140,11 @@ terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 �
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
 멱등 upsert, DELETE는 (owner, FID) 동시 일치 시에만 지우는 멱등 해제다(미존재도 200).
+
+`GET /a/api/{version}/users/me`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
+nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
+parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
+탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 
 ### Boundary conventions
 
