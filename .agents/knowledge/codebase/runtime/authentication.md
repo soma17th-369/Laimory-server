@@ -103,8 +103,6 @@ handoff를 그대로 사용한다.
   유지하고, 콘텐츠 API의 MVC 경계 뒤에서만 UUID subjectId를 사용한다.
 - 회원 account API(`GET /a/api/{version}/users/me`)는 principal userId로 users 행을 endpoint 안에서
   조회한다 — 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로 수렴한다(존재 비노출).
-  이 수렴 경로도 EntryPoint와 같은 `WWW-Authenticate: Bearer` 헤더를 반환한다
-  (`GlobalExceptionHandler`가 `-2001` BusinessException에만 부여 — 다른 401 타입은 헤더 없음).
   인증 filter 자체는 여전히 user row 조회 없이 stateless다.
 
 ## Invariants
