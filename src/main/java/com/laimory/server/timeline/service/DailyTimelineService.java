@@ -4,6 +4,8 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -11,6 +13,7 @@ import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -34,6 +37,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class DailyTimelineService {
+
+    /** MySQL {@code DATE}가 지원하는 연도 범위 — API 경계도 같은 값으로 제한한다. */
+    private static final int MIN_YEAR = 1000;
+    private static final int MAX_YEAR = 9999;
 
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
@@ -92,6 +99,32 @@ public class DailyTimelineService {
     }
 
     /**
+     * 캘린더 월별 경량 조회. 요청 subject가 소유한 해당 월의 DRAFT/SAVED record를 날짜 오름차순으로
+     * {@code recordDate}·{@code emotionType}만 담아 반환한다. Event·junction·Item graph는 읽지 않으며
+     * 기록이 없는 월은 404가 아니라 빈 배열이다.
+     *
+     * @throws IllegalArgumentException {@code year}가 1000~9999(MySQL {@code DATE} 지원 범위) 밖이거나
+     *                                  {@code month}가 1~12 밖일 때(400 {@code -400})
+     */
+    @Transactional(readOnly = true)
+    public MonthlyDailyRecordsResponse getMonthlyDailyRecords(String applicationVersion, UUID subjectId,
+                                                              int year, int month) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        if (year < MIN_YEAR || year > MAX_YEAR) {
+            throw new IllegalArgumentException("year must be between 1000 and 9999: " + year);
+        }
+        if (month < 1 || month > 12) {
+            throw new IllegalArgumentException("month must be between 1 and 12: " + month);
+        }
+        YearMonth yearMonth = YearMonth.of(year, month);
+        List<DailyRecord> records = dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                subjectId, yearMonth.atDay(1), yearMonth.atEndOfMonth());
+        return new MonthlyDailyRecordsResponse(records.stream()
+                .map(record -> new MonthlyDailyRecordResponse(record.getRecordDate(), record.getEmotionType()))
+                .toList());
+    }
+
+    /**
      * 소유권이 확인된 record 목록을 최대 Event→junction→Item 3번의 bulk 조회로 조립한다. 입력 record 순서가
      * 응답 순서이고, Event는 leaf 쿼리 순서, Item은 startAt(null 먼저)·ID 오름차순이다.
      */
@@ -114,6 +147,7 @@ public class DailyTimelineService {
                 .map(record -> new DailyTimelineResponse(
                         record.getDailyRecordId(),
                         record.getRecordDate(),
+                        record.getStatus(),
                         record.getEmotionType(),
                         eventResponsesByDailyRecordId.getOrDefault(record.getDailyRecordId(), List.of())))
                 .toList();

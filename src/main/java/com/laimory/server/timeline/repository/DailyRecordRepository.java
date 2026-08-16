@@ -32,6 +32,14 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
             UUID subjectId, Collection<Long> dailyRecordIds);
 
     /**
+     * 소유 record를 양끝 포함 날짜 범위로 골라 {@code record_date} 오름차순으로 반환한다.
+     * 월별 경량 조회가 월 첫날~마지막 날 범위로 호출하며 {@code (subject_id, record_date)}가 유일해
+     * 추가 tie-breaker는 필요 없다.
+     */
+    List<DailyRecord> findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+            UUID subjectId, LocalDate startInclusive, LocalDate endInclusive);
+
+    /**
      * 소유 DRAFT record만 요청 감정과 함께 SAVED로 옮기는 조건부 UPDATE. 영향 행 수가 전이 성공 판정
      * 기준이라 같은 record에 저장 요청이 겹쳐도 정확히 하나만 1을 받는다 — read-then-write는 둘 다 통과해
      * AI 갱신 결과가 서로를 덮는다. 조건 불일치(이미 SAVED·삭제됨·비소유)는 예외 대신 0으로 알려지고

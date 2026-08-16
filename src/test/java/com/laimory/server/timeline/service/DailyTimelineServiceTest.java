@@ -15,6 +15,8 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -101,6 +103,7 @@ class DailyTimelineServiceTest {
         DailyTimelineResponse result = dailyTimelineService.getDailyTimeline("v1", SUBJECT_ID, 300L);
 
         assertThat(result.recordDate()).isEqualTo(RECORD_DATE);
+        assertThat(result.status()).isEqualTo(DailyRecordStatus.DRAFT);
         assertThat(result.emotionType()).isEqualTo(EmotionType.HAPPY);
         assertThat(result.events()).hasSize(1);
 
@@ -291,6 +294,9 @@ class DailyTimelineServiceTest {
 
         assertThat(result.timelines()).extracting(DailyTimelineResponse::dailyRecordId)
                 .containsExactly(301L, 300L, 299L);
+        // DRAFT/SAVED 혼합 목록에서 각 record의 상태가 그대로 보존된다(#298).
+        assertThat(result.timelines()).extracting(DailyTimelineResponse::status)
+                .containsExactly(DailyRecordStatus.DRAFT, DailyRecordStatus.SAVED, DailyRecordStatus.DRAFT);
         assertThat(result.timelines().get(0).events()).extracting(TimelineEventResponse::timelineEventId)
                 .containsExactly(12L);
         assertThat(result.timelines().get(1).events()).extracting(TimelineEventResponse::timelineEventId)
@@ -366,6 +372,82 @@ class DailyTimelineServiceTest {
 
         assertThat(result.events().get(0).items()).extracting(TimelineItemResponse::timelineItemId)
                 .containsExactly(22L, 21L);
+    }
+
+    // --- getMonthlyDailyRecords (캘린더 월별 경량 조회) ---
+
+    @Test
+    void getMonthlyDailyRecords_mapsDateAndEmotionOnlyWithoutLoadingGraph() {
+        DailyRecord withEmotion = record(300L, LocalDate.of(2026, 5, 3));
+        ReflectionTestUtils.setField(withEmotion, "status", DailyRecordStatus.SAVED);
+        ReflectionTestUtils.setField(withEmotion, "emotionType", EmotionType.HAPPY);
+        DailyRecord draftWithoutEmotion = record(301L, LocalDate.of(2026, 5, 19));
+        when(dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)))
+                .thenReturn(List.of(withEmotion, draftWithoutEmotion));
+
+        MonthlyDailyRecordsResponse result =
+                dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 5);
+
+        // 캘린더 read model은 recordDate·nullable emotionType만 담는다 — DRAFT/SAVED 모두 포함.
+        assertThat(result.dailyRecords()).containsExactly(
+                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 3), EmotionType.HAPPY),
+                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 19), null));
+        // Event·junction·Item leaf 서비스는 호출하지 않는다(경량 조회).
+        verifyNoInteractions(timelineEventService, timelineEventItemService, timelineItemService);
+    }
+
+    @Test
+    void getMonthlyDailyRecords_usesInclusiveMonthBoundsFromYearMonth() {
+        when(dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28)))
+                .thenReturn(List.of());
+
+        dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 2);
+
+        // 월 첫날 이상·마지막 날 이하 — 윤년이 아닌 2월은 28일까지다.
+        verify(dailyRecordService).findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(2026, 2, 1), LocalDate.of(2026, 2, 28));
+    }
+
+    @Test
+    void getMonthlyDailyRecords_emptyMonth_returnsEmptyArray() {
+        when(dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30)))
+                .thenReturn(List.of());
+
+        MonthlyDailyRecordsResponse result =
+                dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 6);
+
+        assertThat(result.dailyRecords()).isEmpty();
+    }
+
+    @Test
+    void getMonthlyDailyRecords_acceptsSupportedRangeEdges() {
+        when(dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(1000, 1, 1), LocalDate.of(1000, 1, 31)))
+                .thenReturn(List.of());
+        when(dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+                SUBJECT_ID, LocalDate.of(9999, 12, 1), LocalDate.of(9999, 12, 31)))
+                .thenReturn(List.of());
+
+        // MySQL DATE 지원 범위 양끝(1000-01, 9999-12)은 정상 조회다.
+        assertThat(dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 1000, 1).dailyRecords())
+                .isEmpty();
+        assertThat(dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 9999, 12).dailyRecords())
+                .isEmpty();
+    }
+
+    @Test
+    void getMonthlyDailyRecords_rejectsOutOfRangeYearOrMonthBeforeQuerying() {
+        // 범위 밖 입력은 catch-all 500이 아니라 IllegalArgumentException(400 -400)으로 수렴한다.
+        for (int[] invalid : new int[][] {{999, 5}, {10000, 5}, {2026, 0}, {2026, 13}}) {
+            assertThatThrownBy(() ->
+                    dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, invalid[0], invalid[1]))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        verifyNoInteractions(dailyRecordService, timelineEventService, timelineEventItemService,
+                timelineItemService);
     }
 
     @Test

@@ -14,6 +14,9 @@ import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -69,6 +72,8 @@ class TimelineSaveFlowIntegrationTest {
 
     @Autowired
     private TimelineSaveService timelineSaveService;
+    @Autowired
+    private DailyTimelineService dailyTimelineService;
     @Autowired
     private UserMemoryUpdateWorker userMemoryUpdateWorker;
     @Autowired
@@ -152,6 +157,21 @@ class TimelineSaveFlowIntegrationTest {
         assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteEvent("v1", subjectId, eventId));
         assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteDailyRecordByDate("v1", subjectId, DATE));
         assertRejectedAsAlreadySaved(() -> timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY));
+    }
+
+    @Test
+    void 저장한_감정은_일별_조회와_월별_조회에_함께_보인다() {
+        // #304+#298 결합: HAPPY 저장 → 기존 일별 조회는 SAVED+HAPPY, 같은 달 월별 조회는 recordDate+HAPPY.
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+
+        DailyTimelineResponse daily = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE);
+        assertThat(daily.status()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(daily.emotionType()).isEqualTo(EmotionType.HAPPY);
+
+        MonthlyDailyRecordsResponse monthly = dailyTimelineService.getMonthlyDailyRecords(
+                "v1", subjectId, DATE.getYear(), DATE.getMonthValue());
+        assertThat(monthly.dailyRecords())
+                .contains(new MonthlyDailyRecordResponse(DATE, EmotionType.HAPPY));
     }
 
     @Test

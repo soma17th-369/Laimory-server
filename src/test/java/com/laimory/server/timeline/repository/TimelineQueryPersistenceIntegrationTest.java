@@ -107,6 +107,51 @@ class TimelineQueryPersistenceIntegrationTest {
     }
 
     @Test
+    void monthlyRangeQuery_filtersOwnerAndInclusiveBounds_andOrdersByDateAsc() {
+        ensureExists(jdbcTemplate, OWNER_ID);
+        ensureExists(jdbcTemplate, OTHER_SUBJECT_ID);
+        // 전월 말·월 첫날·월 중간·월 말·다음 달 첫날 경계와 타 subject 격리를 함께 검증한다.
+        dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 4, 30)));
+        DailyRecord firstDay = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 5, 1)));
+        DailyRecord middle = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 5, 19)));
+        DailyRecord lastDay = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 5, 31)));
+        dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 6, 1)));
+        dailyRecordRepository.save(record(OTHER_SUBJECT_ID, LocalDate.of(2026, 5, 19)));
+        // SAVED + 감정 확정 record도 DRAFT와 함께 조회 대상이다.
+        dailyRecordRepository.markSaved(middle.getDailyRecordId(), OWNER_ID, EmotionType.HAPPY,
+                LocalDateTime.of(2026, 5, 19, 21, 0));
+
+        em.flush();
+        em.clear();
+
+        List<DailyRecord> result = dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        OWNER_ID, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31));
+
+        assertThat(result).extracting(DailyRecord::getDailyRecordId)
+                .containsExactly(firstDay.getDailyRecordId(), middle.getDailyRecordId(),
+                        lastDay.getDailyRecordId());
+        assertThat(result).extracting(DailyRecord::getStatus)
+                .containsExactly(DailyRecordStatus.DRAFT, DailyRecordStatus.SAVED, DailyRecordStatus.DRAFT);
+        assertThat(result).extracting(DailyRecord::getEmotionType)
+                .containsExactly(null, EmotionType.HAPPY, null);
+    }
+
+    @Test
+    void monthlyRangeQuery_emptyMonth_returnsEmptyList() {
+        ensureExists(jdbcTemplate, OWNER_ID);
+        dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 4, 30)));
+
+        em.flush();
+        em.clear();
+
+        assertThat(dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        OWNER_ID, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)))
+                .isEmpty();
+    }
+
+    @Test
     void markSaved_persistsEmotionAndStatusTogether_andRoundTripsEnum() {
         ensureExists(jdbcTemplate, OWNER_ID);
         DailyRecord draft = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 8, 1)));

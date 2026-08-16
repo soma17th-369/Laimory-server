@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 17개(timeline 15 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 18개(timeline 16 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject UUID subjectId` parameter로 주입돼 OpenAPI
 parameter에 나타나지 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -57,8 +57,19 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 일치하는 DRAFT/SAVED record를 반환한다. 기존
 `GET /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 응답·소유권 계약으로 동작하지만
 Android 전환 동안만 유지하는 deprecated 호환 API다. 없음·비소유는 두 경로 모두 같은 404 `-404`로
-은닉하며 `DailyTimelineResponse.dailyRecordId`는 응답에 계속 포함한다. 전체·단건 응답 모두 Event별 연결
-Item을 `events[].items[]`에 포함한다.
+은닉하며 `DailyTimelineResponse.dailyRecordId`는 응답에 계속 포함한다. `DailyTimelineResponse`는
+non-null `status`(`DRAFT`/`SAVED`)를 포함한다 — 전체·날짜·deprecated ID 단건 조회와 draft polling
+SUCCESS `body.result`가 같은 공용 DTO라 네 경로 모두 상태가 일관되게 나간다(상태별 필터는 없다).
+필드 순서는 `dailyRecordId`·`recordDate`·`status`·`emotionType`·`events`다. 전체·단건 응답 모두
+Event별 연결 Item을 `events[].items[]`에 포함한다.
+
+`GET /a/api/{version}/timeline/monthly-records?year=&month=`는 인증 사용자가 소유한 해당 월(양끝 포함)의
+DRAFT/SAVED DailyRecord를 `recordDate` 오름차순으로 반환하는 캘린더용 경량 조회다. 각 항목은
+`MonthlyDailyRecordResponse(recordDate, nullable emotionType)`뿐이고 `dailyRecordId`·`status`·`events`는
+싣지 않으며 Event·Item graph를 조회하지 않는다. null 감정은 key 생략이 아니라 명시적 JSON null이다.
+기록 없는 월은 404가 아니라 200과 `dailyRecords=[]`다. `year`·`month`는 필수 정수 query parameter이며
+`year`는 1000~9999(MySQL `DATE` 지원 범위), `month`는 1~12만 허용한다 — 누락·비정수·범위 밖은 모두
+400 `-400`이다. URL·DTO·method 이름에 `calendar`는 쓰지 않는다(Source Item `ItemType.CALENDAR`와 충돌).
 
 `GET /a/api/{version}/timeline/events/{timelineEventId}`는 인증 사용자가 소유한 DRAFT/SAVED record의
 Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. Event·부모 record 없음과 부모 비소유는

@@ -88,6 +88,25 @@ class DailyRecordServiceTest {
     }
 
     @Test
+    void findBySubjectIdAndRecordDateBetween_delegatesInclusiveRangeToRepository() {
+        LocalDate start = LocalDate.of(2026, 5, 1);
+        LocalDate end = LocalDate.of(2026, 5, 31);
+        List<DailyRecord> records = List.of(DailyRecord.createDraft(SUBJECT, start, RECORD_AT, ZONE));
+        when(dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        SUBJECT, start, end))
+                .thenReturn(records);
+
+        List<DailyRecord> result =
+                dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(SUBJECT, start, end);
+
+        assertThat(result).isSameAs(records);
+        verify(dailyRecordRepository)
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        SUBJECT, start, end);
+    }
+
+    @Test
     void markSaved_delegatesConditionalUpdateWithEmotionAndClockNow() {
         // 감정과 SAVED 전이는 레포의 조건부 UPDATE 하나로 위임된다(별도 entity write 없음).
         LocalDateTime now = LocalDateTime.now(clock);

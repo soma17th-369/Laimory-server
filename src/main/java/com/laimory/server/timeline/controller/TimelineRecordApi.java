@@ -5,6 +5,7 @@ import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
 import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 /**
  * 확정 타임라인 기록 조회·편집 API의 문서·계약(구현은 {@link TimelineRecordController}).
@@ -48,6 +50,7 @@ public interface TimelineRecordApi {
     @Operation(summary = "사용자 타임라인 전체 조회",
             description = "인증 사용자의 모든 DRAFT/SAVED 하루 기록을 최신 날짜부터 반환한다. "
                     + "Event가 없는 기록도 포함하며, 기록이 없으면 timelines 빈 배열을 반환한다. "
+                    + "각 기록의 status(DRAFT/SAVED, non-null)가 함께 반환되고, "
                     + "각 Event의 연결 Item은 events[].items[]에 포함한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
@@ -63,7 +66,8 @@ public interface TimelineRecordApi {
     @Operation(summary = "하루 타임라인 단건 조회(ID, deprecated)", deprecated = true,
             description = "호환을 위해 한시적으로 유지하는 ID 기반 조회다. 신규 클라이언트는 "
                     + "GET /daily-records/{recordDate}를 사용한다. 인증 사용자가 소유한 하루 기록과 "
-                    + "Event·Item graph를 반환하며, 기록이 없거나 다른 사용자 소유이면 404로 응답한다.")
+                    + "Event·Item graph를 status(DRAFT/SAVED)와 함께 반환하며, "
+                    + "기록이 없거나 다른 사용자 소유이면 404로 응답한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "단건 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
@@ -79,7 +83,8 @@ public interface TimelineRecordApi {
             @Parameter(description = "조회할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "하루 타임라인 날짜 조회",
-            description = "인증 사용자가 선택한 날짜의 하루 기록과 Event·Item graph를 반환한다. recordDate는 "
+            description = "인증 사용자가 선택한 날짜의 하루 기록과 Event·Item graph를 status(DRAFT/SAVED)와 "
+                    + "함께 반환한다. recordDate는 "
                     + "yyyy-MM-dd 형식이며 서버에서 계산·timezone 보정하지 않는다. 기록이 없으면 404로 응답한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
@@ -97,6 +102,27 @@ public interface TimelineRecordApi {
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @Parameter(description = "조회할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
+
+    @Operation(summary = "캘린더 월별 하루 기록 경량 조회",
+            description = "인증 사용자가 소유한 해당 월(양끝 포함)의 DRAFT/SAVED 하루 기록을 recordDate "
+                    + "오름차순으로 반환한다. 앱 캘린더 화면용 경량 read model이라 각 항목은 recordDate와 "
+                    + "nullable emotionType만 담고 Event·Item graph는 조회하지 않는다. "
+                    + "기록이 없는 월은 404가 아니라 dailyRecords 빈 배열이다. "
+                    + "year는 1000~9999(MySQL DATE 지원 범위), month는 1~12만 허용한다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "월별 조회 성공 — 기록이 없으면 dailyRecords 빈 배열", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — year/month 누락·정수 아님·범위 밖(year 1000~9999, month 1~12)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+    })
+    @GetMapping("/monthly-records")
+    ResponseEntity<ApiResponse<MonthlyDailyRecordsResponse>> getMonthlyDailyRecords(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @Parameter(description = "조회할 연도(1000~9999)", example = "2026") @RequestParam int year,
+            @Parameter(description = "조회할 월(1~12)", example = "5") @RequestParam int month);
 
     @Operation(summary = "타임라인 Event 단건 조회",
             description = "인증 사용자가 소유한 Event와 연결 Item을 반환한다. DRAFT/SAVED 모두 조회할 수 있으며, "

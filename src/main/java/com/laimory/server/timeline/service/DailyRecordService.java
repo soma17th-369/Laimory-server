@@ -52,6 +52,14 @@ public class DailyRecordService {
                 subjectId, dailyRecordIds);
     }
 
+    /** 소유 record를 양끝 포함 날짜 범위로 골라 record_date 오름차순으로 반환한다. */
+    public List<DailyRecord> findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+            UUID subjectId, LocalDate startInclusive, LocalDate endInclusive) {
+        return dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        subjectId, startInclusive, endInclusive);
+    }
+
     public DailyRecord save(DailyRecord dailyRecord) {
         return dailyRecordRepository.save(dailyRecord);
     }

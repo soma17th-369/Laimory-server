@@ -17,7 +17,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * 보호 API 17개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
+ * 보호 API 18개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code ERROR_2001} 응답 문서,
  * {@code @CurrentSubject UUID} owner의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  */
@@ -95,9 +95,9 @@ class TimelineApiAuthenticationContractTest {
     }
 
     @org.junit.jupiter.api.Test
-    void protectedOperationCount_isSeventeen() {
-        // timeline 15개(날짜 GET/DELETE·저장 POST·Event 단건 GET·Event Item 연결 해제 포함)
+    void protectedOperationCount_isEighteen() {
+        // timeline 16개(날짜 GET/DELETE·저장 POST·Event 단건 GET·Event Item 연결 해제·월별 GET 포함)
         // + push-registrations PUT/DELETE 2개.
-        assertThat(protectedOperations().count()).isEqualTo(17);
+        assertThat(protectedOperations().count()).isEqualTo(18);
     }
 }
