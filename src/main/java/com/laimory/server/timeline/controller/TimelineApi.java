@@ -2,6 +2,8 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.terms.RequiredTermsStage;
+import com.laimory.server.terms.TermStage;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
@@ -154,6 +156,9 @@ public interface TimelineApi {
                             + "window의 `startTime >= endTime`, 지오코딩 대상 고유 좌표 30개 초과 포함)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계). "
+                            + "해당 단계의 현재 약관을 조회해 동의 후 재시도한다"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
@@ -165,6 +170,7 @@ public interface TimelineApi {
                             + "`-1015`(영구 실패 포함 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })
     @PostMapping
+    @RequiredTermsStage(TermStage.TIMELINE_FIRST_CREATE)
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
@@ -183,9 +189,13 @@ public interface TimelineApi {
                     description = "`-1004`(최대 장수 초과) · `-1005`(장당 크기 초과) · "
                             + "`-1007`(미지원 포맷 — JPG/PNG/WebP만) · `-400`(필수값 누락)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계). "
+                            + "presign은 S3 객체 수집의 시작점이라 동의 전에 발급하지 않는다")
     })
     @PostMapping("/photo-uploads")
+    @RequiredTermsStage(TermStage.TIMELINE_FIRST_CREATE)
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,

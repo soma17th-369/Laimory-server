@@ -150,6 +150,21 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 콘텐츠 주체 | Subject (`subjectId`) | 현재 구현 | 인증 userId와 분리된 콘텐츠·push 소유 UUIDv4다. 별도 value type 없이 Java `UUID`를 쓰고, DB와 Redis는 canonical lowercase 36자 문자열을 사용한다. 로그·예외에는 userId·lookup key와 함께 남기지 않는다. DailyRecord·staging·User Memory·push·Redis task/queue/guard·PHOTO namespace의 owner authority다. |
 | 주체 매핑 | Subject Mapping | 현재 구현 | `user_subject_links` 행 — HMAC-SHA-256 lookup key(BINARY(32) PK)로 userId를 subject로 해석한다. `SubjectMappingService`만 접근하며, 신규 사용자 생성 transaction에서만 만들어지고 일반 경로(`getRequired`)는 누락을 자동 생성 없이 내부 불변식 위반으로 fail-closed한다. HMAC key rotation은 PK·version 원자 교체이고 subject는 불변이다. |
 
+## 약관과 동의
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 약관 문서 | Term Document | 현재 구현 | 약관 한 버전의 불변 행(`term_documents`)이다. 개정은 UPDATE가 아니라 새 행 INSERT이며 게시된 본문·버전·효력일을 수정·삭제하는 API는 없다. 운영 seed는 배포 전 수동 INSERT다(승인 원문만). |
+| 약관 종류 | Term Type | 현재 구현 | `TermType` enum 5종 — `TERMS_OF_SERVICE`(이용약관)·`PRIVACY_POLICY`(개인정보 처리방침)는 `LOGIN`, `SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)는 `TIMELINE_FIRST_CREATE` 단계다. enum이 각 종류의 기대 `(stage, required, displayOrder)` mapping을 소유하며 DB 사본과의 불일치는 잘못된 seed다. required 값은 현재 다섯 종류 모두 true(계획 기본값)이고 제품·법무 확정 시 enum과 seed를 함께 바꾼다. |
+| 약관 단계 | Term Stage | 현재 구현 | `TermStage` enum — 노출·동의·enforcement의 공통 축(`LOGIN`, `TIMELINE_FIRST_CREATE`)이다. 공개 조회의 필수 query이며 판정 소속은 DB `stage` 컬럼이 아니라 enum mapping이다. |
+| 약관 버전 | Term Version | 현재 구현 | 종류 안에서 유일한 exact-match 문자열이다(컬럼 binary collation — Java equals와 동일 비교). 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. |
+| 현재 문서 | Current Term Document | 현재 구현 | `effective_at <= now(KST)`인 종류별 최신 행이다. 별도 active flag 없이 효력 시각 한 축으로 future 등록·cutover를 관리하며, `(term_type, effective_at)` UNIQUE가 동시 최신 모호성을 차단한다. |
+| 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
+| 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서가 불변이라 이 행이 "언제 어떤 내용에 동의했는지"의 권위 기록이다. |
+| 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
+| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·push PUT/DELETE·후속 탈퇴)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
+| catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | seed 존재·enum mapping 정합성·현재 필수 문서 커버리지 판정(`TermCatalogReadiness`)이다. 기동 검사와 요청별 판정이 bounded 전이 로그·metric(`laimory.terms.catalog.ready`·`laimory.terms.gate.fail_open`)으로 알리되 기동·공개 조회를 막지 않는다. 로그 수위는 상태 성격으로 가른다 — 테이블이 완전히 빈 pre-activation(법무 원문 대기, 예정된 fail-open)은 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·mapping 불일치·오타 literal) ready에서 퇴행한 경우는 ERROR(경보 대상)다. gauge/counter는 수위와 무관하게 동일 기록한다. |
+
 ## 푸시 알림
 
 | 한글명 | 영문명 | 상태 | 설명 |

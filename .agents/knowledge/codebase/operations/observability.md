@@ -82,12 +82,14 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 통째로 담는 지정 11개 endpoint의 body는 파싱 시도 없이 고정
-  `[masked privacy body]`로 전체 마스킹한다(#281) — request 6개(draft 생성 POST, Event PATCH,
-  memo PUT, AI timeline result POST, AI callback POST, User Memory result POST), response 5개
-  (draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET). malformed·oversize·비JSON·
+  사용자 사생활 원문·약관 법률 원문을 통째로 담는 지정 13개 endpoint의 body는 파싱 시도 없이 고정
+  `[masked privacy body]`로 전체 마스킹한다(#281·#303) — request 6개(draft 생성 POST, Event PATCH,
+  memo PUT, AI timeline result POST, AI callback POST, User Memory result POST), response 7개
+  (draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, 공개 약관 GET
+  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). malformed·oversize·비JSON·
   empty도 같은 placeholder다. AI input 응답(`GET /s/.../input`)은 대상이 아니다 — 저장 시점에 이미
-  privacy 치환된 서버간 응답이다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
+  privacy 치환된 서버간 응답이다. 약관 동의 POST request는 원문 없이 type/version뿐이라 전체 마스킹
+  대상이 아니다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
   비정상 body의 형태·누락/미지 필드·원문·fingerprint는
   access logging 범위가 아니며 status/errorCode/transactionId/clientIp로 조사한다.
 - request cache는 MVC가 실제로 읽은 bytes만 가진다. 404/405/415처럼 body를 읽기 전에 거절하면
@@ -97,8 +99,8 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `[unavailable: unhandled exception]`로 남긴다. 이후 container `/error` body는 현재 한 줄 access log에서
   관찰하지 않는다.
 
-위치·건강·알림 본문·기기 사진 URI 등 사용자 사생활 원문을 통째로 담는 timeline·AI 경로의 body는 위
-11개 endpoint 전체 마스킹으로 access log에 남지 않는다. 마스킹 밖 경로의 body에도 개인 데이터가 실릴
+위치·건강·알림 본문·기기 사진 URI 등 사용자 사생활 원문과 약관 원문을 통째로 담는 경로의 body는 위
+13개 endpoint 전체 마스킹으로 access log에 남지 않는다. 마스킹 밖 경로의 body에도 개인 데이터가 실릴
 수 있고 `clientIp`·`userId`와 결합된다
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
