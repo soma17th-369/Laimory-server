@@ -3,7 +3,6 @@ package com.laimory.server.terms.service;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -73,7 +72,7 @@ public class TermCatalogReadiness {
     }
 
     /** stage catalog 판정 결과 — 준비되지 않았으면 enforcement가 stage 전체를 fail-open한다. */
-    public record StageCatalog(boolean ready, List<TermDocument> currentRequiredDocuments) {
+    public record StageCatalog(boolean ready, List<TermDocumentSummary> currentRequiredDocuments) {
     }
 
     /** 판정 시각은 지금 캡처한 instant의 KST 벽시계다. */
@@ -86,20 +85,21 @@ public class TermCatalogReadiness {
      * 기대 필수 종류 전부에 현재 문서가 있고, stage의 현재 문서 전부가 enum mapping과 일치한다.
      */
     public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
-        List<TermDocument> currentDocuments = termDocumentService.findCurrentDocuments(
+        // 요청마다 도는 판정이라 content 제외 요약만 조회한다(LONGTEXT 원문 미적재).
+        List<TermDocumentSummary> currentDocuments = termDocumentService.findCurrentSummaries(
                 TermType.typesOf(stage), nowKst);
 
         boolean mappingConsistent = currentDocuments.stream()
                 .allMatch(TermCatalogReadiness::matchesEnumMapping);
         Set<TermType> currentTypes = currentDocuments.stream()
-                .map(TermDocument::getTermType)
+                .map(TermDocumentSummary::termType)
                 .collect(Collectors.toSet());
         boolean requiredCovered = currentTypes.containsAll(TermType.requiredTypesOf(stage));
 
         boolean ready = mappingConsistent && requiredCovered;
         publishStageState(stage, ready);
-        List<TermDocument> currentRequired = currentDocuments.stream()
-                .filter(document -> document.getTermType().required())
+        List<TermDocumentSummary> currentRequired = currentDocuments.stream()
+                .filter(summary -> summary.termType().required())
                 .toList();
         return new StageCatalog(ready, currentRequired);
     }
@@ -161,11 +161,11 @@ public class TermCatalogReadiness {
         }
     }
 
-    private static boolean matchesEnumMapping(TermDocument document) {
-        TermType type = document.getTermType();
-        return type.stage().name().equals(document.getStage())
-                && document.getRequired() != null
-                && document.getRequired() == type.required();
+    private static boolean matchesEnumMapping(TermDocumentSummary summary) {
+        TermType type = summary.termType();
+        return type.stage().name().equals(summary.stage())
+                && summary.required() != null
+                && summary.required() == type.required();
     }
 
     /** 상태 gauge 갱신 + 전이 시에만 로그(bounded — not-ready 지속 중 반복 ERROR 없음). */

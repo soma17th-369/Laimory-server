@@ -42,4 +42,17 @@ public class TermDocumentService {
                 .sorted(Comparator.comparingInt(document -> document.getTermType().displayOrder()))
                 .toList();
     }
+
+    /**
+     * 지정 종류들의 현재 문서 content 제외 요약(화면 순서 정렬) — enforcement/readiness/동의 버전 검증용.
+     * LOGIN gate가 모든 {@code /a/api} 요청에서 호출하므로 {@code LONGTEXT} 원문을 함께 적재하지 않는다.
+     */
+    public List<TermDocumentSummary> findCurrentSummaries(Collection<TermType> termTypes, LocalDateTime nowKst) {
+        if (termTypes.isEmpty()) {
+            return List.of();
+        }
+        return termDocumentRepository.findCurrentDocumentSummaries(termTypes, nowKst).stream()
+                .sorted(Comparator.comparingInt(summary -> summary.termType().displayOrder()))
+                .toList();
+    }
 }

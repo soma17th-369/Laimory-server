@@ -152,11 +152,17 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 `term_documents`(#303)는 버전별 불변 약관 문서다. 게시 행 UPDATE·삭제 API가 없고 개정은 새 행 INSERT이며,
 현재 문서는 `effective_at <= now(KST)`의 종류별 최신 행으로 계산한다(별도 active flag 없음).
 `(term_type, version)`·`(term_type, effective_at)` UNIQUE와 `(stage, effective_at, term_type)` 조회
-index를 가진다. `version`은 exact-match 식별자라 컬럼 단위 `utf8mb4_bin`이다(raw_id·FID 선례).
+index를 가진다. `version`은 exact-match 식별자라 컬럼 단위 `utf8mb4_bin`(raw_id·FID 선례),
+`term_type`은 enum literal exact-match라 컬럼 단위 `ascii_bin`이다(subject_id 선례) — 테이블 기본
+`_unicode_ci`면 소문자 오타 seed가 JPQL `IN`(enum literal)에 case-insensitive 매칭돼 `@Enumerated`
+hydration을 500으로 깨뜨리지만, binary 비교면 불일치 행이 조회에서 빠지고 readiness가
+not-ready(fail-open)로 경보한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
 `stage`/`required`/`display_order`는 코드 `TermType` mapping의 denormalized 사본이라 entity도 stage를
 enum이 아닌 String으로 매핑한다(소비자가 정합성 검사뿐이고 오타 seed가 공개 조회 hydration을 깨지 않게).
-운영 seed는 앱 배포 전 수동 INSERT이며 승인 원문만 넣는다.
+enforcement/readiness/동의 버전 검증은 `LONGTEXT content`를 제외한 summary projection만 조회한다 —
+LOGIN gate가 모든 `/a/api` 요청에서 도는 경로라 약관 원문을 요청마다 전송하지 않고, 원문 전체는 공개
+조회·이력 조회에서만 읽는다. 운영 seed는 앱 배포 전 수동 INSERT이며 승인 원문만 넣는다.
 
 `term_agreements`(#303)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(FK 없음 —
 `refresh_tokens` 선례, 탈퇴 후 보존 정책 #302/#305 확정 전 최소 결정)이고

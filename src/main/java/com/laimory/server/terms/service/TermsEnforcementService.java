@@ -3,6 +3,7 @@ package com.laimory.server.terms.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermStage;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -30,7 +31,10 @@ public class TermsEnforcementService {
             termCatalogReadiness.recordFailOpen(stage);
             return;
         }
-        if (!termAgreementService.hasAgreedToAll(userId, catalog.currentRequiredDocuments())) {
+        List<Long> requiredDocumentIds = catalog.currentRequiredDocuments().stream()
+                .map(TermDocumentSummary::termDocumentId)
+                .toList();
+        if (!termAgreementService.hasAgreedToAll(userId, requiredDocumentIds)) {
             throw new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED);
         }
     }

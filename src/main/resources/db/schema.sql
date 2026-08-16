@@ -227,7 +227,11 @@ CREATE TABLE IF NOT EXISTS push_registrations (
 -- 승인된 법률 원문·실제 효력일 seed는 배포 전 운영 수동 INSERT로만 넣는다(예시 원문 seed 금지).
 CREATE TABLE IF NOT EXISTS term_documents (
     term_document_id BIGINT NOT NULL AUTO_INCREMENT,
-    term_type VARCHAR(64) NOT NULL,                  -- TermType literal(TERMS_OF_SERVICE 등 5종)
+    -- term_type은 enum literal exact-match 식별자다 → 컬럼 단위 binary collation(subject_id 선례).
+    -- 테이블 기본 _unicode_ci면 소문자 오타 seed가 JPQL IN(enum literal)에 case-insensitive 매칭돼
+    -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
+    -- readiness가 not-ready(fail-open)로 경보한다.
+    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- TermType literal(TERMS_OF_SERVICE 등 5종)
     stage VARCHAR(32) NOT NULL,                      -- TermStage literal 사본(LOGIN|TIMELINE_FIRST_CREATE)
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).

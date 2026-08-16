@@ -10,8 +10,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
-import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,15 +35,13 @@ class TermsEnforcementServiceTest {
     @InjectMocks
     private TermsEnforcementService service;
 
-    private List<TermDocument> requiredDocuments;
+    private List<TermDocumentSummary> requiredDocuments;
 
     @BeforeEach
     void setUp() {
         requiredDocuments = List.of(
-                TermDocument.of(TermType.TERMS_OF_SERVICE, "2026-08-15", "이용약관", "fixture-content",
-                        LocalDateTime.parse("2026-08-01T00:00:00")),
-                TermDocument.of(TermType.PRIVACY_POLICY, "2026-08-15", "개인정보 처리방침", "fixture-content",
-                        LocalDateTime.parse("2026-08-01T00:00:00")));
+                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "LOGIN", true, "2026-08-15"),
+                new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "LOGIN", true, "2026-08-15"));
     }
 
     @Test
@@ -64,7 +60,7 @@ class TermsEnforcementServiceTest {
     void missingRequiredAgreement_throws403TermsAgreementRequired() {
         when(termCatalogReadiness.checkStage(TermStage.LOGIN))
                 .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, requiredDocuments)).thenReturn(false);
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L))).thenReturn(false);
 
         assertThatThrownBy(() -> service.requireAgreements(TermStage.LOGIN, USER_ID))
                 .isInstanceOf(BusinessException.class)
@@ -76,7 +72,7 @@ class TermsEnforcementServiceTest {
     void allCurrentRequiredAgreed_passes() {
         when(termCatalogReadiness.checkStage(TermStage.TIMELINE_FIRST_CREATE))
                 .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, requiredDocuments)).thenReturn(true);
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L))).thenReturn(true);
 
         assertThatCode(() -> service.requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID))
                 .doesNotThrowAnyException();

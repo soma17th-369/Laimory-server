@@ -2,6 +2,7 @@ package com.laimory.server.terms.repository;
 
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
+import com.laimory.server.terms.service.TermDocumentSummary;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -24,6 +25,22 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
             """)
     List<TermDocument> findCurrentDocuments(@Param("termTypes") Collection<TermType> termTypes,
                                             @Param("nowKst") LocalDateTime nowKst);
+
+    /**
+     * 현재 문서의 content 제외 요약 — enforcement/readiness/동의 버전 검증용. 위 전체 조회와 같은
+     * current selection이지만 {@code LONGTEXT content}를 요청마다 전송하지 않는다(원문은 공개 조회·이력
+     * 조회에서만 읽는다).
+     */
+    @Query("""
+            SELECT new com.laimory.server.terms.service.TermDocumentSummary(
+                    d.termDocumentId, d.termType, d.stage, d.required, d.version)
+            FROM TermDocument d
+            WHERE d.termType IN :termTypes
+              AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
+                                   WHERE d2.termType = d.termType AND d2.effectiveAt <= :nowKst)
+            """)
+    List<TermDocumentSummary> findCurrentDocumentSummaries(@Param("termTypes") Collection<TermType> termTypes,
+                                                           @Param("nowKst") LocalDateTime nowKst);
 
     /**
      * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}·{@code stage}

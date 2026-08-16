@@ -11,7 +11,6 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
@@ -26,7 +25,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * catalog 준비 판정(필수 종류 current 커버리지 + denormalized mapping 일치)과 기동 정합성 검사,
@@ -65,7 +63,7 @@ class TermCatalogReadinessTest {
 
     @Test
     void stageWithAllRequiredCurrentAndConsistentMapping_isReady() {
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
 
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
@@ -78,7 +76,7 @@ class TermCatalogReadinessTest {
     @Test
     void missingRequiredCurrentDocument_marksStageNotReady() {
         // PRIVACY_POLICY의 current 문서 없음(활성화 전) — 부분 강제 없이 stage 전체 미준비.
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
 
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
@@ -90,9 +88,9 @@ class TermCatalogReadinessTest {
     @Test
     void denormalizedMappingMismatch_marksStageNotReady() {
         // stage 사본이 enum 기대와 어긋난 seed — 정상 seed로 취급하지 않는다.
-        TermDocument wrongStage = document(TermType.TERMS_OF_SERVICE);
-        ReflectionTestUtils.setField(wrongStage, "stage", TermStage.TIMELINE_FIRST_CREATE.name());
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        TermDocumentSummary wrongStage = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE,
+                TermStage.TIMELINE_FIRST_CREATE.name(), true, "2026-08-15");
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(wrongStage, document(TermType.PRIVACY_POLICY)));
 
         assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
@@ -100,9 +98,9 @@ class TermCatalogReadinessTest {
 
     @Test
     void requiredFlagMismatch_marksStageNotReady() {
-        TermDocument wrongRequired = document(TermType.PRIVACY_POLICY);
-        ReflectionTestUtils.setField(wrongRequired, "required", Boolean.FALSE);
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        TermDocumentSummary wrongRequired = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY,
+                TermStage.LOGIN.name(), false, "2026-08-15");
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), wrongRequired));
 
         assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
@@ -110,7 +108,7 @@ class TermCatalogReadinessTest {
 
     @Test
     void notReadyTransition_logsErrorOnceUntilRecovery() {
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of());
 
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
@@ -121,10 +119,10 @@ class TermCatalogReadinessTest {
         assertThat(errorCount).isEqualTo(1); // bounded — 지속 미준비 중 반복 ERROR 없음
 
         // 회복 → INFO 1줄, 이후 다시 미준비면 새 ERROR 1줄.
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(2);
     }
@@ -145,7 +143,7 @@ class TermCatalogReadinessTest {
                 catalogRow("TERMS_OF_SERVICE", "LOGIN", true),
                 catalogRow("PRIVACY_POLICY", "TIMELINE_FIRST_CREATE", true), // stage 사본 불일치
                 catalogRow("BOGUS_TYPE", "LOGIN", true)));                   // 미지 literal
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
 
         readiness.verifyCatalogOnStartup();
 
@@ -168,9 +166,9 @@ class TermCatalogReadinessTest {
                 catalogRow("SENSITIVE_INFORMATION_CONSENT", "TIMELINE_FIRST_CREATE", true),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT", "TIMELINE_FIRST_CREATE", true),
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "TIMELINE_FIRST_CREATE", true)));
-        when(termDocumentService.findCurrentDocuments(eqTypes(TermStage.LOGIN), any()))
+        when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
-        when(termDocumentService.findCurrentDocuments(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
+        when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
@@ -191,9 +189,9 @@ class TermCatalogReadinessTest {
                 .tag("stage", stage.name()).gauge().value();
     }
 
-    private static TermDocument document(TermType type) {
-        return TermDocument.of(type, "2026-08-15", "제목", "fixture-content",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
+    private static TermDocumentSummary document(TermType type) {
+        return new TermDocumentSummary((long) type.displayOrder(), type, type.stage().name(),
+                type.required(), "2026-08-15");
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String stage,

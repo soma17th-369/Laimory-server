@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -24,7 +23,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 동의 일괄 등록의 all-or-nothing 검증(전체 성공 / stale 409 / shape 400)과 KST 수락 시각 계약,
@@ -55,9 +53,9 @@ class TermAgreementServiceTest {
 
     @Test
     void agree_recordsAllCurrentDocuments_withSingleKstAcceptedAt() {
-        TermDocument terms = documentWithId(11L, TermType.TERMS_OF_SERVICE, "2026-08-15");
-        TermDocument privacy = documentWithId(12L, TermType.PRIVACY_POLICY, "2026-08-15");
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
+        TermDocumentSummary terms = summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15");
+        TermDocumentSummary privacy = summary(12L, TermType.PRIVACY_POLICY, "2026-08-15");
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(terms, privacy));
 
         service.agreeToTerms("v1", USER_ID, List.of(
@@ -66,7 +64,7 @@ class TermAgreementServiceTest {
 
         // 검증(current selection)과 수락 시각이 같은 캡처 instant의 KST 벽시계를 공유한다.
         ArgumentCaptor<LocalDateTime> nowKst = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(termDocumentService).findCurrentDocuments(anyCollection(), nowKst.capture());
+        verify(termDocumentService).findCurrentSummaries(anyCollection(), nowKst.capture());
         assertThat(nowKst.getValue()).isEqualTo(EXPECTED_KST);
         verify(termAgreementTransactionService).recordAgreements(USER_ID, List.of(11L, 12L), EXPECTED_KST);
     }
@@ -74,9 +72,9 @@ class TermAgreementServiceTest {
     @Test
     void agree_staleVersion_rejects409WithoutRecordingAnything() {
         // PRIVACY_POLICY만 개정됨 — 하나라도 stale이면 전부 기록하지 않는다(all-or-nothing).
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
-                .thenReturn(List.of(documentWithId(11L, TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                        documentWithId(13L, TermType.PRIVACY_POLICY, "2026-09-01")));
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15"),
+                        summary(13L, TermType.PRIVACY_POLICY, "2026-09-01")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
@@ -91,7 +89,7 @@ class TermAgreementServiceTest {
     @Test
     void agree_unknownDocument_rejectsWithSame409() {
         // 현재 유효 문서가 아예 없는 종류(미활성·미존재) 제출도 같은 409로 수렴한다(재조회 신호).
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"))))
@@ -124,8 +122,8 @@ class TermAgreementServiceTest {
     @Test
     void agree_sameTypeDifferentVersions_isNotDuplicate_butStaleOneRejects() {
         // 같은 종류의 두 버전은 shape 중복이 아니다 — 대신 stale 검증이 409로 거절한다.
-        when(termDocumentService.findCurrentDocuments(anyCollection(), any()))
-                .thenReturn(List.of(documentWithId(11L, TermType.TERMS_OF_SERVICE, "2026-08-15")));
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
@@ -144,15 +142,13 @@ class TermAgreementServiceTest {
     }
 
     @Test
-    void hasAgreedToAll_comparesCountAgainstDocumentSet() {
-        List<TermDocument> documents = List.of(
-                documentWithId(11L, TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                documentWithId(12L, TermType.PRIVACY_POLICY, "2026-08-15"));
-        when(termAgreementRepository.countByUserIdAndTermDocumentIdIn(USER_ID, List.of(11L, 12L)))
+    void hasAgreedToAll_comparesCountAgainstDocumentIdSet() {
+        List<Long> documentIds = List.of(11L, 12L);
+        when(termAgreementRepository.countByUserIdAndTermDocumentIdIn(USER_ID, documentIds))
                 .thenReturn(1L, 2L);
 
-        assertThat(service.hasAgreedToAll(USER_ID, documents)).isFalse();
-        assertThat(service.hasAgreedToAll(USER_ID, documents)).isTrue();
+        assertThat(service.hasAgreedToAll(USER_ID, documentIds)).isFalse();
+        assertThat(service.hasAgreedToAll(USER_ID, documentIds)).isTrue();
     }
 
     @Test
@@ -161,10 +157,7 @@ class TermAgreementServiceTest {
         verifyNoInteractions(termAgreementRepository);
     }
 
-    private static TermDocument documentWithId(Long id, TermType type, String version) {
-        TermDocument document = TermDocument.of(type, version, "제목", "fixture-content",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
-        ReflectionTestUtils.setField(document, "termDocumentId", id);
-        return document;
+    private static TermDocumentSummary summary(Long id, TermType type, String version) {
+        return new TermDocumentSummary(id, type, type.stage().name(), type.required(), version);
     }
 }

@@ -4,7 +4,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -44,14 +43,15 @@ public class TermAgreementService {
         validateShape(agreements);
 
         LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
-        Map<TermType, TermDocument> currentByType = termDocumentService.findCurrentDocuments(
+        // 버전 검증에는 원문이 필요 없다 — content 제외 요약만 조회한다.
+        Map<TermType, TermDocumentSummary> currentByType = termDocumentService.findCurrentSummaries(
                         agreements.stream().map(TermAgreementCommand::termType).collect(Collectors.toSet()), nowKst)
                 .stream()
-                .collect(Collectors.toMap(TermDocument::getTermType, Function.identity()));
+                .collect(Collectors.toMap(TermDocumentSummary::termType, Function.identity()));
 
         List<Long> documentIds = agreements.stream()
                 .map(agreement -> requireCurrentDocument(currentByType, agreement))
-                .map(TermDocument::getTermDocumentId)
+                .map(TermDocumentSummary::termDocumentId)
                 .toList();
 
         termAgreementTransactionService.recordAgreements(userId, documentIds, nowKst);
@@ -64,12 +64,12 @@ public class TermAgreementService {
     }
 
     /** 주어진 문서 전부에 동의했는지 — enforcement용 단일 existence query. 빈 목록은 true다. */
-    public boolean hasAgreedToAll(Long userId, List<TermDocument> documents) {
-        if (documents.isEmpty()) {
+    public boolean hasAgreedToAll(Long userId, List<Long> termDocumentIds) {
+        if (termDocumentIds.isEmpty()) {
             return true;
         }
-        List<Long> documentIds = documents.stream().map(TermDocument::getTermDocumentId).toList();
-        return termAgreementRepository.countByUserIdAndTermDocumentIdIn(userId, documentIds) == documentIds.size();
+        return termAgreementRepository.countByUserIdAndTermDocumentIdIn(userId, termDocumentIds)
+                == termDocumentIds.size();
     }
 
     private static void validateShape(List<TermAgreementCommand> agreements) {
@@ -91,10 +91,10 @@ public class TermAgreementService {
     }
 
     /** 제출 항목이 현재 버전과 정확히 일치해야 한다 — 미존재·과거/미래 버전은 같은 409로 수렴한다. */
-    private static TermDocument requireCurrentDocument(Map<TermType, TermDocument> currentByType,
-                                                       TermAgreementCommand agreement) {
-        TermDocument current = currentByType.get(agreement.termType());
-        if (current == null || !current.getVersion().equals(agreement.version())) {
+    private static TermDocumentSummary requireCurrentDocument(Map<TermType, TermDocumentSummary> currentByType,
+                                                              TermAgreementCommand agreement) {
+        TermDocumentSummary current = currentByType.get(agreement.termType());
+        if (current == null || !current.version().equals(agreement.version())) {
             throw new BusinessException(ExceptionType.STALE_TERM_VERSION);
         }
         return current;

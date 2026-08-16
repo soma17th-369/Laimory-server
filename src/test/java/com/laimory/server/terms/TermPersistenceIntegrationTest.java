@@ -8,6 +8,10 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
+import com.laimory.server.terms.service.TermCatalogReadiness;
+import com.laimory.server.terms.service.TermDocumentService;
+import com.laimory.server.terms.service.TermDocumentSummary;
+import com.laimory.server.terms.service.TermsEnforcementService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -52,11 +57,25 @@ class TermPersistenceIntegrationTest {
     @Autowired
     private TermAgreementTransactionService termAgreementTransactionService;
 
+    @Autowired
+    private TermDocumentService termDocumentService;
+
+    @Autowired
+    private TermCatalogReadiness termCatalogReadiness;
+
+    @Autowired
+    private TermsEnforcementService termsEnforcementService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     private final List<Long> createdDocumentIds = new ArrayList<>();
     private final List<Long> createdUserIds = new ArrayList<>();
 
     @AfterEach
     void cleanUp() {
+        // raw SQL로 주입한 오타 seed(엔티티 경로로는 만들 수 없는 행) 정리.
+        jdbcTemplate.update("DELETE FROM term_documents WHERE version LIKE 'it-lc-%'");
         // FK RESTRICT 순서: 동의 이력 → 문서.
         for (Long userId : createdUserIds) {
             termAgreementRepository.deleteAll(termAgreementRepository.findAll().stream()
@@ -163,6 +182,36 @@ class TermPersistenceIntegrationTest {
         // binary collation — "IT-5.0"과 "it-5.0"은 다른 버전이다(Java equals와 같은 비교 의미).
         saveDocument(TermType.THIRD_PARTY_PROVISION_CONSENT, "IT-5.0", "2026-01-05T00:00:00");
         saveDocument(TermType.THIRD_PARTY_PROVISION_CONSENT, "it-5.0", "2026-01-06T00:00:00");
+    }
+
+    @Test
+    void lowercaseRawSeed_convergesToNotReadyFailOpen_insteadOf500() {
+        // 소문자 오타 seed — term_type이 binary collation이 아니라면 IN(enum literal)에 case-insensitive
+        // 매칭돼 @Enumerated hydration이 공개 조회·gate를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
+        jdbcTemplate.update("INSERT INTO term_documents"
+                + " (term_type, stage, version, title, content, required, display_order,"
+                + "  effective_at, created_at, updated_at)"
+                + " VALUES ('terms_of_service', 'LOGIN', 'it-lc-1', '이용약관', 'lc-fixture', 1, 1,"
+                + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
+        // 나머지 LOGIN 필수 종류는 정상 seed — 오타 행 하나만으로 stage가 미준비여야 한다.
+        saveDocument(TermType.PRIVACY_POLICY, "it-lc-ok", "2026-01-02T00:00:00");
+
+        // 1) binary collation — 소문자 행은 enum literal 조회에 매칭되지 않아 hydration 예외가 없다.
+        List<TermDocument> current = termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN);
+        assertThat(current)
+                .extracting(TermDocument::getTermType)
+                .containsExactly(TermType.PRIVACY_POLICY); // 공개 조회는 정상 문서만 — 500 아님
+        List<TermDocumentSummary> summaries = termDocumentService.findCurrentSummaries(
+                TermType.typesOf(TermStage.LOGIN), LocalDateTime.parse("2026-08-16T00:00:00"));
+        assertThat(summaries)
+                .extracting(TermDocumentSummary::termType)
+                .containsExactly(TermType.PRIVACY_POLICY);
+
+        // 2) readiness — TERMS_OF_SERVICE의 current 문서가 없으므로 stage는 not-ready로 수렴한다.
+        assertThat(termCatalogReadiness.checkStage(TermStage.LOGIN).ready()).isFalse();
+
+        // 3) gate — 미준비 stage는 fail-open이라 예외 없이 통과한다(5xx가 아니라 경보 metric).
+        termsEnforcementService.requireAgreements(TermStage.LOGIN, newUserId());
     }
 
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {

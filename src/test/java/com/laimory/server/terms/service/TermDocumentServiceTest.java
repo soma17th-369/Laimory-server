@@ -65,11 +65,30 @@ class TermDocumentServiceTest {
     }
 
     @Test
+    void summaries_useContentFreeProjection_sortedByEnumDisplayOrder() {
+        // enforcement/readiness 경로 — LONGTEXT content 없는 summary 쿼리에 위임하고 화면 순서로 정렬한다.
+        TermDocumentService service = new TermDocumentService(termDocumentRepository,
+                Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
+        TermDocumentSummary privacy = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY,
+                "LOGIN", true, "v1");
+        TermDocumentSummary terms = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE,
+                "LOGIN", true, "v1");
+        LocalDateTime nowKst = LocalDateTime.parse("2026-08-15T09:00:00");
+        when(termDocumentRepository.findCurrentDocumentSummaries(TermType.typesOf(TermStage.LOGIN), nowKst))
+                .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도
+
+        assertThat(service.findCurrentSummaries(TermType.typesOf(TermStage.LOGIN), nowKst))
+                .containsExactly(terms, privacy);
+    }
+
+    @Test
     void emptyTypeSet_shortCircuitsWithoutQuery() {
         TermDocumentService service = new TermDocumentService(termDocumentRepository,
                 Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
 
         assertThat(service.findCurrentDocuments(List.of(), LocalDateTime.parse("2026-08-15T00:00:00")))
+                .isEmpty();
+        assertThat(service.findCurrentSummaries(List.of(), LocalDateTime.parse("2026-08-15T00:00:00")))
                 .isEmpty();
         verifyNoInteractions(termDocumentRepository);
     }
