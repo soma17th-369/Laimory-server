@@ -3,7 +3,7 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
@@ -55,7 +55,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     }
 
     @Override
-    public ResponseEntity<ApiResponse<MonthlyDailyRecordsResponse>> getMonthlyDailyRecords(
+    public ResponseEntity<ApiResponse<MonthlyDailyRecordListResponse>> getMonthlyDailyRecords(
             String applicationVersion, UUID subjectId, int year, int month) {
         return ResponseEntity.ok(ApiResponse.success(
                 dailyTimelineService.getMonthlyDailyRecords(applicationVersion, subjectId, year, month)));

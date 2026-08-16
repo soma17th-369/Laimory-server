@@ -16,7 +16,7 @@ import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -168,7 +168,7 @@ class TimelineSaveFlowIntegrationTest {
         assertThat(daily.status()).isEqualTo(DailyRecordStatus.SAVED);
         assertThat(daily.emotionType()).isEqualTo(EmotionType.HAPPY);
 
-        MonthlyDailyRecordsResponse monthly = dailyTimelineService.getMonthlyDailyRecords(
+        MonthlyDailyRecordListResponse monthly = dailyTimelineService.getMonthlyDailyRecords(
                 "v1", subjectId, DATE.getYear(), DATE.getMonthValue());
         assertThat(monthly.dailyRecords())
                 .contains(new MonthlyDailyRecordResponse(DATE, EmotionType.HAPPY));

@@ -5,7 +5,7 @@ import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
@@ -118,7 +118,7 @@ public interface TimelineRecordApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @GetMapping("/monthly-records")
-    ResponseEntity<ApiResponse<MonthlyDailyRecordsResponse>> getMonthlyDailyRecords(
+    ResponseEntity<ApiResponse<MonthlyDailyRecordListResponse>> getMonthlyDailyRecords(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @Parameter(description = "조회할 연도(1000~9999)", example = "2026") @RequestParam int year,
