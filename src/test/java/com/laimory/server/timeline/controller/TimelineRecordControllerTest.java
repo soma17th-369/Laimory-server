@@ -34,7 +34,7 @@ import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -251,7 +251,7 @@ class TimelineRecordControllerTest {
     @Test
     void getMonthlyDailyRecords_returns200WithDateAndNullableEmotionAndPassesPrincipal() throws Exception {
         when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(5)))
-                .thenReturn(new MonthlyDailyRecordsResponse(List.of(
+                .thenReturn(new MonthlyDailyRecordListResponse(List.of(
                         new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-03"), null),
                         new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-19"), EmotionType.HAPPY))));
 
@@ -281,7 +281,7 @@ class TimelineRecordControllerTest {
     @Test
     void getMonthlyDailyRecords_emptyMonthReturns200WithEmptyArray() throws Exception {
         when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(6)))
-                .thenReturn(new MonthlyDailyRecordsResponse(List.of()));
+                .thenReturn(new MonthlyDailyRecordListResponse(List.of()));
 
         mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "6")
                         .with(authenticatedUser(USER_ID)))
