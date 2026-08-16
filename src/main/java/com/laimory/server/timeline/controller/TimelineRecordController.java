@@ -3,6 +3,7 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -103,8 +104,8 @@ public class TimelineRecordController implements TimelineRecordApi {
 
     @Override
     public ResponseEntity<ApiResponse<Void>> saveDailyRecord(
-            String applicationVersion, UUID subjectId, LocalDate recordDate) {
-        timelineSaveService.save(applicationVersion, subjectId, recordDate);
+            String applicationVersion, UUID subjectId, LocalDate recordDate, SaveDailyRecordRequest request) {
+        timelineSaveService.save(applicationVersion, subjectId, recordDate, request.emotionType());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 }

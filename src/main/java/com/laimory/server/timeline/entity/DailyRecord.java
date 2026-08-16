@@ -19,7 +19,8 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL.
+ * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL이며
+ * 저장 API의 조건부 UPDATE가 emotion_type과 status=SAVED를 함께 확정한다(과거 SAVED 행의 NULL은 정상값).
  */
 @Entity
 @Table(name = "daily_records")

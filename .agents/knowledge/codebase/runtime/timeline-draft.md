@@ -189,9 +189,11 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신
 
-- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(body 없음). `(request subjectId,
-  recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로 <b>부수효과 전에</b>
-  거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로 전이한다. 영향 행 수 0은
+- `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(필수 body `emotionType` — 5단계
+  enum, 누락·null·미지원 값·zero-byte body는 400, body 있는 비JSON Content-Type은 415). `(request
+  subjectId, recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로
+  <b>부수효과 전에</b> 거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
+  감정과 상태를 함께 전이한다(이 UPDATE가 감정·상태의 유일한 write 지점). 영향 행 수 0은
   재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
 - **전이와 User Memory 교체는 서로 다른 API가 담당하는 서로 다른 transaction이다.** 저장 API는 전이만
   commit하고 200을 반환하며, 교체는 10초+ 뒤 AI가 결과를 들고 왔을 때
@@ -299,7 +301,6 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 ## Known Gaps
 
 - 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
-- emotion 설정 API가 없다.
 - User Memory 갱신이 **끝내 안 된 날**(7일 retention 안에 반영 못 함)은 그 날의 내용이 memory에 영영
   반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
   없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를

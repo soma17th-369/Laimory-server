@@ -42,7 +42,9 @@ public record AiUserMemoryUpdateRequest(
     public record DailyTimeline(
             LocalDate recordDate,
             @Schema(example = "Asia/Seoul") String recordTimeZone,
-            @Schema(description = "사용자가 고른 하루 감정. 입력 경로가 없어 현재는 항상 null", nullable = true)
+            @Schema(description = "사용자가 저장 시 고른 하루 감정(VERY_HAPPY·HAPPY·NEUTRAL·UNHAPPY·"
+                    + "VERY_UNHAPPY). 저장 전·legacy 기록은 null일 수 있으나 저장 후 갱신에는 확정값이 실린다",
+                    nullable = true)
             EmotionType emotionType,
             List<Event> events
     ) {

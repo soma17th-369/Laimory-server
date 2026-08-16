@@ -5,6 +5,7 @@ import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -270,8 +271,10 @@ public interface TimelineRecordApi {
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
 
     @Operation(summary = "하루 기록(DailyRecord) 저장(작성완료)",
-            description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 SAVED로 확정한다. request body는 없다. "
-                    + "**200이 곧 저장 완료다** — 전이가 커밋된 뒤 응답한다. 저장 후에는 Event 수정·메모·삭제, "
+            description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 SAVED로 확정하면서 하루 감정을 함께 "
+                    + "저장한다. request body의 `emotionType`은 필수다(VERY_HAPPY·HAPPY·NEUTRAL·UNHAPPY·"
+                    + "VERY_UNHAPPY). **200이 곧 저장 완료다** — 감정과 SAVED 전이가 한 트랜잭션으로 커밋된 뒤 "
+                    + "응답한다. 저장 후에는 Event 수정·메모·삭제, "
                     + "Item 연결 해제, 같은 날짜 draft 추가가 모두 `-1003`으로 거절된다. "
                     + "커밋 뒤 서버가 User Memory 갱신을 별도로 진행하지만 그 성패는 이 응답과 무관하며 "
                     + "클라이언트가 기다리거나 조회할 대상이 아니다.")
@@ -279,19 +282,23 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "저장 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음(zero-byte, "
+                            + "Content-Type 유무 무관) · emotionType 누락/null/미지원 값 · 깨진 JSON"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 해당 날짜의 내 하루 기록이 없음"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003` — 하루 기록이 이미 SAVED(작성완료). 응답 유실 뒤 재시도한 "
-                            + "클라이언트에게는 \"앞선 저장이 성공했다\"는 뜻이다")
+                            + "클라이언트에게는 \"앞선 저장이 성공했다\"는 뜻이다"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "415",
+                    description = "`-415` — body는 있는데 Content-Type이 없거나 JSON이 아님")
     })
     @PostMapping("/daily-records/{recordDate}/save")
     ResponseEntity<ApiResponse<Void>> saveDailyRecord(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @Parameter(description = "저장할 기록 날짜", example = "2026-07-08")
-            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate);
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate,
+            @RequestBody SaveDailyRecordRequest request);
 }

@@ -77,6 +77,10 @@ class TimelineRecordControllerTest {
     private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/not-a-date";
     private static final String SAVE_DAILY_RECORD_DATE_PATH = DAILY_RECORD_DATE_PATH + "/save";
 
+    private static final String SAVE_BODY = """
+            {"emotionType": "HAPPY"}
+            """;
+
     private static final String PATCH_BODY = """
             {
               "title": "카페에서 휴식",
@@ -739,22 +743,24 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void saveDailyRecord_returns200WithEmptyBodyAndPassesPrincipal() throws Exception {
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+    void saveDailyRecord_returns200WithEmptyBodyAndPassesPrincipalAndEmotion() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineSaveService).save("v1", SUBJECT_ID, RECORD_DATE);
+        verify(timelineSaveService).save("v1", SUBJECT_ID, RECORD_DATE, EmotionType.HAPPY);
     }
 
     @Test
     void saveDailyRecord_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
-                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class), any());
 
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
     }
@@ -762,16 +768,18 @@ class TimelineRecordControllerTest {
     @Test
     void saveDailyRecord_mapsAlreadySavedTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class), any());
 
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
     void saveDailyRecord_withInvalidDateReturns400WithoutCallingService() throws Exception {
-        mockMvc.perform(post(DAILY_RECORDS_PATH + "/not-a-date/save").with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(DAILY_RECORDS_PATH + "/not-a-date/save").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -781,10 +789,92 @@ class TimelineRecordControllerTest {
 
     @Test
     void saveDailyRecord_withoutAuthenticationReturns401WithoutCallingService() throws Exception {
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH)
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_zeroByteBodyWithoutContentTypeReturns400WithoutCallingService() throws Exception {
+        // zero-byte body는 Content-Type이 없어도 415가 아니라 "required body 누락" 400이다.
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_zeroByteJsonBodyReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_missingEmotionTypeReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_explicitNullEmotionTypeReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":null}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_unsupportedEmotionLiteralReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":\"ANGRY\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_malformedJsonReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_bodyWithoutContentTypeReturns415WithoutCallingService() throws Exception {
+        // body는 있는데 Content-Type이 없으면 octet-stream 취급이라 415/-415다(zero-byte 400과 구분).
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)).content(SAVE_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.header.code").value(-415));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_nonJsonContentTypeReturns415WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.TEXT_PLAIN).content(SAVE_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.header.code").value(-415));
 
         verifyNoInteractions(timelineSaveService);
     }

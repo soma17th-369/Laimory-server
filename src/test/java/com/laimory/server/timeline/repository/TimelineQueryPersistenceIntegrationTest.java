@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -102,6 +104,36 @@ class TimelineQueryPersistenceIntegrationTest {
                         firstAtSameTime.getTimelineEventId(),
                         secondAtSameTime.getTimelineEventId(),
                         secondRecordEvent.getTimelineEventId());
+    }
+
+    @Test
+    void markSaved_persistsEmotionAndStatusTogether_andRoundTripsEnum() {
+        ensureExists(jdbcTemplate, OWNER_ID);
+        DailyRecord draft = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 8, 1)));
+        DailyRecord untouched = dailyRecordRepository.save(record(OWNER_ID, LocalDate.of(2026, 8, 2)));
+        Long savedId = draft.getDailyRecordId();
+
+        int affected = dailyRecordRepository.markSaved(
+                savedId, OWNER_ID, EmotionType.HAPPY, LocalDateTime.of(2026, 8, 1, 21, 0));
+        em.clear();
+
+        // 감정과 상태가 조건부 UPDATE 하나로 함께 확정되고 기존 emotion_type 컬럼으로 enum이 왕복한다.
+        assertThat(affected).isEqualTo(1);
+        DailyRecord reloaded = dailyRecordRepository.findById(savedId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(reloaded.getEmotionType()).isEqualTo(EmotionType.HAPPY);
+        // null 감정 fixture는 migration 없이 그대로 null로 조회된다(legacy 정상값).
+        DailyRecord stillDraft = dailyRecordRepository.findById(untouched.getDailyRecordId()).orElseThrow();
+        assertThat(stillDraft.getStatus()).isEqualTo(DailyRecordStatus.DRAFT);
+        assertThat(stillDraft.getEmotionType()).isNull();
+
+        // 이미 SAVED인 행은 0행 — 늦은 요청의 감정이 승자를 덮지 않는다.
+        int lateAffected = dailyRecordRepository.markSaved(
+                savedId, OWNER_ID, EmotionType.VERY_UNHAPPY, LocalDateTime.of(2026, 8, 1, 22, 0));
+        em.clear();
+        assertThat(lateAffected).isZero();
+        assertThat(dailyRecordRepository.findById(savedId).orElseThrow().getEmotionType())
+                .isEqualTo(EmotionType.HAPPY);
     }
 
     private DailyRecord record(UUID subjectId, LocalDate recordDate) {

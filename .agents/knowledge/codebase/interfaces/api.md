@@ -96,12 +96,16 @@ API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED 409 계약은 동일하다. 성공 응답은 `body=null`이다.
 
-`POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 request body 없이 그 날짜의 DRAFT
-record를 SAVED로 확정한다. **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가 기다릴
-비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item 연결
-해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
-409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식은
-400 `-400`이다. **새 error code는 추가하지 않았다.** commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
+`POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 필수 request body
+`{"emotionType": "..."}`(허용값 `VERY_HAPPY`·`HAPPY`·`NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY`)로 하루 감정을
+받아 그 날짜의 DRAFT record를 SAVED로 확정한다. 감정과 `status=SAVED`는 같은 조건부 UPDATE 하나로
+함께 commit된다(부분 상태 없음). **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가
+기다릴 비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item
+연결 해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
+409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식·
+zero-byte body(Content-Type 유무 무관)·`emotionType` 누락/null/미지원 literal·깨진 JSON은 400 `-400`,
+body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. **새 error code는 추가하지 않았다.**
+commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
 그 성패는 이 응답과 무관하며 클라이언트가 조회할 대상이 아니다. ID 기반 deprecated 경로는 만들지 않았다.
 
 `POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자
