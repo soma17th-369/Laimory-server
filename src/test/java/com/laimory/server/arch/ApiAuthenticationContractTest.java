@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -28,16 +29,33 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
- * <p>principal은 operation마다 정확히 하나이며, 콘텐츠·push API의 {@code @CurrentSubject UUID} 또는
- * 회원 account API의 {@code @AuthenticationPrincipal Long} 중 정확히 한 형태다.
+ * <p>principal은 operation마다 정확히 하나이며, 형태는 API 종류가 결정한다 — 콘텐츠·push API는
+ * {@code @CurrentSubject UUID}, 회원 account API는 {@code @AuthenticationPrincipal Long}이다.
+ * 새 보호 API는 {@link #EXPECTED_PRINCIPALS}에 기대 principal 형태와 함께 등록한다(either-or 허용이
+ * 아니라 API별 고정 — 콘텐츠 API가 실수로 raw userId를 받는 회귀를 빌드에서 차단).
  * (timeline 전용이던 {@code TimelineApiAuthenticationContractTest}를 공용 계약으로 일반화해 옮겼다 —
  * timeline 전용 문서 계약은 {@code timeline.controller.TimelineApiDocumentationContractTest}에 남긴다.)
  */
 class ApiAuthenticationContractTest {
 
+    /** 보호 operation의 principal 형태. */
+    private enum PrincipalKind {
+        /** 콘텐츠·push — hidden {@code @CurrentSubject UUID subjectId}(MVC resolver가 subject로 변환). */
+        CONTENT_SUBJECT,
+        /** 회원 account — hidden {@code @AuthenticationPrincipal Long userId}(subject 변환 없음). */
+        ACCOUNT_USER_ID
+    }
+
+    /** 보호 API 클래스 → 기대 principal 형태. 새 보호 API 등록 시 기대 형태를 여기서 함께 선언한다. */
+    private static final Map<Class<?>, PrincipalKind> EXPECTED_PRINCIPALS = Map.of(
+            TimelineApi.class, PrincipalKind.CONTENT_SUBJECT,
+            TimelineRecordApi.class, PrincipalKind.CONTENT_SUBJECT,
+            PushRegistrationApi.class, PrincipalKind.CONTENT_SUBJECT,
+            UserApi.class, PrincipalKind.ACCOUNT_USER_ID,
+            TermAgreementApi.class, PrincipalKind.ACCOUNT_USER_ID);
+
     static Stream<Method> protectedOperations() {
-        return Stream.of(TimelineApi.class, TimelineRecordApi.class, PushRegistrationApi.class, UserApi.class,
-                        TermAgreementApi.class)
+        return EXPECTED_PRINCIPALS.keySet().stream()
                 .flatMap(api -> Arrays.stream(api.getDeclaredMethods()))
                 .filter(method -> !method.isSynthetic());
     }
@@ -66,7 +84,9 @@ class ApiAuthenticationContractTest {
 
     @ParameterizedTest
     @MethodSource("protectedOperations")
-    void everyProtectedOperation_hasExactlyOneHiddenPrincipalParameter(Method method) {
+    void everyProtectedOperation_hasExactlyOneHiddenPrincipalOfDeclaredKind(Method method) {
+        PrincipalKind expected = EXPECTED_PRINCIPALS.get(method.getDeclaringClass());
+
         List<java.lang.reflect.Parameter> principals = Arrays.stream(method.getParameters())
                 .filter(parameter -> parameter.isAnnotationPresent(CurrentSubject.class)
                         || parameter.isAnnotationPresent(AuthenticationPrincipal.class))
@@ -74,12 +94,18 @@ class ApiAuthenticationContractTest {
 
         assertThat(principals).hasSize(1);
         java.lang.reflect.Parameter principal = principals.get(0);
-        // 두 형태 중 정확히 하나 — 콘텐츠·push는 subject UUID, 회원 account는 raw Long userId.
-        if (principal.isAnnotationPresent(CurrentSubject.class)) {
-            assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isFalse();
-            assertThat(principal.getType()).isEqualTo(UUID.class);
-        } else {
-            assertThat(principal.getType()).isEqualTo(Long.class);
+        // API 종류가 principal 형태를 결정한다 — either-or가 아니라 선언된 기대 형태만 허용한다.
+        switch (expected) {
+            case CONTENT_SUBJECT -> {
+                assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isTrue();
+                assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isFalse();
+                assertThat(principal.getType()).isEqualTo(UUID.class);
+            }
+            case ACCOUNT_USER_ID -> {
+                assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isTrue();
+                assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isFalse();
+                assertThat(principal.getType()).isEqualTo(Long.class);
+            }
         }
         // principal은 클라이언트 입력이 아니다 — 생성된 OpenAPI parameter에 나타나면 안 된다.
         Parameter openApiParameter = principal.getAnnotation(Parameter.class);
