@@ -17,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -351,7 +352,7 @@ class TimelineControllerTest {
                 1L, TimelineEventType.UNKNOWN, LocalDateTime.parse("2026-06-17T09:00:00"), null,
                 "title", "subtitle", "question", "memo", List.of(item));
         DailyTimelineResponse result = new DailyTimelineResponse(
-                42L, LocalDate.parse("2026-06-17"), null, List.of(event));
+                42L, LocalDate.parse("2026-06-17"), DailyRecordStatus.DRAFT, null, List.of(event));
         when(timelineDraftTaskPollingService.poll(any(), any(), eq("t-ok")))
                 .thenReturn(DraftTaskStatusResponse.success(result));
 
@@ -361,6 +362,8 @@ class TimelineControllerTest {
                 .andExpect(jsonPath("$.body.status").value("SUCCESS"))
                 // dailyRecordId는 삭제 API 타깃팅용 결과 식별자 — 응답 직렬화 계약에 포함된다.
                 .andExpect(jsonPath("$.body.result.dailyRecordId").value(42))
+                // DailyRecord status는 SUCCESS result에도 직렬화된다(#298 — draft 폴링 결과는 DRAFT).
+                .andExpect(jsonPath("$.body.result.status").value("DRAFT"))
                 .andExpect(jsonPath("$.body.result.events[0].timelineEventId").value(1))
                 // eventType은 uppercase literal로 직렬화된다(#166 — UNKNOWN은 분류 미확정 fallback).
                 .andExpect(jsonPath("$.body.result.events[0].eventType").value("UNKNOWN"))

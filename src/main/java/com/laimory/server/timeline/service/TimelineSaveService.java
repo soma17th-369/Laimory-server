@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import java.time.LocalDate;
@@ -39,11 +40,12 @@ public class TimelineSaveService {
     }
 
     /**
-     * 인증 사용자의 해당 날짜 DRAFT 하루 기록을 SAVED로 확정한다.
+     * 인증 사용자의 해당 날짜 DRAFT 하루 기록을 요청 감정과 함께 SAVED로 확정한다.
+     * 감정과 상태는 같은 트랜잭션의 조건부 UPDATE 하나로 함께 커밋된다.
      *
      * @throws BusinessException 없음·비소유 404 {@code -404}, 이미 SAVED 409 {@code -1003}
      */
-    public void save(String applicationVersion, UUID subjectId, LocalDate recordDate) {
+    public void save(String applicationVersion, UUID subjectId, LocalDate recordDate, EmotionType emotionType) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
@@ -52,7 +54,7 @@ public class TimelineSaveService {
         }
 
         Long dailyRecordId = record.getDailyRecordId();
-        timelineSaveTransactionService.save(subjectId, dailyRecordId);
+        timelineSaveTransactionService.save(subjectId, dailyRecordId, emotionType);
         requestUserMemoryUpdate(subjectId, dailyRecordId);
     }
 

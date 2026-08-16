@@ -9,10 +9,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -31,6 +35,11 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -63,6 +72,8 @@ class TimelineSaveFlowIntegrationTest {
 
     @Autowired
     private TimelineSaveService timelineSaveService;
+    @Autowired
+    private DailyTimelineService dailyTimelineService;
     @Autowired
     private UserMemoryUpdateWorker userMemoryUpdateWorker;
     @Autowired
@@ -123,11 +134,12 @@ class TimelineSaveFlowIntegrationTest {
 
     @Test
     void 저장은_즉시_커밋되고_그_하루는_큐에_들어간다() {
-        timelineSaveService.save("v1", subjectId, DATE);
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
 
-        // 반환 시점에 전이는 이미 커밋돼 있다(동기 저장).
-        assertThat(dailyRecordRepository.findById(recordId).orElseThrow().getStatus())
-                .isEqualTo(DailyRecordStatus.SAVED);
+        // 반환 시점에 전이와 요청 감정이 같은 행에 이미 커밋돼 있다(동기 저장 — 부분 상태 없음).
+        DailyRecord saved = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(saved.getEmotionType()).isEqualTo(EmotionType.HAPPY);
         // 접수는 배치가 전담한다 — 저장 경로는 큐에 넣기만 하고 guard도 잡지 않는다.
         assertThat(pendingEntriesOf(subjectId))
                 .extracting(UserMemoryUpdatePending::dailyRecordId)
@@ -137,14 +149,84 @@ class TimelineSaveFlowIntegrationTest {
 
     @Test
     void 저장_후에는_모든_편집이_1003으로_거절된다() {
-        timelineSaveService.save("v1", subjectId, DATE);
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.NEUTRAL);
 
         assertRejectedAsAlreadySaved(() -> timelineEventEditService.updateMemo("v1", subjectId, eventId, "수정"));
         assertRejectedAsAlreadySaved(() -> timelineEventEditService.updateEvent("v1", subjectId, eventId,
                 new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, false, List.of())));
         assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteEvent("v1", subjectId, eventId));
         assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteDailyRecordByDate("v1", subjectId, DATE));
-        assertRejectedAsAlreadySaved(() -> timelineSaveService.save("v1", subjectId, DATE));
+        assertRejectedAsAlreadySaved(() -> timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY));
+    }
+
+    @Test
+    void 저장한_감정은_일별_조회와_월별_조회에_함께_보인다() {
+        // #304+#298 결합: HAPPY 저장 → 기존 일별 조회는 SAVED+HAPPY, 같은 달 월별 조회는 recordDate+HAPPY.
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+
+        DailyTimelineResponse daily = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE);
+        assertThat(daily.status()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(daily.emotionType()).isEqualTo(EmotionType.HAPPY);
+
+        MonthlyDailyRecordListResponse monthly = dailyTimelineService.getMonthlyDailyRecords(
+                "v1", subjectId, DATE.getYear(), DATE.getMonthValue());
+        assertThat(monthly.dailyRecords())
+                .contains(new MonthlyDailyRecordResponse(DATE, EmotionType.HAPPY));
+    }
+
+    @Test
+    void 저장_실패_요청은_기존_감정을_덮지_않는다() {
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+
+        assertRejectedAsAlreadySaved(() -> timelineSaveService.save("v1", subjectId, DATE, EmotionType.VERY_UNHAPPY));
+
+        // 거절된 요청은 상태·감정 어느 쪽도 부분 변경하지 않는다 — 승자의 감정만 남는다.
+        DailyRecord saved = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(saved.getEmotionType()).isEqualTo(EmotionType.HAPPY);
+    }
+
+    @Test
+    void 동시_저장은_하나만_성공하고_승자의_감정만_남는다() throws Exception {
+        // 사전 검증을 동시에 통과해도 조건부 UPDATE가 유일한 직렬화 지점이라 정확히 한 요청만 1행을 받는다.
+        List<EmotionType> emotions = List.of(EmotionType.VERY_HAPPY, EmotionType.VERY_UNHAPPY);
+        ExecutorService executor = Executors.newFixedThreadPool(emotions.size());
+        CountDownLatch ready = new CountDownLatch(emotions.size());
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<EmotionType>> futures;
+        try {
+            futures = emotions.stream()
+                    .map(emotion -> executor.submit(() -> {
+                        ready.countDown();
+                        start.await();
+                        timelineSaveService.save("v1", subjectId, DATE, emotion);
+                        return emotion;
+                    }))
+                    .toList();
+            ready.await();
+            start.countDown();
+        } finally {
+            executor.shutdown();
+        }
+
+        List<EmotionType> winners = new java.util.ArrayList<>();
+        int conflicts = 0;
+        for (Future<EmotionType> future : futures) {
+            try {
+                winners.add(future.get());
+            } catch (ExecutionException e) {
+                assertThat(e.getCause()).isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getExceptionType())
+                                .isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
+                conflicts++;
+            }
+        }
+
+        assertThat(winners).hasSize(1);
+        assertThat(conflicts).isEqualTo(1);
+        DailyRecord saved = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(saved.getEmotionType()).isEqualTo(winners.get(0));
     }
 
     @Test
@@ -158,7 +240,7 @@ class TimelineSaveFlowIntegrationTest {
         pendingStore.enqueue(inFlight, now);
         assertThat(taskStore.acquireGuard(subjectId, "in-flight-task", Duration.ofMinutes(3))).isTrue();
 
-        timelineSaveService.save("v1", subjectId, DATE);
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.NEUTRAL);
         userMemoryUpdateWorker.dispatchPendingUpdates();
 
         // guard를 못 잡았으니 접수를 미룬다 — 버렸다면 여기가 비어 있다.
@@ -247,7 +329,7 @@ class TimelineSaveFlowIntegrationTest {
     void FAILED_통보는_문서를_바꾸지_않고_record도_SAVED로_남긴다() throws Exception {
         JsonNode existing = objectMapper.readTree("{\"schemaVersion\":\"1.0\",\"currentFocus\":\"그대로\"}");
         userMemoryService.replace(subjectId, existing);
-        timelineSaveService.save("v1", subjectId, DATE);
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.NEUTRAL);
 
         String taskId = UUID.randomUUID().toString();
         String token = TaskTokens.generate();

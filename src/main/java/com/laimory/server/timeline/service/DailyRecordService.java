@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import java.time.Clock;
@@ -51,6 +52,14 @@ public class DailyRecordService {
                 subjectId, dailyRecordIds);
     }
 
+    /** 소유 record를 양끝 포함 날짜 범위로 골라 record_date 오름차순으로 반환한다. */
+    public List<DailyRecord> findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
+            UUID subjectId, LocalDate startInclusive, LocalDate endInclusive) {
+        return dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        subjectId, startInclusive, endInclusive);
+    }
+
     public DailyRecord save(DailyRecord dailyRecord) {
         return dailyRecordRepository.save(dailyRecord);
     }
@@ -61,11 +70,12 @@ public class DailyRecordService {
     }
 
     /**
-     * 소유 DRAFT record를 SAVED로 전이하고 실제로 옮긴 행 수를 반환한다(0 = 이미 SAVED·삭제됨·비소유).
-     * 호출부의 트랜잭션에 합류하는 조건부 UPDATE라 별도 lock 없이 동시 저장 중 하나만 성공한다.
+     * 소유 DRAFT record를 요청 감정과 함께 SAVED로 전이하고 실제로 옮긴 행 수를 반환한다
+     * (0 = 이미 SAVED·삭제됨·비소유). 호출부의 트랜잭션에 합류하는 조건부 UPDATE라 별도 lock 없이
+     * 동시 저장 중 하나만 성공하고, 승자의 감정만 남는다.
      */
-    public int markSaved(Long dailyRecordId, UUID subjectId) {
-        return dailyRecordRepository.markSaved(dailyRecordId, subjectId, LocalDateTime.now(clock));
+    public int markSaved(Long dailyRecordId, UUID subjectId, EmotionType emotionType) {
+        return dailyRecordRepository.markSaved(dailyRecordId, subjectId, emotionType, LocalDateTime.now(clock));
     }
 
     /**

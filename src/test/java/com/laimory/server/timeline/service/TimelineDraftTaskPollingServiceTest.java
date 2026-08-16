@@ -14,6 +14,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -137,7 +138,8 @@ class TimelineDraftTaskPollingServiceTest {
         DailyRecord record = DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(12, 0), "Asia/Seoul");
         ReflectionTestUtils.setField(record, "dailyRecordId", 42L);
         when(dailyRecordService.findById(42L)).thenReturn(Optional.of(record));
-        DailyTimelineResponse timeline = new DailyTimelineResponse(42L, DATE, null, List.of());
+        DailyTimelineResponse timeline = new DailyTimelineResponse(
+                42L, DATE, DailyRecordStatus.DRAFT, null, List.of());
         when(dailyTimelineService.getDailyTimeline(42L)).thenReturn(timeline);
 
         DraftTaskStatusResponse res = service.poll("v1", SUBJECT_ID, "t");

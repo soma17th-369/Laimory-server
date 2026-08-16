@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.EmotionType;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,15 +30,16 @@ public class TimelineSaveTransactionService {
     private final DailyRecordService dailyRecordService;
 
     /**
-     * 소유 DRAFT record를 SAVED로 옮긴다. 반환 시점에 전이는 커밋됐고, 이후의 User Memory 갱신 요청은
-     * 실패해도 이 결과를 되돌리지 않는다.
+     * 소유 DRAFT record를 요청 감정과 함께 SAVED로 옮긴다. 감정과 상태는 조건부 UPDATE 하나가 유일한
+     * write 지점이라 항상 함께 커밋된다(사전 조회 entity를 수정하지 않는다). 반환 시점에 전이는 커밋됐고,
+     * 이후의 User Memory 갱신 요청은 실패해도 이 결과를 되돌리지 않는다.
      *
      * @throws BusinessException 전이 실패 — 이미 SAVED면 409 {@code -1003},
      *                           record가 사라졌거나 비소유면 404 {@code -404}
      */
     @Transactional
-    public void save(UUID subjectId, Long dailyRecordId) {
-        if (dailyRecordService.markSaved(dailyRecordId, subjectId) == 0) {
+    public void save(UUID subjectId, Long dailyRecordId, EmotionType emotionType) {
+        if (dailyRecordService.markSaved(dailyRecordId, subjectId, emotionType) == 0) {
             throw new BusinessException(classifyTransitionFailure(subjectId, dailyRecordId));
         }
         log.info("하루 기록 저장 commit: dailyRecordId={}", dailyRecordId);

@@ -70,8 +70,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - final event `eventType`은 논리적 non-null이며 미분류는 `UNKNOWN` 단일 표현이다(별도 nullable 상태 없음).
   미지원 literal은 결과 저장 400이다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
 - `DRAFT→SAVED` 전이는 조건부 UPDATE(`WHERE status='DRAFT'`)의 영향 행 수가 유일한 판정 기준이자 이
-  흐름의 유일한 직렬화 지점이다. 사전 검증을 통과한 요청 둘이 겹쳐도 하나만 1을 받고 나머지는 부수효과
-  없이 롤백된다(0행은 재조회로 이미 SAVED 409 / 없음·비소유 404로 분류).
+  흐름의 유일한 직렬화 지점이다. 요청 필수 `emotionType`(5단계 enum)과 `status=SAVED`는 이 UPDATE
+  하나로 함께 확정된다 — 감정·상태의 다른 write 지점은 없고 부분 상태도 없다. 사전 검증을 통과한
+  요청 둘이 겹쳐도 하나만 1을 받아 승자의 감정만 남고 나머지는 부수효과
+  없이 롤백된다(0행은 재조회로 이미 SAVED 409 / 없음·비소유 404로 분류). 저장 전 DRAFT와 과거
+  SAVED 행의 null 감정은 backfill하지 않는 정상 legacy 값이다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
@@ -227,7 +230,6 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ## Known Gaps
 
-- emotion 입력 API가 없다(저장 API 범위 밖 — `emotion_type`은 계속 null이다).
 - User Memory 갱신이 AI FAILED·deadline(7일) 초과로 끝내 안 된 날은 그 날의 내용이 memory에 반영되지
   않는다. guard 충돌 누락은 대기 큐 + 하루 1회 재시도가 없앴고, 남은 구멍은 MQ 도입과 함께 다룬다
   (로그로만 관측).

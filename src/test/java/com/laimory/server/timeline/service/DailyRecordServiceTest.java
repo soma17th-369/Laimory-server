@@ -7,10 +7,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -27,6 +32,9 @@ class DailyRecordServiceTest {
 
     @Mock
     private DailyRecordRepository dailyRecordRepository;
+
+    @Spy
+    private Clock clock = Clock.fixed(Instant.parse("2026-05-08T03:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     @InjectMocks
     private DailyRecordService dailyRecordService;
@@ -77,6 +85,44 @@ class DailyRecordServiceTest {
 
         assertThat(dailyRecordService.save(record)).isSameAs(record);
         verify(dailyRecordRepository).save(record);
+    }
+
+    @Test
+    void findBySubjectIdAndRecordDateBetween_delegatesInclusiveRangeToRepository() {
+        LocalDate start = LocalDate.of(2026, 5, 1);
+        LocalDate end = LocalDate.of(2026, 5, 31);
+        List<DailyRecord> records = List.of(DailyRecord.createDraft(SUBJECT, start, RECORD_AT, ZONE));
+        when(dailyRecordRepository
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        SUBJECT, start, end))
+                .thenReturn(records);
+
+        List<DailyRecord> result =
+                dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(SUBJECT, start, end);
+
+        assertThat(result).isSameAs(records);
+        verify(dailyRecordRepository)
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                        SUBJECT, start, end);
+    }
+
+    @Test
+    void markSaved_delegatesConditionalUpdateWithEmotionAndClockNow() {
+        // 감정과 SAVED 전이는 레포의 조건부 UPDATE 하나로 위임된다(별도 entity write 없음).
+        LocalDateTime now = LocalDateTime.now(clock);
+        when(dailyRecordRepository.markSaved(100L, SUBJECT, EmotionType.HAPPY, now)).thenReturn(1);
+
+        assertThat(dailyRecordService.markSaved(100L, SUBJECT, EmotionType.HAPPY)).isEqualTo(1);
+
+        verify(dailyRecordRepository).markSaved(100L, SUBJECT, EmotionType.HAPPY, now);
+    }
+
+    @Test
+    void markSaved_returnsZeroWhenConditionalUpdateMatchesNoRow() {
+        when(dailyRecordRepository.markSaved(100L, SUBJECT, EmotionType.UNHAPPY, LocalDateTime.now(clock)))
+                .thenReturn(0);
+
+        assertThat(dailyRecordService.markSaved(100L, SUBJECT, EmotionType.UNHAPPY)).isZero();
     }
 
     // --- findOrCreateDraft (finalize 트랜잭션에 합류: REQUIRED) ---

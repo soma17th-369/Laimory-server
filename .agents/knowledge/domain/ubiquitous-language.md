@@ -25,9 +25,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. `subject_id + record_date`는 유일하다. |
 | 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
-| 하루 감정 | Emotion Type | 부분 구현 | 하루 전체의 5단계 감정 enum과 nullable DB 필드는 있다. draft에서는 NULL이며 사용자가 설정하는 save 흐름은 아직 없다. 이벤트별 감정은 없다. |
+| 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 확정한다. 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
-| 작성완료 | Saved | 현재 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제 거부, 그리고 사용자가 `DRAFT→SAVED`로 전환하는 `POST .../daily-records/{recordDate}/save`가 모두 있다. 전이는 동기 커밋이라 200이 곧 저장 완료이고, 뒤따르는 User Memory 갱신은 별개 흐름이다. |
+| 작성완료 | Saved | 현재 구현 | `SAVED` enum과 append·Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제 거부, 그리고 사용자가 필수 `emotionType` body와 함께 `DRAFT→SAVED`로 전환하는 `POST .../daily-records/{recordDate}/save`가 모두 있다. 전이는 하루 감정과 함께 동기 커밋이라 200이 곧 저장 완료이고, 뒤따르는 User Memory 갱신은 별개 흐름이다. |
 
 ## 타임라인 이벤트
 

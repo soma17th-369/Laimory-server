@@ -27,11 +27,14 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
@@ -76,6 +79,11 @@ class TimelineRecordControllerTest {
     private static final String DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/" + RECORD_DATE;
     private static final String INVALID_DAILY_RECORD_DATE_PATH = DAILY_RECORDS_PATH + "/not-a-date";
     private static final String SAVE_DAILY_RECORD_DATE_PATH = DAILY_RECORD_DATE_PATH + "/save";
+    private static final String MONTHLY_RECORDS_PATH = "/a/api/v1/timeline/monthly-records";
+
+    private static final String SAVE_BODY = """
+            {"emotionType": "HAPPY"}
+            """;
 
     private static final String PATCH_BODY = """
             {
@@ -124,7 +132,8 @@ class TimelineRecordControllerTest {
 
     private DailyTimelineResponse dailyTimeline() {
         return new DailyTimelineResponse(
-                77L, LocalDate.parse("2026-07-08"), EmotionType.HAPPY, List.of(updatedEvent()));
+                77L, LocalDate.parse("2026-07-08"), DailyRecordStatus.SAVED, EmotionType.HAPPY,
+                List.of(updatedEvent()));
     }
 
     // --- getDailyTimelines / getDailyTimeline / getTimelineEvent ---
@@ -140,6 +149,7 @@ class TimelineRecordControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.timelines[0].dailyRecordId").value(77))
                 .andExpect(jsonPath("$.body.timelines[0].recordDate").value("2026-07-08"))
+                .andExpect(jsonPath("$.body.timelines[0].status").value("SAVED"))
                 .andExpect(jsonPath("$.body.timelines[0].emotionType").value("HAPPY"))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].timelineEventId").value(11))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].question").value("누구와 함께 있었나요?"))
@@ -208,6 +218,7 @@ class TimelineRecordControllerTest {
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(jsonPath("$.body.dailyRecordId").value(77))
                 .andExpect(jsonPath("$.body.recordDate").value("2026-07-08"))
+                .andExpect(jsonPath("$.body.status").value("SAVED"))
                 .andExpect(jsonPath("$.body.events[0].timelineEventId").value(11))
                 .andExpect(jsonPath("$.body.events[0].items[0].timelineItemId").value(21));
 
@@ -230,6 +241,102 @@ class TimelineRecordControllerTest {
         mockMvc.perform(get(INVALID_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(dailyTimelineService);
+    }
+
+    // --- getMonthlyDailyRecords (캘린더 월별 경량 조회) ---
+
+    @Test
+    void getMonthlyDailyRecords_returns200WithDateAndNullableEmotionAndPassesPrincipal() throws Exception {
+        when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(5)))
+                .thenReturn(new MonthlyDailyRecordListResponse(List.of(
+                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-03"), null),
+                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-19"), EmotionType.HAPPY))));
+
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "5")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body.dailyRecords[0].recordDate").value("2026-05-03"))
+                .andExpect(jsonPath("$.body.dailyRecords[1].recordDate").value("2026-05-19"))
+                .andExpect(jsonPath("$.body.dailyRecords[1].emotionType").value("HAPPY"))
+                // 캘린더 응답은 경량 read model이다 — dailyRecordId·status·events 키가 없어야 한다.
+                .andExpect(jsonPath("$.body.dailyRecords[0].dailyRecordId").doesNotExist())
+                .andExpect(jsonPath("$.body.dailyRecords[0].status").doesNotExist())
+                .andExpect(jsonPath("$.body.dailyRecords[0].events").doesNotExist())
+                // null 감정은 key 생략(NON_NULL)이 아니라 명시적 JSON null이다.
+                .andExpect(result -> {
+                    JsonNode first = objectMapper.readTree(result.getResponse().getContentAsByteArray())
+                            .at("/body/dailyRecords/0");
+                    assertThat(first.has("emotionType")).isTrue();
+                    assertThat(first.get("emotionType").isNull()).isTrue();
+                });
+
+        verify(dailyTimelineService).getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 5);
+    }
+
+    @Test
+    void getMonthlyDailyRecords_emptyMonthReturns200WithEmptyArray() throws Exception {
+        when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(6)))
+                .thenReturn(new MonthlyDailyRecordListResponse(List.of()));
+
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "6")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.body.dailyRecords").isArray())
+                .andExpect(jsonPath("$.body.dailyRecords").isEmpty());
+    }
+
+    @Test
+    void getMonthlyDailyRecords_missingParamReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("month", "5")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(dailyTimelineService);
+    }
+
+    @Test
+    void getMonthlyDailyRecords_nonIntegerParamReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "20x6").queryParam("month", "5")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "5.5")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(dailyTimelineService);
+    }
+
+    @Test
+    void getMonthlyDailyRecords_mapsIllegalArgumentTo400() throws Exception {
+        when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(13)))
+                .thenThrow(new IllegalArgumentException("month must be between 1 and 12: 13"));
+
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "13")
+                        .with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void getMonthlyDailyRecords_withoutAuthenticationReturns401WithoutCallingService() throws Exception {
+        mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "5"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
 
         verifyNoInteractions(dailyTimelineService);
@@ -739,22 +846,24 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void saveDailyRecord_returns200WithEmptyBodyAndPassesPrincipal() throws Exception {
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+    void saveDailyRecord_returns200WithEmptyBodyAndPassesPrincipalAndEmotion() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
                 .andExpect(this::assertBodyIsExplicitNull);
 
-        verify(timelineSaveService).save("v1", SUBJECT_ID, RECORD_DATE);
+        verify(timelineSaveService).save("v1", SUBJECT_ID, RECORD_DATE, EmotionType.HAPPY);
     }
 
     @Test
     void saveDailyRecord_mapsNotFoundTo404() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND))
-                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class), any());
 
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
     }
@@ -762,16 +871,18 @@ class TimelineRecordControllerTest {
     @Test
     void saveDailyRecord_mapsAlreadySavedTo409() throws Exception {
         doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineSaveService).save(any(), any(), any(LocalDate.class));
+                .when(timelineSaveService).save(any(), any(), any(LocalDate.class), any());
 
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
     void saveDailyRecord_withInvalidDateReturns400WithoutCallingService() throws Exception {
-        mockMvc.perform(post(DAILY_RECORDS_PATH + "/not-a-date/save").with(authenticatedUser(USER_ID)))
+        mockMvc.perform(post(DAILY_RECORDS_PATH + "/not-a-date/save").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400))
                 .andExpect(jsonPath("$.body").doesNotExist());
@@ -781,10 +892,92 @@ class TimelineRecordControllerTest {
 
     @Test
     void saveDailyRecord_withoutAuthenticationReturns401WithoutCallingService() throws Exception {
-        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH))
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH)
+                        .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_zeroByteBodyWithoutContentTypeReturns400WithoutCallingService() throws Exception {
+        // zero-byte body는 Content-Type이 없어도 415가 아니라 "required body 누락" 400이다.
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_zeroByteJsonBodyReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_missingEmotionTypeReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_explicitNullEmotionTypeReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":null}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_unsupportedEmotionLiteralReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":\"ANGRY\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_malformedJsonReturns400WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_bodyWithoutContentTypeReturns415WithoutCallingService() throws Exception {
+        // body는 있는데 Content-Type이 없으면 octet-stream 취급이라 415/-415다(zero-byte 400과 구분).
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)).content(SAVE_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.header.code").value(-415));
+
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @Test
+    void saveDailyRecord_nonJsonContentTypeReturns415WithoutCallingService() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.TEXT_PLAIN).content(SAVE_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.header.code").value(-415));
 
         verifyNoInteractions(timelineSaveService);
     }

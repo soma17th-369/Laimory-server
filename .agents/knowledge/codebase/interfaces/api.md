@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 17개(timeline 15 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
+보호 operation 18개(timeline 16 + push-registrations PUT/DELETE)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. 콘텐츠 소유자는 hidden `@CurrentSubject UUID subjectId` parameter로 주입돼 OpenAPI
 parameter에 나타나지 않는다(클라이언트 입력이 아님). 인증 흐름 상세는
 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -57,8 +57,19 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 일치하는 DRAFT/SAVED record를 반환한다. 기존
 `GET /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 응답·소유권 계약으로 동작하지만
 Android 전환 동안만 유지하는 deprecated 호환 API다. 없음·비소유는 두 경로 모두 같은 404 `-404`로
-은닉하며 `DailyTimelineResponse.dailyRecordId`는 응답에 계속 포함한다. 전체·단건 응답 모두 Event별 연결
-Item을 `events[].items[]`에 포함한다.
+은닉하며 `DailyTimelineResponse.dailyRecordId`는 응답에 계속 포함한다. `DailyTimelineResponse`는
+non-null `status`(`DRAFT`/`SAVED`)를 포함한다 — 전체·날짜·deprecated ID 단건 조회와 draft polling
+SUCCESS `body.result`가 같은 공용 DTO라 네 경로 모두 상태가 일관되게 나간다(상태별 필터는 없다).
+필드 순서는 `dailyRecordId`·`recordDate`·`status`·`emotionType`·`events`다. 전체·단건 응답 모두
+Event별 연결 Item을 `events[].items[]`에 포함한다.
+
+`GET /a/api/{version}/timeline/monthly-records?year=&month=`는 인증 사용자가 소유한 해당 월(양끝 포함)의
+DRAFT/SAVED DailyRecord를 `recordDate` 오름차순으로 반환하는 캘린더용 경량 조회다. 각 항목은
+`MonthlyDailyRecordResponse(recordDate, nullable emotionType)`뿐이고 `dailyRecordId`·`status`·`events`는
+싣지 않으며 Event·Item graph를 조회하지 않는다. null 감정은 key 생략이 아니라 명시적 JSON null이다.
+기록 없는 월은 404가 아니라 200과 `dailyRecords=[]`다. `year`·`month`는 필수 정수 query parameter이며
+`year`는 1000~9999(MySQL `DATE` 지원 범위), `month`는 1~12만 허용한다 — 누락·비정수·범위 밖은 모두
+400 `-400`이다. URL·DTO·method 이름에 `calendar`는 쓰지 않는다(Source Item `ItemType.CALENDAR`와 충돌).
 
 `GET /a/api/{version}/timeline/events/{timelineEventId}`는 인증 사용자가 소유한 DRAFT/SAVED record의
 Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. Event·부모 record 없음과 부모 비소유는
@@ -96,12 +107,16 @@ API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED 409 계약은 동일하다. 성공 응답은 `body=null`이다.
 
-`POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 request body 없이 그 날짜의 DRAFT
-record를 SAVED로 확정한다. **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가 기다릴
-비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item 연결
-해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
-409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식은
-400 `-400`이다. **새 error code는 추가하지 않았다.** commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
+`POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 필수 request body
+`{"emotionType": "..."}`(허용값 `VERY_HAPPY`·`HAPPY`·`NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY`)로 하루 감정을
+받아 그 날짜의 DRAFT record를 SAVED로 확정한다. 감정과 `status=SAVED`는 같은 조건부 UPDATE 하나로
+함께 commit된다(부분 상태 없음). **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가
+기다릴 비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item
+연결 해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
+409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식·
+zero-byte body(Content-Type 유무 무관)·`emotionType` 누락/null/미지원 literal·깨진 JSON은 400 `-400`,
+body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. **새 error code는 추가하지 않았다.**
+commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
 그 성패는 이 응답과 무관하며 클라이언트가 조회할 대상이 아니다. ID 기반 deprecated 경로는 만들지 않았다.
 
 `POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자

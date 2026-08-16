@@ -178,7 +178,7 @@ POST {base-url}/v1/user-memory
   "taskId": "...", "taskToken": "...",
   "userMemory": null,
   "dailyTimelines": [{
-    "recordDate": "2026-08-04", "recordTimeZone": "Asia/Seoul", "emotionType": null,
+    "recordDate": "2026-08-04", "recordTimeZone": "Asia/Seoul", "emotionType": "HAPPY",
     "events": [{
       "eventType": "MEAL", "title": "...", "subtitle": "...", "question": "...",
       "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00",
@@ -207,7 +207,9 @@ POST {base-url}/v1/user-memory
   순서가 의미를 가지므로, 큐 진입 순서가 아니라 기록 날짜 순으로 싣고 초과분(=더 나중 날짜)이 다음
   실행 몫이 된다.
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
-- `emotionType`은 입력 경로가 없어 현재 항상 null이지만 nullable 필드를 미리 뒀다.
+- `emotionType`은 저장 API가 확정한 하루 감정이다 — non-null 값 도메인은 `VERY_HAPPY`·`HAPPY`·
+  `NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY` 5종이고, 저장 전 DRAFT·legacy SAVED 행은 null일 수 있으나
+  저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변).
 
 ```http
 POST /s/api/{version}/user-memory/updates/{taskId}/result

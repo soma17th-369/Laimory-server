@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionType;
+import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
@@ -148,6 +149,50 @@ class UserMemoryUpdateWorkerTest {
         assertThat(task.getValue().baseMemoryHash())
                 .isEqualTo(UserMemoryDigest.of(Optional.of(currentMemory)));
         assertThat(task.getValue().dailyRecordIds()).containsExactly(RECORD_ID);
+    }
+
+    @Test
+    void 접수_body는_record에_확정된_emotionType을_기존_키로_그대로_싣는다() {
+        // 저장 API가 확정한 하루 감정이 outbound JSON `emotionType` 키에 5개 enum literal로 실린다(#304).
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        DailyRecord saved = record(RECORD_ID, RECORD_DATE);
+        ReflectionTestUtils.setField(saved, "emotionType", EmotionType.VERY_HAPPY);
+        stubPendingQueue(List.of(pending));
+        when(taskStore.acquireGuard(eq(SUBJECT_ID), anyString(), any())).thenReturn(true);
+        stubLookup(List.of(pending), List.of(saved));
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        AiUserMemoryUpdateRequest.DailyTimeline timeline = request.getValue().dailyTimelines().getFirst();
+        assertThat(timeline.emotionType()).isEqualTo(EmotionType.VERY_HAPPY);
+        // wire key는 기존 `emotionType`을 유지하고 값은 enum literal이다(필드명 cutover 없음).
+        JsonNode serialized = timeMapper().valueToTree(timeline);
+        assertThat(serialized.has("emotionType")).isTrue();
+        assertThat(serialized.get("emotionType").textValue()).isEqualTo("VERY_HAPPY");
+    }
+
+    @Test
+    void 저장_전_기록의_null_감정은_null_값으로_직렬화된다() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        AiUserMemoryUpdateRequest.DailyTimeline timeline = request.getValue().dailyTimelines().getFirst();
+        assertThat(timeline.emotionType()).isNull();
+        // NON_NULL을 붙이지 않았으므로 key는 유지되고 값이 JSON null이다(legacy·저장 전 기록 정상 계약).
+        JsonNode serialized = timeMapper().valueToTree(timeline);
+        assertThat(serialized.has("emotionType")).isTrue();
+        assertThat(serialized.get("emotionType").isNull()).isTrue();
     }
 
     @Test
@@ -453,6 +498,11 @@ class UserMemoryUpdateWorkerTest {
         when(dailyRecordService.findAllBySubjectIdAndIdsOrderByRecordDate(SUBJECT_ID,
                 pending.stream().map(UserMemoryUpdatePending::dailyRecordId).toList()))
                 .thenReturn(found);
+    }
+
+    /** DTO 직렬화 계약 확인용 — 운영 Boot 설정처럼 JSR-310 모듈을 켠 mapper. */
+    private static ObjectMapper timeMapper() {
+        return new ObjectMapper().registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
     }
 
     private static UserMemoryUpdatePending pending(long dailyRecordId) {
