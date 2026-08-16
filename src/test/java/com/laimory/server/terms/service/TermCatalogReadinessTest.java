@@ -107,9 +107,39 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void notReadyTransition_logsErrorOnceUntilRecovery() {
+    void emptyCatalogTransition_logsWarnOnce_notError() {
+        // seed 전(테이블 완전 비어있음)은 예정된 pre-activation fail-open — 경보(ERROR)가 아니라 WARN 1회다.
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(0L);
+
+        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+
+        assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).isEmpty();
+        assertThat(logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("not seeded")))
+                .hasSize(1); // bounded — 지속 미준비 중 반복 없음
+        assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0); // gauge는 수위와 무관하게 0
+    }
+
+    @Test
+    void emptyCurrentWithSeededRows_logsErrorOnTransition() {
+        // 행이 존재하는데(예: 전부 소문자 오타·다른 stage) current 후보가 0건 — seed 실수라 ERROR다.
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(5L);
+
+        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+
+        assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(1);
+    }
+
+    @Test
+    void seededButBrokenTransition_logsErrorOnceUntilRecovery() {
+        // 필수 종류 하나가 빠진 seed(행은 존재) — 예정 상태가 아니라 ERROR 경보 대상이다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of());
+                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
 
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
@@ -118,11 +148,12 @@ class TermCatalogReadinessTest {
                 .count();
         assertThat(errorCount).isEqualTo(1); // bounded — 지속 미준비 중 반복 ERROR 없음
 
-        // 회복 → INFO 1줄, 이후 다시 미준비면 새 ERROR 1줄.
+        // 회복 → INFO 1줄, 이후 다시 퇴행하면 새 ERROR 1줄.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(2);
     }
@@ -144,6 +175,7 @@ class TermCatalogReadinessTest {
                 catalogRow("PRIVACY_POLICY", "TIMELINE_FIRST_CREATE", true), // stage 사본 불일치
                 catalogRow("BOGUS_TYPE", "LOGIN", true)));                   // 미지 literal
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(3L); // 행이 존재하는 seed 실수 — ERROR 경로
 
         readiness.verifyCatalogOnStartup();
 
@@ -156,6 +188,24 @@ class TermCatalogReadinessTest {
                 .contains("mapping mismatch for termType=PRIVACY_POLICY")
                 .contains("unknown termType literal in term_documents: BOGUS_TYPE")
                 .contains("stage not ready");
+    }
+
+    @Test
+    void startupCheck_emptyCatalog_logsWarnNotError() {
+        // seed 전 반복 기동이 ERROR 경보(Discord)를 만들지 않는다 — WARN으로만 pre-activation을 알린다.
+        when(termDocumentRepository.findCatalogRows()).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(0L);
+
+        readiness.verifyCatalogOnStartup();
+
+        assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).isEmpty();
+        assertThat(logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(message -> message.contains("not seeded yet"));
+        assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0);
+        assertThat(readyGauge(TermStage.TIMELINE_FIRST_CREATE)).isEqualTo(0.0);
     }
 
     @Test

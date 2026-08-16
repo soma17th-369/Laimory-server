@@ -26,8 +26,11 @@ import org.springframework.stereotype.Component;
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 mapping 정합성의 단일 판정 지점.
  *
  * <p>기동 시 다섯 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code (termType, stage, required)} 일치를
- * 검사하고, 누락·불일치·현재 유효 필수 문서 집합 불완전을 bounded ERROR log와 metric으로 경보한다 —
- * 기동과 공개 조회는 막지 않는다.
+ * 검사하고, 누락·불일치·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
+ * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
+ * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·mapping
+ * 불일치) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge/counter는 수위와 무관하게 동일하게
+ * 기록한다(대시보드 추적).
  *
  * <p>runtime enforcement는 요청마다 {@link #checkStage(TermStage, LocalDateTime)}로 DB 권위를 직접
  * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). 기대 필수 종류 중 하나라도 current 문서가
@@ -97,7 +100,7 @@ public class TermCatalogReadiness {
         boolean requiredCovered = currentTypes.containsAll(TermType.requiredTypesOf(stage));
 
         boolean ready = mappingConsistent && requiredCovered;
-        publishStageState(stage, ready);
+        publishStageState(stage, ready, currentDocuments.isEmpty());
         List<TermDocumentSummary> currentRequired = currentDocuments.stream()
                 .filter(summary -> summary.termType().required())
                 .toList();
@@ -113,8 +116,10 @@ public class TermCatalogReadiness {
     @EventListener(ApplicationReadyEvent.class)
     public void verifyCatalogOnStartup() {
         List<String> problems = new ArrayList<>();
+        boolean seeded;
         try {
             List<TermDocumentRepository.TermCatalogRow> rows = termDocumentRepository.findCatalogRows();
+            seeded = !rows.isEmpty();
             Set<String> seededTypes = rows.stream()
                     .map(TermDocumentRepository.TermCatalogRow::getTermType)
                     .collect(Collectors.toSet());
@@ -137,7 +142,11 @@ public class TermCatalogReadiness {
             log.error("term catalog startup verification failed", e);
             return;
         }
-        if (problems.isEmpty()) {
+        if (!seeded) {
+            // seed 전(테이블 완전 비어있음)은 법무 원문 대기 중의 예정된 fail-open 상태다 — 경보(ERROR)가
+            // 아니라 WARN 1줄로만 알린다(반복 기동 경보 소음 방지). 행이 하나라도 생기면 아래 ERROR 경로다.
+            log.warn("term catalog not seeded yet — enforcement fails open until activation (pre-activation state)");
+        } else if (problems.isEmpty()) {
             log.info("term catalog verified: all {} term types seeded and consistent", TermType.values().length);
         } else {
             // 경보 1줄(bounded) — 기동·공개 조회는 계속되고 미준비 stage의 gate는 fail-open된다.
@@ -168,13 +177,23 @@ public class TermCatalogReadiness {
                 && summary.required() == type.required();
     }
 
-    /** 상태 gauge 갱신 + 전이 시에만 로그(bounded — not-ready 지속 중 반복 ERROR 없음). */
-    private void publishStageState(TermStage stage, boolean ready) {
+    /**
+     * 상태 gauge 갱신 + 전이 시에만 로그(bounded — not-ready 지속 중 반복 없음). not-ready 전이의 수위는
+     * catalog 성격으로 가른다: 이 stage의 current 후보가 0건이고 테이블 전체도 빈 pre-activation 상태면
+     * WARN(예정된 fail-open — seed 전 소음 방지), 그 외(행이 있는데 틀림·ready였다가 퇴행)는 ERROR다.
+     * 전체 행 수 확인은 전이 시점에만 수행한다(요청마다 아님). gauge는 수위와 무관하게 0/1을 기록한다.
+     */
+    private void publishStageState(TermStage stage, boolean ready, boolean noCurrentCandidates) {
         stageReadyGauges.get(stage).set(ready ? 1 : 0);
         AtomicBoolean logged = notReadyLogged.get(stage);
         if (!ready && logged.compareAndSet(false, true)) {
-            log.error("term catalog not ready for stage {} — enforcement fails open until seed/activation is fixed",
-                    stage.name());
+            if (noCurrentCandidates && termDocumentRepository.count() == 0) {
+                log.warn("term catalog not seeded yet for stage {} — enforcement fails open until activation",
+                        stage.name());
+            } else {
+                log.error("term catalog not ready for stage {} — enforcement fails open until "
+                        + "seed/activation is fixed", stage.name());
+            }
         } else if (ready && logged.compareAndSet(true, false)) {
             log.info("term catalog recovered for stage {}", stage.name());
         }

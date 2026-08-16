@@ -232,7 +232,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   인증(401)은 그대로 요구한다. 후속 #305 탈퇴 endpoint가 같은 annotation을 재사용한다.
 - 기대 필수 종류 중 current 문서가 없거나 enum mapping이 깨진 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
-  ERROR log로만 경보한다.
+  전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
+  WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은 ERROR(경보 대상)다.
 - 약관 원문은 access log에 복제하지 않는다 — 두 GET response(`/api/{v}/terms`,
   `/a/api/{v}/terms/agreements`)는 body 크기·parse 성공과 무관하게 전체 placeholder로 치환한다.
 
