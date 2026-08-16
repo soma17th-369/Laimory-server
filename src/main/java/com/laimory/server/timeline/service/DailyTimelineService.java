@@ -5,7 +5,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -107,7 +107,7 @@ public class DailyTimelineService {
      *                                  {@code month}가 1~12 밖일 때(400 {@code -400})
      */
     @Transactional(readOnly = true)
-    public MonthlyDailyRecordsResponse getMonthlyDailyRecords(String applicationVersion, UUID subjectId,
+    public MonthlyDailyRecordListResponse getMonthlyDailyRecords(String applicationVersion, UUID subjectId,
                                                               int year, int month) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         if (year < MIN_YEAR || year > MAX_YEAR) {
@@ -119,7 +119,7 @@ public class DailyTimelineService {
         YearMonth yearMonth = YearMonth.of(year, month);
         List<DailyRecord> records = dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
                 subjectId, yearMonth.atDay(1), yearMonth.atEndOfMonth());
-        return new MonthlyDailyRecordsResponse(records.stream()
+        return new MonthlyDailyRecordListResponse(records.stream()
                 .map(record -> new MonthlyDailyRecordResponse(record.getRecordDate(), record.getEmotionType()))
                 .toList());
     }

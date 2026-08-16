@@ -16,7 +16,7 @@ import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordsResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -386,7 +386,7 @@ class DailyTimelineServiceTest {
                 SUBJECT_ID, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 31)))
                 .thenReturn(List.of(withEmotion, draftWithoutEmotion));
 
-        MonthlyDailyRecordsResponse result =
+        MonthlyDailyRecordListResponse result =
                 dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 5);
 
         // 캘린더 read model은 recordDate·nullable emotionType만 담는다 — DRAFT/SAVED 모두 포함.
@@ -416,7 +416,7 @@ class DailyTimelineServiceTest {
                 SUBJECT_ID, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30)))
                 .thenReturn(List.of());
 
-        MonthlyDailyRecordsResponse result =
+        MonthlyDailyRecordListResponse result =
                 dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 6);
 
         assertThat(result.dailyRecords()).isEmpty();
