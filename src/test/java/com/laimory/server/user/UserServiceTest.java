@@ -7,6 +7,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,7 +20,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 /**
  * findOrCreate 계약: 기존 조회 우선, 미존재면 NewUserProvisioner로 생성(user+subject mapping 한
  * transaction), 동시 최초 로그인(UNIQUE 위반)은 재조회로 수렴. Kakao 기존 사용자는 non-null 닉네임만
- * 갱신하고 누락 claim은 기존 값을 보존한다. 인프라 0.
+ * 갱신하고 누락 claim은 기존 값을 보존한다. getProfile 계약: 인증 userId 조회, 행 없음은 기존 401
+ * {@code -2001}로 수렴(존재 비노출). 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
@@ -132,6 +135,29 @@ class UserServiceTest {
 
         assertThat(result).isSameAs(winnerRow);
         assertThat(result.getNickname()).isEqualTo("이번닉");
+    }
+
+    @Test
+    void getProfile_existingUser_returnsRow() {
+        User existing = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(existing));
+
+        User result = userService.getProfile("v1", 7L);
+
+        assertThat(result).isSameAs(existing);
+    }
+
+    @Test
+    void getProfile_missingUserRow_throwsAuthenticationRequiredWithoutUserId() {
+        when(userRepository.findById(7L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.getProfile("v1", 7L))
+                .isInstanceOfSatisfying(BusinessException.class, e -> {
+                    // 기존 401 -2001 계약으로 수렴 — 탈퇴 여부·내부 식별자 존재를 노출하지 않는다.
+                    assertThat(e.getExceptionType()).isEqualTo(ExceptionType.API_AUTHENTICATION_REQUIRED);
+                    assertThat(e.getArgs()).isEmpty();
+                    assertThat(e.getMessage()).doesNotContain("7");
+                });
     }
 
     @Test
