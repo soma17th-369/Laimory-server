@@ -97,18 +97,14 @@ class AccessLogBodyMaskerTest {
 
     @ParameterizedTest
     @MethodSource("privacyRequestPaths")
-    void privacyRequestBodiesAreFullyMaskedBeforeJsonParsing(String method, String path) {
-        ObjectMapper unusedMapper = mock(ObjectMapper.class);
-        AccessLogBodyMasker privacyMasker = new AccessLogBodyMasker(unusedMapper);
-        String raw = "{\"memo\":\"RAW_PRIVACY_281_NEVER_LOG\"}";
+    void privacyRequestBodiesKeepOnlyAllowlistedSkeleton(String method, String path) {
+        // 전 request 경로 공통 규칙(#312) — allowlist 밖 필드는 타입 무관 MASK, 목록 필드(status)만 남는다.
+        String raw = "{\"memo\":\"RAW_PRIVACY_281_NEVER_LOG\",\"status\":\"FAILED\"}";
         MockHttpServletRequest request = jsonRequest(method, path, raw);
 
-        String masked = privacyMasker.maskRequest(request, bytes(raw), false);
-
-        assertThat(masked)
-                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY)
+        assertThat(masker.maskRequest(request, bytes(raw), false))
+                .isEqualTo("{\"memo\":\"***\",\"status\":\"FAILED\"}")
                 .doesNotContain("RAW_PRIVACY_281_NEVER_LOG");
-        verifyNoInteractions(unusedMapper);
     }
 
     private static Stream<Arguments> privacyRequestPaths() {
@@ -123,18 +119,17 @@ class AccessLogBodyMaskerTest {
 
     @ParameterizedTest
     @MethodSource("privacyResponsePaths")
-    void privacyResponseBodiesAreFullyMaskedBeforeJsonParsing(String path) {
-        ObjectMapper unusedMapper = mock(ObjectMapper.class);
-        AccessLogBodyMasker privacyMasker = new AccessLogBodyMasker(unusedMapper);
-        String raw = "{\"title\":\"RAW_PRIVACY_281_NEVER_LOG\"}";
+    void privacyResponseBodiesKeepOnlyAllowlistedSkeleton(String path) {
+        // 응답은 ApiResponse envelope 구조(header.code·body)만 남고 원문 필드는 MASK다.
+        String raw = "{\"header\":{\"code\":0,\"message\":\"정상 처리\"},"
+                + "\"body\":{\"title\":\"RAW_PRIVACY_281_NEVER_LOG\"}}";
 
-        String masked = privacyMasker.maskResponse(
+        String masked = masker.maskResponse(
                 new MockHttpServletRequest("GET", path), jsonResponse(), bytes(raw), false);
 
         assertThat(masked)
-                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY)
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"title\":\"***\"}}")
                 .doesNotContain("RAW_PRIVACY_281_NEVER_LOG");
-        verifyNoInteractions(unusedMapper);
     }
 
     private static Stream<String> privacyResponsePaths() {
@@ -149,12 +144,13 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
-    void privacyPathJudgmentPrecedesBodyChecks() {
+    void unparseablePrivacyBodiesFallBackToPlaceholder() {
+        // skeleton은 파싱 성공 시에만 — 파싱 불가 body는 형태 정보도 남기지 않는 고정 placeholder다.
         // malformed JSON도 [unavailable...]이 아닌 같은 placeholder
         assertThat(maskRequest("POST", "/a/api/v1/timeline/drafts", "{RAW_PRIVACY_281_NEVER_LOG"))
                 .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
 
-        // 비JSON content type도 null이 아닌 placeholder
+        // 비JSON body도 null이 아닌 placeholder
         MockHttpServletRequest nonJson = new MockHttpServletRequest("PUT", "/a/api/v1/timeline/events/1/memo");
         nonJson.setContentType("text/plain");
         assertThat(masker.maskRequest(nonJson, bytes("raw text memo"), false))
@@ -172,6 +168,108 @@ class AccessLogBodyMaskerTest {
         assertThat(masker.maskRequest(
                 jsonRequest("POST", "/a/api/v1/timeline/drafts", "{}"), new byte[0], false))
                 .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+    }
+
+    @Test
+    void draftCreationRequestKeepsStructureAndCollapsesPayload() throws Exception {
+        String raw = """
+                {"recordDate":"2026-07-08","recordAt":"2026-07-09T09:12:34","recordTimeZone":"Asia/Seoul",
+                 "timelineWindow":{"startTime":"2026-07-08T00:00","endTime":"2026-07-09T00:00"},
+                 "sourceItems":[{"itemType":"NOTIFICATION","rawId":"0190a1b2-0001-7000-8000-000000000001",
+                 "startAt":"2026-07-08T09:05:00","endAt":null,
+                 "payload":{"appName":"KakaoTalk","title":"RAW_PRIVACY_312_NEVER_LOG","text":"점심 뭐 먹지"}}]}
+                """;
+
+        String masked = maskRequest("POST", "/a/api/v1/timeline/drafts", raw);
+        JsonNode json = objectMapper.readTree(masked);
+
+        assertThat(json.get("recordDate").asText()).isEqualTo("2026-07-08");
+        assertThat(json.get("recordTimeZone").asText()).isEqualTo("Asia/Seoul");
+        assertThat(json.at("/timelineWindow/startTime").asText()).isEqualTo("2026-07-08T00:00");
+        assertThat(json.at("/sourceItems/0/itemType").asText()).isEqualTo("NOTIFICATION");
+        assertThat(json.at("/sourceItems/0/rawId").asText())
+                .isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(json.at("/sourceItems/0/endAt").isNull()).isTrue();
+        // payload는 내부 필드명 포함 subtree째 붕괴한다.
+        assertThat(json.at("/sourceItems/0/payload").asText()).isEqualTo("***");
+        assertThat(masked).doesNotContain("RAW_PRIVACY_312_NEVER_LOG", "KakaoTalk", "점심");
+    }
+
+    @Test
+    void callbackRequestKeepsStatusCodesAndMasksErrorText() {
+        // FAILED 진단 축(status·errorCode)은 남고, AI 자유 텍스트 error는 숫자·null이 아니라서 MASK다.
+        assertThat(maskRequest("POST", "/s/api/v1/timeline/drafts/task-312/callback",
+                "{\"status\":\"FAILED\",\"errorCode\":-1008,\"error\":\"boom RAW_PRIVACY_312_NEVER_LOG\"}"))
+                .isEqualTo("{\"status\":\"FAILED\",\"errorCode\":-1008,\"error\":\"***\"}");
+
+        // 숫자·null은 그대로 — 실제 null이 "마스킹된 민감값"처럼 오독되지 않는다. userMemory 원문은 붕괴.
+        assertThat(maskRequest("POST", "/s/api/v2/user-memory/updates/task-312/result",
+                "{\"status\":\"SUCCESS\",\"userMemory\":{\"tone\":\"소중한 하루\"},\"errorCode\":null,\"error\":null}"))
+                .isEqualTo("{\"status\":\"SUCCESS\",\"userMemory\":\"***\",\"errorCode\":null,\"error\":null}");
+    }
+
+    @Test
+    void pollingResponseKeepsEnvelopeStatusAndNumericError() {
+        assertThat(maskGetResponse("/a/api/v1/timeline/drafts/task-312",
+                "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":"
+                        + "{\"status\":\"PROCESSING\",\"result\":null,\"error\":null,\"elapsedSeconds\":42}}"))
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":"
+                        + "{\"status\":\"PROCESSING\",\"result\":null,\"error\":null,\"elapsedSeconds\":42}}");
+
+        // FAILED의 numeric error code는 진단 축이라 남는다.
+        assertThat(maskGetResponse("/a/api/v1/timeline/drafts/task-312",
+                "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"status\":\"FAILED\",\"result\":null,\"error\":-1008}}"))
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":"
+                        + "{\"status\":\"FAILED\",\"result\":null,\"error\":-1008}}");
+    }
+
+    @Test
+    void dailyRecordResponseKeepsStructureAndMasksUserContent() throws Exception {
+        String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"dailyRecordId\":42,"
+                + "\"recordDate\":\"2026-07-08\",\"emotionType\":\"HAPPY\",\"events\":[{"
+                + "\"timelineEventId\":7,\"eventType\":\"MEAL\",\"startAt\":\"2026-07-08T12:00:00\","
+                + "\"endAt\":null,\"title\":\"RAW_TITLE_312_NEVER_LOG\",\"subtitle\":null,"
+                + "\"question\":\"오늘 점심 어땠나요?\",\"memo\":\"강남에서 점심\",\"items\":[{"
+                + "\"timelineItemId\":9,\"itemType\":\"STAY\",\"rawId\":\"0190a1b2-0001-7000-8000-000000000002\","
+                + "\"startAt\":\"2026-07-08T12:00:00\",\"endAt\":null,\"payload\":{\"address\":\"서울 강남구\"}}]}]}}";
+
+        String masked = maskGetResponse("/a/api/v1/timeline/daily-records/2026-07-08", raw);
+        JsonNode body = objectMapper.readTree(masked).get("body");
+
+        assertThat(body.get("dailyRecordId").asInt()).isEqualTo(42);
+        assertThat(body.get("emotionType").asText()).isEqualTo("HAPPY");
+        assertThat(body.at("/events/0/eventType").asText()).isEqualTo("MEAL");
+        assertThat(body.at("/events/0/title").asText()).isEqualTo("***");
+        // allowlist 밖 필드는 null-여부도 숨긴다(타입 무관 MASK).
+        assertThat(body.at("/events/0/subtitle").asText()).isEqualTo("***");
+        assertThat(body.at("/events/0/items/0/timelineItemId").asInt()).isEqualTo(9);
+        assertThat(body.at("/events/0/items/0/payload").asText()).isEqualTo("***");
+        assertThat(masked).doesNotContain("RAW_TITLE_312_NEVER_LOG", "점심", "강남");
+    }
+
+    @Test
+    void termsResponseMasksLegalTextButKeepsStructure() {
+        String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"terms\":[{"
+                + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\",\"title\":\"이용약관\","
+                + "\"content\":\"제1조 RAW_TERMS_312_NEVER_LOG\",\"required\":true,"
+                + "\"effectiveAt\":\"2026-08-15T00:00:00\"}]}}";
+
+        assertThat(maskGetResponse("/api/v1/terms", raw))
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"terms\":[{"
+                        + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\",\"title\":\"***\","
+                        + "\"content\":\"***\",\"required\":true,\"effectiveAt\":\"2026-08-15T00:00:00\"}]}}")
+                .doesNotContain("RAW_TERMS_312_NEVER_LOG");
+    }
+
+    @Test
+    void shapeGuardMasksNonStructuralTextEvenInSafeFields() {
+        // 클라 버그로 구조 필드에 원문이 실려도 공백·비ASCII·장문(>64자)은 통과하지 못한다.
+        assertThat(maskRequest("POST", "/a/api/v1/timeline/drafts",
+                "{\"rawId\":\"오늘 강남 RAW_PRIVACY_312_NEVER_LOG\",\"recordDate\":\"2026-07-08\","
+                        + "\"sourceRawIds\":[\"0190a1b2-0001-7000-8000-000000000001\",\"두 단어\"],"
+                        + "\"status\":\"" + "a".repeat(65) + "\"}"))
+                .isEqualTo("{\"rawId\":\"***\",\"recordDate\":\"2026-07-08\","
+                        + "\"sourceRawIds\":[\"0190a1b2-0001-7000-8000-000000000001\",\"***\"],\"status\":\"***\"}");
     }
 
     @Test
@@ -284,6 +382,10 @@ class AccessLogBodyMaskerTest {
     private String maskRequest(String method, String path, String body) {
         MockHttpServletRequest request = jsonRequest(method, path, body);
         return masker.maskRequest(request, bytes(body), false);
+    }
+
+    private String maskGetResponse(String path, String body) {
+        return masker.maskResponse(new MockHttpServletRequest("GET", path), jsonResponse(), bytes(body), false);
     }
 
     private static MockHttpServletRequest jsonRequest(String path, String body) {

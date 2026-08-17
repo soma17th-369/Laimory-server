@@ -262,8 +262,8 @@ class TransactionIdFilterTest {
     }
 
     @Test
-    void completionLog_masksPrivacyPathBodiesEntirely() throws Exception {
-        // 사생활 원문 경로는 body 전체가 고정 placeholder다 — 클라이언트 응답은 불변, 로그 어디에도 원문 없음.
+    void completionLog_masksPrivacyPathBodiesToSkeleton() throws Exception {
+        // 사생활 원문 경로는 allowlist skeleton만 남는다 — 클라이언트 응답은 불변, 로그 어디에도 원문 없음.
         String rawRequest = "RAW_DRAFT_MEMO_281_NEVER_LOG";
         MockHttpServletRequest request = jsonRequest("POST", "/a/api/v1/timeline/drafts",
                 "{\"items\":[{\"text\":\"" + rawRequest + "\"}]}");
@@ -288,9 +288,9 @@ class TransactionIdFilterTest {
 
         assertThat(response.getContentAsString()).contains(rawResponse);
         assertThat(encoded(accessLog.list.get(0)).get("requestBody").asText())
-                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+                .isEqualTo("{\"items\":[{\"text\":\"***\"}]}");
         assertThat(encoded(accessLog.list.get(1)).get("responseBody").asText())
-                .isEqualTo(AccessLogBodyMasker.MASKED_PRIVACY_BODY);
+                .isEqualTo("{\"title\":\"***\"}");
         for (ILoggingEvent event : accessLog.list) {
             assertThat(new String(encode(event), StandardCharsets.UTF_8))
                     .doesNotContain(rawRequest, rawResponse);
