@@ -200,6 +200,12 @@ class ActuatorEndpointIntegrationTest {
             ProbeController.class
     })
     static class TestApplication {
+
+        /** DB 없는 최소 앱 — JWT 필터의 active 검사(#305)는 항상 활성으로 stub한다(이 경계와 무관). */
+        @org.springframework.context.annotation.Bean
+        com.laimory.server.user.UserAccountAccessService userAccountAccessService() {
+            return userId -> true;
+        }
     }
 
     @RestController

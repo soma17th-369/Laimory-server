@@ -31,8 +31,8 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 21개(timeline 16 + push-registrations PUT/DELETE + users GET /me + terms agreements
-GET/POST)는 `bearerAuth` security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
+보호 operation 22개(timeline 16 + push-registrations PUT/DELETE + users GET /me·DELETE /me + terms
+agreements GET/POST)는 `bearerAuth` security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
 입력이 아님). 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -146,6 +146,18 @@ nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 
+`DELETE /a/api/{version}/users/me`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
+bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`이다 — 202는 논리 탈퇴(이후 이
+회원의 모든 `/a/api` 접근·token/refresh 발급 차단), 이 transaction이 관측한 기존 refresh 전량 폐기,
+push 등록 삭제, 개인정보 삭제 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
+콘텐츠·Redis·S3의 물리 삭제 완료(#302 worker 책임)를 뜻하지 않는다. 이미 인증을 통과한 동시 요청은
+같은 202로 멱등 수렴하고, commit 뒤 같은 access token의 새 요청은 401 `-2001`이다(응답을 잃은 앱은
+401을 이미 탈퇴된 terminal 결과로 취급). 미인증/무효/만료/이미 최종 삭제된 회원도 401 `-2001`로
+존재를 노출하지 않는다. `@LoginTermsExempt`라 약관 미동의 상태에서도 탈퇴할 수 있다. 내부
+userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소셜 계정의 다음 로그인은 과거
+데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
+code는 추가하지 않았다.**
+
 `GET /api/{version}/terms?stage=LOGIN|TIMELINE_FIRST_CREATE`(#303)는 로그인 전 화면에서도 쓰는 public
 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음). `stage`는 필수 enum query이고
 누락·미지원 값은 400 `-400`이다. 응답 `terms[]`는 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
@@ -166,7 +178,7 @@ parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 �
 log에서 전체 마스킹된다(원문 비복제 — [observability](../operations/observability.md)).
 
 미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption과 fail-open
+403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /me 포함)과 fail-open
 계약은 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions

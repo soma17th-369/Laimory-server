@@ -37,6 +37,7 @@ import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectMappingService;
 import com.laimory.server.user.User;
 import com.laimory.server.user.UserService;
+import com.laimory.server.user.UserWithdrawalService;
 import com.laimory.server.user.controller.UserController;
 import java.util.List;
 import java.util.UUID;
@@ -108,6 +109,8 @@ class TermsEnforcementInterceptorMvcTest {
     @MockitoBean
     private UserService userService;
     @MockitoBean
+    private UserWithdrawalService userWithdrawalService;
+    @MockitoBean
     private TermAgreementService termAgreementService;
 
     @BeforeEach
@@ -131,8 +134,8 @@ class TermsEnforcementInterceptorMvcTest {
 
     @Test
     void exemptOperations_neverConsultTermsGate_andRemainAccessible() throws Exception {
-        // 동의 등록/이력·내 회원 조회·push PUT/DELETE는 LOGIN gate 판정 자체를 타지 않는다 —
-        // 미동의(gate가 403을 던질 상태)에서도 접근 가능함이 이 exemption의 의미다.
+        // 동의 등록/이력·내 회원 조회·회원 탈퇴(#305)·push PUT/DELETE는 LOGIN gate 판정 자체를 타지
+        // 않는다 — 미동의(gate가 403을 던질 상태)에서도 접근 가능함이 이 exemption의 의미다.
         when(userService.getProfile("v1", USER_ID))
                 .thenReturn(User.of(Provider.KAKAO, "sub-303", null, "라이머"));
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of());
@@ -152,11 +155,15 @@ class TermsEnforcementInterceptorMvcTest {
                 .andExpect(status().isOk());
         mockMvc.perform(get("/a/api/v1/terms/agreements").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk());
+        // #305: 미동의 사용자도 탈퇴할 수 있다 — LOGIN gate를 타지 않고 202까지 도달한다.
+        mockMvc.perform(delete("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
+                .andExpect(status().isAccepted());
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).
         verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303");
         verify(pushRegistrationService).unregister("v1", SUBJECT_ID, "fid-303");
+        verify(userWithdrawalService).withdraw("v1", USER_ID);
     }
 
     @Test

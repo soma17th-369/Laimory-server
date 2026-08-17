@@ -204,6 +204,10 @@ Spring JSON stdout
     없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)
   - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
     subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다
+  - `laimory.account.erasure.job.pending`: #302 worker를 기다리는 PENDING 계정 삭제 작업 수(#305).
+    scrape 시점 MySQL count이며 DB 장애는 NaN(scrape 비실패 — stuck 계열과 동일 규칙)
+  - `laimory.account.erasure.job.pending.oldest.age`: 최고령 PENDING 접수 경과 초(없으면 0).
+    두 값은 HMAC secret 갱신 전 runbook gate(PENDING ≥ 1이면 previous key retire 금지)의 판단 근거다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
   - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
     unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회

@@ -55,11 +55,11 @@ class RefreshTokenRotationIntegrationTest {
         long userId = randomUserId();
         try {
             String first = refreshTokenService.issue(userId);
-            RefreshTokenService.Rotation rotated = refreshTokenService.rotate(first);
+            RefreshTokenService.Rotation rotated = refreshTokenService.rotate(first, id -> true);
             assertThat(rotated.refreshToken()).isNotEqualTo(first);
 
             // 구 토큰 재제시 = 재사용 탐지 → 2003 + 해당 userId 전체 REVOKED.
-            assertThatThrownBy(() -> refreshTokenService.rotate(first))
+            assertThatThrownBy(() -> refreshTokenService.rotate(first, id -> true))
                     .isInstanceOfSatisfying(BusinessException.class,
                             ex -> assertThat(ex.getErrorCode()).isEqualTo(-2003));
 
@@ -80,7 +80,7 @@ class RefreshTokenRotationIntegrationTest {
             String raw = refreshTokenService.issue(userId);
             refreshTokenService.revoke(raw);
 
-            assertThatThrownBy(() -> refreshTokenService.rotate(raw))
+            assertThatThrownBy(() -> refreshTokenService.rotate(raw, id -> true))
                     .isInstanceOfSatisfying(BusinessException.class,
                             ex -> assertThat(ex.getErrorCode()).isEqualTo(-2003));
 
@@ -108,7 +108,7 @@ class RefreshTokenRotationIntegrationTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             Callable<RefreshTokenService.Rotation> task = () -> {
                 barrier.await(20, TimeUnit.SECONDS); // 두 스레드 동시 시작 정렬
-                return refreshTokenService.rotate(first);
+                return refreshTokenService.rotate(first, id -> true);
             };
             Future<RefreshTokenService.Rotation> f1 = pool.submit(task);
             Future<RefreshTokenService.Rotation> f2 = pool.submit(task);

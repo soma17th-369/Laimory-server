@@ -49,6 +49,15 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
                                                    @Param("fid") String firebaseInstallationId);
 
     /**
+     * 탈퇴 transaction의 subject 단위 전체 해제(#305) — REQUIRED 전파로 호출자 transaction에 합류하며
+     * 미존재 삭제는 0행(멱등)이다. 반환 = 삭제 행 수.
+     */
+    @Modifying
+    @Transactional
+    @Query("delete from PushRegistration p where p.subjectId = :subjectId")
+    int deleteAllBySubjectId(@Param("subjectId") UUID subjectId);
+
+    /**
      * FCM이 영구 무효(UNREGISTERED 등)로 판정한 FID 등록 일괄 삭제. repository 메서드 단위의 짧은 별도
      * transaction이라 한 batch 실패가 callback이나 다른 batch를 되돌리지 않는다.
      *

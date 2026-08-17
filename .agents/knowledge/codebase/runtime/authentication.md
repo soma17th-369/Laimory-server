@@ -19,10 +19,13 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 
 - `/a/api/{version}`은 사용자가 `Authorization: Bearer <access-token>`으로 접근하는 인증 영역이다.
   유효한 자체 access JWT 없이는 401 `-2001` envelope로 거절된다(`WWW-Authenticate: Bearer`).
+  #305부터 서명·만료에 더해 매 요청 users PK로 회원 `ACTIVE`를 확인한다 — 회원 없음과
+  `WITHDRAWAL_PENDING`(탈퇴 접수)은 token 상세와 구분 없이 같은 401 `-2001`로 수렴하고, 상태 조회
+  DB 장애만 fail-closed 500 `-500`이다(장애를 credential 오류로 숨기지 않음).
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
 - 인증 principal은 `Long` userId다. timeline/push controller의 콘텐츠 owner parameter는
   `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로 변환해 주입한다.
-  회원 account controller(`GET /a/api/{version}/users/me`)는 subject 변환 없이 hidden
+  회원 account controller(`GET/DELETE /a/api/{version}/users/me`)는 subject 변환 없이 hidden
   `@AuthenticationPrincipal Long userId`를 직접 받는다.
 
 ## Current Implementation
@@ -36,8 +39,12 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 `/a/api` 인증 흐름:
 
 1. `JwtAuthenticationFilter`(security chain 내부, `AuthorizationFilter` 앞)가 Bearer token을
-   `JwtTokens.parseUserId`로 검증해 성공 시 `Long` userId principal 인증을 SecurityContext에 넣는다.
-   부재/형식 불량/무효/만료는 사유 구분 없이 context 없이 통과시킨다(token 원문은 어디에도 보존 안 함).
+   `JwtTokens.parseUserId`로 검증하고, 성공 시 `UserAccountAccessService#isActive(userId)`(users PK
+   existence — cache 없음)까지 통과한 경우에만 `Long` userId principal 인증을 SecurityContext에 넣고
+   userId 로그 attribute를 심는다(#305). 부재/형식 불량/무효/만료/비활성 회원은 사유 구분 없이 context
+   없이 통과시킨다(token 원문은 어디에도 보존 안 함). 상태 조회 DB 장애만 예외다 — 공용
+   `ApiErrorResponseWriter`로 fail-closed 500 `-500` envelope과 ERROR 관측(stacktrace + access log
+   attribute)을 남기고 chain을 중단한다.
 2. 인가 단계에서 무인증이면 `ApiAuthenticationEntryPoint`가 401 `-2001` envelope를 직접 쓴다
    (Security filter 단계는 `GlobalExceptionHandler` 미도달 — `AppChallengeFilter` 400 작성과 같은 선례).
    `ExceptionType.API_AUTHENTICATION_REQUIRED`(INFO)를 request attribute에 심어 access log와 합류하고,
@@ -46,13 +53,15 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
    `FilterRegistrationBean#setEnabled(false)`로 끈다.
 
 `JwtTokens`는 양수 userId만 발급·인증한다 — 0·음수 subject는 유효한 서명이 있어도 실패 처리해
-과거 user 0 데이터 접근을 차단한다. 매 요청 user row 조회는 없다(stateless access token 계약 유지).
+과거 user 0 데이터 접근을 차단한다. access token 자체는 여전히 서버 미저장 stateless지만 #305부터
+`/a/api`마다 users PK 조회 1회가 추가된다(탈퇴 즉시 차단 — 성능 개선이 필요하면 실측 후 별도 이슈에서
+상태 캐시/epoch token을 설계한다).
 
 인증을 통과한 `/a/api` HandlerMethod에는 약관 gate(#303)가 이어진다 — `TermsEnforcementInterceptor`가
 controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` 필수 약관 동의를 검사하고
 미동의는 403 `-3001`이다(401 인증 계약과 독립 — bearer 실패가 항상 먼저다). exemption은 raw path
 allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·users GET /me·
-push-registrations PUT/DELETE — 후속 #305 탈퇴가 재사용). draft 생성·사진 presign은
+회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE). draft 생성·사진 presign은
 `@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
 필수 문서의 content 제외 summary + 동의 existence 1회 — 약관 원문은 요청마다 적재하지 않음)이고
 TTL cache가 없으며, catalog 미준비 stage(seed/activation 누락·
@@ -65,7 +74,9 @@ token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니�
    - Kakao scope는 `openid,profile_nickname`이다. 닉네임은 검증된 id_token의 `nickname` claim에서
      읽고(blank·비문자열은 null) UserInfo endpoint는 호출하지 않는다. email은 수집하지 않는다(콘솔 권한 없음).
    - 기존 Kakao 사용자는 재로그인 시 non-null 닉네임으로 갱신하고 누락 claim은 기존 값을 보존한다.
-     Google 기존 사용자는 갱신 없이 반환한다.
+     갱신은 entity 저장이 아니라 `(provider, provider_user_id, status=ACTIVE)` 조건의 nickname-only
+     UPDATE다(#305 — 탈퇴와 겹친 stale 로그인이 status/released identity를 되살리지 못함, 영향 0행은
+     갱신 폐기). Google 기존 사용자는 갱신 없이 반환한다.
    - 신규 사용자 생성은 `NewUserProvisioner`의 단일 transaction이 user insert와 subject mapping
      insert(#282, `user_subject_links`)를 함께 commit/rollback한다 — 실패 시 부분 user나 orphan
      mapping이 남지 않는다. `UserService.findOrCreate`의 무트랜잭션 catch-재조회 동시 로그인
@@ -74,6 +85,11 @@ token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니�
 3. login 성공 뒤 60초 App Code를 Redis hash key로 저장하고 GETDEL로 소비한다.
 4. 교환 성공 시 자체 access JWT와 opaque refresh token을 발급한다.
 5. access token은 HS256이며 기본 15분, `iss/sub/iat/exp` claim만 둔다. 서버에 저장하지 않는다.
+   app-code 교환(`/auth/token`)과 refresh 회전은 발급 전에 회원 `ACTIVE`를 조회한다(#305) — 회원
+   없음/`WITHDRAWAL_PENDING`은 각각 기존 `APP_CODE_INVALID` 401 `-2002`/`REFRESH_TOKEN_INVALID` 401
+   `-2003`(INFO)으로 수렴하고 신규 탈퇴 전용 code는 없다. WARN은 실제 verifier 불일치와 active 회원의
+   refresh 재사용 탐지만 유지한다. 검사 통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이며
+   그 token도 매 요청 ACTIVE 검사와 다음 회전 검사에서 거절된다.
 6. refresh token은 기본 30일이며 DB에 SHA-256 hash만 저장한다.
 7. refresh는 rotation되고 reuse가 탐지되면 해당 user의 refresh token을 모두 revoke한다.
 8. logout은 전달된 refresh token을 revoke한다.
@@ -101,13 +117,25 @@ handoff를 그대로 사용한다.
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
 - 콘텐츠 subject는 JWT principal이 아니다. 인증 filter와 access/refresh 도메인은 raw `Long` userId를
   유지하고, 콘텐츠 API의 MVC 경계 뒤에서만 UUID subjectId를 사용한다.
-- 회원 account API(`GET /a/api/{version}/users/me`)는 principal userId로 users 행을 endpoint 안에서
-  조회한다 — 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로 수렴한다(존재 비노출).
-  인증 filter 자체는 여전히 user row 조회 없이 stateless다.
+- 회원 account API(`GET/DELETE /a/api/{version}/users/me`)는 principal userId를 직접 받는다. GET은
+  users 행을 endpoint 안에서 조회하며, 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로
+  수렴한다(존재 비노출). DELETE(#305 탈퇴)는 단일 DB transaction으로 조건부
+  `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + 기존 refresh 전량
+  REVOKED + subject push 등록 삭제 + userId-only PENDING 삭제 작업(insert-if-absent)을 commit하고
+  202를 반환한다. 영향 0행은 fresh 조회로 분류한다 — `WITHDRAWAL_PENDING`이면 멱등 202, 회원 없음은
+  401 `-2001`. 탈퇴 회원 행은 절대 `ACTIVE`로 되돌리지 않으며 같은 provider의 다음 로그인은 released
+  identity로 `findOrCreate` 신규 생성 경로(새 userId·새 subject)를 탄다 — 과거 콘텐츠·약관 동의와
+  연결되지 않는다.
 
 ## Invariants
 
-- provider account는 email이 아니라 `(provider, provider_user_id)`로 식별한다.
+- provider account는 email이 아니라 `(provider, provider_user_id)`로 식별한다. `ACTIVE` 행의
+  `provider_user_id`는 application invariant로 non-null이고, NULL은 탈퇴 행의 identity release뿐이다
+  (nullable UNIQUE가 탈퇴 generation 다수를 허용하면서 신규 ACTIVE 행은 하나로 제한).
+- 탈퇴 상태 전이·닉네임 갱신은 조건부 UPDATE 영향 행 수로만 판정한다 — 탈퇴 행을 되살릴 수 있는
+  read-then-write entity 저장 경로를 만들지 않는다.
+- `/a/api` 인증·token/refresh 발급은 매번 회원 `ACTIVE`를 확인하고 결과를 cache하지 않는다. 회원
+  없음과 탈퇴는 응답으로 구분되지 않으며, DB 장애만 500으로 드러낸다(조용한 401 강등 금지).
 - access token에 PII를 넣거나 raw refresh/App Code를 저장하지 않는다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.

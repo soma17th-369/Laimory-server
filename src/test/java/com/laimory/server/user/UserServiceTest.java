@@ -20,8 +20,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 /**
  * findOrCreate 계약: 기존 조회 우선, 미존재면 NewUserProvisioner로 생성(user+subject mapping 한
  * transaction), 동시 최초 로그인(UNIQUE 위반)은 재조회로 수렴. Kakao 기존 사용자는 non-null 닉네임만
- * 갱신하고 누락 claim은 기존 값을 보존한다. getProfile 계약: 인증 userId 조회, 행 없음은 기존 401
- * {@code -2001}로 수렴(존재 비노출). 인프라 0.
+ * ACTIVE 조건부 nickname-only UPDATE로 갱신하고(#305 — entity 저장으로 탈퇴 status/identity를 되살리지
+ * 않음, 영향 0행이면 갱신 폐기) 누락 claim은 기존 값을 보존한다. getProfile 계약: 인증 userId 조회,
+ * 행 없음은 기존 401 {@code -2001}로 수렴(존재 비노출). 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
@@ -82,16 +83,32 @@ class UserServiceTest {
     }
 
     @Test
-    void findOrCreate_existingKakaoUser_refreshesNicknameAndSaves() {
+    void findOrCreate_existingKakaoUser_refreshesNicknameViaConditionalUpdateOnly() {
         User existing = User.of(Provider.KAKAO, PROVIDER_USER_ID, null, "옛닉");
         when(userRepository.findByProviderAndProviderUserId(Provider.KAKAO, PROVIDER_USER_ID))
                 .thenReturn(Optional.of(existing));
-        when(userRepository.saveAndFlush(existing)).thenReturn(existing);
+        when(userRepository.updateNicknameIfActive(Provider.KAKAO, PROVIDER_USER_ID, "새닉")).thenReturn(1);
 
         User result = userService.findOrCreate(Provider.KAKAO, PROVIDER_USER_ID, null, "새닉");
 
         assertThat(result.getNickname()).isEqualTo("새닉");
-        verify(userRepository).saveAndFlush(existing);
+        // entity 전체 저장 금지(#305) — 탈퇴와 겹친 stale 저장이 status/provider identity를 되살린다.
+        verify(userRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void findOrCreate_kakaoNicknameUpdateLostToWithdrawal_keepsExistingNicknameWithoutResurrection() {
+        // 조회 후 탈퇴가 commit되면 ACTIVE 조건부 UPDATE가 0행이다 — 갱신을 버리고 어떤 저장도 하지 않는다.
+        User existing = User.of(Provider.KAKAO, PROVIDER_USER_ID, null, "옛닉");
+        when(userRepository.findByProviderAndProviderUserId(Provider.KAKAO, PROVIDER_USER_ID))
+                .thenReturn(Optional.of(existing));
+        when(userRepository.updateNicknameIfActive(Provider.KAKAO, PROVIDER_USER_ID, "새닉")).thenReturn(0);
+
+        User result = userService.findOrCreate(Provider.KAKAO, PROVIDER_USER_ID, null, "새닉");
+
+        assertThat(result).isSameAs(existing);
+        assertThat(result.getNickname()).isEqualTo("옛닉");
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -105,6 +122,7 @@ class UserServiceTest {
         assertThat(result).isSameAs(existing);
         assertThat(result.getNickname()).isEqualTo("옛닉"); // 누락 claim은 철회/응답 누락 구분 불가 — 보존
         verify(userRepository, never()).saveAndFlush(any());
+        verify(userRepository, never()).updateNicknameIfActive(any(), any(), any());
     }
 
     @Test
@@ -128,13 +146,14 @@ class UserServiceTest {
                 .thenReturn(Optional.of(winnerRow)); // provision 패배 후 재조회: 상대가 만든 행
         when(newUserProvisioner.provision(any(), any(), any(), any()))
                 .thenThrow(new DataIntegrityViolationException("duplicate key")); // 내 insert 패배
-        when(userRepository.saveAndFlush(any()))
-                .thenAnswer(invocation -> invocation.getArgument(0)); // 승자 닉네임 갱신 저장
+        when(userRepository.updateNicknameIfActive(Provider.KAKAO, PROVIDER_USER_ID, "이번닉"))
+                .thenReturn(1); // 승자 행 닉네임 조건부 갱신
 
         User result = userService.findOrCreate(Provider.KAKAO, PROVIDER_USER_ID, null, "이번닉");
 
         assertThat(result).isSameAs(winnerRow);
         assertThat(result.getNickname()).isEqualTo("이번닉");
+        verify(userRepository, never()).saveAndFlush(any());
     }
 
     @Test
