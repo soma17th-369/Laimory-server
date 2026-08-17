@@ -271,7 +271,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   재사용만). 검사 통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이고 그 credential도 매 요청
   ACTIVE 검사·다음 회전 검사에서 거절된다(race로 늦게 저장된 ACTIVE refresh 행은 #302 정리 대상).
 - PENDING 계정 삭제 작업이 남아 있는 동안 previous HMAC key retire와 두 번째 rotation을 수행하지
-  않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — PENDING count/oldest-age 관측이 runbook gate).
+  않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음). 이 gate는 지표가 아니라 secret 갱신 전 runbook의
+  수동 PENDING SELECT로 확인한다(경보 미부착 지표 금지 원칙 — backlog gauge 없음).
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
   `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request UUID subjectId가 draft record 조회·

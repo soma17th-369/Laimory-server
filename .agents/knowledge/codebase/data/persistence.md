@@ -180,10 +180,11 @@ FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE �
 finalization 소유). status는 #305에서 `PENDING` 단일 값이며 worker claim/stage/retry column은 #302의
 additive migration으로 확장한다. 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
-NULL) — `created_at`이 접수 감사 시각이자 oldest-age gauge 기준이다. entity는 read model이다.
+NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
 **운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
 수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
-runbook gate, `laimory.account.erasure.job.pending*` gauge가 근거). live dev/prod 반영은 앱 배포 전
+runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은
+`(status, created_at)` index를 타는 수동 SELECT다. live dev/prod 반영은 앱 배포 전
 수동 DDL(users ALTER + job CREATE)이 필요하다(`ddl-auto=validate`).
 
 `term_agreements`(#303)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(FK 없음 —

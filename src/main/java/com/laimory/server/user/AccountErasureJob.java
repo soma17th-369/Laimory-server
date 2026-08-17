@@ -23,7 +23,7 @@ import lombok.Getter;
  * <p>쓰기는 repository의 native {@code INSERT IGNORE}(insert-if-absent)뿐이라 JPA auditing이 돌지
  * 않고 감사 컬럼은 insert SQL이 직접 채운다({@code modified_by} NULL — term_agreements 선례).
  * 이 엔티티는 조회·{@code ddl-auto=validate} 검증용 read model이다. {@code created_at}이 접수 감사
- * 시각이자 oldest-age 관측 기준이다.
+ * 시각이다(runbook의 backlog 확인은 수동 SELECT — 경보 미부착 지표 금지 원칙으로 gauge를 두지 않는다).
  */
 @Entity
 @Table(name = "account_erasure_jobs",

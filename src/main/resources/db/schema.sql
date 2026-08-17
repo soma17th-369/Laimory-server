@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS account_erasure_jobs (
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (account_erasure_job_id),
     UNIQUE KEY uq_account_erasure_jobs_user (user_id),
-    KEY idx_account_erasure_jobs_status_created (status, created_at), -- PENDING count/oldest-age 관측용
+    KEY idx_account_erasure_jobs_status_created (status, created_at), -- runbook 수동 PENDING count/최고령 조회·#302 claim 스캔용
     CONSTRAINT fk_account_erasure_jobs_user
         FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

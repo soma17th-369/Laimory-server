@@ -144,7 +144,7 @@ class UserWithdrawalIntegrationTest {
         List<AccountErasureJob> jobs = jobsOf(userId);
         assertThat(jobs).hasSize(1);
         assertThat(jobs.get(0).getStatus()).isEqualTo(AccountErasureJobStatus.PENDING);
-        assertThat(jobs.get(0).getCreatedAt()).isNotNull(); // 접수 감사 시각(oldest-age 관측 기준)
+        assertThat(jobs.get(0).getCreatedAt()).isNotNull(); // 접수 감사 시각(runbook 수동 backlog 확인 기준)
     }
 
     @Test

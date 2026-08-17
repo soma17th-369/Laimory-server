@@ -1,14 +1,13 @@
 package com.laimory.server.user;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
-/** account_erasure_jobs 레포(#305) — userId-only PENDING enqueue와 관측 조회만 소유한다. */
+/** account_erasure_jobs 레포(#305) — userId-only PENDING enqueue만 소유한다. */
 public interface AccountErasureJobRepository extends JpaRepository<AccountErasureJob, Long> {
 
     /**
@@ -24,11 +23,4 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
             VALUES (:userId, 'PENDING', :auditNow, :auditNow)
             """, nativeQuery = true)
     int insertIfAbsent(@Param("userId") Long userId, @Param("auditNow") LocalDateTime auditNow);
-
-    /** PENDING backlog 관측(gauge)·HMAC rotation runbook gate용 count. */
-    long countByStatus(AccountErasureJobStatus status);
-
-    /** 가장 오래된 PENDING 접수 시각 — oldest-age gauge 기준({@code (status, created_at)} index). */
-    @Query("select min(j.createdAt) from AccountErasureJob j where j.status = :status")
-    Optional<LocalDateTime> findOldestCreatedAtByStatus(@Param("status") AccountErasureJobStatus status);
 }
