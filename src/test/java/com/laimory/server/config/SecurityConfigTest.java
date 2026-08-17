@@ -19,7 +19,7 @@ import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.testsupport.AuthTestSupport;
-import com.laimory.server.user.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountAccessService;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

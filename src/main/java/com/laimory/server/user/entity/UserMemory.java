@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.entity;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.common.BaseEntity;

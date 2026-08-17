@@ -1,10 +1,10 @@
 package com.laimory.server.user.controller;
 
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.user.User;
-import com.laimory.server.user.UserService;
-import com.laimory.server.user.UserWithdrawalService;
 import com.laimory.server.user.dto.UserProfileResponse;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.service.UserService;
+import com.laimory.server.user.service.UserWithdrawalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;

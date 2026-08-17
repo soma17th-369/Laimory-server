@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

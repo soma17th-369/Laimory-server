@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;

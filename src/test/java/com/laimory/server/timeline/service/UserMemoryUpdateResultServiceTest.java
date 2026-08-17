@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -10,7 +11,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,7 +24,7 @@ import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
 import com.laimory.server.timeline.entity.UserMemoryUpdateTask;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.repository.UserMemoryUpdateTaskStore;
-import com.laimory.server.user.UserMemoryService;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;

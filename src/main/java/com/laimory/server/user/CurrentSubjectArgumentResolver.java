@@ -1,5 +1,6 @@
 package com.laimory.server.user;
 
+import com.laimory.server.user.service.SubjectMappingService;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.MethodParameter;

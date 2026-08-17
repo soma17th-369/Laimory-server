@@ -1,7 +1,10 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;

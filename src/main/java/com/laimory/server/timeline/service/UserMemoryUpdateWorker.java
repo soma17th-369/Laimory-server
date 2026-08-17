@@ -10,7 +10,7 @@ import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import com.laimory.server.timeline.entity.UserMemoryUpdateTask;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.repository.UserMemoryUpdateTaskStore;
-import com.laimory.server.user.UserMemoryService;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

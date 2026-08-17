@@ -1,5 +1,6 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
+import com.laimory.server.user.repository.AccountErasureJobRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;

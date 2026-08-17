@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -14,6 +14,7 @@ import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.PushRegistrationService;
+import com.laimory.server.user.UserStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;

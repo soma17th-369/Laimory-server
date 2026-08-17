@@ -1,8 +1,8 @@
 package com.laimory.server.common.error;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static com.laimory.server.testsupport.TestSubjects.id;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -21,7 +21,7 @@ import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
-import com.laimory.server.user.SubjectMappingService;
+import com.laimory.server.user.service.SubjectMappingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

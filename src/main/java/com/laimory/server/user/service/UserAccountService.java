@@ -1,5 +1,8 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
+import com.laimory.server.user.UserStatus;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;

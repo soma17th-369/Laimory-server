@@ -1,9 +1,15 @@
-package com.laimory.server.user;
+package com.laimory.server.user.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.SubjectLookupKeyDeriver;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.service.NewUserProvisioner;
+import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.UserMemoryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;

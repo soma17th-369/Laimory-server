@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -10,6 +10,9 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.entity.UserMemory;
+import com.laimory.server.user.repository.UserMemoryRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -20,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.BeanUtils;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -43,9 +47,9 @@ class UserMemoryServiceTest {
         return new UserMemoryService(userMemoryRepository, Clock.fixed(NOW, ZONE));
     }
 
-    /** 쓰기가 native query뿐이라 엔티티에 팩토리가 없다 — 조회 fixture는 필드를 직접 채운다. */
+    /** 쓰기가 native query뿐이라 엔티티에 팩토리가 없다 — 조회 fixture는 필드를 직접 채운다(protected JPA 생성자는 리플렉션 생성). */
     private UserMemory memoryRow(JsonNode memory) {
-        UserMemory row = new UserMemory();
+        UserMemory row = BeanUtils.instantiateClass(UserMemory.class);
         ReflectionTestUtils.setField(row, "subjectId", SUBJECT_ID);
         ReflectionTestUtils.setField(row, "memory", memory);
         return row;

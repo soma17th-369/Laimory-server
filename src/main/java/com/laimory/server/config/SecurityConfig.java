@@ -6,7 +6,7 @@ import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.auth.security.JwtAuthenticationFilter;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.user.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountAccessService;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;

@@ -1,6 +1,8 @@
-package com.laimory.server.user;
+package com.laimory.server.user.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.UserStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

@@ -1,4 +1,6 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
+import com.laimory.server.user.UserStatus;
+
 
 /**
  * 인증·token 발급 경계가 회원의 활성 여부를 확인하는 최소 계약(#305).

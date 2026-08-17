@@ -4,7 +4,7 @@ import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
-import com.laimory.server.user.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountAccessService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

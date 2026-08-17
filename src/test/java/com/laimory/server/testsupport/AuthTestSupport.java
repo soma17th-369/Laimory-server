@@ -1,7 +1,7 @@
 package com.laimory.server.testsupport;
 
 import com.laimory.server.auth.token.JwtTokens;
-import com.laimory.server.user.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountAccessService;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;

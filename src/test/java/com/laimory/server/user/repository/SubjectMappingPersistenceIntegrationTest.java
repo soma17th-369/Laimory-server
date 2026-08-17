@@ -1,21 +1,27 @@
-package com.laimory.server.user;
+package com.laimory.server.user.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.SubjectLookupKeyDeriver;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.entity.UserSubjectLink;
+import com.laimory.server.user.service.NewUserProvisioner;
+import com.laimory.server.user.service.SubjectMappingService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;

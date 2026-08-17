@@ -1,5 +1,8 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

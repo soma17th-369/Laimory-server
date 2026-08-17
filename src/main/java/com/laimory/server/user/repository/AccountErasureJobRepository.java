@@ -1,5 +1,6 @@
-package com.laimory.server.user;
+package com.laimory.server.user.repository;
 
+import com.laimory.server.user.entity.AccountErasureJob;
 import java.time.LocalDateTime;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;

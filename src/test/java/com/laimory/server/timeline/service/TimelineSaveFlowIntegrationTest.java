@@ -1,8 +1,8 @@
 package com.laimory.server.timeline.service;
 
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,8 +15,8 @@ import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateResultRequest;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
-import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
+import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -26,8 +26,8 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.repository.UserMemoryUpdateTaskStore;
-import com.laimory.server.user.UserMemoryRepository;
-import com.laimory.server.user.UserMemoryService;
+import com.laimory.server.user.repository.UserMemoryRepository;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

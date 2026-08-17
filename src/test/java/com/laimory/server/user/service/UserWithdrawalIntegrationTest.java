@@ -1,4 +1,4 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -15,6 +15,15 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.repository.PushRegistrationRepository;
 import com.laimory.server.push.service.PushRegistrationService;
+import com.laimory.server.user.AccountErasureJobStatus;
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.SubjectLookupKeyDeriver;
+import com.laimory.server.user.UserStatus;
+import com.laimory.server.user.entity.AccountErasureJob;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.repository.AccountErasureJobRepository;
+import com.laimory.server.user.repository.UserRepository;
+import com.laimory.server.user.repository.UserSubjectLinkRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;

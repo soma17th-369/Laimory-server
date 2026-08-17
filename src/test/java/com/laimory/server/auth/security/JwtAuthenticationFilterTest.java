@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
-import com.laimory.server.user.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountAccessService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
