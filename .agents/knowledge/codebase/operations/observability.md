@@ -59,7 +59,8 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
   아니며, 발송 결과 summary는 무효 등록 DB 정리 전에 남긴다(sender/notifier unit test가 고정).
 
 **요청·응답 값은 적극적으로 log한다. 금지는 진짜 비밀(token, password, credential, presigned URL,
-세션 값)과 사용자 사생활 원문을 통째로 담는 지정 endpoint body(#281 — 아래 전체 마스킹 목록)다.**
+세션 값)과 사용자 사생활 원문·약관 법률 원문(#281·#312 — 지정 endpoint는 아래 allowlist skeleton
+마스킹으로 구조 필드만 남긴다)이다.**
 query string과 request/response header는 서명·token 채널이라 제외한다. 따라서 OAuth 302
 `Location`의 `app_code`도 기록하지 않는다. 향후 header 로깅은 별도 마스킹·보안 검토 없이는 추가하지 않는다.
 금지 대상을 예외 메시지에도 넣지 않는다.
@@ -82,16 +83,25 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문·약관 법률 원문을 통째로 담는 지정 13개 endpoint의 body는 파싱 시도 없이 고정
-  `[masked privacy body]`로 전체 마스킹한다(#281·#303) — request 6개(draft 생성 POST, Event PATCH,
-  memo PUT, AI timeline result POST, AI callback POST, User Memory result POST), response 7개
-  (draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, 공개 약관 GET
-  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). malformed·oversize·비JSON·
-  empty도 같은 placeholder다. AI input 응답(`GET /s/.../input`)은 대상이 아니다 — 저장 시점에 이미
-  privacy 치환된 서버간 응답이다. 약관 동의 POST request는 원문 없이 type/version뿐이라 전체 마스킹
-  대상이 아니다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
-  비정상 body의 형태·누락/미지 필드·원문·fingerprint는
-  access logging 범위가 아니며 status/errorCode/transactionId/clientIp로 조사한다.
+  사용자 사생활 원문·약관 법률 원문을 담는 지정 13개 endpoint의 body는 **allowlist skeleton**으로
+  마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303) — request 6개(draft 생성
+  POST, Event PATCH, memo PUT, AI timeline result POST, AI callback POST, User Memory result POST),
+  response 7개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, 공개 약관 GET
+  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`).
+  skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
+  status·`ApiResponse` envelope의 header/code/body·약관 termType/version/required/effectiveAt/
+  acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —
+  새 DTO 필드는 자동 마스크, title/content/payload/memo/userMemory·envelope `message`가 대표 대상).
+  allowlist 텍스트 값도 shape guard(`[A-Za-z0-9_\-.:+/]{1,64}` 전체 일치) 통과 시만 남아 공백·비ASCII·
+  장문 원문은 어떤 필드명 밑에서도 남지 않는다. `error`/`errorCode`는 숫자·null만 남긴다(폴링 numeric
+  code는 유지, 콜백 자유 텍스트는 마스크 — "수신 후 폐기" 계약 유지). empty·캡처 상한 초과는 파싱
+  없이, malformed·비JSON은 파싱 실패로 — 모두 고정 `[masked privacy body]`로 폴백해 형태 정보도
+  남기지 않는다. AI input 응답(`GET /s/.../input`)은 대상이 아니다 — 저장 시점에 이미
+  privacy 치환된 서버간 응답이다. 약관 동의 POST request는 원문 없이 type/version뿐이라 대상이
+  아니다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
+  파싱 불가 body의 형태·원문·fingerprint는 여전히 access logging 범위 밖이며
+  status/errorCode/transactionId/clientIp로 조사한다. 파싱 가능한 불량 body는 #312부터 skeleton으로
+  구조(필드 존재·enum 값·개수)까지 관찰할 수 있다.
 - request cache는 MVC가 실제로 읽은 bytes만 가진다. 404/405/415처럼 body를 읽기 전에 거절하면
   client가 bytes를 보냈어도 `requestBody`가 null일 수 있고, malformed JSON은 소비된 부분 또는 전체가
   남을 수 있다. 로깅을 위해 request stream을 선행 소비하지 않는다.
@@ -99,18 +109,19 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `[unavailable: unhandled exception]`로 남긴다. 이후 container `/error` body는 현재 한 줄 access log에서
   관찰하지 않는다.
 
-위치·건강·알림 본문·기기 사진 URI 등 사용자 사생활 원문과 약관 원문을 통째로 담는 경로의 body는 위
-13개 endpoint 전체 마스킹으로 access log에 남지 않는다. 마스킹 밖 경로의 body에도 개인 데이터가 실릴
+위치·건강·알림 본문·기기 사진 URI 등 사용자 사생활 원문과 약관 원문은 위 13개 endpoint skeleton
+마스킹으로 access log에 남지 않는다(구조 필드만 남는다). 마스킹 밖 경로의 body에도 개인 데이터가 실릴
 수 있고 `clientIp`·`userId`와 결합된다
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
 개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
 
-polling GET response body는 privacy 마스킹(#281)부터 `[masked privacy body]`다 — 이벤트 제목·부제·
-질문·payload 등 사용자 사생활 원문을 통째로 담기 때문이다. 2026-07-17의 "전체 response body 기록 유지"
-결정은 이 마스킹으로 뒤집혔고, FAILED 진단은 body 대신 status/errorCode/exceptionType/transactionId로
-한다. 아래 preview 상한 산정 수치는 마스킹 도입 전 polling body 기준의 기록이다.
+polling GET response body는 #281에서 전체 placeholder였고 #312부터 skeleton이다 — 이벤트 제목·부제·
+질문·payload 등 원문 필드는 `"***"`, envelope·status·numeric `error`·이벤트/아이템 구조는 남는다.
+2026-07-17의 "전체 response body 기록 유지" 결정은 #281로 뒤집혔고, FAILED 진단은 skeleton의
+status/error와 access log field(errorCode/exceptionType/transactionId)로 한다. 아래 preview 상한
+산정 수치는 마스킹 도입 전 polling body 기준의 기록이다.
 
 2026-07-16 `LogstashEncoder` 실인코딩 fixture(service/environment 포함, preview 8,192자)는
 `PROCESSING` 652 B, 12 events × 4 photo items의 대표 `SUCCESS` 10,387 B, escape-heavy preview

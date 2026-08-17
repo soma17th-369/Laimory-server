@@ -18,7 +18,9 @@ import org.springframework.http.MediaType;
 
 /**
  * 제한된 JSON body를 access log용 text preview로 만들고 비밀 필드를 재귀적으로 제거한다.
- * 사용자 사생활 원문을 통째로 담는 지정 method+path는 body 전체를 고정 placeholder로 치환한다.
+ * 사용자 사생활 원문을 담는 지정 method+path는 allowlist 구조 필드만 값을 남기는 skeleton으로
+ * 마스킹하고(기본 마스크 — 목록 밖 필드는 타입 무관 제거), 파싱할 수 없는 body는 고정
+ * placeholder로 폴백해 원문 유출 경로를 남기지 않는다.
  */
 final class AccessLogBodyMasker {
 
@@ -46,10 +48,9 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/callback$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")));
 
-    // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건.
+    // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건·
+    // 약관 원문 두 GET(전문·동의 이력 — 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지).
     // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
-    // 약관 두 GET은 법률 원문 전체를 담으므로 body 크기·JSON parse 성공 여부와 무관하게 전체 치환한다
-    // (동의 POST request에는 원문이 없고 type/version뿐이라 기존 field-level 규칙을 유지한다).
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records$")),
@@ -63,6 +64,29 @@ final class AccessLogBodyMasker {
     private static final List<String> CONTAINED_SECRET_NAMES =
             List.of("password", "secret", "token", "credential", "authorization");
 
+    // privacy 경로 skeleton allowlist(#312) — 여기 명시된 구조 필드만 값을 남기고 목록 밖 필드는
+    // 타입 무관 subtree째 MASK다. 새 DTO 필드의 기본이 마스크라 목록 갱신 누락이 유출로 새지 않는다.
+    private static final Set<String> SKELETON_SAFE_FIELDS = Set.of(
+            // draft 생성·Event 수정 request envelope
+            "recorddate", "recordat", "recordtimezone", "timelinewindow", "starttime", "endtime",
+            "sourceitems", "itemtype", "rawid", "startat", "endat", "photostoadd",
+            // AI result·상태 전이
+            "events", "eventtype", "sourcerawids", "status", "elapsedseconds",
+            // 조회 response 구조(ApiResponse envelope 포함 — message는 제외)
+            "header", "code", "body", "result", "timelines", "dailyrecordid", "emotiontype",
+            "timelineeventid", "items", "timelineitemid",
+            // 약관 구조(title·content 법률 원문은 제외)
+            "terms", "agreements", "termtype", "version", "required", "effectiveat", "acceptedat");
+
+    // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는
+    // 자유 텍스트다(수신 후 폐기 계약) — 같은 이름의 이중 의미라 숫자·null만 남긴다. errorCode는
+    // StrictErrorCodeDeserializer 적용 전의 wire 원문이므로 같은 규칙으로 텍스트 가능성을 차단한다.
+    private static final Set<String> SKELETON_NUMERIC_ONLY_FIELDS = Set.of("error", "errorcode");
+
+    // allowlist 필드의 텍스트 값 shape guard — 현 계약의 구조 값(enum·UUID·ISO 시각·ZoneId·버전
+    // 문자열)만 통과한다. 클라 버그로 구조 필드에 원문이 실려도 공백·비ASCII·장문은 남지 않는다.
+    private static final Pattern SKELETON_STRUCTURAL_TEXT = Pattern.compile("[A-Za-z0-9_\\-.:+/]{1,64}");
+
     private final ObjectMapper objectMapper;
 
     AccessLogBodyMasker(ObjectMapper objectMapper) {
@@ -70,13 +94,13 @@ final class AccessLogBodyMasker {
     }
 
     String maskRequest(HttpServletRequest request, byte[] body, boolean overflowed) {
-        // path 판정이 body 검사보다 먼저다 — 대상 경로는 empty·비JSON·malformed·oversize여도
-        // 파싱을 시도하지 않고 같은 고정 placeholder로 확정해 원문 유출 경로를 남기지 않는다.
+        // path 판정이 body 검사보다 먼저다 — auth는 항상 placeholder, privacy는 skeleton 전용
+        // 경로로 보내 empty·비JSON·malformed·oversize가 일반 마스킹 규칙으로 새지 않게 한다.
         if (AUTH_BODY_PATH.matcher(request.getRequestURI()).matches()) {
             return MASKED_AUTH_BODY;
         }
         if (matchesAny(PRIVACY_REQUEST_PATHS, request)) {
-            return MASKED_PRIVACY_BODY;
+            return maskPrivacyBody(body, request.getContentLengthLong(), overflowed);
         }
         if (body.length == 0 || !isJson(request.getContentType())) {
             return null;
@@ -86,7 +110,7 @@ final class AccessLogBodyMasker {
 
     String maskResponse(HttpServletRequest request, HttpServletResponse response, byte[] body, boolean overflowed) {
         if (matchesAny(PRIVACY_RESPONSE_PATHS, request)) {
-            return MASKED_PRIVACY_BODY;
+            return maskPrivacyBody(body, contentLength(response), overflowed);
         }
         if (body.length == 0 || !isJson(response.getContentType())) {
             return null;
@@ -119,6 +143,65 @@ final class AccessLogBodyMasker {
         }
     }
 
+    /**
+     * privacy 경로 body의 allowlist skeleton. 파싱 성공 시에만 구조를 남기고, 파싱할 수 없는
+     * body(empty·oversize·malformed·비JSON)는 형태 정보도 남기지 않도록 고정 placeholder로 폴백한다.
+     */
+    private String maskPrivacyBody(byte[] body, long declaredLength, boolean overflowed) {
+        if (body.length == 0 || declaredLength > CAPTURE_LIMIT_BYTES || overflowed) {
+            return MASKED_PRIVACY_BODY;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            if (root == null) {
+                return MASKED_PRIVACY_BODY;
+            }
+            String compactJson = objectMapper.writeValueAsString(skeletonNode(root));
+            return LogSanitizer.sanitize(compactJson, MAX_LOGGED_CHARS);
+        } catch (IOException | IllegalArgumentException e) {
+            return MASKED_PRIVACY_BODY;
+        }
+    }
+
+    private JsonNode skeletonNode(JsonNode node) {
+        if (node.isObject()) {
+            ObjectNode object = (ObjectNode) node;
+            List<String> fieldNames = new ArrayList<>();
+            object.fieldNames().forEachRemaining(fieldNames::add);
+            for (String fieldName : fieldNames) {
+                object.set(fieldName, skeletonValue(fieldName, object.get(fieldName)));
+            }
+            return object;
+        }
+        if (node.isArray()) {
+            ArrayNode array = (ArrayNode) node;
+            for (int index = 0; index < array.size(); index++) {
+                array.set(index, skeletonNode(array.get(index)));
+            }
+            return array;
+        }
+        return skeletonScalar(node);
+    }
+
+    private JsonNode skeletonValue(String fieldName, JsonNode value) {
+        String normalized = normalizeFieldName(fieldName);
+        if (SKELETON_NUMERIC_ONLY_FIELDS.contains(normalized)) {
+            // null까지 마스크하면 실제 null이 "마스킹된 민감값"처럼 오독된다 — 숫자·null만 유지.
+            return value.isNumber() || value.isNull() ? value : TextNode.valueOf(MASK);
+        }
+        if (!SKELETON_SAFE_FIELDS.contains(normalized)) {
+            return TextNode.valueOf(MASK);
+        }
+        return skeletonNode(value);
+    }
+
+    private static JsonNode skeletonScalar(JsonNode node) {
+        if (node.isTextual() && !SKELETON_STRUCTURAL_TEXT.matcher(node.textValue()).matches()) {
+            return TextNode.valueOf(MASK);
+        }
+        return node;
+    }
+
     private JsonNode maskNode(JsonNode node) {
         if (node.isTextual()) {
             return containsIgnoreCase(node.textValue(), "x-amz-") ? TextNode.valueOf(MASK) : node;
@@ -143,9 +226,13 @@ final class AccessLogBodyMasker {
     }
 
     private static boolean isSecretField(String fieldName) {
-        String normalized = fieldName.toLowerCase(Locale.ROOT).replace("_", "").replace("-", "");
+        String normalized = normalizeFieldName(fieldName);
         return EXACT_SECRET_NAMES.contains(normalized)
                 || CONTAINED_SECRET_NAMES.stream().anyMatch(normalized::contains);
+    }
+
+    private static String normalizeFieldName(String fieldName) {
+        return fieldName.toLowerCase(Locale.ROOT).replace("_", "").replace("-", "");
     }
 
     private static boolean containsIgnoreCase(String value, String needle) {
