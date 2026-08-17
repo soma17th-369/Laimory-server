@@ -27,8 +27,8 @@ import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfigurat
 import org.springframework.boot.autoconfigure.security.oauth2.client.OAuth2ClientAutoConfiguration;
 import org.springframework.boot.autoconfigure.session.SessionAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalManagementPort;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -200,6 +200,12 @@ class ActuatorEndpointIntegrationTest {
             ProbeController.class
     })
     static class TestApplication {
+
+        /** DB 없는 최소 앱 — JWT 필터의 active 검사(#305)는 항상 활성으로 stub한다(이 경계와 무관). */
+        @org.springframework.context.annotation.Bean
+        com.laimory.server.user.service.UserAccountAccessService userAccountAccessService() {
+            return userId -> true;
+        }
     }
 
     @RestController

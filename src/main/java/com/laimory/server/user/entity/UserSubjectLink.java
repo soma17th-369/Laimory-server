@@ -1,5 +1,6 @@
-package com.laimory.server.user;
+package com.laimory.server.user.entity;
 
+import com.laimory.server.user.repository.UserSubjectLinkRepository;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;

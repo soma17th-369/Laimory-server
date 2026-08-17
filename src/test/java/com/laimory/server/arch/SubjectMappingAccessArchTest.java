@@ -5,8 +5,8 @@ import static com.tngtech.archunit.core.domain.JavaClass.Predicates.belongToAnyO
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.laimory.server.user.SubjectLookupKeyDeriver;
-import com.laimory.server.user.SubjectMappingService;
-import com.laimory.server.user.UserSubjectLinkRepository;
+import com.laimory.server.user.repository.UserSubjectLinkRepository;
+import com.laimory.server.user.service.SubjectMappingService;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;

@@ -228,8 +228,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
-  등록/이력·내 회원 조회·push 등록 PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer
-  인증(401)은 그대로 요구한다. 후속 #305 탈퇴 endpoint가 같은 annotation을 재사용한다.
+  등록/이력·내 회원 조회·회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
+  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
 - 기대 필수 종류 중 current 문서가 없거나 enum mapping이 깨진 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
   전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
@@ -240,14 +240,41 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Authentication
 
 - 사용자는 `(provider, provider_user_id)`로만 결합하며 email로 provider account를 merge하지 않는다.
+  `ACTIVE` 행의 `provider_user_id`는 application invariant로 non-null이고 NULL은 탈퇴 행의 identity
+  release뿐이다(#305).
 - Kakao 재로그인은 non-null 닉네임만 갱신한다. 누락 claim은 동의 철회인지 provider 응답 누락인지
-  구분할 수 없으므로 기존 값을 지우지 않는다.
+  구분할 수 없으므로 기존 값을 지우지 않는다. 갱신은 `(provider, provider_user_id, status=ACTIVE)`
+  조건의 nickname-only UPDATE다 — 탈퇴와 겹친 stale 로그인이 entity 저장으로 old row의 status/released
+  identity를 되살리는 경로를 만들지 않는다(영향 0행 = 갱신 폐기).
 - access JWT에는 `iss/sub/iat/exp`만 두고 PII를 넣지 않는다.
 - refresh token raw value는 저장하지 않고 hash만 저장한다.
 - refresh rotation과 reuse detection은 transactionally 처리하고 reuse 때 그 사용자의 refresh를 모두 revoke한다.
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
+- `/a/api` 인증은 JWT 파싱에 더해 매 요청 users PK로 회원 `ACTIVE`를 확인한다(#305 — cache 금지).
+  회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애만 fail-closed
+  500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
+  성립한 뒤에만 기록한다.
+- 탈퇴(#305)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
+  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록 삭제 + userId-only
+  PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). 동시성 판정은 조건부
+  UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
+  수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 old
+  credential의 사용·연장 불가를 뜻한다.
+- `WITHDRAWAL_PENDING` 행을 `ACTIVE`로 되돌리는 경로는 없다. 같은 provider의 다음 로그인은 released
+  identity로 `findOrCreate` 신규 생성 경로를 타 새 userId·새 subject의 완전히 새로운 회원이 된다 —
+  old subject/콘텐츠/약관 동의를 새 회원에 연결하거나 email로 병합하지 않는다.
+- token 발급(app-code 교환)과 refresh 회전은 발급 전에 회원 `ACTIVE`를 조회한다(#305). 회원
+  없음/탈퇴는 각각 기존 401 `-2002`(`APP_CODE_INVALID`)/`-2003`(`REFRESH_TOKEN_INVALID`, INFO)으로
+  수렴하며 탈퇴 전용 code·WARN·ERROR를 만들지 않는다(WARN은 실제 verifier 불일치·active 회원 refresh
+  재사용만). 검사 통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이고 그 credential도 매 요청
+  ACTIVE 검사·다음 회전 검사에서 거절된다(race로 늦게 저장된 ACTIVE refresh 행은 #302 정리 대상).
+  탈퇴-회전 경합의 좁은 창(ACTIVE 검사 통과 후 claim 전에 탈퇴 commit)에서는 스퓨리어스 reuse WARN
+  1회가 가능하다(문서화된 제한 예외 — 401 `-2003` 수렴 계약 자체는 동일).
+- PENDING 계정 삭제 작업이 남아 있는 동안 previous HMAC key retire와 두 번째 rotation을 수행하지
+  않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음). 이 gate는 지표가 아니라 secret 갱신 전 runbook의
+  수동 PENDING SELECT로 확인한다(경보 미부착 지표 금지 원칙 — backlog gauge 없음).
 - access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
 - 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
   `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request UUID subjectId가 draft record 조회·

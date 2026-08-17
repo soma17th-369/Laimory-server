@@ -8,6 +8,7 @@ import com.laimory.server.common.error.ExceptionType;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.function.LongPredicate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -55,6 +56,12 @@ public class RefreshTokenService {
      * ROTATED/REVOKED)은 사용자 전체 폐기 후 {@code REFRESH_TOKEN_REUSED} — 클라이언트엔 둘 다
      * {@code -2003}(재로그인)으로 나가고, 내부 구분은 access 로그의 exceptionType에 남는다.
      *
+     * <p>{@code ownerActive}는 발급 전에 수행하는 소유 회원의 일반 ACTIVE 검사다(#305 §5.4 —
+     * {@code AuthTokenService}가 {@code UserAccountAccessService#isActive}를 넘긴다). 탈퇴/삭제 회원의
+     * 회전은 — 탈퇴가 폐기한 REVOKED 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN 재사용 경로에
+     * 들어가기 전에 credential 무효와 구분 없는 {@code REFRESH_TOKEN_INVALID}(INFO)로 수렴한다.
+     * 검사 통과 직후 탈퇴와 겹친 in-flight 회전은 §5.1의 제한된 예외다.
+     *
      * <p><b>회전 승자의 claim + 새 refresh 저장은 한 트랜잭션</b>으로 묶는다(아래 {@code transactionTemplate}).
      * 그 트랜잭션은 old row 락을 커밋까지 쥐므로, 같은 토큰으로 동시에 들어온 loser는 <b>승자 커밋 이후에야</b>
      * {@code claim=0}을 관측한다 — 그 시점엔 승자의 새 ACTIVE refresh까지 커밋돼 있어, loser의
@@ -63,13 +70,17 @@ public class RefreshTokenService {
      * <p>반면 loser의 전체 폐기와 뒤따르는 throw는 트랜잭션 밖이다 — 폐기가 throw와 함께 롤백되면 안 되므로
      * 승자 트랜잭션이 커밋된 뒤 별도 커밋된다.
      */
-    public Rotation rotate(String rawToken) {
+    public Rotation rotate(String rawToken, LongPredicate ownerActive) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new IllegalArgumentException("refreshToken must not be blank");
         }
         RefreshToken current = refreshTokenRepository.findByTokenHash(AuthTokens.sha256Hex(rawToken))
                 .orElseThrow(() -> new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID));
         if (current.isExpired(LocalDateTime.now(clock))) {
+            throw new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID);
+        }
+        if (!ownerActive.test(current.getUserId())) {
+            // 회원 없음/탈퇴 — 발급 전에 거절한다. 탈퇴 상태를 노출하지 않고 기존 -2003(INFO)으로 수렴.
             throw new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID);
         }
 
@@ -88,6 +99,14 @@ public class RefreshTokenService {
             throw new BusinessException(ExceptionType.REFRESH_TOKEN_REUSED);
         }
         return new Rotation(current.getUserId(), newRefresh);
+    }
+
+    /**
+     * 탈퇴 transaction 합류용(#305) — 그 transaction이 관측한 사용자 refresh 전체를 {@code REVOKED}로
+     * 폐기한다(멱등 — repository의 조건부 UPDATE가 REQUIRED 전파로 호출자 transaction에 합류).
+     */
+    public void revokeAllForUser(long userId) {
+        refreshTokenRepository.revokeAllByUserId(userId);
     }
 
     /** 로그아웃: 해당 refresh만 폐기한다. 멱등 — 미존재/이미 폐기여도 조용히 성공(유효성 오라클 차단). */

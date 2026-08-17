@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.user.Provider;
-import com.laimory.server.user.User;
-import com.laimory.server.user.UserService;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.service.UserService;
 import java.lang.reflect.Field;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

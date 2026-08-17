@@ -19,6 +19,7 @@ import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.user.service.UserAccountAccessService;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,8 +40,9 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인의
- * /a/api 인증 강제(무토큰/무효 토큰 → 401 ERROR_2001, 유효 토큰 → 통과), 공개 경로 무인증 유지,
- * 핸드오프 안내 페이지의 code 비표시, App Link 검증 파일(assetlinks.json)의 무인증 JSON 제공.
+ * /a/api 인증 강제(무토큰/무효 토큰/탈퇴 회원 → 401 ERROR_2001, 유효 토큰 + ACTIVE 회원 → 통과 —
+ * #305 매 요청 active 검사), 공개 경로 무인증 유지, 핸드오프 안내 페이지의 code 비표시, App Link
+ * 검증 파일(assetlinks.json)의 무인증 JSON 제공.
  */
 @WebMvcTest(controllers = AuthHandoffPageController.class)
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
@@ -61,6 +63,10 @@ class SecurityConfigTest {
 
     @MockitoBean
     private SocialLoginService socialLoginService;
+
+    // JwtTokensTestConfig의 항상-활성 기본 빈을 대체 — 테스트별로 active/탈퇴를 stub한다(#305).
+    @MockitoBean
+    private UserAccountAccessService userAccountAccessService;
 
     @BeforeEach
     void attachAccessLogAppender() {
@@ -169,7 +175,8 @@ class SecurityConfigTest {
 
     @Test
     void authenticatedPrefix_withValidToken_passesSecurityToHandler404() throws Exception {
-        // 유효 토큰은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
+        // 유효 토큰 + ACTIVE 회원은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
+        org.mockito.Mockito.when(userAccountAccessService.isActive(42L)).thenReturn(true);
         String token = jwtTokens.issueAccessToken(42L);
 
         MvcResult result = mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
@@ -181,6 +188,25 @@ class SecurityConfigTest {
         JsonNode accessEvent = encoded(findAccessEvent(result));
         assertThat(accessEvent.get("userId").isIntegralNumber()).isTrue();
         assertThat(accessEvent.get("userId").asLong()).isEqualTo(42L);
+    }
+
+    @Test
+    void authenticatedPrefix_withdrawnUserValidToken_returnsSame401Envelope() throws Exception {
+        // #305: 서명·만료가 유효해도 회원이 ACTIVE가 아니면(탈퇴 접수/최종 삭제) 무토큰과 같은
+        // 401 ERROR_2001로 수렴한다 — 탈퇴 상태를 노출하지 않는다. (MockitoBean 기본 stub = false)
+        String token = jwtTokens.issueAccessToken(42L);
+
+        MvcResult result = mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
+                .andExpect(jsonPath("$.body").doesNotExist())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andReturn();
+
+        // active 인증이 성립하지 않았으므로 access 로그의 userId는 무토큰과 같은 null이다(주체 비기록).
+        JsonNode accessEvent = encoded(findAccessEvent(result));
+        assertThat(accessEvent.path("userId").isNull()).isTrue();
     }
 
     @Test

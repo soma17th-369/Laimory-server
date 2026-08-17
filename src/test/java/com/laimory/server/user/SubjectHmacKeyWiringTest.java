@@ -2,6 +2,7 @@ package com.laimory.server.user;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.user.service.SubjectMappingMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.File;

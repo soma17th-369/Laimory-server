@@ -1,6 +1,7 @@
 package com.laimory.server.testsupport;
 
 import com.laimory.server.auth.token.JwtTokens;
+import com.laimory.server.user.service.UserAccountAccessService;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -41,6 +42,15 @@ public final class AuthTestSupport {
         @Bean
         JwtTokens jwtTokens() {
             return new JwtTokens(TEST_JWT_SECRET, Duration.ofMinutes(15), Clock.systemUTC());
+        }
+
+        /**
+         * JWT 필터의 매 요청 active 검사(#305)용 슬라이스 기본 빈 — 항상 활성 회원으로 취급한다.
+         * 탈퇴·장애 시나리오가 필요한 테스트는 {@code @MockitoBean UserAccountAccessService}로 대체한다.
+         */
+        @Bean
+        UserAccountAccessService userAccountAccessService() {
+            return userId -> true;
         }
     }
 }

@@ -1,5 +1,6 @@
-package com.laimory.server.user;
+package com.laimory.server.user.repository;
 
+import com.laimory.server.user.entity.UserMemory;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;

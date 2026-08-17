@@ -190,6 +190,8 @@ Spring JSON stdout
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
 - 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
+- 경보 규칙까지 물리지 않을 지표는 붙이지 않는다(write-only 지표 금지) — 예: 계정 삭제 작업(#305)
+  PENDING backlog는 gauge 없이 runbook의 수동 SELECT로 확인한다.
 - custom meter:
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수

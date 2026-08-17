@@ -1,6 +1,8 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.laimory.server.user.entity.UserMemory;
+import com.laimory.server.user.repository.UserMemoryRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Optional;

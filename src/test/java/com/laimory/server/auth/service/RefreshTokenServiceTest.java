@@ -70,7 +70,7 @@ class RefreshTokenServiceTest {
                 .thenReturn(java.util.Optional.of(activeToken()));
         when(refreshTokenRepository.claimRotation(any())).thenReturn(1);
 
-        RefreshTokenService.Rotation rotation = newService().rotate(oldRaw);
+        RefreshTokenService.Rotation rotation = newService().rotate(oldRaw, id -> true);
 
         assertThat(rotation.userId()).isEqualTo(USER_ID);
         assertThat(rotation.refreshToken()).isNotEqualTo(oldRaw);
@@ -86,7 +86,7 @@ class RefreshTokenServiceTest {
     void rotate_unknownToken_throwsError2003_withoutRevokeAll() {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.empty());
 
-        assertThatThrownBy(() -> newService().rotate("unknown-raw"))
+        assertThatThrownBy(() -> newService().rotate("unknown-raw", id -> true))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(ex.getErrorCode()).isEqualTo(-2003);
@@ -99,7 +99,7 @@ class RefreshTokenServiceTest {
         RefreshToken expired = RefreshToken.issue(USER_ID, "hash", LOCAL_NOW.minusSeconds(1), null);
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(expired));
 
-        assertThatThrownBy(() -> newService().rotate("expired-raw"))
+        assertThatThrownBy(() -> newService().rotate("expired-raw", id -> true))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(ex.getErrorCode()).isEqualTo(-2003);
@@ -108,11 +108,27 @@ class RefreshTokenServiceTest {
     }
 
     @Test
+    void rotate_inactiveOwner_throwsInvalid2003BeforeClaim_withoutWarnReusePath() {
+        // 탈퇴/삭제 회원의 회전(#305): 행 상태와 무관하게 발급 전 ACTIVE 검사에서 credential 무효와
+        // 구분 없는 REFRESH_TOKEN_INVALID(INFO)로 수렴한다 — WARN 재사용 경로·전체 폐기에 진입하지 않는다.
+        when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(activeToken()));
+
+        assertThatThrownBy(() -> newService().rotate("withdrawn-raw", id -> false))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
+                    assertThat(ex.getErrorCode()).isEqualTo(-2003);
+                });
+        verify(refreshTokenRepository, never()).claimRotation(any());
+        verify(refreshTokenRepository, never()).revokeAllByUserId(any());
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    @Test
     void rotate_claimLost_revokesAllAndThrowsError2003() {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(activeToken()));
         when(refreshTokenRepository.claimRotation(any())).thenReturn(0); // 이미 ROTATED/REVOKED = 재사용 신호
 
-        assertThatThrownBy(() -> newService().rotate("reused-raw"))
+        assertThatThrownBy(() -> newService().rotate("reused-raw", id -> true))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     // N:1 계약: 내부 타입은 재사용 탐지(WARN 대상)로 구분되지만 클라이언트 코드는 동일하다
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_REUSED);
@@ -126,8 +142,8 @@ class RefreshTokenServiceTest {
     void rotateAndRevoke_blankToken_throwIllegalArgument() {
         RefreshTokenService service = newService();
 
-        assertThatThrownBy(() -> service.rotate(" ")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.rotate(null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.rotate(" ", id -> true)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.rotate(null, id -> true)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.revoke(" ")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.revoke(null)).isInstanceOf(IllegalArgumentException.class);
     }

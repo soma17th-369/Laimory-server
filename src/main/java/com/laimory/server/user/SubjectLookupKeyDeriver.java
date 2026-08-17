@@ -1,5 +1,6 @@
 package com.laimory.server.user;
 
+import com.laimory.server.user.service.SubjectMappingService;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;

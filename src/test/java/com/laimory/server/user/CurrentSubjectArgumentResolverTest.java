@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.user.service.SubjectMappingService;
 import java.lang.reflect.Method;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;

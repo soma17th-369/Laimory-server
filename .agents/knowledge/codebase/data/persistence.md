@@ -34,7 +34,7 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, `cleanup_available_at`=retention cleanup
   eligibility)
-- `users`, `refresh_tokens`
+- `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업)
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
@@ -164,8 +164,32 @@ enforcement/readiness/동의 버전 검증은 `LONGTEXT content`를 제외한 su
 LOGIN gate가 모든 `/a/api` 요청에서 도는 경로라 약관 원문을 요청마다 전송하지 않고, 원문 전체는 공개
 조회·이력 조회에서만 읽는다. 운영 seed는 앱 배포 전 수동 INSERT이며 승인 원문만 넣는다.
 
+`users`(#305)는 회원 상태 컬럼을 가진다 — `status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'`
+(`ACTIVE`|`WITHDRAWAL_PENDING`)와 `withdrawal_requested_at DATETIME(6) NULL`. `provider_user_id`는
+nullable이지만 `ACTIVE` 행은 application invariant로 non-null이며, NULL은 탈퇴 transaction의 identity
+release뿐이다 — `(provider, provider_user_id)` UNIQUE는 유지되고 MySQL nullable UNIQUE가 여러 탈퇴
+generation NULL을 허용하면서 같은 identity의 신규 ACTIVE 행은 하나로 제한한다. 탈퇴 전이·Kakao
+nickname 갱신은 모두 `status` 조건부 UPDATE(영향 행 수 판정)이고 read-then-write entity 저장 경로는
+없다(stale 저장의 탈퇴 부활 방지).
+
+`account_erasure_jobs`(#305)는 탈퇴가 durable하게 접수한 계정 데이터 삭제 작업이다(#302 worker가
+소비). `user_id`만 저장하고 `subject_id`를 같은 row/table에 두지 않는다 — DB만으로 raw identity와
+content subject를 평문 join할 수 없다는 `user_subject_links` 보안 속성 유지(#302는 착수 시
+`SubjectMappingService#getRequired`로 해석). `user_id` UNIQUE가 회원당 활성 job 하나를 강제하고 user
+FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE 금지, 삭제 순서는 #302
+finalization 소유). status는 #305에서 `PENDING` 단일 값이며 worker claim/stage/retry column은 #302의
+additive migration으로 확장한다. 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
+(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
+NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
+**운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
+수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
+runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은
+`(status, created_at)` index를 타는 수동 SELECT다. live dev/prod 반영은 앱 배포 전
+수동 DDL(users ALTER + job CREATE)이 필요하다(`ddl-auto=validate`).
+
 `term_agreements`(#303)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(FK 없음 —
-`refresh_tokens` 선례, 탈퇴 후 보존 정책 #302/#305 확정 전 최소 결정)이고
+`refresh_tokens` 선례)이고 — #305는 탈퇴 시 동의 이력을 old userId에 그대로 남기며 신규 가입에
+연결하지 않는다(보존 기간·삭제 방식은 #302/#303 확정 대상) —
 `(user_id, term_document_id)` UNIQUE + `(user_id, accepted_at, term_agreement_id)` 이력 index를 가진다.
 문서 FK는 `ON DELETE RESTRICT`다(동의가 남은 문서 삭제 금지). 쓰기는 repository의 native
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며

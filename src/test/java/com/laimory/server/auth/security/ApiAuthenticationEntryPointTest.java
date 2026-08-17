@@ -28,7 +28,7 @@ class ApiAuthenticationEntryPointTest {
         ResourceBundleMessageSource messageSource = new ResourceBundleMessageSource();
         messageSource.setBasename("messages");
         messageSource.setDefaultEncoding("UTF-8");
-        entryPoint = new ApiAuthenticationEntryPoint(messageSource, objectMapper);
+        entryPoint = new ApiAuthenticationEntryPoint(new ApiErrorResponseWriter(messageSource, objectMapper));
     }
 
     private MockHttpServletResponse commence(MockHttpServletRequest request) throws Exception {

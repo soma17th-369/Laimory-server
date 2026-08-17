@@ -156,18 +156,45 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).
+-- 탈퇴(#305)는 한 조건부 UPDATE로 status=WITHDRAWAL_PENDING·탈퇴 시각·provider_user_id=NULL을 함께 적용한다.
+-- provider_user_id는 nullable이지만 ACTIVE 행은 application invariant로 non-null이다 — NULL은 탈퇴 행의
+-- identity release뿐이고, MySQL nullable UNIQUE는 여러 NULL을 허용해 탈퇴 generation을 여럿 보존하면서
+-- 같은 provider identity의 신규 ACTIVE 행은 계속 하나로 제한한다.
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT NOT NULL AUTO_INCREMENT,
     provider VARCHAR(32) NOT NULL,                   -- GOOGLE|KAKAO
-    provider_user_id VARCHAR(255) NOT NULL,          -- OIDC id_token의 sub
+    provider_user_id VARCHAR(255) NULL,              -- OIDC id_token의 sub. 탈퇴 identity release 시 NULL
     email VARCHAR(255) NULL,                         -- Kakao는 미동의 시 NULL
     nickname VARCHAR(100) NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',    -- ACTIVE|WITHDRAWAL_PENDING(#305). default는 기존 행 backfill 호환
+    withdrawal_requested_at DATETIME(6) NULL,        -- 탈퇴 접수 서버 시각(#305). ACTIVE 행은 NULL
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (user_id),
     UNIQUE KEY uq_users_provider_user (provider, provider_user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 회원 탈퇴가 durable하게 접수한 계정 데이터 삭제 작업(#305) — 미래 #302 worker가 소비한다.
+-- user_id만 저장한다(subject_id를 같은 row/table에 저장하지 않아 DB만으로 raw identity↔content subject
+-- 평문 join 불가 — user_subject_links 보안 속성 유지). user FK는 ON DELETE RESTRICT라 job이 남은 user
+-- 행을 지울 수 없다(CASCADE 금지 — 삭제 순서는 #302 finalization이 소유). 회원당 활성 job은 user_id
+-- UNIQUE 하나이며 쓰기는 native INSERT IGNORE(insert-if-absent, 감사 컬럼 직접 기입)뿐이다.
+-- worker claim/stage/retry column은 #302의 additive migration으로 확장한다.
+CREATE TABLE IF NOT EXISTS account_erasure_jobs (
+    account_erasure_job_id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',   -- #305에서는 PENDING 단일 값(#302가 stage 확장)
+    -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움). created_at = 접수 시각
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    modified_by VARCHAR(32) NULL,
+    PRIMARY KEY (account_erasure_job_id),
+    UNIQUE KEY uq_account_erasure_jobs_user (user_id),
+    KEY idx_account_erasure_jobs_status_created (status, created_at), -- runbook 수동 PENDING count/최고령 조회·#302 claim 스캔용
+    CONSTRAINT fk_account_erasure_jobs_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- User Memory 정본. subject_id가 owner PK다.

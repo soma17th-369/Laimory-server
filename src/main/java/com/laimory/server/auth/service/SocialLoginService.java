@@ -1,8 +1,8 @@
 package com.laimory.server.auth.service;
 
 import com.laimory.server.user.Provider;
-import com.laimory.server.user.User;
-import com.laimory.server.user.UserService;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

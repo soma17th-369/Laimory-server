@@ -1,7 +1,10 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.user.Provider;
+import com.laimory.server.user.entity.User;
+import com.laimory.server.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -57,7 +60,14 @@ public class UserService {
         if (provider != Provider.KAKAO || nickname == null) {
             return user;
         }
-        user.updateNickname(nickname);
-        return userRepository.saveAndFlush(user);
+        // 탈퇴(#305)와 겹친 stale 로그인이 entity 전체 저장으로 status/NULL 처리된 provider identity를
+        // 되살리지 않도록 ACTIVE 행의 nickname 한 컬럼만 조건부 UPDATE한다. 영향 0행 = 그 사이 탈퇴 —
+        // 갱신을 버리고 조회 시점 상태를 그대로 반환한다(후속 token 교환의 ACTIVE 검사가 거절).
+        int updated = userRepository.updateNicknameIfActive(provider, user.getProviderUserId(), nickname);
+        if (updated == 0) {
+            return user;
+        }
+        user.updateNickname(nickname); // detached 반환 표현만 동기화(재조회 없이 caller에 최신 닉네임 전달)
+        return user;
     }
 }

@@ -2,9 +2,11 @@ package com.laimory.server.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.auth.security.ApiAuthenticationEntryPoint;
+import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.auth.security.JwtAuthenticationFilter;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
+import com.laimory.server.user.service.UserAccountAccessService;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
@@ -57,8 +59,11 @@ public class SecurityConfig {
     }
 
     @Bean
-    public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokens jwtTokens) {
-        return new JwtAuthenticationFilter(jwtTokens);
+    public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokens jwtTokens,
+                                                           UserAccountAccessService userAccountAccessService,
+                                                           ApiErrorResponseWriter apiErrorResponseWriter) {
+        // #305: JWT 파싱 후 매 요청 active 검사 — 탈퇴 회원의 기존 access token을 즉시 차단한다.
+        return new JwtAuthenticationFilter(jwtTokens, userAccountAccessService, apiErrorResponseWriter);
     }
 
     /** Filter 빈은 Boot가 서블릿 필터로도 자동 등록한다 — Security 체인 안에서만 실행되도록 전역 등록을 끈다. */
@@ -70,9 +75,14 @@ public class SecurityConfig {
         return registration;
     }
 
+    /** filter 단계 error envelope 공용 작성기 — 401 EntryPoint와 JWT 필터의 fail-closed 500이 공유한다. */
     @Bean
-    public ApiAuthenticationEntryPoint apiAuthenticationEntryPoint(MessageSource messageSource,
-                                                                   ObjectMapper objectMapper) {
-        return new ApiAuthenticationEntryPoint(messageSource, objectMapper);
+    public ApiErrorResponseWriter apiErrorResponseWriter(MessageSource messageSource, ObjectMapper objectMapper) {
+        return new ApiErrorResponseWriter(messageSource, objectMapper);
+    }
+
+    @Bean
+    public ApiAuthenticationEntryPoint apiAuthenticationEntryPoint(ApiErrorResponseWriter apiErrorResponseWriter) {
+        return new ApiAuthenticationEntryPoint(apiErrorResponseWriter);
     }
 }

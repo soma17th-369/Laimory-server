@@ -1,5 +1,8 @@
-package com.laimory.server.user;
+package com.laimory.server.user.service;
 
+import com.laimory.server.user.SubjectLookupKeyDeriver;
+import com.laimory.server.user.entity.UserSubjectLink;
+import com.laimory.server.user.repository.UserSubjectLinkRepository;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
