@@ -189,6 +189,22 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - FCM 영구 무효(`UNREGISTERED`·target-level `INVALID_ARGUMENT`)만 등록을 삭제하고 인증·project
   mismatch·quota·internal 오류로는 삭제하지 않는다.
 - FID 원문은 URL·application log·예외 메시지에 남기지 않으며 access log body에서 마스킹된다.
+- 발송 판정 축은 분류에 따라 다르다(#314). 정보성은 `전체 마스터 ON + 종류별 ON + 활성 FID`,
+  광고성은 여기에 `광고 수신 동의 + 수신거부 token을 가진 설치`를 더한다. 광고성 발송에서 마스터·동의
+  행 부재는 추정하지 않고 제외한다(fail-closed) — 기존 정보성 완료 푸시만 rollout 공백을 ON으로 읽는다.
+- 야간(21:00 이상 또는 08:00 미만 KST) 광고성 전송의 최종 판정 권위는 각 FCM 호출 직전의 실제 시각이다.
+  설정 API의 저장 시각 기준 검사는 조기 거절용이며, 실제 전송이 야간이면 야간 동의 없는 target은
+  제외되고 주간이면 예정 시각이 야간이었어도 일반 광고 동의만으로 보낸다.
+- 예정 알림의 한 occurrence는 하루에 한 번만 처리된다(발송·지연 skip 어느 쪽이든). claim transaction이
+  처리한 occurrence의 KST 날짜와 다음 미래 occurrence를 먼저 commit하고 FCM은 그 밖에서 호출하므로
+  전달 보장은 at-most-once best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.
+- 허용 지연(기본 30분)을 넘긴 occurrence는 발송하지 않고 다음 occurrence로 넘긴다 — 장시간 중단 뒤
+  복구가 새벽에 밀린 알림을 쏟아내지 않게 하는 상한이다.
+- 알림 수신 동의의 상태 권위는 `notification_consents` snapshot이고 `term_agreements`는 이 종류를
+  기록하지 않는다(수락만 표현해 철회를 담지 못한다). 야간 동의는 일반 광고 동의를 전제하며 일반 동의
+  철회는 야간 동의도 함께 내린다.
+- 같은 `clientRequestId`의 동의·철회 재시도는 상태를 다시 바꾸지 않고 원래 증적을 돌려준다. 같은 ID로
+  다른 의사 표시가 오면 아무것도 바꾸지 않고 거절한다.
 
 ### Photos
 

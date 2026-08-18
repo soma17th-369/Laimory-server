@@ -11,6 +11,13 @@ public record PushRegistrationRequest(
         @Schema(description = "Firebase Installation ID(FID) — Firebase Messaging 등록 콜백(onRegistered)이 "
                 + "전달한 원문을 가공(trim·대소문자 변환) 없이 그대로 보낸다. 민감 opaque 식별자로 취급한다.",
                 requiredMode = Schema.RequiredMode.REQUIRED)
-        String firebaseInstallationId
+        String firebaseInstallationId,
+
+        @Schema(description = "설치별 수신거부 credential — 앱이 만들어 private storage에 보관하는 256-bit "
+                + "무작위 값을 padding 없는 base64url 43자로 보낸다. 서버는 SHA-256 hash만 저장한다. "
+                + "등록 PUT마다 같은 원문을 다시 보내고, 로그아웃·계정 전환 때 새로 만든다. 값이 없으면 "
+                + "서버의 기존 hash도 지워지며 그 설치는 광고성 알림 대상에서 빠진다. 해제 DELETE는 사용하지 않는다.",
+                requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true)
+        String optOutToken
 ) {
 }

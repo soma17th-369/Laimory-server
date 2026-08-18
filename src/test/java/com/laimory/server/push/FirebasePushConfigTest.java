@@ -7,6 +7,7 @@ import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.laimory.server.config.AsyncConfig;
+import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import java.nio.file.Files;
@@ -40,6 +41,8 @@ class FirebasePushConfigTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withBean(FirebaseMessaging.class, () -> Mockito.mock(FirebaseMessaging.class))
             .withBean(PushRegistrationService.class, () -> Mockito.mock(PushRegistrationService.class))
+            .withBean(PushPreferenceService.class, () -> Mockito.mock(PushPreferenceService.class))
+            .withBean(PushSenderProperties.class, () -> new PushSenderProperties("테스트 전송자", "test@example.com"))
             .withBean(PushMetrics.class, () -> Mockito.mock(PushMetrics.class))
             .withBean(Clock.class, () -> Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneId.of("Asia/Seoul")))
             .withUserConfiguration(

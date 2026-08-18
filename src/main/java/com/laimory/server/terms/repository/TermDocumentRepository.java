@@ -6,6 +6,7 @@ import com.laimory.server.terms.service.TermDocumentSummary;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,6 +42,13 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
             """)
     List<TermDocumentSummary> findCurrentDocumentSummaries(@Param("termTypes") Collection<TermType> termTypes,
                                                            @Param("nowKst") LocalDateTime nowKst);
+
+    /**
+     * 문서 ID → 버전 문자열. 동의 snapshot이 보관한 문서 ID를 사용자에게 보여줄 버전으로 되돌릴 때
+     * 쓴다 — {@code LONGTEXT content}를 적재하지 않는 projection이다.
+     */
+    @Query("SELECT d.version FROM TermDocument d WHERE d.termDocumentId = :termDocumentId")
+    Optional<String> findVersionById(@Param("termDocumentId") Long termDocumentId);
 
     /**
      * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}·{@code stage}

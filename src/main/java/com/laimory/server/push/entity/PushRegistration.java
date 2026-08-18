@@ -43,6 +43,17 @@ public class PushRegistration extends BaseEntity {
     @Column(nullable = false)
     private LocalDateTime lastRegisteredAt;
 
+    /**
+     * 비로그인 수신거부 credential의 SHA-256 hex hash(원문 미저장). Android가 installation별로 만든
+     * token을 등록 PUT마다 그대로 보내고 서버는 hash만 보관한다 — 광고 발송 대상은 이 값이 있는
+     * 설치로 제한해 "알림에서 바로 수신거부"가 불가능한 legacy 설치에 광고를 보내지 않는다.
+     *
+     * <p>UNIQUE를 두지 않는다. FID 단일 UNIQUE가 native upsert의 충돌 권위이며, 두 번째 unique key가
+     * 생기면 같은 token으로 새 FID를 등록할 때 어떤 행이 갱신될지 보장되지 않는다.
+     */
+    @Column(name = "opt_out_token_hash", length = 64)
+    private String optOutTokenHash;
+
     protected PushRegistration() {
     }
 }

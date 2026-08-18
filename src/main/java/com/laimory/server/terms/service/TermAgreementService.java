@@ -24,6 +24,9 @@ import org.springframework.stereotype.Service;
  * 409({@code -3002})로 거절해 앱이 현재 약관을 다시 조회하게 한다. 수락 시각은 클라이언트 입력이 아니라
  * 서버가 한 번 캡처한 instant의 KST 벽시계이며 batch 전체에 같은 값을 쓴다 — 유효성 판정과 수락 시각이
  * 같은 시각 축을 공유한다.
+ *
+ * <p>{@link TermType#isAgreementManaged()}가 {@code false}인 종류(푸시 수신 동의)는 여기서 기록하지
+ * 않는다 — 철회·현재 상태를 표현하지 못하는 테이블이라 상태 권위가 될 수 없어 400으로 거절한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -80,6 +83,12 @@ public class TermAgreementService {
         for (TermAgreementCommand agreement : agreements) {
             if (agreement == null || agreement.termType() == null) {
                 throw new IllegalArgumentException("each agreement requires termType");
+            }
+            if (!agreement.termType().isAgreementManaged()) {
+                // 알림 수신 동의는 철회가 있어 수락만 표현하는 이 테이블이 상태 권위가 될 수 없다(#314).
+                // DB insert 전에 막아 두 개의 상충하는 진실이 생기지 않게 한다.
+                throw new IllegalArgumentException(
+                        "termType is not managed by the generic agreement API: " + agreement.termType());
             }
             if (agreement.version() == null || agreement.version().isBlank()) {
                 throw new IllegalArgumentException("each agreement requires version");

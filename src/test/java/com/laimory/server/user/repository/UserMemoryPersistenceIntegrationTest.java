@@ -15,11 +15,13 @@ import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -61,10 +63,16 @@ class UserMemoryPersistenceIntegrationTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final List<Long> createdUserIds = new ArrayList<>();
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @AfterEach
     void cleanUp() {
         createdUserIds.forEach(userId -> {
-            userMemoryService.replace(subjectMappingService.getRequired(userId), null);
+            java.util.UUID subjectId = subjectMappingService.getRequired(userId);
+            userMemoryService.replace(subjectId, null);
+            // 가입 transaction이 만든 subject 축 설정 행(#314)도 mapping보다 먼저 지운다(FK RESTRICT).
+            SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
             userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(userId));
             userRepository.deleteById(userId);
         });

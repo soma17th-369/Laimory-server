@@ -52,6 +52,16 @@ class TermAgreementServiceTest {
     }
 
     @Test
+    void agree_rejectsPushConsentTypesBeforeAnyWrite() {
+        // 알림 수신 동의는 철회가 있어 이 테이블이 상태 권위가 될 수 없다 — 전용 API로만 기록한다(#314).
+        assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
+                new TermAgreementCommand(TermType.ADVERTISING_PUSH_CONSENT, "v1"))))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(termDocumentService, termAgreementTransactionService);
+    }
+
+    @Test
     void agree_recordsAllCurrentDocuments_withSingleKstAcceptedAt() {
         TermDocumentSummary terms = summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15");
         TermDocumentSummary privacy = summary(12L, TermType.PRIVACY_POLICY, "2026-08-15");

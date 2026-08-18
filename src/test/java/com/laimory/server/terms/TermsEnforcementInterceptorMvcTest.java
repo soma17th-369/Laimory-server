@@ -161,7 +161,7 @@ class TermsEnforcementInterceptorMvcTest {
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).
-        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303");
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303", null);
         verify(pushRegistrationService).unregister("v1", SUBJECT_ID, "fid-303");
         verify(userWithdrawalService).withdraw("v1", USER_ID);
     }

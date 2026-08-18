@@ -1,9 +1,11 @@
 package com.laimory.server.push.repository;
 
 import com.laimory.server.push.entity.PushRegistration;
+import com.laimory.server.push.service.SubjectInstallation;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -22,20 +24,51 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
      * FID 등록·갱신·계정 전환 원자 upsert. 신규면 insert, 이미 있으면(같은/다른 owner 모두) 현재
      * 사용자로 owner를 덮고 freshness를 갱신한다. native INSERT는 JPA auditing을 우회하므로
      * 감사 컬럼을 직접 채운다(modified_by는 NULL 유지 — 요청 주체는 access log가 기록).
+     *
+     * <p>owner 교체와 수신거부 token hash 교체가 이 한 문장 안에서 함께 일어난다 — 계정 전환 뒤 이전
+     * owner가 보유한 token으로 현재 owner의 동의를 철회할 수 없다. token을 보내지 않는 구버전 요청은
+     * 기존 hash를 {@code NULL}로 되돌린다(수신거부 수단이 없는 설치는 광고 발송 대상에서 빠진다).
+     *
+     * <p>{@code opt_out_token_hash}에는 UNIQUE를 두지 않는다 — 이 문장의 충돌 권위는 FID 단일 UNIQUE
+     * 하나여야 한다. 두 번째 unique key가 있으면 같은 token으로 새 FID를 등록할 때 MySQL이 어느 행을
+     * 갱신할지 보장하지 않아, 새 FID가 저장되지 않고 죽은 FID만 남는 경로가 생긴다.
      */
     @Modifying
     @Transactional
     @Query(value = "insert into push_registrations "
-            + "(subject_id, firebase_installation_id, last_registered_at, created_at, updated_at) "
-            + "values (:subjectId, :fid, :now, :now, :now) "
-            + "on duplicate key update subject_id = :subjectId, last_registered_at = :now, updated_at = :now",
+            + "(subject_id, firebase_installation_id, opt_out_token_hash, last_registered_at, created_at, updated_at) "
+            + "values (:subjectId, :fid, :optOutTokenHash, :now, :now, :now) "
+            + "on duplicate key update subject_id = :subjectId, opt_out_token_hash = :optOutTokenHash, "
+            + "last_registered_at = :now, updated_at = :now",
             nativeQuery = true)
     void upsert(@Param("subjectId") String subjectId, @Param("fid") String firebaseInstallationId,
-                @Param("now") LocalDateTime now);
+                @Param("optOutTokenHash") String optOutTokenHash, @Param("now") LocalDateTime now);
 
     /** callback task owner의 활성 설치 전체 발송 대상 조회(FID만 — 엔티티 로드 불필요). */
     @Query("select p.firebaseInstallationId from PushRegistration p where p.subjectId = :subjectId")
     List<String> findAllFirebaseInstallationIdsBySubjectId(@Param("subjectId") UUID subjectId);
+
+    /** 정보성 발송의 subject batch 대상 조회 — 수신거부 token 유무와 무관하게 활성 설치 전부다. */
+    @Query("select new com.laimory.server.push.service.SubjectInstallation(p.subjectId, p.firebaseInstallationId) "
+            + "from PushRegistration p where p.subjectId in :subjectIds")
+    List<SubjectInstallation> findAllBySubjectIdIn(@Param("subjectIds") Collection<UUID> subjectIds);
+
+    /**
+     * 광고성 발송의 subject batch 대상 조회 — 수신거부 token을 가진 설치만 포함한다.
+     * 알림에서 바로 수신거부할 수단이 없는 legacy 설치에는 광고성 알림을 보내지 않는다.
+     */
+    @Query("select new com.laimory.server.push.service.SubjectInstallation(p.subjectId, p.firebaseInstallationId) "
+            + "from PushRegistration p where p.subjectId in :subjectIds and p.optOutTokenHash is not null")
+    List<SubjectInstallation> findTokenCapableBySubjectIdIn(@Param("subjectIds") Collection<UUID> subjectIds);
+
+    /**
+     * 비로그인 수신거부용 현재 등록 조회 — UNIQUE FID로 정확히 한 행을 잠근다. 같은 transaction 안에서
+     * owner subject와 token hash를 함께 읽어야 계정 전환과 경합해도 "지금 이 설치의 owner"에게만
+     * 철회가 적용된다.
+     */
+    @Query(value = "select * from push_registrations where firebase_installation_id = :fid for update",
+            nativeQuery = true)
+    Optional<PushRegistration> findByFirebaseInstallationIdForUpdate(@Param("fid") String firebaseInstallationId);
 
     /**
      * owner 조건 해제 — (principal에서 해석한 subject, FID)가 함께 일치할 때만 삭제해

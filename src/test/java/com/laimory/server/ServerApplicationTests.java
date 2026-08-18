@@ -32,7 +32,8 @@ class ServerApplicationTests {
 		assertThat(meterRegistry.find("laimory.timeline.task.terminal").meters()).hasSize(2);
 		assertThat(meterRegistry.find("laimory.timeline.callback.duration").meters()).isNotEmpty();
 		assertThat(meterRegistry.find("laimory.timeline.task.processing.stuck").meters()).isNotEmpty();
-		assertThat(meterRegistry.find("laimory.push.delivery").meters()).hasSize(2);
+		// 알림 종류 2 x 결과 3(success/failed/skipped) — 고정 차원만 쓰므로 개수가 상한이다.
+		assertThat(meterRegistry.find("laimory.push.delivery").meters()).hasSize(6);
 		assertThat(meterRegistry.find("laimory.build.info").meters()).isNotEmpty();
 		assertThat(meterRegistry.get("laimory.timeline.draft.creation").counter().getId().getTags())
 				.anyMatch(tag -> tag.getKey().equals("application") && tag.getValue().equals("laimory"))

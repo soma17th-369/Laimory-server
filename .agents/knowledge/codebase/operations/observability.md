@@ -211,7 +211,9 @@ Spring JSON stdout
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
     task write 뒤 processing index 명령 실패·응답 유실 또는 사용자 index PEXPIRE=false를 최신 task
     기준으로 보정한 시도 수. 식별자와 Redis key는 tag에 넣지 않는다
-  - `laimory.push.delivery{result=success|failed}`: FCM batch response가 확인한 발송 결과 수
+  - `laimory.push.delivery{type=TIMELINE_COMPLETION|DAILY_REMINDER, result=success|failed|skipped}`:
+    FCM batch response가 확인한 발송 결과 수. `skipped`는 실패가 아니라 전송 직전 야간 제한으로
+    제외한 target 수다(#314). 차원은 고정 알림 종류와 결과뿐이다.
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
     없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)
