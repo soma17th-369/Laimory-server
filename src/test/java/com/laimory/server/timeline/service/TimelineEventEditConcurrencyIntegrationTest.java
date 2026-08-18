@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -75,6 +76,8 @@ class TimelineEventEditConcurrencyIntegrationTest {
     @AfterEach
     void cleanUp() {
         deleteFixtureRecord();
+        // 완료 푸시 경로가 마스터 행을 보정할 수 있어(#314) mapping보다 먼저 지운다(FK RESTRICT).
+        SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, SUBJECT_ID);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 

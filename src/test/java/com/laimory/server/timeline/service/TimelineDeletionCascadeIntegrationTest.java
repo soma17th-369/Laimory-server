@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.TimelineEventType;
@@ -105,6 +106,8 @@ class TimelineDeletionCascadeIntegrationTest {
     void cleanUp() {
         deleteFixtureRecord();
         deleteFixturePhotoJobsAndItems();
+        // 완료 푸시 경로가 마스터 행을 보정할 수 있어(#314) mapping보다 먼저 지운다(FK RESTRICT).
+        SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 

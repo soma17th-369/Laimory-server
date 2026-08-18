@@ -3,6 +3,7 @@ package com.laimory.server.terms;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -17,7 +18,11 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.push.controller.PushRegistrationController;
+import com.laimory.server.push.controller.PushSettingController;
+import com.laimory.server.push.dto.PushSettingsResponse;
+import com.laimory.server.push.PushComplianceClass;
 import com.laimory.server.push.service.PushRegistrationService;
+import com.laimory.server.push.service.PushSettingService;
 import com.laimory.server.terms.controller.TermAgreementController;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermsEnforcementService;
@@ -58,7 +63,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * 동작하는지 고정한다(판정 내부 로직은 {@code TermsEnforcementServiceTest} 소유). 인프라 0.
  */
 @WebMvcTest(controllers = {TimelineController.class, TimelineRecordController.class,
-        PushRegistrationController.class, UserController.class, TermAgreementController.class})
+        PushRegistrationController.class, PushSettingController.class, UserController.class,
+        TermAgreementController.class})
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TermsEnforcementInterceptorMvcTest {
 
@@ -107,6 +113,8 @@ class TermsEnforcementInterceptorMvcTest {
     @MockitoBean
     private PushRegistrationService pushRegistrationService;
     @MockitoBean
+    private PushSettingService pushSettingService;
+    @MockitoBean
     private UserService userService;
     @MockitoBean
     private UserWithdrawalService userWithdrawalService;
@@ -140,6 +148,18 @@ class TermsEnforcementInterceptorMvcTest {
                 .thenReturn(User.of(Provider.KAKAO, "sub-303", null, "라이머"));
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of());
         String pushBody = "{\"firebaseInstallationId\":\"fid-303\"}";
+        String consentBody = "{\"clientRequestId\":\"55555555-5555-4555-8555-555555555555\","
+                + "\"consented\":false}";
+        when(pushSettingService.getSettings("v1", SUBJECT_ID)).thenReturn(new PushSettingsResponse(
+                true,
+                new PushSettingsResponse.DailyReminder(false, "21:00", PushComplianceClass.ADVERTISING),
+                new PushSettingsResponse.ConsentStatus(false, null),
+                new PushSettingsResponse.ConsentStatus(false, null),
+                List.of()));
+        when(pushSettingService.applyAdvertisingConsent(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+        when(pushSettingService.applyNightAdvertisingConsent(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
         String agreementBody = "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}";
 
         mockMvc.perform(get("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
@@ -158,6 +178,24 @@ class TermsEnforcementInterceptorMvcTest {
         // #305: 미동의 사용자도 탈퇴할 수 있다 — LOGIN gate를 타지 않고 202까지 도달한다.
         mockMvc.perform(delete("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isAccepted());
+        // #314: 미동의 상태에서도 수신 설정을 조회하고 광고 수신을 거부할 수 있어야 한다.
+        mockMvc.perform(get("/a/api/v1/push-settings").with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/a/api/v1/push-settings/enabled").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/enabled").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/time").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"time\":\"21:00\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/a/api/v1/push-settings/advertising-consent").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(consentBody))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/a/api/v1/push-settings/night-advertising-consent").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(consentBody))
+                .andExpect(status().isOk());
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).

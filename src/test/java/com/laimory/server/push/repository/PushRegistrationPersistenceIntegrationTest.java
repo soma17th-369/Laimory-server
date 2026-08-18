@@ -143,4 +143,29 @@ class PushRegistrationPersistenceIntegrationTest {
         assertThat(deleted).isZero();
         assertThat(repository.findAllFirebaseInstallationIdsBySubjectId(SUBJECT_A)).containsExactly("fid-revived");
     }
+
+    @Test
+    void sameOptOutTokenHashOnNewFid_insertsSecondRow() {
+        // FID 재발급(백업 복원·SDK 재발급)로 같은 token이 새 FID와 함께 오면 새 행이 정상 insert돼야 한다.
+        // hash에 UNIQUE가 있으면 upsert가 어느 행을 갱신할지 보장되지 않아 새 FID가 저장되지 않는다.
+        String hash = "a".repeat(64);
+        repository.upsert(SUBJECT_A.toString(), "fid-old", hash, T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-new", hash, T2);
+
+        assertThat(rowsInDb())
+                .extracting(PushRegistration::getFirebaseInstallationId)
+                .contains("fid-old", "fid-new");
+    }
+
+    @Test
+    void reRegisteringWithoutToken_clearsStoredHash() {
+        // 구버전 앱으로 되돌아간 설치는 유효하지 않은 수신거부 수단을 남기지 않는다(광고 대상에서 제외).
+        repository.upsert(SUBJECT_A.toString(), "fid-tok", "b".repeat(64), T1);
+        repository.upsert(SUBJECT_A.toString(), "fid-tok", null, T2);
+
+        assertThat(rowsInDb())
+                .filteredOn(row -> row.getFirebaseInstallationId().equals("fid-tok"))
+                .singleElement()
+                .satisfies(row -> assertThat(row.getOptOutTokenHash()).isNull());
+    }
 }

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TaskTokens;
@@ -129,6 +130,8 @@ class TimelineSaveFlowIntegrationTest {
         if (!leftover.isEmpty()) {
             pendingStore.removeAll(subjectId, leftover);
         }
+        // 완료 푸시 경로가 마스터 행을 보정할 수 있어(#314) mapping보다 먼저 지운다(FK RESTRICT).
+        SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 

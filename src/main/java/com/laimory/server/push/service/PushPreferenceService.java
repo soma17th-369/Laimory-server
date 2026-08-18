@@ -1,5 +1,6 @@
 package com.laimory.server.push.service;
 
+import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.entity.PushPreference;
 import com.laimory.server.push.repository.PushPreferenceRepository;
@@ -8,9 +9,11 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>행 부재 해석은 두 갈래다. 기존 정보성 푸시(타임라인 완료)는 rollout 공백에서 기존 동작을 보존하려고
  * ON으로 읽고({@link #isPushEnabledForLegacyCompatibility}), 새 광고성 발송은 추정하지 않는다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PushPreferenceService {
@@ -28,6 +32,7 @@ public class PushPreferenceService {
     static final boolean DEFAULT_PUSH_ENABLED = true;
 
     private final PushPreferenceRepository pushPreferenceRepository;
+    private final PushMetrics pushMetrics;
     private final Clock clock;
 
     /** 가입 transaction 합류용 기본 ON 행 생성. 이미 있으면 no-op(멱등). */
@@ -54,11 +59,23 @@ public class PushPreferenceService {
     /**
      * 기존 타임라인 완료 푸시의 마스터 판정 — 행이 없으면 ON으로 읽는다(rollout 공백에서 기존 동작 보존).
      * DB 조회 장애는 여기서 ON으로 숨기지 않고 예외를 그대로 올려 호출자의 기존 실패 격리를 따른다.
+     *
+     * <p>부재는 metric으로 관측하고 기본 행을 best-effort로 보정한다 — 이 값이 0으로 수렴하지 않으면
+     * backfill이 덜 끝난 것이다. 보정 실패는 판정을 바꾸지 않는다(발송이 우선).
      */
     public boolean isPushEnabledForLegacyCompatibility(UUID subjectId) {
-        return pushPreferenceRepository.findById(subjectId)
-                .map(PushPreference::isPushEnabled)
-                .orElse(DEFAULT_PUSH_ENABLED);
+        Optional<PushPreference> preference = pushPreferenceRepository.findById(subjectId);
+        if (preference.isPresent()) {
+            return preference.get().isPushEnabled();
+        }
+        pushMetrics.recordPreferenceMissing();
+        try {
+            createDefaultIfAbsent(subjectId);
+        } catch (RuntimeException e) {
+            log.warn("push preference backfill on read failed: exceptionType={}",
+                    e.getClass().getSimpleName());
+        }
+        return DEFAULT_PUSH_ENABLED;
     }
 
     /**
