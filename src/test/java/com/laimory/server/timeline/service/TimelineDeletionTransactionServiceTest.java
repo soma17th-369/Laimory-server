@@ -345,17 +345,15 @@ class TimelineDeletionTransactionServiceTest {
     }
 
     @Test
-    void deleteEvent_savedRecordOnRecheckIsConflictWithoutMutation() {
+    void deleteEvent_savedRecordOnRecheckIsStillDeletable() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteEvent(SUBJECT_ID, EVENT_ID))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
-        verify(timelineEventService, never()).deleteById(anyLong());
-        verifyNoInteractions(timelinePhotoDeleteJobService);
+        service.deleteEvent(SUBJECT_ID, EVENT_ID);
+
+        verify(timelineEventService).deleteById(EVENT_ID);
     }
 
     @Test
@@ -518,18 +516,20 @@ class TimelineDeletionTransactionServiceTest {
     }
 
     @Test
-    void detachEventItem_savedRecordIsConflictWithoutMutation() {
+    void detachEventItem_savedRecordIsStillDetachable() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event(EVENT_ID)));
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+        when(timelineItemService.findById(21L)).thenReturn(Optional.of(photoItem(21L, "saved.jpg")));
+        when(timelineEventItemService.isLinked(EVENT_ID, 21L)).thenReturn(true);
+        when(timelineEventItemService.deleteLink(EVENT_ID, 21L)).thenReturn(1);
+        when(timelineEventItemService.findByTimelineItemIds(List.of(21L)))
+                .thenReturn(List.of(TimelineEventItem.of(12L, 21L)));
 
-        assertThatThrownBy(() -> service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
+        service.detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
-        verify(timelineEventItemService, never()).deleteLink(anyLong(), anyLong());
-        verifyNoInteractions(timelinePhotoDeleteJobService);
+        verify(timelineEventItemService).deleteLink(EVENT_ID, 21L);
     }
 
     @Test
@@ -546,15 +546,13 @@ class TimelineDeletionTransactionServiceTest {
     }
 
     @Test
-    void deleteDailyRecord_savedRecordOnRecheckIsConflictWithoutMutation() {
+    void deleteDailyRecord_savedRecordOnRecheckIsStillDeletable() {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
-        verify(dailyRecordService, never()).deleteById(anyLong());
-        verifyNoInteractions(timelinePhotoDeleteJobService);
+        service.deleteDailyRecord(SUBJECT_ID, RECORD_ID);
+
+        verify(dailyRecordService).deleteById(RECORD_ID);
     }
 }

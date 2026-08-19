@@ -256,20 +256,18 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
-    void updateEvent_savedRecordOnTransactionRecheckIs1003() {
+    void updateEvent_savedRecordOnTransactionRecheckIsStillEditable() {
         TimelineEvent event = event(EVENT_ID);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID))
                 .thenReturn(Optional.of(record(SUBJECT_ID, DailyRecordStatus.SAVED)));
 
-        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of())))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of()));
 
-        assertOriginalState(event, null);
-        verifyNoWrites();
+        assertThat(event.getEventType()).isEqualTo(TimelineEventType.MEAL);
+        assertThat(event.getTitle()).isEqualTo("새 제목");
+        assertThat(event.getStartAt()).isEqualTo(NEW_START);
+        assertThat(event.getEndAt()).isEqualTo(NEW_END);
     }
 
     private TimelineEvent stubOwnedDraftEvent() {

@@ -92,8 +92,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 ### Deletion
 
-- Event·DailyRecord 삭제와 Event-Item 연결 해제는 DRAFT record에서만 허용한다. SAVED는 모든 작업 전에
-  거절하고 없음·비소유는 404로 은닉한다.
+- Event·DailyRecord 삭제와 Event-Item 연결 해제는 record 상태와 무관하게 허용한다(SAVED 포함).
+  없음·비소유는 404로 은닉한다.
 - 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
   transaction이 그 정확한 ID의 owner/DRAFT를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
   record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.

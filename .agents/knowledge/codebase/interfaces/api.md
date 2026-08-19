@@ -99,21 +99,21 @@ Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. E
 PHOTO Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. 기존
 `DELETE /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 의미로 동작하는 deprecated 호환
 API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를
-동기 502로 반환하지 않는다. 없음·비소유 404와 SAVED 409 계약은 유지한다. 잘못된 날짜 형식은 400이며,
+동기 502로 반환하지 않는다. 없음·비소유 404 계약은 유지하고 SAVED record도 삭제할 수 있다. 잘못된 날짜 형식은 400이며,
 같은 날짜 작업 중이라는 이유로 `-1016`을 반환하지 않는다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}/items/{timelineItemId}`는 Event-Item junction
 한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 위
 삭제 API들과 같은 PHOTO 삭제 작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
-404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED 409 계약은 동일하다. 성공 응답은 `body=null`이다.
+404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED record에서도 해제할 수 있다. 성공 응답은 `body=null`이다.
 
 `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`는 필수 request body
 `{"emotionType": "..."}`(허용값 `VERY_HAPPY`·`HAPPY`·`NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY`)로 하루 감정을
 받아 그 날짜의 DRAFT record를 SAVED로 확정한다. 감정과 `status=SAVED`는 같은 조건부 UPDATE 하나로
 함께 commit된다(부분 상태 없음). **200이 곧 저장 완료다** — 전이가 commit된 뒤 응답하므로 클라이언트가
-기다릴 비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에는 Event PATCH·memo PUT·Event/record 삭제·Item
-연결 해제·같은 날짜 draft append가 모두 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
+기다릴 비동기 작업이 없고 폴링 endpoint도 없다. 저장 후에도 Event PATCH·memo PUT·Event/record 삭제·Item
+연결 해제는 계속 허용되며, 같은 날짜 draft append만 기존 `-1003`으로 거절된다. 없음·비소유는 404 `-404`, 이미 SAVED는
 409 `-1003`(응답 유실 뒤 재시도한 클라이언트에게 "앞선 저장이 성공했다"는 신호), 잘못된 날짜 형식·
 zero-byte body(Content-Type 유무 무관)·`emotionType` 누락/null/미지원 literal·깨진 JSON은 400 `-400`,
 body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. **새 error code는 추가하지 않았다.**
