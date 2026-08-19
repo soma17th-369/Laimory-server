@@ -18,13 +18,12 @@ class PushTimesTest {
 
         assertThat(PushTimes.kstWallClock(instant))
                 .isEqualTo(LocalDateTime.of(2026, 7, 21, 21, 30));
-        assertThat(PushTimes.kstDate(instant)).isEqualTo(java.time.LocalDate.of(2026, 7, 21));
     }
 
     @Test
-    void kstDateRollsOverBeforeUtcMidnight() {
-        // UTC 15:00 = KST 다음 날 00:00 — occurrence 날짜 계산이 UTC 날짜를 쓰면 하루가 어긋난다.
-        assertThat(PushTimes.kstDate(Instant.parse("2026-07-21T15:00:00Z")))
-                .isEqualTo(java.time.LocalDate.of(2026, 7, 22));
+    void wallClockRollsOverToNextKstDayBeforeUtcMidnight() {
+        // UTC 15:00 = KST 다음 날 00:00 — UTC 날짜를 쓰면 하루가 어긋난다.
+        assertThat(PushTimes.kstWallClock(Instant.parse("2026-07-21T15:00:00Z")))
+                .isEqualTo(LocalDateTime.of(2026, 7, 22, 0, 0));
     }
 }

@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
- * 푸시 수신 설정·알림 수신 동의 API의 문서·계약(구현은 {@link PushSettingController}).
+ * 푸시 수신 설정 API의 문서·계약(구현은 {@link PushSettingController}).
  *
  * <p>모든 값의 권위는 서버다 — 앱은 재설치·기기 변경 뒤에도 로컬 추정값이 아니라 조회 응답을 표시한다.
  * 설정 owner는 {@code @CurrentSubject}가 JWT principal에서 해석한 subject이며 클라이언트 입력이 아니다.
@@ -37,8 +37,8 @@ public interface PushSettingApi {
 
     @Operation(summary = "푸시 수신 설정 조회",
             description = "전체 푸시 ON/OFF와 일일 리마인더 ON/OFF·시각(Asia/Seoul HH:mm)을 반환한다. "
-                    + "설정 행이 아직 없는 사용자에게는 기본값(전체 ON / 리마인더 OFF·21:00)을 "
-                    + "응답하면서 같은 요청에서 기본 행을 보정한다.")
+                    + "설정 행이 아직 없는 사용자에게는 기본값(전체 ON / 리마인더 OFF·21:00)을 응답한다"
+                    + "(순수 조회 — 행 생성은 가입·backfill·첫 설정 변경이 소유).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "조회 성공", useReturnTypeSchema = true),
@@ -53,7 +53,7 @@ public interface PushSettingApi {
 
     @Operation(summary = "전체 푸시 수신 ON/OFF",
             description = "모든 알림의 최상위 스위치를 바꾼다. OFF는 타임라인 완료 알림과 모든 예정 알림을 "
-                    + "차단하지만 종류별 설정값·시각과 법적 동의는 그대로 보존한다(다시 켜면 이전 설정으로 "
+                    + "차단하지만 종류별 설정값·시각은 그대로 보존한다(다시 켜면 이전 설정으로 "
                     + "재개하며 지나간 알림을 몰아 보내지 않는다). 같은 값 재요청은 멱등 성공이다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",

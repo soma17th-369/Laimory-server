@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * no-op {@link PushMessageSender}(기본 구현) — FID 등록 API/DB와 설정·동의 API는 동작하되 외부 발송은
+ * no-op {@link PushMessageSender}(기본 구현) — FID 등록 API/DB와 설정 API는 동작하되 외부 발송은
  * 하지 않는다.
  *
  * <p>{@code matchIfMissing = true}라 {@code app.push.mode} 미설정 환경(prod 기본·로컬·CI)에서 항상 이

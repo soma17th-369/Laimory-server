@@ -58,17 +58,15 @@ public class DailyReminderPushNotifier {
 
         // snapshot은 조회보다 먼저 캡처한다 — 이후 같은 FID로 갱신된 재등록이 무효 정리에서 보호된다.
         LocalDateTime snapshotAt = LocalDateTime.now(clock);
-        List<String> targets = pushRegistrationService
-                .findFirebaseInstallationIdsBySubjectIds(eligible).values().stream()
-                .flatMap(List::stream)
-                .toList();
+        List<String> targets = pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(eligible);
         if (targets.isEmpty()) {
             return new BatchOutcome(subjectIds.size(), eligible.size(), 0, 0);
         }
 
         PushSendResult result = pushMessageSender.send(PushMessage.dailyReminder(), targets);
         pushMetrics.record(TYPE.pushMessageType(), result);
-        log.info("daily reminder push result: claimed={} eligibleSubjects={} targets={} accepted={} "
+        // claimed가 아니라 deliverable — worker 로그의 claimed(지연 skip 포함)와 다른 값이라 라벨을 나눈다.
+        log.info("daily reminder push result: deliverableSubjects={} eligibleSubjects={} targets={} accepted={} "
                         + "failed={} invalidTargets={}",
                 subjectIds.size(), eligible.size(), targets.size(), result.successCount(), result.failureCount(),
                 result.invalidFirebaseInstallationIds().size());
@@ -80,7 +78,7 @@ public class DailyReminderPushNotifier {
     }
 
     /** batch 집계 — 개수만 담는다(식별자 없음). */
-    public record BatchOutcome(int claimedSubjects, int eligibleSubjects, int targets, int accepted) {
+    public record BatchOutcome(int deliverableSubjects, int eligibleSubjects, int targets, int accepted) {
 
         static BatchOutcome empty() {
             return new BatchOutcome(0, 0, 0, 0);

@@ -302,7 +302,7 @@ CREATE TABLE IF NOT EXISTS term_agreements (
         FOREIGN KEY (term_document_id) REFERENCES term_documents (term_document_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── 푸시 수신 설정과 알림 수신 동의(#314) ──
+-- ── 푸시 수신 설정(#314) ──
 
 -- subject별 FCM 전체 수신 마스터. 정보성·광고성을 가리지 않는 최상위 ON/OFF이며 기본은 ON이다.
 -- 알림 종류가 늘어도 컬럼을 추가하지 않는다(종류별 값은 scheduled_notification_preferences 행이 소유).

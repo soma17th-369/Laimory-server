@@ -76,7 +76,7 @@ class DailyReminderPushNotifierTest {
         when(pushPreferenceService.findPushEnabledBySubjectIds(any()))
                 .thenReturn(Map.of(SUBJECT_A, true, SUBJECT_B, false));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(List.of(SUBJECT_A)))
-                .thenReturn(Map.of(SUBJECT_A, List.of("fid-a1", "fid-a2")));
+                .thenReturn(List.of("fid-a1", "fid-a2"));
         when(pushMessageSender.send(any(), anyList()))
                 .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
@@ -86,7 +86,7 @@ class DailyReminderPushNotifierTest {
         // 마스터 OFF인 B는 FID 조회 전에 빠진다. 설치가 여러 대면 각각 발송 대상이다.
         verify(pushMessageSender).send(any(), targetsCaptor.capture());
         assertThat(targetsCaptor.getValue()).containsExactly("fid-a1", "fid-a2");
-        assertThat(outcome.claimedSubjects()).isEqualTo(2);
+        assertThat(outcome.deliverableSubjects()).isEqualTo(2);
         assertThat(outcome.eligibleSubjects()).isEqualTo(1);
         verify(pushMetrics).record(PushMessageType.DAILY_REMINDER, new PushSendResult(2, 2, 0, List.of()));
     }
@@ -107,7 +107,7 @@ class DailyReminderPushNotifierTest {
     void usesDailyReminderMessageWithRoutingDataOnly() {
         when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any()))
-                .thenReturn(Map.of(SUBJECT_A, List.of("fid-a")));
+                .thenReturn(List.of("fid-a"));
         when(pushMessageSender.send(any(), anyList())).thenReturn(new PushSendResult(1, 1, 0, List.of()));
 
         notifier().notifyAll(List.of(claimed(SUBJECT_A)));
@@ -121,7 +121,7 @@ class DailyReminderPushNotifierTest {
     @Test
     void noTargets_skipsSendEntirely() {
         when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
-        when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any())).thenReturn(Map.of());
+        when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any())).thenReturn(List.of());
 
         DailyReminderPushNotifier.BatchOutcome outcome = notifier().notifyAll(List.of(claimed(SUBJECT_A)));
 
@@ -133,7 +133,7 @@ class DailyReminderPushNotifierTest {
     void invalidTargetsAreCleanedUpWithSnapshotGuard() {
         when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any()))
-                .thenReturn(Map.of(SUBJECT_A, List.of("fid-a")));
+                .thenReturn(List.of("fid-a"));
         when(pushMessageSender.send(any(), anyList()))
                 .thenReturn(new PushSendResult(1, 0, 1, List.of("fid-a")));
 

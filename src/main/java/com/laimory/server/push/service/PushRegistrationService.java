@@ -5,9 +5,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -24,10 +22,7 @@ public class PushRegistrationService {
     private final PushRegistrationRepository pushRegistrationRepository;
     private final Clock clock;
 
-    /**
-     * 등록·갱신·계정 전환(원자 재결합). 같은 사용자·FID 재등록은 멱등 성공이며 freshness만 갱신된다.
-     *
-     */
+    /** 등록·갱신·계정 전환(원자 재결합). 같은 사용자·FID 재등록은 멱등 성공이며 freshness만 갱신된다. */
     public void register(String applicationVersion, UUID subjectId, String firebaseInstallationId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         validate(firebaseInstallationId);
@@ -46,17 +41,12 @@ public class PushRegistrationService {
         return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
     }
 
-    /** 정보성 발송의 subject별 활성 FID batch 조회 — 설치가 없는 subject는 결과에서 빠진다. */
-    public Map<UUID, List<String>> findFirebaseInstallationIdsBySubjectIds(Collection<UUID> subjectIds) {
+    /** 예정 알림 발송의 subject batch 활성 FID 조회 — 설치가 없는 subject는 결과에 나타나지 않는다. */
+    public List<String> findFirebaseInstallationIdsBySubjectIds(Collection<UUID> subjectIds) {
         if (subjectIds.isEmpty()) {
-            return Map.of();
+            return List.of();
         }
-        return groupBySubject(pushRegistrationRepository.findAllBySubjectIdIn(subjectIds));
-    }
-
-    private static Map<UUID, List<String>> groupBySubject(List<SubjectInstallation> installations) {
-        return installations.stream().collect(Collectors.groupingBy(SubjectInstallation::subjectId,
-                Collectors.mapping(SubjectInstallation::firebaseInstallationId, Collectors.toList())));
+        return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectIdIn(subjectIds);
     }
 
     /**

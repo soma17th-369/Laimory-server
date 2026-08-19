@@ -1,7 +1,6 @@
 package com.laimory.server.push;
 
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
@@ -23,10 +22,4 @@ public final class PushTimes {
     public static LocalDateTime kstWallClock(Instant instant) {
         return LocalDateTime.ofInstant(instant, KST);
     }
-
-    /** 캡처한 절대시각의 KST 달력 날짜. */
-    public static LocalDate kstDate(Instant instant) {
-        return kstWallClock(instant).toLocalDate();
-    }
-
 }

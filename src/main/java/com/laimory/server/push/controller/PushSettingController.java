@@ -11,10 +11,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 푸시 수신 설정·알림 수신 동의 API 구현. HTTP 문서·계약은 {@link PushSettingApi}.
+ * 푸시 수신 설정 API 구현. HTTP 문서·계약은 {@link PushSettingApi}.
  *
  * <p>subjectId는 클라이언트 값이 아니라 {@code @CurrentSubject}가 JWT principal을 해석한 결과다.
- * 설정·동의의 owner 판정은 전부 이 subject 하나를 기준으로 한다.
+ * 설정의 owner 판정은 전부 이 subject 하나를 기준으로 한다.
  */
 @RestController
 @RequiredArgsConstructor
