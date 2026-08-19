@@ -45,16 +45,16 @@ class PushRegistrationServiceTest {
     @Test
     void register_passesFidUnmodifiedWithFixedNow() {
         // opaque 계약: 앞뒤 공백·대소문자 포함 원문 그대로 repository에 전달한다(trim·정규화 금지).
-        service().register("v1", SUBJECT_ID, " AbC-fid ", null);
+        service().register("v1", SUBJECT_ID, " AbC-fid ");
 
-        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), " AbC-fid ", null, FIXED_NOW);
+        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), " AbC-fid ", FIXED_NOW);
     }
 
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"", "   "})
     void register_rejectsNullOrBlankFid(String fid) {
-        assertThatThrownBy(() -> service().register("v1", SUBJECT_ID, fid, null))
+        assertThatThrownBy(() -> service().register("v1", SUBJECT_ID, fid))
                 .isInstanceOf(IllegalArgumentException.class);
         verifyNoInteractions(pushRegistrationRepository);
     }
@@ -63,7 +63,7 @@ class PushRegistrationServiceTest {
     void register_rejectsOverlongFid_withoutEchoingRawValue() {
         String overlong = "f".repeat(256);
 
-        assertThatThrownBy(() -> service().register("v1", SUBJECT_ID, overlong, null))
+        assertThatThrownBy(() -> service().register("v1", SUBJECT_ID, overlong))
                 .isInstanceOf(IllegalArgumentException.class)
                 // FID 원문은 예외 메시지(→로그)에 노출하지 않는다 — 길이 계약만 언급.
                 .satisfies(ex -> assertThat(ex.getMessage()).doesNotContain(overlong));
@@ -74,9 +74,9 @@ class PushRegistrationServiceTest {
     void register_acceptsMaxLengthFid() {
         String max = "f".repeat(255);
 
-        service().register("v1", SUBJECT_ID, max, null);
+        service().register("v1", SUBJECT_ID, max);
 
-        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), max, null, FIXED_NOW);
+        verify(pushRegistrationRepository).upsert(SUBJECT_ID.toString(), max, FIXED_NOW);
     }
 
     @Test

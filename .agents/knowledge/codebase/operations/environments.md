@@ -98,12 +98,10 @@ OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 
   `TIMELINE_PHOTO_DELETE_CONCURRENCY`, `TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN`,
   `TIMELINE_PHOTO_DELETE_MAX_RUN_DURATION` (checked-in default는 worker on, 매일 `03:00`
   `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
-- `PUSH_SENDER_NAME`, `PUSH_SENDER_CONTACT` (법무가 확정한 전송자 법인명·연락처. checked-in default는
-  빈 값이라 설정 API만 배포한 단계에서도 기동하고, 광고성 알림 worker를 켜면 non-blank를 요구한다)
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
   `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
   `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
-  **worker off** — 광고성 알림을 켜는 것은 법무 문구 seed와 전송자 정보가 준비된 뒤의 운영 결정이다.
+  **worker off** — 실제 발송 시작은 배포의 부작용이 아니라 운영 결정이다.
   기본 매분 `Asia/Seoul`, 허용 지연 30분, process당 concurrency 1, batch 250, 최대 4 batch/30초)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,

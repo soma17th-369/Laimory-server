@@ -20,7 +20,6 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.push.controller.PushRegistrationController;
 import com.laimory.server.push.controller.PushSettingController;
 import com.laimory.server.push.dto.PushSettingsResponse;
-import com.laimory.server.push.PushComplianceClass;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.PushSettingService;
 import com.laimory.server.terms.controller.TermAgreementController;
@@ -148,17 +147,10 @@ class TermsEnforcementInterceptorMvcTest {
                 .thenReturn(User.of(Provider.KAKAO, "sub-303", null, "라이머"));
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of());
         String pushBody = "{\"firebaseInstallationId\":\"fid-303\"}";
-        String consentBody = "{\"consented\":false}";
         when(pushSettingService.getSettings("v1", SUBJECT_ID)).thenReturn(new PushSettingsResponse(
                 true,
-                new PushSettingsResponse.DailyReminder(false, "21:00", PushComplianceClass.ADVERTISING),
-                new PushSettingsResponse.ConsentStatus(false, null),
-                new PushSettingsResponse.ConsentStatus(false, null),
-                List.of()));
-        when(pushSettingService.applyAdvertisingConsent(any(), any(), any(), any()))
-                .thenReturn(List.of());
-        when(pushSettingService.applyNightAdvertisingConsent(any(), any(), any(), any()))
-                .thenReturn(List.of());
+                new PushSettingsResponse.DailyReminder(false, "21:00")));
+
         String agreementBody = "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}";
 
         mockMvc.perform(get("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
@@ -189,16 +181,10 @@ class TermsEnforcementInterceptorMvcTest {
         mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/time").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"time\":\"21:00\"}"))
                 .andExpect(status().isOk());
-        mockMvc.perform(put("/a/api/v1/push-settings/advertising-consent").with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(consentBody))
-                .andExpect(status().isOk());
-        mockMvc.perform(put("/a/api/v1/push-settings/night-advertising-consent").with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(consentBody))
-                .andExpect(status().isOk());
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).
-        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303", null);
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303");
         verify(pushRegistrationService).unregister("v1", SUBJECT_ID, "fid-303");
         verify(userWithdrawalService).withdraw("v1", USER_ID);
     }

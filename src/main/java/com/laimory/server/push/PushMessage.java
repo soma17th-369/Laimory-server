@@ -21,18 +21,11 @@ public record PushMessage(PushMessageType type, Map<String, String> data) {
                 Map.of("taskId", taskId, "status", status));
     }
 
-    /**
-     * 일일 리마인더 — 광고성이라 수신거부 화면으로 바로 진입하는 고정 route만 싣는다.
-     * raw FID·opt-out token은 payload에 넣지 않는다(단말이 보관한 값으로 호출).
-     */
+    /** 일일 리마인더 — 알림을 탭했을 때 열 화면 route만 싣는다. */
     public static PushMessage dailyReminder() {
-        return new PushMessage(PushMessageType.DAILY_REMINDER,
-                Map.of("route", DAILY_REMINDER_ROUTE, "optOutRoute", OPT_OUT_ROUTE));
+        return new PushMessage(PushMessageType.DAILY_REMINDER, Map.of("route", DAILY_REMINDER_ROUTE));
     }
 
     /** 알림 탭 시 여는 화면 route. */
     public static final String DAILY_REMINDER_ROUTE = "timeline/today";
-
-    /** 수신거부 action이 여는 광고 수신 설정 화면 route — 로그인·중간 메뉴를 거치지 않는다. */
-    public static final String OPT_OUT_ROUTE = "settings/push/advertising";
 }

@@ -23,14 +23,13 @@ public final class SubjectMappingFixtures {
     }
 
     /**
-     * subject를 owner로 갖는 푸시 설정·수신 동의 행을 FK 순서대로 지운다(#314).
+     * subject를 owner로 갖는 푸시 설정 행을 FK 순서대로 지운다(#314).
      * {@code user_subject_links} 행을 지우는 정리 코드는 이 helper를 먼저 호출해야 한다 —
-     * 세 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
+     * 두 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
      */
     public static void deleteSubjectScopedPushRows(JdbcTemplate jdbcTemplate, UUID subjectId) {
         jdbcTemplate.update("DELETE FROM scheduled_notification_preferences WHERE subject_id = ?",
                 subjectId.toString());
-        jdbcTemplate.update("DELETE FROM notification_consents WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM push_preferences WHERE subject_id = ?", subjectId.toString());
     }
 

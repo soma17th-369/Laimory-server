@@ -23,8 +23,7 @@ public class PushRegistrationController implements PushRegistrationApi {
     @Override
     public ResponseEntity<ApiResponse<Void>> registerPushRegistration(
             String applicationVersion, UUID subjectId, PushRegistrationRequest request) {
-        pushRegistrationService.register(applicationVersion, subjectId, request.firebaseInstallationId(),
-                request.optOutToken());
+        pushRegistrationService.register(applicationVersion, subjectId, request.firebaseInstallationId());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 

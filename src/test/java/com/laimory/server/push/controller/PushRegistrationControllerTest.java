@@ -86,7 +86,7 @@ class PushRegistrationControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // userId는 클라 입력이 아니라 인증 principal이고, FID는 body 원문 그대로 서비스에 전달된다.
-        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-abc", null);
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-abc");
     }
 
     @Test
@@ -104,7 +104,7 @@ class PushRegistrationControllerTest {
     @Test
     void register_mapsIllegalArgumentTo400() throws Exception {
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(any(), any(UUID.class), any(), any());
+                .when(pushRegistrationService).register(any(), any(UUID.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"firebaseInstallationId\":\"\"}"))
@@ -128,14 +128,14 @@ class PushRegistrationControllerTest {
     void register_missingField_passesNullToServiceValidation() throws Exception {
         // 필드 부재는 역직렬화에서 null — 400 판정은 서비스 validation 한 곳이 담당한다(중복 검증 금지).
         doThrow(new IllegalArgumentException("firebaseInstallationId is required"))
-                .when(pushRegistrationService).register(anyString(), any(UUID.class), any(), any());
+                .when(pushRegistrationService).register(anyString(), any(UUID.class), any());
 
         mockMvc.perform(put(PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
 
-        verify(pushRegistrationService).register("v1", SUBJECT_ID, null, null);
+        verify(pushRegistrationService).register("v1", SUBJECT_ID, null);
     }
 
     private void assertBodyIsExplicitNull(MvcResult result) throws Exception {

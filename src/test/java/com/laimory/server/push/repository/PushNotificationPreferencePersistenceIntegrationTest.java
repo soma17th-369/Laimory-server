@@ -63,9 +63,6 @@ class PushNotificationPreferencePersistenceIntegrationTest {
     private ScheduledNotificationPreferenceRepository scheduledNotificationPreferenceRepository;
 
     @Autowired
-    private NotificationConsentRepository notificationConsentRepository;
-
-    @Autowired
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
     @Autowired
@@ -77,7 +74,6 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         for (UUID subjectId : SUBJECTS) {
             jdbcTemplate.update("DELETE FROM scheduled_notification_preferences WHERE subject_id = ?",
                     subjectId.toString());
-            jdbcTemplate.update("DELETE FROM notification_consents WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM push_preferences WHERE subject_id = ?", subjectId.toString());
         }
     }
@@ -107,7 +103,7 @@ class PushNotificationPreferencePersistenceIntegrationTest {
     // --- 기본 행 생성 ---
 
     @Test
-    void insertIfAbsent_isIdempotentAcrossAllThreeTables() {
+    void insertIfAbsent_isIdempotentAcrossBothTables() {
         UUID subjectId = SUBJECTS.get(0);
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
         LocalDateTime now = LocalDateTime.of(2026, 7, 21, 12, 0);
@@ -118,15 +114,11 @@ class PushNotificationPreferencePersistenceIntegrationTest {
                 false, LocalTime.of(21, 0), LocalDateTime.of(2026, 7, 21, 21, 0), now)).isEqualTo(1);
         assertThat(scheduledNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(), TYPE.name(),
                 true, LocalTime.of(9, 0), LocalDateTime.of(2026, 7, 21, 9, 0), now)).isZero();
-        assertThat(notificationConsentRepository.insertIfAbsent(subjectId.toString(), now)).isEqualTo(1);
-        assertThat(notificationConsentRepository.insertIfAbsent(subjectId.toString(), now)).isZero();
 
         // 재실행이 기존 값을 덮지 않는다 — 두 단계 rollout backfill을 몇 번 돌려도 안전하다.
         assertThat(pushPreferenceRepository.findById(subjectId).orElseThrow().isPushEnabled()).isTrue();
         assertThat(reload(subjectId).isEnabled()).isFalse();
         assertThat(reload(subjectId).getNotificationTime()).isEqualTo(LocalTime.of(21, 0));
-        assertThat(notificationConsentRepository.findById(subjectId).orElseThrow()
-                .isAdvertisingPushConsented()).isFalse();
     }
 
     // --- claim 전진 규칙 ---

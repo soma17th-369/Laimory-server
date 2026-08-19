@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 28개(timeline 16 + push-registrations PUT/DELETE + push-settings GET·PUT 5종 +
+보호 operation 26개(timeline 16 + push-registrations PUT/DELETE + push-settings GET·PUT 3종 +
 users GET /me·DELETE /me + terms agreements GET/POST)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -141,31 +141,15 @@ terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 �
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
 멱등 upsert, DELETE는 (owner, FID) 동시 일치 시에만 지우는 멱등 해제다(미존재도 200).
-PUT body에는 optional `optOutToken`(#314)이 있다 — 앱이 설치별로 만든 256-bit 값의 base64url 43자
-표현이며 서버는 SHA-256 hash만 저장한다. 값을 보내지 않으면 기존 hash가 지워지고 그 설치는 광고성
-알림 대상에서 빠진다. 응답 shape는 바뀌지 않았다(`body=null`).
-
-`GET /a/api/{version}/push-settings`와 다섯 개의 `PUT` (`/enabled`, `/daily-reminder/enabled`,
-`/daily-reminder/time`, `/advertising-consent`, `/night-advertising-consent`)은 푸시 수신 설정과 알림
-수신 동의의 서버 권위 계약이다(#314). 여섯 operation 모두 `@LoginTermsExempt`라 약관 미동의 상태에서도
-조회·수신 거부가 가능하며 bearer 인증은 그대로 요구한다. GET은 전체 ON/OFF, 일일 리마인더
-ON/OFF·`HH:mm` 시각·서버가 확정한 `classification`(`INFORMATIONAL|ADVERTISING`, 항상 non-null),
-두 선택 동의의 상태·동의 문서 버전, 최근 14일 처리결과를 반환하고 누락 행은 기본값 응답 + 같은 요청에서
-멱등 보정한다. 시각은 분 단위 `HH:mm`만 받으며 timezone은 서버가 `Asia/Seoul`로 고정한다(클라 timezone
-미수신, 형식 위반은 DB 변경 전 400 `-400`). 광고성으로 분류된 알림을 켜거나 야간(21:00~08:00)으로 옮길
-때 필요한 동의가 없으면 부분 변경 없이 409 `-4002`다. 동의 API에 별도 멱등 키는 없다 — 상태 전이가
-조건부 UPDATE라 재시도해도 상태가 어긋나지 않고 이미 같은 상태면 `ALREADY_IN_STATE` 처리결과가 나간다
-(증적에는 도착한 요청 수만큼 행이 남는다). 문서 버전 불일치는 기존 409 `-3002`다. 응답은 처리결과
-배열이고 일반 광고 동의 철회는 켜져 있던 야간 동의까지 철회해 두 건을 반환한다. 알림 수신 동의는 범용
-약관 동의 API(`POST /a/api/{version}/terms/agreements`)로 기록할 수 없다 — `TermType.isAgreementManaged()`가
-`false`인 종류는 400 `-400`으로 거절된다(철회·현재 상태를 표현하지 못하는 테이블이 상태 권위가 되지
-않게 한다).
-
-`POST /api/{version}/push-opt-outs`(#314)는 bearer 없는 public 경로다. 광고 알림의 수신거부 action이
-로그인 화면을 거치지 않고 호출하며, body의 FID와 수신거부 credential로 현재 등록 한 행을 잠가 owner를
-해석한 뒤 그 subject의 광고·야간 동의를 철회한다. 줄 수 있는 권한은 철회 하나뿐이고 등록은 지우지
-않는다(정보성 알림 수신과 재시도 유지). FID 미등록·token 미제출·hash 불일치는 모두 같은 401 `-4001`로
-수렴해 등록 존재 여부를 노출하지 않는다.
+`GET /a/api/{version}/push-settings`와 세 개의 `PUT` (`/enabled`, `/daily-reminder/enabled`,
+`/daily-reminder/time`)은 푸시 수신 설정의 서버 권위 계약이다(#314). 네 operation 모두
+`@LoginTermsExempt`라 약관 미동의 상태에서도 알림을 끌 수 있으며 bearer 인증은 그대로 요구한다. GET은
+전체 ON/OFF와 일일 리마인더 ON/OFF·`HH:mm` 시각을 반환하고 누락 행은 기본값 응답 + 같은 요청에서 멱등
+보정한다. 시각은 분 단위 `HH:mm`만 받으며 timezone은 서버가 `Asia/Seoul`로 고정한다(클라 timezone
+미수신, 형식 위반은 DB 변경 전 400 `-400`). 일일 리마인더 기본값은 OFF이고 사용자가 직접 켜야 발송된다.
+두 알림 모두 사용자 행동·설정에 대한 정보성 통지라 별도 수신 동의 절차를 두지 않는다 — 영리 목적의
+광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
+도입해야 한다.
 
 `GET /a/api/{version}/users/me`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는

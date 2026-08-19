@@ -40,8 +40,6 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `push_registrations`
 - `push_preferences → scheduled_notification_preferences` (#314 — subject별 전체 푸시 마스터와
   알림 종류별 ON/OFF·시각·occurrence 스케줄 상태)
-- `notification_consents`, `notification_consent_events` (#314 — subject별 광고성·야간 광고성 수신
-  동의의 현재 상태 snapshot과 append-only 증적)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -51,8 +49,8 @@ dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/work
 중단 후 새 컨테이너 기동), 스키마 변경 PR의 live DDL은 **머지 전에** dev DB에 적용해야 한다.
 미적용 상태로 머지하면 새 앱이 `ddl-auto=validate` 기동 실패로 dev가 다운된다.
 
-#314의 세 subject 축 테이블(`push_preferences`·`scheduled_notification_preferences`·
-`notification_consents`)은 DDL만으로 끝나지 않는다. 가입 transaction이 신규 회원의 기본 행을 만들지만
+#314의 두 subject 축 테이블(`push_preferences`·`scheduled_notification_preferences`)은 DDL만으로
+끝나지 않는다. 가입 transaction이 신규 회원의 기본 행을 만들지만
 기존 subject에는 backfill이 필요하고, DDL 선적용~컨테이너 교체 사이에 가입한 회원은 구버전 코드가
 설정 행 없이 만든다. 그래서 rollout은 **두 단계 insert-if-absent backfill**이다 — ① 구 컨테이너가 도는
 동안 테이블 생성 + 당시 모든 subject의 기본 행 삽입, ② 새 컨테이너 health 확인 뒤 같은 문장을 다시 실행해
@@ -102,11 +100,7 @@ rollback된다. Event PATCH는 subject+filename의 full object key로 job을 loc
 유효한 `PROCESSING`이면 409 `-1019`로 거절한다. pre-S3 association 재검증은 다른 재연결 경로의 방어선으로
 계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
-`push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. nullable `opt_out_token_hash`(#314)는
-비로그인 수신거부 credential의 SHA-256 hex이며 **UNIQUE·index를 두지 않는다** — 이 테이블의 upsert 충돌
-권위는 FID 단일 UNIQUE 하나여야 하고, 두 번째 unique key가 생기면 같은 token으로 새 FID를 등록할 때
-MySQL이 어느 행을 갱신할지 보장하지 않아 새 FID가 저장되지 않는 경로가 생긴다. NULL은 수신거부 수단이
-없는 legacy 설치이며 광고성 발송 대상에서 제외된다. `firebase_installation_id`는 전역 UNIQUE로
+`push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
 쓴다(테이블 기본은 `_unicode_ci`). `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`이 FK 없는
 owner이고 조회 index를 가진다. 행 존재 = 활성 등록이며 해제·영구 무효는 행 삭제다. 쓰기는 repository의
@@ -145,17 +139,6 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 occurrence" 전진을 native UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖). 종류별 행은
 마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
 
-`notification_consents`·`notification_consent_events`(#314)는 광고성·야간 광고성 수신 동의의 현재 상태와
-증적이다. 법적 주체는 회원이지만 owner 키는 subject다 — 인증·push 등록·worker가 공유하는 축이 subject
-하나뿐이고 subject→raw `user_id` 역방향 mapping은 존재하지 않기 때문이다(#282의 단방향 HMAC).
-snapshot 행 부재는 언제나 미동의로 읽는다(fail-closed). 상태 전이는 조건부 UPDATE이고
-**영향 행 수가 처리 결과의 근거**다 — 1이면 이 요청이 상태를 바꿨고(`APPLIED`), 0이면 그 순간 이미 같은
-상태였다(`ALREADY_IN_STATE`). 미리 읽어 판정하면 읽기와 쓰기 사이에 낀 동시 요청 때문에 철회가 유실되고
-증적만 "이미 그 상태였다"로 남는다. 별도 멱등 키는 두지 않으며 증적은 요청 하나당 행 하나다.
-`sender_name`은 event 생성 시점의 법무 확정 전송자 법인명 snapshot이라 설정이 바뀌어도 과거 증적 표기가
-변하지 않는다. 탈퇴는 snapshot만 지우고 증적은 남긴다(보존·가명처리 정책은 약관 동의 이력 정책과 함께
-확정 — `term_agreements`와 같은 이유로 subject FK를 두지 않는다).
-
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
 `HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`
 PK이며, `subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin`(CSPRNG UUIDv4 canonical lowercase,
@@ -173,7 +156,7 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 `uq_daily_records_subject_date (subject_id, record_date)` UNIQUE·FK RESTRICT를 가진다.
 `timeline_draft_source_items.subject_id`도 NOT NULL·FK RESTRICT이고,
 `push_registrations.subject_id`는 NOT NULL·조회 index를 가지되 기존 soft-owner 방침대로 FK는 없다.
-`user_memories`·`push_preferences`·`notification_consents`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
+`user_memories`·`push_preferences`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
 명시 삭제 후 mapping을 마지막에 지우는 계약이다. 이 owner 테이블들에는 raw `user_id` 컬럼이 없고
 runtime repository/entity도 subject만 읽고 쓴다.

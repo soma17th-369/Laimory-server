@@ -141,7 +141,7 @@ class UserWithdrawalIntegrationTest {
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
         refreshTokenService.issue(userId);
         refreshTokenService.issue(userId);
-        pushRegistrationService.register("v1", subjectId, "fid-" + userId, null);
+        pushRegistrationService.register("v1", subjectId, "fid-" + userId);
 
         userWithdrawalService.withdraw("v1", userId);
 

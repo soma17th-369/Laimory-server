@@ -237,11 +237,6 @@ CREATE TABLE IF NOT EXISTS push_registrations (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- owner authority. 기존 soft-owner 방침대로 FK 없음
     firebase_installation_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     last_registered_at DATETIME(6) NOT NULL,         -- Android가 FID를 서버와 마지막으로 동기화한 시각(후속 stale 정리 기준)
-    -- 비로그인 수신거부 credential의 SHA-256 hex hash(#314, 원문 미저장). Android가 installation별로 만든
-    -- token을 등록 PUT마다 그대로 보내며, NULL은 수신거부 수단이 없는 legacy 설치다(광고 발송 대상 제외).
-    -- UNIQUE/index를 두지 않는다 — FID 단일 UNIQUE가 native upsert의 충돌 권위이고, 두 번째 unique key가
-    -- 생기면 같은 token으로 새 FID를 등록할 때 어떤 행이 갱신될지 MySQL이 보장하지 않는다.
-    opt_out_token_hash VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
@@ -346,64 +341,6 @@ CREATE TABLE IF NOT EXISTS scheduled_notification_preferences (
     KEY idx_scheduled_notification_preferences_due (notification_type, enabled, next_due_at, subject_id),
     CONSTRAINT fk_scheduled_notification_preferences_master
         FOREIGN KEY (subject_id) REFERENCES push_preferences (subject_id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- subject별 광고성·야간 광고성 수신 동의의 현재 상태 snapshot. 행 부재는 항상 미동의(fail-closed)이며
--- rollout 공백이나 조회 장애를 동의로 추정하지 않는다. 각 동의의 근거 문서·시각을 함께 보관해
--- "어떤 버전에 동의했는지"를 재구성한다(철회 뒤에도 마지막 동의 문서는 남긴다).
--- 동의 주체는 법적으로 회원이지만 owner 키는 subject다 — 인증·push 등록·worker가 공유하는 축이
--- subject 하나뿐이고 raw user_id ↔ subject 역방향 mapping은 저장하지 않는다(#282 계약).
--- 불변식(service 소유): 야간 동의 ON이면 일반 광고 동의도 ON이다.
-CREATE TABLE IF NOT EXISTS notification_consents (
-    subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    advertising_push_consented BOOLEAN NOT NULL DEFAULT FALSE,
-    advertising_term_document_id BIGINT NULL,
-    advertising_consented_at DATETIME(6) NULL,       -- KST 벽시계 서버 처리 시각
-    advertising_withdrawn_at DATETIME(6) NULL,
-    night_advertising_push_consented BOOLEAN NOT NULL DEFAULT FALSE,
-    night_term_document_id BIGINT NULL,
-    night_consented_at DATETIME(6) NULL,
-    night_withdrawn_at DATETIME(6) NULL,
-    -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
-    created_at DATETIME(6) NOT NULL,
-    updated_at DATETIME(6) NOT NULL,
-    modified_by VARCHAR(32) NULL,
-    PRIMARY KEY (subject_id),
-    CONSTRAINT fk_notification_consents_subject
-        FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT,
-    -- 동의 근거 문서 삭제 금지 — 동의 시점 문구·버전 재구성 권위 보존(term_agreements 선례).
-    CONSTRAINT fk_notification_consents_advertising_document
-        FOREIGN KEY (advertising_term_document_id) REFERENCES term_documents (term_document_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_notification_consents_night_document
-        FOREIGN KEY (night_term_document_id) REFERENCES term_documents (term_document_id) ON DELETE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 동의·철회 의사 표시의 append-only 증적. UPDATE/DELETE 하지 않는다.
--- 요청 하나가 행 하나다(멱등 키 없음) — 상태 전이가 조건부 UPDATE라 재시도해도 상태는 어긋나지 않고,
--- 두 번째부터는 processing_result가 ALREADY_IN_STATE로 남아 아무것도 바꾸지 않았음이 드러난다.
--- sender_name은 event 생성 시점의 법무 확정 전송자 법인명 snapshot이다(설정이 바뀌어도 과거 증적 불변).
--- term_document_id는 동의 이력 없는 상태의 철회에서만 NULL이다.
--- subject FK는 두지 않는다 — 탈퇴 후 증적 보존·가명처리 정책이 약관 동의 이력 정책과 함께 확정된다
--- (term_agreements가 users FK를 두지 않은 것과 같은 이유).
-CREATE TABLE IF NOT EXISTS notification_consent_events (
-    notification_consent_event_id BIGINT NOT NULL AUTO_INCREMENT,
-    subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    consent_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,  -- NotificationConsentType literal
-    action VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,        -- CONSENT|WITHDRAW
-    term_document_id BIGINT NULL,
-    occurred_at DATETIME(6) NOT NULL,                -- KST 벽시계 서버 처리 시각(클라 입력 아님)
-    sender_name VARCHAR(255) NOT NULL,
-    processing_result VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- APPLIED|ALREADY_IN_STATE
-    source VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,        -- PUSH_SETTINGS|INSTALLATION_OPT_OUT
-    -- 감사 컬럼 (BaseEntity)
-    created_at DATETIME(6) NOT NULL,
-    updated_at DATETIME(6) NOT NULL,
-    modified_by VARCHAR(32) NULL,
-    PRIMARY KEY (notification_consent_event_id),
-    -- 최근 처리결과 조회(설정 GET) 축.
-    KEY idx_notification_consent_events_recent (subject_id, occurred_at, notification_consent_event_id),
-    CONSTRAINT fk_notification_consent_events_document
-        FOREIGN KEY (term_document_id) REFERENCES term_documents (term_document_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,

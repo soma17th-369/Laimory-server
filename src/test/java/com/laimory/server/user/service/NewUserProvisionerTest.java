@@ -9,7 +9,6 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.service.NotificationConsentService;
 import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.user.Provider;
@@ -44,9 +43,6 @@ class NewUserProvisionerTest {
     @Mock
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
-    @Mock
-    private NotificationConsentService notificationConsentService;
-
     @InjectMocks
     private NewUserProvisioner newUserProvisioner;
 
@@ -68,14 +64,13 @@ class NewUserProvisionerTest {
 
         assertThat(result).isSameAs(saved);
         InOrder inOrder = inOrder(userRepository, subjectMappingService, pushPreferenceService,
-                scheduledNotificationPreferenceService, notificationConsentService);
+                scheduledNotificationPreferenceService);
         inOrder.verify(userRepository).saveAndFlush(any());
         inOrder.verify(subjectMappingService).createFor(42L);
         // 기본 설정 행은 방금 만든 subject로 같은 흐름에서 생성된다(재조회 없음).
         inOrder.verify(pushPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
         inOrder.verify(scheduledNotificationPreferenceService)
                 .createDefaultIfAbsent(SUBJECT_ID, ScheduledNotificationType.DAILY_REMINDER);
-        inOrder.verify(notificationConsentService).createDefaultIfAbsent(SUBJECT_ID);
     }
 
     @Test

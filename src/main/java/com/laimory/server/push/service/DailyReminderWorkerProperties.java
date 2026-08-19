@@ -1,8 +1,5 @@
 package com.laimory.server.push.service;
 
-import com.laimory.server.push.PushComplianceClass;
-import com.laimory.server.push.PushSenderProperties;
-import com.laimory.server.push.ScheduledNotificationType;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -10,9 +7,7 @@ import org.springframework.stereotype.Component;
 /**
  * 일일 리마인더 worker의 runtime 설정과 기동 시 불변식 검증.
  *
- * <p>기본은 OFF다 — 광고성으로 확정된 알림을 켜는 것은 법무 확정 문구 seed와 전송자 정보가 준비된 뒤의
- * 운영 결정이지 배포의 부작용이 아니다. 광고성 알림의 worker를 켜면서 전송자 법인명·연락처를 비워 두면
- * 기동을 실패시킨다 — 광고 표기 없는 광고성 발송을 막는 fail-fast다.
+ * <p>기본은 OFF다 — 실제 발송을 시작하는 것은 배포의 부작용이 아니라 운영 결정이다.
  */
 @Component
 public class DailyReminderWorkerProperties {
@@ -36,8 +31,7 @@ public class DailyReminderWorkerProperties {
             @Value("${app.push.daily-reminder.batch-size:250}") int batchSize,
             @Value("${app.push.daily-reminder.concurrency:1}") int concurrency,
             @Value("${app.push.daily-reminder.max-batches-per-run:4}") int maxBatchesPerRun,
-            @Value("${app.push.daily-reminder.max-run-duration:30s}") Duration maxRunDuration,
-            PushSenderProperties pushSenderProperties) {
+            @Value("${app.push.daily-reminder.max-run-duration:30s}") Duration maxRunDuration) {
         if (maxLateness.isZero() || maxLateness.isNegative() || maxLateness.compareTo(MAX_LATENESS_LIMIT) > 0) {
             throw new IllegalStateException("app.push.daily-reminder.max-lateness must be positive and at most "
                     + MAX_LATENESS_LIMIT);
@@ -58,12 +52,6 @@ public class DailyReminderWorkerProperties {
                 || maxRunDuration.compareTo(MAX_RUN_DURATION) > 0) {
             throw new IllegalStateException("app.push.daily-reminder.max-run-duration must be positive and at most "
                     + MAX_RUN_DURATION);
-        }
-        if (workerEnabled
-                && ScheduledNotificationType.DAILY_REMINDER.complianceClass() == PushComplianceClass.ADVERTISING
-                && !pushSenderProperties.isConfigured()) {
-            throw new IllegalStateException("app.push.sender-name and app.push.sender-contact are required "
-                    + "to enable an advertising notification worker");
         }
         this.workerEnabled = workerEnabled;
         this.maxLateness = maxLateness;

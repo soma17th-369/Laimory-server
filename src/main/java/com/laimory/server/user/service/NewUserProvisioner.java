@@ -1,7 +1,6 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.service.NotificationConsentService;
 import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.user.Provider;
@@ -33,16 +32,15 @@ public class NewUserProvisioner {
     private final SubjectMappingService subjectMappingService;
     private final PushPreferenceService pushPreferenceService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
-    private final NotificationConsentService notificationConsentService;
 
     /**
      * user, subject mapping, subject 축 기본 설정 행을 한 transaction에서 저장한다.
      * {@code saveAndFlush}로 insert를 즉시 flush해 UNIQUE 위반이 이 메서드 안에서 드러나게 한다
      * (commit 시점으로 미루지 않음).
      *
-     * <p>푸시 마스터(ON)·일일 리마인더(OFF/21:00)·수신 동의(전부 미동의) 기본 행을 여기서 함께 만든다 —
-     * 가입 직후부터 설정 조회·worker 스캔이 추정 없이 동작하고, 나중에 행을 만들어 주는 경로가 실패해도
-     * 조용히 누락된 사용자가 생기지 않는다. 각 leaf service의 쓰기는 insert-if-absent라 재실행에 안전하다.
+     * <p>푸시 마스터(ON)와 일일 리마인더(OFF/21:00) 기본 행을 여기서 함께 만든다 — 가입 직후부터 설정
+     * 조회·worker 스캔이 추정 없이 동작하고, 나중에 행을 만들어 주는 경로가 실패해도 조용히 누락된
+     * 사용자가 생기지 않는다. 각 leaf service의 쓰기는 insert-if-absent라 재실행에 안전하다.
      */
     @Transactional
     public User provision(Provider provider, String providerUserId, String email, String nickname) {
@@ -51,7 +49,6 @@ public class NewUserProvisioner {
         pushPreferenceService.createDefaultIfAbsent(subjectId);
         scheduledNotificationPreferenceService.createDefaultIfAbsent(
                 subjectId, ScheduledNotificationType.DAILY_REMINDER);
-        notificationConsentService.createDefaultIfAbsent(subjectId);
         return user;
     }
 }

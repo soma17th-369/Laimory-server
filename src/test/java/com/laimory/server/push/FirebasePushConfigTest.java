@@ -42,7 +42,6 @@ class FirebasePushConfigTest {
             .withBean(FirebaseMessaging.class, () -> Mockito.mock(FirebaseMessaging.class))
             .withBean(PushRegistrationService.class, () -> Mockito.mock(PushRegistrationService.class))
             .withBean(PushPreferenceService.class, () -> Mockito.mock(PushPreferenceService.class))
-            .withBean(PushSenderProperties.class, () -> new PushSenderProperties("테스트 전송자", "test@example.com"))
             .withBean(PushMetrics.class, () -> Mockito.mock(PushMetrics.class))
             .withBean(Clock.class, () -> Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneId.of("Asia/Seoul")))
             .withUserConfiguration(

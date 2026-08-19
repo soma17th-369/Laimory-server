@@ -28,8 +28,7 @@ public class PushMetrics {
         for (PushMessageType type : PushMessageType.values()) {
             countersByType.put(type, new Counters(
                     deliveryCounter(meterRegistry, type, "success"),
-                    deliveryCounter(meterRegistry, type, "failed"),
-                    deliveryCounter(meterRegistry, type, "skipped")));
+                    deliveryCounter(meterRegistry, type, "failed")));
         }
     }
 
@@ -53,9 +52,8 @@ public class PushMetrics {
         Counters counters = countersByType.get(type);
         counters.success().increment(result.successCount());
         counters.failed().increment(result.failureCount());
-        counters.skipped().increment(result.skippedCount());
     }
 
-    private record Counters(Counter success, Counter failed, Counter skipped) {
+    private record Counters(Counter success, Counter failed) {
     }
 }

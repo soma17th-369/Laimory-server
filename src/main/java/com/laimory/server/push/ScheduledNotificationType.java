@@ -17,12 +17,8 @@ public enum ScheduledNotificationType {
         this.pushMessageType = pushMessageType;
     }
 
-    /** 이 예정 알림이 실제로 발송하는 메시지 종류(문구·법적 분류의 소유자). */
+    /** 이 예정 알림이 실제로 발송하는 메시지 종류(문구의 소유자). */
     public PushMessageType pushMessageType() {
         return pushMessageType;
-    }
-
-    public PushComplianceClass complianceClass() {
-        return pushMessageType.complianceClass();
     }
 }

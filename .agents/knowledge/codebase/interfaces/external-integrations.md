@@ -101,21 +101,15 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   `setToken/addToken/addAllTokens`를 쓰지 않는다.
 - Android 선행조건: `firebase-messaging 25.1.1+`, manifest
   `firebase_messaging_installation_id_enabled=true`, `onRegistered(fid)`가 준 FID를 등록 API로 업로드.
-- sender는 typed `PushMessage`(종류 + data)와 `PushTarget`(FID + 야간 동의 여부) 목록을 받는다(#314).
-  고정 title/body와 법적 분류는 `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다.
-  `TIMELINE_COMPLETION`은 정보성, `DAILY_REMINDER`는 광고성으로 확정돼 있다.
+- sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
+  `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 두 종류 모두 사용자 행동·설정에 대한
+  정보성 통지다 — 광고성 알림을 추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을
+  함께 도입해야 한다.
 - 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
   1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
   전체 푸시 마스터가 OFF면 FID 조회 전에 끝내고, 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
   보존하려고 ON으로 읽는다.
-- 광고성 메시지에는 sender가 `(광고)` 제목 접두사, 본문 마지막 줄 `수신거부: 설정 > 알림 (무료)`,
-  data의 전송자 법인명·연락처와 수신거부 route를 공통으로 합성한다 — 개별 호출자가 표기를 빠뜨릴 수
-  없는 구조다. raw FID·수신거부 token은 payload에 싣지 않는다.
-- 야간(21:00~08:00 KST) 판정은 예정 시각이나 claim 시각이 아니라 **각 SDK 호출 직전** `Clock` instant를
-  `Asia/Seoul`로 변환해 다시 한다. 그 시점이 야간이면 야간 동의가 없는 target을 그 chunk에서 제외하고
-  skip으로 집계한다 — 동의 조회와 전송 사이, 여러 chunk를 처리하는 도중 경계를 넘어도 미동의 target에
-  전송되지 않는다. 주간이면 예정 시각이 야간이었어도 일반 광고 동의만으로 보낸다.
 - FID 등록·해제·callback 발송 대상 조회의 owner는 UUID subjectId다. 인증된 앱 요청은 MVC 경계에서 매핑된
   subject를 쓰고, callback은 Redis task의 subject owner로 FID를 조회한다(raw userId 역조회 없음).
 - multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를

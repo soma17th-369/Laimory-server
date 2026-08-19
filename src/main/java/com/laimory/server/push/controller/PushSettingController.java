@@ -2,12 +2,9 @@ package com.laimory.server.push.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.push.dto.DailyReminderTimeRequest;
-import com.laimory.server.push.dto.NotificationConsentRequest;
-import com.laimory.server.push.dto.NotificationConsentResultResponse;
 import com.laimory.server.push.dto.PushEnabledRequest;
 import com.laimory.server.push.dto.PushSettingsResponse;
 import com.laimory.server.push.service.PushSettingService;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -53,19 +50,4 @@ public class PushSettingController implements PushSettingApi {
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 
-    @Override
-    public ResponseEntity<ApiResponse<List<NotificationConsentResultResponse>>> updateAdvertisingConsent(
-            String applicationVersion, UUID subjectId, NotificationConsentRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(NotificationConsentResultResponse.from(
-                pushSettingService.applyAdvertisingConsent(applicationVersion, subjectId,
-                        request.consented(), request.termVersion()))));
-    }
-
-    @Override
-    public ResponseEntity<ApiResponse<List<NotificationConsentResultResponse>>> updateNightAdvertisingConsent(
-            String applicationVersion, UUID subjectId, NotificationConsentRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(NotificationConsentResultResponse.from(
-                pushSettingService.applyNightAdvertisingConsent(applicationVersion, subjectId,
-                        request.consented(), request.termVersion()))));
-    }
 }

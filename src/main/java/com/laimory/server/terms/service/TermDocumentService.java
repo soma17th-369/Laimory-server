@@ -10,7 +10,6 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -27,17 +26,6 @@ public class TermDocumentService {
 
     private final TermDocumentRepository termDocumentRepository;
     private final Clock clock;
-
-    /**
-     * 동의 snapshot이 보관한 문서 ID의 버전 문자열. 문서가 사라졌으면(운영 실수) 빈 값이며 호출자는
-     * 버전 미상으로 응답한다 — 조회 실패로 설정 화면 전체를 깨뜨리지 않는다.
-     */
-    public Optional<String> findVersionById(Long termDocumentId) {
-        if (termDocumentId == null) {
-            return Optional.empty();
-        }
-        return termDocumentRepository.findVersionById(termDocumentId);
-    }
 
     /** 단계의 현재 문서(화면 순서 정렬) — 공개 조회용. 판정 시각은 지금 캡처한 instant의 KST 벽시계다. */
     public List<TermDocument> findCurrentDocuments(String applicationVersion, TermStage stage) {

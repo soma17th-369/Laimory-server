@@ -127,18 +127,16 @@ public class DailyReminderWorker {
         }
         try {
             BatchOutcome outcome = dailyReminderPushNotifier.notifyAll(deliverable);
-            return new BatchResult(claimed.size(), lateSkipped, outcome.targets(), outcome.accepted(),
-                    outcome.nightSkipped(), 0);
+            return new BatchResult(claimed.size(), lateSkipped, outcome.targets(), outcome.accepted(), 0);
         } catch (RuntimeException exception) {
             // occurrence는 이미 전진했으므로 이 batch는 그대로 유실된다(자동 재발송 없음).
             log.warn("일일 리마인더 발송 실패: claimed={} exceptionType={}",
                     claimed.size(), exception.getClass().getSimpleName());
-            return new BatchResult(claimed.size(), lateSkipped, 0, 0, 0, 1);
+            return new BatchResult(claimed.size(), lateSkipped, 0, 0, 1);
         }
     }
 
-    private record BatchResult(int claimed, int lateSkipped, int targets, int accepted, int nightSkipped,
-                               int sendErrors) {
+    private record BatchResult(int claimed, int lateSkipped, int targets, int accepted, int sendErrors) {
     }
 
     private static final class RunSummary {
@@ -149,7 +147,6 @@ public class DailyReminderWorker {
         private int lateSkipped;
         private int targets;
         private int accepted;
-        private int nightSkipped;
         private int sendErrors;
         private int claimErrors;
         private int workerErrors;
@@ -160,7 +157,6 @@ public class DailyReminderWorker {
             lateSkipped += result.lateSkipped();
             targets += result.targets();
             accepted += result.accepted();
-            nightSkipped += result.nightSkipped();
             sendErrors += result.sendErrors();
         }
 
@@ -178,9 +174,8 @@ public class DailyReminderWorker {
                 return;
             }
             log.info("일일 리마인더 worker run 완료: batches={} claimed={} lateSkipped={} targets={} "
-                            + "accepted={} nightSkipped={} sendErrors={} claimErrors={} workerErrors={} "
-                            + "durationMs={}",
-                    batches, claimed, lateSkipped, targets, accepted, nightSkipped, sendErrors, claimErrors,
+                            + "accepted={} sendErrors={} claimErrors={} workerErrors={} durationMs={}",
+                    batches, claimed, lateSkipped, targets, accepted, sendErrors, claimErrors,
                     workerErrors, Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000));
         }
     }

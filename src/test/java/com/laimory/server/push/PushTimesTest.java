@@ -4,30 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 
 /**
- * 야간 광고 제한 구간(21:00 이상 또는 08:00 미만)의 경계와 KST 변환을 고정한다.
- * 이 판정이 어긋나면 야간 미동의 사용자에게 광고성 알림이 나간다.
+ * KST 벽시계 변환을 고정한다 — 예정 시각 계산과 worker claim이 JVM 기본 timezone에 흔들리지 않아야 한다.
  */
 class PushTimesTest {
-
-    @ParameterizedTest
-    @CsvSource({
-            "20:59, false",
-            "21:00, true",   // 21:00 정각은 야간이다
-            "23:59, true",
-            "00:00, true",
-            "07:59, true",
-            "08:00, false",  // 08:00 정각은 주간이다
-            "08:01, false",
-    })
-    void nightBoundariesAreInclusiveAtNineAndExclusiveAtEight(String time, boolean night) {
-        assertThat(PushTimes.isNight(LocalTime.parse(time))).isEqualTo(night);
-    }
 
     @Test
     void convertsInstantToSeoulWallClockRegardlessOfJvmZone() {
@@ -37,7 +19,6 @@ class PushTimesTest {
         assertThat(PushTimes.kstWallClock(instant))
                 .isEqualTo(LocalDateTime.of(2026, 7, 21, 21, 30));
         assertThat(PushTimes.kstDate(instant)).isEqualTo(java.time.LocalDate.of(2026, 7, 21));
-        assertThat(PushTimes.isNight(PushTimes.kstWallClock(instant))).isTrue();
     }
 
     @Test

@@ -8,7 +8,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.push.PushSenderProperties;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
@@ -40,9 +39,6 @@ class DailyReminderWorkerTest {
     private static final UUID SUBJECT_ID = TestSubjects.id(61L);
     /** KST 2026-07-21 21:10. */
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-21T12:10:00Z"), ZoneOffset.UTC);
-    private static final PushSenderProperties SENDER =
-            new PushSenderProperties("라이모리 주식회사", "help@laimory.app");
-
     @Mock
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
     @Mock
@@ -52,8 +48,7 @@ class DailyReminderWorkerTest {
     private ArgumentCaptor<List<ScheduledNotificationPreference>> deliverableCaptor;
 
     private static DailyReminderWorkerProperties properties(boolean enabled, Duration maxLateness) {
-        return new DailyReminderWorkerProperties(enabled, maxLateness, 250, 1, 4,
-                Duration.ofSeconds(30), SENDER);
+        return new DailyReminderWorkerProperties(enabled, maxLateness, 250, 1, 4, Duration.ofSeconds(30));
     }
 
     private DailyReminderWorker worker(DailyReminderWorkerProperties properties) {

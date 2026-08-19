@@ -19,7 +19,6 @@ import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMessageType;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
-import com.laimory.server.push.PushTarget;
 import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
@@ -50,9 +49,6 @@ class TimelineCompletionPushNotifierTest {
     private static final Clock FIXED_CLOCK =
             Clock.fixed(Instant.parse("2026-07-21T01:30:00Z"), ZoneId.of("Asia/Seoul"));
     private static final LocalDateTime SNAPSHOT_AT = LocalDateTime.now(FIXED_CLOCK);
-
-    private static final List<PushTarget> TWO_TARGETS =
-            List.of(PushTarget.informational("fid-1"), PushTarget.informational("fid-2"));
 
     @Mock
     private PushRegistrationService pushRegistrationService;
@@ -94,14 +90,15 @@ class TimelineCompletionPushNotifierTest {
         masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
-        when(pushMessageSender.send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"), TWO_TARGETS))
-                .thenReturn(new PushSendResult(2, 2, 0, 0, List.of()));
+        when(pushMessageSender.send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"), List.of("fid-1", "fid-2")))
+                .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
-        verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"), TWO_TARGETS);
+        verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"),
+                List.of("fid-1", "fid-2"));
         verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION,
-                new PushSendResult(2, 2, 0, 0, List.of()));
+                new PushSendResult(2, 2, 0, List.of()));
         // invalid 0건이면 정리 query를 만들지 않는다.
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
         assertThat(logAppender.list).singleElement().satisfies(event -> {
@@ -141,7 +138,7 @@ class TimelineCompletionPushNotifierTest {
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2", "fid-3"));
         when(pushMessageSender.send(any(), anyList()))
-                .thenReturn(new PushSendResult(3, 1, 2, 0, List.of("fid-2")));
+                .thenReturn(new PushSendResult(3, 1, 2, List.of("fid-2")));
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
@@ -191,14 +188,14 @@ class TimelineCompletionPushNotifierTest {
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
         when(pushMessageSender.send(any(), anyList()))
-                .thenReturn(new PushSendResult(2, 1, 1, 0, List.of("fid-1")));
+                .thenReturn(new PushSendResult(2, 1, 1, List.of("fid-1")));
         doThrow(new RuntimeException("db down"))
                 .when(pushRegistrationService).removeInvalidRegistrations(anyCollection(), any());
 
         assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
         verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION,
-                new PushSendResult(2, 1, 1, 0, List.of("fid-1")));
+                new PushSendResult(2, 1, 1, List.of("fid-1")));
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
                 .containsSequence(

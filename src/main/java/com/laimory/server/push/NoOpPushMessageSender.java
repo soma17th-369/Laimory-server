@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 class NoOpPushMessageSender implements PushMessageSender {
 
     @Override
-    public PushSendResult send(PushMessage message, List<PushTarget> targets) {
+    public PushSendResult send(PushMessage message, List<String> firebaseInstallationIds) {
         return PushSendResult.empty();
     }
 }

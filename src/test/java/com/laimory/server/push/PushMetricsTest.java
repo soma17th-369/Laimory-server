@@ -17,15 +17,12 @@ class PushMetricsTest {
         PushMetrics metrics = new PushMetrics(registry);
 
         metrics.record(PushMessageType.DAILY_REMINDER,
-                new PushSendResult(6, 3, 2, 1, List.of("not-a-metric-label")));
+                new PushSendResult(5, 3, 2, List.of("not-a-metric-label")));
 
         assertThat(registry.get(PushMetrics.DELIVERY)
                 .tag("type", "DAILY_REMINDER").tag("result", "success").counter().count()).isEqualTo(3);
         assertThat(registry.get(PushMetrics.DELIVERY)
                 .tag("type", "DAILY_REMINDER").tag("result", "failed").counter().count()).isEqualTo(2);
-        assertThat(registry.get(PushMetrics.DELIVERY)
-                .tag("type", "DAILY_REMINDER").tag("result", "skipped").counter().count()).isEqualTo(1);
-
         Set<String> tagKeys = registry.getMeters().stream()
                 .map(Meter::getId)
                 .flatMap(id -> id.getTags().stream())
@@ -40,8 +37,8 @@ class PushMetricsTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         PushMetrics metrics = new PushMetrics(registry);
 
-        metrics.record(PushMessageType.TIMELINE_COMPLETION, new PushSendResult(1, 1, 0, 0, List.of()));
-        metrics.record(PushMessageType.DAILY_REMINDER, new PushSendResult(2, 2, 0, 0, List.of()));
+        metrics.record(PushMessageType.TIMELINE_COMPLETION, new PushSendResult(1, 1, 0, List.of()));
+        metrics.record(PushMessageType.DAILY_REMINDER, new PushSendResult(2, 2, 0, List.of()));
 
         assertThat(registry.get(PushMetrics.DELIVERY)
                 .tag("type", "TIMELINE_COMPLETION").tag("result", "success").counter().count()).isEqualTo(1);

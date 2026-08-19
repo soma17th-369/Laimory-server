@@ -5,7 +5,6 @@ import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMessageType;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
-import com.laimory.server.push.PushTarget;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -56,9 +55,8 @@ public class TimelineCompletionPushNotifier {
             if (firebaseInstallationIds.isEmpty()) {
                 return;
             }
-            List<PushTarget> targets = firebaseInstallationIds.stream().map(PushTarget::informational).toList();
             PushSendResult result = pushMessageSender.send(
-                    PushMessage.timelineCompletion(taskId, status.name()), targets);
+                    PushMessage.timelineCompletion(taskId, status.name()), firebaseInstallationIds);
             // 발송 결과는 invalid registration DB 정리와 독립된 사실이다. 정리 실패 전에 먼저 기록한다.
             pushMetrics.record(PushMessageType.TIMELINE_COMPLETION, result);
             // targets는 sender 결과가 아니라 조회한 FID 수 — noop sender는 0을 보고하므로 여기서 세야 진실이다.

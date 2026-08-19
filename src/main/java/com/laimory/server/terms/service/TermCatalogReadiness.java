@@ -17,7 +17,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -26,7 +25,7 @@ import org.springframework.stereotype.Component;
 /**
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 mapping 정합성의 단일 판정 지점.
  *
- * <p>기동 시 필수 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code (termType, stage, required)} 일치를
+ * <p>기동 시 다섯 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code (termType, stage, required)} 일치를
  * 검사하고, 누락·불일치·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
  * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
  * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·mapping
@@ -124,13 +123,7 @@ public class TermCatalogReadiness {
             Set<String> seededTypes = rows.stream()
                     .map(TermDocumentRepository.TermCatalogRow::getTermType)
                     .collect(Collectors.toSet());
-            // seed 존재는 필수 종류만 요구한다 — 선택 동의 문서(PUSH_SETTINGS)는 없어도 어떤 gate도
-            // 열리지 않고, 사용자가 동의를 시도하면 버전 불일치 409로 fail-closed된다. 필수가 아닌
-            // 종류의 미seed를 ERROR로 올리면 활성화 전 기간 내내 운영 경보가 거짓으로 울린다.
-            List<TermType> seedRequiredTypes = Stream.of(TermType.values())
-                    .filter(TermType::required)
-                    .toList();
-            for (TermType type : seedRequiredTypes) {
+            for (TermType type : TermType.values()) {
                 if (!seededTypes.contains(type.name())) {
                     problems.add("missing seed for termType=" + type.name());
                 }
@@ -154,9 +147,7 @@ public class TermCatalogReadiness {
             // 아니라 WARN 1줄로만 알린다(반복 기동 경보 소음 방지). 행이 하나라도 생기면 아래 ERROR 경로다.
             log.warn("term catalog not seeded yet — enforcement fails open until activation (pre-activation state)");
         } else if (problems.isEmpty()) {
-            log.info("term catalog verified: all {} required term types seeded and consistent",
-                    TermType.requiredTypesOf(TermStage.LOGIN).size()
-                            + TermType.requiredTypesOf(TermStage.TIMELINE_FIRST_CREATE).size());
+            log.info("term catalog verified: all {} term types seeded and consistent", TermType.values().length);
         } else {
             // 경보 1줄(bounded) — 기동·공개 조회는 계속되고 미준비 stage의 gate는 fail-open된다.
             log.error("term catalog inconsistent: {}", String.join("; ", problems));

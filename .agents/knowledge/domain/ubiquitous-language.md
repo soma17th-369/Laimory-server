@@ -176,14 +176,10 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
-| 전체 푸시 설정 | Push Preference | 현재 구현 | subject별 FCM 전체 수신 마스터(`push_preferences`, 기본 ON)다. 정보성·광고성을 가리지 않는 최상위 스위치이며 OFF는 발송만 막고 종류별 설정값·법적 동의는 보존한다. |
+| 전체 푸시 설정 | Push Preference | 현재 구현 | subject별 FCM 전체 수신 마스터(`push_preferences`, 기본 ON)다. 모든 알림의 최상위 스위치이며 OFF는 발송만 막고 종류별 설정값은 보존한다. |
 | 예정 알림 설정 | Scheduled Notification Preference | 현재 구현 | subject와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태(`scheduled_notification_preferences`)다. 새 리텐션 알림은 컬럼이 아니라 새 `notification_type` 행으로 추가한다. |
-| 일일 리마인더 | Daily Reminder | 현재 구현 | 사용자가 고른 KST 시각에 하루 기록을 유도하는 예정 알림이다. 기본 OFF/21:00이며 켜려면 광고 수신 동의가 필요하다(야간 시각이면 야간 동의도). |
-| 알림 분류 | Push Compliance Class | 현재 구현 | 알림 종류의 법적 성격(`INFORMATIONAL`/`ADVERTISING`)이다. 제품 책임자가 종류마다 확정해 코드에 넣는 값이며 문구로 runtime 추론하지 않는다. 누락은 기동 실패다. |
-| 광고성 수신 동의 | Advertising Push Consent | 현재 구현 | 광고성 알림 수신에 대한 선택 동의다. 상태 권위는 `notification_consents` snapshot이고 증적은 append-only `notification_consent_events`다. 철회가 있어 약관 동의 이력 테이블로 표현하지 않는다. 상태 전이는 조건부 UPDATE이며 영향 행 수가 처리 결과(APPLIED/ALREADY_IN_STATE)를 정한다. |
-| 야간 광고성 수신 동의 | Night Advertising Push Consent | 현재 구현 | 21:00~08:00(KST) 광고성 전송에만 적용되는 별도 선택 동의다. 일반 광고 동의가 ON일 때만 켤 수 있고 일반 동의 철회 시 함께 철회된다. |
+| 일일 리마인더 | Daily Reminder | 현재 구현 | 사용자가 직접 켜고 시각을 고르는 예정 알림이다. 기본 OFF/21:00이며 사용자 설정이 곧 수신 의사 표시다(별도 법정 동의 절차 없음 — 정보성 통지). |
 | occurrence | Occurrence | 현재 구현 | 예정 알림의 하루치 발송 기회다. 하루에 한 번만 처리되며(발송·지연 skip 어느 쪽이든) 처리한 occurrence의 KST 날짜가 `last_processed_occurrence_date`다 — claim 시각의 날짜가 아니다. |
-| 수신거부 token | Opt-out Token | 현재 구현 | 앱이 설치별로 만들어 보관하는 256-bit 수신거부 credential이다. 서버는 SHA-256 hash만 저장하며, 이 값이 없는 설치(legacy)는 광고성 발송 대상에서 빠진다. 로그인 없이 광고 수신을 철회하는 유일한 수단이다. |
 
 ## 개인정보 치환
 
