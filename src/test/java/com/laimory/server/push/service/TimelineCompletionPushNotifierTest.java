@@ -90,12 +90,12 @@ class TimelineCompletionPushNotifierTest {
         masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
-        when(pushMessageSender.send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"), List.of("fid-1", "fid-2")))
+        when(pushMessageSender.send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS), List.of("fid-1", "fid-2")))
                 .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
-        verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, "SUCCESS"),
+        verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS),
                 List.of("fid-1", "fid-2"));
         verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION,
                 new PushSendResult(2, 2, 0, List.of()));

@@ -1,6 +1,7 @@
 package com.laimory.server.push;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -19,6 +20,7 @@ import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.MulticastMessage;
 import com.google.firebase.messaging.Notification;
 import com.google.firebase.messaging.SendResponse;
+import com.laimory.server.timeline.TaskStatus;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -47,7 +49,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 class FirebasePushMessageSenderTest {
 
     private static final String TASK_ID = "t-1";
-    private static final PushMessage COMPLETION = PushMessage.timelineCompletion(TASK_ID, "SUCCESS");
+    private static final PushMessage COMPLETION =
+            PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS);
 
     @Mock
     private FirebaseMessaging firebaseMessaging;
@@ -141,6 +144,28 @@ class FirebasePushMessageSenderTest {
     }
 
     // --- 정보성 payload 고정 ---
+
+    @Test
+    void failed_buildsFailureNotification() throws Exception {
+        givenAllSuccess(1);
+
+        // terminal 상태에 따라 문구가 달라야 한다 — 실패에 성공 문구가 나가면 사용자가 결과를 오해한다.
+        sender.send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.FAILED), targets("fid-1"));
+
+        verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
+        MulticastMessage message = messageCaptor.getValue();
+        assertThat(notificationTitleOf(message)).isEqualTo("타임라인 생성 실패");
+        assertThat(notificationBodyOf(message)).isEqualTo("타임라인을 만들지 못했어요. 앱에서 다시 시도해 주세요.");
+        assertThat(dataOf(message)).containsExactlyInAnyOrderEntriesOf(
+                Map.of("taskId", TASK_ID, "status", "FAILED"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = TaskStatus.class, names = "PROCESSING")
+    void nonTerminalStatus_isRejected(TaskStatus status) {
+        assertThatThrownBy(() -> PushMessage.timelineCompletion(TASK_ID, status))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
     @Test
     void buildsFixedNotificationWithRoutingDataOnly() throws Exception {
