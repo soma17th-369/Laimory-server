@@ -3,7 +3,6 @@ package com.laimory.server.push.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.NotificationConsentAction;
-import com.laimory.server.push.NotificationConsentProcessingResult;
 import com.laimory.server.push.NotificationConsentSource;
 import com.laimory.server.push.NotificationConsentType;
 import com.laimory.server.push.PushSenderProperties;
@@ -12,13 +11,13 @@ import com.laimory.server.push.entity.NotificationConsent;
 import com.laimory.server.push.entity.NotificationConsentEvent;
 import com.laimory.server.push.repository.NotificationConsentEventRepository;
 import com.laimory.server.push.repository.NotificationConsentRepository;
+import com.laimory.server.push.service.NotificationConsentTransactionService.ConsentCommand;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
@@ -45,6 +44,10 @@ import org.springframework.stereotype.Service;
  * 같은 응답으로 수렴시킨다(duplicate key를 500으로 노출하지 않는다).
  *
  * <p>행 부재는 언제나 미동의다. 조회 장애나 rollout 공백을 동의로 추정하지 않는다.
+ *
+ * <p>상태 전이 판정은 이 클래스가 하지 않는다 — 조건부 UPDATE의 영향 행 수가 근거이며
+ * {@link NotificationConsentTransactionService}가 소유한다. 여기서 미리 읽어 판단하면 읽기와 쓰기 사이에
+ * 낀 동시 요청 때문에 철회가 "이미 OFF였다"로 기록되고 실제 상태는 ON으로 남을 수 있다.
  */
 @Service
 @RequiredArgsConstructor
@@ -62,10 +65,17 @@ public class NotificationConsentService {
         notificationConsentRepository.insertIfAbsent(subjectId.toString(), nowKst());
     }
 
-    /** 설정 조회 경로의 get-or-create — 누락 행을 같은 request에서 기본 OFF로 멱등 보정한다. */
+    /**
+     * 설정 조회 경로의 get-or-create — 누락 행을 기본 OFF로 보정한다. 있는 행에는 쓰기를 하지 않는다
+     * (읽기 경로의 불필요한 쓰기 제거 + 기존 행에 S락을 잡지 않기 위해).
+     */
     public ConsentState getOrCreateState(UUID subjectId) {
-        createDefaultIfAbsent(subjectId);
-        return findState(subjectId);
+        return notificationConsentRepository.findById(subjectId)
+                .map(ConsentState::of)
+                .orElseGet(() -> {
+                    createDefaultIfAbsent(subjectId);
+                    return findState(subjectId);
+                });
     }
 
     /** 현재 동의 상태 — 행이 없으면 전부 미동의로 읽는다(추정 금지). */
@@ -111,8 +121,8 @@ public class NotificationConsentService {
                                                 boolean consented, String termVersion,
                                                 NotificationConsentSource source) {
         Objects.requireNonNull(clientRequestId, "clientRequestId is required");
-        createDefaultIfAbsent(subjectId);
-
+        // 기본 행 생성은 전이 transaction 안에서 필요할 때만 한다 — 여기서 미리 INSERT IGNORE를 날리면
+        // 바깥 transaction(비로그인 수신거부)에 S락이 실려 전이 UPDATE와 deadlock을 만든다.
         NotificationConsentAction action = consented
                 ? NotificationConsentAction.CONSENT : NotificationConsentAction.WITHDRAW;
         Optional<List<NotificationConsentEvent>> replay = findReplay(subjectId, clientRequestId, type, action);
@@ -150,70 +160,26 @@ public class NotificationConsentService {
     private List<NotificationConsentEvent> consent(UUID subjectId, UUID clientRequestId,
                                                     NotificationConsentType type, String termVersion,
                                                     NotificationConsentSource source) {
-        LocalDateTime occurredAt = nowKst();
-        ConsentState state = findState(subjectId);
-        if (type == NotificationConsentType.NIGHT_ADVERTISING_PUSH && !state.advertisingConsented()) {
-            // 야간 동의는 일반 광고 동의를 전제한다 — 부분 적용 없이 거절한다.
-            throw new BusinessException(ExceptionType.NOTIFICATION_CONSENT_REQUIRED);
-        }
-
-        TermDocumentSummary document = requireCurrentDocument(type, termVersion, occurredAt);
-        boolean alreadyConsented = type == NotificationConsentType.ADVERTISING_PUSH
-                ? state.advertisingConsented() : state.nightAdvertisingConsented();
-        Long recordedDocumentId = type == NotificationConsentType.ADVERTISING_PUSH
-                ? state.advertisingTermDocumentId() : state.nightTermDocumentId();
-        boolean sameDocument = alreadyConsented && document.termDocumentId().equals(recordedDocumentId);
-
-        NotificationConsentProcessingResult result = sameDocument
-                ? NotificationConsentProcessingResult.ALREADY_IN_STATE
-                : NotificationConsentProcessingResult.APPLIED;
-        List<NotificationConsentEvent> events = List.of(event(subjectId, clientRequestId, type,
-                NotificationConsentAction.CONSENT, document.termDocumentId(), occurredAt, result, source));
-
-        if (result == NotificationConsentProcessingResult.ALREADY_IN_STATE) {
-            return notificationConsentTransactionService.recordEventsOnly(events);
-        }
+        ConsentCommand command = command(subjectId, clientRequestId, source);
+        Long termDocumentId = requireCurrentDocument(type, termVersion, command.occurredAt()).termDocumentId();
+        // 상태 판정은 transaction 안의 조건부 UPDATE가 한다 — 여기서 미리 읽어 결정하지 않는다.
         return type == NotificationConsentType.ADVERTISING_PUSH
-                ? notificationConsentTransactionService.consentAdvertising(
-                        subjectId, document.termDocumentId(), occurredAt, events)
-                : notificationConsentTransactionService.consentNight(
-                        subjectId, document.termDocumentId(), occurredAt, events);
+                ? notificationConsentTransactionService.consentAdvertising(command, termDocumentId)
+                : notificationConsentTransactionService.consentNight(command, termDocumentId);
     }
 
     private List<NotificationConsentEvent> withdraw(UUID subjectId, UUID clientRequestId,
                                                      NotificationConsentType type,
                                                      NotificationConsentSource source) {
-        LocalDateTime occurredAt = nowKst();
-        ConsentState state = findState(subjectId);
-        List<NotificationConsentEvent> events = new ArrayList<>();
+        ConsentCommand command = command(subjectId, clientRequestId, source);
+        return type == NotificationConsentType.ADVERTISING_PUSH
+                ? notificationConsentTransactionService.withdrawAdvertising(command)
+                : notificationConsentTransactionService.withdrawNight(command);
+    }
 
-        if (type == NotificationConsentType.NIGHT_ADVERTISING_PUSH) {
-            events.add(event(subjectId, clientRequestId, type, NotificationConsentAction.WITHDRAW,
-                    state.nightTermDocumentId(), occurredAt,
-                    state.nightAdvertisingConsented()
-                            ? NotificationConsentProcessingResult.APPLIED
-                            : NotificationConsentProcessingResult.ALREADY_IN_STATE,
-                    source));
-            return state.nightAdvertisingConsented()
-                    ? notificationConsentTransactionService.withdrawNight(subjectId, occurredAt, events)
-                    : notificationConsentTransactionService.recordEventsOnly(events);
-        }
-
-        events.add(event(subjectId, clientRequestId, NotificationConsentType.ADVERTISING_PUSH,
-                NotificationConsentAction.WITHDRAW, state.advertisingTermDocumentId(), occurredAt,
-                state.advertisingConsented()
-                        ? NotificationConsentProcessingResult.APPLIED
-                        : NotificationConsentProcessingResult.ALREADY_IN_STATE,
-                source));
-        if (state.nightAdvertisingConsented()) {
-            // 일반 동의 철회는 야간 동의도 함께 내린다 — 그 사실도 별도 증적으로 남긴다.
-            events.add(event(subjectId, clientRequestId, NotificationConsentType.NIGHT_ADVERTISING_PUSH,
-                    NotificationConsentAction.WITHDRAW, state.nightTermDocumentId(), occurredAt,
-                    NotificationConsentProcessingResult.APPLIED, source));
-        }
-        return state.advertisingConsented() || state.nightAdvertisingConsented()
-                ? notificationConsentTransactionService.withdrawAdvertising(subjectId, occurredAt, events)
-                : notificationConsentTransactionService.recordEventsOnly(events);
+    private ConsentCommand command(UUID subjectId, UUID clientRequestId, NotificationConsentSource source) {
+        return new ConsentCommand(subjectId, clientRequestId, nowKst(),
+                pushSenderProperties.requireSenderName(), source);
     }
 
     /** 제출 버전이 지금의 현재 문서와 정확히 일치해야 한다 — 미존재·과거·미래 버전은 같은 409로 수렴한다. */
@@ -227,15 +193,6 @@ public class NotificationConsentService {
                 .filter(summary -> summary.termType() == termType && termVersion.equals(summary.version()))
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ExceptionType.STALE_TERM_VERSION));
-    }
-
-    private NotificationConsentEvent event(UUID subjectId, UUID clientRequestId, NotificationConsentType type,
-                                            NotificationConsentAction action, Long termDocumentId,
-                                            LocalDateTime occurredAt,
-                                            NotificationConsentProcessingResult result,
-                                            NotificationConsentSource source) {
-        return NotificationConsentEvent.of(subjectId, clientRequestId, type, action, termDocumentId, occurredAt,
-                pushSenderProperties.requireSenderName(), result, source);
     }
 
     private static List<NotificationConsentEvent> sorted(List<NotificationConsentEvent> events) {
