@@ -11,7 +11,6 @@ import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -38,7 +37,7 @@ import org.springframework.test.context.ActiveProfiles;
  * <ul>
  *   <li>{@code ddl-auto=validate}이므로 컨텍스트 기동 자체가 엔티티↔DDL 정합을 검증한다(감사 컬럼 포함).</li>
  *   <li>{@code FOR UPDATE SKIP LOCKED} claim이 여러 worker에서 같은 subject/occurrence를 중복 선택하지
- *       않는지, 그리고 claim이 occurrence 날짜와 다음 예정 시각을 SQL 한 문장으로 정확히 전진시키는지
+ *       않는지, 그리고 claim이 다음 예정 시각을 SQL 한 문장으로 정확히 전진시키는지
  *       실제 unique key·index 위에서 확인한다.</li>
  *   <li>FK RESTRICT 순서(종류별 → 마스터)도 실제 제약으로 확인한다.</li>
  * </ul>
@@ -129,50 +128,17 @@ class PushNotificationPreferencePersistenceIntegrationTest {
     // --- claim 전진 규칙 ---
 
     @Test
-    void claim_recordsProcessedOccurrenceDate_andMovesToNextFutureOccurrence() {
+    void advance_writesGivenNextDueAtVerbatim() {
         UUID subjectId = SUBJECTS.get(1);
-        // D일 21:00 예정을 D+1 03:00에 복구한 상황을 재현한다.
-        givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 21, 21, 0));
-
-        int advanced = scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 21),
-                LocalDateTime.of(2026, 7, 22, 21, 0));
-
-        assertThat(advanced).isEqualTo(1);
-        ScheduledNotificationPreference reloaded = reload(subjectId);
-        // 기록되는 날짜는 claim 시각(D+1)이 아니라 처리한 occurrence(D)의 날짜다.
-        assertThat(reloaded.getLastProcessedOccurrenceDate()).isEqualTo(LocalDate.of(2026, 7, 21));
-        // 그래서 당일(D+1) 21:00 알림이 그대로 남는다.
-        assertThat(reloaded.getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
-    }
-
-    @Test
-    void claim_whenTodaysTimeAlreadyPassed_movesToTomorrow() {
-        UUID subjectId = SUBJECTS.get(2);
-        givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 21, 21, 0));
-
-        scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 21),
-                LocalDateTime.of(2026, 7, 22, 21, 0));
-
-        // JVM timezone과 무관하게 저장한 값 그대로 돌아와야 한다(UTC CI가 이 회귀를 잡는다).
-        assertThat(reload(subjectId).getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
-        assertThat(reload(subjectId).getLastProcessedOccurrenceDate()).isEqualTo(LocalDate.of(2026, 7, 21));
-    }
-
-    @Test
-    void claim_afterLongOutage_jumpsStraightToFirstFutureOccurrence() {
-        UUID subjectId = SUBJECTS.get(3);
         // 며칠 밀린 행도 한 문장으로 현재 이후 첫 occurrence에 도달한다(날짜별 반복 claim 없음).
         givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 18, 21, 0));
 
-        scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 18),
-                LocalDateTime.of(2026, 7, 22, 21, 0));
+        int advanced = scheduledNotificationPreferenceRepository.advanceNextDueAt(
+                TYPE, List.of(subjectId), LocalDateTime.of(2026, 7, 22, 21, 0));
 
-        ScheduledNotificationPreference reloaded = reload(subjectId);
-        assertThat(reloaded.getLastProcessedOccurrenceDate()).isEqualTo(LocalDate.of(2026, 7, 18));
-        assertThat(reloaded.getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
+        assertThat(advanced).isEqualTo(1);
+        // JVM timezone과 무관하게 저장한 값 그대로 돌아와야 한다(UTC CI가 이 회귀를 잡는다).
+        assertThat(reload(subjectId).getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
     }
 
     // --- 멀티 worker claim ---
@@ -229,10 +195,8 @@ class PushNotificationPreferencePersistenceIntegrationTest {
                 scheduledNotificationPreferenceService.claimDue(TYPE, 100);
 
         assertThat(claimed).extracting(ScheduledNotificationPreference::getSubjectId).contains(subjectId);
-        ScheduledNotificationPreference reloaded = reload(subjectId);
-        // 처리한 occurrence의 KST 날짜와, 오늘 시각이 이미 지났으므로 다음 날 같은 시각.
-        assertThat(reloaded.getLastProcessedOccurrenceDate()).isEqualTo(dueAt.toLocalDate());
-        assertThat(reloaded.getNextDueAt()).isEqualTo(dueAt.plusDays(1));
+        // 오늘 시각이 이미 지났으므로 다음 날 같은 시각.
+        assertThat(reload(subjectId).getNextDueAt()).isEqualTo(dueAt.plusDays(1));
     }
 
     @Test

@@ -23,9 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 예정 알림 종류별 설정과 occurrence 스케줄 상태의 단일 관문.
  *
- * <p>{@code nextDueAt} 계산 규칙은 한 곳에서만 산다: 같은 KST 날짜의 occurrence를 이미 처리했거나 새
- * 시각이 이미 지났으면 다음 날, 아니면 오늘이다. 발송 여부와 무관하게 하루의 occurrence는 최대 한 번만
- * 처리된다.
+ * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>다(오늘 시각이 아직 미래면 오늘, 아니면
+ * 다음 날). 하루 1회 캡은 두지 않는다 — 시각 변경은 사용자 행동이므로, 오늘 발송을 이미 받았어도 새
+ * 시각이 미래면 그 시각으로 재장전되어 오늘 다시 올 수 있다.
  *
  * <p>기본값은 OFF/21:00이다 — 시각은 표시·저장할 수 있지만 사용자가 직접 켜기 전에는 발송하지 않는다.
  */
@@ -48,7 +48,7 @@ public class ScheduledNotificationPreferenceService {
                 notificationType.name(),
                 DEFAULT_ENABLED,
                 DEFAULT_NOTIFICATION_TIME,
-                computeNextDueAt(nowKst, DEFAULT_NOTIFICATION_TIME, null),
+                computeNextDueAt(nowKst, DEFAULT_NOTIFICATION_TIME),
                 nowKst);
     }
 
@@ -85,31 +85,25 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 시각 변경 — 시각과 다음 예정 시각을 한 문장에서 함께 바꾼다. 후보 시각만 여기서 KST로 계산하고
-     * "오늘 것을 이미 처리했는가"는 UPDATE가 행에서 직접 본다. 그래서 worker claim이나 다른 설정 변경과
-     * 겹쳐도 두 값이 어긋난 상태가 남지 않는다.
+     * 시각 변경 — 시각과 새 시각의 다음 미래 occurrence를 한 문장에서 함께 바꾼다. 그래서 worker claim이나
+     * 다른 설정 변경과 겹쳐도 두 값이 어긋난 상태가 남지 않는다.
      *
      * <p>{@link #updateEnabled}와 같은 이유로 문장들을 한 transaction으로 묶지 않는다.
      */
     public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
                                        LocalTime notificationTime) {
-        LocalDateTime nowKst = nowKst();
-        LocalDate today = nowKst.toLocalDate();
-        LocalDateTime todayAt = LocalDateTime.of(today, notificationTime);
-        LocalDateTime tomorrowAt = LocalDateTime.of(today.plusDays(1), notificationTime);
-        LocalDateTime candidate = todayAt.isAfter(nowKst) ? todayAt : tomorrowAt;
+        LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime);
         if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
-                notificationTime, today, tomorrowAt, candidate) == 0) {
+                notificationTime, nextDueAt) == 0) {
             createDefaultIfAbsent(subjectId, notificationType);
             scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
-                    notificationTime, today, tomorrowAt, candidate);
+                    notificationTime, nextDueAt);
         }
     }
 
     /**
-     * due occurrence를 row lock으로 분리하고 같은 짧은 transaction에서 처리 완료로 표시한 뒤 현재 시각
-     * 이후 첫 occurrence로 옮긴다. 반환 시 transaction·row lock이 끝났으므로 호출자는 외부 I/O를
-     * 안전하게 수행할 수 있다.
+     * due occurrence를 row lock으로 분리하고 같은 짧은 transaction에서 현재 시각 이후 첫 occurrence로
+     * 옮긴다. 반환 시 transaction·row lock이 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
      *
      * <p>허용 지연을 넘긴 행도 함께 claim한다 — 발송 대상 판정은 호출자가 반환된 {@code nextDueAt}으로
      * 하고, 여기서는 오래된 행이 매분 다시 선택되지 않도록 전진만 보장한다.
@@ -128,21 +122,19 @@ public class ScheduledNotificationPreferenceService {
             return List.of();
         }
         // 전진 값은 Java에서 KST로 계산한다 — SQL 안에서 DATETIME 파라미터와 TIME 컬럼을 섞어 파생하면
-        // JDBC의 timezone 변환 때문에 JVM zone에 따라 결과가 달라진다. 같은 (occurrence 날짜, 다음 시각)
-        // 조합끼리 묶어 문장 수를 줄인다(대부분 같은 시각을 쓰므로 보통 1~2개로 수렴).
-        Map<Advance, List<UUID>> subjectsByAdvance = new LinkedHashMap<>();
+        // JDBC의 timezone 변환 때문에 JVM zone에 따라 결과가 달라진다. 같은 다음 시각끼리 묶어 문장 수를
+        // 줄인다(대부분 같은 시각을 쓰므로 보통 1~2개로 수렴).
+        Map<LocalDateTime, List<UUID>> subjectsByNextDueAt = new LinkedHashMap<>();
         for (ScheduledNotificationPreference preference : due) {
-            LocalDate occurrenceDate = preference.getNextDueAt().toLocalDate();
-            Advance advance = new Advance(occurrenceDate,
-                    computeNextDueAt(nowKst, preference.getNotificationTime(), occurrenceDate));
-            subjectsByAdvance.computeIfAbsent(advance, key -> new ArrayList<>())
+            subjectsByNextDueAt
+                    .computeIfAbsent(computeNextDueAt(nowKst, preference.getNotificationTime()),
+                            key -> new ArrayList<>())
                     .add(preference.getSubjectId());
         }
         int advanced = 0;
-        for (Map.Entry<Advance, List<UUID>> entry : subjectsByAdvance.entrySet()) {
-            advanced += scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                    notificationType, entry.getValue(),
-                    entry.getKey().occurrenceDate(), entry.getKey().nextDueAt());
+        for (Map.Entry<LocalDateTime, List<UUID>> entry : subjectsByNextDueAt.entrySet()) {
+            advanced += scheduledNotificationPreferenceRepository.advanceNextDueAt(
+                    notificationType, entry.getValue(), entry.getKey());
         }
         if (advanced != due.size()) {
             throw new IllegalStateException("scheduled notification claim count mismatch");
@@ -155,16 +147,11 @@ public class ScheduledNotificationPreferenceService {
         scheduledNotificationPreferenceRepository.deleteAllBySubjectId(subjectId);
     }
 
-    /**
-     * 다음 예정 시각 — 같은 KST 날짜의 occurrence를 이미 처리했거나 오늘 시각이 이미 지났으면 다음 날,
-     * 아니면 오늘이다. 하루의 occurrence는 발송·skip 어느 쪽이든 한 번만 처리된다.
-     */
-    static LocalDateTime computeNextDueAt(LocalDateTime nowKst, LocalTime notificationTime,
-                                          LocalDate lastProcessedOccurrenceDate) {
+    /** 다음 예정 시각 — 현재 이후 첫 occurrence다(오늘 시각이 아직 미래면 오늘, 아니면 다음 날). */
+    static LocalDateTime computeNextDueAt(LocalDateTime nowKst, LocalTime notificationTime) {
         LocalDate today = nowKst.toLocalDate();
         LocalDateTime todayOccurrence = LocalDateTime.of(today, notificationTime);
-        boolean processedToday = today.equals(lastProcessedOccurrenceDate);
-        if (!processedToday && todayOccurrence.isAfter(nowKst)) {
+        if (todayOccurrence.isAfter(nowKst)) {
             return todayOccurrence;
         }
         return LocalDateTime.of(today.plusDays(1), notificationTime);
@@ -174,11 +161,7 @@ public class ScheduledNotificationPreferenceService {
     public record Settings(boolean enabled, LocalTime notificationTime) {
     }
 
-    /** 같은 전진 값을 공유하는 행을 한 문장으로 묶기 위한 그룹 키. */
-    private record Advance(LocalDate occurrenceDate, LocalDateTime nextDueAt) {
-    }
-
-    /** 마스터·동의 batch 조회를 위해 claim 결과에서 subject를 뽑는 호출부 편의. */
+    /** 마스터 batch 조회를 위해 claim 결과에서 subject를 뽑는 호출부 편의. */
     public static List<UUID> subjectIdsOf(Collection<ScheduledNotificationPreference> preferences) {
         return preferences.stream().map(ScheduledNotificationPreference::getSubjectId).distinct().toList();
     }

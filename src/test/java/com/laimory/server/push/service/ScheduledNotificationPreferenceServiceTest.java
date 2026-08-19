@@ -18,7 +18,6 @@ import com.laimory.server.push.repository.ScheduledNotificationPreferenceReposit
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
@@ -34,8 +33,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 종류별 설정 leaf 검증 — 다음 예정 시각 계산 규칙, 기본값, claim 후 전진 계약. 인프라 0.
  *
- * <p>occurrence 계산은 "하루에 한 번"과 "지연 복구가 다음 날 알림을 잡아먹지 않음"을 동시에 지켜야 해서
- * 경계 케이스를 값으로 고정한다.
+ * <p>occurrence 계산은 항상 "현재 이후 첫 occurrence"다 — 하루 1회 캡은 없고, 지연 복구가 다음 날
+ * 알림을 잡아먹지 않는 것은 같은 규칙의 결과다. 경계 케이스를 값으로 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ScheduledNotificationPreferenceServiceTest {
@@ -54,13 +53,12 @@ class ScheduledNotificationPreferenceServiceTest {
     }
 
     private static ScheduledNotificationPreference preference(boolean enabled, LocalTime time,
-                                                              LocalDate lastProcessed, LocalDateTime nextDueAt) {
+                                                              LocalDateTime nextDueAt) {
         ScheduledNotificationPreference preference = new ScheduledNotificationPreference() {
         };
         ReflectionTestUtils.setField(preference, "id", new ScheduledNotificationPreferenceId(SUBJECT_ID, TYPE));
         ReflectionTestUtils.setField(preference, "enabled", enabled);
         ReflectionTestUtils.setField(preference, "notificationTime", time);
-        ReflectionTestUtils.setField(preference, "lastProcessedOccurrenceDate", lastProcessed);
         ReflectionTestUtils.setField(preference, "nextDueAt", nextDueAt);
         return preference;
     }
@@ -70,37 +68,22 @@ class ScheduledNotificationPreferenceServiceTest {
     @Test
     void nextDueAt_isTodayWhenTimeIsStillAhead() {
         assertThat(ScheduledNotificationPreferenceService.computeNextDueAt(
-                NOW_KST, LocalTime.of(21, 0), null))
+                NOW_KST, LocalTime.of(21, 0)))
                 .isEqualTo(LocalDateTime.of(2026, 7, 21, 21, 0));
     }
 
     @Test
     void nextDueAt_movesToTomorrowWhenTimeAlreadyPassed() {
         assertThat(ScheduledNotificationPreferenceService.computeNextDueAt(
-                NOW_KST, LocalTime.of(19, 0), null))
+                NOW_KST, LocalTime.of(19, 0)))
                 .isEqualTo(LocalDateTime.of(2026, 7, 22, 19, 0));
-    }
-
-    @Test
-    void nextDueAt_movesToTomorrowWhenTodaysOccurrenceWasAlreadyProcessed() {
-        // 같은 날 두 번 발송 금지 — 시각을 미래로 바꿔도 오늘 몫은 이미 소비됐다.
-        assertThat(ScheduledNotificationPreferenceService.computeNextDueAt(
-                NOW_KST, LocalTime.of(21, 0), LocalDate.of(2026, 7, 21)))
-                .isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
-    }
-
-    @Test
-    void nextDueAt_isTodayWhenLastProcessedIsAnEarlierDay() {
-        assertThat(ScheduledNotificationPreferenceService.computeNextDueAt(
-                NOW_KST, LocalTime.of(21, 0), LocalDate.of(2026, 7, 20)))
-                .isEqualTo(LocalDateTime.of(2026, 7, 21, 21, 0));
     }
 
     @Test
     void nextDueAt_atExactlyNow_movesToTomorrow() {
         // 경계: 지금과 같은 시각은 "아직 미래"가 아니다(즉시 재발송 방지).
         assertThat(ScheduledNotificationPreferenceService.computeNextDueAt(
-                NOW_KST, LocalTime.of(20, 0), null))
+                NOW_KST, LocalTime.of(20, 0)))
                 .isEqualTo(LocalDateTime.of(2026, 7, 22, 20, 0));
     }
 
@@ -152,28 +135,25 @@ class ScheduledNotificationPreferenceServiceTest {
     }
 
     @Test
-    void updateNotificationTime_passesBothCandidatesSoSqlPicksByProcessedDate() {
-        when(repository.updateNotificationTime(any(), any(), any(), any(), any(), any())).thenReturn(1);
+    void updateNotificationTime_rearmsTodayWhenNewTimeIsStillAhead() {
+        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
 
-        // 지금은 20:00. 22:15는 아직 오늘 미래라 후보는 오늘, 오늘 것을 이미 처리했다면 내일.
+        // 지금은 20:00. 22:15는 아직 오늘 미래라 오늘로 재장전한다 — 오늘 이미 발송됐어도 마찬가지다
+        // (하루 1회 캡 없음, 시각 변경은 사용자 행동).
         service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15));
 
         verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15),
-                LocalDate.of(2026, 7, 21),
-                LocalDateTime.of(2026, 7, 22, 22, 15),
                 LocalDateTime.of(2026, 7, 21, 22, 15));
         verify(repository, never()).findById(any());
     }
 
     @Test
-    void updateNotificationTime_whenNewTimeAlreadyPassed_candidateIsTomorrow() {
-        when(repository.updateNotificationTime(any(), any(), any(), any(), any(), any())).thenReturn(1);
+    void updateNotificationTime_whenNewTimeAlreadyPassed_nextDueIsTomorrow() {
+        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
 
         service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0));
 
         verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0),
-                LocalDate.of(2026, 7, 21),
-                LocalDateTime.of(2026, 7, 22, 19, 0),
                 LocalDateTime.of(2026, 7, 22, 19, 0));
     }
 
@@ -182,36 +162,36 @@ class ScheduledNotificationPreferenceServiceTest {
     @Test
     void claimDue_advancesEveryClaimedRowInSameTransaction() {
         ScheduledNotificationPreference due =
-                preference(true, LocalTime.of(19, 0), null, LocalDateTime.of(2026, 7, 21, 19, 0));
+                preference(true, LocalTime.of(19, 0), LocalDateTime.of(2026, 7, 21, 19, 0));
         when(repository.findDueForUpdateSkipLocked("DAILY_REMINDER", NOW_KST, 250))
                 .thenReturn(List.of(due));
-        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(1);
+        when(repository.advanceNextDueAt(any(), any(), any())).thenReturn(1);
 
         List<ScheduledNotificationPreference> claimed = service().claimDue(TYPE, 250);
 
         assertThat(claimed).containsExactly(due);
-        // 전진 값은 Java가 KST로 계산해 넘긴다 — 처리한 occurrence 날짜와 다음 날 같은 시각.
-        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
-                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 19, 0));
+        // 전진 값은 Java가 KST로 계산해 넘긴다 — 19:00은 이미 지났으니 다음 날 같은 시각.
+        verify(repository).advanceNextDueAt(TYPE, List.of(SUBJECT_ID),
+                LocalDateTime.of(2026, 7, 22, 19, 0));
     }
 
     @Test
     void claimDue_groupsRowsByTheirOwnAdvanceValues() {
         // 시각이 다른 행은 전진 값도 달라야 한다 — 한 문장으로 뭉뚱그리면 남의 시각으로 덮인다.
-        ScheduledNotificationPreference nine = preference(true, LocalTime.of(19, 0), null,
+        ScheduledNotificationPreference nine = preference(true, LocalTime.of(19, 0),
                 LocalDateTime.of(2026, 7, 21, 19, 0));
-        ScheduledNotificationPreference eight = preference(true, LocalTime.of(18, 0), null,
+        ScheduledNotificationPreference eight = preference(true, LocalTime.of(18, 0),
                 LocalDateTime.of(2026, 7, 21, 18, 0));
         when(repository.findDueForUpdateSkipLocked(anyString(), any(), anyInt()))
                 .thenReturn(List.of(nine, eight));
-        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(1);
+        when(repository.advanceNextDueAt(any(), any(), any())).thenReturn(1);
 
         service().claimDue(TYPE, 250);
 
-        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
-                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 19, 0));
-        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
-                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 18, 0));
+        verify(repository).advanceNextDueAt(TYPE, List.of(SUBJECT_ID),
+                LocalDateTime.of(2026, 7, 22, 19, 0));
+        verify(repository).advanceNextDueAt(TYPE, List.of(SUBJECT_ID),
+                LocalDateTime.of(2026, 7, 22, 18, 0));
     }
 
     @Test
@@ -220,15 +200,15 @@ class ScheduledNotificationPreferenceServiceTest {
 
         assertThat(service().claimDue(TYPE, 250)).isEmpty();
 
-        verify(repository, never()).markProcessedAndAdvance(any(), any(), any(), any());
+        verify(repository, never()).advanceNextDueAt(any(), any(), any());
     }
 
     @Test
     void claimDue_advanceCountMismatch_failsLoudly() {
         // 잠근 행 수와 전진한 행 수가 다르면 같은 occurrence가 다시 선택될 수 있다 — 조용히 넘기지 않는다.
         when(repository.findDueForUpdateSkipLocked(anyString(), any(), anyInt())).thenReturn(List.of(
-                preference(true, LocalTime.of(19, 0), null, LocalDateTime.of(2026, 7, 21, 19, 0))));
-        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(0);
+                preference(true, LocalTime.of(19, 0), LocalDateTime.of(2026, 7, 21, 19, 0))));
+        when(repository.advanceNextDueAt(any(), any(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> service().claimDue(TYPE, 250))
                 .isInstanceOf(IllegalStateException.class);

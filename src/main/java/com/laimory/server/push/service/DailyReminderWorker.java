@@ -20,9 +20,9 @@ import org.springframework.stereotype.Component;
  * 일일 리마인더 occurrence를 여러 process/thread에서 batch claim해 발송하는 worker.
  *
  * <p>모든 process가 매분 trigger를 돌린다. 짧은 claim transaction이 {@code SKIP LOCKED}로 서로 다른
- * subject 행을 나눠 잡고 처리한 occurrence 날짜와 다음 예정 시각을 먼저 commit한 뒤, FID 조회와 FCM
- * 호출은 transaction 밖에서 한다 — 같은 사용자·같은 날짜가 두 번 발송되지 않는 것이 우선이고, 그 대가로
- * claim commit 뒤 process가 죽으면 그 날 알림은 누락된다(자동 재발송 없음, at-most-once best-effort).
+ * subject 행을 나눠 잡고 다음 예정 시각을 먼저 commit한 뒤, FID 조회와 FCM 호출은 transaction 밖에서
+ * 한다 — 같은 occurrence가 두 번 발송되지 않는 것이 우선이고, 그 대가로 claim commit 뒤 process가
+ * 죽으면 그 날 알림은 누락된다(자동 재발송 없음, at-most-once best-effort).
  *
  * <p>허용 지연을 넘긴 occurrence는 발송 없이 건너뛴다. 오래 내려가 있던 서버가 복구되면서 새벽에
  * 밀린 알림을 쏟아내지 않게 하는 장치이며, 그래도 claim은 해서 다음 미래 occurrence로 옮긴다.

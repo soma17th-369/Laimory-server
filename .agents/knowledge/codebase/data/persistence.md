@@ -132,15 +132,15 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 `push_preferences`·`scheduled_notification_preferences`(#314)는 푸시 수신 설정을 두 축으로 나눈다.
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 종류별 설정은 `(subject_id, notification_type)`
 복합 PK라 새 리텐션 알림이 컬럼이 아니라 행으로 늘어난다. `notification_time`(TIME)·`next_due_at`
-(DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고 `last_processed_occurrence_date`(DATE)는 claim 시각의
-날짜가 아니라 **처리한 예정 occurrence의 날짜**다 — 지연 복구가 다음 날짜 알림을 잡아먹지 않게 하는
-기준이다. worker는 `(notification_type, enabled, next_due_at, subject_id)` index로 due 행을
-`FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 occurrence 날짜 기록과 "현재 시각 이후 첫
-occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
+(DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고, `next_due_at`은 항상 **현재 이후 첫 occurrence**다 —
+하루 1회 캡을 두지 않아 시각 변경이 미래 시각으로 재장전하면 같은 날 다시 발송될 수 있다(사용자
+행동이므로 허용, 설계 검토 2026-08-19 확정). worker는 `(notification_type, enabled, next_due_at,
+subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각
+이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
 
 설정 쓰기는 행을 읽지 않는다. ON/OFF는 `enabled` 한 컬럼만 바꾸고, 시각 변경은 시각과 파생값
-`next_due_at`을 한 UPDATE에서 함께 바꾼다 — 후보 시각 두 개를 Java가 KST로 계산해 파라미터로 넘기고
-SQL은 `last_processed_occurrence_date = :today`만 본다. 읽고 계산해서 쓰면 그 사이 다른 설정 변경이나
+`next_due_at`을 한 UPDATE에서 함께 바꾼다 — 전진 시각은 Java가 KST로 계산해 파라미터로 넘긴다.
+읽고 계산해서 쓰면 그 사이 다른 설정 변경이나
 worker claim이 끼어들어 파생값이 자기 입력과 어긋나므로, 잠금 대신 <b>읽기를 없애서</b> 막는다.
 행이 없으면 UPDATE가 0행을 반환하고 그때만 만든 뒤 다시 시도하며, 이 문장들은 한 transaction으로
 묶지 않는다(대상 없는 UPDATE의 gap lock을 쥔 채 INSERT하면 동시 최초 생성이 deadlock에 빠진다). 종류별 행은

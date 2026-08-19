@@ -321,8 +321,6 @@ CREATE TABLE IF NOT EXISTS push_preferences (
 
 -- subject의 예정 알림 종류별 설정·스케줄 상태. 새 리텐션 알림은 컬럼이 아니라 새 notification_type 행이다.
 -- notification_time/next_due_at은 Asia/Seoul 벽시계 계약(offset 없음 — 이 저장소 공통).
--- last_processed_occurrence_date는 claim 시각의 날짜가 아니라 처리한 예정 occurrence의 KST 날짜다 —
--- 지연 복구가 다음 날짜 알림을 잡아먹지 않게 하는 기준이다.
 -- notification_type은 enum literal exact-match 식별자 → 컬럼 단위 binary collation(term_type 선례).
 -- master FK는 RESTRICT라 종류별 행 정리를 빠뜨린 탈퇴가 master 삭제를 조용히 통과하지 못한다.
 CREATE TABLE IF NOT EXISTS scheduled_notification_preferences (
@@ -330,7 +328,6 @@ CREATE TABLE IF NOT EXISTS scheduled_notification_preferences (
     notification_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- ScheduledNotificationType literal
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     notification_time TIME NOT NULL,
-    last_processed_occurrence_date DATE NULL,
     next_due_at DATETIME(6) NOT NULL,
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
     created_at DATETIME(6) NOT NULL,

@@ -3,7 +3,6 @@ package com.laimory.server.push.repository;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collection;
@@ -47,23 +46,21 @@ public interface ScheduledNotificationPreferenceRepository
             @Param("limit") int limit);
 
     /**
-     * claim한 occurrence를 처리 완료로 표시하고 다음 예정 시각으로 옮긴다. 발송한 행과 지연 초과로
-     * 건너뛴 행이 같은 문장을 공유하며, 같은 (occurrence 날짜, 다음 예정 시각) 값을 갖는 행끼리 묶여 온다.
+     * claim한 occurrence를 다음 예정 시각으로 옮긴다. 발송한 행과 지연 초과로 건너뛴 행이 같은 문장을
+     * 공유하며, 같은 다음 예정 시각을 갖는 행끼리 묶여 온다.
      *
-     * <p>두 값은 <b>Java에서 KST로 계산해</b> 넘긴다 — SQL 안에서 {@code date()}/{@code timestamp()}로
+     * <p>전진 값은 <b>Java에서 KST로 계산해</b> 넘긴다 — SQL 안에서 {@code date()}/{@code timestamp()}로
      * 파생하지 않는다. JDBC가 {@code LocalDateTime} 파라미터를 connection timezone 기준으로 변환하는데
      * {@code TIME} 컬럼은 변환하지 않아, DB 안에서 둘을 섞어 연산하면 JVM timezone에 따라 결과가 달라진다
      * (UTC JVM에서 날짜 +1일·시각 −9시간). 파라미터만 주고받으면 읽기와 쓰기의 변환이 대칭이라 안전하다.
      */
     @Modifying
     @Transactional
-    @Query("update ScheduledNotificationPreference s "
-            + "set s.lastProcessedOccurrenceDate = :occurrenceDate, s.nextDueAt = :nextDueAt "
+    @Query("update ScheduledNotificationPreference s set s.nextDueAt = :nextDueAt "
             + "where s.id.notificationType = :notificationType and s.id.subjectId in :subjectIds")
-    int markProcessedAndAdvance(@Param("notificationType") ScheduledNotificationType notificationType,
-                                @Param("subjectIds") Collection<UUID> subjectIds,
-                                @Param("occurrenceDate") LocalDate occurrenceDate,
-                                @Param("nextDueAt") LocalDateTime nextDueAt);
+    int advanceNextDueAt(@Param("notificationType") ScheduledNotificationType notificationType,
+                         @Param("subjectIds") Collection<UUID> subjectIds,
+                         @Param("nextDueAt") LocalDateTime nextDueAt);
 
     /**
      * 종류별 ON/OFF 전환 — <b>{@code enabled} 한 컬럼만</b> 바꾼다.
@@ -85,25 +82,18 @@ public interface ScheduledNotificationPreferenceRepository
      *
      * <p>행을 미리 읽어 계산하지 않는다. 읽기와 쓰기 사이가 벌어지면 다른 설정 변경이나 worker claim이
      * 그 사이에 끼어들어 {@code notification_time}과 {@code next_due_at}이 서로 어긋난 상태가 남는다.
-     * 두 후보 시각은 Java가 KST로 계산해 파라미터로 넘기고, SQL은 "오늘 것을 이미 처리했는가"만 본다 —
-     * 비교 대상이 {@code DATE} 컬럼과 {@code DATE} 파라미터뿐이라 JDBC timezone 변환이 끼어들 여지가 없다.
      *
-     * @param today 오늘 KST 날짜
-     * @param tomorrowAt 오늘 occurrence를 이미 처리했을 때 쓸 내일 시각
-     * @param candidate 아직 처리하지 않았을 때 쓸 시각(오늘이 미래면 오늘, 아니면 내일)
+     * @param nextDueAt 새 시각의 다음 미래 occurrence(오늘이 미래면 오늘, 아니면 내일)
      */
     @Modifying
     @Transactional
     @Query("update ScheduledNotificationPreference s set s.notificationTime = :notificationTime, "
-            + "s.nextDueAt = case when s.lastProcessedOccurrenceDate = :today then :tomorrowAt "
-            + "else :candidate end "
+            + "s.nextDueAt = :nextDueAt "
             + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType")
     int updateNotificationTime(@Param("subjectId") UUID subjectId,
                                @Param("notificationType") ScheduledNotificationType notificationType,
                                @Param("notificationTime") LocalTime notificationTime,
-                               @Param("today") LocalDate today,
-                               @Param("tomorrowAt") LocalDateTime tomorrowAt,
-                               @Param("candidate") LocalDateTime candidate);
+                               @Param("nextDueAt") LocalDateTime nextDueAt);
 
     /** 탈퇴 transaction 합류용 — subject의 모든 종류 행 삭제(마스터보다 먼저). 0행 허용(멱등). */
     @Modifying

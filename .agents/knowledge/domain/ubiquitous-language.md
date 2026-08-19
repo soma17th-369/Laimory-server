@@ -179,7 +179,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 전체 푸시 설정 | Push Preference | 현재 구현 | subject별 FCM 전체 수신 마스터(`push_preferences`, 기본 ON)다. 모든 알림의 최상위 스위치이며 OFF는 발송만 막고 종류별 설정값은 보존한다. |
 | 예정 알림 설정 | Scheduled Notification Preference | 현재 구현 | subject와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태(`scheduled_notification_preferences`)다. 새 리텐션 알림은 컬럼이 아니라 새 `notification_type` 행으로 추가한다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 사용자가 직접 켜고 시각을 고르는 예정 알림이다. 기본 OFF/21:00이며 사용자 설정이 곧 수신 의사 표시다(별도 법정 동의 절차 없음 — 정보성 통지). |
-| occurrence | Occurrence | 현재 구현 | 예정 알림의 하루치 발송 기회다. 하루에 한 번만 처리되며(발송·지연 skip 어느 쪽이든) 처리한 occurrence의 KST 날짜가 `last_processed_occurrence_date`다 — claim 시각의 날짜가 아니다. |
+| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. claim은 occurrence당 한 번이며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 시각 변경이 미래 시각으로 재장전하면 같은 날 다시 올 수 있다. |
 
 ## 개인정보 치환
 
