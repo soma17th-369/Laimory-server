@@ -9,7 +9,10 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -106,12 +109,24 @@ public class ScheduledNotificationPreferenceService {
         if (due.isEmpty()) {
             return List.of();
         }
-        List<String> subjectIds = due.stream()
-                .map(preference -> preference.getSubjectId().toString())
-                .toList();
-        int advanced = scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                notificationType.name(), subjectIds, nowKst);
-        if (advanced != subjectIds.size()) {
+        // 전진 값은 Java에서 KST로 계산한다 — SQL 안에서 DATETIME 파라미터와 TIME 컬럼을 섞어 파생하면
+        // JDBC의 timezone 변환 때문에 JVM zone에 따라 결과가 달라진다. 같은 (occurrence 날짜, 다음 시각)
+        // 조합끼리 묶어 문장 수를 줄인다(대부분 같은 시각을 쓰므로 보통 1~2개로 수렴).
+        Map<Advance, List<UUID>> subjectsByAdvance = new LinkedHashMap<>();
+        for (ScheduledNotificationPreference preference : due) {
+            LocalDate occurrenceDate = preference.getNextDueAt().toLocalDate();
+            Advance advance = new Advance(occurrenceDate,
+                    computeNextDueAt(nowKst, preference.getNotificationTime(), occurrenceDate));
+            subjectsByAdvance.computeIfAbsent(advance, key -> new ArrayList<>())
+                    .add(preference.getSubjectId());
+        }
+        int advanced = 0;
+        for (Map.Entry<Advance, List<UUID>> entry : subjectsByAdvance.entrySet()) {
+            advanced += scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
+                    notificationType, entry.getValue(),
+                    entry.getKey().occurrenceDate(), entry.getKey().nextDueAt());
+        }
+        if (advanced != due.size()) {
             throw new IllegalStateException("scheduled notification claim count mismatch");
         }
         return List.copyOf(due);
@@ -135,6 +150,10 @@ public class ScheduledNotificationPreferenceService {
             return todayOccurrence;
         }
         return LocalDateTime.of(today.plusDays(1), notificationTime);
+    }
+
+    /** 같은 전진 값을 공유하는 행을 한 문장으로 묶기 위한 그룹 키. */
+    private record Advance(LocalDate occurrenceDate, LocalDateTime nextDueAt) {
     }
 
     /** 마스터·동의 batch 조회를 위해 claim 결과에서 subject를 뽑는 호출부 편의. */

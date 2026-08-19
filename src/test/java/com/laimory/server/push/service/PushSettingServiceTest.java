@@ -202,14 +202,28 @@ class PushSettingServiceTest {
     }
 
     @Test
+    void changeTimeToDay_afterConsentWithdrawn_isNotBlocked() {
+        // 수신거부로 동의를 철회하면 enabled는 true로 남는다. 이때 시각을 주간으로 바꾸는 것까지 막으면
+        // 리마인더를 끄거나 재동의하는 것 말고는 빠져나갈 수 없다 — 발송은 worker가 다시 막는다.
+        givenPreference(true, LocalTime.of(21, 0));
+
+        service().updateDailyReminderTime("v1", SUBJECT_ID, "20:00");
+
+        verify(scheduledNotificationPreferenceService)
+                .updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(20, 0));
+        // 주간으로 옮기는 건 수신 범위를 넓히지 않으므로 동의를 아예 묻지 않는다.
+        verify(notificationConsentService, never()).getOrCreateState(any());
+    }
+
+    @Test
     void changeTimeToDay_whileEnabled_needsNoNightConsent() {
         givenPreference(true, LocalTime.of(21, 0));
-        givenConsent(true, false);
 
         service().updateDailyReminderTime("v1", SUBJECT_ID, "20:30");
 
         verify(scheduledNotificationPreferenceService)
                 .updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(20, 30));
+        verify(notificationConsentService, never()).getOrCreateState(any());
     }
 
     // --- 조회 ---

@@ -3,6 +3,7 @@ package com.laimory.server.push.repository;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collection;
@@ -46,27 +47,23 @@ public interface ScheduledNotificationPreferenceRepository
             @Param("limit") int limit);
 
     /**
-     * claim한 occurrence를 처리 완료로 표시하고 <b>현재 시각 이후 첫 occurrence</b>로 옮긴다.
-     * 발송한 행과 지연 초과로 건너뛴 행이 같은 문장을 공유한다.
+     * claim한 occurrence를 처리 완료로 표시하고 다음 예정 시각으로 옮긴다. 발송한 행과 지연 초과로
+     * 건너뛴 행이 같은 문장을 공유하며, 같은 (occurrence 날짜, 다음 예정 시각) 값을 갖는 행끼리 묶여 온다.
      *
-     * <p>{@code last_processed_occurrence_date}는 claim 시각의 날짜가 아니라 방금 처리한 예정
-     * occurrence({@code next_due_at})의 날짜다 — D일 21:00 행을 D+1 03:00에 처리해도 D+1 21:00 알림이
-     * 남는다. 다음 시각은 오늘 {@code notification_time}이 아직 미래면 오늘, 아니면 다음 날이라
-     * 며칠이 밀려 있어도 한 문장으로 현재 이후 첫 occurrence에 도달한다.
+     * <p>두 값은 <b>Java에서 KST로 계산해</b> 넘긴다 — SQL 안에서 {@code date()}/{@code timestamp()}로
+     * 파생하지 않는다. JDBC가 {@code LocalDateTime} 파라미터를 connection timezone 기준으로 변환하는데
+     * {@code TIME} 컬럼은 변환하지 않아, DB 안에서 둘을 섞어 연산하면 JVM timezone에 따라 결과가 달라진다
+     * (UTC JVM에서 날짜 +1일·시각 −9시간). 파라미터만 주고받으면 읽기와 쓰기의 변환이 대칭이라 안전하다.
      */
     @Modifying
     @Transactional
-    @Query(value = "update scheduled_notification_preferences "
-            + "set last_processed_occurrence_date = date(next_due_at), "
-            + "    next_due_at = if(timestamp(date(:nowKst), notification_time) > :nowKst, "
-            + "                     timestamp(date(:nowKst), notification_time), "
-            + "                     timestamp(date(:nowKst) + interval 1 day, notification_time)), "
-            + "    updated_at = :nowKst "
-            + "where notification_type = :notificationType and subject_id in :subjectIds",
-            nativeQuery = true)
-    int markProcessedAndAdvance(@Param("notificationType") String notificationType,
-                                @Param("subjectIds") Collection<String> subjectIds,
-                                @Param("nowKst") LocalDateTime nowKst);
+    @Query("update ScheduledNotificationPreference s "
+            + "set s.lastProcessedOccurrenceDate = :occurrenceDate, s.nextDueAt = :nextDueAt "
+            + "where s.id.notificationType = :notificationType and s.id.subjectId in :subjectIds")
+    int markProcessedAndAdvance(@Param("notificationType") ScheduledNotificationType notificationType,
+                                @Param("subjectIds") Collection<UUID> subjectIds,
+                                @Param("occurrenceDate") LocalDate occurrenceDate,
+                                @Param("nextDueAt") LocalDateTime nextDueAt);
 
     /** 종류별 ON/OFF 전환 — ON 전환은 다음 예정 시각을 함께 다시 계산한다. */
     @Modifying

@@ -145,12 +145,33 @@ class ScheduledNotificationPreferenceServiceTest {
                 preference(true, LocalTime.of(19, 0), null, LocalDateTime.of(2026, 7, 21, 19, 0));
         when(repository.findDueForUpdateSkipLocked("DAILY_REMINDER", NOW_KST, 250))
                 .thenReturn(List.of(due));
-        when(repository.markProcessedAndAdvance(eq("DAILY_REMINDER"), any(), eq(NOW_KST))).thenReturn(1);
+        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(1);
 
         List<ScheduledNotificationPreference> claimed = service().claimDue(TYPE, 250);
 
         assertThat(claimed).containsExactly(due);
-        verify(repository).markProcessedAndAdvance("DAILY_REMINDER", List.of(SUBJECT_ID.toString()), NOW_KST);
+        // 전진 값은 Java가 KST로 계산해 넘긴다 — 처리한 occurrence 날짜와 다음 날 같은 시각.
+        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
+                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 19, 0));
+    }
+
+    @Test
+    void claimDue_groupsRowsByTheirOwnAdvanceValues() {
+        // 시각이 다른 행은 전진 값도 달라야 한다 — 한 문장으로 뭉뚱그리면 남의 시각으로 덮인다.
+        ScheduledNotificationPreference nine = preference(true, LocalTime.of(19, 0), null,
+                LocalDateTime.of(2026, 7, 21, 19, 0));
+        ScheduledNotificationPreference eight = preference(true, LocalTime.of(18, 0), null,
+                LocalDateTime.of(2026, 7, 21, 18, 0));
+        when(repository.findDueForUpdateSkipLocked(anyString(), any(), anyInt()))
+                .thenReturn(List.of(nine, eight));
+        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(1);
+
+        service().claimDue(TYPE, 250);
+
+        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
+                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 19, 0));
+        verify(repository).markProcessedAndAdvance(TYPE, List.of(SUBJECT_ID),
+                LocalDate.of(2026, 7, 21), LocalDateTime.of(2026, 7, 22, 18, 0));
     }
 
     @Test
@@ -159,7 +180,7 @@ class ScheduledNotificationPreferenceServiceTest {
 
         assertThat(service().claimDue(TYPE, 250)).isEmpty();
 
-        verify(repository, never()).markProcessedAndAdvance(any(), any(), any());
+        verify(repository, never()).markProcessedAndAdvance(any(), any(), any(), any());
     }
 
     @Test
@@ -167,7 +188,7 @@ class ScheduledNotificationPreferenceServiceTest {
         // 잠근 행 수와 전진한 행 수가 다르면 같은 occurrence가 다시 선택될 수 있다 — 조용히 넘기지 않는다.
         when(repository.findDueForUpdateSkipLocked(anyString(), any(), anyInt())).thenReturn(List.of(
                 preference(true, LocalTime.of(19, 0), null, LocalDateTime.of(2026, 7, 21, 19, 0))));
-        when(repository.markProcessedAndAdvance(any(), any(), any())).thenReturn(0);
+        when(repository.markProcessedAndAdvance(any(), any(), any(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> service().claimDue(TYPE, 250))
                 .isInstanceOf(IllegalStateException.class);

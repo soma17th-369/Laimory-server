@@ -2,12 +2,14 @@ package com.laimory.server.push.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -91,6 +93,11 @@ class PushNotificationPreferencePersistenceIntegrationTest {
                 nextDueAt.toLocalTime(), nextDueAt, LocalDateTime.now());
     }
 
+    /** 테스트 fixture의 "지금" — JVM 기본 timezone이 아니라 서비스와 같은 KST 벽시계를 쓴다. */
+    private static LocalDateTime nowKst() {
+        return PushTimes.kstWallClock(Instant.now()).withNano(0);
+    }
+
     private ScheduledNotificationPreference reload(UUID subjectId) {
         return scheduledNotificationPreferenceRepository
                 .findById(new ScheduledNotificationPreferenceId(subjectId, TYPE))
@@ -129,10 +136,10 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         UUID subjectId = SUBJECTS.get(1);
         // D일 21:00 예정을 D+1 03:00에 복구한 상황을 재현한다.
         givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 21, 21, 0));
-        LocalDateTime recoveredAt = LocalDateTime.of(2026, 7, 22, 3, 0);
 
         int advanced = scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE.name(), List.of(subjectId.toString()), recoveredAt);
+                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 21),
+                LocalDateTime.of(2026, 7, 22, 21, 0));
 
         assertThat(advanced).isEqualTo(1);
         ScheduledNotificationPreference reloaded = reload(subjectId);
@@ -148,9 +155,12 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 21, 21, 0));
 
         scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE.name(), List.of(subjectId.toString()), LocalDateTime.of(2026, 7, 21, 21, 0, 30));
+                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 21),
+                LocalDateTime.of(2026, 7, 22, 21, 0));
 
+        // JVM timezone과 무관하게 저장한 값 그대로 돌아와야 한다(UTC CI가 이 회귀를 잡는다).
         assertThat(reload(subjectId).getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 22, 21, 0));
+        assertThat(reload(subjectId).getLastProcessedOccurrenceDate()).isEqualTo(LocalDate.of(2026, 7, 21));
     }
 
     @Test
@@ -160,7 +170,8 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         givenDueSchedule(subjectId, LocalDateTime.of(2026, 7, 18, 21, 0));
 
         scheduledNotificationPreferenceRepository.markProcessedAndAdvance(
-                TYPE.name(), List.of(subjectId.toString()), LocalDateTime.of(2026, 7, 22, 10, 0));
+                TYPE, List.of(subjectId), LocalDate.of(2026, 7, 18),
+                LocalDateTime.of(2026, 7, 22, 21, 0));
 
         ScheduledNotificationPreference reloaded = reload(subjectId);
         assertThat(reloaded.getLastProcessedOccurrenceDate()).isEqualTo(LocalDate.of(2026, 7, 18));
@@ -171,7 +182,7 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     @Test
     void concurrentWorkers_claimEachSubjectExactlyOnce() throws Exception {
-        LocalDateTime dueAt = LocalDateTime.now().minusMinutes(1).withNano(0);
+        LocalDateTime dueAt = nowKst().minusMinutes(1);
         for (UUID subjectId : SUBJECTS) {
             givenDueSchedule(subjectId, dueAt);
         }
@@ -205,15 +216,33 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
         // 모든 행이 다음 날로 전진해 같은 날짜에 다시 선택되지 않는다.
         for (UUID subjectId : SUBJECTS) {
-            assertThat(reload(subjectId).getNextDueAt()).isAfter(LocalDateTime.now());
+            assertThat(reload(subjectId).getNextDueAt()).isAfter(nowKst());
         }
+    }
+
+    @Test
+    void claimThroughService_writesKstOccurrenceValues_regardlessOfJvmTimezone() {
+        // claim 경로 전체(조회 → 전진 계산 → UPDATE → 재조회)를 태운다. 전진 값을 SQL 안에서 파생하면
+        // JDBC의 DATETIME 변환과 TIME 컬럼이 섞여 UTC JVM에서 날짜 +1일·시각 -9시간으로 어긋난다.
+        UUID subjectId = SUBJECTS.get(2);
+        LocalDateTime dueAt = nowKst().minusMinutes(1);
+        givenDueSchedule(subjectId, dueAt);
+
+        List<ScheduledNotificationPreference> claimed =
+                scheduledNotificationPreferenceService.claimDue(TYPE, 100);
+
+        assertThat(claimed).extracting(ScheduledNotificationPreference::getSubjectId).contains(subjectId);
+        ScheduledNotificationPreference reloaded = reload(subjectId);
+        // 처리한 occurrence의 KST 날짜와, 오늘 시각이 이미 지났으므로 다음 날 같은 시각.
+        assertThat(reloaded.getLastProcessedOccurrenceDate()).isEqualTo(dueAt.toLocalDate());
+        assertThat(reloaded.getNextDueAt()).isEqualTo(dueAt.plusDays(1));
     }
 
     @Test
     void claim_skipsDisabledAndFutureRows() {
         UUID enabled = SUBJECTS.get(4);
         UUID disabled = SUBJECTS.get(5);
-        LocalDateTime dueAt = LocalDateTime.now().minusMinutes(1).withNano(0);
+        LocalDateTime dueAt = nowKst().minusMinutes(1);
         givenDueSchedule(enabled, dueAt);
         givenSubject(disabled);
         scheduledNotificationPreferenceRepository.insertIfAbsent(disabled.toString(), TYPE.name(), false,

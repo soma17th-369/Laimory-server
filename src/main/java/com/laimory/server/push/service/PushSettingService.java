@@ -93,16 +93,23 @@ public class PushSettingService {
     }
 
     /**
-     * 일일 리마인더 시각 변경. 이미 켜져 있는 광고성 알림을 야간 시각으로 옮기려면 야간 동의가 필요하다.
-     * OFF 상태에서는 동의 없이 야간 시각을 저장할 수 있고 발송은 계속 차단된다.
+     * 일일 리마인더 시각 변경. 이미 켜져 있는 광고성 알림을 <b>야간 시각으로</b> 옮길 때만 야간 동의를
+     * 요구한다 — 주간 시각으로 옮기는 것은 수신 범위를 넓히지 않으므로 동의를 묻지 않는다.
+     *
+     * <p>일반 광고 동의는 여기서 검사하지 않는다. 검사하면 수신거부로 동의를 철회한 사용자(그 경우
+     * {@code enabled}는 true로 남는다)가 시각을 주간으로 바꾸는 것조차 막혀, 리마인더를 끄거나 재동의하는
+     * 것 말고는 빠져나갈 수 없는 상태가 된다. 동의 없는 발송은 worker가 발송 시점에 다시 막는다.
+     *
+     * <p>OFF 상태에서는 동의 없이 야간 시각을 저장할 수 있고 발송은 계속 차단된다.
      */
     public void updateDailyReminderTime(String applicationVersion, UUID subjectId, String time) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         LocalTime notificationTime = parseTime(time);
         ScheduledNotificationPreference preference =
                 scheduledNotificationPreferenceService.getOrCreate(subjectId, DAILY_REMINDER);
-        if (preference.isEnabled() && DAILY_REMINDER.complianceClass() == PushComplianceClass.ADVERTISING) {
-            requireAdvertisingConsent(subjectId, notificationTime);
+        if (preference.isEnabled() && DAILY_REMINDER.complianceClass() == PushComplianceClass.ADVERTISING
+                && PushTimes.isNight(notificationTime)) {
+            requireNightAdvertisingConsent(subjectId);
         }
         scheduledNotificationPreferenceService.updateNotificationTime(subjectId, DAILY_REMINDER, notificationTime);
     }
@@ -134,6 +141,16 @@ public class PushSettingService {
             throw new BusinessException(ExceptionType.NOTIFICATION_CONSENT_REQUIRED);
         }
         if (PushTimes.isNight(notificationTime) && !consent.nightAdvertisingConsented()) {
+            throw new BusinessException(ExceptionType.NOTIFICATION_CONSENT_REQUIRED);
+        }
+    }
+
+    /**
+     * 야간 시각으로 옮길 때의 조건. 야간 동의가 ON이면 일반 광고 동의도 ON이라는 불변식이 있으므로
+     * 야간 동의만 확인하면 충분하다.
+     */
+    private void requireNightAdvertisingConsent(UUID subjectId) {
+        if (!notificationConsentService.getOrCreateState(subjectId).nightAdvertisingConsented()) {
             throw new BusinessException(ExceptionType.NOTIFICATION_CONSENT_REQUIRED);
         }
     }
