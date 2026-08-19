@@ -44,9 +44,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 class NotificationConsentTransactionServiceTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(22L);
-    private static final UUID REQUEST_ID = UUID.fromString("99999999-9999-4999-8999-999999999999");
     private static final LocalDateTime NOW_KST = LocalDateTime.of(2026, 7, 21, 14, 0);
-    private static final ConsentCommand COMMAND = new ConsentCommand(SUBJECT_ID, REQUEST_ID, NOW_KST,
+    private static final ConsentCommand COMMAND = new ConsentCommand(SUBJECT_ID, NOW_KST,
             "라이모리 주식회사", NotificationConsentSource.PUSH_SETTINGS);
 
     @Mock

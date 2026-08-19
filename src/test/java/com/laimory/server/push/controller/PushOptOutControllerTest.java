@@ -43,8 +43,7 @@ class PushOptOutControllerTest {
     private static final String PATH = "/api/v1/push-opt-outs";
     private static final UUID REQUEST_ID = UUID.fromString("44444444-4444-4444-8444-444444444444");
     private static final String BODY = """
-            {"clientRequestId":"44444444-4444-4444-8444-444444444444",
-             "firebaseInstallationId":"fid-1","optOutToken":"token-value"}
+            {"firebaseInstallationId":"fid-1","optOutToken":"token-value"}
             """;
 
     @Autowired
@@ -54,7 +53,7 @@ class PushOptOutControllerTest {
     private PushOptOutService pushOptOutService;
 
     private static NotificationConsentEvent event(NotificationConsentType type) {
-        NotificationConsentEvent event = NotificationConsentEvent.of(TestSubjects.id(71L), REQUEST_ID, type,
+        NotificationConsentEvent event = NotificationConsentEvent.of(TestSubjects.id(71L), type,
                 NotificationConsentAction.WITHDRAW, 100L, LocalDateTime.of(2026, 7, 21, 14, 0),
                 "라이모리 주식회사", NotificationConsentProcessingResult.APPLIED,
                 NotificationConsentSource.INSTALLATION_OPT_OUT);
@@ -64,7 +63,7 @@ class PushOptOutControllerTest {
 
     @Test
     void optOut_worksWithoutBearerToken() throws Exception {
-        when(pushOptOutService.optOut("v1", REQUEST_ID, "fid-1", "token-value"))
+        when(pushOptOutService.optOut("v1", "fid-1", "token-value"))
                 .thenReturn(List.of(event(NotificationConsentType.ADVERTISING_PUSH),
                         event(NotificationConsentType.NIGHT_ADVERTISING_PUSH)));
 
@@ -76,13 +75,13 @@ class PushOptOutControllerTest {
                 .andExpect(jsonPath("$.body[0].action").value("WITHDRAW"))
                 .andExpect(jsonPath("$.body[1].consentType").value("NIGHT_ADVERTISING_PUSH"));
 
-        verify(pushOptOutService).optOut("v1", REQUEST_ID, "fid-1", "token-value");
+        verify(pushOptOutService).optOut("v1", "fid-1", "token-value");
     }
 
     @Test
     void invalidCredential_maps401WithSharedCode() throws Exception {
         doThrow(new BusinessException(ExceptionType.PUSH_OPT_OUT_TOKEN_INVALID))
-                .when(pushOptOutService).optOut(anyString(), any(UUID.class), any(), any());
+                .when(pushOptOutService).optOut(anyString(), any(), any());
 
         mockMvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isUnauthorized())
@@ -90,14 +89,4 @@ class PushOptOutControllerTest {
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 
-    @Test
-    void missingClientRequestId_maps400() throws Exception {
-        doThrow(new IllegalArgumentException("clientRequestId is required"))
-                .when(pushOptOutService).optOut(anyString(), any(), any(), any());
-
-        mockMvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"firebaseInstallationId\":\"fid-1\",\"optOutToken\":\"t\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value(-400));
-    }
 }

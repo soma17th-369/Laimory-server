@@ -58,7 +58,7 @@ public class PushSettingController implements PushSettingApi {
             String applicationVersion, UUID subjectId, NotificationConsentRequest request) {
         return ResponseEntity.ok(ApiResponse.success(NotificationConsentResultResponse.from(
                 pushSettingService.applyAdvertisingConsent(applicationVersion, subjectId,
-                        request.clientRequestId(), request.consented(), request.termVersion()))));
+                        request.consented(), request.termVersion()))));
     }
 
     @Override
@@ -66,6 +66,6 @@ public class PushSettingController implements PushSettingApi {
             String applicationVersion, UUID subjectId, NotificationConsentRequest request) {
         return ResponseEntity.ok(ApiResponse.success(NotificationConsentResultResponse.from(
                 pushSettingService.applyNightAdvertisingConsent(applicationVersion, subjectId,
-                        request.clientRequestId(), request.consented(), request.termVersion()))));
+                        request.consented(), request.termVersion()))));
     }
 }

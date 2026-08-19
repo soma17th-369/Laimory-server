@@ -8,7 +8,6 @@ import com.laimory.server.push.OptOutTokens;
 import com.laimory.server.push.entity.NotificationConsentEvent;
 import com.laimory.server.push.entity.PushRegistration;
 import java.util.List;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,19 +41,16 @@ public class PushOptOutService {
      * @return 남긴 증적(재시도면 기존 증적) — 앱이 처리 결과로 표시한다
      */
     @Transactional
-    public List<NotificationConsentEvent> optOut(String applicationVersion, UUID clientRequestId,
-                                                  String firebaseInstallationId, String optOutToken) {
+    public List<NotificationConsentEvent> optOut(String applicationVersion, String firebaseInstallationId,
+                                                  String optOutToken) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        if (clientRequestId == null) {
-            throw new IllegalArgumentException("clientRequestId is required");
-        }
         PushRegistration registration = pushRegistrationService.findForOptOut(firebaseInstallationId)
                 .orElseThrow(() -> invalidCredential());
         if (!OptOutTokens.matches(registration.getOptOutTokenHash(), optOutToken)) {
             throw invalidCredential();
         }
         // 일반 광고 동의 철회가 ON이던 야간 동의도 같은 transaction에서 내린다.
-        return notificationConsentService.apply(registration.getSubjectId(), clientRequestId,
+        return notificationConsentService.apply(registration.getSubjectId(),
                 NotificationConsentType.ADVERTISING_PUSH, false, null,
                 NotificationConsentSource.INSTALLATION_OPT_OUT);
     }

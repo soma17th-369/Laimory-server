@@ -23,7 +23,7 @@ public class PushOptOutController implements PushOptOutApi {
     public ResponseEntity<ApiResponse<List<NotificationConsentResultResponse>>> optOut(
             String applicationVersion, PushOptOutRequest request) {
         return ResponseEntity.ok(ApiResponse.success(NotificationConsentResultResponse.from(
-                pushOptOutService.optOut(applicationVersion, request.clientRequestId(),
+                pushOptOutService.optOut(applicationVersion,
                         request.firebaseInstallationId(), request.optOutToken()))));
     }
 }

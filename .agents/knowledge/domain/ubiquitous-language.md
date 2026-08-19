@@ -180,7 +180,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 예정 알림 설정 | Scheduled Notification Preference | 현재 구현 | subject와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태(`scheduled_notification_preferences`)다. 새 리텐션 알림은 컬럼이 아니라 새 `notification_type` 행으로 추가한다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 사용자가 고른 KST 시각에 하루 기록을 유도하는 예정 알림이다. 기본 OFF/21:00이며 켜려면 광고 수신 동의가 필요하다(야간 시각이면 야간 동의도). |
 | 알림 분류 | Push Compliance Class | 현재 구현 | 알림 종류의 법적 성격(`INFORMATIONAL`/`ADVERTISING`)이다. 제품 책임자가 종류마다 확정해 코드에 넣는 값이며 문구로 runtime 추론하지 않는다. 누락은 기동 실패다. |
-| 광고성 수신 동의 | Advertising Push Consent | 현재 구현 | 광고성 알림 수신에 대한 선택 동의다. 상태 권위는 `notification_consents` snapshot이고 증적은 append-only `notification_consent_events`다. 철회가 있어 약관 동의 이력 테이블로 표현하지 않는다. |
+| 광고성 수신 동의 | Advertising Push Consent | 현재 구현 | 광고성 알림 수신에 대한 선택 동의다. 상태 권위는 `notification_consents` snapshot이고 증적은 append-only `notification_consent_events`다. 철회가 있어 약관 동의 이력 테이블로 표현하지 않는다. 상태 전이는 조건부 UPDATE이며 영향 행 수가 처리 결과(APPLIED/ALREADY_IN_STATE)를 정한다. |
 | 야간 광고성 수신 동의 | Night Advertising Push Consent | 현재 구현 | 21:00~08:00(KST) 광고성 전송에만 적용되는 별도 선택 동의다. 일반 광고 동의가 ON일 때만 켤 수 있고 일반 동의 철회 시 함께 철회된다. |
 | occurrence | Occurrence | 현재 구현 | 예정 알림의 하루치 발송 기회다. 하루에 한 번만 처리되며(발송·지연 skip 어느 쪽이든) 처리한 occurrence의 KST 날짜가 `last_processed_occurrence_date`다 — claim 시각의 날짜가 아니다. |
 | 수신거부 token | Opt-out Token | 현재 구현 | 앱이 설치별로 만들어 보관하는 256-bit 수신거부 credential이다. 서버는 SHA-256 hash만 저장하며, 이 값이 없는 설치(legacy)는 광고성 발송 대상에서 빠진다. 로그인 없이 광고 수신을 철회하는 유일한 수단이다. |

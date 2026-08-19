@@ -141,12 +141,12 @@ public class NotificationConsentTransactionService {
      * 한 요청이 전이와 증적에 공통으로 넘기는 값 묶음. 상태는 담지 않는다 — 상태 판정은 조건부 UPDATE가
      * 한다는 계약을 타입으로도 드러낸다.
      */
-    public record ConsentCommand(UUID subjectId, UUID clientRequestId, LocalDateTime occurredAt,
-                                 String senderName, NotificationConsentSource source) {
+    public record ConsentCommand(UUID subjectId, LocalDateTime occurredAt, String senderName,
+                                 NotificationConsentSource source) {
 
         NotificationConsentEvent event(NotificationConsentType type, NotificationConsentAction action,
                                        Long termDocumentId, NotificationConsentProcessingResult result) {
-            return NotificationConsentEvent.of(subjectId, clientRequestId, type, action, termDocumentId,
+            return NotificationConsentEvent.of(subjectId, type, action, termDocumentId,
                     occurredAt, senderName, result, source);
         }
     }

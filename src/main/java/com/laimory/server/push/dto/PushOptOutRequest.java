@@ -1,7 +1,6 @@
 package com.laimory.server.push.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import java.util.UUID;
 
 /**
  * 비로그인 installation 수신거부 요청. 알림의 수신거부 action에서 로그인 없이 호출한다.
@@ -10,9 +9,6 @@ import java.util.UUID;
  */
 @Schema(description = "비로그인 수신거부 요청")
 public record PushOptOutRequest(
-        @Schema(description = "앱이 생성한 요청 멱등 키(UUID)", requiredMode = Schema.RequiredMode.REQUIRED)
-        UUID clientRequestId,
-
         @Schema(description = "Firebase Installation ID(FID) — 민감 opaque 식별자로 취급한다.",
                 requiredMode = Schema.RequiredMode.REQUIRED)
         String firebaseInstallationId,

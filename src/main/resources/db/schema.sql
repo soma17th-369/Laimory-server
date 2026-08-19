@@ -379,8 +379,8 @@ CREATE TABLE IF NOT EXISTS notification_consents (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 동의·철회 의사 표시의 append-only 증적. UPDATE/DELETE 하지 않는다.
--- client_request_id는 Android durable outbox의 멱등 키다 — (subject, request, 종류) UNIQUE가 재시도로
--- 같은 의사 표시가 여러 event로 늘어나는 것을 DB에서 막고, 응답이 유실돼도 재시도가 원래 event를 되받는다.
+-- 요청 하나가 행 하나다(멱등 키 없음) — 상태 전이가 조건부 UPDATE라 재시도해도 상태는 어긋나지 않고,
+-- 두 번째부터는 processing_result가 ALREADY_IN_STATE로 남아 아무것도 바꾸지 않았음이 드러난다.
 -- sender_name은 event 생성 시점의 법무 확정 전송자 법인명 snapshot이다(설정이 바뀌어도 과거 증적 불변).
 -- term_document_id는 동의 이력 없는 상태의 철회에서만 NULL이다.
 -- subject FK는 두지 않는다 — 탈퇴 후 증적 보존·가명처리 정책이 약관 동의 이력 정책과 함께 확정된다
@@ -388,7 +388,6 @@ CREATE TABLE IF NOT EXISTS notification_consents (
 CREATE TABLE IF NOT EXISTS notification_consent_events (
     notification_consent_event_id BIGINT NOT NULL AUTO_INCREMENT,
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    client_request_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     consent_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,  -- NotificationConsentType literal
     action VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,        -- CONSENT|WITHDRAW
     term_document_id BIGINT NULL,
@@ -401,8 +400,6 @@ CREATE TABLE IF NOT EXISTS notification_consent_events (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (notification_consent_event_id),
-    UNIQUE KEY uq_notification_consent_events_request
-        (subject_id, client_request_id, consent_type),
     -- 최근 처리결과 조회(설정 GET) 축.
     KEY idx_notification_consent_events_recent (subject_id, occurred_at, notification_consent_event_id),
     CONSTRAINT fk_notification_consent_events_document

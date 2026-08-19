@@ -32,8 +32,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * <p>모든 operation에 {@link LoginTermsExempt}를 붙인다 — 약관에 아직 동의하지 않은 사용자도 수신을
  * 끄거나 광고 동의를 철회할 수 있어야 한다. bearer 인증(401)은 그대로 요구한다.
  *
- * <p>동의 API는 앱의 durable outbox가 붙인 {@code clientRequestId}로 멱등하다. 같은 ID의 재시도는 상태를
- * 다시 바꾸지 않고 원래 처리결과를 돌려주며, 같은 ID로 다른 의사 표시가 오면 409({@code -4003})다.
+ * <p>재시도해도 상태가 어긋나지 않는다 — 전이가 조건부 UPDATE라 이미 그 상태면 아무것도 바꾸지 않고
+ * {@code ALREADY_IN_STATE} 처리결과를 돌려준다.
  */
 @Tag(name = "Push Settings", description = "푸시 수신 설정 — 전체 ON/OFF, 일일 리마인더, 광고성 수신 동의")
 @SecurityRequirement(name = "bearerAuth")
@@ -125,16 +125,17 @@ public interface PushSettingApi {
             description = "동의(`consented=true`)는 `ADVERTISING_PUSH_CONSENT`의 현재 유효 문서 버전과 "
                     + "정확히 일치하는 `termVersion`을 요구한다(불일치·미존재는 409 `-3002`). 철회는 "
                     + "`termVersion` 없이 보내며 켜져 있던 야간 동의도 같은 트랜잭션에서 함께 철회된다"
-                    + "(그 경우 응답 배열에 두 건이 담긴다). 응답의 처리결과는 앱이 즉시 표시한다.")
+                    + "(그 경우 응답 배열에 두 건이 담긴다). 이미 같은 상태였으면 상태를 바꾸지 않고 "
+                    + "`ALREADY_IN_STATE` 처리결과를 돌려준다. 응답의 처리결과는 앱이 즉시 표시한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "처리 성공 — 처리결과 배열", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — clientRequestId/consented 누락, 동의인데 termVersion 누락"),
+                    description = "`-400` — consented 누락, 동의인데 termVersion 누락"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-3002` 문서 버전 불일치 / `-4003` 같은 clientRequestId로 다른 의사 표시")
+                    description = "`-3002` — 제출한 문서 버전이 현재 유효 버전이 아님")
     })
     @PutMapping("/advertising-consent")
     @LoginTermsExempt
@@ -151,12 +152,11 @@ public interface PushSettingApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "처리 성공 — 처리결과 배열", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — clientRequestId/consented 누락, 동의인데 termVersion 누락"),
+                    description = "`-400` — consented 누락, 동의인데 termVersion 누락"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-4002` 일반 광고 동의 없음 / `-3002` 문서 버전 불일치 / "
-                            + "`-4003` 같은 clientRequestId로 다른 의사 표시")
+                    description = "`-4002` 일반 광고 동의 없음 / `-3002` 문서 버전 불일치")
     })
     @PutMapping("/night-advertising-consent")
     @LoginTermsExempt

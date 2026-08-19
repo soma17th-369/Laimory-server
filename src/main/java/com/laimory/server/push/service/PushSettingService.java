@@ -116,22 +116,18 @@ public class PushSettingService {
 
     /** 광고성 수신 동의·철회 — 철회는 야간 동의도 함께 내린다. */
     public List<NotificationConsentEvent> applyAdvertisingConsent(String applicationVersion, UUID subjectId,
-                                                                   UUID clientRequestId, Boolean consented,
-                                                                   String termVersion) {
+                                                                   Boolean consented, String termVersion) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return notificationConsentService.apply(subjectId, requireClientRequestId(clientRequestId),
-                NotificationConsentType.ADVERTISING_PUSH, requireConsented(consented), termVersion,
-                NotificationConsentSource.PUSH_SETTINGS);
+        return notificationConsentService.apply(subjectId, NotificationConsentType.ADVERTISING_PUSH,
+                requireConsented(consented), termVersion, NotificationConsentSource.PUSH_SETTINGS);
     }
 
     /** 야간 광고성 수신 동의·철회 — 동의는 일반 광고 동의가 ON일 때만 가능하다. */
     public List<NotificationConsentEvent> applyNightAdvertisingConsent(String applicationVersion, UUID subjectId,
-                                                                        UUID clientRequestId, Boolean consented,
-                                                                        String termVersion) {
+                                                                        Boolean consented, String termVersion) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return notificationConsentService.apply(subjectId, requireClientRequestId(clientRequestId),
-                NotificationConsentType.NIGHT_ADVERTISING_PUSH, requireConsented(consented), termVersion,
-                NotificationConsentSource.PUSH_SETTINGS);
+        return notificationConsentService.apply(subjectId, NotificationConsentType.NIGHT_ADVERTISING_PUSH,
+                requireConsented(consented), termVersion, NotificationConsentSource.PUSH_SETTINGS);
     }
 
     /** 광고성 알림 활성화 조건 — 일반 동의는 항상, 야간 시각이면 야간 동의도 필요하다. */
@@ -188,10 +184,4 @@ public class PushSettingService {
         return consented;
     }
 
-    private static UUID requireClientRequestId(UUID clientRequestId) {
-        if (clientRequestId == null) {
-            throw new IllegalArgumentException("clientRequestId is required");
-        }
-        return clientRequestId;
-    }
 }

@@ -7,7 +7,6 @@ import com.laimory.server.push.entity.NotificationConsentEvent;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 동의·철회 의사 표시 하나의 처리결과. 앱이 사용자에게 즉시 표시하고, 응답이 유실되면 설정 조회의 최근
@@ -17,9 +16,6 @@ import java.util.UUID;
 public record NotificationConsentResultResponse(
         @Schema(description = "서버가 남긴 증적 ID(로컬 dedupe 키)", requiredMode = Schema.RequiredMode.REQUIRED)
         Long eventId,
-
-        @Schema(description = "요청 멱등 키", requiredMode = Schema.RequiredMode.REQUIRED)
-        UUID clientRequestId,
 
         @Schema(description = "동의 종류", requiredMode = Schema.RequiredMode.REQUIRED)
         NotificationConsentType consentType,
@@ -41,7 +37,6 @@ public record NotificationConsentResultResponse(
     public static NotificationConsentResultResponse from(NotificationConsentEvent event) {
         return new NotificationConsentResultResponse(
                 event.getNotificationConsentEventId(),
-                event.getClientRequestId(),
                 event.getConsentType(),
                 event.getAction(),
                 event.getOccurredAt(),

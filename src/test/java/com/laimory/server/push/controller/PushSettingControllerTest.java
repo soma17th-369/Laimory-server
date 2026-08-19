@@ -67,7 +67,7 @@ class PushSettingControllerTest {
     }
 
     private static NotificationConsentEvent event() {
-        NotificationConsentEvent event = NotificationConsentEvent.of(SUBJECT_ID, REQUEST_ID,
+        NotificationConsentEvent event = NotificationConsentEvent.of(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, NotificationConsentAction.CONSENT, 100L,
                 LocalDateTime.of(2026, 7, 21, 14, 0), "라이모리 주식회사",
                 NotificationConsentProcessingResult.APPLIED, NotificationConsentSource.PUSH_SETTINGS);
@@ -155,13 +155,12 @@ class PushSettingControllerTest {
 
     @Test
     void updateAdvertisingConsent_returnsProcessingResults() throws Exception {
-        when(pushSettingService.applyAdvertisingConsent("v1", SUBJECT_ID, REQUEST_ID, true, "v1"))
+        when(pushSettingService.applyAdvertisingConsent("v1", SUBJECT_ID, true, "v1"))
                 .thenReturn(List.of(event()));
 
         mockMvc.perform(put(BASE + "/advertising-consent").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"clientRequestId\":\"" + REQUEST_ID + "\",\"consented\":true,"
-                                + "\"termVersion\":\"v1\"}"))
+                        .content("{\"consented\":true,\"termVersion\":\"v1\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body[0].eventId").value(9))
                 .andExpect(jsonPath("$.body[0].consentType").value("ADVERTISING_PUSH"))
@@ -173,37 +172,25 @@ class PushSettingControllerTest {
     @Test
     void updateAdvertisingConsent_staleVersion_maps409() throws Exception {
         doThrow(new BusinessException(ExceptionType.STALE_TERM_VERSION))
-                .when(pushSettingService).applyAdvertisingConsent(anyString(), any(UUID.class), any(), any(), any());
+                .when(pushSettingService).applyAdvertisingConsent(anyString(), any(UUID.class), any(), any());
 
         mockMvc.perform(put(BASE + "/advertising-consent").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"clientRequestId\":\"" + REQUEST_ID + "\",\"consented\":true,"
-                                + "\"termVersion\":\"old\"}"))
+                        .content("{\"consented\":true,\"termVersion\":\"old\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.header.code").value(-3002));
     }
 
     @Test
     void updateNightAdvertisingConsent_reusesSameContract() throws Exception {
-        when(pushSettingService.applyNightAdvertisingConsent("v1", SUBJECT_ID, REQUEST_ID, false, null))
+        when(pushSettingService.applyNightAdvertisingConsent("v1", SUBJECT_ID, false, null))
                 .thenReturn(List.of(event()));
 
         mockMvc.perform(put(BASE + "/night-advertising-consent").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"clientRequestId\":\"" + REQUEST_ID + "\",\"consented\":false}"))
+                        .content("{\"consented\":false}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body[0].eventId").value(9));
     }
 
-    @Test
-    void mismatchedClientRequestId_maps409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.CONSENT_REQUEST_MISMATCH))
-                .when(pushSettingService).applyAdvertisingConsent(anyString(), any(UUID.class), any(), any(), any());
-
-        mockMvc.perform(put(BASE + "/advertising-consent").with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"clientRequestId\":\"" + REQUEST_ID + "\",\"consented\":false}"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-4003));
-    }
 }

@@ -148,9 +148,10 @@ occurrence" 전진을 native UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM
 `notification_consents`·`notification_consent_events`(#314)는 광고성·야간 광고성 수신 동의의 현재 상태와
 증적이다. 법적 주체는 회원이지만 owner 키는 subject다 — 인증·push 등록·worker가 공유하는 축이 subject
 하나뿐이고 subject→raw `user_id` 역방향 mapping은 존재하지 않기 때문이다(#282의 단방향 HMAC).
-snapshot 행 부재는 언제나 미동의로 읽는다(fail-closed). 증적은 append-only이며
-`(subject_id, client_request_id, consent_type)` UNIQUE가 앱 재시도의 멱등 축이다 — 응답이 유실돼도
-재시도는 원래 event를 되받고, 동시 경합의 loser는 winner의 event를 새 transaction에서 되읽는다.
+snapshot 행 부재는 언제나 미동의로 읽는다(fail-closed). 상태 전이는 조건부 UPDATE이고
+**영향 행 수가 처리 결과의 근거**다 — 1이면 이 요청이 상태를 바꿨고(`APPLIED`), 0이면 그 순간 이미 같은
+상태였다(`ALREADY_IN_STATE`). 미리 읽어 판정하면 읽기와 쓰기 사이에 낀 동시 요청 때문에 철회가 유실되고
+증적만 "이미 그 상태였다"로 남는다. 별도 멱등 키는 두지 않으며 증적은 요청 하나당 행 하나다.
 `sender_name`은 event 생성 시점의 법무 확정 전송자 법인명 snapshot이라 설정이 바뀌어도 과거 증적 표기가
 변하지 않는다. 탈퇴는 snapshot만 지우고 증적은 남긴다(보존·가명처리 정책은 약관 동의 이력 정책과 함께
 확정 — `term_agreements`와 같은 이유로 subject FK를 두지 않는다).

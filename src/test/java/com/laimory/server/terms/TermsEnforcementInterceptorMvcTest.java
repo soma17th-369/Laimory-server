@@ -148,17 +148,16 @@ class TermsEnforcementInterceptorMvcTest {
                 .thenReturn(User.of(Provider.KAKAO, "sub-303", null, "라이머"));
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of());
         String pushBody = "{\"firebaseInstallationId\":\"fid-303\"}";
-        String consentBody = "{\"clientRequestId\":\"55555555-5555-4555-8555-555555555555\","
-                + "\"consented\":false}";
+        String consentBody = "{\"consented\":false}";
         when(pushSettingService.getSettings("v1", SUBJECT_ID)).thenReturn(new PushSettingsResponse(
                 true,
                 new PushSettingsResponse.DailyReminder(false, "21:00", PushComplianceClass.ADVERTISING),
                 new PushSettingsResponse.ConsentStatus(false, null),
                 new PushSettingsResponse.ConsentStatus(false, null),
                 List.of()));
-        when(pushSettingService.applyAdvertisingConsent(any(), any(), any(), any(), any()))
+        when(pushSettingService.applyAdvertisingConsent(any(), any(), any(), any()))
                 .thenReturn(List.of());
-        when(pushSettingService.applyNightAdvertisingConsent(any(), any(), any(), any(), any()))
+        when(pushSettingService.applyNightAdvertisingConsent(any(), any(), any(), any()))
                 .thenReturn(List.of());
         String agreementBody = "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}";
 

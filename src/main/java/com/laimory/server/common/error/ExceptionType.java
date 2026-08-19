@@ -96,12 +96,7 @@ public enum ExceptionType {
      * 광고성 알림을 켜거나 야간 시각으로 바꾸려는데 필요한 수신 동의가 없음 — 설정을 부분 변경하지 않고
      * 거절한다. 앱은 해당 동의 화면으로 분기한다(야간 동의를 일반 광고 동의 없이 켜는 경우 포함).
      */
-    NOTIFICATION_CONSENT_REQUIRED(-4002, HttpStatus.CONFLICT, Level.INFO),
-    /**
-     * 같은 {@code clientRequestId}로 이전과 다른 의사 표시가 도착함 — 재시도 멱등과 새 행위를 구분할 수
-     * 없으므로 아무것도 바꾸지 않고 거절한다(앱은 새 request ID로 다시 보낸다).
-     */
-    CONSENT_REQUEST_MISMATCH(-4003, HttpStatus.CONFLICT, Level.INFO);
+    NOTIFICATION_CONSENT_REQUIRED(-4002, HttpStatus.CONFLICT, Level.INFO);
 
     private final int code;
     private final HttpStatus status;

@@ -33,7 +33,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 class PushOptOutServiceTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(41L);
-    private static final UUID REQUEST_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
     private static final String FID = "fid-1";
     private static final String TOKEN = token((byte) 3);
     private static final String OTHER_TOKEN = token((byte) 9);
@@ -67,10 +66,10 @@ class PushOptOutServiceTest {
         when(pushRegistrationService.findForOptOut(FID))
                 .thenReturn(Optional.of(registration(OptOutTokens.hash(TOKEN))));
 
-        service().optOut("v1", REQUEST_ID, FID, TOKEN);
+        service().optOut("v1", FID, TOKEN);
 
         // owner는 요청 body가 아니라 잠근 등록 행에서 해석한다.
-        verify(notificationConsentService).apply(SUBJECT_ID, REQUEST_ID,
+        verify(notificationConsentService).apply(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, false, null,
                 NotificationConsentSource.INSTALLATION_OPT_OUT);
     }
@@ -79,10 +78,10 @@ class PushOptOutServiceTest {
     void registrationIsNeverDeleted() {
         when(pushRegistrationService.findForOptOut(FID))
                 .thenReturn(Optional.of(registration(OptOutTokens.hash(TOKEN))));
-        when(notificationConsentService.apply(any(), any(), any(), anyBoolean(), any(), any()))
+        when(notificationConsentService.apply(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(List.of());
 
-        service().optOut("v1", REQUEST_ID, FID, TOKEN);
+        service().optOut("v1", FID, TOKEN);
 
         // 정보성 알림 수신과 같은 요청의 재시도가 유지돼야 한다.
         verify(pushRegistrationService, never()).unregister(any(), any(), anyString());
@@ -93,11 +92,11 @@ class PushOptOutServiceTest {
     void unknownFid_isRejectedWithSharedCredentialError() {
         when(pushRegistrationService.findForOptOut(FID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service().optOut("v1", REQUEST_ID, FID, TOKEN))
+        assertThatThrownBy(() -> service().optOut("v1", FID, TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class, e ->
                         assertThat(e.getExceptionType())
                                 .isEqualTo(ExceptionType.PUSH_OPT_OUT_TOKEN_INVALID));
-        verify(notificationConsentService, never()).apply(any(), any(), any(), anyBoolean(), any(), any());
+        verify(notificationConsentService, never()).apply(any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -106,28 +105,21 @@ class PushOptOutServiceTest {
         when(pushRegistrationService.findForOptOut(FID))
                 .thenReturn(Optional.of(registration(OptOutTokens.hash(TOKEN))));
 
-        assertThatThrownBy(() -> service().optOut("v1", REQUEST_ID, FID, OTHER_TOKEN))
+        assertThatThrownBy(() -> service().optOut("v1", FID, OTHER_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class, e ->
                         assertThat(e.getExceptionType())
                                 .isEqualTo(ExceptionType.PUSH_OPT_OUT_TOKEN_INVALID));
-        verify(notificationConsentService, never()).apply(any(), any(), any(), anyBoolean(), any(), any());
+        verify(notificationConsentService, never()).apply(any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
     void legacyRegistrationWithoutStoredHash_cannotOptOut() {
         when(pushRegistrationService.findForOptOut(FID)).thenReturn(Optional.of(registration(null)));
 
-        assertThatThrownBy(() -> service().optOut("v1", REQUEST_ID, FID, TOKEN))
+        assertThatThrownBy(() -> service().optOut("v1", FID, TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class, e ->
                         assertThat(e.getExceptionType())
                                 .isEqualTo(ExceptionType.PUSH_OPT_OUT_TOKEN_INVALID));
     }
 
-    @Test
-    void missingClientRequestId_isRejectedBeforeLookup() {
-        assertThatThrownBy(() -> service().optOut("v1", null, FID, TOKEN))
-                .isInstanceOf(IllegalArgumentException.class);
-
-        verify(pushRegistrationService, never()).findForOptOut(any());
-    }
 }

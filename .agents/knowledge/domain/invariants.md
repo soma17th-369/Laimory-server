@@ -203,8 +203,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 알림 수신 동의의 상태 권위는 `notification_consents` snapshot이고 `term_agreements`는 이 종류를
   기록하지 않는다(수락만 표현해 철회를 담지 못한다). 야간 동의는 일반 광고 동의를 전제하며 일반 동의
   철회는 야간 동의도 함께 내린다.
-- 같은 `clientRequestId`의 동의·철회 재시도는 상태를 다시 바꾸지 않고 원래 증적을 돌려준다. 같은 ID로
-  다른 의사 표시가 오면 아무것도 바꾸지 않고 거절한다.
+- 동의·철회 처리 결과는 조건부 UPDATE의 영향 행 수가 정한다 — 직전 상태를 미리 읽어 판정하지 않는다.
+  재시도는 상태를 다시 바꾸지 않고 `ALREADY_IN_STATE`로 수렴하며 별도 멱등 키는 두지 않는다.
 
 ### Photos
 

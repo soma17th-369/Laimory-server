@@ -116,15 +116,13 @@ class NotificationConsentConcurrencyIntegrationTest {
     }
 
     private Callable<List<NotificationConsentEvent>> withdraw() {
-        UUID requestId = UUID.randomUUID();
-        return () -> notificationConsentService.apply(SUBJECT_ID, requestId,
+        return () -> notificationConsentService.apply(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, false, null,
                 NotificationConsentSource.INSTALLATION_OPT_OUT);
     }
 
     private Callable<List<NotificationConsentEvent>> consent() {
-        UUID requestId = UUID.randomUUID();
-        return () -> notificationConsentService.apply(SUBJECT_ID, requestId,
+        return () -> notificationConsentService.apply(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, true, TERM_VERSION,
                 NotificationConsentSource.PUSH_SETTINGS);
     }
@@ -169,9 +167,9 @@ class NotificationConsentConcurrencyIntegrationTest {
     void sequentialWithdrawals_secondIsAlreadyInState() {
         givenAdvertisingConsented();
 
-        List<NotificationConsentEvent> first = notificationConsentService.apply(SUBJECT_ID, UUID.randomUUID(),
+        List<NotificationConsentEvent> first = notificationConsentService.apply(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, false, null, NotificationConsentSource.PUSH_SETTINGS);
-        List<NotificationConsentEvent> second = notificationConsentService.apply(SUBJECT_ID, UUID.randomUUID(),
+        List<NotificationConsentEvent> second = notificationConsentService.apply(SUBJECT_ID,
                 NotificationConsentType.ADVERTISING_PUSH, false, null, NotificationConsentSource.PUSH_SETTINGS);
 
         assertThat(first).singleElement().satisfies(event -> assertThat(event.getProcessingResult())

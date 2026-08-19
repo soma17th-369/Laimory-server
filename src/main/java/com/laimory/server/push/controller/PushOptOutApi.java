@@ -32,17 +32,13 @@ public interface PushOptOutApi {
             description = "설치가 보관한 FID와 수신거부 credential을 검증해 해당 설치 소유자의 광고성 "
                     + "수신 동의를 철회한다. 켜져 있던 야간 동의도 함께 철회되어 응답 배열에 두 건이 담긴다. "
                     + "FID 등록은 삭제하지 않는다 — 정보성 알림 수신과 같은 요청의 재시도가 유지된다. "
-                    + "같은 `clientRequestId`의 재시도는 원래 처리결과를 그대로 돌려준다(멱등).")
+                    + "재시도해도 상태는 어긋나지 않으며 이미 철회 상태면 `ALREADY_IN_STATE`로 응답한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "철회 성공 — 처리결과 배열", useReturnTypeSchema = true),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — clientRequestId 누락"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-4001` — 수신거부 credential 무효. FID 미등록·token 미제출·불일치를 "
-                            + "구분하지 않는 단일 응답이다(등록 존재 여부를 노출하지 않는다)."),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-4003` — 같은 clientRequestId로 다른 의사 표시")
+                            + "구분하지 않는 단일 응답이다(등록 존재 여부를 노출하지 않는다).")
     })
     @PostMapping
     ResponseEntity<ApiResponse<List<NotificationConsentResultResponse>>> optOut(

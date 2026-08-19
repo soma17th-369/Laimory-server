@@ -9,12 +9,9 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.push.NotificationConsentAction;
-import com.laimory.server.push.NotificationConsentProcessingResult;
 import com.laimory.server.push.NotificationConsentSource;
 import com.laimory.server.push.NotificationConsentType;
 import com.laimory.server.push.PushSenderProperties;
-import com.laimory.server.push.entity.NotificationConsentEvent;
 import com.laimory.server.push.repository.NotificationConsentEventRepository;
 import com.laimory.server.push.repository.NotificationConsentRepository;
 import com.laimory.server.push.service.NotificationConsentTransactionService.ConsentCommand;
@@ -34,18 +31,16 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 동의 orchestration 검증 — 문서 버전 검증, 종류별 위임, {@code clientRequestId} 멱등과 payload 불일치
- * 거절. 상태 판정(APPLIED/ALREADY_IN_STATE)은 조건부 UPDATE의 영향 행 수가 소유하므로
- * {@link NotificationConsentTransactionServiceTest}가 검증한다. 인프라 0.
+ * 동의 orchestration 검증 — 문서 버전 검증과 종류별 위임. 상태 판정(APPLIED/ALREADY_IN_STATE)은
+ * 조건부 UPDATE의 영향 행 수가 소유하므로 {@link NotificationConsentTransactionServiceTest}가 검증한다.
+ * 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class NotificationConsentServiceTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(21L);
-    private static final UUID REQUEST_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-21T05:00:00Z"), ZoneOffset.UTC);
     private static final LocalDateTime NOW_KST = LocalDateTime.of(2026, 7, 21, 14, 0);
     private static final TermDocumentSummary AD_DOC =
@@ -72,38 +67,23 @@ class NotificationConsentServiceTest {
                 termDocumentService, sender, CLOCK);
     }
 
-    private void givenNoPriorEvents() {
-        when(eventRepository.findAllBySubjectIdAndClientRequestId(SUBJECT_ID, REQUEST_ID)).thenReturn(List.of());
-    }
-
     private void givenCurrentDocument(TermDocumentSummary document) {
         when(termDocumentService.findCurrentSummaries(List.of(document.termType()), NOW_KST))
                 .thenReturn(List.of(document));
-    }
-
-    private static NotificationConsentEvent event(NotificationConsentType type,
-                                                   NotificationConsentAction action, long id) {
-        NotificationConsentEvent event = NotificationConsentEvent.of(SUBJECT_ID, REQUEST_ID, type, action, 100L,
-                NOW_KST, "라이모리 주식회사", NotificationConsentProcessingResult.APPLIED,
-                NotificationConsentSource.PUSH_SETTINGS);
-        ReflectionTestUtils.setField(event, "notificationConsentEventId", id);
-        return event;
     }
 
     // --- 위임과 command 조립 ---
 
     @Test
     void consentAdvertising_delegatesWithResolvedDocumentAndServerCapturedTime() {
-        givenNoPriorEvents();
         givenCurrentDocument(AD_DOC);
 
-        service().apply(SUBJECT_ID, REQUEST_ID, NotificationConsentType.ADVERTISING_PUSH, true, "v1",
+        service().apply(SUBJECT_ID, NotificationConsentType.ADVERTISING_PUSH, true, "v1",
                 NotificationConsentSource.PUSH_SETTINGS);
 
         verify(transactionService).consentAdvertising(commandCaptor.capture(), eqLong(100L));
         ConsentCommand command = commandCaptor.getValue();
         assertThat(command.subjectId()).isEqualTo(SUBJECT_ID);
-        assertThat(command.clientRequestId()).isEqualTo(REQUEST_ID);
         assertThat(command.occurredAt()).isEqualTo(NOW_KST);
         assertThat(command.senderName()).isEqualTo("라이모리 주식회사");
         assertThat(command.source()).isEqualTo(NotificationConsentSource.PUSH_SETTINGS);
@@ -111,10 +91,9 @@ class NotificationConsentServiceTest {
 
     @Test
     void consentNight_delegatesToNightTransition() {
-        givenNoPriorEvents();
         givenCurrentDocument(NIGHT_DOC);
 
-        service().apply(SUBJECT_ID, REQUEST_ID, NotificationConsentType.NIGHT_ADVERTISING_PUSH, true, "v1",
+        service().apply(SUBJECT_ID, NotificationConsentType.NIGHT_ADVERTISING_PUSH, true, "v1",
                 NotificationConsentSource.PUSH_SETTINGS);
 
         verify(transactionService).consentNight(any(), eqLong(200L));
@@ -123,9 +102,8 @@ class NotificationConsentServiceTest {
 
     @Test
     void withdrawAdvertising_delegatesToCascadingWithdrawal() {
-        givenNoPriorEvents();
 
-        service().apply(SUBJECT_ID, REQUEST_ID, NotificationConsentType.ADVERTISING_PUSH, false, null,
+        service().apply(SUBJECT_ID, NotificationConsentType.ADVERTISING_PUSH, false, null,
                 NotificationConsentSource.INSTALLATION_OPT_OUT);
 
         verify(transactionService).withdrawAdvertising(commandCaptor.capture());
@@ -137,9 +115,8 @@ class NotificationConsentServiceTest {
 
     @Test
     void withdrawNight_leavesAdvertisingTransitionUntouched() {
-        givenNoPriorEvents();
 
-        service().apply(SUBJECT_ID, REQUEST_ID, NotificationConsentType.NIGHT_ADVERTISING_PUSH, false, null,
+        service().apply(SUBJECT_ID, NotificationConsentType.NIGHT_ADVERTISING_PUSH, false, null,
                 NotificationConsentSource.PUSH_SETTINGS);
 
         verify(transactionService).withdrawNight(any());
@@ -150,11 +127,9 @@ class NotificationConsentServiceTest {
 
     @Test
     void consent_staleVersion_isRejectedBeforeAnyTransition() {
-        givenNoPriorEvents();
         givenCurrentDocument(AD_DOC);
 
-        assertThatThrownBy(() -> service().apply(SUBJECT_ID, REQUEST_ID,
-                NotificationConsentType.ADVERTISING_PUSH, true, "v0", NotificationConsentSource.PUSH_SETTINGS))
+        assertThatThrownBy(() -> service().apply(SUBJECT_ID, NotificationConsentType.ADVERTISING_PUSH, true, "v0", NotificationConsentSource.PUSH_SETTINGS))
                 .isInstanceOfSatisfying(BusinessException.class, e ->
                         assertThat(e.getExceptionType()).isEqualTo(ExceptionType.STALE_TERM_VERSION));
         verify(transactionService, never()).consentAdvertising(any(), any());
@@ -162,48 +137,10 @@ class NotificationConsentServiceTest {
 
     @Test
     void consent_missingVersion_isRejected() {
-        givenNoPriorEvents();
 
-        assertThatThrownBy(() -> service().apply(SUBJECT_ID, REQUEST_ID,
-                NotificationConsentType.ADVERTISING_PUSH, true, null, NotificationConsentSource.PUSH_SETTINGS))
+        assertThatThrownBy(() -> service().apply(SUBJECT_ID, NotificationConsentType.ADVERTISING_PUSH, true, null, NotificationConsentSource.PUSH_SETTINGS))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(transactionService, never()).consentAdvertising(any(), any());
-    }
-
-    // --- 멱등 ---
-
-    @Test
-    void sameClientRequestId_returnsOriginalEventsWithoutRepeatingTransition() {
-        NotificationConsentEvent existing =
-                event(NotificationConsentType.ADVERTISING_PUSH, NotificationConsentAction.CONSENT, 7L);
-        when(eventRepository.findAllBySubjectIdAndClientRequestId(SUBJECT_ID, REQUEST_ID))
-                .thenReturn(List.of(existing));
-
-        List<NotificationConsentEvent> result = service().apply(SUBJECT_ID, REQUEST_ID,
-                NotificationConsentType.ADVERTISING_PUSH, true, "v1", NotificationConsentSource.PUSH_SETTINGS);
-
-        assertThat(result).containsExactly(existing);
-        verify(transactionService, never()).consentAdvertising(any(), any());
-    }
-
-    @Test
-    void sameClientRequestId_withDifferentIntent_isRejected() {
-        when(eventRepository.findAllBySubjectIdAndClientRequestId(SUBJECT_ID, REQUEST_ID))
-                .thenReturn(List.of(event(NotificationConsentType.ADVERTISING_PUSH,
-                        NotificationConsentAction.CONSENT, 7L)));
-
-        // 같은 멱등 키로 반대 의사가 오면 어느 쪽도 적용하지 않는다(앱은 새 request ID로 다시 보낸다).
-        assertThatThrownBy(() -> service().apply(SUBJECT_ID, REQUEST_ID,
-                NotificationConsentType.ADVERTISING_PUSH, false, null, NotificationConsentSource.PUSH_SETTINGS))
-                .isInstanceOfSatisfying(BusinessException.class, e ->
-                        assertThat(e.getExceptionType()).isEqualTo(ExceptionType.CONSENT_REQUEST_MISMATCH));
-    }
-
-    @Test
-    void missingClientRequestId_isRejected() {
-        assertThatThrownBy(() -> service().apply(SUBJECT_ID, null,
-                NotificationConsentType.ADVERTISING_PUSH, false, null, NotificationConsentSource.PUSH_SETTINGS))
-                .isInstanceOf(NullPointerException.class);
     }
 
     // --- 조회 ---
