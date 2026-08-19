@@ -93,22 +93,14 @@ class PushPreferenceServiceTest {
     }
 
     @Test
-    void updatePushEnabled_whenRowMissing_createsThenRetries() {
-        when(pushPreferenceRepository.updatePushEnabled(SUBJECT_ID, false)).thenReturn(0).thenReturn(1);
-
-        service().updatePushEnabled(SUBJECT_ID, false);
-
-        verify(pushPreferenceRepository).insertIfAbsent(SUBJECT_ID.toString(), true, NOW_KST);
-        verify(pushPreferenceRepository, org.mockito.Mockito.times(2)).updatePushEnabled(SUBJECT_ID, false);
-    }
-
-    @Test
-    void updatePushEnabled_whenRetryStillZero_failsLoudly() {
-        // INSERT IGNORE는 FK 위반도 warning으로 삼킨다 — 조용한 no-op 200을 금지한다.
-        when(pushPreferenceRepository.updatePushEnabled(SUBJECT_ID, false)).thenReturn(0).thenReturn(0);
+    void updatePushEnabled_whenRowMissing_failsLoudlyWithoutCreating() {
+        // 쓰기 경로는 행을 만들지 않는다 — 행 존재는 가입 transaction·backfill이 보장하고, 0행은
+        // 그 보장이 깨진 운영 신호다(조용한 no-op 200 금지).
+        when(pushPreferenceRepository.updatePushEnabled(SUBJECT_ID, false)).thenReturn(0);
 
         assertThatThrownBy(() -> service().updatePushEnabled(SUBJECT_ID, false))
                 .isInstanceOf(IllegalStateException.class);
+        verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
     }
 
     @Test

@@ -95,21 +95,6 @@ public interface ScheduledNotificationPreferenceRepository
                                @Param("notificationTime") LocalTime notificationTime,
                                @Param("nextDueAt") LocalDateTime nextDueAt);
 
-    /**
-     * 시각 변경 직후 보정 — 방금 쓴 값이 그대로일 때만 새 값으로 바꾼다. 시각 변경의 {@code nextDueAt}은
-     * 행 lock을 잡기 전에 계산되므로, lock을 기다리는 사이 worker claim이 지나가면 과거 값이 남을 수 있다.
-     * 값 일치 조건이 있어 다른 전진이 이미 덮었으면 0행 no-op이다(멱등).
-     */
-    @Modifying
-    @Transactional
-    @Query("update ScheduledNotificationPreference s set s.nextDueAt = :correctedNextDueAt "
-            + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType "
-            + "and s.nextDueAt = :staleNextDueAt")
-    int updateNextDueAtIfUnchanged(@Param("subjectId") UUID subjectId,
-                                   @Param("notificationType") ScheduledNotificationType notificationType,
-                                   @Param("staleNextDueAt") LocalDateTime staleNextDueAt,
-                                   @Param("correctedNextDueAt") LocalDateTime correctedNextDueAt);
-
     /** 탈퇴 transaction 합류용 — subject의 모든 종류 행 삭제(마스터보다 먼저). 0행 허용(멱등). */
     @Modifying
     @Transactional

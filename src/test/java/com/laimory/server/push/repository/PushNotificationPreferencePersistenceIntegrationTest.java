@@ -6,7 +6,6 @@ import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
-import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.PushSettingService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
@@ -18,7 +17,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -66,9 +64,6 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     @Autowired
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
-
-    @Autowired
-    private PushPreferenceService pushPreferenceService;
 
     @Autowired
     private PushSettingService pushSettingService;
@@ -222,69 +217,16 @@ class PushNotificationPreferencePersistenceIntegrationTest {
     }
 
     @Test
-    void firstReminderWriteWithoutMasterRow_healsMasterAndPersists() {
-        // backfill 공백 재현: subject mapping만 있고 push_preferences 행이 없다. INSERT IGNORE가 종류별
-        // 행의 FK 위반을 warning으로 삼켜도, orchestration의 마스터 선보정 덕에 쓰기가 성공해야 한다.
+    void writeWithoutRow_failsLoudlyInsteadOfSilentNoOp() {
+        // backfill 공백 재현: subject mapping만 있고 설정 행이 없다. 쓰기 경로는 행을 만들지 않으므로
+        // 조용한 no-op 200이 아니라 예외로 크게 실패해야 한다(운영 신호 → backfill 재실행).
         UUID subjectId = SUBJECTS.get(3);
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
 
-        pushSettingService.updateDailyReminderEnabled("v1", subjectId, true);
-
-        assertThat(pushPreferenceRepository.findById(subjectId)).isPresent();
-        assertThat(reload(subjectId).isEnabled()).isTrue();
-    }
-
-    // --- 설정 쓰기 동시성 ---
-
-    @Test
-    void concurrentMasterToggles_doNotDeadlock() throws Exception {
-        // 있는 행에도 INSERT IGNORE(get-or-create)를 먼저 날리면 S락이 잡히고, 이어지는 UPDATE의 X락과
-        // 얽혀 같은 subject를 동시에 다루는 두 transaction이 서로를 기다린다(동의 쪽에서 확인된 패턴).
-        UUID subjectId = SUBJECTS.get(0);
-        givenSubject(subjectId);
-
-        runConcurrently(
-                () -> pushPreferenceService.updatePushEnabled(subjectId, false),
-                () -> pushPreferenceService.updatePushEnabled(subjectId, true));
-
-        assertThat(pushPreferenceRepository.findById(subjectId)).isPresent();
-    }
-
-    @Test
-    void concurrentReminderToggles_doNotDeadlock() throws Exception {
-        UUID subjectId = SUBJECTS.get(1);
-        givenDueSchedule(subjectId, nowKst().plusHours(1));
-
-        runConcurrently(
-                () -> scheduledNotificationPreferenceService.updateEnabled(subjectId, TYPE, false),
-                () -> scheduledNotificationPreferenceService.updateNotificationTime(
-                        subjectId, TYPE, LocalTime.of(9, 0)));
-
-        assertThat(reload(subjectId)).isNotNull();
-    }
-
-    /** 두 작업을 같은 출발선에서 동시에 실행한다 — 락 획득 순서가 겹쳐야 deadlock이 드러난다. */
-    private void runConcurrently(Runnable first, Runnable second) throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CyclicBarrier startLine = new CyclicBarrier(2);
-        try {
-            List<Future<?>> futures = List.of(
-                    executor.submit(() -> {
-                        startLine.await(10, TimeUnit.SECONDS);
-                        first.run();
-                        return null;
-                    }),
-                    executor.submit(() -> {
-                        startLine.await(10, TimeUnit.SECONDS);
-                        second.run();
-                        return null;
-                    }));
-            for (Future<?> future : futures) {
-                future.get(30, TimeUnit.SECONDS);
-            }
-        } finally {
-            executor.shutdownNow();
-        }
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> pushSettingService.updateDailyReminderEnabled("v1", subjectId, true))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(pushPreferenceRepository.findById(subjectId)).isEmpty();
     }
 
     // --- FK 계약 ---

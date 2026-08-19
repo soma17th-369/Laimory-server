@@ -38,7 +38,7 @@ public interface PushSettingApi {
     @Operation(summary = "푸시 수신 설정 조회",
             description = "전체 푸시 ON/OFF와 일일 리마인더 ON/OFF·시각(Asia/Seoul HH:mm)을 반환한다. "
                     + "설정 행이 아직 없는 사용자에게는 기본값(전체 ON / 리마인더 OFF·21:00)을 응답한다"
-                    + "(순수 조회 — 행 생성은 가입·backfill·첫 설정 변경이 소유).")
+                    + "(순수 조회 — 행 생성은 가입 transaction과 rollout backfill이 소유).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "조회 성공", useReturnTypeSchema = true),

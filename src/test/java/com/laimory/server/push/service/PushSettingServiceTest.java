@@ -101,16 +101,6 @@ class PushSettingServiceTest {
     }
 
     @Test
-    void reminderWrites_healMasterRowFirst() {
-        // 종류별 행의 FK가 마스터를 참조한다 — 마스터 행이 없는 backfill 공백 subject의 첫 설정 변경도
-        // 성공해야 하므로 마스터부터 멱등 보정한다.
-        service().updateDailyReminderEnabled("v1", SUBJECT_ID, true);
-        service().updateDailyReminderTime("v1", SUBJECT_ID, "22:00");
-
-        verify(pushPreferenceService, org.mockito.Mockito.times(2)).createDefaultIfAbsent(SUBJECT_ID);
-    }
-
-    @Test
     void updateTime_storesParsedWallClock() {
         service().updateDailyReminderTime("v1", SUBJECT_ID, "22:00");
 

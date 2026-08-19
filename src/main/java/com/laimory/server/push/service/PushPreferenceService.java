@@ -49,21 +49,14 @@ public class PushPreferenceService {
     }
 
     /**
-     * 마스터 ON/OFF 변경(멱등) — 한 컬럼만 바꾸는 한 문장이다. 행이 없으면 그때만 만들고 다시 시도한다.
+     * 마스터 ON/OFF 변경(멱등) — 한 컬럼만 바꾸는 UPDATE 한 문장이다.
      *
-     * <p>있는 행에 먼저 {@code INSERT IGNORE}를 날리지 않는다 — 그러면 그 행에 S락이 잡히고 뒤따르는
-     * UPDATE의 X락과 얽혀 같은 subject의 동시 변경이 deadlock에 빠진다. 같은 이유로 세 문장을 한
-     * transaction으로 묶지도 않는다(대상 없는 UPDATE의 gap lock을 쥔 채 INSERT하면 같은 교착이 난다).
-     *
-     * <p>재시도 UPDATE가 그래도 0행이면 던진다 — {@code INSERT IGNORE}는 FK 위반도 warning으로 삼키므로,
-     * 여기서 확인하지 않으면 아무것도 저장하지 않은 요청이 200으로 끝난다.
+     * <p>쓰기 경로는 행을 만들지 않는다. 행 존재는 가입 transaction과 rollout backfill이 보장하며,
+     * 0행은 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
      */
     public void updatePushEnabled(UUID subjectId, boolean pushEnabled) {
         if (pushPreferenceRepository.updatePushEnabled(subjectId, pushEnabled) == 0) {
-            createDefaultIfAbsent(subjectId);
-            if (pushPreferenceRepository.updatePushEnabled(subjectId, pushEnabled) == 0) {
-                throw new IllegalStateException("push preference write was lost");
-            }
+            throw new IllegalStateException("push preference row is missing");
         }
     }
 

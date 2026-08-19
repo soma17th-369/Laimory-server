@@ -138,12 +138,11 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각
 이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
 
-설정 쓰기는 행을 읽지 않는다. ON/OFF는 `enabled` 한 컬럼만 바꾸고, 시각 변경은 시각과 파생값
-`next_due_at`을 한 UPDATE에서 함께 바꾼다 — 전진 시각은 Java가 KST로 계산해 파라미터로 넘긴다.
-읽고 계산해서 쓰면 그 사이 다른 설정 변경이나
-worker claim이 끼어들어 파생값이 자기 입력과 어긋나므로, 잠금 대신 <b>읽기를 없애서</b> 막는다.
-행이 없으면 UPDATE가 0행을 반환하고 그때만 만든 뒤 다시 시도하며, 이 문장들은 한 transaction으로
-묶지 않는다(대상 없는 UPDATE의 gap lock을 쥔 채 INSERT하면 동시 최초 생성이 deadlock에 빠진다). 종류별 행은
+설정 쓰기는 행을 읽지도 만들지도 않는 UPDATE 한 문장이다. ON/OFF는 `enabled` 한 컬럼만 바꾸고, 시각
+변경은 시각과 파생값 `next_due_at`을 한 UPDATE에서 함께 바꾼다 — 전진 시각은 Java가 KST로 계산해
+파라미터로 넘긴다. 읽고 계산해서 쓰면 그 사이 다른 설정 변경이나 worker claim이 끼어들어 파생값이
+자기 입력과 어긋나므로, 잠금 대신 <b>읽기를 없애서</b> 막는다. 행 존재는 가입 transaction과 rollout
+backfill이 보장하며 0행은 조용히 넘기지 않고 던진다(운영 신호 — 복구는 backfill 재실행). 종류별 행은
 마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고

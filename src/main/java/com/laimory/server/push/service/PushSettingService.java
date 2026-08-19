@@ -31,8 +31,7 @@ public class PushSettingService {
 
     /**
      * 서버 권위 상태 조회 — 순수 읽기다. 설정 행이 아직 없는 사용자에게는 기본값을 답하고 행을 만들지
-     * 않는다(만들어도 값이 같다). 행은 가입 transaction과 rollout backfill이 만들며, 그래도 없으면 첫
-     * 설정 변경이 만든다.
+     * 않는다(만들어도 값이 같다). 행은 가입 transaction과 rollout backfill이 만든다.
      */
     public PushSettingsResponse getSettings(String applicationVersion, UUID subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
@@ -54,24 +53,14 @@ public class PushSettingService {
     /** 일일 리마인더 ON/OFF — 사용자가 직접 켜야 발송된다(기본 OFF). */
     public void updateDailyReminderEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        ensureMasterRow(subjectId);
         scheduledNotificationPreferenceService.updateEnabled(subjectId, DAILY_REMINDER, requireEnabled(enabled));
     }
 
     /** 일일 리마인더 시각 변경 — OFF 상태에서도 저장하며 발송 여부는 {@code enabled}가 정한다. */
     public void updateDailyReminderTime(String applicationVersion, UUID subjectId, String time) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        ensureMasterRow(subjectId);
         scheduledNotificationPreferenceService.updateNotificationTime(
                 subjectId, DAILY_REMINDER, parseTime(time));
-    }
-
-    /**
-     * 종류별 행의 FK가 마스터를 참조하므로, 마스터 행이 없는 backfill 공백 subject의 첫 리마인더 설정도
-     * 성공하도록 마스터부터 멱등 보정한다(이미 있으면 no-op 한 문장).
-     */
-    private void ensureMasterRow(UUID subjectId) {
-        pushPreferenceService.createDefaultIfAbsent(subjectId);
     }
 
     /** 분 단위 {@code HH:mm}만 받는다 — 초·나노 표기와 한 자리 시각은 DB 변경 전에 거절한다. */

@@ -54,8 +54,7 @@ public class ScheduledNotificationPreferenceService {
 
     /**
      * 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 기본값을 답한다(그 행을 만들어도 값이
-     * 같으므로 조회가 쓰기를 할 이유가 없다). 행은 가입 transaction과 rollout backfill이 만들고,
-     * 그래도 없으면 첫 설정 변경이 만든다.
+     * 같으므로 조회가 쓰기를 할 이유가 없다). 행은 가입 transaction과 rollout backfill이 만든다.
      */
     public Settings findSettings(UUID subjectId, ScheduledNotificationType notificationType) {
         return find(subjectId, notificationType)
@@ -70,52 +69,32 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 종류별 ON/OFF 전환 — {@code enabled} 한 컬럼만 바꾸는 한 문장이다. 행이 없으면 그때만 만들고 다시
-     * 시도한다.
+     * 종류별 ON/OFF 전환 — {@code enabled} 한 컬럼만 바꾸는 UPDATE 한 문장이다.
      *
-     * <p>세 문장을 한 transaction으로 묶지 않는다. 묶으면 대상이 없는 첫 UPDATE가 잡은 gap lock을 계속
-     * 쥔 채 INSERT를 시도하게 되고, 같은 행을 동시에 처음 만드는 두 요청이 서로의 gap lock을 기다려
-     * deadlock에 빠진다. 문장별로 끊어도 각 문장이 멱등이라 최종 결과는 같다.
-     *
-     * <p>재시도 UPDATE가 그래도 0행이면 던진다 — {@code INSERT IGNORE}는 FK 위반(마스터 행 부재)도
-     * warning으로 삼키므로, 여기서 확인하지 않으면 아무것도 저장하지 않은 요청이 200으로 끝난다.
+     * <p>쓰기 경로는 행을 만들지 않는다. 행 존재는 가입 transaction과 rollout backfill이 보장하며,
+     * 0행은 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
      */
     public void updateEnabled(UUID subjectId, ScheduledNotificationType notificationType, boolean enabled) {
         if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled) == 0) {
-            createDefaultIfAbsent(subjectId, notificationType);
-            if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled)
-                    == 0) {
-                throw new IllegalStateException("scheduled notification preference write was lost");
-            }
+            throw new IllegalStateException("scheduled notification preference row is missing");
         }
     }
 
     /**
-     * 시각 변경 — 시각과 새 시각의 다음 미래 occurrence를 한 문장에서 함께 바꾼다. 그래서 worker claim이나
-     * 다른 설정 변경과 겹쳐도 두 값이 어긋난 상태가 남지 않는다.
+     * 시각 변경 — 시각과 새 시각의 다음 미래 occurrence를 UPDATE 한 문장에서 함께 바꾼다. 그래서 worker
+     * claim이나 다른 설정 변경과 겹쳐도 두 값이 어긋난 상태가 남지 않는다. 행 부재는
+     * {@link #updateEnabled}와 같은 이유로 던진다.
      *
-     * <p>{@link #updateEnabled}와 같은 이유로 문장들을 한 transaction으로 묶지 않으며, 재시도 UPDATE가
-     * 0행이면 같은 이유로 던진다.
-     *
-     * <p>쓰기 직후 값을 한 번 재검증한다 — {@code nextDueAt}은 행 lock을 잡기 전에 계산되므로, lock을
-     * 기다리는 사이 worker claim이 그 occurrence를 이미 처리했다면 방금 쓴 값이 과거일 수 있다. 그대로
-     * 두면 다음 tick이 허용 지연 안에서 같은 occurrence를 중복 발송하므로, 값이 그대로일 때만 하루 뒤로
-     * 민다(다른 전진이 이미 지나갔으면 0행 no-op — 멱등 보정).
+     * <p>알려진 수용 edge: occurrence 경계 직전에 들어온 변경이 worker claim과 겹치면 방금 발송된
+     * occurrence 시각이 다시 저장돼 같은 알림이 한 번 더 갈 수 있다 — 중복은 최대 1회이고 다음 claim이
+     * 미래로 전진시키므로 정보성 알림에서 수용한다.
      */
     public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
                                        LocalTime notificationTime) {
         LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime);
         if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
                 notificationTime, nextDueAt) == 0) {
-            createDefaultIfAbsent(subjectId, notificationType);
-            if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
-                    notificationTime, nextDueAt) == 0) {
-                throw new IllegalStateException("scheduled notification preference write was lost");
-            }
-        }
-        if (!nextDueAt.isAfter(nowKst())) {
-            scheduledNotificationPreferenceRepository.updateNextDueAtIfUnchanged(
-                    subjectId, notificationType, nextDueAt, nextDueAt.plusDays(1));
+            throw new IllegalStateException("scheduled notification preference row is missing");
         }
     }
 
