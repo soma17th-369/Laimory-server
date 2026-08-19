@@ -101,8 +101,10 @@ OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
   `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
   `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
-  **worker off** — 실제 발송 시작은 배포의 부작용이 아니라 운영 결정이다.
-  기본 매분 `Asia/Seoul`, 허용 지연 30분, process당 concurrency 1, batch 250, 최대 4 batch/30초)
+  worker on — 리마인더가 사용자별 기본 OFF라 켜둬도 발송 대상이 없고, env는 문제 시 끄는 kill
+  switch다. 단 `docker` 프로필은 off — 매분 background claim이 통합 테스트가 심은 due 행을
+  가로채지 않게 한다. 기본 매분 `Asia/Seoul`, 허용 지연 30분, process당 concurrency 1, batch 250,
+  최대 4 batch/30초)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,
   `DRAFT_CLEANUP_MAX_BATCHES_PER_RUN`, `DRAFT_CLEANUP_MAX_RUN_DURATION` (checked-in default는 worker on,

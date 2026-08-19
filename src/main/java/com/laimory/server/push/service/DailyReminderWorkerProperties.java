@@ -7,7 +7,8 @@ import org.springframework.stereotype.Component;
 /**
  * 일일 리마인더 worker의 runtime 설정과 기동 시 불변식 검증.
  *
- * <p>기본은 OFF다 — 실제 발송을 시작하는 것은 배포의 부작용이 아니라 운영 결정이다.
+ * <p>기본은 ON이다 — 리마인더는 사용자별 기본 OFF라 worker를 켜둬도 사용자가 직접 설정을 켜기
+ * 전에는 발송 대상이 없다. env는 문제 시 끄는 kill switch로만 쓴다.
  */
 @Component
 public class DailyReminderWorkerProperties {
@@ -26,7 +27,7 @@ public class DailyReminderWorkerProperties {
     private final Duration maxRunDuration;
 
     public DailyReminderWorkerProperties(
-            @Value("${app.push.daily-reminder.worker-enabled:false}") boolean workerEnabled,
+            @Value("${app.push.daily-reminder.worker-enabled:true}") boolean workerEnabled,
             @Value("${app.push.daily-reminder.max-lateness:30m}") Duration maxLateness,
             @Value("${app.push.daily-reminder.batch-size:250}") int batchSize,
             @Value("${app.push.daily-reminder.concurrency:1}") int concurrency,
