@@ -107,19 +107,30 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
-    void updateEvent_savedRecordPrecedesRequestValidation() {
+    void updateEvent_savedRecordIsStillEditable() {
         TimelineEvent event = originalEvent();
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
-        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, null))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID,
+                request(null, "제목", null, NEW_START, null, null, false, List.of()));
 
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), any());
+    }
+
+    @Test
+    void updateMemo_savedRecordIsStillEditable() {
+        TimelineEvent event = originalEvent();
+        DailyRecord saved = draftRecordOf(SUBJECT_ID);
+        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+
+        service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, "저장 후 메모");
+
+        assertThat(event.getMemo()).isEqualTo("저장 후 메모");
         verifyNoInteractions(transactionService);
     }
 
@@ -377,21 +388,6 @@ class TimelineEventEditServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
-        verifyNoInteractions(transactionService);
-    }
-
-    @Test
-    void updateMemo_savedRecordRejectionPrecedesMemoValidation() {
-        TimelineEvent event = originalEvent();
-        DailyRecord saved = draftRecordOf(SUBJECT_ID);
-        ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
-        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
-        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
-
-        assertThatThrownBy(() -> service.updateMemo(VERSION, SUBJECT_ID, EVENT_ID, "a".repeat(501)))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-1003));
-
         verifyNoInteractions(transactionService);
     }
 

@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RequestParam;
  * JWT raw userId는 {@link CurrentSubject}로 subjectId에 해석하며 클라이언트 입력이 아니다 — OpenAPI
  * parameter로 노출하지 않는다.
  *
- * <p>편집은 DRAFT 상태의 하루 기록에서만 허용한다(SAVED는 409). AI 작업 진행(PROCESSING)만으로
+ * <p>편집·삭제는 하루 기록 상태와 무관하게 허용한다(SAVED 포함). AI 작업 진행(PROCESSING)만으로
  * Event/memo/PHOTO 변경 요청을 거절하지 않는다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
@@ -167,8 +167,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능 · "
-                            + "`-1019` — 같은 PHOTO object를 삭제하는 중이므로 잠시 후 새 업로드 필요")
+                    description = "`-1019` — 같은 PHOTO object를 삭제하는 중이므로 잠시 후 새 업로드 필요")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
@@ -188,9 +187,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료) — DRAFT에서만 수정 가능")
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @PutMapping("/events/{timelineEventId}/memo")
     ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
@@ -211,9 +208,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료)")
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @DeleteMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> deleteTimelineEvent(
@@ -237,9 +232,7 @@ public interface TimelineRecordApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 이벤트가 없거나 내 소유가 아니거나, Item이 없거나 해당 이벤트에 "
-                            + "연결돼 있지 않음(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 이벤트가 속한 하루 기록이 이미 SAVED(작성완료)")
+                            + "연결돼 있지 않음(존재 여부는 구분해 주지 않는다)")
     })
     @DeleteMapping("/events/{timelineEventId}/items/{timelineItemId}")
     ResponseEntity<ApiResponse<Void>> detachTimelineEventItem(
@@ -261,9 +254,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료)")
+                    description = "`-404` — 하루 기록이 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @DeleteMapping("/daily-records/by-id/{dailyRecordId}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecord(
@@ -272,7 +263,7 @@ public interface TimelineRecordApi {
             @Parameter(description = "삭제할 하루 기록 ID") @PathVariable Long dailyRecordId);
 
     @Operation(summary = "하루 기록(DailyRecord) 날짜 삭제",
-            description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 삭제한다. recordDate는 yyyy-MM-dd "
+            description = "인증 사용자가 선택한 날짜의 하루 기록을 삭제한다(DRAFT/SAVED 모두). recordDate는 yyyy-MM-dd "
                     + "형식이며 서버에서 계산·timezone 보정하지 않는다. 하루 전체 Record·Events와 마지막 참조가 "
                     + "사라지는 non-PHOTO Items를 DB에서 삭제한다. 마지막 참조가 사라지는 PHOTO Item은 S3 삭제 "
                     + "작업과 함께 보존하며, commit 뒤 별도 worker가 S3 성공 시 Item과 작업을 최종 삭제한다. "
@@ -285,9 +276,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1003` — 하루 기록이 이미 SAVED(작성완료)")
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음")
     })
     @DeleteMapping("/daily-records/{recordDate}")
     ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
@@ -300,8 +289,8 @@ public interface TimelineRecordApi {
             description = "인증 사용자가 선택한 날짜의 DRAFT 하루 기록을 SAVED로 확정하면서 하루 감정을 함께 "
                     + "저장한다. request body의 `emotionType`은 필수다(VERY_HAPPY·HAPPY·NEUTRAL·UNHAPPY·"
                     + "VERY_UNHAPPY). **200이 곧 저장 완료다** — 감정과 SAVED 전이가 한 트랜잭션으로 커밋된 뒤 "
-                    + "응답한다. 저장 후에는 Event 수정·메모·삭제, "
-                    + "Item 연결 해제, 같은 날짜 draft 추가가 모두 `-1003`으로 거절된다. "
+                    + "응답한다. 저장 후에도 Event 수정·메모·삭제·Item 연결 해제는 계속 허용되며, "
+                    + "같은 날짜 draft 추가만 `-1003`으로 거절된다. "
                     + "커밋 뒤 서버가 User Memory 갱신을 별도로 진행하지만 그 성패는 이 응답과 무관하며 "
                     + "클라이언트가 기다리거나 조회할 대상이 아니다.")
     @ApiResponses({

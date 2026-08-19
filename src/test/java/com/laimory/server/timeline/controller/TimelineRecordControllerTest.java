@@ -591,16 +591,6 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_mapsSavedConflictTo409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
-
-        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(PATCH_BODY))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1003));
-    }
-
-    @Test
     void updateTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
         doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20))
                 .when(timelineEventEditService).updateEvent(any(), any(), any(), any());
@@ -664,19 +654,6 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.header.code").value(-404));
     }
 
-    @Test
-    void updateTimelineEventMemo_mapsSavedConflictTo409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineEventEditService).updateMemo(any(), any(), any(), any());
-
-        String body = """
-                {"memo": "m"}
-                """;
-        mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1003));
-    }
-
     // --- deleteTimelineEvent ---
 
     @Test
@@ -699,16 +676,6 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
-    }
-
-    @Test
-    void deleteTimelineEvent_mapsSavedConflictTo409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).deleteEvent(any(), any(), any());
-
-        mockMvc.perform(delete(EVENT_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test
@@ -753,16 +720,6 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-1018));
-    }
-
-    @Test
-    void detachTimelineEventItem_mapsSavedConflictTo409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).detachEventItem(any(), any(), any(), any());
-
-        mockMvc.perform(delete(EVENT_ITEM_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     // --- deleteDailyRecord / deleteDailyRecordByDate ---
@@ -817,16 +774,6 @@ class TimelineRecordControllerTest {
         mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
-    }
-
-    @Test
-    void deleteDailyRecordByDate_mapsSavedConflictTo409() throws Exception {
-        doThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED))
-                .when(timelineDeletionService).deleteDailyRecordByDate(any(), any(), any(LocalDate.class));
-
-        mockMvc.perform(delete(DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1003));
     }
 
     @Test

@@ -56,7 +56,7 @@ import org.springframework.test.context.ActiveProfiles;
  * <ul>
  *   <li>저장 API 반환 시점에 record가 이미 SAVED다(동기 저장). 그 하루는 <b>예외 없이</b> 갱신 대기
  *       큐에 들어가고, 요청 경로는 AI를 부르지 않는다.</li>
- *   <li>저장 후에는 편집 경로가 전부 {@code -1003}으로 거절된다(이슈 요구 회귀).</li>
+ *   <li>저장 후에도 편집·삭제는 허용되고, 재저장만 {@code -1003}으로 거절된다.</li>
  *   <li>배치가 접수하지 못하면(guard 점유 등) 항목이 큐에 그대로 남아 다음 실행이 가져간다.</li>
  *   <li>AI 결과는 base 지문이 일치할 때만 반영되고, FAILED는 문서를 바꾸지 않는다.</li>
  * </ul>
@@ -148,15 +148,23 @@ class TimelineSaveFlowIntegrationTest {
     }
 
     @Test
-    void 저장_후에는_모든_편집이_1003으로_거절된다() {
+    void 저장_후에도_편집과_삭제는_허용되고_재저장만_1003으로_거절된다() {
         timelineSaveService.save("v1", subjectId, DATE, EmotionType.NEUTRAL);
 
-        assertRejectedAsAlreadySaved(() -> timelineEventEditService.updateMemo("v1", subjectId, eventId, "수정"));
-        assertRejectedAsAlreadySaved(() -> timelineEventEditService.updateEvent("v1", subjectId, eventId,
-                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, false, List.of())));
-        assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteEvent("v1", subjectId, eventId));
-        assertRejectedAsAlreadySaved(() -> timelineDeletionService.deleteDailyRecordByDate("v1", subjectId, DATE));
         assertRejectedAsAlreadySaved(() -> timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY));
+
+        timelineEventEditService.updateMemo("v1", subjectId, eventId, "수정");
+        timelineEventEditService.updateEvent("v1", subjectId, eventId,
+                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, false, List.of()));
+        TimelineEvent edited = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(edited.getTitle()).isEqualTo("제목");
+        assertThat(edited.getMemo()).isEqualTo("수정");
+
+        timelineDeletionService.deleteEvent("v1", subjectId, eventId);
+        assertThat(timelineEventRepository.findById(eventId)).isEmpty();
+
+        timelineDeletionService.deleteDailyRecordByDate("v1", subjectId, DATE);
+        assertThat(dailyRecordRepository.findById(recordId)).isEmpty();
     }
 
     @Test

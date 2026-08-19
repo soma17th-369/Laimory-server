@@ -127,19 +127,17 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
-    void detachEventItem_rejectsSavedRecordBeforeTransaction() {
+    void detachEventItem_savedRecordIsStillDetachable() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
-        assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
-        verifyNoInteractions(timelineDeletionTransactionService);
+        verify(timelineDeletionTransactionService).detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
     }
 
     @Test
@@ -221,19 +219,17 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
-    void deleteEvent_rejectsSavedRecordBeforeTransaction() {
+    void deleteEvent_savedRecordIsStillDeletable() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
-        assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID);
 
-        verifyNoInteractions(timelineDeletionTransactionService);
+        verify(timelineDeletionTransactionService).deleteEvent(SUBJECT_ID, EVENT_ID);
     }
 
     @Test
@@ -263,18 +259,16 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
-    void deleteDailyRecord_rejectsSavedRecordBeforeTransaction() {
+    void deleteDailyRecord_savedRecordIsStillDeletable() {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
-        assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
 
-        verifyNoInteractions(timelineDeletionTransactionService);
+        verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
     }
 
     @Test
@@ -292,19 +286,17 @@ class TimelineDeletionServiceTest {
     }
 
     @Test
-    void deleteDailyRecordByDate_rejectsSavedRecordBeforeTransaction() {
+    void deleteDailyRecordByDate_savedRecordIsStillDeletable() {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(saved));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
-        assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1003);
-                });
+        service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE);
 
-        verifyNoInteractions(timelineDeletionTransactionService);
+        verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
     }
 
     private void stubOwnedDraftEvent(TimelineDeletionTransactionService.DeletionResult result) {

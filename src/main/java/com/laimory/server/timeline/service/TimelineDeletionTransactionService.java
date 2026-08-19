@@ -4,9 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
@@ -29,7 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 호출한다 — 오케스트레이터 안에
  * {@code @Transactional} 메서드를 두면 self-invocation으로 트랜잭션이 조용히 무효화되므로 분리한다.
  *
- * <p>짧은 트랜잭션 안에서 소유권·DRAFT를 <b>재확인</b>하고, 삭제 후 association이 0이 될 PHOTO Item의
+ * <p>짧은 트랜잭션 안에서 소유권을 <b>재확인</b>하고, 삭제 후 association이 0이 될 PHOTO Item의
  * S3 삭제 job을 insert하고 원문 PHOTO Item을 보존한 뒤 root/junction/non-PHOTO orphan Item을 hard
  * delete한다. 따라서 job insert나 hard delete 어느 쪽이 실패해도 함께 rollback된다. S3 호출과 PHOTO
  * Item 최종 hard delete는 이 transaction 밖의 worker/completion transaction만 수행한다.
@@ -46,12 +44,12 @@ public class TimelineDeletionTransactionService {
     private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     private final ObjectMapper objectMapper;
 
-    /** 소유권·DRAFT 재확인 후 PHOTO Item/job 보존과 Event/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
+    /** 소유권 재확인 후 PHOTO Item/job 보존과 Event/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
     @Transactional
     public DeletionResult deleteEvent(UUID subjectId, Long timelineEventId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+        requireOwnedRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
         DeletionItems deletionItems = resolveDeletionItems(Set.of(timelineEventId));
         OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
@@ -61,10 +59,10 @@ public class TimelineDeletionTransactionService {
                 preparation.scheduled(), deletionItems.sharedPhotoCount(), preparation.invalidSkipped());
     }
 
-    /** 소유권·DRAFT 재확인 후 PHOTO Item/job 보존과 DailyRecord/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
+    /** 소유권 재확인 후 PHOTO Item/job 보존과 DailyRecord/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
     @Transactional
     public DeletionResult deleteDailyRecord(UUID subjectId, Long dailyRecordId) {
-        requireOwnedDraftRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
+        requireOwnedRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
 
         Set<Long> recordEventIds = timelineEventService.findByDailyRecordId(dailyRecordId).stream()
                 .map(TimelineEvent::getTimelineEventId)
@@ -89,7 +87,7 @@ public class TimelineDeletionTransactionService {
     public DeletionResult detachEventItem(UUID subjectId, Long timelineEventId, Long timelineItemId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        requireOwnedDraftRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
+        requireOwnedRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
         TimelineItem item = timelineItemService.findById(timelineItemId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_ITEM_NOT_FOUND));
@@ -186,15 +184,11 @@ public class TimelineDeletionTransactionService {
         return new OrphanPreparation(scheduled, invalidSkipped, List.copyOf(immediateDeleteItemIds));
     }
 
-    /** record 없음·비소유는 {@code notFoundType}(404 은닉), SAVED는 409(-1003)로 거절한다. */
-    private DailyRecord requireOwnedDraftRecord(UUID subjectId, Long dailyRecordId, ExceptionType notFoundType) {
-        DailyRecord record = dailyRecordService.findById(dailyRecordId)
+    /** record 없음·비소유는 {@code notFoundType}(404 은닉)으로 거절한다. */
+    private void requireOwnedRecord(UUID subjectId, Long dailyRecordId, ExceptionType notFoundType) {
+        dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(notFoundType));
-        if (record.getStatus() == DailyRecordStatus.SAVED) {
-            throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-        }
-        return record;
     }
 
     public record DeletionResult(int scheduled, int sharedRetained, int invalidSkipped) {

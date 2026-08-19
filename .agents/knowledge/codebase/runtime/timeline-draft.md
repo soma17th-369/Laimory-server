@@ -199,8 +199,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   commit하고 200을 반환하며, 교체는 10초+ 뒤 AI가 결과를 들고 왔을 때
   `POST /s/api/{version}/user-memory/updates/{taskId}/result`가 수행한다. 그래서 사용자의 저장이 AI의
   성패에 묶이지 않는다.
-- 이 분리가 두 가지를 없앤다: **폴링 불필요**(저장 응답이 곧 완료), **AI 처리 중 편집 창 없음**(요청
-  시점에 이미 SAVED라 모든 편집이 기존 불변식으로 거절된다).
+- 이 분리로 **폴링이 불필요하다**(저장 응답이 곧 완료). 저장 후에도 편집·삭제는 허용되므로 갱신 접수
+  이후의 편집은 그 갱신에 반영되지 않을 수 있다 — 접수 body는 dispatch 시점 스냅샷이다(수용된 정책).
 - 요청 스레드는 AI를 호출하지 않는다. 저장 commit 뒤 그 하루를 갱신 대기 큐
   (`timeline:user-memory-update:pending` sorted set, member `canonicalUuid(subjectId):dailyRecordId`, score 최초 기록
   시각)에 넣기만 하고 곧바로 응답한다. Redis 쓰기 한 번이라 async로 넘기지 않는다 — 실행기 포화 시

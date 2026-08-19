@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -42,12 +41,12 @@ public class TimelineEventEditTransactionService {
     private final PhotoUrlService photoUrlService;
     private final ObjectMapper objectMapper;
 
-    /** 소유권·DRAFT를 재확인하고 Event 필드와 수동 PHOTO graph를 원자적으로 반영한다. */
+    /** 소유권을 재확인하고 Event 필드와 수동 PHOTO graph를 원자적으로 반영한다. */
     @Transactional
     public void updateEvent(UUID subjectId, Long timelineEventId, TimelineEventEditCommand command) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        DailyRecord record = requireOwnedDraftRecord(subjectId, event.getDailyRecordId());
+        DailyRecord record = requireOwnedRecord(subjectId, event.getDailyRecordId());
 
         PhotoChanges photoChanges = resolvePhotoChanges(record, timelineEventId, command.photosToAdd());
 
@@ -140,14 +139,10 @@ public class TimelineEventEditTransactionService {
         return new PhotoChanges(existingItemIdsToLink, newPhotos);
     }
 
-    private DailyRecord requireOwnedDraftRecord(UUID subjectId, Long dailyRecordId) {
-        DailyRecord record = dailyRecordService.findById(dailyRecordId)
+    private DailyRecord requireOwnedRecord(UUID subjectId, Long dailyRecordId) {
+        return dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        if (record.getStatus() == DailyRecordStatus.SAVED) {
-            throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
-        }
-        return record;
     }
 
     private record PhotoChanges(
