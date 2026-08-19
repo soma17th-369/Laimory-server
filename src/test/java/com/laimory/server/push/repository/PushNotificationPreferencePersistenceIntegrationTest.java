@@ -6,6 +6,7 @@ import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
+import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -64,6 +66,9 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     @Autowired
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+
+    @Autowired
+    private PushPreferenceService pushPreferenceService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -246,6 +251,59 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         assertThat(claimed).extracting(ScheduledNotificationPreference::getSubjectId)
                 .contains(enabled)
                 .doesNotContain(disabled);
+    }
+
+    // --- 설정 쓰기 동시성 ---
+
+    @Test
+    void concurrentMasterToggles_doNotDeadlock() throws Exception {
+        // 있는 행에도 INSERT IGNORE(get-or-create)를 먼저 날리면 S락이 잡히고, 이어지는 UPDATE의 X락과
+        // 얽혀 같은 subject를 동시에 다루는 두 transaction이 서로를 기다린다(동의 쪽에서 확인된 패턴).
+        UUID subjectId = SUBJECTS.get(0);
+        givenSubject(subjectId);
+
+        runConcurrently(
+                () -> pushPreferenceService.updatePushEnabled(subjectId, false),
+                () -> pushPreferenceService.updatePushEnabled(subjectId, true));
+
+        assertThat(pushPreferenceRepository.findById(subjectId)).isPresent();
+    }
+
+    @Test
+    void concurrentReminderToggles_doNotDeadlock() throws Exception {
+        UUID subjectId = SUBJECTS.get(1);
+        givenDueSchedule(subjectId, nowKst().plusHours(1));
+
+        runConcurrently(
+                () -> scheduledNotificationPreferenceService.updateEnabled(subjectId, TYPE, false),
+                () -> scheduledNotificationPreferenceService.updateNotificationTime(
+                        subjectId, TYPE, LocalTime.of(9, 0)));
+
+        assertThat(reload(subjectId)).isNotNull();
+    }
+
+    /** 두 작업을 같은 출발선에서 동시에 실행한다 — 락 획득 순서가 겹쳐야 deadlock이 드러난다. */
+    private void runConcurrently(Runnable first, Runnable second) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CyclicBarrier startLine = new CyclicBarrier(2);
+        try {
+            List<Future<?>> futures = List.of(
+                    executor.submit(() -> {
+                        startLine.await(10, TimeUnit.SECONDS);
+                        first.run();
+                        return null;
+                    }),
+                    executor.submit(() -> {
+                        startLine.await(10, TimeUnit.SECONDS);
+                        second.run();
+                        return null;
+                    }));
+            for (Future<?> future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     // --- FK 계약 ---

@@ -52,9 +52,19 @@ public class ScheduledNotificationPreferenceService {
                 nowKst);
     }
 
-    /** 설정 조회·변경 경로의 get-or-create — rollout 공백 행을 같은 request에서 멱등 보정한다. */
+    /**
+     * 설정 조회·변경 경로의 get-or-create — rollout 공백 행을 같은 request에서 멱등 보정한다.
+     *
+     * <p><b>있는 행에는 쓰기를 하지 않는다.</b> 있는 행에 {@code INSERT IGNORE}를 날리면 그 행에 S락이
+     * 잡히고, 뒤따르는 설정 UPDATE가 X락을 요구하면서 같은 subject를 동시에 다루는 두 transaction이
+     * 서로의 S락을 기다려 deadlock에 빠진다(실 MySQL 동시 토글 테스트로 확인).
+     */
     @Transactional
     public ScheduledNotificationPreference getOrCreate(UUID subjectId, ScheduledNotificationType notificationType) {
+        Optional<ScheduledNotificationPreference> existing = find(subjectId, notificationType);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
         createDefaultIfAbsent(subjectId, notificationType);
         return find(subjectId, notificationType)
                 // insert-if-absent 직후라 도달할 수 없다 — 조용한 기본값 대신 불변식 위반으로 드러낸다.

@@ -40,20 +40,34 @@ public class PushPreferenceService {
         pushPreferenceRepository.insertIfAbsent(subjectId.toString(), DEFAULT_PUSH_ENABLED, auditNow());
     }
 
-    /** 설정 조회·변경 경로의 get-or-create — rollout 공백 행을 같은 request에서 멱등 보정한다. */
+    /**
+     * 설정 조회·변경 경로의 get-or-create — rollout 공백 행을 같은 request에서 멱등 보정한다.
+     *
+     * <p><b>있는 행에는 쓰기를 하지 않는다.</b> 있는 행에 {@code INSERT IGNORE}를 날리면 그 행에 S락이
+     * 잡히고, 뒤따르는 조건부 UPDATE가 X락을 요구하면서 같은 subject를 동시에 다루는 두 transaction이
+     * 서로의 S락을 기다려 deadlock에 빠진다(실 MySQL 동시 토글 테스트로 확인). 잠금 없는 읽기를 먼저
+     * 해서 정상 경로에는 UPDATE의 X락 하나만 남긴다.
+     */
     @Transactional
     public boolean getOrCreatePushEnabled(UUID subjectId) {
-        createDefaultIfAbsent(subjectId);
-        return pushPreferenceRepository.findById(subjectId)
-                .map(PushPreference::isPushEnabled)
-                .orElse(DEFAULT_PUSH_ENABLED);
+        return ensureExists(subjectId).map(PushPreference::isPushEnabled).orElse(DEFAULT_PUSH_ENABLED);
     }
 
     /** 마스터 ON/OFF 변경(멱등) — 종류별 설정값·시각은 보존한다. */
     @Transactional
     public void updatePushEnabled(UUID subjectId, boolean pushEnabled) {
-        createDefaultIfAbsent(subjectId);
+        ensureExists(subjectId);
         pushPreferenceRepository.updatePushEnabled(subjectId, pushEnabled);
+    }
+
+    /** 행이 없을 때만 만든다 — 있는 행에 불필요한 쓰기(와 그로 인한 S락)를 남기지 않는다. */
+    private Optional<PushPreference> ensureExists(UUID subjectId) {
+        Optional<PushPreference> existing = pushPreferenceRepository.findById(subjectId);
+        if (existing.isPresent()) {
+            return existing;
+        }
+        createDefaultIfAbsent(subjectId);
+        return pushPreferenceRepository.findById(subjectId);
     }
 
     /**
