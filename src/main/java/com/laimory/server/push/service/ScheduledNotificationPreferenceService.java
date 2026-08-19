@@ -76,11 +76,17 @@ public class ScheduledNotificationPreferenceService {
      * <p>세 문장을 한 transaction으로 묶지 않는다. 묶으면 대상이 없는 첫 UPDATE가 잡은 gap lock을 계속
      * 쥔 채 INSERT를 시도하게 되고, 같은 행을 동시에 처음 만드는 두 요청이 서로의 gap lock을 기다려
      * deadlock에 빠진다. 문장별로 끊어도 각 문장이 멱등이라 최종 결과는 같다.
+     *
+     * <p>재시도 UPDATE가 그래도 0행이면 던진다 — {@code INSERT IGNORE}는 FK 위반(마스터 행 부재)도
+     * warning으로 삼키므로, 여기서 확인하지 않으면 아무것도 저장하지 않은 요청이 200으로 끝난다.
      */
     public void updateEnabled(UUID subjectId, ScheduledNotificationType notificationType, boolean enabled) {
         if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled) == 0) {
             createDefaultIfAbsent(subjectId, notificationType);
-            scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled);
+            if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled)
+                    == 0) {
+                throw new IllegalStateException("scheduled notification preference write was lost");
+            }
         }
     }
 
@@ -88,7 +94,13 @@ public class ScheduledNotificationPreferenceService {
      * 시각 변경 — 시각과 새 시각의 다음 미래 occurrence를 한 문장에서 함께 바꾼다. 그래서 worker claim이나
      * 다른 설정 변경과 겹쳐도 두 값이 어긋난 상태가 남지 않는다.
      *
-     * <p>{@link #updateEnabled}와 같은 이유로 문장들을 한 transaction으로 묶지 않는다.
+     * <p>{@link #updateEnabled}와 같은 이유로 문장들을 한 transaction으로 묶지 않으며, 재시도 UPDATE가
+     * 0행이면 같은 이유로 던진다.
+     *
+     * <p>쓰기 직후 값을 한 번 재검증한다 — {@code nextDueAt}은 행 lock을 잡기 전에 계산되므로, lock을
+     * 기다리는 사이 worker claim이 그 occurrence를 이미 처리했다면 방금 쓴 값이 과거일 수 있다. 그대로
+     * 두면 다음 tick이 허용 지연 안에서 같은 occurrence를 중복 발송하므로, 값이 그대로일 때만 하루 뒤로
+     * 민다(다른 전진이 이미 지나갔으면 0행 no-op — 멱등 보정).
      */
     public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
                                        LocalTime notificationTime) {
@@ -96,8 +108,14 @@ public class ScheduledNotificationPreferenceService {
         if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
                 notificationTime, nextDueAt) == 0) {
             createDefaultIfAbsent(subjectId, notificationType);
-            scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
-                    notificationTime, nextDueAt);
+            if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
+                    notificationTime, nextDueAt) == 0) {
+                throw new IllegalStateException("scheduled notification preference write was lost");
+            }
+        }
+        if (!nextDueAt.isAfter(nowKst())) {
+            scheduledNotificationPreferenceRepository.updateNextDueAtIfUnchanged(
+                    subjectId, notificationType, nextDueAt, nextDueAt.plusDays(1));
         }
     }
 

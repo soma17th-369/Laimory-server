@@ -93,8 +93,27 @@ class PushPreferenceServiceTest {
     }
 
     @Test
+    void updatePushEnabled_whenRowMissing_createsThenRetries() {
+        when(pushPreferenceRepository.updatePushEnabled(SUBJECT_ID, false)).thenReturn(0).thenReturn(1);
+
+        service().updatePushEnabled(SUBJECT_ID, false);
+
+        verify(pushPreferenceRepository).insertIfAbsent(SUBJECT_ID.toString(), true, NOW_KST);
+        verify(pushPreferenceRepository, org.mockito.Mockito.times(2)).updatePushEnabled(SUBJECT_ID, false);
+    }
+
+    @Test
+    void updatePushEnabled_whenRetryStillZero_failsLoudly() {
+        // INSERT IGNORE는 FK 위반도 warning으로 삼킨다 — 조용한 no-op 200을 금지한다.
+        when(pushPreferenceRepository.updatePushEnabled(SUBJECT_ID, false)).thenReturn(0).thenReturn(0);
+
+        assertThatThrownBy(() -> service().updatePushEnabled(SUBJECT_ID, false))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void batchLookup_omitsSubjectsWithoutRow() {
-        // worker는 결과에 없는 subject를 마스터 누락으로 다뤄 광고성 발송에서 제외한다(추정 금지).
+        // worker는 결과에 없는 subject를 마스터 누락으로 다뤄 발송에서 제외한다(추정 금지).
         when(pushPreferenceRepository.findAllBySubjectIdIn(any())).thenReturn(List.of(preference(true)));
 
         Map<UUID, Boolean> result = service().findPushEnabledBySubjectIds(

@@ -7,6 +7,7 @@ import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
 import com.laimory.server.push.service.PushPreferenceService;
+import com.laimory.server.push.service.PushSettingService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
@@ -68,6 +69,9 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     @Autowired
     private PushPreferenceService pushPreferenceService;
+
+    @Autowired
+    private PushSettingService pushSettingService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -215,6 +219,19 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         assertThat(claimed).extracting(ScheduledNotificationPreference::getSubjectId)
                 .contains(enabled)
                 .doesNotContain(disabled);
+    }
+
+    @Test
+    void firstReminderWriteWithoutMasterRow_healsMasterAndPersists() {
+        // backfill 공백 재현: subject mapping만 있고 push_preferences 행이 없다. INSERT IGNORE가 종류별
+        // 행의 FK 위반을 warning으로 삼켜도, orchestration의 마스터 선보정 덕에 쓰기가 성공해야 한다.
+        UUID subjectId = SUBJECTS.get(3);
+        SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
+
+        pushSettingService.updateDailyReminderEnabled("v1", subjectId, true);
+
+        assertThat(pushPreferenceRepository.findById(subjectId)).isPresent();
+        assertThat(reload(subjectId).isEnabled()).isTrue();
     }
 
     // --- 설정 쓰기 동시성 ---

@@ -54,14 +54,24 @@ public class PushSettingService {
     /** 일일 리마인더 ON/OFF — 사용자가 직접 켜야 발송된다(기본 OFF). */
     public void updateDailyReminderEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        ensureMasterRow(subjectId);
         scheduledNotificationPreferenceService.updateEnabled(subjectId, DAILY_REMINDER, requireEnabled(enabled));
     }
 
     /** 일일 리마인더 시각 변경 — OFF 상태에서도 저장하며 발송 여부는 {@code enabled}가 정한다. */
     public void updateDailyReminderTime(String applicationVersion, UUID subjectId, String time) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        ensureMasterRow(subjectId);
         scheduledNotificationPreferenceService.updateNotificationTime(
                 subjectId, DAILY_REMINDER, parseTime(time));
+    }
+
+    /**
+     * 종류별 행의 FK가 마스터를 참조하므로, 마스터 행이 없는 backfill 공백 subject의 첫 리마인더 설정도
+     * 성공하도록 마스터부터 멱등 보정한다(이미 있으면 no-op 한 문장).
+     */
+    private void ensureMasterRow(UUID subjectId) {
+        pushPreferenceService.createDefaultIfAbsent(subjectId);
     }
 
     /** 분 단위 {@code HH:mm}만 받는다 — 초·나노 표기와 한 자리 시각은 DB 변경 전에 거절한다. */
@@ -82,6 +92,4 @@ public class PushSettingService {
         }
         return enabled;
     }
-
-
 }

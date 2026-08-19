@@ -192,16 +192,20 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 예정 알림의 발송 판정 축은 `전체 마스터 ON + 종류별 ON + 활성 FID`다(#314). 마스터 행 부재는
   추정하지 않고 제외한다 — rollout 공백을 ON으로 읽는 것은 기존 타임라인 완료 푸시뿐이다.
 - 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답하고 첫 설정 변경이 만든다.
-- 설정 쓰기는 행을 읽지 않는다 — 저장된 값에서 파생값을 다시 계산해야 하는 경우 그 계산을 같은 UPDATE
-  문장 안에 두어, 읽기와 쓰기 사이에 다른 변경이 끼어들 수 없게 한다. `next_due_at`은 파생값이라
-  어긋나도 다음 claim이 `notification_time`에서 다시 계산해 한 사이클 안에 수렴한다.
+- 설정 쓰기는 행을 읽지 않는다 — 시각 변경은 새 시각과 그 다음 미래 occurrence를 한 UPDATE로 함께
+  쓰고, 쓴 값이 그 사이 과거가 됐을 때만(락 대기 중 worker claim이 지나간 race) 값 일치 조건부 보정
+  한 문장으로 하루 뒤로 민다 — 과거 `next_due_at`을 남기면 다음 tick이 같은 occurrence를 중복 발송한다.
+  재시도 UPDATE가 0행이면 던진다 — `INSERT IGNORE`는 FK 위반(마스터 행 부재)도 warning으로 삼키므로
+  조용한 no-op 200을 만들지 않기 위해서다(리마인더 쓰기는 orchestration이 마스터 행부터 멱등 보정).
 - 종류별 ON 전환은 `next_due_at`을 다시 계산하지 않는다. 꺼둔 사이 과거가 된 값은 worker가 허용 지연
   초과로 걸러 발송 없이 다음 occurrence로 넘긴다.
 - 현재 두 알림 종류 모두 사용자 행동·설정에 대한 정보성 통지다. 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
-- 예정 알림의 한 occurrence는 하루에 한 번만 처리된다(발송·지연 skip 어느 쪽이든). claim transaction이
-  처리한 occurrence의 KST 날짜와 다음 미래 occurrence를 먼저 commit하고 FCM은 그 밖에서 호출하므로
-  전달 보장은 at-most-once best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.
+- 예정 알림의 한 occurrence는 한 번만 claim된다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후
+  첫 occurrence로 전진). 하루 1회 캡은 없다 — 시각 변경이 미래 시각으로 재장전하면 같은 날 다시
+  발송될 수 있다(사용자 행동이므로 허용). claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서
+  호출하므로 전달 보장은 at-most-once best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지
+  않는다.
 - 허용 지연(기본 30분)을 넘긴 occurrence는 발송하지 않고 다음 occurrence로 넘긴다 — 장시간 중단 뒤
   복구가 새벽에 밀린 알림을 쏟아내지 않게 하는 상한이다.
 

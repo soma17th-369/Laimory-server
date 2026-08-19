@@ -135,6 +135,23 @@ class ScheduledNotificationPreferenceServiceTest {
     }
 
     @Test
+    void updateEnabled_whenRetryStillZero_failsLoudly() {
+        // INSERT IGNORE는 FK 위반(마스터 행 부재)도 warning으로 삼킨다 — 조용한 no-op 200을 금지한다.
+        when(repository.updateEnabled(SUBJECT_ID, TYPE, true)).thenReturn(0).thenReturn(0);
+
+        assertThatThrownBy(() -> service().updateEnabled(SUBJECT_ID, TYPE, true))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void updateNotificationTime_whenRetryStillZero_failsLoudly() {
+        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(0).thenReturn(0);
+
+        assertThatThrownBy(() -> service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void updateNotificationTime_rearmsTodayWhenNewTimeIsStillAhead() {
         when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
 
@@ -145,6 +162,8 @@ class ScheduledNotificationPreferenceServiceTest {
         verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15),
                 LocalDateTime.of(2026, 7, 21, 22, 15));
         verify(repository, never()).findById(any());
+        // 쓴 값이 아직 미래면 보정 문장은 나가지 않는다.
+        verify(repository, never()).updateNextDueAtIfUnchanged(any(), any(), any(), any());
     }
 
     @Test
@@ -155,6 +174,24 @@ class ScheduledNotificationPreferenceServiceTest {
 
         verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0),
                 LocalDateTime.of(2026, 7, 22, 19, 0));
+    }
+
+    @Test
+    void updateNotificationTime_whenWrittenValueBecamePast_bumpsToNextDayIfUnchanged() {
+        // nextDueAt은 행 lock을 잡기 전에 계산된다 — 대기하는 사이 worker claim이 그 occurrence를
+        // 처리했다면 방금 쓴 값이 과거다. 그대로 두면 다음 tick이 같은 occurrence를 중복 발송한다.
+        Clock racingClock = org.mockito.Mockito.mock(Clock.class);
+        when(racingClock.instant()).thenReturn(
+                Instant.parse("2026-07-21T11:59:59Z"),  // KST 20:59:59 — candidate = 오늘 21:00
+                Instant.parse("2026-07-21T12:00:01Z")); // KST 21:00:01 — 재검증 시점, candidate는 과거
+        ScheduledNotificationPreferenceService service =
+                new ScheduledNotificationPreferenceService(repository, racingClock);
+        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
+
+        service.updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(21, 0));
+
+        verify(repository).updateNextDueAtIfUnchanged(SUBJECT_ID, TYPE,
+                LocalDateTime.of(2026, 7, 21, 21, 0), LocalDateTime.of(2026, 7, 22, 21, 0));
     }
 
     // --- claim ---
