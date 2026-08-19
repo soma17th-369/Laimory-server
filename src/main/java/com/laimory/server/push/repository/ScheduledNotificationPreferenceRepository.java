@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -31,6 +32,18 @@ public interface ScheduledNotificationPreferenceRepository
                        @Param("notificationTime") LocalTime notificationTime,
                        @Param("nextDueAt") LocalDateTime nextDueAt,
                        @Param("now") LocalDateTime now);
+
+    /**
+     * 생성 직후 재조회 전용 <b>잠금 읽기</b>. 앞선 비잠금 읽기가 이 transaction의 REPEATABLE READ
+     * 스냅샷을 고정하기 때문에, 그 사이 다른 transaction이 만들어 commit한 행은 일반 재조회로는 보이지
+     * 않는다(insert-if-absent는 최신을 보고 no-op이 되는데 읽기만 과거를 본다). 잠금 읽기는 항상 최신
+     * 커밋을 보므로 그 창을 닫는다 — 행이 없던 경로에서만 쓰므로 정상 경로에는 락이 생기지 않는다.
+     */
+    @Query(value = "select * from scheduled_notification_preferences "
+            + "where subject_id = :subjectId and notification_type = :notificationType for update",
+            nativeQuery = true)
+    Optional<ScheduledNotificationPreference> findForUpdate(@Param("subjectId") String subjectId,
+                                                            @Param("notificationType") String notificationType);
 
     /**
      * due occurrence를 row lock으로 분리한다. 허용 지연을 넘긴 행도 함께 claim한다 — 발송은 하지 않지만

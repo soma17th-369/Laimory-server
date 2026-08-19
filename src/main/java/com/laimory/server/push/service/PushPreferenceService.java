@@ -60,7 +60,14 @@ public class PushPreferenceService {
         pushPreferenceRepository.updatePushEnabled(subjectId, pushEnabled);
     }
 
-    /** 행이 없을 때만 만든다 — 있는 행에 불필요한 쓰기(와 그로 인한 S락)를 남기지 않는다. */
+    /**
+     * 행이 없을 때만 만든다 — 있는 행에 불필요한 쓰기(와 그로 인한 S락)를 남기지 않는다.
+     *
+     * <p>재조회가 비어 있을 수 있다. 먼저 한 비잠금 읽기가 REPEATABLE READ 스냅샷을 고정하므로 그 사이
+     * 다른 transaction이 만든 행은 보이지 않는다. 호출자는 그 경우를 <b>기본값으로 흡수해야 한다</b> —
+     * 그 행의 값이 곧 기본값이라 답이 같기 때문이다. 여기서 예외를 던지도록 바꾸면 동시 최초 진입이
+     * 500으로 샌다.
+     */
     private Optional<PushPreference> ensureExists(UUID subjectId) {
         Optional<PushPreference> existing = pushPreferenceRepository.findById(subjectId);
         if (existing.isPresent()) {

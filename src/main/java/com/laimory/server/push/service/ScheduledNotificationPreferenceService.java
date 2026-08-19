@@ -58,6 +58,9 @@ public class ScheduledNotificationPreferenceService {
      * <p><b>있는 행에는 쓰기를 하지 않는다.</b> 있는 행에 {@code INSERT IGNORE}를 날리면 그 행에 S락이
      * 잡히고, 뒤따르는 설정 UPDATE가 X락을 요구하면서 같은 subject를 동시에 다루는 두 transaction이
      * 서로의 S락을 기다려 deadlock에 빠진다(실 MySQL 동시 토글 테스트로 확인).
+     *
+     * <p>대신 행이 없던 경로의 재조회는 잠금 읽기로 한다 — 먼저 한 비잠금 읽기가 스냅샷을 고정하므로
+     * 그 사이 다른 transaction이 만든 행이 일반 재조회에는 보이지 않기 때문이다.
      */
     @Transactional
     public ScheduledNotificationPreference getOrCreate(UUID subjectId, ScheduledNotificationType notificationType) {
@@ -66,8 +69,11 @@ public class ScheduledNotificationPreferenceService {
             return existing.get();
         }
         createDefaultIfAbsent(subjectId, notificationType);
-        return find(subjectId, notificationType)
-                // insert-if-absent 직후라 도달할 수 없다 — 조용한 기본값 대신 불변식 위반으로 드러낸다.
+        // 재조회는 잠금 읽기다 — 위 비잠금 읽기가 스냅샷을 고정해서, 그 사이 다른 transaction이 만든 행은
+        // 일반 재조회로 보이지 않는다(REPEATABLE READ). 그대로 두면 동시 최초 진입이 500으로 샌다.
+        return scheduledNotificationPreferenceRepository
+                .findForUpdate(subjectId.toString(), notificationType.name())
+                // insert-if-absent + 잠금 읽기 뒤라 도달할 수 없다 — 불변식 위반으로 드러낸다.
                 .orElseThrow(() -> new IllegalStateException(
                         "scheduled notification preference missing after insert-if-absent"));
     }
