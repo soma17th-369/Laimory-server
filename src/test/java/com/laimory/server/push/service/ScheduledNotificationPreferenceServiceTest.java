@@ -3,6 +3,7 @@ package com.laimory.server.push.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -106,6 +107,18 @@ class ScheduledNotificationPreferenceServiceTest {
     // --- 기본값 ---
 
     @Test
+    void findSettings_missingRow_answersDefaultsWithoutWriting() {
+        when(repository.findById(any())).thenReturn(Optional.empty());
+
+        ScheduledNotificationPreferenceService.Settings settings = service().findSettings(SUBJECT_ID, TYPE);
+
+        assertThat(settings.enabled()).isFalse();
+        assertThat(settings.notificationTime()).isEqualTo(LocalTime.of(21, 0));
+        // 조회는 쓰기를 하지 않는다 — 행을 만들어도 값이 같다.
+        verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
+    }
+
+    @Test
     void createDefault_isDisabledAtNineNinePm() {
         service().createDefaultIfAbsent(SUBJECT_ID, TYPE);
 
@@ -117,24 +130,51 @@ class ScheduledNotificationPreferenceServiceTest {
     // --- ON/OFF·시각 변경 ---
 
     @Test
-    void updateEnabled_recomputesNextDueFromStoredTime() {
-        when(repository.findById(any())).thenReturn(Optional.of(
-                preference(false, LocalTime.of(21, 30), null, LocalDateTime.of(2026, 7, 21, 21, 30))));
+    void updateEnabled_touchesOnlyTheEnabledColumn() {
+        when(repository.updateEnabled(SUBJECT_ID, TYPE, true)).thenReturn(1);
 
         service().updateEnabled(SUBJECT_ID, TYPE, true);
 
-        verify(repository).updateEnabled(SUBJECT_ID, TYPE, true, LocalDateTime.of(2026, 7, 21, 21, 30));
+        // 행을 읽지 않는다 — 읽고 계산하면 그 사이 다른 변경이 끼어들어 파생값이 어긋난다.
+        verify(repository, never()).findById(any());
+        verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
     }
 
     @Test
-    void updateNotificationTime_movesNextDueToNewTime() {
-        when(repository.findById(any())).thenReturn(Optional.of(
-                preference(true, LocalTime.of(21, 0), null, LocalDateTime.of(2026, 7, 21, 21, 0))));
+    void updateEnabled_whenRowMissing_createsThenRetries() {
+        when(repository.updateEnabled(SUBJECT_ID, TYPE, true)).thenReturn(0).thenReturn(1);
 
+        service().updateEnabled(SUBJECT_ID, TYPE, true);
+
+        verify(repository).insertIfAbsent(eq(SUBJECT_ID.toString()), eq("DAILY_REMINDER"), eq(false),
+                eq(LocalTime.of(21, 0)), any(), eq(NOW_KST));
+        verify(repository, org.mockito.Mockito.times(2)).updateEnabled(SUBJECT_ID, TYPE, true);
+    }
+
+    @Test
+    void updateNotificationTime_passesBothCandidatesSoSqlPicksByProcessedDate() {
+        when(repository.updateNotificationTime(any(), any(), any(), any(), any(), any())).thenReturn(1);
+
+        // 지금은 20:00. 22:15는 아직 오늘 미래라 후보는 오늘, 오늘 것을 이미 처리했다면 내일.
         service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15));
 
         verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15),
+                LocalDate.of(2026, 7, 21),
+                LocalDateTime.of(2026, 7, 22, 22, 15),
                 LocalDateTime.of(2026, 7, 21, 22, 15));
+        verify(repository, never()).findById(any());
+    }
+
+    @Test
+    void updateNotificationTime_whenNewTimeAlreadyPassed_candidateIsTomorrow() {
+        when(repository.updateNotificationTime(any(), any(), any(), any(), any(), any())).thenReturn(1);
+
+        service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0));
+
+        verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0),
+                LocalDate.of(2026, 7, 21),
+                LocalDateTime.of(2026, 7, 22, 19, 0),
+                LocalDateTime.of(2026, 7, 22, 19, 0));
     }
 
     // --- claim ---

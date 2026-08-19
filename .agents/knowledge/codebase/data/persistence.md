@@ -55,9 +55,9 @@ dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/work
 설정 행 없이 만든다. 그래서 rollout은 **두 단계 insert-if-absent backfill**이다 — ① 구 컨테이너가 도는
 동안 테이블 생성 + 당시 모든 subject의 기본 행 삽입, ② 새 컨테이너 health 확인 뒤 같은 문장을 다시 실행해
 공백 구간 가입자를 수렴시킨다. 구 image로 rollback한 뒤 재배포하면 그 구간이 새 공백이므로 두 단계를
-다시 수행한다. 각 단계는 subject 수 대비 행 수와 anti-join 누락 0건으로 검증한다. 설정 GET/PUT도
-get-or-create라 누락 행을 요청 시점에 보정하지만, worker 스캔은 없는 행을 발견하지 못하므로 backfill이
-복구 권위다.
+다시 수행한다. 각 단계는 subject 수 대비 행 수와 anti-join 누락 0건으로 검증한다. 설정 조회는 누락 행을 기본값으로
+답하고 <b>행을 만들지 않는다</b>(만들어도 값이 같다) — 조회가 쓰기를 하지 않는다는 규칙을 지킨다.
+누락 행은 첫 설정 변경이 만들고, worker 스캔은 없는 행을 발견하지 못하므로 backfill이 복구 권위다.
 
 저장소는 신규 AWS MySQL 초기화를 자동화하지 않는다. live MySQL schema는 저장소 변경만으로 바뀌지
 않으며, 애플리케이션 배포 전에 실제 DB 상태를 확인하고 수동 DDL을 적용해야 한다.
@@ -136,7 +136,14 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 날짜가 아니라 **처리한 예정 occurrence의 날짜**다 — 지연 복구가 다음 날짜 알림을 잡아먹지 않게 하는
 기준이다. worker는 `(notification_type, enabled, next_due_at, subject_id)` index로 due 행을
 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 occurrence 날짜 기록과 "현재 시각 이후 첫
-occurrence" 전진을 native UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖). 종류별 행은
+occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
+
+설정 쓰기는 행을 읽지 않는다. ON/OFF는 `enabled` 한 컬럼만 바꾸고, 시각 변경은 시각과 파생값
+`next_due_at`을 한 UPDATE에서 함께 바꾼다 — 후보 시각 두 개를 Java가 KST로 계산해 파라미터로 넘기고
+SQL은 `last_processed_occurrence_date = :today`만 본다. 읽고 계산해서 쓰면 그 사이 다른 설정 변경이나
+worker claim이 끼어들어 파생값이 자기 입력과 어긋나므로, 잠금 대신 <b>읽기를 없애서</b> 막는다.
+행이 없으면 UPDATE가 0행을 반환하고 그때만 만든 뒤 다시 시도하며, 이 문장들은 한 transaction으로
+묶지 않는다(대상 없는 UPDATE의 gap lock을 쥔 채 INSERT하면 동시 최초 생성이 deadlock에 빠진다). 종류별 행은
 마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고

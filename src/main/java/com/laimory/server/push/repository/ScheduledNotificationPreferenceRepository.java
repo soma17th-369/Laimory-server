@@ -8,7 +8,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -32,18 +31,6 @@ public interface ScheduledNotificationPreferenceRepository
                        @Param("notificationTime") LocalTime notificationTime,
                        @Param("nextDueAt") LocalDateTime nextDueAt,
                        @Param("now") LocalDateTime now);
-
-    /**
-     * 생성 직후 재조회 전용 <b>잠금 읽기</b>. 앞선 비잠금 읽기가 이 transaction의 REPEATABLE READ
-     * 스냅샷을 고정하기 때문에, 그 사이 다른 transaction이 만들어 commit한 행은 일반 재조회로는 보이지
-     * 않는다(insert-if-absent는 최신을 보고 no-op이 되는데 읽기만 과거를 본다). 잠금 읽기는 항상 최신
-     * 커밋을 보므로 그 창을 닫는다 — 행이 없던 경로에서만 쓰므로 정상 경로에는 락이 생기지 않는다.
-     */
-    @Query(value = "select * from scheduled_notification_preferences "
-            + "where subject_id = :subjectId and notification_type = :notificationType for update",
-            nativeQuery = true)
-    Optional<ScheduledNotificationPreference> findForUpdate(@Param("subjectId") String subjectId,
-                                                            @Param("notificationType") String notificationType);
 
     /**
      * due occurrence를 row lock으로 분리한다. 허용 지연을 넘긴 행도 함께 claim한다 — 발송은 하지 않지만
@@ -78,26 +65,45 @@ public interface ScheduledNotificationPreferenceRepository
                                 @Param("occurrenceDate") LocalDate occurrenceDate,
                                 @Param("nextDueAt") LocalDateTime nextDueAt);
 
-    /** 종류별 ON/OFF 전환 — ON 전환은 다음 예정 시각을 함께 다시 계산한다. */
+    /**
+     * 종류별 ON/OFF 전환 — <b>{@code enabled} 한 컬럼만</b> 바꾼다.
+     *
+     * <p>{@code next_due_at}은 건드리지 않는다. 꺼둔 사이 과거가 된 값은 다시 켰을 때 worker가 허용 지연
+     * 초과로 걸러 발송 없이 다음 occurrence로 넘긴다 — 여기서 미리 고치려면 행을 읽어 계산해야 하고,
+     * 그 읽기와 쓰기 사이가 벌어지면 시각 변경과 겹쳤을 때 파생값이 자기 입력과 어긋난다.
+     */
     @Modifying
     @Transactional
-    @Query("update ScheduledNotificationPreference s set s.enabled = :enabled, s.nextDueAt = :nextDueAt "
+    @Query("update ScheduledNotificationPreference s set s.enabled = :enabled "
             + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType")
     int updateEnabled(@Param("subjectId") UUID subjectId,
                       @Param("notificationType") ScheduledNotificationType notificationType,
-                      @Param("enabled") boolean enabled,
-                      @Param("nextDueAt") LocalDateTime nextDueAt);
+                      @Param("enabled") boolean enabled);
 
-    /** 시각 변경 — OFF 상태에서도 저장하며 다음 예정 시각을 함께 옮긴다(발송 여부는 enabled가 결정). */
+    /**
+     * 시각 변경 — 시각과 그 시각에서 파생되는 다음 예정 시각을 <b>한 문장에서 함께</b> 바꾼다.
+     *
+     * <p>행을 미리 읽어 계산하지 않는다. 읽기와 쓰기 사이가 벌어지면 다른 설정 변경이나 worker claim이
+     * 그 사이에 끼어들어 {@code notification_time}과 {@code next_due_at}이 서로 어긋난 상태가 남는다.
+     * 두 후보 시각은 Java가 KST로 계산해 파라미터로 넘기고, SQL은 "오늘 것을 이미 처리했는가"만 본다 —
+     * 비교 대상이 {@code DATE} 컬럼과 {@code DATE} 파라미터뿐이라 JDBC timezone 변환이 끼어들 여지가 없다.
+     *
+     * @param today 오늘 KST 날짜
+     * @param tomorrowAt 오늘 occurrence를 이미 처리했을 때 쓸 내일 시각
+     * @param candidate 아직 처리하지 않았을 때 쓸 시각(오늘이 미래면 오늘, 아니면 내일)
+     */
     @Modifying
     @Transactional
     @Query("update ScheduledNotificationPreference s set s.notificationTime = :notificationTime, "
-            + "s.nextDueAt = :nextDueAt "
+            + "s.nextDueAt = case when s.lastProcessedOccurrenceDate = :today then :tomorrowAt "
+            + "else :candidate end "
             + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType")
     int updateNotificationTime(@Param("subjectId") UUID subjectId,
                                @Param("notificationType") ScheduledNotificationType notificationType,
                                @Param("notificationTime") LocalTime notificationTime,
-                               @Param("nextDueAt") LocalDateTime nextDueAt);
+                               @Param("today") LocalDate today,
+                               @Param("tomorrowAt") LocalDateTime tomorrowAt,
+                               @Param("candidate") LocalDateTime candidate);
 
     /** 탈퇴 transaction 합류용 — subject의 모든 종류 행 삭제(마스터보다 먼저). 0행 허용(멱등). */
     @Modifying

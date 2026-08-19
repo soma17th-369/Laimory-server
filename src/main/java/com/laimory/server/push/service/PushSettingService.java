@@ -2,7 +2,6 @@ package com.laimory.server.push.service;
 
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.dto.PushSettingsResponse;
-import com.laimory.server.push.entity.ScheduledNotificationPreference;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -30,17 +29,20 @@ public class PushSettingService {
     private final PushPreferenceService pushPreferenceService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
-    /** 서버 권위 상태 조회 — 누락 행은 기본값으로 응답하면서 같은 request에서 멱등 보정한다. */
+    /**
+     * 서버 권위 상태 조회 — 순수 읽기다. 설정 행이 아직 없는 사용자에게는 기본값을 답하고 행을 만들지
+     * 않는다(만들어도 값이 같다). 행은 가입 transaction과 rollout backfill이 만들며, 그래도 없으면 첫
+     * 설정 변경이 만든다.
+     */
     public PushSettingsResponse getSettings(String applicationVersion, UUID subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        boolean pushEnabled = pushPreferenceService.getOrCreatePushEnabled(subjectId);
-        ScheduledNotificationPreference dailyReminder =
-                scheduledNotificationPreferenceService.getOrCreate(subjectId, DAILY_REMINDER);
+        ScheduledNotificationPreferenceService.Settings dailyReminder =
+                scheduledNotificationPreferenceService.findSettings(subjectId, DAILY_REMINDER);
         return new PushSettingsResponse(
-                pushEnabled,
+                pushPreferenceService.findPushEnabled(subjectId),
                 new PushSettingsResponse.DailyReminder(
-                        dailyReminder.isEnabled(),
-                        TIME_FORMAT.format(dailyReminder.getNotificationTime())));
+                        dailyReminder.enabled(),
+                        TIME_FORMAT.format(dailyReminder.notificationTime())));
     }
 
     /** 전체 푸시 마스터 ON/OFF — 종류별 설정값·시각은 보존한다. */

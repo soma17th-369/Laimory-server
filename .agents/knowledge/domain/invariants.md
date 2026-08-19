@@ -191,6 +191,12 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - FID 원문은 URL·application log·예외 메시지에 남기지 않으며 access log body에서 마스킹된다.
 - 예정 알림의 발송 판정 축은 `전체 마스터 ON + 종류별 ON + 활성 FID`다(#314). 마스터 행 부재는
   추정하지 않고 제외한다 — rollout 공백을 ON으로 읽는 것은 기존 타임라인 완료 푸시뿐이다.
+- 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답하고 첫 설정 변경이 만든다.
+- 설정 쓰기는 행을 읽지 않는다 — 저장된 값에서 파생값을 다시 계산해야 하는 경우 그 계산을 같은 UPDATE
+  문장 안에 두어, 읽기와 쓰기 사이에 다른 변경이 끼어들 수 없게 한다. `next_due_at`은 파생값이라
+  어긋나도 다음 claim이 `notification_time`에서 다시 계산해 한 사이클 안에 수렴한다.
+- 종류별 ON 전환은 `next_due_at`을 다시 계산하지 않는다. 꺼둔 사이 과거가 된 값은 worker가 허용 지연
+  초과로 걸러 발송 없이 다음 occurrence로 넘긴다.
 - 현재 두 알림 종류 모두 사용자 행동·설정에 대한 정보성 통지다. 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
 - 예정 알림의 한 occurrence는 하루에 한 번만 처리된다(발송·지연 skip 어느 쪽이든). claim transaction이

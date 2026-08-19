@@ -22,15 +22,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * 설정 행이 <b>아직 없는</b> subject에 동시 요청이 들어올 때의 실 MySQL 검증.
+ * 설정 행이 <b>아직 없는</b> subject에 서로 다른 설정 변경이 동시에 들어올 때의 실 MySQL 검증.
  *
- * <p>get-or-create는 있는 행에 쓰기를 남기지 않으려고 비잠금 읽기를 먼저 한다. 그런데 그 읽기가
- * REPEATABLE READ 스냅샷을 고정하기 때문에, 그 사이 다른 transaction이 행을 만들어 commit하면
- * {@code INSERT IGNORE}는 최신을 보고 no-op이 되는데 <b>재조회만 과거를 본다</b>. 그대로 두면 동시
- * 최초 진입 하나가 "insert 직후인데 행이 없다"로 500이 된다 — 실제로 첫 라운드에서 재현됐다.
- *
- * <p>지금은 행이 없던 경로의 재조회를 잠금 읽기로 해서 최신 커밋을 본다. 이 테스트는 그 창이 다시
- * 열리는 것을 막는다(rollout 공백기의 신규 사용자가 설정 화면을 두 번 두드리는 상황).
+ * <p>쓰기 경로는 UPDATE를 먼저 하고 0행일 때만 행을 만든 뒤 다시 시도한다. 두 요청이 동시에 "행 없음"을
+ * 만나면 한쪽만 insert에 성공하는데, 그때도 양쪽 다 자기 변경을 반영하고 끝나야 한다. 읽고 계산하는
+ * 구조였다면 여기서 REPEATABLE READ 스냅샷 때문에 후발 요청이 승자의 행을 못 보고 실패했다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -75,13 +71,16 @@ class PushSettingFirstTouchConcurrencyIntegrationTest {
                 List<Future<?>> futures = List.of(
                         executor.submit(() -> {
                             line.await(10, TimeUnit.SECONDS);
-                            return scheduledNotificationPreferenceService.getOrCreate(
-                                    subjectId, ScheduledNotificationType.DAILY_REMINDER);
+                            scheduledNotificationPreferenceService.updateEnabled(
+                                    subjectId, ScheduledNotificationType.DAILY_REMINDER, true);
+                            return null;
                         }),
                         executor.submit(() -> {
                             line.await(10, TimeUnit.SECONDS);
-                            return scheduledNotificationPreferenceService.getOrCreate(
-                                    subjectId, ScheduledNotificationType.DAILY_REMINDER);
+                            scheduledNotificationPreferenceService.updateNotificationTime(
+                                    subjectId, ScheduledNotificationType.DAILY_REMINDER,
+                                    java.time.LocalTime.of(9, 0));
+                            return null;
                         }));
                 for (Future<?> future : futures) {
                     int currentRound = round;

@@ -53,29 +53,14 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 설정 조회·변경 경로의 get-or-create — rollout 공백 행을 같은 request에서 멱등 보정한다.
-     *
-     * <p><b>있는 행에는 쓰기를 하지 않는다.</b> 있는 행에 {@code INSERT IGNORE}를 날리면 그 행에 S락이
-     * 잡히고, 뒤따르는 설정 UPDATE가 X락을 요구하면서 같은 subject를 동시에 다루는 두 transaction이
-     * 서로의 S락을 기다려 deadlock에 빠진다(실 MySQL 동시 토글 테스트로 확인).
-     *
-     * <p>대신 행이 없던 경로의 재조회는 잠금 읽기로 한다 — 먼저 한 비잠금 읽기가 스냅샷을 고정하므로
-     * 그 사이 다른 transaction이 만든 행이 일반 재조회에는 보이지 않기 때문이다.
+     * 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 기본값을 답한다(그 행을 만들어도 값이
+     * 같으므로 조회가 쓰기를 할 이유가 없다). 행은 가입 transaction과 rollout backfill이 만들고,
+     * 그래도 없으면 첫 설정 변경이 만든다.
      */
-    @Transactional
-    public ScheduledNotificationPreference getOrCreate(UUID subjectId, ScheduledNotificationType notificationType) {
-        Optional<ScheduledNotificationPreference> existing = find(subjectId, notificationType);
-        if (existing.isPresent()) {
-            return existing.get();
-        }
-        createDefaultIfAbsent(subjectId, notificationType);
-        // 재조회는 잠금 읽기다 — 위 비잠금 읽기가 스냅샷을 고정해서, 그 사이 다른 transaction이 만든 행은
-        // 일반 재조회로 보이지 않는다(REPEATABLE READ). 그대로 두면 동시 최초 진입이 500으로 샌다.
-        return scheduledNotificationPreferenceRepository
-                .findForUpdate(subjectId.toString(), notificationType.name())
-                // insert-if-absent + 잠금 읽기 뒤라 도달할 수 없다 — 불변식 위반으로 드러낸다.
-                .orElseThrow(() -> new IllegalStateException(
-                        "scheduled notification preference missing after insert-if-absent"));
+    public Settings findSettings(UUID subjectId, ScheduledNotificationType notificationType) {
+        return find(subjectId, notificationType)
+                .map(preference -> new Settings(preference.isEnabled(), preference.getNotificationTime()))
+                .orElseGet(() -> new Settings(DEFAULT_ENABLED, DEFAULT_NOTIFICATION_TIME));
     }
 
     public Optional<ScheduledNotificationPreference> find(UUID subjectId,
@@ -84,24 +69,41 @@ public class ScheduledNotificationPreferenceService {
                 new ScheduledNotificationPreferenceId(subjectId, notificationType));
     }
 
-    /** 종류별 ON/OFF 전환 — 다음 예정 시각을 저장된 시각 기준으로 다시 계산한다. */
-    @Transactional
+    /**
+     * 종류별 ON/OFF 전환 — {@code enabled} 한 컬럼만 바꾸는 한 문장이다. 행이 없으면 그때만 만들고 다시
+     * 시도한다.
+     *
+     * <p>세 문장을 한 transaction으로 묶지 않는다. 묶으면 대상이 없는 첫 UPDATE가 잡은 gap lock을 계속
+     * 쥔 채 INSERT를 시도하게 되고, 같은 행을 동시에 처음 만드는 두 요청이 서로의 gap lock을 기다려
+     * deadlock에 빠진다. 문장별로 끊어도 각 문장이 멱등이라 최종 결과는 같다.
+     */
     public void updateEnabled(UUID subjectId, ScheduledNotificationType notificationType, boolean enabled) {
-        ScheduledNotificationPreference preference = getOrCreate(subjectId, notificationType);
-        LocalDateTime nextDueAt = computeNextDueAt(nowKst(), preference.getNotificationTime(),
-                preference.getLastProcessedOccurrenceDate());
-        scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled, nextDueAt);
+        if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled) == 0) {
+            createDefaultIfAbsent(subjectId, notificationType);
+            scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled);
+        }
     }
 
-    /** 시각 변경 — OFF 상태에서도 저장하며 다음 예정 시각을 함께 옮긴다. */
-    @Transactional
+    /**
+     * 시각 변경 — 시각과 다음 예정 시각을 한 문장에서 함께 바꾼다. 후보 시각만 여기서 KST로 계산하고
+     * "오늘 것을 이미 처리했는가"는 UPDATE가 행에서 직접 본다. 그래서 worker claim이나 다른 설정 변경과
+     * 겹쳐도 두 값이 어긋난 상태가 남지 않는다.
+     *
+     * <p>{@link #updateEnabled}와 같은 이유로 문장들을 한 transaction으로 묶지 않는다.
+     */
     public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
                                        LocalTime notificationTime) {
-        ScheduledNotificationPreference preference = getOrCreate(subjectId, notificationType);
-        LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime,
-                preference.getLastProcessedOccurrenceDate());
-        scheduledNotificationPreferenceRepository.updateNotificationTime(
-                subjectId, notificationType, notificationTime, nextDueAt);
+        LocalDateTime nowKst = nowKst();
+        LocalDate today = nowKst.toLocalDate();
+        LocalDateTime todayAt = LocalDateTime.of(today, notificationTime);
+        LocalDateTime tomorrowAt = LocalDateTime.of(today.plusDays(1), notificationTime);
+        LocalDateTime candidate = todayAt.isAfter(nowKst) ? todayAt : tomorrowAt;
+        if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
+                notificationTime, today, tomorrowAt, candidate) == 0) {
+            createDefaultIfAbsent(subjectId, notificationType);
+            scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
+                    notificationTime, today, tomorrowAt, candidate);
+        }
     }
 
     /**
@@ -166,6 +168,10 @@ public class ScheduledNotificationPreferenceService {
             return todayOccurrence;
         }
         return LocalDateTime.of(today.plusDays(1), notificationTime);
+    }
+
+    /** 설정 화면이 보여줄 값. 행이 없으면 기본값이 담긴다. */
+    public record Settings(boolean enabled, LocalTime notificationTime) {
     }
 
     /** 같은 전진 값을 공유하는 행을 한 문장으로 묶기 위한 그룹 키. */

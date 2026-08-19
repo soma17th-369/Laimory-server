@@ -63,32 +63,24 @@ class PushPreferenceServiceTest {
     }
 
     @Test
-    void legacyPath_missingRowReadsAsEnabled_andIsObservedAndBackfilled() {
+    void legacyPath_missingRowReadsAsEnabled_andIsObserved() {
         when(pushPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isTrue();
 
         verify(pushMetrics).recordPreferenceMissing();
-        verify(pushPreferenceRepository).insertIfAbsent(SUBJECT_ID.toString(), true, NOW_KST);
+        // 조회는 쓰기를 하지 않는다 — 누락은 관측만 하고 복구는 backfill과 첫 설정 변경이 맡는다.
+        verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
     }
 
     @Test
-    void legacyPath_presentRowIsNeitherObservedNorBackfilled() {
+    void legacyPath_presentRowIsNeitherObservedNorWritten() {
         when(pushPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.of(preference(false)));
 
         assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isFalse();
 
         verify(pushMetrics, never()).recordPreferenceMissing();
         verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
-    }
-
-    @Test
-    void legacyPath_backfillFailureDoesNotChangeVerdict() {
-        when(pushPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
-        when(pushPreferenceRepository.insertIfAbsent(anyString(), anyBoolean(), any()))
-                .thenThrow(new RuntimeException("db down"));
-
-        assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isTrue();
     }
 
     @Test

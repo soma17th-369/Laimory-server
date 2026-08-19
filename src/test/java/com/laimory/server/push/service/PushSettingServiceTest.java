@@ -10,11 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.dto.PushSettingsResponse;
-import com.laimory.server.push.entity.ScheduledNotificationPreference;
-import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
 import com.laimory.server.testsupport.TestSubjects;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -23,7 +19,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 설정 orchestration 검증 — {@code HH:mm} 입력 계약과 조회 응답 조립. 인프라 0.
@@ -42,20 +37,9 @@ class PushSettingServiceTest {
         return new PushSettingService(pushPreferenceService, scheduledNotificationPreferenceService);
     }
 
-    private static ScheduledNotificationPreference preference(boolean enabled, LocalTime time) {
-        ScheduledNotificationPreference preference = new ScheduledNotificationPreference() {
-        };
-        ReflectionTestUtils.setField(preference, "id", new ScheduledNotificationPreferenceId(SUBJECT_ID, TYPE));
-        ReflectionTestUtils.setField(preference, "enabled", enabled);
-        ReflectionTestUtils.setField(preference, "notificationTime", time);
-        ReflectionTestUtils.setField(preference, "nextDueAt", LocalDateTime.of(2026, 7, 21, 21, 0));
-        ReflectionTestUtils.setField(preference, "lastProcessedOccurrenceDate", LocalDate.of(2026, 7, 20));
-        return preference;
-    }
-
-    private void givenPreference(boolean enabled, LocalTime time) {
-        when(scheduledNotificationPreferenceService.getOrCreate(SUBJECT_ID, TYPE))
-                .thenReturn(preference(enabled, time));
+    private void givenSettings(boolean enabled, LocalTime time) {
+        when(scheduledNotificationPreferenceService.findSettings(SUBJECT_ID, TYPE))
+                .thenReturn(new ScheduledNotificationPreferenceService.Settings(enabled, time));
     }
 
     // --- 시각 입력 계약 ---
@@ -101,10 +85,12 @@ class PushSettingServiceTest {
     // --- 리마인더 토글·시각 ---
 
     @Test
-    void enableDailyReminder_delegatesWithoutConsultingAnythingElse() {
+    void enableDailyReminder_delegatesWithoutReadingFirst() {
         service().updateDailyReminderEnabled("v1", SUBJECT_ID, true);
 
         verify(scheduledNotificationPreferenceService).updateEnabled(SUBJECT_ID, TYPE, true);
+        // 쓰기 경로는 값을 읽지 않는다 — 읽고 계산하면 그 사이에 다른 변경이 끼어들 수 있다.
+        verify(scheduledNotificationPreferenceService, never()).findSettings(any(), any());
     }
 
     @Test
@@ -135,8 +121,8 @@ class PushSettingServiceTest {
 
     @Test
     void getSettings_returnsServerAuthoritativeStateWithConfirmedClassification() {
-        when(pushPreferenceService.getOrCreatePushEnabled(SUBJECT_ID)).thenReturn(true);
-        givenPreference(true, LocalTime.of(21, 0));
+        when(pushPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
+        givenSettings(true, LocalTime.of(21, 0));
 
         PushSettingsResponse response = service().getSettings("v1", SUBJECT_ID);
 
