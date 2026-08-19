@@ -102,9 +102,10 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - Android 선행조건: `firebase-messaging 25.1.1+`, manifest
   `firebase_messaging_installation_id_enabled=true`, `onRegistered(fid)`가 준 FID를 등록 API로 업로드.
 - sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
-  `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 두 종류 모두 사용자 행동·설정에 대한
-  정보성 통지다 — 광고성 알림을 추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을
-  함께 도입해야 한다.
+  `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 결과에 따라 문구가 달라지면 종류를 나누고
+  (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
+  `type` 차원이 늘지 않는다. 현재 모든 종류가 사용자 행동·설정에 대한 정보성 통지다 — 광고성 알림을
+  추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을 함께 도입해야 한다.
 - 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
   1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).

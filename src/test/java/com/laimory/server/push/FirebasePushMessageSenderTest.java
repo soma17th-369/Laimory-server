@@ -318,7 +318,7 @@ class FirebasePushMessageSenderTest {
 
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION failure=1 "
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=1 "
                         + "byCode={TARGET_PLATFORM_PERMISSION_DENIED=1}");
     }
 
@@ -341,7 +341,7 @@ class FirebasePushMessageSenderTest {
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION failure=500 "
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=500 "
                         + "byCode={CALL_FCM_INTERNAL=500}");
     }
 
@@ -355,7 +355,7 @@ class FirebasePushMessageSenderTest {
 
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION failure=1 "
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=1 "
                         + "byCode={CALL_PLATFORM_UNAVAILABLE=1}");
     }
 

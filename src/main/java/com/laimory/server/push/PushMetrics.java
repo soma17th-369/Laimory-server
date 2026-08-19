@@ -9,8 +9,9 @@ import org.springframework.stereotype.Component;
 /**
  * FCM batch 응답이 확인한 저카디널리티 발송 결과.
  *
- * <p>차원은 고정 알림 종류와 결과뿐이다 — task/FID/error 원문은 label로 사용하지 않는다. sender 자체가
- * 예외를 던져 결과를 모르는 경우에는 성공·실패 어느 쪽도 추측해서 기록하지 않는다.
+ * <p>차원은 고정 알림 계열과 결과뿐이다 — task/FID/error 원문은 label로 사용하지 않는다. 문구 때문에
+ * 나뉜 종류들은 같은 {@link PushMessageType#metricGroup()}을 공유하므로 같은 counter에 합산된다.
+ * sender 자체가 예외를 던져 결과를 모르는 경우에는 성공·실패 어느 쪽도 추측해서 기록하지 않는다.
  */
 @Component
 public class PushMetrics {
@@ -32,10 +33,11 @@ public class PushMetrics {
         }
     }
 
+    /** 같은 계열의 두 종류는 (name, tags)가 같아 Micrometer가 기존 counter를 그대로 돌려준다. */
     private static Counter deliveryCounter(MeterRegistry registry, PushMessageType type, String result) {
         return Counter.builder(DELIVERY)
                 .description("Firebase Cloud Messaging delivery attempts reported by the batch response")
-                .tag("type", type.name())
+                .tag("type", type.metricGroup())
                 .tag("result", result)
                 .register(registry);
     }

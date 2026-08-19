@@ -97,7 +97,7 @@ class TimelineCompletionPushNotifierTest {
 
         verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS),
                 List.of("fid-1", "fid-2"));
-        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION,
+        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION_SUCCESS,
                 new PushSendResult(2, 2, 0, List.of()));
         // invalid 0건이면 정리 query를 만들지 않는다.
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
@@ -194,7 +194,7 @@ class TimelineCompletionPushNotifierTest {
 
         assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
-        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION,
+        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION_SUCCESS,
                 new PushSendResult(2, 1, 1, List.of("fid-1")));
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
