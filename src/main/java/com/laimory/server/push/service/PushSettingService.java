@@ -2,10 +2,7 @@ package com.laimory.server.push.service;
 
 import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.dto.PushSettingsResponse;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.time.format.ResolverStyle;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,11 +17,10 @@ public class PushSettingService {
 
     private static final ScheduledNotificationType DAILY_REMINDER = ScheduledNotificationType.DAILY_REMINDER;
     /**
-     * {@code HH:mm} 고정 파싱. STRICT resolver라 {@code 24:00} 같은 범위 밖 값이 조용히 {@code 00:00}으로
-     * 정규화되지 않는다 — 사용자가 의도하지 않은 시각에 알림이 가지 않게 입력 단계에서 거절한다.
+     * 조회 응답의 시각 표기 형식. 시각은 서버 고정이라 입력으로 받지 않으며 이 formatter는 출력 전용이다
+     * (#318 — 앱은 이 값을 "매일 HH:mm" 안내 문구에 쓴다).
      */
-    private static final DateTimeFormatter TIME_FORMAT =
-            DateTimeFormatter.ofPattern("HH:mm").withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private final PushPreferenceService pushPreferenceService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
@@ -50,29 +46,10 @@ public class PushSettingService {
         pushPreferenceService.updatePushEnabled(subjectId, requireEnabled(enabled));
     }
 
-    /** 일일 리마인더 ON/OFF — 사용자가 직접 켜야 발송된다(기본 OFF). */
+    /** 일일 리마인더 ON/OFF — 기본이 ON이라 이 쓰기는 사용자가 끄는(또는 다시 켜는) 유일한 수단이다. */
     public void updateDailyReminderEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         scheduledNotificationPreferenceService.updateEnabled(subjectId, DAILY_REMINDER, requireEnabled(enabled));
-    }
-
-    /** 일일 리마인더 시각 변경 — OFF 상태에서도 저장하며 발송 여부는 {@code enabled}가 정한다. */
-    public void updateDailyReminderTime(String applicationVersion, UUID subjectId, String time) {
-        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        scheduledNotificationPreferenceService.updateNotificationTime(
-                subjectId, DAILY_REMINDER, parseTime(time));
-    }
-
-    /** 분 단위 {@code HH:mm}만 받는다 — 초·나노 표기와 한 자리 시각은 DB 변경 전에 거절한다. */
-    static LocalTime parseTime(String time) {
-        if (time == null || time.isBlank()) {
-            throw new IllegalArgumentException("time is required");
-        }
-        try {
-            return LocalTime.parse(time, TIME_FORMAT);
-        } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("time must be in HH:mm format");
-        }
     }
 
     private static boolean requireEnabled(Boolean enabled) {

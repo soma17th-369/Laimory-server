@@ -104,7 +104,8 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
   `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 결과에 따라 문구가 달라지면 종류를 나누고
   (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
-  `type` 차원이 늘지 않는다. 현재 모든 종류가 사용자 행동·설정에 대한 정보성 통지다 — 광고성 알림을
+  `type` 차원이 늘지 않는다. 현재 모든 종류가 정보성 통지다 — 일일 리마인더는 기본 ON 일괄 발송이고
+  수신거부 수단은 종류별 OFF다(#318). 광고성 알림을
   추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을 함께 도입해야 한다.
 - 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
   1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본

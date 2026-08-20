@@ -191,16 +191,20 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - FID 원문은 URL·application log·예외 메시지에 남기지 않으며 access log body에서 마스킹된다.
 - 예정 알림의 발송 판정 축은 `전체 마스터 ON + 종류별 ON + 활성 FID`다(#314). 마스터 행 부재는
   추정하지 않고 제외한다 — rollout 공백을 ON으로 읽는 것은 기존 타임라인 완료 푸시뿐이다.
+- 일일 리마인더는 기본 ON이고 발송 시각은 서버가 21:00(`Asia/Seoul`)으로 고정한다(#318). 사용자
+  조작은 종류별 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
 - 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답한다.
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
   보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
-- 모든 설정 쓰기는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로 재장전한다.
-  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
-  tick이 예정에 없던 알림을 발송한다.
-- 현재 두 알림 종류 모두 사용자 행동·설정에 대한 정보성 통지다. 영리 목적의 광고성 알림을 추가하려면
+- 설정 쓰기(종류별 ON/OFF)는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로
+  재장전한다. 꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라
+  켠 직후 tick이 예정에 없던 알림을 발송한다. 같은 이유로 기존 행을 일괄로 켜는 마이그레이션도
+  `next_due_at`을 같은 문장에서 재장전해야 한다(#318).
+- 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 종류별
+  OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
 - worker는 한 occurrence를 한 번만 claim한다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후 첫
-  occurrence로 전진). 하루 1회 캡은 없다 — 설정 변경이 미래 시각으로 재장전하면 같은 날 다시 발송될
+  occurrence로 전진). 하루 1회 캡은 없다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 발송될
   수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
   claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서 호출하므로 전달 보장은 at-most-once
   best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.

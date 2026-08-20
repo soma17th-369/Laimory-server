@@ -80,24 +80,6 @@ public interface ScheduledNotificationPreferenceRepository
                       @Param("enabled") boolean enabled,
                       @Param("nextDueAt") LocalDateTime nextDueAt);
 
-    /**
-     * 시각 변경 — 시각과 그 시각에서 파생되는 다음 예정 시각을 <b>한 문장에서 함께</b> 바꾼다.
-     *
-     * <p>행을 미리 읽어 계산하지 않는다. 읽기와 쓰기 사이가 벌어지면 다른 설정 변경이나 worker claim이
-     * 그 사이에 끼어들어 {@code notification_time}과 {@code next_due_at}이 서로 어긋난 상태가 남는다.
-     *
-     * @param nextDueAt 새 시각의 다음 미래 occurrence(오늘이 미래면 오늘, 아니면 내일)
-     */
-    @Modifying
-    @Transactional
-    @Query("update ScheduledNotificationPreference s set s.notificationTime = :notificationTime, "
-            + "s.nextDueAt = :nextDueAt "
-            + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType")
-    int updateNotificationTime(@Param("subjectId") UUID subjectId,
-                               @Param("notificationType") ScheduledNotificationType notificationType,
-                               @Param("notificationTime") LocalTime notificationTime,
-                               @Param("nextDueAt") LocalDateTime nextDueAt);
-
     /** 탈퇴 transaction 합류용 — subject의 모든 종류 행 삭제(마스터보다 먼저). 0행 허용(멱등). */
     @Modifying
     @Transactional

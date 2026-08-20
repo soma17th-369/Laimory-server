@@ -23,7 +23,7 @@ public enum PushMessageType {
     TIMELINE_COMPLETION_FAILED("TIMELINE_COMPLETION",
             "타임라인 생성 실패", "타임라인을 만들지 못했어요. 앱에서 다시 시도해 주세요."),
 
-    /** 사용자가 직접 켜고 시각을 고른 일일 리마인더. */
+    /** 전체 사용자에게 매일 고정 시각으로 가는 일일 리마인더 — 기본 ON이고 사용자는 끄기만 한다. */
     DAILY_REMINDER("DAILY_REMINDER",
             "타임라인을 완성해보세요!", "하루를 기록해보세요!");
 

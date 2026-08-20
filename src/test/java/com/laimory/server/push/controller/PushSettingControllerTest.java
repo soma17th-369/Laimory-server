@@ -29,7 +29,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 푸시 설정 컨트롤러 슬라이스(MockMvc) — 네 경로 매핑, 인증 게이트(401), envelope, 시각 형식 400
+ * 푸시 설정 컨트롤러 슬라이스(MockMvc) — 세 경로 매핑, 인증 게이트(401), envelope, 잘못된 body의 400
  * 매핑을 검증한다. 인프라 0.
  */
 @WebMvcTest(PushSettingController.class)
@@ -100,12 +100,14 @@ class PushSettingControllerTest {
     }
 
     @Test
-    void updateDailyReminderTime_malformedTime_maps400() throws Exception {
-        doThrow(new IllegalArgumentException("time must be in HH:mm format"))
-                .when(pushSettingService).updateDailyReminderTime(anyString(), any(UUID.class), any());
+    void updateDailyReminderEnabled_missingEnabled_maps400() throws Exception {
+        // 시각 변경 API가 사라진 뒤 이 endpoint가 유일한 사용자 조작이다 — body 누락이 500이 아니라
+        // -400 envelope으로 나가는지 고정한다.
+        doThrow(new IllegalArgumentException("enabled is required"))
+                .when(pushSettingService).updateDailyReminderEnabled(anyString(), any(UUID.class), any());
 
-        mockMvc.perform(put(BASE + "/daily-reminder/time").with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"time\":\"9시\"}"))
+        mockMvc.perform(put(BASE + "/daily-reminder/enabled").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
     }

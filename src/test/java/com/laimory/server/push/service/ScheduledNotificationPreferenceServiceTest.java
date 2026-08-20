@@ -94,22 +94,22 @@ class ScheduledNotificationPreferenceServiceTest {
 
         ScheduledNotificationPreferenceService.Settings settings = service().findSettings(SUBJECT_ID, TYPE);
 
-        assertThat(settings.enabled()).isFalse();
+        assertThat(settings.enabled()).isTrue();
         assertThat(settings.notificationTime()).isEqualTo(LocalTime.of(21, 0));
         // 조회는 쓰기를 하지 않는다 — 행을 만들어도 값이 같다.
         verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
     }
 
     @Test
-    void createDefault_isDisabledAtNineNinePm() {
+    void createDefault_isEnabledAtNinePm() {
         service().createDefaultIfAbsent(SUBJECT_ID, TYPE);
 
-        // 기본은 OFF/21:00 — 시각은 저장하되 사용자가 직접 켜기 전에는 보내지 않는다.
-        verify(repository).insertIfAbsent(SUBJECT_ID.toString(), "DAILY_REMINDER", false,
+        // 기본은 ON/21:00(#318) — 가입만으로 매일 21:00 발송 대상이 되고 사용자는 끄기만 한다.
+        verify(repository).insertIfAbsent(SUBJECT_ID.toString(), "DAILY_REMINDER", true,
                 LocalTime.of(21, 0), LocalDateTime.of(2026, 7, 21, 21, 0), NOW_KST);
     }
 
-    // --- ON/OFF·시각 변경 ---
+    // --- ON/OFF 전환 ---
 
     @Test
     void updateEnabled_rearmsNextDueAtFromTheStoredTime() {
@@ -160,38 +160,6 @@ class ScheduledNotificationPreferenceServiceTest {
 
         assertThatThrownBy(() -> service().updateEnabled(SUBJECT_ID, TYPE, true))
                 .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void updateNotificationTime_whenRowMissing_failsLoudlyWithoutCreating() {
-        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(0);
-
-        assertThatThrownBy(() -> service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15)))
-                .isInstanceOf(IllegalStateException.class);
-        verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
-    }
-
-    @Test
-    void updateNotificationTime_rearmsTodayWhenNewTimeIsStillAhead() {
-        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
-
-        // 지금은 20:00. 22:15는 아직 오늘 미래라 오늘로 재장전한다 — 오늘 이미 발송됐어도 마찬가지다
-        // (하루 1회 캡 없음, 시각 변경은 사용자 행동).
-        service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15));
-
-        verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 15),
-                LocalDateTime.of(2026, 7, 21, 22, 15));
-        verify(repository, never()).findById(any());
-    }
-
-    @Test
-    void updateNotificationTime_whenNewTimeAlreadyPassed_nextDueIsTomorrow() {
-        when(repository.updateNotificationTime(any(), any(), any(), any())).thenReturn(1);
-
-        service().updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0));
-
-        verify(repository).updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(19, 0),
-                LocalDateTime.of(2026, 7, 22, 19, 0));
     }
 
     // --- claim ---

@@ -61,6 +61,25 @@ dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/work
 backfill이 <b>유일한</b> 복구 권위다. 탈퇴 subject의 `user_subject_links`는 물리 삭제(#302) 전까지 남아
 있어 backfill이 그 행까지 다시 만든다 — FID가 없어 발송은 없지만 #302 삭제 대상에 포함해야 한다.
 
+#318(일일 리마인더 기본 ON 전환)은 스키마를 바꾸지 않지만 **기존 행 일괄 갱신**이 필요하다. #314
+rollout으로 이미 만들어진 행은 `enabled=false`라 코드 기본값만 바꿔서는 켜지지 않는다. `enabled`만
+켜면 안 된다 — 꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 `next_due_at`이 허용 지연(30분)
+안쪽이면 켠 직후 tick이 예정에 없던 알림을 보낸다. 그래서 `next_due_at`을 같은 문장에서 다음 미래
+occurrence로 재장전한다(dev 적용 후 prod 별도):
+
+```sql
+SET @kst_now = CONVERT_TZ(NOW(6), '+00:00', '+09:00');
+SET @next_due = IF(TIME(@kst_now) < '21:00:00',
+                   TIMESTAMP(DATE(@kst_now), '21:00:00'),
+                   TIMESTAMP(DATE(@kst_now) + INTERVAL 1 DAY, '21:00:00'));
+UPDATE scheduled_notification_preferences
+   SET enabled = TRUE, next_due_at = @next_due, updated_at = @kst_now
+ WHERE notification_type = 'DAILY_REMINDER';
+```
+
+DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계를 만들어 쓴다(이 저장소의 `DATETIME`
+공통 계약). 검증은 갱신 행 수와 `enabled=TRUE`·`next_due_at`이 전부 미래인지로 한다.
+
 저장소는 신규 AWS MySQL 초기화를 자동화하지 않는다. live MySQL schema는 저장소 변경만으로 바뀌지
 않으며, 애플리케이션 배포 전에 실제 DB 상태를 확인하고 수동 DDL을 적용해야 한다.
 
@@ -135,14 +154,18 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 종류별 설정은 `(subject_id, notification_type)`
 복합 PK라 새 리텐션 알림이 컬럼이 아니라 행으로 늘어난다. `notification_time`(TIME)·`next_due_at`
 (DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고, `next_due_at`은 항상 **현재 이후 첫 occurrence**다 —
-하루 1회 캡을 두지 않아 시각 변경이 미래 시각으로 재장전하면 같은 날 다시 발송될 수 있다(사용자
-행동이므로 허용, 설계 검토 2026-08-19 확정). worker는 `(notification_type, enabled, next_due_at,
+하루 1회 캡을 두지 않아 껐다 켠 시점에 저장된 시각이 아직 오늘 미래면 같은 날 다시 발송될 수
+있다(사용자 행동이므로 허용, 설계 검토 2026-08-19 확정). `DAILY_REMINDER` 행 값의 권위는
+애플리케이션이다 — `enabled` 컬럼 DDL default는 `FALSE`지만 insert가 항상 `enabled`를 명시하며 그
+기본값은 코드의 `DEFAULT_ENABLED=true`·21:00이다(#318 — 전체 사용자 일괄 발송, 시각은 사용자 입력으로
+바뀌지 않는다). worker는 `(notification_type, enabled, next_due_at,
 subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각
 이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
 
-설정 쓰기는 행을 만들지 않으며 종류별 두 쓰기 모두 `next_due_at`을 다음 미래 occurrence로 재장전한다.
-전진 값은 언제나 Java가 KST로 계산해 파라미터로 넘긴다 — 시각 변경은 새 시각을 요청으로 받으므로 읽을
-값이 없고, ON/OFF는 저장된 시각이 유일한 근거라 그 행을 읽는다. 이 계산을 SQL에 맡기면 JVM zone에 따라
+설정 쓰기는 행을 만들지 않으며 종류별 쓰기(ON/OFF 하나뿐 — 시각 변경 쓰기는 #318에서 제거)는
+`next_due_at`을 다음 미래 occurrence로 재장전한다. 전진 값은 언제나 Java가 KST로 계산해 파라미터로
+넘긴다 — ON/OFF는 시각을 입력으로 받지 않아 저장된 시각이 유일한 근거라 그 행을 읽는다.
+이 계산을 SQL에 맡기면 JVM zone에 따라
 9시간 어긋난다: JDBC는 `TIME` 파라미터를 connection timezone으로 변환해 저장하므로, 파라미터 왕복은
 대칭이어도 SQL 안에서 컬럼끼리 날짜를 파생하는 순간 깨진다(UTC 통합 테스트가 실측으로 잡는다). 행 존재는
 가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고 던진다(운영 신호 — 복구는

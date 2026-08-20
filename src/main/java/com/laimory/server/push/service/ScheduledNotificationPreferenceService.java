@@ -24,22 +24,23 @@ import org.springframework.transaction.annotation.Transactional;
  * 예정 알림 종류별 설정과 occurrence 스케줄 상태의 단일 관문.
  *
  * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>이며 설정을 바꿀 때마다 다시 계산된다.
- * 하루 1회 캡은 두지 않는다 — 오늘 이미 받았어도 새 시각이 미래면 오늘 다시 온다(사용자 행동).
+ * 하루 1회 캡은 두지 않는다 — 껐다 다시 켠 시점에 오늘 시각이 아직 미래면 오늘 또 온다(사용자 행동).
  *
- * <p>기본값은 OFF/21:00이다 — 시각은 표시·저장할 수 있지만 사용자가 직접 켜기 전에는 발송하지 않는다.
+ * <p>기본값은 ON/21:00이다(#318) — 전체 사용자에게 매일 같은 시각으로 일괄 발송하고 사용자는 끄기만
+ * 한다. 시각은 서버가 고정하며 사용자 입력으로 바뀌지 않는다.
  */
 @Service
 @RequiredArgsConstructor
 public class ScheduledNotificationPreferenceService {
 
-    static final boolean DEFAULT_ENABLED = false;
+    static final boolean DEFAULT_ENABLED = true;
     static final LocalTime DEFAULT_NOTIFICATION_TIME = LocalTime.of(21, 0);
     private static final int MAX_BATCH_SIZE = 1_000;
 
     private final ScheduledNotificationPreferenceRepository scheduledNotificationPreferenceRepository;
     private final Clock clock;
 
-    /** 가입 transaction 합류용 기본 OFF/21:00 행 생성. 이미 있으면 no-op(멱등). */
+    /** 가입 transaction 합류용 기본 ON/21:00 행 생성. 이미 있으면 no-op(멱등). */
     public void createDefaultIfAbsent(UUID subjectId, ScheduledNotificationType notificationType) {
         LocalDateTime nowKst = nowKst();
         scheduledNotificationPreferenceRepository.insertIfAbsent(
@@ -86,19 +87,6 @@ public class ScheduledNotificationPreferenceService {
         LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime);
         if (scheduledNotificationPreferenceRepository.updateEnabled(
                 subjectId, notificationType, enabled, nextDueAt) == 0) {
-            throw new IllegalStateException("scheduled notification preference row is missing");
-        }
-    }
-
-    /**
-     * 시각 변경 — 새 시각과 그 시각의 다음 미래 occurrence를 함께 바꾼다. 두 값 모두 요청에서 나오므로
-     * 행을 읽지 않는다. 행 부재는 {@link #updateEnabled}와 같은 이유로 던진다.
-     */
-    public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
-                                       LocalTime notificationTime) {
-        LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime);
-        if (scheduledNotificationPreferenceRepository.updateNotificationTime(subjectId, notificationType,
-                notificationTime, nextDueAt) == 0) {
             throw new IllegalStateException("scheduled notification preference row is missing");
         }
     }

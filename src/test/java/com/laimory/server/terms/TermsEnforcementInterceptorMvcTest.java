@@ -178,9 +178,6 @@ class TermsEnforcementInterceptorMvcTest {
         mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/enabled").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
                 .andExpect(status().isOk());
-        mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/time").with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"time\":\"21:00\"}"))
-                .andExpect(status().isOk());
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).
