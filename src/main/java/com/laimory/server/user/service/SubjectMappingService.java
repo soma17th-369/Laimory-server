@@ -31,17 +31,24 @@ public class SubjectMappingService {
      * 신규 사용자의 subject mapping을 만든다 — 새 UUIDv4 subject를 생성해 current key lookup key로
      * insert한다. 호출자는 {@link NewUserProvisioner}뿐이며, {@code MANDATORY} 전파로 그 transaction에
      * 합류해 mapping insert 실패가 user insert까지 함께 rollback시킨다(독립 호출 = 계약 위반 → 예외).
+     *
+     * <p>생성한 subject를 반환한다 — 같은 가입 transaction에서 subject 축 기본 행(푸시 설정)을
+     * 만들어야 하고, 그러려면 방금 만든 값을 다시 조회 없이 알아야 하기 때문이다.
+     *
+     * @return 새로 만든 콘텐츠 subject
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void createFor(long userId) {
+    public UUID createFor(long userId) {
         var sample = subjectMappingMetrics.start();
         String result = "failed";
         try {
+            UUID subjectId = UUID.randomUUID();
             userSubjectLinkRepository.saveAndFlush(UserSubjectLink.of(
                     subjectLookupKeyDeriver.deriveCurrent(userId),
-                    UUID.randomUUID(),
+                    subjectId,
                     subjectLookupKeyDeriver.currentVersion()));
             result = "success";
+            return subjectId;
         } finally {
             subjectMappingMetrics.recordMapping(sample, "create", result);
         }

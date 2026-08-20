@@ -9,6 +9,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
@@ -135,6 +136,8 @@ class TimelineAiTaskFlowIntegrationTest {
             redis.delete("timeline:draft-task:" + id);
         });
         createdTaskIds.clear();
+        // 완료 푸시 경로가 마스터 행이 없으면 기본 행을 보정하므로(#314) mapping보다 먼저 지운다(FK RESTRICT).
+        SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, SUBJECT_ID);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 

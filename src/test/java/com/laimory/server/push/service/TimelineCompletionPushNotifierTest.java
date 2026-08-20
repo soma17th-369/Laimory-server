@@ -14,10 +14,12 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.laimory.server.push.PushMessage;
 import com.laimory.server.push.PushMessageSender;
-import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.push.PushMessageType;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
+import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,6 +53,8 @@ class TimelineCompletionPushNotifierTest {
     @Mock
     private PushRegistrationService pushRegistrationService;
     @Mock
+    private PushPreferenceService pushPreferenceService;
+    @Mock
     private PushMessageSender pushMessageSender;
     @Mock
     private PushMetrics pushMetrics;
@@ -72,21 +76,29 @@ class TimelineCompletionPushNotifierTest {
     }
 
     private TimelineCompletionPushNotifier notifier() {
-        return new TimelineCompletionPushNotifier(
-                pushRegistrationService, pushMessageSender, pushMetrics, FIXED_CLOCK);
+        return new TimelineCompletionPushNotifier(pushRegistrationService, pushPreferenceService,
+                pushMessageSender, pushMetrics, FIXED_CLOCK);
+    }
+
+    /** 마스터 ON — 대부분의 시나리오가 공유하는 전제. */
+    private void masterEnabled() {
+        when(pushPreferenceService.isPushEnabledForLegacyCompatibility(SUBJECT_ID)).thenReturn(true);
     }
 
     @Test
     void notifyAsync_sendsToAllOwnerFids() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
-        when(pushMessageSender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2")))
+        when(pushMessageSender.send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS), List.of("fid-1", "fid-2")))
                 .thenReturn(new PushSendResult(2, 2, 0, List.of()));
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
 
-        verify(pushMessageSender).send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
-        verify(pushMetrics).record(new PushSendResult(2, 2, 0, List.of()));
+        verify(pushMessageSender).send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS),
+                List.of("fid-1", "fid-2"));
+        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION_SUCCESS,
+                new PushSendResult(2, 2, 0, List.of()));
         // invalid 0건이면 정리 query를 만들지 않는다.
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
         assertThat(logAppender.list).singleElement().satisfies(event -> {
@@ -99,19 +111,33 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_noRegistrations_skipsSendEntirely() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID)).thenReturn(List.of());
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
 
-        verify(pushMessageSender, never()).send(any(), any(), anyList());
-        verify(pushMetrics, never()).record(any());
+        verify(pushMessageSender, never()).send(any(), anyList());
+        verify(pushMetrics, never()).record(any(), any());
+    }
+
+    @Test
+    void notifyAsync_masterDisabled_skipsBeforeRegistrationLookup() {
+        when(pushPreferenceService.isPushEnabledForLegacyCompatibility(SUBJECT_ID)).thenReturn(false);
+
+        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
+
+        // 전체 OFF는 FID 조회 전에 끝난다 — 발송 대상 조회 자체를 하지 않는다.
+        verify(pushRegistrationService, never()).findFirebaseInstallationIds(any());
+        verify(pushMessageSender, never()).send(any(), anyList());
+        verify(pushMetrics, never()).record(any(), any());
     }
 
     @Test
     void notifyAsync_removesOnlyInvalidFids_withSendSnapshotGuard() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2", "fid-3"));
-        when(pushMessageSender.send(any(), any(), anyList()))
+        when(pushMessageSender.send(any(), anyList()))
                 .thenReturn(new PushSendResult(3, 1, 2, List.of("fid-2")));
 
         notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
@@ -122,38 +148,54 @@ class TimelineCompletionPushNotifierTest {
 
     @Test
     void notifyAsync_registrationLookupFailure_isIsolated() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(any()))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
-        verify(pushMessageSender, never()).send(any(), any(), anyList());
-        verify(pushMetrics, never()).record(any());
+        verify(pushMessageSender, never()).send(any(), anyList());
+        verify(pushMetrics, never()).record(any(), any());
+    }
+
+    @Test
+    void notifyAsync_preferenceLookupFailure_isIsolatedAndDoesNotAssumeEnabled() {
+        // 마스터 조회 장애는 ON으로 숨기지 않는다 — 기존 실패 격리를 그대로 따른다.
+        when(pushPreferenceService.isPushEnabledForLegacyCompatibility(SUBJECT_ID))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
+                .doesNotThrowAnyException();
+        verify(pushRegistrationService, never()).findFirebaseInstallationIds(any());
+        verify(pushMessageSender, never()).send(any(), anyList());
     }
 
     @Test
     void notifyAsync_sendFailure_isIsolatedAndSkipsCleanup() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID)).thenReturn(List.of("fid-1"));
-        when(pushMessageSender.send(any(), any(), anyList())).thenThrow(new RuntimeException("fcm down"));
+        when(pushMessageSender.send(any(), anyList())).thenThrow(new RuntimeException("fcm down"));
 
         assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED))
                 .doesNotThrowAnyException();
         verify(pushRegistrationService, never()).removeInvalidRegistrations(anyCollection(), any());
-        verify(pushMetrics, never()).record(any());
+        verify(pushMetrics, never()).record(any(), any());
     }
 
     @Test
     void notifyAsync_cleanupFailure_isIsolated() {
+        masterEnabled();
         when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID))
                 .thenReturn(List.of("fid-1", "fid-2"));
-        when(pushMessageSender.send(any(), any(), anyList()))
+        when(pushMessageSender.send(any(), anyList()))
                 .thenReturn(new PushSendResult(2, 1, 1, List.of("fid-1")));
         doThrow(new RuntimeException("db down"))
                 .when(pushRegistrationService).removeInvalidRegistrations(anyCollection(), any());
 
         assertThatCode(() -> notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS))
                 .doesNotThrowAnyException();
-        verify(pushMetrics).record(new PushSendResult(2, 1, 1, List.of("fid-1")));
+        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION_SUCCESS,
+                new PushSendResult(2, 1, 1, List.of("fid-1")));
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
                 .containsSequence(

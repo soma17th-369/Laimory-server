@@ -92,7 +92,7 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 관련 이름은 `AWS_REGION`, `PHOTO_S3_BUCKET`, `PHOTO_CDN_DOMAIN`과 upload limit property들이다.
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
-### Firebase Cloud Messaging (타임라인 완료 푸시)
+### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)
 
 - mode는 `noop|firebase`(`app.push.mode`, 기본 noop) — noop에서도 FID 등록 API/DB는 동작하고
   외부 발송만 없다. 알 수 없는 mode는 sender 빈 부재로 기동 실패한다.
@@ -101,9 +101,16 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   `setToken/addToken/addAllTokens`를 쓰지 않는다.
 - Android 선행조건: `firebase-messaging 25.1.1+`, manifest
   `firebase_messaging_installation_id_enabled=true`, `onRegistered(fid)`가 준 FID를 등록 API로 업로드.
-- 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort 1회다.
-  메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
+- sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
+  `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 결과에 따라 문구가 달라지면 종류를 나누고
+  (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
+  `type` 차원이 늘지 않는다. 현재 모든 종류가 사용자 행동·설정에 대한 정보성 통지다 — 광고성 알림을
+  추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을 함께 도입해야 한다.
+- 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
+  1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
+  전체 푸시 마스터가 OFF면 FID 조회 전에 끝내고, 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
+  보존하려고 ON으로 읽는다.
 - FID 등록·해제·callback 발송 대상 조회의 owner는 UUID subjectId다. 인증된 앱 요청은 MVC 경계에서 매핑된
   subject를 쓰고, callback은 Redis task의 subject owner로 FID를 조회한다(raw userId 역조회 없음).
 - multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를
@@ -117,7 +124,7 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   파일은 컨테이너 runtime user(appuser, UID 1001)가 읽을 수 있어야 한다(chown 1001·0400).
   firebase 모드에서 ADC/초기화 실패는 기동 실패다(fail-fast). Admin SDK HTTP timeout은
   기본 0(무한)이라 `FirebasePushConfig`가 connect/read/write 유한값을 강제한다.
-- log에는 taskId·status·개수·오류 분류만 남긴다 — FID·Firebase 응답 원문·credential 금지.
+- log에는 알림 종류·개수·오류 분류만 남긴다 — FID·subjectId·Firebase 응답 원문·credential 금지.
 
 ### AI
 

@@ -31,8 +31,9 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 22개(timeline 16 + push-registrations PUT/DELETE + users GET /me·DELETE /me + terms
-agreements GET/POST)는 `bearerAuth` security requirement와 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
+보호 operation 26개(timeline 16 + push-registrations PUT/DELETE + push-settings GET·PUT 3종 +
+users GET /me·DELETE /me + terms agreements GET/POST)는 `bearerAuth` security requirement와
+401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
 입력이 아님). 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
@@ -140,6 +141,16 @@ terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 �
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
 멱등 upsert, DELETE는 (owner, FID) 동시 일치 시에만 지우는 멱등 해제다(미존재도 200).
+`GET /a/api/{version}/push-settings`와 세 개의 `PUT` (`/enabled`, `/daily-reminder/enabled`,
+`/daily-reminder/time`)은 푸시 수신 설정의 서버 권위 계약이다(#314). 네 operation 모두
+`@LoginTermsExempt`라 약관 미동의 상태에서도 알림을 끌 수 있으며 bearer 인증은 그대로 요구한다. GET은
+전체 ON/OFF와 일일 리마인더 ON/OFF·`HH:mm` 시각을 반환하고 누락 행은 기본값으로 응답한다(순수 조회 —
+행 생성은 가입 transaction과 rollout backfill이 소유하며, 행 없는 PUT은 조용한 no-op 대신 500이다).
+시각은 분 단위 `HH:mm`만 받으며 timezone은 서버가 `Asia/Seoul`로 고정한다(클라 timezone
+미수신, 형식 위반은 DB 변경 전 400 `-400`). 일일 리마인더 기본값은 OFF이고 사용자가 직접 켜야 발송된다.
+두 알림 모두 사용자 행동·설정에 대한 정보성 통지라 별도 수신 동의 절차를 두지 않는다 — 영리 목적의
+광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
+도입해야 한다.
 
 `GET /a/api/{version}/users/me`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는

@@ -176,6 +176,11 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
+| 전체 푸시 설정 | Push Preference | 현재 구현 | subject별 FCM 전체 수신 마스터(`push_preferences`, 기본 ON)다. 모든 알림의 최상위 스위치이며 OFF는 발송만 막고 종류별 설정값은 보존한다. |
+| 예정 알림 설정 | Scheduled Notification Preference | 현재 구현 | subject와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태(`scheduled_notification_preferences`)다. 새 리텐션 알림은 컬럼이 아니라 새 `notification_type` 행으로 추가한다. |
+| 일일 리마인더 | Daily Reminder | 현재 구현 | 사용자가 직접 켜고 시각을 고르는 예정 알림이다. 기본 OFF/21:00이며 사용자 설정이 곧 수신 의사 표시다(별도 법정 동의 절차 없음 — 정보성 통지). |
+| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 설정 변경이 미래 시각으로 재장전하면 같은 날 다시 올 수 있다. |
+
 ## 개인정보 치환
 
 | 한글명 | 영문명 | 상태 | 설명 |

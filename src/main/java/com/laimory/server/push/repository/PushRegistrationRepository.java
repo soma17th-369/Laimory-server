@@ -37,6 +37,11 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
     @Query("select p.firebaseInstallationId from PushRegistration p where p.subjectId = :subjectId")
     List<String> findAllFirebaseInstallationIdsBySubjectId(@Param("subjectId") UUID subjectId);
 
+    /** 예정 알림 발송의 subject batch 대상 조회 — 해당 subject들의 활성 설치 FID 전부다. */
+    @Query("select p.firebaseInstallationId from PushRegistration p where p.subjectId in :subjectIds")
+    List<String> findAllFirebaseInstallationIdsBySubjectIdIn(
+            @Param("subjectIds") Collection<UUID> subjectIds);
+
     /**
      * owner 조건 해제 — (principal에서 해석한 subject, FID)가 함께 일치할 때만 삭제해
      * 계정 전환 뒤 이전 사용자의

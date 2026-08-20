@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.entity.User;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -65,6 +67,9 @@ class SubjectMappingPersistenceIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @PersistenceContext
     private EntityManager em;
 
@@ -73,6 +78,9 @@ class SubjectMappingPersistenceIntegrationTest {
 
     @AfterEach
     void cleanUp() {
+        // 가입 transaction이 subject 축 기본 설정 행도 만든다(#314) — FK RESTRICT라 mapping보다 먼저 지운다.
+        createdLookupKeys.forEach(key -> userSubjectLinkRepository.findById(key).ifPresent(link ->
+                SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, link.getSubjectId())));
         createdLookupKeys.forEach(userSubjectLinkRepository::deleteById);
         createdLookupKeys.clear();
         createdUserIds.forEach(userRepository::deleteById);

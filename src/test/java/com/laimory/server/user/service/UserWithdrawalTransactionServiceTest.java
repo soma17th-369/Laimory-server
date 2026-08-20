@@ -13,7 +13,9 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
+import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
 import com.laimory.server.user.UserStatus;
 import java.time.Clock;
 import java.time.Instant;
@@ -50,11 +52,16 @@ class UserWithdrawalTransactionServiceTest {
     @Mock
     private PushRegistrationService pushRegistrationService;
     @Mock
+    private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+    @Mock
+    private PushPreferenceService pushPreferenceService;
+    @Mock
     private AccountErasureJobService accountErasureJobService;
 
     private UserWithdrawalTransactionService newService() {
         return new UserWithdrawalTransactionService(userAccountService, subjectMappingService,
-                refreshTokenService, pushRegistrationService, accountErasureJobService, CLOCK);
+                refreshTokenService, pushRegistrationService, scheduledNotificationPreferenceService,
+                pushPreferenceService, accountErasureJobService, CLOCK);
     }
 
     @Test
@@ -65,11 +72,15 @@ class UserWithdrawalTransactionServiceTest {
         newService().withdraw(USER_ID);
 
         InOrder order = inOrder(userAccountService, subjectMappingService, refreshTokenService,
-                pushRegistrationService, accountErasureJobService);
+                pushRegistrationService, scheduledNotificationPreferenceService, pushPreferenceService,
+                accountErasureJobService);
         order.verify(userAccountService).transitionToWithdrawalPending(USER_ID, LOCAL_NOW);
         order.verify(subjectMappingService).getRequired(USER_ID);
         order.verify(refreshTokenService).revokeAllForUser(USER_ID);
         order.verify(pushRegistrationService).unregisterAllForSubject(SUBJECT_ID);
+        // 종류별 설정 → 마스터 순서가 FK RESTRICT 계약이다.
+        order.verify(scheduledNotificationPreferenceService).deleteAllForSubject(SUBJECT_ID);
+        order.verify(pushPreferenceService).deleteForSubject(SUBJECT_ID);
         order.verify(accountErasureJobService).enqueue(USER_ID);
         // 승자 경로에서 findStatus 재조회는 없다 — CAS 영향 행 수가 유일한 판정이다.
         verify(userAccountService, never()).findStatus(anyLong());
@@ -83,8 +94,8 @@ class UserWithdrawalTransactionServiceTest {
 
         assertThatCode(() -> newService().withdraw(USER_ID)).doesNotThrowAnyException();
 
-        verifyNoInteractions(subjectMappingService, refreshTokenService,
-                pushRegistrationService, accountErasureJobService);
+        verifyNoInteractions(subjectMappingService, refreshTokenService, pushRegistrationService,
+                scheduledNotificationPreferenceService, pushPreferenceService, accountErasureJobService);
     }
 
     @Test
@@ -99,8 +110,8 @@ class UserWithdrawalTransactionServiceTest {
                     assertThat(e.getMessage()).doesNotContain(String.valueOf(USER_ID));
                 });
 
-        verifyNoInteractions(subjectMappingService, refreshTokenService,
-                pushRegistrationService, accountErasureJobService);
+        verifyNoInteractions(subjectMappingService, refreshTokenService, pushRegistrationService,
+                scheduledNotificationPreferenceService, pushPreferenceService, accountErasureJobService);
     }
 
     @Test
@@ -114,7 +125,8 @@ class UserWithdrawalTransactionServiceTest {
 
         // 실패 지점 이후 단계는 실행되지 않는다. rollback 자체는 @Transactional 프레임워크 계약 —
         // UserWithdrawalIntegrationTest가 실 DB에서 ACTIVE 잔존(부수효과 0)을 검증한다.
-        verifyNoInteractions(refreshTokenService, pushRegistrationService, accountErasureJobService);
+        verifyNoInteractions(refreshTokenService, pushRegistrationService,
+                scheduledNotificationPreferenceService, pushPreferenceService, accountErasureJobService);
         verify(subjectMappingService).getRequired(USER_ID);
         verify(subjectMappingService, never()).createFor(anyLong());
         verify(userAccountService, never()).findStatus(anyLong());

@@ -26,7 +26,8 @@ public class PushRegistrationService {
     public void register(String applicationVersion, UUID subjectId, String firebaseInstallationId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         validate(firebaseInstallationId);
-        pushRegistrationRepository.upsert(subjectId.toString(), firebaseInstallationId, LocalDateTime.now(clock));
+        pushRegistrationRepository.upsert(subjectId.toString(), firebaseInstallationId,
+                LocalDateTime.now(clock));
     }
 
     /** owner 조건 해제 — 미존재 등록도 성공(멱등). 계정 전환으로 재결합된 등록은 이전 사용자가 못 지운다. */
@@ -38,6 +39,14 @@ public class PushRegistrationService {
     /** 사용자의 활성 설치 전체 FID(발송 대상). */
     public List<String> findFirebaseInstallationIds(UUID subjectId) {
         return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
+    }
+
+    /** 예정 알림 발송의 subject batch 활성 FID 조회 — 설치가 없는 subject는 결과에 나타나지 않는다. */
+    public List<String> findFirebaseInstallationIdsBySubjectIds(Collection<UUID> subjectIds) {
+        if (subjectIds.isEmpty()) {
+            return List.of();
+        }
+        return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectIdIn(subjectIds);
     }
 
     /**

@@ -34,11 +34,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -92,6 +94,9 @@ class UserWithdrawalIntegrationTest {
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<UUID> createdSubjectIds = new ArrayList<>();
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @AfterEach
     void cleanUp() {
         // FK/UNIQUE 순서: job(users FK RESTRICT) → refresh/push(soft ref) → user → mapping.
@@ -102,6 +107,9 @@ class UserWithdrawalIntegrationTest {
                 .filter(token -> createdUserIds.contains(token.getUserId()))
                 .forEach(refreshTokenRepository::delete);
         createdSubjectIds.forEach(pushRegistrationRepository::deleteAllBySubjectId);
+        // 탈퇴가 이미 지웠으면 no-op — 탈퇴하지 않은 fixture 회원의 설정 행을 mapping보다 먼저 정리한다.
+        createdSubjectIds.forEach(subjectId ->
+                SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId));
         createdUserIds.forEach(userRepository::deleteById);
         createdUserIds.forEach(userId ->
                 userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(userId)));

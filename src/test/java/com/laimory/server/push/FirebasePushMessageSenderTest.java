@@ -21,7 +21,6 @@ import com.google.firebase.messaging.MulticastMessage;
 import com.google.firebase.messaging.Notification;
 import com.google.firebase.messaging.SendResponse;
 import com.laimory.server.timeline.TaskStatus;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -39,8 +38,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * firebase sender 단위 검증 — server-built payload(문구·data 2키·FID target·TTL)를 고정하고,
- * 500 chunk 분할, response index 매핑, 오류 분류별 삭제 정책, FID 비로그를 검증한다. 인프라 0.
+ * firebase sender 단위 검증 — server-built payload(문구·data·FID target·TTL)를 고정하고, 500 chunk 분할,
+ * response index 매핑, 오류 분류별 삭제 정책, FID 비로그를 검증한다. 인프라 0.
  *
  * <p>{@link MulticastMessage}는 public 접근자가 없어 pinned SDK(9.10.0)의 내부 필드를 reflection으로
  * 읽는다 — 이 payload 고정이 있어야 response의 {@code INVALID_ARGUMENT}를 target(FID) 무효로 간주하는
@@ -50,6 +49,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 class FirebasePushMessageSenderTest {
 
     private static final String TASK_ID = "t-1";
+    private static final PushMessage COMPLETION =
+            PushMessage.timelineCompletion(TASK_ID, TaskStatus.SUCCESS);
 
     @Mock
     private FirebaseMessaging firebaseMessaging;
@@ -73,6 +74,10 @@ class FirebasePushMessageSenderTest {
     @AfterEach
     void tearDown() {
         senderLogger.detachAppender(logAppender);
+    }
+
+    private static List<String> targets(String... fids) {
+        return List.of(fids);
     }
 
     // --- reflection helpers (pinned firebase-admin 9.10.0 내부 구조) ---
@@ -125,7 +130,7 @@ class FirebasePushMessageSenderTest {
 
     private static BatchResponse batchOf(SendResponse... responses) {
         BatchResponse batch = mock(BatchResponse.class);
-        when(batch.getResponses()).thenReturn(Arrays.asList(responses));
+        when(batch.getResponses()).thenReturn(List.of(responses));
         return batch;
     }
 
@@ -138,30 +143,14 @@ class FirebasePushMessageSenderTest {
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
     }
 
-    // --- payload 고정 ---
+    // --- 정보성 payload 고정 ---
 
     @Test
-    void success_buildsGenericNotificationWithTaskIdStatusDataOnly() throws Exception {
-        givenAllSuccess(2);
-
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
-
-        verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
-        MulticastMessage message = messageCaptor.getValue();
-        assertThat(notificationTitleOf(message)).isEqualTo("타임라인 생성 완료");
-        assertThat(notificationBodyOf(message)).isEqualTo("타임라인이 준비됐어요.");
-        // data는 라우팅용 두 key뿐 — 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위).
-        assertThat(dataOf(message)).containsExactlyInAnyOrderEntriesOf(
-                Map.of("taskId", TASK_ID, "status", "SUCCESS"));
-        assertThat(result.successCount()).isEqualTo(2);
-        assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
-    }
-
-    @Test
-    void failed_buildsGenericFailureNotification() throws Exception {
+    void failed_buildsFailureNotification() throws Exception {
         givenAllSuccess(1);
 
-        sender.send(TASK_ID, TaskStatus.FAILED, List.of("fid-1"));
+        // terminal 상태에 따라 문구가 달라야 한다 — 실패에 성공 문구가 나가면 사용자가 결과를 오해한다.
+        sender.send(PushMessage.timelineCompletion(TASK_ID, TaskStatus.FAILED), targets("fid-1"));
 
         verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
         MulticastMessage message = messageCaptor.getValue();
@@ -171,11 +160,34 @@ class FirebasePushMessageSenderTest {
                 Map.of("taskId", TASK_ID, "status", "FAILED"));
     }
 
+    @ParameterizedTest
+    @EnumSource(value = TaskStatus.class, names = "PROCESSING")
+    void nonTerminalStatus_isRejected(TaskStatus status) {
+        assertThatThrownBy(() -> PushMessage.timelineCompletion(TASK_ID, status))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void buildsFixedNotificationWithRoutingDataOnly() throws Exception {
+        givenAllSuccess(2);
+
+        PushSendResult result = sender.send(COMPLETION, targets("fid-1", "fid-2"));
+
+        verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
+        MulticastMessage message = messageCaptor.getValue();
+        assertThat(notificationTitleOf(message)).isEqualTo("타임라인 생성 완료");
+        assertThat(notificationBodyOf(message)).isEqualTo("타임라인이 준비됐어요.");
+        assertThat(dataOf(message)).containsExactlyInAnyOrderEntriesOf(
+                Map.of("taskId", TASK_ID, "status", "SUCCESS"));
+        assertThat(result.successCount()).isEqualTo(2);
+        assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
+    }
+
     @Test
     void targetsFids_notDeprecatedTokens() throws Exception {
         givenAllSuccess(2);
 
-        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1", "fid-2"));
+        sender.send(COMPLETION, targets("fid-1", "fid-2"));
 
         verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
         MulticastMessage message = messageCaptor.getValue();
@@ -188,7 +200,7 @@ class FirebasePushMessageSenderTest {
     void androidConfig_hasOneHourTtl_andDefaultPriority() throws Exception {
         givenAllSuccess(1);
 
-        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+        sender.send(COMPLETION, targets("fid-1"));
 
         verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
         AndroidConfig androidConfig = androidConfigOf(messageCaptor.getValue());
@@ -198,18 +210,11 @@ class FirebasePushMessageSenderTest {
         assertThat(ReflectionTestUtils.getField(androidConfig, "priority")).isNull();
     }
 
-    @ParameterizedTest
-    @EnumSource(value = TaskStatus.class, names = "PROCESSING")
-    void nonTerminalStatus_isRejected(TaskStatus status) {
-        assertThatThrownBy(() -> sender.send(TASK_ID, status, List.of("fid-1")))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
     // --- chunk 분할 ---
 
     @Test
     void emptyTargets_skipFcmEntirely() throws Exception {
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, List.of());
+        PushSendResult result = sender.send(COMPLETION, List.of());
 
         verify(firebaseMessaging, never()).sendEachForMulticast(any());
         assertThat(result).isEqualTo(PushSendResult.empty());
@@ -220,7 +225,7 @@ class FirebasePushMessageSenderTest {
         List<String> fids = IntStream.range(0, 500).mapToObj(i -> "fid-" + i).toList();
         givenAllSuccess(500);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, fids);
+        PushSendResult result = sender.send(COMPLETION, fids);
 
         verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
         assertThat(messageCaptor.getAllValues()).hasSize(1);
@@ -239,7 +244,7 @@ class FirebasePushMessageSenderTest {
                 .thenReturn(firstBatch)
                 .thenReturn(secondBatch);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, fids);
+        PushSendResult result = sender.send(COMPLETION, fids);
 
         verify(firebaseMessaging, org.mockito.Mockito.times(2)).sendEachForMulticast(messageCaptor.capture());
         List<MulticastMessage> messages = messageCaptor.getAllValues();
@@ -261,14 +266,15 @@ class FirebasePushMessageSenderTest {
                 failureResponse(MessagingErrorCode.UNAVAILABLE));
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS,
-                List.of("fid-ok", "fid-gone", "fid-bad", "fid-flaky"));
+        PushSendResult result = sender.send(COMPLETION,
+                targets("fid-ok", "fid-gone", "fid-bad", "fid-flaky"));
 
         assertThat(result.targetCount()).isEqualTo(4);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failureCount()).isEqualTo(3);
         assertThat(result.invalidFirebaseInstallationIds()).containsExactly("fid-gone", "fid-bad");
     }
+
 
     @ParameterizedTest
     @EnumSource(value = MessagingErrorCode.class,
@@ -278,7 +284,7 @@ class FirebasePushMessageSenderTest {
         BatchResponse batch = batchOf(failureResponse(code));
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+        PushSendResult result = sender.send(COMPLETION, targets("fid-1"));
 
         assertThat(result.failureCount()).isEqualTo(1);
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
@@ -292,7 +298,7 @@ class FirebasePushMessageSenderTest {
         BatchResponse batch = batchOf(response);
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+        PushSendResult result = sender.send(COMPLETION, targets("fid-1"));
 
         assertThat(result.failureCount()).isEqualTo(1);
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
@@ -308,13 +314,12 @@ class FirebasePushMessageSenderTest {
         BatchResponse batch = batchOf(response);
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
 
-        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+        sender.send(COMPLETION, targets("fid-1"));
 
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly(
-                        "fcm send failures: taskId=t-1 status=SUCCESS failure=1 "
-                                + "byCode={TARGET_PLATFORM_PERMISSION_DENIED=1}");
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=1 "
+                        + "byCode={TARGET_PLATFORM_PERMISSION_DENIED=1}");
     }
 
     @Test
@@ -328,7 +333,7 @@ class FirebasePushMessageSenderTest {
                 .thenThrow(callFailure)
                 .thenReturn(secondBatch);
 
-        PushSendResult result = sender.send(TASK_ID, TaskStatus.SUCCESS, fids);
+        PushSendResult result = sender.send(COMPLETION, fids);
 
         verify(firebaseMessaging, org.mockito.Mockito.times(2)).sendEachForMulticast(any());
         assertThat(result.failureCount()).isEqualTo(500);
@@ -336,9 +341,8 @@ class FirebasePushMessageSenderTest {
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly(
-                        "fcm send failures: taskId=t-1 status=SUCCESS failure=500 "
-                                + "byCode={CALL_FCM_INTERNAL=500}");
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=500 "
+                        + "byCode={CALL_FCM_INTERNAL=500}");
     }
 
     @Test
@@ -347,13 +351,12 @@ class FirebasePushMessageSenderTest {
         when(callFailure.getErrorCode()).thenReturn(ErrorCode.UNAVAILABLE);
         when(firebaseMessaging.sendEachForMulticast(any())).thenThrow(callFailure);
 
-        sender.send(TASK_ID, TaskStatus.SUCCESS, List.of("fid-1"));
+        sender.send(COMPLETION, targets("fid-1"));
 
         assertThat(logAppender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .containsExactly(
-                        "fcm send failures: taskId=t-1 status=SUCCESS failure=1 "
-                                + "byCode={CALL_PLATFORM_UNAVAILABLE=1}");
+                .containsExactly("fcm send failures: type=TIMELINE_COMPLETION_SUCCESS failure=1 "
+                        + "byCode={CALL_PLATFORM_UNAVAILABLE=1}");
     }
 
     // --- 비밀 비로그 ---
@@ -365,7 +368,7 @@ class FirebasePushMessageSenderTest {
                 failureResponse(MessagingErrorCode.QUOTA_EXCEEDED));
         when(firebaseMessaging.sendEachForMulticast(any())).thenReturn(batch);
 
-        sender.send(TASK_ID, TaskStatus.FAILED, List.of("fid-secret-1", "fid-secret-2"));
+        sender.send(COMPLETION, targets("fid-secret-1", "fid-secret-2"));
 
         assertThat(logAppender.list).isNotEmpty();
         for (ILoggingEvent event : logAppender.list) {
