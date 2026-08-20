@@ -110,8 +110,8 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
   1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
-  전체 푸시 마스터가 OFF면 FID 조회 전에 끝내고, 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
-  보존하려고 ON으로 읽는다.
+  **예정 알림 마스터를 읽지 않는다** — 사용자가 직접 시작한 작업의 결과 통지라 리텐션 알림 스위치의
+  적용 대상이 아니다(#319). 사용자가 이 통지를 끄는 수단은 OS 알림 권한이다.
 - FID 등록·해제·callback 발송 대상 조회의 owner는 UUID subjectId다. 인증된 앱 요청은 MVC 경계에서 매핑된
   subject를 쓰고, callback은 Redis task의 subject owner로 FID를 조회한다(raw userId 역조회 없음).
 - multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를

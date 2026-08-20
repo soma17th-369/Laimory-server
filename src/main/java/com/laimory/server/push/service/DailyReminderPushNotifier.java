@@ -19,8 +19,8 @@ import org.springframework.stereotype.Service;
  * claim된 일일 리마인더 occurrence들을 실제 발송 대상으로 좁히고 FCM에 넘긴다. DB claim transaction 밖에서
  * 실행되며 여기서 실패해도 occurrence는 이미 다음 날로 옮겨져 있다(at-most-once best-effort).
  *
- * <p>발송 대상은 전체 마스터가 ON인 subject의 활성 FID다. 마스터 행이 없는 subject는 추정하지 않고
- * 제외한다 — 이 알림은 rollout 공백을 ON으로 읽는 기존 완료 통지와 다르다.
+ * <p>발송 대상은 예정 알림 마스터가 ON인 subject의 활성 FID다. 마스터 행이 없으면 추정하지 않고
+ * 제외한다.
  *
  * <p>로그에는 FID·subjectId를 남기지 않고 batch 단위 집계만 남긴다.
  */

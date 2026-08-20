@@ -213,8 +213,6 @@ Spring JSON stdout
     기준으로 보정한 시도 수. 식별자와 Redis key는 tag에 넣지 않는다
   - `laimory.push.delivery{type=TIMELINE_COMPLETION|DAILY_REMINDER, result=success|failed}`:
     FCM batch response가 확인한 발송 결과 수. 차원은 고정 알림 종류와 결과뿐이다(#314).
-  - `laimory.push.preference.missing`: 기존 완료 푸시 경로가 마스터 설정 행 부재를 만나 기본값(ON)으로
-    해석한 횟수. 0으로 수렴하지 않으면 rollout backfill이 덜 끝난 것이다.
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
     없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)

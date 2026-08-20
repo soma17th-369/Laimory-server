@@ -17,15 +17,10 @@ import org.springframework.stereotype.Component;
 public class PushMetrics {
 
     static final String DELIVERY = "laimory.push.delivery";
-    static final String PREFERENCE_MISSING = "laimory.push.preference.missing";
 
     private final Map<PushMessageType, Counters> countersByType = new EnumMap<>(PushMessageType.class);
-    private final Counter preferenceMissing;
 
     public PushMetrics(MeterRegistry meterRegistry) {
-        this.preferenceMissing = Counter.builder(PREFERENCE_MISSING)
-                .description("Push master preference row was absent when an existing notification path read it")
-                .register(meterRegistry);
         for (PushMessageType type : PushMessageType.values()) {
             countersByType.put(type, new Counters(
                     deliveryCounter(meterRegistry, type, "success"),
@@ -40,14 +35,6 @@ public class PushMetrics {
                 .tag("type", type.metricGroup())
                 .tag("result", result)
                 .register(registry);
-    }
-
-    /**
-     * 기존 정보성 발송 경로가 마스터 행 부재를 만나 기본값(ON)으로 해석한 횟수. rollout 공백이 언제
-     * 닫히는지 보는 용도라 차원을 두지 않는다 — 0으로 수렴하지 않으면 backfill이 덜 끝난 것이다.
-     */
-    public void recordPreferenceMissing() {
-        preferenceMissing.increment();
     }
 
     public void record(PushMessageType type, PushSendResult result) {

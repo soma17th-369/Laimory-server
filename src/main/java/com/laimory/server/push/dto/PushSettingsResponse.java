@@ -7,7 +7,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(description = "푸시 수신 설정 조회 응답")
 public record PushSettingsResponse(
-        @Schema(description = "전체 푸시 수신 여부(모든 알림의 최상위 스위치)",
+        @Schema(description = "예정 알림 전체 수신 여부(리마인더 등 — 타임라인 완료 통지는 이 스위치와 무관)",
                 requiredMode = Schema.RequiredMode.REQUIRED)
         boolean pushEnabled,
 

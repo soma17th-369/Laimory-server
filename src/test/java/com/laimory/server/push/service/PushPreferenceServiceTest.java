@@ -9,7 +9,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.entity.PushPreference;
 import com.laimory.server.push.repository.PushPreferenceRepository;
 import com.laimory.server.testsupport.TestSubjects;
@@ -28,9 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 전체 푸시 마스터 leaf 검증 — 행 부재 해석이 경로마다 다르다는 계약을 고정한다.
- * 기존 정보성 푸시는 rollout 공백에서 ON으로 읽되 관측만 하고, worker의 batch 판정은 추정하지 않으며,
- * 쓰기는 행을 만들지 않고 던진다.
+ * 전체 푸시 마스터 leaf 검증 — 행 부재는 조회·쓰기 모두 던지고, worker의 batch 판정만 추정 없이
+ * 결과에서 제외한다는 계약을 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 class PushPreferenceServiceTest {
@@ -41,11 +39,9 @@ class PushPreferenceServiceTest {
 
     @Mock
     private PushPreferenceRepository pushPreferenceRepository;
-    @Mock
-    private PushMetrics pushMetrics;
 
     private PushPreferenceService service() {
-        return new PushPreferenceService(pushPreferenceRepository, pushMetrics, CLOCK);
+        return new PushPreferenceService(pushPreferenceRepository, CLOCK);
     }
 
     private static PushPreference preference(boolean enabled) {
@@ -64,33 +60,23 @@ class PushPreferenceServiceTest {
     }
 
     @Test
-    void legacyPath_missingRowReadsAsEnabled_andIsObserved() {
+    void findPushEnabled_missingRow_failsLoudlyWithoutWriting() {
+        // 마스터 행 부재는 깨진 불변식이다 — 기본값으로 가리면 조회가 "켜짐"이라 답하는데 예정 알림은
+        // 나가지 않는다. 조회도 쓰기와 같은 운영 신호를 낸다.
         when(pushPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
 
-        assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isTrue();
-
-        verify(pushMetrics).recordPreferenceMissing();
-        // 조회는 쓰기를 하지 않는다 — 누락은 관측만 하고 복구는 backfill이 맡는다.
+        assertThatThrownBy(() -> service().findPushEnabled(SUBJECT_ID))
+                .isInstanceOf(IllegalStateException.class);
         verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
     }
 
     @Test
-    void legacyPath_presentRowIsNeitherObservedNorWritten() {
+    void findPushEnabled_presentRowIsReturnedWithoutWriting() {
         when(pushPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.of(preference(false)));
 
-        assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isFalse();
+        assertThat(service().findPushEnabled(SUBJECT_ID)).isFalse();
 
-        verify(pushMetrics, never()).recordPreferenceMissing();
         verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
-    }
-
-    @Test
-    void legacyPath_lookupFailureIsNotHiddenAsEnabled() {
-        // 조회 장애를 ON으로 숨기면 발송 여부가 조용히 뒤집힌다 — 호출자의 기존 실패 격리로 넘긴다.
-        when(pushPreferenceRepository.findById(SUBJECT_ID)).thenThrow(new RuntimeException("db down"));
-
-        assertThatThrownBy(() -> service().isPushEnabledForLegacyCompatibility(SUBJECT_ID))
-                .isInstanceOf(RuntimeException.class);
     }
 
     @Test
