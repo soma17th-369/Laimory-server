@@ -89,14 +89,13 @@ class ScheduledNotificationPreferenceServiceTest {
     // --- 기본값 ---
 
     @Test
-    void findSettings_missingRow_answersDefaultsWithoutWriting() {
+    void findSettings_missingRow_failsLoudlyWithoutWriting() {
+        // 기본값으로 가리면 "켜짐"이라 답하면서 실제로는 아무것도 보내지 않는다(worker는 없는 행을
+        // claim하지 못한다). 조회도 쓰기와 같은 운영 신호를 내야 세 경로가 한 방향을 가리킨다.
         when(repository.findById(any())).thenReturn(Optional.empty());
 
-        ScheduledNotificationPreferenceService.Settings settings = service().findSettings(SUBJECT_ID, TYPE);
-
-        assertThat(settings.enabled()).isTrue();
-        assertThat(settings.notificationTime()).isEqualTo(LocalTime.of(21, 0));
-        // 조회는 쓰기를 하지 않는다 — 행을 만들어도 값이 같다.
+        assertThatThrownBy(() -> service().findSettings(SUBJECT_ID, TYPE))
+                .isInstanceOf(IllegalStateException.class);
         verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
     }
 

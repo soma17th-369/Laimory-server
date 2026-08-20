@@ -144,8 +144,9 @@ request body(`firebaseInstallationId`)로 받는다 — access log·프록시 UR
 `GET /a/api/{version}/push-settings`와 두 개의 `PUT` (`/enabled`, `/daily-reminder/enabled`)은 푸시
 수신 설정의 서버 권위 계약이다(#314, #318). 세 operation 모두 `@LoginTermsExempt`라 약관 미동의
 상태에서도 알림을 끌 수 있으며 bearer 인증은 그대로 요구한다. GET은
-전체 ON/OFF와 일일 리마인더 ON/OFF·`HH:mm` 시각을 반환하고 누락 행은 기본값으로 응답한다(순수 조회 —
-행 생성은 가입 transaction과 rollout backfill이 소유하며, 행 없는 PUT은 조용한 no-op 대신 500이다).
+전체 ON/OFF와 일일 리마인더 ON/OFF·`HH:mm` 시각을 반환한다(순수 조회 — 행 생성은 가입 transaction과
+rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으로 가리거나 조용한 no-op 없이 500이다 —
+기본이 ON이라 가려버리면 "켜짐"이라 답하면서 실제로는 아무것도 발송되지 않는 상태가 된다.
 일일 리마인더는 기본 ON이고 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송한다(#318) — 사용자
 조작은 `/daily-reminder/enabled`로 끄고 켜는 것뿐이고, 응답의 `time`은 서버가 고정한 읽기 전용 값이다
 (시각 변경 API 없음 — 앱의 "매일 21:00" 안내 문구용). 두 알림 모두 정보성 통지라 별도 수신 동의

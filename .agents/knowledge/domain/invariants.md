@@ -193,7 +193,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   추정하지 않고 제외한다 — rollout 공백을 ON으로 읽는 것은 기존 타임라인 완료 푸시뿐이다.
 - 일일 리마인더는 기본 ON이고 발송 시각은 서버가 21:00(`Asia/Seoul`)으로 고정한다(#318). 사용자
   조작은 종류별 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
-- 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답한다.
+- 설정 조회는 쓰기를 하지 않으며 행이 없으면 쓰기와 같은 이유로 던진다 — 기본값으로 가리면 조회가
+  "켜짐"이라 답하는데 worker는 없는 행을 claim하지 못해 실제 발송이 0이 된다.
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
   보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
 - 설정 쓰기(종류별 ON/OFF)는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로

@@ -23,8 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 예정 알림 종류별 설정과 occurrence 스케줄 상태의 단일 관문.
  *
- * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>이며 설정을 바꿀 때마다 다시 계산된다.
- * 하루 1회 캡은 두지 않는다 — 껐다 다시 켠 시점에 오늘 시각이 아직 미래면 오늘 또 온다(사용자 행동).
+ * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>이며 ON/OFF를 바꿀 때마다 다시 계산된다.
  *
  * <p>기본값은 ON/21:00이다(#318) — 전체 사용자에게 매일 같은 시각으로 일괄 발송하고 사용자는 끄기만
  * 한다. 시각은 서버가 고정하며 사용자 입력으로 바뀌지 않는다.
@@ -53,13 +52,17 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 기본값을 답한다(그 행을 만들어도 값이
-     * 같으므로 조회가 쓰기를 할 이유가 없다). 행은 가입 transaction과 rollout backfill이 만든다.
+     * 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 쓰기와 같은 이유로 던진다.
+     *
+     * <p>기본값으로 답하지 않는다. 기본이 ON이 된 뒤로(#318) 행 부재를 기본값으로 가리면 "리마인더 켜짐"이라고
+     * 답하면서 정작 worker는 없는 행을 claim하지 못해 아무것도 보내지 않고, 사용자가 끄려 해도 쓰기가
+     * 던진다. 행 존재는 가입 transaction과 rollout backfill이 보장하며 부재는 그 보장이 깨졌다는
+     * 운영 신호다 — 읽기도 같은 신호를 내야 조회·발송·쓰기가 한 방향을 가리킨다.
      */
     public Settings findSettings(UUID subjectId, ScheduledNotificationType notificationType) {
         return find(subjectId, notificationType)
                 .map(preference -> new Settings(preference.isEnabled(), preference.getNotificationTime()))
-                .orElseGet(() -> new Settings(DEFAULT_ENABLED, DEFAULT_NOTIFICATION_TIME));
+                .orElseThrow(() -> new IllegalStateException("scheduled notification preference row is missing"));
     }
 
     public Optional<ScheduledNotificationPreference> find(UUID subjectId,
