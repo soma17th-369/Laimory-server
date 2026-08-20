@@ -192,10 +192,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 예정 알림의 발송 판정 축은 `전체 마스터 ON + 종류별 ON + 활성 FID`다(#314). 마스터 행 부재는
   추정하지 않고 제외한다 — rollout 공백을 ON으로 읽는 것은 기존 타임라인 완료 푸시뿐이다.
 - 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답한다.
-- 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 읽지도 만들지도 않는 UPDATE 한
-  문장이며, 0행은 그 보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
-- 수용 edge: occurrence 경계 직전의 설정 변경이 worker claim과 겹치면 같은 occurrence가 한 번 더 갈 수
-  있다 — 중복은 최대 1회, 다음 claim이 미래로 전진시키며, 정보성 알림이라 수용한다.
+- 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
+  보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
 - 모든 설정 쓰기는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로 재장전한다.
   꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
   tick이 예정에 없던 알림을 발송한다.

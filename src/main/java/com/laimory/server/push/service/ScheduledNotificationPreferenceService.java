@@ -23,9 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 예정 알림 종류별 설정과 occurrence 스케줄 상태의 단일 관문.
  *
- * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>다(오늘 시각이 아직 미래면 오늘, 아니면
- * 다음 날). 하루 1회 캡은 두지 않는다 — 시각 변경은 사용자 행동이므로, 오늘 발송을 이미 받았어도 새
- * 시각이 미래면 그 시각으로 재장전되어 오늘 다시 올 수 있다.
+ * <p>{@code nextDueAt}은 항상 <b>현재 이후 첫 occurrence</b>이며 설정을 바꿀 때마다 다시 계산된다.
+ * 하루 1회 캡은 두지 않는다 — 오늘 이미 받았어도 새 시각이 미래면 오늘 다시 온다(사용자 행동).
  *
  * <p>기본값은 OFF/21:00이다 — 시각은 표시·저장할 수 있지만 사용자가 직접 켜기 전에는 발송하지 않는다.
  */
@@ -73,14 +72,12 @@ public class ScheduledNotificationPreferenceService {
      * {@code nextDueAt}을 그대로 켜면 켠 직후 tick이 곧바로 발송하므로, 저장된 시각 기준 다음 미래
      * occurrence로 재장전한다.
      *
-     * <p>여기서만 행을 읽는다 — 시각 변경과 달리 새 시각을 입력으로 받지 않아 저장된 값이 유일한 근거인데,
-     * 그 계산을 SQL에 맡길 수 없기 때문이다. JDBC가 {@code TIME} 값을 connection timezone으로 변환해
-     * 저장하므로 SQL 안에서 컬럼끼리 날짜를 파생하면 JVM zone에 따라 9시간 어긋난다(UTC CI에서 실측).
-     * 읽기와 쓰기 사이에 시각 변경이 끼어들면 한 occurrence가 옛 시각에 나갈 수 있으나, 다음 claim이
-     * 저장된 시각으로 다시 전진시켜 한 사이클 안에 수렴한다.
+     * <p>시각을 입력으로 받지 않으므로 저장된 값을 읽는다. 이 계산은 SQL에 맡길 수 없다 — JDBC가
+     * {@code TIME} 값을 connection timezone으로 변환해 저장하므로 SQL 안에서 컬럼끼리 날짜를 파생하면
+     * JVM zone에 따라 9시간 어긋난다(UTC 통합 테스트에서 실측).
      *
-     * <p>쓰기 경로는 행을 만들지 않는다. 행 존재는 가입 transaction과 rollout backfill이 보장하며,
-     * 부재는 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
+     * <p>행은 만들지 않는다 — 행 존재는 가입 transaction과 rollout backfill이 보장하고, 부재는 그
+     * 보장이 깨졌다는 운영 신호다.
      */
     public void updateEnabled(UUID subjectId, ScheduledNotificationType notificationType, boolean enabled) {
         LocalTime notificationTime = find(subjectId, notificationType)
@@ -94,13 +91,8 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 시각 변경 — 시각과 새 시각의 다음 미래 occurrence를 UPDATE 한 문장에서 함께 바꾼다. 그래서 worker
-     * claim이나 다른 설정 변경과 겹쳐도 두 값이 어긋난 상태가 남지 않는다. 행 부재는
-     * {@link #updateEnabled}와 같은 이유로 던진다.
-     *
-     * <p>알려진 수용 edge: occurrence 경계 직전에 들어온 변경이 worker claim과 겹치면 방금 발송된
-     * occurrence 시각이 다시 저장돼 같은 알림이 한 번 더 갈 수 있다 — 중복은 최대 1회이고 다음 claim이
-     * 미래로 전진시키므로 정보성 알림에서 수용한다.
+     * 시각 변경 — 새 시각과 그 시각의 다음 미래 occurrence를 함께 바꾼다. 두 값 모두 요청에서 나오므로
+     * 행을 읽지 않는다. 행 부재는 {@link #updateEnabled}와 같은 이유로 던진다.
      */
     public void updateNotificationTime(UUID subjectId, ScheduledNotificationType notificationType,
                                        LocalTime notificationTime) {

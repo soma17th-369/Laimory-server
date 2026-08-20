@@ -141,14 +141,13 @@ subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 �
 이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
 
 설정 쓰기는 행을 만들지 않으며 종류별 두 쓰기 모두 `next_due_at`을 다음 미래 occurrence로 재장전한다.
-전진 값은 언제나 Java가 KST로 계산해 파라미터로 넘긴다 — 시각 변경은 새 시각을 입력으로 받으므로 읽지
-않고, ON/OFF만 저장된 시각을 알 길이 없어 그 행을 읽는다. 이 계산을 SQL에 맡기면 JVM zone에 따라 9시간
-어긋난다: JDBC는 `TIME` 파라미터를 connection timezone으로 변환해 저장하므로, 파라미터 왕복은 대칭이어도
-SQL 안에서 컬럼끼리 날짜를 파생하는 순간 깨진다(UTC 통합 테스트가 실측으로 잡는다). 읽기와 쓰기 사이에
-다른 설정 변경이 끼어들면 한 occurrence가 옛 시각에 나갈 수 있으나 다음 claim이 저장된 시각으로 다시
-전진시켜 수렴한다. 행 존재는 가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고
-던진다(운영 신호 — 복구는 backfill 재실행). 종류별 행은 마스터를 `ON DELETE RESTRICT`로 참조해 종류별
-정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
+전진 값은 언제나 Java가 KST로 계산해 파라미터로 넘긴다 — 시각 변경은 새 시각을 요청으로 받으므로 읽을
+값이 없고, ON/OFF는 저장된 시각이 유일한 근거라 그 행을 읽는다. 이 계산을 SQL에 맡기면 JVM zone에 따라
+9시간 어긋난다: JDBC는 `TIME` 파라미터를 connection timezone으로 변환해 저장하므로, 파라미터 왕복은
+대칭이어도 SQL 안에서 컬럼끼리 날짜를 파생하는 순간 깨진다(UTC 통합 테스트가 실측으로 잡는다). 행 존재는
+가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고 던진다(운영 신호 — 복구는
+backfill 재실행). 종류별 행은 마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히
+통과하지 않는다.
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
 `HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`
