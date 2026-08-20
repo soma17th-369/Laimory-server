@@ -6,6 +6,7 @@ import com.laimory.server.terms.dto.TermAgreementHistoryResponse;
 import com.laimory.server.terms.dto.TermAgreementResponse;
 import com.laimory.server.terms.service.TermAgreementCommand;
 import com.laimory.server.terms.service.TermAgreementService;
+import com.laimory.server.terms.service.TermContentUrlFactory;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class TermAgreementController implements TermAgreementApi {
 
     private final TermAgreementService termAgreementService;
+    private final TermContentUrlFactory termContentUrlFactory;
 
     @Override
     public ResponseEntity<ApiResponse<Void>> agreeToTerms(String applicationVersion, Long userId,
@@ -35,7 +37,8 @@ public class TermAgreementController implements TermAgreementApi {
                                                                                      Long userId) {
         return ResponseEntity.ok(ApiResponse.success(new TermAgreementHistoryResponse(
                 termAgreementService.getHistory(applicationVersion, userId).stream()
-                        .map(TermAgreementResponse::from)
+                        .map(entry -> TermAgreementResponse.from(entry, termContentUrlFactory.create(
+                                entry.document().getTermType(), entry.document().getVersion())))
                         .toList())));
     }
 

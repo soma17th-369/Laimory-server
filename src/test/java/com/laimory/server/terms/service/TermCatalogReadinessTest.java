@@ -27,8 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 
 /**
- * catalog 준비 판정(필수 종류 current 커버리지 + denormalized mapping 일치)과 기동 정합성 검사,
- * bounded 전이 로그·metric 계약 검증.
+ * catalog 준비 판정(필수 종류 current 커버리지)과 기동 정합성 검사, bounded 전이 로그·metric 계약 검증.
  */
 @ExtendWith(MockitoExtension.class)
 class TermCatalogReadinessTest {
@@ -62,7 +61,7 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void stageWithAllRequiredCurrentAndConsistentMapping_isReady() {
+    void stageWithAllRequiredCurrentDocuments_isReady() {
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
 
@@ -83,27 +82,6 @@ class TermCatalogReadinessTest {
 
         assertThat(catalog.ready()).isFalse();
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0);
-    }
-
-    @Test
-    void denormalizedMappingMismatch_marksStageNotReady() {
-        // stage 사본이 enum 기대와 어긋난 seed — 정상 seed로 취급하지 않는다.
-        TermDocumentSummary wrongStage = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE,
-                TermStage.TIMELINE_FIRST_CREATE.name(), true, "2026-08-15");
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(wrongStage, document(TermType.PRIVACY_POLICY)));
-
-        assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
-    }
-
-    @Test
-    void requiredFlagMismatch_marksStageNotReady() {
-        TermDocumentSummary wrongRequired = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY,
-                TermStage.LOGIN.name(), false, "2026-08-15");
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), wrongRequired));
-
-        assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
     }
 
     @Test
@@ -168,12 +146,12 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void startupCheck_reportsMissingSeedUnknownLiteralAndMappingMismatch() {
+    void startupCheck_reportsMissingSeedAndUnknownLiteral() {
         // raw row 검사라 미지 literal도 예외 없이 관측된다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "LOGIN", true),
-                catalogRow("PRIVACY_POLICY", "TIMELINE_FIRST_CREATE", true), // stage 사본 불일치
-                catalogRow("BOGUS_TYPE", "LOGIN", true)));                   // 미지 literal
+                catalogRow("TERMS_OF_SERVICE"),
+                catalogRow("PRIVACY_POLICY"),
+                catalogRow("BOGUS_TYPE"))); // 미지 literal
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(3L); // 행이 존재하는 seed 실수 — ERROR 경로
 
@@ -185,9 +163,9 @@ class TermCatalogReadinessTest {
                 .reduce("", String::concat);
         assertThat(problems)
                 .contains("missing seed for termType=SENSITIVE_INFORMATION_CONSENT")
-                .contains("mapping mismatch for termType=PRIVACY_POLICY")
                 .contains("unknown termType literal in term_documents: BOGUS_TYPE")
-                .contains("stage not ready");
+                .contains("stage not ready")
+                .doesNotContain("mapping mismatch");
     }
 
     @Test
@@ -209,13 +187,13 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void startupCheck_fullyConsistentCatalog_logsNoError() {
+    void startupCheck_fullySeededCatalog_logsNoError() {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "LOGIN", true),
-                catalogRow("PRIVACY_POLICY", "LOGIN", true),
-                catalogRow("SENSITIVE_INFORMATION_CONSENT", "TIMELINE_FIRST_CREATE", true),
-                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "TIMELINE_FIRST_CREATE", true),
-                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "TIMELINE_FIRST_CREATE", true)));
+                catalogRow("TERMS_OF_SERVICE"),
+                catalogRow("PRIVACY_POLICY"),
+                catalogRow("SENSITIVE_INFORMATION_CONSENT"),
+                catalogRow("THIRD_PARTY_PROVISION_CONSENT"),
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT")));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
@@ -240,27 +218,10 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentSummary document(TermType type) {
-        return new TermDocumentSummary((long) type.displayOrder(), type, type.stage().name(),
-                type.required(), "2026-08-15");
+        return new TermDocumentSummary((long) type.displayOrder(), type, "1.0");
     }
 
-    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String stage,
-                                                                    Boolean required) {
-        return new TermDocumentRepository.TermCatalogRow() {
-            @Override
-            public String getTermType() {
-                return termType;
-            }
-
-            @Override
-            public String getStage() {
-                return stage;
-            }
-
-            @Override
-            public Boolean getRequired() {
-                return required;
-            }
-        };
+    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {
+        return () -> termType;
     }
 }

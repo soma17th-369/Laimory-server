@@ -4,6 +4,7 @@ import com.laimory.server.common.ApiResponse;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.dto.TermListResponse;
 import com.laimory.server.terms.dto.TermResponse;
+import com.laimory.server.terms.service.TermContentUrlFactory;
 import com.laimory.server.terms.service.TermDocumentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,13 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class PublicTermController implements PublicTermApi {
 
     private final TermDocumentService termDocumentService;
+    private final TermContentUrlFactory termContentUrlFactory;
 
     @Override
     public ResponseEntity<ApiResponse<TermListResponse>> getCurrentTerms(String applicationVersion,
                                                                          TermStage stage) {
         return ResponseEntity.ok(ApiResponse.success(new TermListResponse(
                 termDocumentService.findCurrentDocuments(applicationVersion, stage).stream()
-                        .map(TermResponse::from)
+                        .map(document -> TermResponse.from(document, termContentUrlFactory.create(
+                                document.getTermType(), document.getVersion())))
                         .toList())));
     }
 }

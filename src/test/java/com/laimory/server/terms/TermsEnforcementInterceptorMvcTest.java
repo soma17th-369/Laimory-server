@@ -24,6 +24,7 @@ import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.PushSettingService;
 import com.laimory.server.terms.controller.TermAgreementController;
 import com.laimory.server.terms.service.TermAgreementService;
+import com.laimory.server.terms.service.TermContentUrlFactory;
 import com.laimory.server.terms.service.TermsEnforcementService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
@@ -119,6 +120,8 @@ class TermsEnforcementInterceptorMvcTest {
     private UserWithdrawalService userWithdrawalService;
     @MockitoBean
     private TermAgreementService termAgreementService;
+    @MockitoBean
+    private TermContentUrlFactory termContentUrlFactory;
 
     @BeforeEach
     void resolveSubject() {

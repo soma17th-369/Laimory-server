@@ -53,14 +53,14 @@ class TermAgreementServiceTest {
 
     @Test
     void agree_recordsAllCurrentDocuments_withSingleKstAcceptedAt() {
-        TermDocumentSummary terms = summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15");
-        TermDocumentSummary privacy = summary(12L, TermType.PRIVACY_POLICY, "2026-08-15");
+        TermDocumentSummary terms = summary(11L, TermType.TERMS_OF_SERVICE, "1.0");
+        TermDocumentSummary privacy = summary(12L, TermType.PRIVACY_POLICY, "1.0");
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(terms, privacy));
 
         service.agreeToTerms("v1", USER_ID, List.of(
-                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "2026-08-15")));
+                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
+                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0")));
 
         // 검증(current selection)과 수락 시각이 같은 캡처 instant의 KST 벽시계를 공유한다.
         ArgumentCaptor<LocalDateTime> nowKst = ArgumentCaptor.forClass(LocalDateTime.class);
@@ -73,12 +73,12 @@ class TermAgreementServiceTest {
     void agree_staleVersion_rejects409WithoutRecordingAnything() {
         // PRIVACY_POLICY만 개정됨 — 하나라도 stale이면 전부 기록하지 않는다(all-or-nothing).
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                        summary(13L, TermType.PRIVACY_POLICY, "2026-09-01")));
+                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "1.0"),
+                        summary(13L, TermType.PRIVACY_POLICY, "1.1")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
-                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "2026-08-15"))))
+                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
+                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0"))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
                 .isEqualTo(ExceptionType.STALE_TERM_VERSION);
@@ -92,7 +92,7 @@ class TermAgreementServiceTest {
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
-                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"))))
+                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
                 .isEqualTo(ExceptionType.STALE_TERM_VERSION);
@@ -104,11 +104,11 @@ class TermAgreementServiceTest {
     void agree_rejectsNullEmptyDuplicateAndMissingFields400() {
         List<List<TermAgreementCommand>> invalidRequests = List.of(
                 List.of(),
-                List.of(new TermAgreementCommand(null, "2026-08-15")),
+                List.of(new TermAgreementCommand(null, "1.0")),
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, null)),
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, " ")),
-                List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                        new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15")));
+                List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
+                        new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, null))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -123,10 +123,10 @@ class TermAgreementServiceTest {
     void agree_sameTypeDifferentVersions_isNotDuplicate_butStaleOneRejects() {
         // 같은 종류의 두 버전은 shape 중복이 아니다 — 대신 stale 검증이 409로 거절한다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "2026-08-15")));
+                .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "1.0")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
-                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
+                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-07-01"))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
@@ -158,6 +158,6 @@ class TermAgreementServiceTest {
     }
 
     private static TermDocumentSummary summary(Long id, TermType type, String version) {
-        return new TermDocumentSummary(id, type, type.stage().name(), type.required(), version);
+        return new TermDocumentSummary(id, type, version);
     }
 }

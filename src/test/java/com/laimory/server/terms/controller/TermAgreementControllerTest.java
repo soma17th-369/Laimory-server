@@ -27,7 +27,9 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.service.TermAgreementCommand;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
 import com.laimory.server.terms.service.TermAgreementService;
+import com.laimory.server.terms.service.TermContentUrlFactory;
 import com.laimory.server.testsupport.AuthTestSupport;
+import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -43,7 +45,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * 약관 동의 컨트롤러 슬라이스 테스트(MockMvc). 인증 게이트(401)·envelope·상태 매핑(200/400/409)과
- * "userId는 인증 principal에서 서비스로 전달", 이력 응답의 불변 내용 재구성·빈 이력 200/[]를 검증한다.
+ * "userId는 인증 principal에서 서비스로 전달", 이력 응답이 동의한 버전의 불변 contentUrl로 원문을
+ * 가리키는 계약·빈 이력 200/[]를 검증한다.
  * 인프라 0. (hidden principal·bearerAuth 문서 계약은 {@code arch.ApiAuthenticationContractTest} 소유.)
  */
 @WebMvcTest(TermAgreementController.class)
@@ -54,8 +57,8 @@ class TermAgreementControllerTest {
     private static final String PATH = "/a/api/v1/terms/agreements";
     private static final String BODY = """
             {"agreements": [
-              {"termType": "TERMS_OF_SERVICE", "version": "2026-08-15"},
-              {"termType": "PRIVACY_POLICY", "version": "2026-08-15"}
+              {"termType": "TERMS_OF_SERVICE", "version": "1.0"},
+              {"termType": "PRIVACY_POLICY", "version": "1.0"}
             ]}
             """;
 
@@ -67,6 +70,9 @@ class TermAgreementControllerTest {
 
     @MockitoBean
     private TermAgreementService termAgreementService;
+
+    @MockitoBean
+    private TermContentUrlFactory termContentUrlFactory;
 
     @Test
     void unauthenticatedRequests_rejected401BeforeService() throws Exception {
@@ -95,8 +101,8 @@ class TermAgreementControllerTest {
         assertThat(response.get("body").isNull()).isTrue();
 
         verify(termAgreementService).agreeToTerms("v1", USER_ID, List.of(
-                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "2026-08-15"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "2026-08-15")));
+                new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
+                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0")));
     }
 
     @Test
@@ -137,23 +143,30 @@ class TermAgreementControllerTest {
     }
 
     @Test
-    void history_returns200WithImmutableContents_inServiceOrder() throws Exception {
+    void history_returns200WithAgreedVersionContentUrl_inServiceOrder() throws Exception {
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of(
-                entry(TermType.PRIVACY_POLICY, "2026-08-15", "개인정보 처리방침", "2026-08-16T09:30:05"),
-                entry(TermType.TERMS_OF_SERVICE, "2026-07-01", "이용약관", "2026-07-02T10:00:05")));
+                entry(TermType.PRIVACY_POLICY, "1.1", "개인정보 처리방침", "2026-08-16T09:30:05"),
+                entry(TermType.TERMS_OF_SERVICE, "1.0", "이용약관", "2026-07-02T10:00:05")));
+        stubUrl(TermType.PRIVACY_POLICY, "1.1");
+        stubUrl(TermType.TERMS_OF_SERVICE, "1.0");
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.agreements[0].termType").value("PRIVACY_POLICY"))
-                .andExpect(jsonPath("$.body.agreements[0].version").value("2026-08-15"))
+                .andExpect(jsonPath("$.body.agreements[0].version").value("1.1"))
                 .andExpect(jsonPath("$.body.agreements[0].title").value("개인정보 처리방침"))
-                .andExpect(jsonPath("$.body.agreements[0].content").value("fixture-content"))
+                // 이력은 현재 버전이 아니라 동의한 버전의 page를 가리킨다(원문 key는 없다).
+                .andExpect(jsonPath("$.body.agreements[0].content").doesNotExist())
+                .andExpect(jsonPath("$.body.agreements[0].contentUrl")
+                        .value("https://laimory.app/terms/privacy-policy/1.1"))
                 .andExpect(jsonPath("$.body.agreements[0].required").value(true))
                 .andExpect(jsonPath("$.body.agreements[0].effectiveAt").value("2026-08-01T09:30:15"))
                 // 수락 시각도 offset 없는 KST 벽시계 문자열이다.
                 .andExpect(jsonPath("$.body.agreements[0].acceptedAt").value("2026-08-16T09:30:05"))
                 .andExpect(jsonPath("$.body.agreements[1].termType").value("TERMS_OF_SERVICE"))
+                .andExpect(jsonPath("$.body.agreements[1].contentUrl")
+                        .value("https://laimory.app/terms/terms-of-service/1.0"))
                 .andExpect(jsonPath("$.body.agreements[1].acceptedAt").value("2026-07-02T10:00:05"));
 
         verify(termAgreementService).getHistory("v1", USER_ID);
@@ -170,9 +183,14 @@ class TermAgreementControllerTest {
                 .andExpect(jsonPath("$.body.agreements").isEmpty());
     }
 
+    private void stubUrl(TermType type, String version) {
+        when(termContentUrlFactory.create(type, version))
+                .thenReturn(URI.create("https://laimory.app/terms/" + type.contentSlug() + "/" + version));
+    }
+
     private static TermAgreementHistoryEntry entry(TermType type, String version, String title,
                                                    String acceptedAt) {
-        TermDocument document = TermDocument.of(type, version, title, "fixture-content",
+        TermDocument document = TermDocument.of(type, version, title,
                 LocalDateTime.parse("2026-08-01T09:30:15"));
         TermAgreement agreement = BeanUtils.instantiateClass(TermAgreement.class);
         ReflectionTestUtils.setField(agreement, "userId", USER_ID);

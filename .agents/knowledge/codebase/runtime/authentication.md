@@ -63,9 +63,10 @@ controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` �
 allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·users GET /me·
 회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE). draft 생성·사진 presign은
 `@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
-필수 문서의 content 제외 summary + 동의 existence 1회 — 약관 원문은 요청마다 적재하지 않음)이고
-TTL cache가 없으며, catalog 미준비 stage(seed/activation 누락·
-mapping 불일치)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness` metric·bounded log 경보).
+필수 문서의 ID·종류·버전 summary + 동의 existence 1회)이고 TTL cache가 없으며, catalog 미준비
+stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal 때문에
+current 조회에서 빠진 경우)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness` metric·bounded
+log 경보).
 token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니다.
 
 구현된 로그인·token 기능:

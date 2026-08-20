@@ -1,7 +1,6 @@
 package com.laimory.server.terms.entity;
 
 import com.laimory.server.common.BaseEntity;
-import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -22,10 +21,9 @@ import lombok.Getter;
  * future version 사전 등록과 cutover를 효력 시각 한 축으로 관리한다. {@code effective_at}은
  * {@code Asia/Seoul} 벽시계 {@code LocalDateTime} 계약이다(offset 없음, {@code Instant} 매핑 금지).
  *
- * <p>{@code stage}/{@code required}/{@code display_order}는 {@link TermType} mapping의 denormalized
- * 사본이다 — 판정·응답은 enum을 쓰고, 불일치는 {@code TermCatalogReadiness}가 잘못된 seed로 경보한다.
- * {@code stage}를 {@link TermStage} enum이 아닌 String으로 매핑하는 이유: 이 컬럼의 소비자는 정합성
- * 검사뿐인데, enum 매핑이면 오타 seed 행 하나가 공개 조회 hydration 자체를 500으로 깨뜨린다.
+ * <p>이 행은 원문을 담지 않는다 — 약관 원문은 {@code laimory.app}에 게시된 버전별 정적 page가
+ * 소유하고 응답은 {@code TermContentUrlFactory}가 만든 URL만 내려준다(#320). 단계·필수 여부·화면
+ * 순서도 {@link TermType} mapping이 단일 권위라 컬럼으로 복제하지 않는다.
  */
 @Entity
 @Table(name = "term_documents")
@@ -41,26 +39,11 @@ public class TermDocument extends BaseEntity {
     @Column(name = "term_type", nullable = false, length = 64)
     private TermType termType;
 
-    /** denormalized 단계 literal — 정합성 검사 전용({@link TermType#stage()}가 판정 권위). */
-    @Column(name = "stage", nullable = false, length = 32)
-    private String stage;
-
     @Column(name = "version", nullable = false, length = 64)
     private String version;
 
     @Column(name = "title", nullable = false, length = 255)
     private String title;
-
-    @Column(name = "content", nullable = false, columnDefinition = "LONGTEXT")
-    private String content;
-
-    /** denormalized 필수 여부 — 정합성 검사 전용({@link TermType#required()}가 판정 권위). */
-    @Column(name = "required", nullable = false)
-    private Boolean required;
-
-    /** denormalized 화면 순서 — 정합성 확인용({@link TermType#displayOrder()}가 정렬 권위). */
-    @Column(name = "display_order", nullable = false)
-    private Integer displayOrder;
 
     /** 효력 시작 시각 — KST 벽시계. 같은 종류 안에서 UNIQUE(동시 최신 모호성 차단). */
     @Column(name = "effective_at", nullable = false)
@@ -69,21 +52,16 @@ public class TermDocument extends BaseEntity {
     protected TermDocument() {
     }
 
-    private TermDocument(TermType termType, String version, String title, String content,
-                         LocalDateTime effectiveAt) {
+    private TermDocument(TermType termType, String version, String title, LocalDateTime effectiveAt) {
         this.termType = termType;
-        this.stage = termType.stage().name();
         this.version = version;
         this.title = title;
-        this.content = content;
-        this.required = termType.required();
-        this.displayOrder = termType.displayOrder();
         this.effectiveAt = effectiveAt;
     }
 
-    /** enum mapping과 일치하는 denormalized 값으로 새 버전 행을 만든다(테스트·초기화 도구용). */
-    public static TermDocument of(TermType termType, String version, String title, String content,
+    /** 새 버전 행을 만든다(테스트·초기화 도구용). */
+    public static TermDocument of(TermType termType, String version, String title,
                                   LocalDateTime effectiveAt) {
-        return new TermDocument(termType, version, title, content, effectiveAt);
+        return new TermDocument(termType, version, title, effectiveAt);
     }
 }

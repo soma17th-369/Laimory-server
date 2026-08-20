@@ -52,10 +52,10 @@ class TermDocumentServiceTest {
     void results_areSortedByEnumDisplayOrder_notDbOrder() {
         Clock clock = Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC);
         TermDocumentService service = new TermDocumentService(termDocumentRepository, clock);
-        TermDocument privacy = TermDocument.of(TermType.PRIVACY_POLICY, "v1", "개인정보 처리방침",
-                "fixture-content", LocalDateTime.parse("2026-08-01T00:00:00"));
-        TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "v1", "이용약관",
-                "fixture-content", LocalDateTime.parse("2026-08-01T00:00:00"));
+        TermDocument privacy = TermDocument.of(TermType.PRIVACY_POLICY, "1.0", "개인정보 처리방침",
+                LocalDateTime.parse("2026-08-01T00:00:00"));
+        TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관",
+                LocalDateTime.parse("2026-08-01T00:00:00"));
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
                 .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도
 
@@ -65,14 +65,12 @@ class TermDocumentServiceTest {
     }
 
     @Test
-    void summaries_useContentFreeProjection_sortedByEnumDisplayOrder() {
-        // enforcement/readiness 경로 — LONGTEXT content 없는 summary 쿼리에 위임하고 화면 순서로 정렬한다.
+    void summaries_useIdentityProjection_sortedByEnumDisplayOrder() {
+        // enforcement/readiness 경로 — 판정에 쓰는 식별 요약 쿼리에 위임하고 화면 순서로 정렬한다.
         TermDocumentService service = new TermDocumentService(termDocumentRepository,
                 Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
-        TermDocumentSummary privacy = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY,
-                "LOGIN", true, "v1");
-        TermDocumentSummary terms = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE,
-                "LOGIN", true, "v1");
+        TermDocumentSummary privacy = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "1.0");
+        TermDocumentSummary terms = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0");
         LocalDateTime nowKst = LocalDateTime.parse("2026-08-15T09:00:00");
         when(termDocumentRepository.findCurrentDocumentSummaries(TermType.typesOf(TermStage.LOGIN), nowKst))
                 .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도

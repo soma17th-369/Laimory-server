@@ -13,7 +13,8 @@ import lombok.Getter;
 /**
  * 회원의 약관 버전 동의 이력 한 건 — {@code (user_id, term_document_id)}당 1행이다.
  *
- * <p>문서 버전이 불변이므로 이 행이 "언제 어떤 내용에 동의했는지"의 권위 기록이다. 같은 버전 재동의는
+ * <p>문서 버전이 불변이므로 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이다 — 그 버전의 원문은
+ * 불변 URL로 게시된 page가 재현한다(#320). 같은 버전 재동의는
  * 새 행을 만들지도 {@code accepted_at}을 덮어쓰지도 않는다(멱등 — native insert-if-absent).
  *
  * <p>쓰기는 repository의 native {@code INSERT IGNORE}뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert

@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 /**
  * 약관 문서 조회 — 종류별 현재 버전({@code effectiveAt <= now(KST)} 최신 행) 계산의 단일 지점.
  *
- * <p>단계 소속·정렬은 DB {@code stage}/{@code display_order}가 아니라 {@link TermType} mapping을 쓴다.
+ * <p>단계 소속·정렬은 {@link TermType} mapping이 권위다(DB는 이 값을 복제하지 않는다).
  * 현재 유효 문서가 없는 종류는 결과에서 빠진다 — rollout/activation 준비 상태의 정상 부분 결과이며
  * 공개 조회를 500으로 만들지 않는다(누락 경보는 {@code TermCatalogReadiness} 소유).
  */
@@ -44,8 +44,8 @@ public class TermDocumentService {
     }
 
     /**
-     * 지정 종류들의 현재 문서 content 제외 요약(화면 순서 정렬) — enforcement/readiness/동의 버전 검증용.
-     * LOGIN gate가 모든 {@code /a/api} 요청에서 호출하므로 {@code LONGTEXT} 원문을 함께 적재하지 않는다.
+     * 지정 종류들의 현재 문서 식별 요약(화면 순서 정렬) — enforcement/readiness/동의 버전 검증용.
+     * LOGIN gate가 모든 {@code /a/api} 요청에서 호출하므로 판정에 쓰는 컬럼만 투영한다.
      */
     public List<TermDocumentSummary> findCurrentSummaries(Collection<TermType> termTypes, LocalDateTime nowKst) {
         if (termTypes.isEmpty()) {

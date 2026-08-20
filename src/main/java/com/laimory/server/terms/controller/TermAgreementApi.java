@@ -61,7 +61,8 @@ public interface TermAgreementApi {
 
     @Operation(summary = "내 동의 이력 조회",
             description = "인증 회원에게 남아 있는 전체 동의 이력을 최신 수락 순으로 반환한다. 약관 문서 "
-                    + "버전이 불변이므로 각 항목이 \"언제 어떤 내용에 동의했는지\"의 권위 기록이다. "
+                    + "버전이 불변이므로 각 항목이 \"언제 어떤 버전에 동의했는지\"의 권위 기록이다. "
+                    + "동의 당시 원문은 항목의 contentUrl(그 버전의 불변 page)이 재현한다. "
                     + "이력이 없으면 404가 아니라 빈 배열이다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",

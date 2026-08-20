@@ -23,19 +23,19 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 mapping 정합성의 단일 판정 지점.
+ * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 종류 커버리지의 단일 판정 지점.
  *
- * <p>기동 시 다섯 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code (termType, stage, required)} 일치를
- * 검사하고, 누락·불일치·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
+ * <p>기동 시 다섯 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code term_type} literal 유효성을
+ * 검사하고, 누락·미지 literal·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
  * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
- * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·mapping
- * 불일치) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge/counter는 수위와 무관하게 동일하게
+ * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·미지
+ * literal) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge/counter는 수위와 무관하게 동일하게
  * 기록한다(대시보드 추적).
  *
  * <p>runtime enforcement는 요청마다 {@link #checkStage(TermStage, LocalDateTime)}로 DB 권위를 직접
  * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). 기대 필수 종류 중 하나라도 current 문서가
- * 없거나 mapping이 불일치한 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage
- * 전체를 fail-open하고, 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다.
+ * 없는 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage 전체를 fail-open하고,
+ * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다.
  *
  * <p>로그는 상태 전이에서만 남기고(bounded — 요청마다 반복하지 않음) 발생 빈도는
  * {@code laimory.terms.gate.fail_open} counter와 {@code laimory.terms.catalog.ready} gauge가 담당한다.
@@ -85,21 +85,18 @@ public class TermCatalogReadiness {
 
     /**
      * stage 준비 상태와 현재 필수 문서 집합을 함께 계산한다. 준비 조건:
-     * 기대 필수 종류 전부에 현재 문서가 있고, stage의 현재 문서 전부가 enum mapping과 일치한다.
+     * 기대 필수 종류 전부에 현재 문서가 있다.
      */
     public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
-        // 요청마다 도는 판정이라 content 제외 요약만 조회한다(LONGTEXT 원문 미적재).
+        // 요청마다 도는 판정이라 판정에 쓰는 식별 요약만 조회한다.
         List<TermDocumentSummary> currentDocuments = termDocumentService.findCurrentSummaries(
                 TermType.typesOf(stage), nowKst);
 
-        boolean mappingConsistent = currentDocuments.stream()
-                .allMatch(TermCatalogReadiness::matchesEnumMapping);
         Set<TermType> currentTypes = currentDocuments.stream()
                 .map(TermDocumentSummary::termType)
                 .collect(Collectors.toSet());
-        boolean requiredCovered = currentTypes.containsAll(TermType.requiredTypesOf(stage));
 
-        boolean ready = mappingConsistent && requiredCovered;
+        boolean ready = currentTypes.containsAll(TermType.requiredTypesOf(stage));
         publishStageState(stage, ready, currentDocuments.isEmpty());
         List<TermDocumentSummary> currentRequired = currentDocuments.stream()
                 .filter(summary -> summary.termType().required())
@@ -112,7 +109,7 @@ public class TermCatalogReadiness {
         failOpenCounters.get(stage).increment();
     }
 
-    /** 기동 정합성 검사 — seed 누락·mapping 불일치·stage 미준비를 경보하되 기동은 막지 않는다. */
+    /** 기동 정합성 검사 — seed 누락·미지 literal·stage 미준비를 경보하되 기동은 막지 않는다. */
     @EventListener(ApplicationReadyEvent.class)
     public void verifyCatalogOnStartup() {
         List<String> problems = new ArrayList<>();
@@ -134,8 +131,7 @@ public class TermCatalogReadiness {
             LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
             for (TermStage stage : TermStage.values()) {
                 if (!checkStage(stage, nowKst).ready()) {
-                    problems.add("stage not ready (incomplete current required set or mapping mismatch): "
-                            + stage.name());
+                    problems.add("stage not ready (incomplete current required set): " + stage.name());
                 }
             }
         } catch (RuntimeException e) {
@@ -147,7 +143,7 @@ public class TermCatalogReadiness {
             // 아니라 WARN 1줄로만 알린다(반복 기동 경보 소음 방지). 행이 하나라도 생기면 아래 ERROR 경로다.
             log.warn("term catalog not seeded yet — enforcement fails open until activation (pre-activation state)");
         } else if (problems.isEmpty()) {
-            log.info("term catalog verified: all {} term types seeded and consistent", TermType.values().length);
+            log.info("term catalog verified: all {} term types seeded", TermType.values().length);
         } else {
             // 경보 1줄(bounded) — 기동·공개 조회는 계속되고 미준비 stage의 gate는 fail-open된다.
             log.error("term catalog inconsistent: {}", String.join("; ", problems));
@@ -155,26 +151,11 @@ public class TermCatalogReadiness {
     }
 
     private static void validateRow(TermDocumentRepository.TermCatalogRow row, List<String> problems) {
-        TermType type;
         try {
-            type = TermType.valueOf(row.getTermType());
+            TermType.valueOf(row.getTermType());
         } catch (IllegalArgumentException e) {
             problems.add("unknown termType literal in term_documents: " + row.getTermType());
-            return;
         }
-        if (!type.stage().name().equals(row.getStage()) || row.getRequired() == null
-                || type.required() != row.getRequired()) {
-            problems.add("mapping mismatch for termType=" + type.name()
-                    + " (db stage=" + row.getStage() + ", db required=" + row.getRequired()
-                    + ", expected stage=" + type.stage().name() + ", expected required=" + type.required() + ")");
-        }
-    }
-
-    private static boolean matchesEnumMapping(TermDocumentSummary summary) {
-        TermType type = summary.termType();
-        return type.stage().name().equals(summary.stage())
-                && summary.required() != null
-                && summary.required() == type.required();
     }
 
     /**

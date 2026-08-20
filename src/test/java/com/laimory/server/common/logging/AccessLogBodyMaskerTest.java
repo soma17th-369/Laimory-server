@@ -139,8 +139,8 @@ class AccessLogBodyMaskerTest {
                 "/a/api/v3/timeline/daily-records/2026-08-11",
                 "/a/api/v1/timeline/daily-records/by-id/42",
                 "/a/api/v1/timeline/events/42",
-                "/api/v1/terms",                               // 약관 원문 전체(공개 조회)
-                "/a/api/v1/terms/agreements");                 // 약관 원문 전체(동의 이력)
+                "/api/v1/terms",                               // 약관 목록(공개 조회)
+                "/a/api/v1/terms/agreements");                 // 약관 동의 이력
     }
 
     @Test
@@ -248,17 +248,35 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
-    void termsResponseMasksLegalTextButKeepsStructure() {
+    void termsResponseMasksTitleAndContentUrlButKeepsStructure() {
+        // 응답에 법률 원문은 더 이상 없지만(#320) title·contentUrl은 allowlist 밖이라 그대로 마스크된다 —
+        // 실제 URL 값이 log preview에 남지 않는다(종류·버전은 구조 필드로 남아 추적에 충분하다).
         String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"terms\":[{"
-                + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\",\"title\":\"이용약관\","
-                + "\"content\":\"제1조 RAW_TERMS_312_NEVER_LOG\",\"required\":true,"
-                + "\"effectiveAt\":\"2026-08-15T00:00:00\"}]}}";
+                + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"1.0\",\"title\":\"이용약관\","
+                + "\"contentUrl\":\"https://laimory.app/terms/terms-of-service/1.0\",\"required\":true,"
+                + "\"effectiveAt\":\"2026-09-01T00:00:00\"}]}}";
 
         assertThat(maskGetResponse("/api/v1/terms", raw))
                 .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"terms\":[{"
-                        + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\",\"title\":\"***\","
-                        + "\"content\":\"***\",\"required\":true,\"effectiveAt\":\"2026-08-15T00:00:00\"}]}}")
-                .doesNotContain("RAW_TERMS_312_NEVER_LOG");
+                        + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"1.0\",\"title\":\"***\","
+                        + "\"contentUrl\":\"***\",\"required\":true,"
+                        + "\"effectiveAt\":\"2026-09-01T00:00:00\"}]}}")
+                .doesNotContain("laimory.app");
+    }
+
+    @Test
+    void agreementHistoryResponseMasksContentUrl() {
+        String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"agreements\":[{"
+                + "\"termType\":\"PRIVACY_POLICY\",\"version\":\"1.0\",\"title\":\"개인정보 처리방침\","
+                + "\"contentUrl\":\"https://laimory.app/terms/privacy-policy/1.0\",\"required\":true,"
+                + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}";
+
+        assertThat(maskGetResponse("/a/api/v1/terms/agreements", raw))
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"agreements\":[{"
+                        + "\"termType\":\"PRIVACY_POLICY\",\"version\":\"1.0\",\"title\":\"***\","
+                        + "\"contentUrl\":\"***\",\"required\":true,"
+                        + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}")
+                .doesNotContain("laimory.app");
     }
 
     @Test
@@ -306,9 +324,9 @@ class AccessLogBodyMaskerTest {
     void termAgreementPostRequestKeepsFieldLevelMasking() {
         // 동의 POST request에는 약관 원문이 없고 type/version뿐 — 전체 치환 대상이 아니라 일반 JSON 규칙이다.
         assertThat(maskRequest("POST", "/a/api/v1/terms/agreements",
-                "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}"))
+                "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"1.0\"}]}"))
                 .contains("\"termType\":\"TERMS_OF_SERVICE\"")
-                .contains("\"version\":\"2026-08-15\"");
+                .contains("\"version\":\"1.0\"");
         // 같은 경로라도 GET response만 전체 치환된다(위 privacyResponsePaths 참여) — POST response는 body=null이라 대상 아님.
         assertThat(masker.maskResponse(new MockHttpServletRequest("POST", "/a/api/v1/terms/agreements"),
                 jsonResponse(), bytes("{\"header\":{\"code\":0}}"), false))
