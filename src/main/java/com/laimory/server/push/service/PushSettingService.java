@@ -26,8 +26,8 @@ public class PushSettingService {
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
     /**
-     * 서버 권위 상태 조회 — 순수 읽기다. 설정 행이 아직 없는 사용자에게는 기본값을 답하고 행을 만들지
-     * 않는다(만들어도 값이 같다). 행은 가입 transaction과 rollout backfill이 만든다.
+     * 서버 권위 상태 조회 — 순수 읽기다. 설정 행이 없으면 기본값으로 가리지 않고 던진다(조회·발송·쓰기가
+     * 한 방향을 가리킨다). 행은 가입 transaction과 rollout backfill이 만든다.
      */
     public PushSettingsResponse getSettings(String applicationVersion, UUID subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
@@ -40,7 +40,7 @@ public class PushSettingService {
                         TIME_FORMAT.format(dailyReminder.notificationTime())));
     }
 
-    /** 전체 푸시 마스터 ON/OFF — 종류별 설정값·시각은 보존한다. */
+    /** 예정 알림 마스터 ON/OFF — 종류별 설정값·시각은 보존한다. */
     public void updatePushEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         pushPreferenceService.updatePushEnabled(subjectId, requireEnabled(enabled));
