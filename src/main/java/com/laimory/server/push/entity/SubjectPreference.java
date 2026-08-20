@@ -19,9 +19,9 @@ import org.hibernate.type.SqlTypes;
  * {@code ddl-auto=validate} 검증용 read model이다.
  */
 @Entity
-@Table(name = "push_preferences")
+@Table(name = "subject_preferences")
 @Getter
-public class PushPreference extends BaseEntity {
+public class SubjectPreference extends BaseEntity {
 
     @Id
     @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -32,6 +32,6 @@ public class PushPreference extends BaseEntity {
     @Column(name = "push_enabled", nullable = false)
     private boolean pushEnabled;
 
-    protected PushPreference() {
+    protected SubjectPreference() {
     }
 }

@@ -31,7 +31,7 @@ public class DailyReminderPushNotifier {
 
     private static final ScheduledNotificationType TYPE = ScheduledNotificationType.DAILY_REMINDER;
 
-    private final PushPreferenceService pushPreferenceService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final PushRegistrationService pushRegistrationService;
     private final PushMessageSender pushMessageSender;
     private final PushMetrics pushMetrics;
@@ -47,7 +47,7 @@ public class DailyReminderPushNotifier {
             return BatchOutcome.empty();
         }
         List<UUID> subjectIds = ScheduledNotificationPreferenceService.subjectIdsOf(deliverable);
-        Map<UUID, Boolean> masters = pushPreferenceService.findPushEnabledBySubjectIds(subjectIds);
+        Map<UUID, Boolean> masters = subjectPreferenceService.findPushEnabledBySubjectIds(subjectIds);
         List<UUID> eligible = subjectIds.stream()
                 // 마스터 행이 없으면 제외한다 — 예정 발송에 기본값을 추정하지 않는다.
                 .filter(subjectId -> Boolean.TRUE.equals(masters.get(subjectId)))

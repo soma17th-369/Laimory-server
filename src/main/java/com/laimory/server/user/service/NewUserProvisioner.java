@@ -1,8 +1,8 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.UserRepository;
@@ -30,7 +30,7 @@ public class NewUserProvisioner {
 
     private final UserRepository userRepository;
     private final SubjectMappingService subjectMappingService;
-    private final PushPreferenceService pushPreferenceService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
     /**
@@ -46,7 +46,7 @@ public class NewUserProvisioner {
     public User provision(Provider provider, String providerUserId, String email, String nickname) {
         User user = userRepository.saveAndFlush(User.of(provider, providerUserId, email, nickname));
         UUID subjectId = subjectMappingService.createFor(user.getUserId());
-        pushPreferenceService.createDefaultIfAbsent(subjectId);
+        subjectPreferenceService.createDefaultIfAbsent(subjectId);
         scheduledNotificationPreferenceService.createDefaultIfAbsent(
                 subjectId, ScheduledNotificationType.DAILY_REMINDER);
         return user;

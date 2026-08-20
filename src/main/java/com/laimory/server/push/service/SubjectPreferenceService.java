@@ -1,8 +1,8 @@
 package com.laimory.server.push.service;
 
 import com.laimory.server.push.PushTimes;
-import com.laimory.server.push.entity.PushPreference;
-import com.laimory.server.push.repository.PushPreferenceRepository;
+import com.laimory.server.push.entity.SubjectPreference;
+import com.laimory.server.push.repository.SubjectPreferenceRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -23,23 +23,23 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
-public class PushPreferenceService {
+public class SubjectPreferenceService {
 
     static final boolean DEFAULT_PUSH_ENABLED = true;
 
-    private final PushPreferenceRepository pushPreferenceRepository;
+    private final SubjectPreferenceRepository subjectPreferenceRepository;
     private final Clock clock;
 
     /** 가입 transaction 합류용 기본 ON 행 생성. 이미 있으면 no-op(멱등). */
     public void createDefaultIfAbsent(UUID subjectId) {
-        pushPreferenceRepository.insertIfAbsent(subjectId.toString(), DEFAULT_PUSH_ENABLED, auditNow());
+        subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), DEFAULT_PUSH_ENABLED, auditNow());
     }
 
     /** 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 쓰기와 같은 이유로 던진다. */
     public boolean findPushEnabled(UUID subjectId) {
-        return pushPreferenceRepository.findById(subjectId)
-                .map(PushPreference::isPushEnabled)
-                .orElseThrow(() -> new IllegalStateException("push preference row is missing"));
+        return subjectPreferenceRepository.findById(subjectId)
+                .map(SubjectPreference::isPushEnabled)
+                .orElseThrow(() -> new IllegalStateException("subject preference row is missing"));
     }
 
     /**
@@ -49,8 +49,8 @@ public class PushPreferenceService {
      * 0행은 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
      */
     public void updatePushEnabled(UUID subjectId, boolean pushEnabled) {
-        if (pushPreferenceRepository.updatePushEnabled(subjectId, pushEnabled) == 0) {
-            throw new IllegalStateException("push preference row is missing");
+        if (subjectPreferenceRepository.updatePushEnabled(subjectId, pushEnabled) == 0) {
+            throw new IllegalStateException("subject preference row is missing");
         }
     }
 
@@ -62,15 +62,15 @@ public class PushPreferenceService {
         if (subjectIds.isEmpty()) {
             return Map.of();
         }
-        List<PushPreference> preferences = pushPreferenceRepository.findAllBySubjectIdIn(subjectIds);
+        List<SubjectPreference> preferences = subjectPreferenceRepository.findAllBySubjectIdIn(subjectIds);
         return preferences.stream()
-                .collect(Collectors.toMap(PushPreference::getSubjectId, PushPreference::isPushEnabled,
+                .collect(Collectors.toMap(SubjectPreference::getSubjectId, SubjectPreference::isPushEnabled,
                         (first, second) -> first));
     }
 
     /** 탈퇴 transaction 합류용 — 종류별 행 삭제 뒤에 호출한다(FK RESTRICT). */
     public void deleteForSubject(UUID subjectId) {
-        pushPreferenceRepository.deleteBySubjectId(subjectId);
+        subjectPreferenceRepository.deleteBySubjectId(subjectId);
     }
 
     private LocalDateTime auditNow() {

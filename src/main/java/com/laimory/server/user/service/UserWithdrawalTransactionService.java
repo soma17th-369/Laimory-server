@@ -3,9 +3,9 @@ package com.laimory.server.user.service;
 import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.push.service.PushPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -41,7 +41,7 @@ public class UserWithdrawalTransactionService {
     private final RefreshTokenService refreshTokenService;
     private final PushRegistrationService pushRegistrationService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
-    private final PushPreferenceService pushPreferenceService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final AccountErasureJobService accountErasureJobService;
     private final Clock clock;
 
@@ -60,7 +60,7 @@ public class UserWithdrawalTransactionService {
         pushRegistrationService.unregisterAllForSubject(subjectId);
         // 종류별 설정 → 마스터 순서를 지킨다(FK RESTRICT).
         scheduledNotificationPreferenceService.deleteAllForSubject(subjectId);
-        pushPreferenceService.deleteForSubject(subjectId);
+        subjectPreferenceService.deleteForSubject(subjectId);
         accountErasureJobService.enqueue(userId);
     }
 }

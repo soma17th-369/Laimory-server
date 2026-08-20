@@ -44,7 +44,7 @@ class DailyReminderPushNotifierTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-21T12:00:00Z"), ZoneOffset.UTC);
 
     @Mock
-    private PushPreferenceService pushPreferenceService;
+    private SubjectPreferenceService subjectPreferenceService;
     @Mock
     private PushRegistrationService pushRegistrationService;
     @Mock
@@ -56,7 +56,7 @@ class DailyReminderPushNotifierTest {
     private ArgumentCaptor<List<String>> targetsCaptor;
 
     private DailyReminderPushNotifier notifier() {
-        return new DailyReminderPushNotifier(pushPreferenceService, pushRegistrationService,
+        return new DailyReminderPushNotifier(subjectPreferenceService, pushRegistrationService,
                 pushMessageSender, pushMetrics, CLOCK);
     }
 
@@ -73,7 +73,7 @@ class DailyReminderPushNotifierTest {
 
     @Test
     void sendsToActiveFidsOfSubjectsWithMasterEnabled() {
-        when(pushPreferenceService.findPushEnabledBySubjectIds(any()))
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any()))
                 .thenReturn(Map.of(SUBJECT_A, true, SUBJECT_B, false));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(List.of(SUBJECT_A)))
                 .thenReturn(List.of("fid-a1", "fid-a2"));
@@ -94,7 +94,7 @@ class DailyReminderPushNotifierTest {
     @Test
     void masterRowMissing_isExcludedInsteadOfAssumedEnabled() {
         // 예정 발송은 rollout 공백을 ON으로 추정하지 않는다.
-        when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of());
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of());
 
         DailyReminderPushNotifier.BatchOutcome outcome = notifier().notifyAll(List.of(claimed(SUBJECT_A)));
 
@@ -105,7 +105,7 @@ class DailyReminderPushNotifierTest {
 
     @Test
     void usesDailyReminderMessageWithRoutingDataOnly() {
-        when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any()))
                 .thenReturn(List.of("fid-a"));
         when(pushMessageSender.send(any(), anyList())).thenReturn(new PushSendResult(1, 1, 0, List.of()));
@@ -120,7 +120,7 @@ class DailyReminderPushNotifierTest {
 
     @Test
     void noTargets_skipsSendEntirely() {
-        when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any())).thenReturn(List.of());
 
         DailyReminderPushNotifier.BatchOutcome outcome = notifier().notifyAll(List.of(claimed(SUBJECT_A)));
@@ -131,7 +131,7 @@ class DailyReminderPushNotifierTest {
 
     @Test
     void invalidTargetsAreCleanedUpWithSnapshotGuard() {
-        when(pushPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
         when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any()))
                 .thenReturn(List.of("fid-a"));
         when(pushMessageSender.send(any(), anyList()))
@@ -146,6 +146,6 @@ class DailyReminderPushNotifierTest {
     void emptyBatch_doesNothing() {
         assertThat(notifier().notifyAll(List.of()).targets()).isZero();
 
-        verify(pushPreferenceService, never()).findPushEnabledBySubjectIds(anyCollection());
+        verify(subjectPreferenceService, never()).findPushEnabledBySubjectIds(anyCollection());
     }
 }

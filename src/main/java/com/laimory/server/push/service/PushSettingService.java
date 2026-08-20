@@ -22,7 +22,7 @@ public class PushSettingService {
      */
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
-    private final PushPreferenceService pushPreferenceService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
 
     /**
@@ -34,7 +34,7 @@ public class PushSettingService {
         ScheduledNotificationPreferenceService.Settings dailyReminder =
                 scheduledNotificationPreferenceService.findSettings(subjectId, DAILY_REMINDER);
         return new PushSettingsResponse(
-                pushPreferenceService.findPushEnabled(subjectId),
+                subjectPreferenceService.findPushEnabled(subjectId),
                 new PushSettingsResponse.DailyReminder(
                         dailyReminder.enabled(),
                         TIME_FORMAT.format(dailyReminder.notificationTime())));
@@ -43,7 +43,7 @@ public class PushSettingService {
     /** 예정 알림 마스터 ON/OFF — 종류별 설정값·시각은 보존한다. */
     public void updatePushEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        pushPreferenceService.updatePushEnabled(subjectId, requireEnabled(enabled));
+        subjectPreferenceService.updatePushEnabled(subjectId, requireEnabled(enabled));
     }
 
     /** 일일 리마인더 ON/OFF — 기본이 ON이라 이 쓰기는 사용자가 끄는(또는 다시 켜는) 유일한 수단이다. */

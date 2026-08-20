@@ -59,7 +59,7 @@ class PushNotificationPreferencePersistenceIntegrationTest {
             TestSubjects.id(92_004L), TestSubjects.id(92_005L), TestSubjects.id(92_006L));
 
     @Autowired
-    private PushPreferenceRepository pushPreferenceRepository;
+    private SubjectPreferenceRepository subjectPreferenceRepository;
 
     @Autowired
     private ScheduledNotificationPreferenceRepository scheduledNotificationPreferenceRepository;
@@ -79,13 +79,13 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         for (UUID subjectId : SUBJECTS) {
             jdbcTemplate.update("DELETE FROM scheduled_notification_preferences WHERE subject_id = ?",
                     subjectId.toString());
-            jdbcTemplate.update("DELETE FROM push_preferences WHERE subject_id = ?", subjectId.toString());
+            jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());
         }
     }
 
     private void givenSubject(UUID subjectId) {
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
-        pushPreferenceRepository.insertIfAbsent(subjectId.toString(), true, LocalDateTime.now());
+        subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, LocalDateTime.now());
     }
 
     private void givenDueSchedule(UUID subjectId, LocalDateTime nextDueAt) {
@@ -113,15 +113,15 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
         LocalDateTime now = LocalDateTime.of(2026, 7, 21, 12, 0);
 
-        assertThat(pushPreferenceRepository.insertIfAbsent(subjectId.toString(), true, now)).isEqualTo(1);
-        assertThat(pushPreferenceRepository.insertIfAbsent(subjectId.toString(), false, now)).isZero();
+        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, now)).isEqualTo(1);
+        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), false, now)).isZero();
         assertThat(scheduledNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(), TYPE.name(),
                 false, LocalTime.of(21, 0), LocalDateTime.of(2026, 7, 21, 21, 0), now)).isEqualTo(1);
         assertThat(scheduledNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(), TYPE.name(),
                 true, LocalTime.of(9, 0), LocalDateTime.of(2026, 7, 21, 9, 0), now)).isZero();
 
         // 재실행이 기존 값을 덮지 않는다 — 두 단계 rollout backfill을 몇 번 돌려도 안전하다.
-        assertThat(pushPreferenceRepository.findById(subjectId).orElseThrow().isPushEnabled()).isTrue();
+        assertThat(subjectPreferenceRepository.findById(subjectId).orElseThrow().isPushEnabled()).isTrue();
         assertThat(reload(subjectId).isEnabled()).isFalse();
         assertThat(reload(subjectId).getNotificationTime()).isEqualTo(LocalTime.of(21, 0));
     }
@@ -227,7 +227,7 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
         assertThatThrownBy(() -> pushSettingService.updateDailyReminderEnabled("v1", subjectId, true))
                 .isInstanceOf(IllegalStateException.class);
-        assertThat(pushPreferenceRepository.findById(subjectId)).isEmpty();
+        assertThat(subjectPreferenceRepository.findById(subjectId)).isEmpty();
     }
 
     @Test
@@ -265,12 +265,12 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         assertThat(catchDeleteFailure(subjectId)).isTrue();
 
         assertThat(scheduledNotificationPreferenceRepository.deleteAllBySubjectId(subjectId)).isEqualTo(1);
-        assertThat(pushPreferenceRepository.deleteBySubjectId(subjectId)).isEqualTo(1);
+        assertThat(subjectPreferenceRepository.deleteBySubjectId(subjectId)).isEqualTo(1);
     }
 
     private boolean catchDeleteFailure(UUID subjectId) {
         try {
-            pushPreferenceRepository.deleteBySubjectId(subjectId);
+            subjectPreferenceRepository.deleteBySubjectId(subjectId);
             return false;
         } catch (RuntimeException e) {
             return true;

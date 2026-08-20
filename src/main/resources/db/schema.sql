@@ -304,10 +304,12 @@ CREATE TABLE IF NOT EXISTS term_agreements (
 
 -- ── 푸시 수신 설정(#314) ──
 
--- subject별 FCM 전체 수신 마스터. 정보성·광고성을 가리지 않는 최상위 ON/OFF이며 기본은 ON이다.
+-- subject 축 설정 버킷(subject당 한 행). worker·배치가 subject만 들고 읽는 설정이 늘어도 컬럼 2개짜리
+-- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 예정 알림 마스터 하나뿐이다.
+-- push_enabled는 예정 알림 전체 ON/OFF이며 기본은 ON이다(타임라인 완료 통지는 이 스위치를 읽지 않는다).
 -- 알림 종류가 늘어도 컬럼을 추가하지 않는다(종류별 값은 scheduled_notification_preferences 행이 소유).
 -- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 탈퇴가 명시 삭제 소유).
-CREATE TABLE IF NOT EXISTS push_preferences (
+CREATE TABLE IF NOT EXISTS subject_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
@@ -315,7 +317,7 @@ CREATE TABLE IF NOT EXISTS push_preferences (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (subject_id),
-    CONSTRAINT fk_push_preferences_subject
+    CONSTRAINT fk_subject_preferences_subject
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -337,7 +339,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notification_preferences (
     -- worker due claim 스캔 축(종류 → 활성 → 예정 시각). subject_id는 covering tie-breaker다.
     KEY idx_scheduled_notification_preferences_due (notification_type, enabled, next_due_at, subject_id),
     CONSTRAINT fk_scheduled_notification_preferences_master
-        FOREIGN KEY (subject_id) REFERENCES push_preferences (subject_id) ON DELETE RESTRICT
+        FOREIGN KEY (subject_id) REFERENCES subject_preferences (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,

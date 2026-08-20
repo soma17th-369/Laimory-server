@@ -30,11 +30,11 @@ class PushSettingServiceTest {
     private static final ScheduledNotificationType TYPE = ScheduledNotificationType.DAILY_REMINDER;
 
     @Mock
-    private PushPreferenceService pushPreferenceService;
+    private SubjectPreferenceService subjectPreferenceService;
     @Mock
     private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
     private PushSettingService service() {
-        return new PushSettingService(pushPreferenceService, scheduledNotificationPreferenceService);
+        return new PushSettingService(subjectPreferenceService, scheduledNotificationPreferenceService);
     }
 
     private void givenSettings(boolean enabled, LocalTime time) {
@@ -48,7 +48,7 @@ class PushSettingServiceTest {
     void updatePushEnabled_delegatesToMasterOnly() {
         service().updatePushEnabled("v1", SUBJECT_ID, false);
 
-        verify(pushPreferenceService).updatePushEnabled(SUBJECT_ID, false);
+        verify(subjectPreferenceService).updatePushEnabled(SUBJECT_ID, false);
         verify(scheduledNotificationPreferenceService, never()).updateEnabled(any(), any(), anyBoolean());
     }
 
@@ -56,7 +56,7 @@ class PushSettingServiceTest {
     void updatePushEnabled_nullBody_isRejected() {
         assertThatThrownBy(() -> service().updatePushEnabled("v1", SUBJECT_ID, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(pushPreferenceService, never()).updatePushEnabled(any(), anyBoolean());
+        verify(subjectPreferenceService, never()).updatePushEnabled(any(), anyBoolean());
     }
 
     // --- 리마인더 토글 ---
@@ -89,7 +89,7 @@ class PushSettingServiceTest {
 
     @Test
     void getSettings_returnsServerAuthoritativeStateWithConfirmedClassification() {
-        when(pushPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
+        when(subjectPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
         givenSettings(true, LocalTime.of(21, 0));
 
         PushSettingsResponse response = service().getSettings("v1", SUBJECT_ID);

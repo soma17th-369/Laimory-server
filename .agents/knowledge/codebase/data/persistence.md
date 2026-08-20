@@ -38,8 +38,8 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
-- `push_preferences → scheduled_notification_preferences` (#314 — subject별 전체 푸시 마스터와
-  알림 종류별 ON/OFF·시각·occurrence 스케줄 상태)
+- `subject_preferences → scheduled_notification_preferences` (#314·#318 — subject 축 설정 버킷이
+  담은 예정 알림 마스터와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -48,8 +48,13 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/workflows/deploy.yml` — 구 컨테이너
 중단 후 새 컨테이너 기동), 스키마 변경 PR의 live DDL은 **머지 전에** dev DB에 적용해야 한다.
 미적용 상태로 머지하면 새 앱이 `ddl-auto=validate` 기동 실패로 dev가 다운된다.
+테이블 rename은 구 컨테이너를 즉시 깨뜨리므로(옛 이름 매핑이 table not found) 선적용이 아니라 구 컨테이너
+중단~신 컨테이너 기동 사이에 실행해야 한다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
+**제약 이름은 옛 이름 그대로 남기므로**, `schema.sql`의 제약 이름을 함께 바꿨다면 `ALTER TABLE ... DROP
+FOREIGN KEY ... ADD CONSTRAINT ...` 한 문장을 따로 실행해야 신규 DB와 기존 DB가 같아진다(이 ALTER는
+애플리케이션이 제약 이름을 읽지 않으므로 cutover 창 밖에서 실행해도 안전하다).
 
-#314의 두 subject 축 테이블(`push_preferences`·`scheduled_notification_preferences`)은 DDL만으로
+#314의 두 subject 축 테이블(`subject_preferences`·`scheduled_notification_preferences`)은 DDL만으로
 끝나지 않는다. 가입 transaction이 신규 회원의 기본 행을 만들지만
 기존 subject에는 backfill이 필요하고, DDL 선적용~컨테이너 교체 사이에 가입한 회원은 구버전 코드가
 설정 행 없이 만든다. 그래서 rollout은 **두 단계 insert-if-absent backfill**이다 — ① 구 컨테이너가 도는
@@ -152,7 +157,7 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
 삭제로 수렴한다.
 
-`push_preferences`·`scheduled_notification_preferences`(#314)는 푸시 수신 설정을 두 축으로 나눈다.
+`subject_preferences`·`scheduled_notification_preferences`(#314)는 푸시 수신 설정을 두 축으로 나눈다.
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 종류별 설정은 `(subject_id, notification_type)`
 복합 PK라 새 리텐션 알림이 컬럼이 아니라 행으로 늘어난다. `notification_time`(TIME)·`next_due_at`
 (DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고, `next_due_at`은 항상 **현재 이후 첫 occurrence**다 —
@@ -191,7 +196,7 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 `uq_daily_records_subject_date (subject_id, record_date)` UNIQUE·FK RESTRICT를 가진다.
 `timeline_draft_source_items.subject_id`도 NOT NULL·FK RESTRICT이고,
 `push_registrations.subject_id`는 NOT NULL·조회 index를 가지되 기존 soft-owner 방침대로 FK는 없다.
-`user_memories`·`push_preferences`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
+`user_memories`·`subject_preferences`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
 명시 삭제 후 mapping을 마지막에 지우는 계약이다. 이 owner 테이블들에는 raw `user_id` 컬럼이 없고
 runtime repository/entity도 subject만 읽고 쓴다.

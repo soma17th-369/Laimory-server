@@ -30,7 +30,7 @@ public final class SubjectMappingFixtures {
     public static void deleteSubjectScopedPushRows(JdbcTemplate jdbcTemplate, UUID subjectId) {
         jdbcTemplate.update("DELETE FROM scheduled_notification_preferences WHERE subject_id = ?",
                 subjectId.toString());
-        jdbcTemplate.update("DELETE FROM push_preferences WHERE subject_id = ?", subjectId.toString());
+        jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());
     }
 
     private static byte[] sha256(byte[] value) {
