@@ -2,8 +2,7 @@ package com.laimory.server.push.service;
 
 import com.laimory.server.common.ScheduledWorkerRunBudget;
 import com.laimory.server.push.PushTimes;
-import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.entity.ScheduledNotificationPreference;
+import com.laimory.server.push.entity.DailyNotificationPreference;
 import com.laimory.server.push.service.DailyReminderPushNotifier.BatchOutcome;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -33,9 +32,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class DailyReminderWorker {
 
-    private static final ScheduledNotificationType TYPE = ScheduledNotificationType.DAILY_REMINDER;
-
-    private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+    private final DailyNotificationPreferenceService dailyNotificationPreferenceService;
     private final DailyReminderPushNotifier dailyReminderPushNotifier;
     private final DailyReminderWorkerProperties properties;
     private final TaskExecutor workerExecutor;
@@ -43,12 +40,12 @@ public class DailyReminderWorker {
     private final AtomicBoolean runActive = new AtomicBoolean();
 
     public DailyReminderWorker(
-            ScheduledNotificationPreferenceService scheduledNotificationPreferenceService,
+            DailyNotificationPreferenceService dailyNotificationPreferenceService,
             DailyReminderPushNotifier dailyReminderPushNotifier,
             DailyReminderWorkerProperties properties,
             @Qualifier("dailyReminderWorkerExecutor") TaskExecutor workerExecutor,
             Clock clock) {
-        this.scheduledNotificationPreferenceService = scheduledNotificationPreferenceService;
+        this.dailyNotificationPreferenceService = dailyNotificationPreferenceService;
         this.dailyReminderPushNotifier = dailyReminderPushNotifier;
         this.properties = properties;
         this.workerExecutor = workerExecutor;
@@ -86,9 +83,9 @@ public class DailyReminderWorker {
     private void runWorkerSlot(ScheduledWorkerRunBudget budget, AtomicInteger remainingSlots, RunSummary summary) {
         try {
             while (budget.tryAcquireBatch()) {
-                List<ScheduledNotificationPreference> claimed;
+                List<DailyNotificationPreference> claimed;
                 try {
-                    claimed = scheduledNotificationPreferenceService.claimDue(TYPE, properties.getBatchSize());
+                    claimed = dailyNotificationPreferenceService.claimDue(properties.getBatchSize());
                 } catch (RuntimeException exception) {
                     summary.recordClaimError();
                     log.warn("일일 리마인더 claim 실패: exceptionType={}", exception.getClass().getSimpleName());
@@ -115,9 +112,9 @@ public class DailyReminderWorker {
      * claim한 occurrence를 허용 지연 안/밖으로 가르고 안쪽만 발송한다. 지연 초과분은 이미 다음 미래
      * occurrence로 옮겨져 있으므로 여기서 더 할 일이 없다.
      */
-    private BatchResult processClaimedBatch(List<ScheduledNotificationPreference> claimed) {
+    private BatchResult processClaimedBatch(List<DailyNotificationPreference> claimed) {
         LocalDateTime nowKst = PushTimes.kstWallClock(clock.instant());
-        List<ScheduledNotificationPreference> deliverable = claimed.stream()
+        List<DailyNotificationPreference> deliverable = claimed.stream()
                 .filter(preference -> !preference.getNextDueAt().plus(properties.getMaxLateness()).isBefore(nowKst))
                 .toList();
         int lateSkipped = claimed.size() - deliverable.size();

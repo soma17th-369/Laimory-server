@@ -2,10 +2,10 @@ package com.laimory.server.push.service;
 
 import com.laimory.server.push.PushMessage;
 import com.laimory.server.push.PushMessageSender;
+import com.laimory.server.push.PushMessageType;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
-import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.entity.ScheduledNotificationPreference;
+import com.laimory.server.push.entity.DailyNotificationPreference;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,8 +29,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class DailyReminderPushNotifier {
 
-    private static final ScheduledNotificationType TYPE = ScheduledNotificationType.DAILY_REMINDER;
-
     private final SubjectPreferenceService subjectPreferenceService;
     private final PushRegistrationService pushRegistrationService;
     private final PushMessageSender pushMessageSender;
@@ -42,11 +40,11 @@ public class DailyReminderPushNotifier {
      *
      * @return batch 집계(로그·run summary용)
      */
-    public BatchOutcome notifyAll(List<ScheduledNotificationPreference> deliverable) {
+    public BatchOutcome notifyAll(List<DailyNotificationPreference> deliverable) {
         if (deliverable.isEmpty()) {
             return BatchOutcome.empty();
         }
-        List<UUID> subjectIds = ScheduledNotificationPreferenceService.subjectIdsOf(deliverable);
+        List<UUID> subjectIds = DailyNotificationPreferenceService.subjectIdsOf(deliverable);
         Map<UUID, Boolean> masters = subjectPreferenceService.findPushEnabledBySubjectIds(subjectIds);
         List<UUID> eligible = subjectIds.stream()
                 // 마스터 행이 없으면 제외한다 — 예정 발송에 기본값을 추정하지 않는다.
@@ -64,7 +62,7 @@ public class DailyReminderPushNotifier {
         }
 
         PushSendResult result = pushMessageSender.send(PushMessage.dailyReminder(), targets);
-        pushMetrics.record(TYPE.pushMessageType(), result);
+        pushMetrics.record(PushMessageType.DAILY_REMINDER, result);
         // claimed가 아니라 deliverable — worker 로그의 claimed(지연 skip 포함)와 다른 값이라 라벨을 나눈다.
         log.info("daily reminder push result: deliverableSubjects={} eligibleSubjects={} targets={} accepted={} "
                         + "failed={} invalidTargets={}",

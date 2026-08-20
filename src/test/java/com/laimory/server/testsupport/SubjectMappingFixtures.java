@@ -28,7 +28,7 @@ public final class SubjectMappingFixtures {
      * 두 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
      */
     public static void deleteSubjectScopedPushRows(JdbcTemplate jdbcTemplate, UUID subjectId) {
-        jdbcTemplate.update("DELETE FROM scheduled_notification_preferences WHERE subject_id = ?",
+        jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?",
                 subjectId.toString());
         jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());
     }

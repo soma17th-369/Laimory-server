@@ -68,7 +68,7 @@ public class SubjectPreferenceService {
                         (first, second) -> first));
     }
 
-    /** 탈퇴 transaction 합류용 — 종류별 행 삭제 뒤에 호출한다(FK RESTRICT). */
+    /** 탈퇴 transaction 합류용 — 일일 알림 행 삭제 뒤에 호출한다(FK RESTRICT). */
     public void deleteForSubject(UUID subjectId) {
         subjectPreferenceRepository.deleteBySubjectId(subjectId);
     }

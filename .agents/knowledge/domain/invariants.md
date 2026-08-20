@@ -189,21 +189,24 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - FCM 영구 무효(`UNREGISTERED`·target-level `INVALID_ARGUMENT`)만 등록을 삭제하고 인증·project
   mismatch·quota·internal 오류로는 삭제하지 않는다.
 - FID 원문은 URL·application log·예외 메시지에 남기지 않으며 access log body에서 마스킹된다.
-- 예정 알림의 발송 판정 축은 `예정 알림 마스터 ON + 종류별 ON + 활성 FID`다(#314). 마스터 행 부재는
+- 예정 알림의 발송 판정 축은 `예정 알림 마스터 ON + 일일 알림 ON + 활성 FID`다(#314). 마스터 행 부재는
   추정하지 않고 발송 대상에서 제외한다.
 - 타임라인 완료 통지는 **마스터 스위치와 무관하게 발송한다** — 사용자가 직접 시작한 작업의 결과
   통지라 예정(리텐션) 알림과 성격이 다르다. 따라서 마스터가 실제로 막는 것은 예정 알림뿐이다.
 - 일일 리마인더는 기본 ON이고 발송 시각은 서버가 21:00(`Asia/Seoul`)으로 고정한다(#318). 사용자
-  조작은 종류별 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
+  조작은 일일 알림 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
 - 설정 조회는 쓰기를 하지 않으며 행이 없으면 쓰기와 같은 이유로 던진다 — 기본값으로 가리면 조회가
   "켜짐"이라 답하는데 worker는 없는 행을 claim하지 못해 실제 발송이 0이 된다.
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
   보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
-- 설정 쓰기(종류별 ON/OFF)는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로
-  재장전한다. 꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라
-  켠 직후 tick이 예정에 없던 알림을 발송한다. 같은 이유로 기존 행을 일괄로 켜는 마이그레이션도
-  `next_due_at`을 같은 문장에서 재장전해야 한다(#318).
-- 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 종류별
+- 설정 쓰기(일일 알림 ON/OFF)는 `next_due_at`을 서버 고정 시각의 다음 미래 occurrence로 재장전한다.
+  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
+  tick이 예정에 없던 알림을 발송한다. 같은 이유로 기존 행을 일괄로 켜는 마이그레이션도 `next_due_at`을
+  같은 문장에서 재장전해야 한다(#318).
+- 일일 알림 설정은 **subject당 한 행**이다(#321 — 판별자 없음). 두 번째 일일 알림이 생기면 이 테이블에
+  행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
+  운영 SQL로도 바뀌지 않는다.
+- 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 일일 알림
   OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
 - worker는 한 occurrence를 한 번만 claim한다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후 첫
@@ -281,7 +284,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
   성립한 뒤에만 기록한다.
 - 탈퇴(#305)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
-  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록·종류별 설정·마스터
+  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록·일일 알림 설정·마스터
   삭제(FK RESTRICT 순서) + userId-only
   PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등

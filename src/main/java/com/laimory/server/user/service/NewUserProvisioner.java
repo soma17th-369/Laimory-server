@@ -1,7 +1,6 @@
 package com.laimory.server.user.service;
 
-import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
+import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.entity.User;
@@ -31,7 +30,7 @@ public class NewUserProvisioner {
     private final UserRepository userRepository;
     private final SubjectMappingService subjectMappingService;
     private final SubjectPreferenceService subjectPreferenceService;
-    private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+    private final DailyNotificationPreferenceService dailyNotificationPreferenceService;
 
     /**
      * user, subject mapping, subject 축 기본 설정 행을 한 transaction에서 저장한다.
@@ -47,8 +46,7 @@ public class NewUserProvisioner {
         User user = userRepository.saveAndFlush(User.of(provider, providerUserId, email, nickname));
         UUID subjectId = subjectMappingService.createFor(user.getUserId());
         subjectPreferenceService.createDefaultIfAbsent(subjectId);
-        scheduledNotificationPreferenceService.createDefaultIfAbsent(
-                subjectId, ScheduledNotificationType.DAILY_REMINDER);
+        dailyNotificationPreferenceService.createDefaultIfAbsent(subjectId);
         return user;
     }
 }

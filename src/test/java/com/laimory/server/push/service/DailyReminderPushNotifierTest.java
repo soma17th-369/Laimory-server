@@ -13,14 +13,11 @@ import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMessageType;
 import com.laimory.server.push.PushMetrics;
 import com.laimory.server.push.PushSendResult;
-import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.entity.ScheduledNotificationPreference;
-import com.laimory.server.push.entity.ScheduledNotificationPreferenceId;
+import com.laimory.server.push.entity.DailyNotificationPreference;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -60,13 +57,11 @@ class DailyReminderPushNotifierTest {
                 pushMessageSender, pushMetrics, CLOCK);
     }
 
-    private static ScheduledNotificationPreference claimed(UUID subjectId) {
-        ScheduledNotificationPreference preference = new ScheduledNotificationPreference() {
+    private static DailyNotificationPreference claimed(UUID subjectId) {
+        DailyNotificationPreference preference = new DailyNotificationPreference() {
         };
-        ReflectionTestUtils.setField(preference, "id", new ScheduledNotificationPreferenceId(
-                subjectId, ScheduledNotificationType.DAILY_REMINDER));
+        ReflectionTestUtils.setField(preference, "subjectId", subjectId);
         ReflectionTestUtils.setField(preference, "enabled", true);
-        ReflectionTestUtils.setField(preference, "notificationTime", LocalTime.of(21, 0));
         ReflectionTestUtils.setField(preference, "nextDueAt", LocalDateTime.of(2026, 7, 21, 21, 0));
         return preference;
     }

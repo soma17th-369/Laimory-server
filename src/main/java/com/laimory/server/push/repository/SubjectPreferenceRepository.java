@@ -33,13 +33,13 @@ public interface SubjectPreferenceRepository extends JpaRepository<SubjectPrefer
     @Query("select p from SubjectPreference p where p.subjectId in :subjectIds")
     List<SubjectPreference> findAllBySubjectIdIn(@Param("subjectIds") Collection<UUID> subjectIds);
 
-    /** 마스터 ON/OFF만 바꾼다 — 종류별 설정값·시각은 건드리지 않는다. 같은 값 재요청은 멱등이다. */
+    /** 마스터 ON/OFF만 바꾼다 — 일일 알림 설정값은 건드리지 않는다. 같은 값 재요청은 멱등이다. */
     @Modifying
     @Transactional
     @Query("update SubjectPreference p set p.pushEnabled = :pushEnabled where p.subjectId = :subjectId")
     int updatePushEnabled(@Param("subjectId") UUID subjectId, @Param("pushEnabled") boolean pushEnabled);
 
-    /** 탈퇴 transaction 합류용 — 종류별 행을 먼저 지운 뒤 호출한다(FK RESTRICT). 0행 허용(멱등). */
+    /** 탈퇴 transaction 합류용 — 일일 알림 행을 먼저 지운 뒤 호출한다(FK RESTRICT). 0행 허용(멱등). */
     @Modifying
     @Transactional
     @Query("delete from SubjectPreference p where p.subjectId = :subjectId")

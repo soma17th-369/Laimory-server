@@ -38,8 +38,8 @@ MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
-- `subject_preferences → scheduled_notification_preferences` (#314·#318 — subject 축 설정 버킷이
-  담은 예정 알림 마스터와 알림 종류별 ON/OFF·시각·occurrence 스케줄 상태)
+- `subject_preferences → daily_notification_preferences` (#314·#318·#321 — subject 축 설정 버킷이
+  담은 예정 알림 마스터와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -54,14 +54,14 @@ dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/work
 FOREIGN KEY ... ADD CONSTRAINT ...` 한 문장을 따로 실행해야 신규 DB와 기존 DB가 같아진다(이 ALTER는
 애플리케이션이 제약 이름을 읽지 않으므로 cutover 창 밖에서 실행해도 안전하다).
 
-#314의 두 subject 축 테이블(`subject_preferences`·`scheduled_notification_preferences`)은 DDL만으로
+#314의 두 subject 축 테이블(`subject_preferences`·`daily_notification_preferences`)은 DDL만으로
 끝나지 않는다. 가입 transaction이 신규 회원의 기본 행을 만들지만
 기존 subject에는 backfill이 필요하고, DDL 선적용~컨테이너 교체 사이에 가입한 회원은 구버전 코드가
 설정 행 없이 만든다. 그래서 rollout은 **두 단계 insert-if-absent backfill**이다 — ① 구 컨테이너가 도는
 동안 테이블 생성 + 당시 모든 subject의 기본 행 삽입, ② 새 컨테이너 health 확인 뒤 같은 문장을 다시 실행해
 공백 구간 가입자를 수렴시킨다. 구 image로 rollback한 뒤 재배포하면 그 구간이 새 공백이므로 두 단계를
 다시 수행한다. 각 단계는 subject 수 대비 행 수와 anti-join 누락 0건으로 검증한다. **#318 이후 재실행하는
-backfill은 종류별 행을 `enabled=TRUE`로 넣어야 한다** — #314 때 쓴 `FALSE` 문장을 그대로 재실행하면 그
+backfill은 일일 알림 행을 `enabled=TRUE`로 넣어야 한다** — #314 때 쓴 `FALSE` 문장을 그대로 재실행하면 그
 구간 사용자만 일괄 발송에서 조용히 빠지고, 쓰기·조회 어느 쪽도 그 행을 고치지 않는다.
 설정 조회와 쓰기 모두 행을 만들지 않으며 행이 없으면 던진다 — 기본값으로 가리면 "켜짐"이라 답하면서
 아무것도 보내지 않는 상태가 되기 때문이다. worker 스캔도 없는 행을 발견하지 못하므로
@@ -79,9 +79,8 @@ SET @kst_now = CONVERT_TZ(NOW(6), '+00:00', '+09:00');
 SET @next_due = IF(TIME(@kst_now) < '21:00:00',
                    TIMESTAMP(DATE(@kst_now), '21:00:00'),
                    TIMESTAMP(DATE(@kst_now) + INTERVAL 1 DAY, '21:00:00'));
-UPDATE scheduled_notification_preferences
-   SET enabled = TRUE, next_due_at = @next_due, updated_at = @kst_now
- WHERE notification_type = 'DAILY_REMINDER';
+UPDATE daily_notification_preferences
+   SET enabled = TRUE, next_due_at = @next_due, updated_at = @kst_now;
 ```
 
 DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계를 만들어 쓴다(이 저장소의 `DATETIME`
@@ -157,27 +156,28 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
 삭제로 수렴한다.
 
-`subject_preferences`·`scheduled_notification_preferences`(#314)는 푸시 수신 설정을 두 축으로 나눈다.
-마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 종류별 설정은 `(subject_id, notification_type)`
-복합 PK라 새 리텐션 알림이 컬럼이 아니라 행으로 늘어난다. `notification_time`(TIME)·`next_due_at`
-(DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고, `next_due_at`은 항상 **현재 이후 첫 occurrence**다 —
-하루 1회 캡을 두지 않아 껐다 켠 시점에 저장된 시각이 아직 오늘 미래면 같은 날 다시 발송될 수
-있다(사용자 행동이므로 허용, 설계 검토 2026-08-19 확정). `DAILY_REMINDER` 행 값의 권위는
-애플리케이션이다 — `enabled` 컬럼 DDL default는 `FALSE`지만 insert가 항상 `enabled`를 명시하며 그
-기본값은 코드의 `DEFAULT_ENABLED=true`·21:00이다(#318 — 전체 사용자 일괄 발송, 시각은 사용자 입력으로
-바뀌지 않는다). worker는 `(notification_type, enabled, next_due_at,
-subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각
-이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
+`subject_preferences`·`daily_notification_preferences`(#314·#321)는 푸시 수신 설정을 두 축으로 나눈다.
+마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 일일 알림 설정도 subject PK 한 행이다.
+**두 번째 일일 알림은 이 테이블에 담을 수 없다** — #321이 값이 하나뿐이던 `notification_type` 판별자를
+걷어내면서 PK를 `subject_id` 단독으로 줄였고, 새 알림은 컬럼도 판별자도 아니라 새 테이블이 된다.
+발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유한다(`NOTIFICATION_TIME=21:00`, #318 이후 사용자
+입력 경로가 없어 행마다 같은 값을 복제할 이유가 없다). 그래서 이 테이블에는 `TIME` 컬럼이 없다.
+`next_due_at`(DATETIME(6))은 `Asia/Seoul` 벽시계 계약이고 항상 **현재 이후 첫 occurrence**다 —
+하루 1회 캡을 두지 않아 껐다 켠 시점에 고정 시각이 아직 오늘 미래면 같은 날 다시 발송될 수
+있다(사용자 행동이므로 허용, 설계 검토 2026-08-19 확정). 행 값의 권위는 애플리케이션이다 —
+`enabled` 컬럼 DDL default는 `FALSE`지만 insert가 항상 `enabled`를 명시하며 그 기본값은 코드의
+`DEFAULT_ENABLED=true`다(#318 — 전체 사용자 일괄 발송). worker는 `(enabled, next_due_at, subject_id)`
+index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각 이후 첫
+occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖). 시각이 서버
+고정이라 claim된 행 전부가 같은 전진 값을 가져 문장이 하나로 수렴한다.
 
-설정 쓰기는 행을 만들지 않으며 종류별 쓰기(ON/OFF 하나뿐 — 시각 변경 쓰기는 #318에서 제거)는
-`next_due_at`을 다음 미래 occurrence로 재장전한다. 전진 값은 언제나 Java가 KST로 계산해 파라미터로
-넘긴다 — ON/OFF는 시각을 입력으로 받지 않아 저장된 시각이 유일한 근거라 그 행을 읽는다.
-이 계산을 SQL에 맡기면 JVM zone에 따라
-9시간 어긋난다: JDBC는 `TIME` 파라미터를 connection timezone으로 변환해 저장하므로, 파라미터 왕복은
-대칭이어도 SQL 안에서 컬럼끼리 날짜를 파생하는 순간 깨진다(UTC 통합 테스트가 실측으로 잡는다). 행 존재는
-가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고 던진다(운영 신호 — 복구는
-backfill 재실행). 종류별 행은 마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히
-통과하지 않는다.
+설정 쓰기는 행을 만들지 않으며 ON/OFF 쓰기(시각 변경 쓰기는 #318에서 제거)는 `next_due_at`을 다음 미래
+occurrence로 재장전한다. 시각이 상수라 그 값을 알아내려고 행을 읽지 않는다 — 쓰기는 UPDATE 한 문장이다.
+전진 값은 언제나 Java가 KST로 계산해 파라미터로 넘긴다. 이 계산을 SQL에 맡기면 JDBC가 `LocalDateTime`
+파라미터를 connection timezone으로 변환하므로 JVM zone이 결과에 새어 들어간다(UTC 통합 테스트가 실측으로
+잡는다). 행 존재는 가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고
+던진다(운영 신호 — 복구는 backfill 재실행). 일일 알림 행은 마스터를 `ON DELETE RESTRICT`로 참조해
+그 정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
 `HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`
