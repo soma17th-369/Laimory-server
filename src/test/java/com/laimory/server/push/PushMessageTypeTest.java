@@ -58,10 +58,4 @@ class PushMessageTypeTest {
         assertThat(message.type().body()).isEqualTo("하루를 기록해보세요!");
         assertThat(message.data()).containsOnlyKeys("route");
     }
-
-    @Test
-    void scheduledTypeResolvesToItsMessage() {
-        assertThat(ScheduledNotificationType.DAILY_REMINDER.pushMessageType())
-                .isEqualTo(PushMessageType.DAILY_REMINDER);
-    }
 }

@@ -36,7 +36,6 @@ import org.springframework.stereotype.Service;
 public class TimelineCompletionPushNotifier {
 
     private final PushRegistrationService pushRegistrationService;
-    private final PushPreferenceService pushPreferenceService;
     private final PushMessageSender pushMessageSender;
     private final PushMetrics pushMetrics;
     private final Clock clock;
@@ -44,9 +43,6 @@ public class TimelineCompletionPushNotifier {
     @Async
     public void notifyAsync(UUID subjectId, String taskId, TaskStatus status) {
         try {
-            if (!pushPreferenceService.isPushEnabledForLegacyCompatibility(subjectId)) {
-                return;
-            }
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면
             // (lastRegisteredAt > snapshotAt) 무효 정리에서 보호된다.
             LocalDateTime snapshotAt = LocalDateTime.now(clock);

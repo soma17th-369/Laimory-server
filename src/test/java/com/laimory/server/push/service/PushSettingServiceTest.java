@@ -8,61 +8,36 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.push.ScheduledNotificationType;
 import com.laimory.server.push.dto.PushSettingsResponse;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.LocalTime;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 설정 orchestration 검증 — {@code HH:mm} 입력 계약과 조회 응답 조립. 인프라 0.
+ * 설정 orchestration 검증 — ON/OFF 위임과 조회 응답 조립. 인프라 0.
+ *
+ * <p>시각은 서버 고정이라 입력 계약이 없다(#318) — 조회 응답의 {@code HH:mm} 표기만 남는다.
  */
 @ExtendWith(MockitoExtension.class)
 class PushSettingServiceTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(31L);
-    private static final ScheduledNotificationType TYPE = ScheduledNotificationType.DAILY_REMINDER;
 
     @Mock
-    private PushPreferenceService pushPreferenceService;
+    private SubjectPreferenceService subjectPreferenceService;
     @Mock
-    private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+    private DailyNotificationPreferenceService dailyNotificationPreferenceService;
     private PushSettingService service() {
-        return new PushSettingService(pushPreferenceService, scheduledNotificationPreferenceService);
+        return new PushSettingService(subjectPreferenceService, dailyNotificationPreferenceService);
     }
 
     private void givenSettings(boolean enabled, LocalTime time) {
-        when(scheduledNotificationPreferenceService.findSettings(SUBJECT_ID, TYPE))
-                .thenReturn(new ScheduledNotificationPreferenceService.Settings(enabled, time));
-    }
-
-    // --- 시각 입력 계약 ---
-
-    @ParameterizedTest
-    @ValueSource(strings = {"21:00", "00:00", "23:59", "07:30"})
-    void acceptsMinuteGranularityWallClock(String time) {
-        assertThat(PushSettingService.parseTime(time)).isEqualTo(LocalTime.parse(time));
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"9:05", "21:00:00", "21시", "24:00", "21:60", "", " "})
-    void rejectsMalformedTimeBeforeAnyWrite(String time) {
-        assertThatThrownBy(() -> PushSettingService.parseTime(time))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void updateTime_malformedInput_neverTouchesPreferences() {
-        assertThatThrownBy(() -> service().updateDailyReminderTime("v1", SUBJECT_ID, "9시"))
-                .isInstanceOf(IllegalArgumentException.class);
-
-        verify(scheduledNotificationPreferenceService, never()).updateNotificationTime(any(), any(), any());
+        when(dailyNotificationPreferenceService.findSettings(SUBJECT_ID))
+                .thenReturn(new DailyNotificationPreferenceService.Settings(enabled, time));
     }
 
     // --- 마스터 ---
@@ -71,57 +46,48 @@ class PushSettingServiceTest {
     void updatePushEnabled_delegatesToMasterOnly() {
         service().updatePushEnabled("v1", SUBJECT_ID, false);
 
-        verify(pushPreferenceService).updatePushEnabled(SUBJECT_ID, false);
-        verify(scheduledNotificationPreferenceService, never()).updateEnabled(any(), any(), anyBoolean());
+        verify(subjectPreferenceService).updatePushEnabled(SUBJECT_ID, false);
+        verify(dailyNotificationPreferenceService, never()).updateEnabled(any(), anyBoolean());
     }
 
     @Test
     void updatePushEnabled_nullBody_isRejected() {
         assertThatThrownBy(() -> service().updatePushEnabled("v1", SUBJECT_ID, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(pushPreferenceService, never()).updatePushEnabled(any(), anyBoolean());
+        verify(subjectPreferenceService, never()).updatePushEnabled(any(), anyBoolean());
     }
 
-    // --- 리마인더 토글·시각 ---
+    // --- 리마인더 토글 ---
 
     @Test
     void enableDailyReminder_delegatesWithoutReadingFirst() {
         service().updateDailyReminderEnabled("v1", SUBJECT_ID, true);
 
-        verify(scheduledNotificationPreferenceService).updateEnabled(SUBJECT_ID, TYPE, true);
+        verify(dailyNotificationPreferenceService).updateEnabled(SUBJECT_ID, true);
         // 쓰기 경로는 값을 읽지 않는다 — 읽고 계산하면 그 사이에 다른 변경이 끼어들 수 있다.
-        verify(scheduledNotificationPreferenceService, never()).findSettings(any(), any());
+        verify(dailyNotificationPreferenceService, never()).findSettings(any());
     }
 
     @Test
     void disableDailyReminder_delegates() {
+        // 기본이 ON이라 이 경로가 사용자가 수신을 멈추는 유일한 수단이다.
         service().updateDailyReminderEnabled("v1", SUBJECT_ID, false);
 
-        verify(scheduledNotificationPreferenceService).updateEnabled(SUBJECT_ID, TYPE, false);
+        verify(dailyNotificationPreferenceService).updateEnabled(SUBJECT_ID, false);
     }
 
     @Test
-    void updateTime_storesParsedWallClock() {
-        service().updateDailyReminderTime("v1", SUBJECT_ID, "22:00");
-
-        verify(scheduledNotificationPreferenceService)
-                .updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(22, 0));
-    }
-
-    @Test
-    void updateTime_nightValueIsStoredLikeAnyOther() {
-        // 정보성 알림이라 야간 시각에 별도 조건이 없다.
-        service().updateDailyReminderTime("v1", SUBJECT_ID, "23:30");
-
-        verify(scheduledNotificationPreferenceService)
-                .updateNotificationTime(SUBJECT_ID, TYPE, LocalTime.of(23, 30));
+    void updateDailyReminderEnabled_nullBody_isRejected() {
+        assertThatThrownBy(() -> service().updateDailyReminderEnabled("v1", SUBJECT_ID, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(dailyNotificationPreferenceService, never()).updateEnabled(any(), anyBoolean());
     }
 
     // --- 조회 ---
 
     @Test
     void getSettings_returnsServerAuthoritativeStateWithConfirmedClassification() {
-        when(pushPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
+        when(subjectPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
         givenSettings(true, LocalTime.of(21, 0));
 
         PushSettingsResponse response = service().getSettings("v1", SUBJECT_ID);

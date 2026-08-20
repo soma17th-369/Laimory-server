@@ -304,10 +304,12 @@ CREATE TABLE IF NOT EXISTS term_agreements (
 
 -- ── 푸시 수신 설정(#314) ──
 
--- subject별 FCM 전체 수신 마스터. 정보성·광고성을 가리지 않는 최상위 ON/OFF이며 기본은 ON이다.
--- 알림 종류가 늘어도 컬럼을 추가하지 않는다(종류별 값은 scheduled_notification_preferences 행이 소유).
+-- subject 축 설정 버킷(subject당 한 행). worker·배치가 subject만 들고 읽는 설정이 늘어도 컬럼 2개짜리
+-- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 예정 알림 마스터 하나뿐이다.
+-- push_enabled는 예정 알림 전체 ON/OFF이며 기본은 ON이다(타임라인 완료 통지는 이 스위치를 읽지 않는다).
+-- 알림이 늘어도 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유).
 -- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 탈퇴가 명시 삭제 소유).
-CREATE TABLE IF NOT EXISTS push_preferences (
+CREATE TABLE IF NOT EXISTS subject_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
@@ -315,29 +317,30 @@ CREATE TABLE IF NOT EXISTS push_preferences (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (subject_id),
-    CONSTRAINT fk_push_preferences_subject
+    CONSTRAINT fk_subject_preferences_subject
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- subject의 예정 알림 종류별 설정·스케줄 상태. 새 리텐션 알림은 컬럼이 아니라 새 notification_type 행이다.
--- notification_time/next_due_at은 Asia/Seoul 벽시계 계약(offset 없음 — 이 저장소 공통).
--- notification_type은 enum literal exact-match 식별자 → 컬럼 단위 binary collation(term_type 선례).
--- master FK는 RESTRICT라 종류별 행 정리를 빠뜨린 탈퇴가 master 삭제를 조용히 통과하지 못한다.
-CREATE TABLE IF NOT EXISTS scheduled_notification_preferences (
+-- subject의 일일 알림 설정·스케줄 상태. subject당 한 행이다.
+-- 발송 시각은 서버가 21:00(KST)로 고정하고 사용자는 끄기만 하므로(#318) 시각 컬럼을 두지 않는다 —
+-- 시각의 권위는 애플리케이션 상수이고 DB는 "다음 예정 occurrence"만 들고 있다.
+-- PK가 subject_id 단독이라 두 번째 일일 알림은 이 테이블에 담을 수 없다. 그때는 컬럼도 판별자도 아니라
+-- 새 테이블을 만든다(#321 — 값이 하나뿐인 판별자를 걷어낸 결과로 수용한 제약).
+-- next_due_at은 Asia/Seoul 벽시계 계약(offset 없음 — 이 저장소 공통).
+-- master FK는 RESTRICT라 이 행 정리를 빠뜨린 탈퇴가 master 삭제를 조용히 통과하지 못한다.
+CREATE TABLE IF NOT EXISTS daily_notification_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    notification_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- ScheduledNotificationType literal
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    notification_time TIME NOT NULL,
     next_due_at DATETIME(6) NOT NULL,
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
-    PRIMARY KEY (subject_id, notification_type),
-    -- worker due claim 스캔 축(종류 → 활성 → 예정 시각). subject_id는 covering tie-breaker다.
-    KEY idx_scheduled_notification_preferences_due (notification_type, enabled, next_due_at, subject_id),
-    CONSTRAINT fk_scheduled_notification_preferences_master
-        FOREIGN KEY (subject_id) REFERENCES push_preferences (subject_id) ON DELETE RESTRICT
+    PRIMARY KEY (subject_id),
+    -- worker due claim 스캔 축(활성 → 예정 시각). subject_id는 covering tie-breaker다.
+    KEY idx_daily_notification_preferences_due (enabled, next_due_at, subject_id),
+    CONSTRAINT fk_daily_notification_preferences_master
+        FOREIGN KEY (subject_id) REFERENCES subject_preferences (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 기본 app_config 시드: /intro(AppConfig 조회)는 config row 존재를 요구하므로,

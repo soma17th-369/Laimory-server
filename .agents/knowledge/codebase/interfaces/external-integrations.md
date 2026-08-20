@@ -104,13 +104,14 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
   `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 결과에 따라 문구가 달라지면 종류를 나누고
   (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
-  `type` 차원이 늘지 않는다. 현재 모든 종류가 사용자 행동·설정에 대한 정보성 통지다 — 광고성 알림을
+  `type` 차원이 늘지 않는다. 현재 모든 종류가 정보성 통지다 — 일일 리마인더는 기본 ON 일괄 발송이고
+  수신거부 수단은 일일 알림 OFF다(#318). 광고성 알림을
   추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을 함께 도입해야 한다.
 - 타임라인 완료 발송은 AI callback이 처음 확정한 terminal(SUCCESS/FAILED 모두) 뒤 비동기 best-effort
   1회다. 메시지는 일반 문구 notification + data(`taskId`, `status`) 조합이고 Android TTL 1시간, 기본
   priority다. 타임라인 결과·오류 원문·기록 내용은 싣지 않는다(polling이 권위이자 유실 안전망).
-  전체 푸시 마스터가 OFF면 FID 조회 전에 끝내고, 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
-  보존하려고 ON으로 읽는다.
+  **예정 알림 마스터를 읽지 않는다** — 사용자가 직접 시작한 작업의 결과 통지라 리텐션 알림 스위치의
+  적용 대상이 아니다(#319). 사용자가 이 통지를 끄는 수단은 OS 알림 권한이다.
 - FID 등록·해제·callback 발송 대상 조회의 owner는 UUID subjectId다. 인증된 앱 요청은 MVC 경계에서 매핑된
   subject를 쓰고, callback은 Redis task의 subject owner로 FID를 조회한다(raw userId 역조회 없음).
 - multicast는 호출당 최대 500 FID chunk(입력 순서 보존)로 나누고 response index로 실패 FID를

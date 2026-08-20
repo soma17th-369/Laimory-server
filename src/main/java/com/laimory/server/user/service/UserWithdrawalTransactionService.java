@@ -3,9 +3,9 @@ package com.laimory.server.user.service;
 import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.push.service.PushPreferenceService;
+import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
-import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>순서: ① 조건부 {@code ACTIVE → WITHDRAWAL_PENDING} + 탈퇴 시각 + provider identity release
  * ② subject 해석(push 삭제용) ③ 이 transaction이 관측한 기존 refresh 전량 {@code REVOKED}
- * ④ subject push 등록 전부 삭제 ⑤ 종류별 알림 설정 → 푸시 마스터 삭제(FK RESTRICT라 이 순서)
+ * ④ subject push 등록 전부 삭제 ⑤ 일일 알림 설정 → 푸시 마스터 삭제(FK RESTRICT라 이 순서)
  * ⑥ userId-only PENDING 삭제 작업 insert-if-absent.
  *
  * <p>동시성은 ①의 영향 행 수가 유일한 직렬화 지점이다. 승자만 ②~⑤를 수행하고, 영향 0행은 fresh
@@ -40,8 +40,8 @@ public class UserWithdrawalTransactionService {
     private final SubjectMappingService subjectMappingService;
     private final RefreshTokenService refreshTokenService;
     private final PushRegistrationService pushRegistrationService;
-    private final ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
-    private final PushPreferenceService pushPreferenceService;
+    private final DailyNotificationPreferenceService dailyNotificationPreferenceService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final AccountErasureJobService accountErasureJobService;
     private final Clock clock;
 
@@ -58,9 +58,9 @@ public class UserWithdrawalTransactionService {
         UUID subjectId = subjectMappingService.getRequired(userId);
         refreshTokenService.revokeAllForUser(userId);
         pushRegistrationService.unregisterAllForSubject(subjectId);
-        // 종류별 설정 → 마스터 순서를 지킨다(FK RESTRICT).
-        scheduledNotificationPreferenceService.deleteAllForSubject(subjectId);
-        pushPreferenceService.deleteForSubject(subjectId);
+        // 일일 알림 → 마스터 순서를 지킨다(FK RESTRICT).
+        dailyNotificationPreferenceService.deleteForSubject(subjectId);
+        subjectPreferenceService.deleteForSubject(subjectId);
         accountErasureJobService.enqueue(userId);
     }
 }

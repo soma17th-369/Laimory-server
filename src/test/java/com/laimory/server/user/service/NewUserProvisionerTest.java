@@ -8,9 +8,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.push.ScheduledNotificationType;
-import com.laimory.server.push.service.PushPreferenceService;
-import com.laimory.server.push.service.ScheduledNotificationPreferenceService;
+import com.laimory.server.push.service.DailyNotificationPreferenceService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.UserRepository;
@@ -38,10 +37,10 @@ class NewUserProvisionerTest {
     private SubjectMappingService subjectMappingService;
 
     @Mock
-    private PushPreferenceService pushPreferenceService;
+    private SubjectPreferenceService subjectPreferenceService;
 
     @Mock
-    private ScheduledNotificationPreferenceService scheduledNotificationPreferenceService;
+    private DailyNotificationPreferenceService dailyNotificationPreferenceService;
 
     @InjectMocks
     private NewUserProvisioner newUserProvisioner;
@@ -63,14 +62,14 @@ class NewUserProvisionerTest {
         User result = newUserProvisioner.provision(Provider.GOOGLE, "sub-123", "e@x.com", "nick");
 
         assertThat(result).isSameAs(saved);
-        InOrder inOrder = inOrder(userRepository, subjectMappingService, pushPreferenceService,
-                scheduledNotificationPreferenceService);
+        InOrder inOrder = inOrder(userRepository, subjectMappingService, subjectPreferenceService,
+                dailyNotificationPreferenceService);
         inOrder.verify(userRepository).saveAndFlush(any());
         inOrder.verify(subjectMappingService).createFor(42L);
         // 기본 설정 행은 방금 만든 subject로 같은 흐름에서 생성된다(재조회 없음).
-        inOrder.verify(pushPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
-        inOrder.verify(scheduledNotificationPreferenceService)
-                .createDefaultIfAbsent(SUBJECT_ID, ScheduledNotificationType.DAILY_REMINDER);
+        inOrder.verify(subjectPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
+        inOrder.verify(dailyNotificationPreferenceService)
+                .createDefaultIfAbsent(SUBJECT_ID);
     }
 
     @Test
@@ -90,7 +89,7 @@ class NewUserProvisionerTest {
         when(userRepository.saveAndFlush(any())).thenReturn(savedUser(42L));
         when(subjectMappingService.createFor(42L)).thenReturn(SUBJECT_ID);
         IllegalStateException failure = new IllegalStateException("preference insert failed");
-        doThrow(failure).when(pushPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
+        doThrow(failure).when(subjectPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
 
         assertThatThrownBy(() ->
                 newUserProvisioner.provision(Provider.GOOGLE, "sub-123", "e@x.com", "nick"))

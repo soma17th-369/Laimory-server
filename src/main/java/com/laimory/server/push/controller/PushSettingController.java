@@ -1,7 +1,6 @@
 package com.laimory.server.push.controller;
 
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.push.dto.DailyReminderTimeRequest;
 import com.laimory.server.push.dto.PushEnabledRequest;
 import com.laimory.server.push.dto.PushSettingsResponse;
 import com.laimory.server.push.service.PushSettingService;
@@ -40,13 +39,6 @@ public class PushSettingController implements PushSettingApi {
     public ResponseEntity<ApiResponse<Void>> updateDailyReminderEnabled(
             String applicationVersion, UUID subjectId, PushEnabledRequest request) {
         pushSettingService.updateDailyReminderEnabled(applicationVersion, subjectId, request.enabled());
-        return ResponseEntity.ok(ApiResponse.success(null));
-    }
-
-    @Override
-    public ResponseEntity<ApiResponse<Void>> updateDailyReminderTime(
-            String applicationVersion, UUID subjectId, DailyReminderTimeRequest request) {
-        pushSettingService.updateDailyReminderTime(applicationVersion, subjectId, request.time());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 

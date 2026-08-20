@@ -11,17 +11,17 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * subject별 FCM 전체 수신 마스터 행. 이 행 하나가 모든 푸시의 최상위 ON/OFF이며, 종류별 설정
- * ({@link ScheduledNotificationPreference})은 이 마스터를 통과한 뒤에만 의미가 있다.
+ * subject별 예정 알림 마스터 행. 일일 알림 설정({@link DailyNotificationPreference})은 이 마스터를
+ * 통과한 뒤에만 의미가 있다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 읽지 않는다.
  *
- * <p>새 리텐션 알림이 늘어도 이 테이블에는 컬럼을 추가하지 않는다(종류별 값은 종류 행이 소유).
+ * <p>새 리텐션 알림이 늘어도 이 테이블에는 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유).
  * 쓰기는 repository의 native insert-if-absent와 조건 UPDATE로 수행하므로 이 엔티티는 조회와
  * {@code ddl-auto=validate} 검증용 read model이다.
  */
 @Entity
-@Table(name = "push_preferences")
+@Table(name = "subject_preferences")
 @Getter
-public class PushPreference extends BaseEntity {
+public class SubjectPreference extends BaseEntity {
 
     @Id
     @JdbcTypeCode(SqlTypes.VARCHAR)
@@ -32,6 +32,6 @@ public class PushPreference extends BaseEntity {
     @Column(name = "push_enabled", nullable = false)
     private boolean pushEnabled;
 
-    protected PushPreference() {
+    protected SubjectPreference() {
     }
 }

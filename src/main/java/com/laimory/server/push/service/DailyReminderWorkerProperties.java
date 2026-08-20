@@ -7,8 +7,8 @@ import org.springframework.stereotype.Component;
 /**
  * 일일 리마인더 worker의 runtime 설정과 기동 시 불변식 검증.
  *
- * <p>기본은 ON이다 — 리마인더는 사용자별 기본 OFF라 worker를 켜둬도 사용자가 직접 설정을 켜기
- * 전에는 발송 대상이 없다. env는 문제 시 끄는 kill switch로만 쓴다.
+ * <p>기본은 ON이다. 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker를 켜는 것은 곧 전체 사용자
+ * 발송을 뜻하므로, env는 문제 시 발송을 멈추는 kill switch다.
  */
 @Component
 public class DailyReminderWorkerProperties {
