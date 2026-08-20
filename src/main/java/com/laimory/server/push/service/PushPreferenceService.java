@@ -17,8 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * subject별 FCM 전체 수신 마스터의 단일 관문. 신규 행은 기본 ON이며 어떤 경로에서도 행이 없다는 이유로
- * 사용자의 기존 수신 상태가 바뀌지 않게 get-or-create로 수렴시킨다.
+ * subject별 FCM 전체 수신 마스터의 단일 관문. 신규 행은 기본 ON이며, 행을 만드는 것은 가입
+ * transaction과 rollout backfill뿐이다 — 조회는 기본값으로 답하고 쓰기는 던진다.
  *
  * <p>행 부재 해석은 두 갈래다. 기존 정보성 푸시(타임라인 완료)는 rollout 공백에서 기존 동작을 보존하려고
  * ON으로 읽고({@link #isPushEnabledForLegacyCompatibility}), 예정 알림 발송은 추정하지 않는다.

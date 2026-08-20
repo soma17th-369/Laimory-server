@@ -57,7 +57,9 @@ dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/work
 공백 구간 가입자를 수렴시킨다. 구 image로 rollback한 뒤 재배포하면 그 구간이 새 공백이므로 두 단계를
 다시 수행한다. 각 단계는 subject 수 대비 행 수와 anti-join 누락 0건으로 검증한다. 설정 조회는 누락 행을 기본값으로
 답하고 <b>행을 만들지 않는다</b>(만들어도 값이 같다) — 조회가 쓰기를 하지 않는다는 규칙을 지킨다.
-누락 행은 첫 설정 변경이 만들고, worker 스캔은 없는 행을 발견하지 못하므로 backfill이 복구 권위다.
+설정 쓰기도 행을 만들지 않고 0행이면 던지므로, worker 스캔이 없는 행을 발견하지 못하는 것과 합쳐
+backfill이 <b>유일한</b> 복구 권위다. 탈퇴 subject의 `user_subject_links`는 물리 삭제(#302) 전까지 남아
+있어 backfill이 그 행까지 다시 만든다 — FID가 없어 발송은 없지만 #302 삭제 대상에 포함해야 한다.
 
 저장소는 신규 AWS MySQL 초기화를 자동화하지 않는다. live MySQL schema는 저장소 변경만으로 바뀌지
 않으며, 애플리케이션 배포 전에 실제 DB 상태를 확인하고 수동 DDL을 적용해야 한다.
@@ -138,12 +140,15 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 subject_id)` index로 due 행을 `FOR UPDATE SKIP LOCKED` claim하고, 같은 짧은 transaction에서 "현재 시각
 이후 첫 occurrence" 전진을 UPDATE 한 문장으로 끝낸 뒤 commit한다(FCM 호출은 transaction 밖).
 
-설정 쓰기는 행을 읽지도 만들지도 않는 UPDATE 한 문장이다. ON/OFF는 `enabled` 한 컬럼만 바꾸고, 시각
-변경은 시각과 파생값 `next_due_at`을 한 UPDATE에서 함께 바꾼다 — 전진 시각은 Java가 KST로 계산해
-파라미터로 넘긴다. 읽고 계산해서 쓰면 그 사이 다른 설정 변경이나 worker claim이 끼어들어 파생값이
-자기 입력과 어긋나므로, 잠금 대신 <b>읽기를 없애서</b> 막는다. 행 존재는 가입 transaction과 rollout
-backfill이 보장하며 0행은 조용히 넘기지 않고 던진다(운영 신호 — 복구는 backfill 재실행). 종류별 행은
-마스터를 `ON DELETE RESTRICT`로 참조해 종류별 정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
+설정 쓰기는 행을 만들지 않으며 종류별 두 쓰기 모두 `next_due_at`을 다음 미래 occurrence로 재장전한다.
+전진 값은 언제나 Java가 KST로 계산해 파라미터로 넘긴다 — 시각 변경은 새 시각을 입력으로 받으므로 읽지
+않고, ON/OFF만 저장된 시각을 알 길이 없어 그 행을 읽는다. 이 계산을 SQL에 맡기면 JVM zone에 따라 9시간
+어긋난다: JDBC는 `TIME` 파라미터를 connection timezone으로 변환해 저장하므로, 파라미터 왕복은 대칭이어도
+SQL 안에서 컬럼끼리 날짜를 파생하는 순간 깨진다(UTC 통합 테스트가 실측으로 잡는다). 읽기와 쓰기 사이에
+다른 설정 변경이 끼어들면 한 occurrence가 옛 시각에 나갈 수 있으나 다음 claim이 저장된 시각으로 다시
+전진시켜 수렴한다. 행 존재는 가입 transaction과 rollout backfill이 보장하며 부재·0행은 조용히 넘기지 않고
+던진다(운영 신호 — 복구는 backfill 재실행). 종류별 행은 마스터를 `ON DELETE RESTRICT`로 참조해 종류별
+정리를 빠뜨린 삭제가 조용히 통과하지 않는다.
 
 `user_subject_links`(#282)는 인증 사용자와 콘텐츠 subject의 매핑이다. raw `user_id`를 저장하지 않고
 `HMAC-SHA-256(secret, "content-subject-lookup:v1" || userId 8-byte BE)` 결과가 `user_lookup_key BINARY(32)`

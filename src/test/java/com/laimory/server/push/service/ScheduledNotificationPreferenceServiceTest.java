@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -113,25 +112,54 @@ class ScheduledNotificationPreferenceServiceTest {
     // --- ON/OFF·시각 변경 ---
 
     @Test
-    void updateEnabled_touchesOnlyTheEnabledColumn() {
-        when(repository.updateEnabled(SUBJECT_ID, TYPE, true)).thenReturn(1);
+    void updateEnabled_rearmsNextDueAtFromTheStoredTime() {
+        // 켜는 순간 재장전하지 않으면, 꺼둔 사이 과거로 굳은 next_due_at이 허용 지연 안쪽이라
+        // 켠 직후 tick이 예정에 없던 알림을 보낸다. 저장된 시각(21:00)은 오늘 아직 미래이므로 오늘로.
+        when(repository.findById(any()))
+                .thenReturn(Optional.of(preference(false, LocalTime.of(21, 0),
+                        LocalDateTime.of(2026, 7, 20, 21, 0))));
+        when(repository.updateEnabled(any(), any(), anyBoolean(), any())).thenReturn(1);
 
         service().updateEnabled(SUBJECT_ID, TYPE, true);
 
-        // 행을 읽지 않는다 — 읽고 계산하면 그 사이 다른 변경이 끼어들어 파생값이 어긋난다.
-        verify(repository, never()).findById(any());
+        verify(repository).updateEnabled(SUBJECT_ID, TYPE, true, LocalDateTime.of(2026, 7, 21, 21, 0));
         verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
     }
 
     @Test
+    void updateEnabled_whenStoredTimeAlreadyPassed_rearmsToTomorrow() {
+        when(repository.findById(any()))
+                .thenReturn(Optional.of(preference(false, LocalTime.of(19, 0),
+                        LocalDateTime.of(2026, 7, 20, 19, 0))));
+        when(repository.updateEnabled(any(), any(), anyBoolean(), any())).thenReturn(1);
+
+        service().updateEnabled(SUBJECT_ID, TYPE, true);
+
+        verify(repository).updateEnabled(SUBJECT_ID, TYPE, true, LocalDateTime.of(2026, 7, 22, 19, 0));
+    }
+
+    @Test
     void updateEnabled_whenRowMissing_failsLoudlyWithoutCreating() {
-        // 쓰기 경로는 행을 만들지 않는다 — 행 존재는 가입 transaction·backfill이 보장하고, 0행은
+        // 쓰기 경로는 행을 만들지 않는다 — 행 존재는 가입 transaction·backfill이 보장하고, 부재는
         // 그 보장이 깨진 운영 신호다(조용한 no-op 200 금지).
-        when(repository.updateEnabled(SUBJECT_ID, TYPE, true)).thenReturn(0);
+        when(repository.findById(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service().updateEnabled(SUBJECT_ID, TYPE, true))
                 .isInstanceOf(IllegalStateException.class);
         verify(repository, never()).insertIfAbsent(any(), any(), anyBoolean(), any(), any(), any());
+        verify(repository, never()).updateEnabled(any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    void updateEnabled_whenUpdateAffectsNoRow_failsLoudly() {
+        // 읽은 뒤 사라진 행(탈퇴 등) — 조용히 성공으로 끝내지 않는다.
+        when(repository.findById(any()))
+                .thenReturn(Optional.of(preference(false, LocalTime.of(21, 0),
+                        LocalDateTime.of(2026, 7, 20, 21, 0))));
+        when(repository.updateEnabled(any(), any(), anyBoolean(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service().updateEnabled(SUBJECT_ID, TYPE, true))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

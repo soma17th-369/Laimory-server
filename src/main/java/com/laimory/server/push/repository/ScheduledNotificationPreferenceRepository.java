@@ -63,19 +63,22 @@ public interface ScheduledNotificationPreferenceRepository
                          @Param("nextDueAt") LocalDateTime nextDueAt);
 
     /**
-     * 종류별 ON/OFF 전환 — <b>{@code enabled} 한 컬럼만</b> 바꾼다.
+     * 종류별 ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾼다.
      *
-     * <p>{@code next_due_at}은 건드리지 않는다. 꺼둔 사이 과거가 된 값은 다시 켰을 때 worker가 허용 지연
-     * 초과로 걸러 발송 없이 다음 occurrence로 넘긴다 — 여기서 미리 고치려면 행을 읽어 계산해야 하고,
-     * 그 읽기와 쓰기 사이가 벌어지면 시각 변경과 겹쳤을 때 파생값이 자기 입력과 어긋난다.
+     * <p>재장전이 없으면 켜는 순간 예정에 없던 알림이 나간다. 꺼져 있는 동안 worker가 그 행을 claim하지
+     * 않아 {@code next_due_at}이 과거에 굳는데, 그 값이 허용 지연(기본 30분) 안쪽이면 다시 켠 직후의
+     * tick이 곧바로 due로 잡아 발송한다(21:00 알림을 21:05에 켜면 21:06에 도착).
+     *
+     * @param nextDueAt 저장된 시각의 다음 미래 occurrence(호출자가 KST로 계산)
      */
     @Modifying
     @Transactional
-    @Query("update ScheduledNotificationPreference s set s.enabled = :enabled "
+    @Query("update ScheduledNotificationPreference s set s.enabled = :enabled, s.nextDueAt = :nextDueAt "
             + "where s.id.subjectId = :subjectId and s.id.notificationType = :notificationType")
     int updateEnabled(@Param("subjectId") UUID subjectId,
                       @Param("notificationType") ScheduledNotificationType notificationType,
-                      @Param("enabled") boolean enabled);
+                      @Param("enabled") boolean enabled,
+                      @Param("nextDueAt") LocalDateTime nextDueAt);
 
     /**
      * 시각 변경 — 시각과 그 시각에서 파생되는 다음 예정 시각을 <b>한 문장에서 함께</b> 바꾼다.

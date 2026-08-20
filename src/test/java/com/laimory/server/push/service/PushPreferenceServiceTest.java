@@ -29,7 +29,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 전체 푸시 마스터 leaf 검증 — 행 부재 해석이 경로마다 다르다는 계약을 고정한다.
- * 기존 정보성 푸시는 rollout 공백에서 ON으로 읽되 관측·보정하고, worker의 batch 판정은 추정하지 않는다.
+ * 기존 정보성 푸시는 rollout 공백에서 ON으로 읽되 관측만 하고, worker의 batch 판정은 추정하지 않으며,
+ * 쓰기는 행을 만들지 않고 던진다.
  */
 @ExtendWith(MockitoExtension.class)
 class PushPreferenceServiceTest {
@@ -69,7 +70,7 @@ class PushPreferenceServiceTest {
         assertThat(service().isPushEnabledForLegacyCompatibility(SUBJECT_ID)).isTrue();
 
         verify(pushMetrics).recordPreferenceMissing();
-        // 조회는 쓰기를 하지 않는다 — 누락은 관측만 하고 복구는 backfill과 첫 설정 변경이 맡는다.
+        // 조회는 쓰기를 하지 않는다 — 누락은 관측만 하고 복구는 backfill이 맡는다.
         verify(pushPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
     }
 

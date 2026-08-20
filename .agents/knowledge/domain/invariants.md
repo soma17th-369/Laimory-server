@@ -194,17 +194,18 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 설정 조회는 쓰기를 하지 않는다. 누락 행은 기본값으로 답한다.
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 읽지도 만들지도 않는 UPDATE 한
   문장이며, 0행은 그 보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
-- 수용 edge: occurrence 경계 직전의 시각 변경이 worker claim과 겹치면 같은 occurrence가 한 번 더 갈 수
+- 수용 edge: occurrence 경계 직전의 설정 변경이 worker claim과 겹치면 같은 occurrence가 한 번 더 갈 수
   있다 — 중복은 최대 1회, 다음 claim이 미래로 전진시키며, 정보성 알림이라 수용한다.
-- 종류별 ON 전환은 `next_due_at`을 다시 계산하지 않는다. 꺼둔 사이 과거가 된 값은 worker가 허용 지연
-  초과로 걸러 발송 없이 다음 occurrence로 넘긴다.
+- 모든 설정 쓰기는 `next_due_at`을 그 행의 `notification_time` 기준 다음 미래 occurrence로 재장전한다.
+  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
+  tick이 예정에 없던 알림을 발송한다.
 - 현재 두 알림 종류 모두 사용자 행동·설정에 대한 정보성 통지다. 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
-- 예정 알림의 한 occurrence는 한 번만 claim된다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후
-  첫 occurrence로 전진). 하루 1회 캡은 없다 — 시각 변경이 미래 시각으로 재장전하면 같은 날 다시
-  발송될 수 있다(사용자 행동이므로 허용). claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서
-  호출하므로 전달 보장은 at-most-once best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지
-  않는다.
+- worker는 한 occurrence를 한 번만 claim한다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후 첫
+  occurrence로 전진). 하루 1회 캡은 없다 — 설정 변경이 미래 시각으로 재장전하면 같은 날 다시 발송될
+  수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
+  claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서 호출하므로 전달 보장은 at-most-once
+  best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.
 - 허용 지연(기본 30분)을 넘긴 occurrence는 발송하지 않고 다음 occurrence로 넘긴다 — 장시간 중단 뒤
   복구가 새벽에 밀린 알림을 쏟아내지 않게 하는 상한이다.
 
@@ -275,7 +276,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
   성립한 뒤에만 기록한다.
 - 탈퇴(#305)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
-  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록 삭제 + userId-only
+  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록·종류별 설정·마스터
+  삭제(FK RESTRICT 순서) + userId-only
   PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
   수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 old

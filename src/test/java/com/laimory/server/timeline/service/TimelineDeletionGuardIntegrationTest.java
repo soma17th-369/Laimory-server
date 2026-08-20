@@ -64,7 +64,7 @@ class TimelineDeletionGuardIntegrationTest {
     void cleanUp() {
         dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
                 .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
-        // 완료 푸시 경로가 마스터 행을 보정할 수 있어(#314) mapping보다 먼저 지운다(FK RESTRICT).
+        // 가입 transaction이 만든 subject 축 push 행(#314)이 남아 있으면 mapping 삭제가 FK RESTRICT에 막힌다.
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
         redisGateway.delete(legacyGuardKey());

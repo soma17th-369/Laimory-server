@@ -25,7 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * provision 계약: users insert(flush)로 userId를 확보한 뒤 같은 흐름에서 subject mapping과 subject 축
- * 기본 설정 행(푸시 마스터·일일 리마인더·수신 동의)을 만든다. 어느 단계의 실패든 그대로 전파된다 —
+ * 기본 설정 행(푸시 마스터·일일 리마인더)을 만든다. 어느 단계의 실패든 그대로 전파된다 —
  * 한 transaction rollback으로 user까지 사라지는 것은 @Transactional의 몫이며 통합 테스트가 검증한다.
  */
 @ExtendWith(MockitoExtension.class)

@@ -69,13 +69,26 @@ public class ScheduledNotificationPreferenceService {
     }
 
     /**
-     * 종류별 ON/OFF 전환 — {@code enabled} 한 컬럼만 바꾸는 UPDATE 한 문장이다.
+     * 종류별 ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾼다. 꺼져 있는 동안 과거가 된
+     * {@code nextDueAt}을 그대로 켜면 켠 직후 tick이 곧바로 발송하므로, 저장된 시각 기준 다음 미래
+     * occurrence로 재장전한다.
+     *
+     * <p>여기서만 행을 읽는다 — 시각 변경과 달리 새 시각을 입력으로 받지 않아 저장된 값이 유일한 근거인데,
+     * 그 계산을 SQL에 맡길 수 없기 때문이다. JDBC가 {@code TIME} 값을 connection timezone으로 변환해
+     * 저장하므로 SQL 안에서 컬럼끼리 날짜를 파생하면 JVM zone에 따라 9시간 어긋난다(UTC CI에서 실측).
+     * 읽기와 쓰기 사이에 시각 변경이 끼어들면 한 occurrence가 옛 시각에 나갈 수 있으나, 다음 claim이
+     * 저장된 시각으로 다시 전진시켜 한 사이클 안에 수렴한다.
      *
      * <p>쓰기 경로는 행을 만들지 않는다. 행 존재는 가입 transaction과 rollout backfill이 보장하며,
-     * 0행은 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
+     * 부재는 그 보장이 깨졌다는 운영 신호라 조용히 넘기지 않고 던진다.
      */
     public void updateEnabled(UUID subjectId, ScheduledNotificationType notificationType, boolean enabled) {
-        if (scheduledNotificationPreferenceRepository.updateEnabled(subjectId, notificationType, enabled) == 0) {
+        LocalTime notificationTime = find(subjectId, notificationType)
+                .map(ScheduledNotificationPreference::getNotificationTime)
+                .orElseThrow(() -> new IllegalStateException("scheduled notification preference row is missing"));
+        LocalDateTime nextDueAt = computeNextDueAt(nowKst(), notificationTime);
+        if (scheduledNotificationPreferenceRepository.updateEnabled(
+                subjectId, notificationType, enabled, nextDueAt) == 0) {
             throw new IllegalStateException("scheduled notification preference row is missing");
         }
     }

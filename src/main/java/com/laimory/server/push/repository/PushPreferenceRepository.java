@@ -13,7 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * push_preferences 레포. 신규 행 쓰기는 native insert-if-absent 한 문장이라 read-then-insert 경합이
- * UNIQUE 예외로 새지 않는다(가입 transaction·rollout backfill·설정 self-heal이 같은 문장을 공유).
+ * UNIQUE 예외로 새지 않는다(행을 만드는 것은 가입 transaction뿐이고 rollout backfill이 같은 의미의
+ * 운영 SQL을 쓴다 — 설정 쓰기는 행을 만들지 않는다).
  * native INSERT는 JPA auditing을 우회하므로 감사 timestamp를 직접 채운다.
  */
 public interface PushPreferenceRepository extends JpaRepository<PushPreference, UUID> {

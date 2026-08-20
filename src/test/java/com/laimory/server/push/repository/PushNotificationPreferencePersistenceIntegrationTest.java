@@ -1,6 +1,8 @@
 package com.laimory.server.push.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.ScheduledNotificationType;
@@ -223,10 +225,33 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         UUID subjectId = SUBJECTS.get(3);
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
 
-        org.assertj.core.api.Assertions
-                .assertThatThrownBy(() -> pushSettingService.updateDailyReminderEnabled("v1", subjectId, true))
+        assertThatThrownBy(() -> pushSettingService.updateDailyReminderEnabled("v1", subjectId, true))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(pushPreferenceRepository.findById(subjectId)).isEmpty();
+    }
+
+    @Test
+    void enablingReminder_rearmsStaleScheduleToFutureOccurrence() {
+        // 꺼둔 사이 과거로 굳은 예정 시각을 그대로 켜면 허용 지연(30분) 안쪽이라 켠 직후 tick이
+        // 예정에 없던 알림을 보낸다. 켤 때 다음 미래 occurrence로 재장전해야 한다.
+        UUID subjectId = SUBJECTS.get(2);
+        LocalDateTime staleDueAt = nowKst().minusMinutes(5);
+        givenSubject(subjectId);
+        scheduledNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(), TYPE.name(), false,
+                staleDueAt.toLocalTime(), staleDueAt, LocalDateTime.now());
+
+        pushSettingService.updateDailyReminderEnabled("v1", subjectId, true);
+
+        ScheduledNotificationPreference reloaded = reload(subjectId);
+        assertThat(reloaded.isEnabled()).isTrue();
+        // 저장된 시각은 그대로, 예정만 다음 날로 — 전진 값을 SQL이 TIME 컬럼에서 고르므로 JVM
+        // timezone과 무관해야 한다(UTC CI가 이 회귀를 잡는다).
+        assertThat(reloaded.getNotificationTime()).isEqualTo(staleDueAt.toLocalTime());
+        assertThat(reloaded.getNextDueAt()).isAfter(nowKst()).isEqualTo(staleDueAt.plusDays(1));
+
+        // 같은 값 재요청도 멱등 성공이다 — 0행 판정이 matched가 아니라 changed 기준으로 바뀌면 깨진다.
+        assertThatCode(() -> pushSettingService.updateDailyReminderEnabled("v1", subjectId, true))
+                .doesNotThrowAnyException();
     }
 
     // --- FK 계약 ---
