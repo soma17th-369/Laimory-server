@@ -27,13 +27,12 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
                                             @Param("nowKst") LocalDateTime nowKst);
 
     /**
-     * 현재 문서의 content 제외 요약 — enforcement/readiness/동의 버전 검증용. 위 전체 조회와 같은
-     * current selection이지만 {@code LONGTEXT content}를 요청마다 전송하지 않는다(원문은 공개 조회·이력
-     * 조회에서만 읽는다).
+     * 현재 문서의 식별 요약 — enforcement/readiness/동의 버전 검증용. 위 전체 조회와 같은 current
+     * selection이지만 판정에 쓰는 ID·종류·버전만 투영한다.
      */
     @Query("""
             SELECT new com.laimory.server.terms.service.TermDocumentSummary(
-                    d.termDocumentId, d.termType, d.stage, d.required, d.version)
+                    d.termDocumentId, d.termType, d.version)
             FROM TermDocument d
             WHERE d.termType IN :termTypes
               AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
@@ -43,19 +42,18 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
                                                            @Param("nowKst") LocalDateTime nowKst);
 
     /**
-     * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}·{@code stage}
-     * literal(오타 seed)도 예외 없이 관측된다. 검사자는 이 문자열을 enum 기대 mapping과 대조한다.
+     * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}
+     * literal(오타 seed)도 예외 없이 관측된다. 검사자는 이 문자열을 enum 기대 종류와 대조하고
+     * {@code content_url}이 https 절대 URI 형식인지 확인한다.
      */
-    @Query(value = "SELECT term_type AS termType, stage AS stage, required AS required FROM term_documents",
+    @Query(value = "SELECT term_type AS termType, content_url AS contentUrl FROM term_documents",
             nativeQuery = true)
     List<TermCatalogRow> findCatalogRows();
 
-    /** 정합성 검사용 raw projection — 미지 literal을 깨지 않고 나르는 문자열 view다. */
+    /** 정합성 검사용 raw projection — 잘못된 값을 깨지 않고 나르는 문자열 view다. */
     interface TermCatalogRow {
         String getTermType();
 
-        String getStage();
-
-        Boolean getRequired();
+        String getContentUrl();
     }
 }

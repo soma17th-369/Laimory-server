@@ -27,8 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 
 /**
- * catalog 준비 판정(필수 종류 current 커버리지 + denormalized mapping 일치)과 기동 정합성 검사,
- * bounded 전이 로그·metric 계약 검증.
+ * catalog 준비 판정(필수 종류 current 커버리지)과 기동 정합성 검사, bounded 전이 로그·metric 계약 검증.
  */
 @ExtendWith(MockitoExtension.class)
 class TermCatalogReadinessTest {
@@ -62,7 +61,7 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void stageWithAllRequiredCurrentAndConsistentMapping_isReady() {
+    void stageWithAllRequiredCurrentDocuments_isReady() {
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
 
@@ -83,27 +82,6 @@ class TermCatalogReadinessTest {
 
         assertThat(catalog.ready()).isFalse();
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0);
-    }
-
-    @Test
-    void denormalizedMappingMismatch_marksStageNotReady() {
-        // stage 사본이 enum 기대와 어긋난 seed — 정상 seed로 취급하지 않는다.
-        TermDocumentSummary wrongStage = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE,
-                TermStage.TIMELINE_FIRST_CREATE.name(), true, "2026-08-15");
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(wrongStage, document(TermType.PRIVACY_POLICY)));
-
-        assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
-    }
-
-    @Test
-    void requiredFlagMismatch_marksStageNotReady() {
-        TermDocumentSummary wrongRequired = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY,
-                TermStage.LOGIN.name(), false, "2026-08-15");
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), wrongRequired));
-
-        assertThat(readiness.checkStage(TermStage.LOGIN, NOW_KST).ready()).isFalse();
     }
 
     @Test
@@ -168,12 +146,12 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void startupCheck_reportsMissingSeedUnknownLiteralAndMappingMismatch() {
+    void startupCheck_reportsMissingSeedAndUnknownLiteral() {
         // raw row 검사라 미지 literal도 예외 없이 관측된다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "LOGIN", true),
-                catalogRow("PRIVACY_POLICY", "TIMELINE_FIRST_CREATE", true), // stage 사본 불일치
-                catalogRow("BOGUS_TYPE", "LOGIN", true)));                   // 미지 literal
+                catalogRow("TERMS_OF_SERVICE"),
+                catalogRow("PRIVACY_POLICY"),
+                catalogRow("BOGUS_TYPE"))); // 미지 literal
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(3L); // 행이 존재하는 seed 실수 — ERROR 경로
 
@@ -185,9 +163,37 @@ class TermCatalogReadinessTest {
                 .reduce("", String::concat);
         assertThat(problems)
                 .contains("missing seed for termType=SENSITIVE_INFORMATION_CONSENT")
-                .contains("mapping mismatch for termType=PRIVACY_POLICY")
                 .contains("unknown termType literal in term_documents: BOGUS_TYPE")
-                .contains("stage not ready");
+                .contains("stage not ready")
+                .doesNotContain("mapping mismatch");
+    }
+
+    @Test
+    void startupCheck_reportsMalformedContentUrl() {
+        // 게시 URL은 운영 seed가 손으로 넣는 값이라 형식 오류가 조용히 통과하면 안 된다. host는 보지
+        // 않는다 — 게시 위치는 정책이 아니라 운영 선택이다.
+        when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
+                catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"), // https 아님
+                catalogRow("PRIVACY_POLICY", "/terms/privacy-policy/1.0"),                       // 절대 URI 아님
+                catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),                                // blank
+                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),    // 형식 OK
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://laimory.app/terms/x/1.0")));
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(5L);
+
+        readiness.verifyCatalogOnStartup();
+
+        String problems = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.ERROR)
+                .map(ILoggingEvent::getFormattedMessage)
+                .reduce("", String::concat);
+        assertThat(problems)
+                .contains("invalid contentUrl for termType=TERMS_OF_SERVICE")
+                .contains("invalid contentUrl for termType=PRIVACY_POLICY")
+                .contains("invalid contentUrl for termType=SENSITIVE_INFORMATION_CONSENT")
+                // host는 검사하지 않는다 — 형식만 맞으면 통과한다.
+                .doesNotContain("invalid contentUrl for termType=THIRD_PARTY_PROVISION_CONSENT")
+                .doesNotContain("invalid contentUrl for termType=CROSS_BORDER_TRANSFER_CONSENT");
     }
 
     @Test
@@ -209,13 +215,13 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void startupCheck_fullyConsistentCatalog_logsNoError() {
+    void startupCheck_fullySeededCatalog_logsNoError() {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "LOGIN", true),
-                catalogRow("PRIVACY_POLICY", "LOGIN", true),
-                catalogRow("SENSITIVE_INFORMATION_CONSENT", "TIMELINE_FIRST_CREATE", true),
-                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "TIMELINE_FIRST_CREATE", true),
-                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "TIMELINE_FIRST_CREATE", true)));
+                catalogRow("TERMS_OF_SERVICE"),
+                catalogRow("PRIVACY_POLICY"),
+                catalogRow("SENSITIVE_INFORMATION_CONSENT"),
+                catalogRow("THIRD_PARTY_PROVISION_CONSENT"),
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT")));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
@@ -240,12 +246,14 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentSummary document(TermType type) {
-        return new TermDocumentSummary((long) type.displayOrder(), type, type.stage().name(),
-                type.required(), "2026-08-15");
+        return new TermDocumentSummary((long) type.displayOrder(), type, "1.0");
     }
 
-    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String stage,
-                                                                    Boolean required) {
+    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {
+        return catalogRow(termType, "https://laimory.app/terms/page/1.0");
+    }
+
+    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String contentUrl) {
         return new TermDocumentRepository.TermCatalogRow() {
             @Override
             public String getTermType() {
@@ -253,13 +261,8 @@ class TermCatalogReadinessTest {
             }
 
             @Override
-            public String getStage() {
-                return stage;
-            }
-
-            @Override
-            public Boolean getRequired() {
-                return required;
+            public String getContentUrl() {
+                return contentUrl;
             }
         };
     }

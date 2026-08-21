@@ -237,15 +237,29 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Terms
 
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
-  본문·버전·효력일을 바꾸는 API는 없다.
+  버전·효력일을 바꾸는 API는 없다.
+- 약관 원문은 Server가 소유하지 않는다 — DB·응답 어디에도 Markdown/HTML을 담지 않고 버전별로 게시된
+  page가 단일 소유자다. Server는 문서 행의 `content_url`을 내려줄 뿐이고, 요청·기동 중 그 page를 HTTP로
+  조회하지 않는다.
+- `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
+  규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
+  것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
+- 종류별 current 행의 **존재가 곧 그 stage gate의 활성화 조건**이다. 서버는 `content_url`이 실제로 열리는지
+  검증할 수 없으므로(요청·기동 중 HTTP 조회 금지, 기동 형식 검사는 멀쩡한 오타를 통과시킨다) 게시 page가
+  200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 gate가 미동의 사용자를 막는 동안 약관 page는
+  열리지 않는 창이 생긴다 — 이 창을 닫는 것은 코드가 아니라 순서다.
+- 게시된 버전 URL은 영구 불변이다 — 내용 수정·재사용·삭제를 하지 않고 개정은 새 version·새 URL로
+  게시한다. 과거 버전 URL이 동의 이력의 유일한 원문 재현 근거이므로 도메인·path를 옮기더라도 기존 URL
+  접근성을 보존한다. 이 보존은 서버가 검증하지 못하므로 게시 절차가 소유한다.
 - 현재 문서는 `effective_at <= now(KST)`인 종류별 최신 행으로만 계산한다(별도 active flag 없음).
   `(term_type, version)`·`(term_type, effective_at)` UNIQUE가 버전 식별과 동시 최신 모호성을 DB에서
   차단한다.
 - 약관 시각(`effective_at`·`accepted_at`)은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 판정·기록은
   캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
-- 공개 응답과 필수 판정의 stage/required/화면 순서는 `TermType` enum mapping이 권위다. DB denormalized
-  `stage`/`required`는 사본이며 불일치는 `TermCatalogReadiness`가 잘못된 seed로 경보한다(조용한 정상 취급
-  금지).
+- 공개 응답과 필수 판정의 stage/required/화면 순서는 `TermType` enum mapping이 단독 권위다 — DB는 이
+  값을 복제하지 않는다. 미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌 `content_url`은
+  `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
+  판정을 바꾸지 않는다 — gate 판정은 현재 필수 문서 존재 여부만 본다.
 - 동의 등록은 all-or-nothing이다 — 제출 전부가 검증 시각의 현재 버전일 때만 한 DB transaction으로
   기록하고, 하나라도 미존재·stale이면 0건 기록 + 409 `-3002`다. 수락 시각은 서버가 batch당 한 번 캡처한
   KST 값이고 같은 버전 재전송은 native insert-if-absent(멱등)라 최초 수락 시각을 덮어쓰지 않는다
@@ -257,12 +271,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
   등록/이력·내 회원 조회·회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
   PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
-- 기대 필수 종류 중 current 문서가 없거나 enum mapping이 깨진 stage는 부분 강제하지 않고 전체를
+- 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
   전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
   WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은 ERROR(경보 대상)다.
-- 약관 원문은 access log에 복제하지 않는다 — 두 GET response(`/api/{v}/terms`,
-  `/a/api/{v}/terms/agreements`)는 body 크기·parse 성공과 무관하게 전체 placeholder로 치환한다.
+- 두 약관 GET response(`/api/{v}/terms`, `/a/api/{v}/terms/agreements`)는 응답에 법률 원문이 없어진
+  뒤에도 privacy skeleton 대상으로 남는다 — 제목과 `contentUrl` 값은 allowlist 밖이라 마스크되고
+  종류·버전만 구조 필드로 남는다.
 
 ### Authentication
 

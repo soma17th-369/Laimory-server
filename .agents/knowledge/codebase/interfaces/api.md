@@ -177,8 +177,12 @@ code는 추가하지 않았다.**
 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음). `stage`는 필수 enum query이고
 누락·미지원 값은 400 `-400`이다. 응답 `terms[]`는 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
 버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
-`termType`·`version`·`title`·`content`·`required`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
-`required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
+`termType`·`version`·`title`·`contentUrl`·`required`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
+응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
+WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
+아니다(현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가 강제하는
+형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
+파싱·정렬하지 않는다. `required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
 (activation 전 rollout) 404/500이 아니라 200과 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다.
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
@@ -188,9 +192,11 @@ code는 추가하지 않았다.**
 409 `-3002`(재조회 신호)다. 전부 현재 버전이면 한 DB transaction으로 기록하고 성공은 `200 + body=null`
 이다. 수락 시각은 서버가 batch당 한 번 캡처한 KST 벽시계이며 같은 버전 재전송은 멱등 성공(최초 수락
 시각 불변)이다. 동의 철회 API는 없다. `GET /a/api/{version}/terms/agreements`는 회원에게 남아 있는
-전체 동의 이력을 `acceptedAt DESC`(PK DESC tie-breaker)로 반환한다 — 각 원소는 문서 필드 전체 +
-`acceptedAt`이고, 이력이 없으면 404가 아니라 200과 `agreements=[]`다. 두 약관 GET response는 access
-log에서 전체 마스킹된다(원문 비복제 — [observability](../operations/observability.md)).
+전체 동의 이력을 `acceptedAt DESC`(PK DESC tie-breaker)로 반환한다 — 각 원소는 조회 응답과 같은 문서
+필드(`contentUrl`은 동의한 그 버전 행에 저장된 URL이라 이후 게시 규약이 바뀌어도 변하지 않는다) +
+`acceptedAt`이고, 이력이 없으면 404가 아니라 200과
+`agreements=[]`다. 두 약관 GET response는 access log에서 privacy skeleton으로 마스킹되어 제목과
+`contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
 미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
 403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /me 포함)과 fail-open

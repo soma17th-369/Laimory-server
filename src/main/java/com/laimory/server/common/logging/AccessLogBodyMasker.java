@@ -49,7 +49,10 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")));
 
     // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건·
-    // 약관 원문 두 GET(전문·동의 이력 — 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지).
+    // 약관 두 GET. 약관 응답은 #320 이후 법률 원문 대신 page URL만 담지만 skeleton을 해제하지 않는다 —
+    // 제목·URL은 allowlist 밖이라 마스크되고 추적에 필요한 종류·버전만 구조 필드로 남는다. URL이 필요하면
+    // 그 종류·버전으로 term_documents.content_url을 읽는다(로그가 원본이 아니다).
+    // 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지.
     // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),
@@ -75,7 +78,7 @@ final class AccessLogBodyMasker {
             // 조회 response 구조(ApiResponse envelope 포함 — message는 제외)
             "header", "code", "body", "result", "timelines", "dailyrecordid", "emotiontype",
             "timelineeventid", "items", "timelineitemid",
-            // 약관 구조(title·content 법률 원문은 제외)
+            // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
             "terms", "agreements", "termtype", "version", "required", "effectiveat", "acceptedat");
 
     // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는

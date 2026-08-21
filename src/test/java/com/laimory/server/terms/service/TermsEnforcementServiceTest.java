@@ -40,13 +40,13 @@ class TermsEnforcementServiceTest {
     @BeforeEach
     void setUp() {
         requiredDocuments = List.of(
-                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "LOGIN", true, "2026-08-15"),
-                new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "LOGIN", true, "2026-08-15"));
+                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0"),
+                new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "1.0"));
     }
 
     @Test
     void catalogNotReady_failsOpenWithoutAgreementQuery() {
-        // seed/activation 누락·mapping 불일치 stage는 사용자 흐름을 막지 않고 metric으로 경보한다.
+        // seed/activation이 덜 된 stage는 사용자 흐름을 막지 않고 metric으로 경보한다.
         when(termCatalogReadiness.checkStage(TermStage.LOGIN))
                 .thenReturn(new TermCatalogReadiness.StageCatalog(false, List.of()));
 

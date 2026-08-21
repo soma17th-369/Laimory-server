@@ -8,10 +8,9 @@ import java.util.stream.Stream;
  * 약관 종류 — 각 종류의 기대 {@code (stage, required, displayOrder)} mapping의 단일 소유자다.
  *
  * <p>공개 응답의 {@code required}·정렬 순서와 필수 동의 판정은 전부 이 enum을 사용한다. DB
- * {@code term_documents}의 denormalized {@code stage}/{@code required}는 운영 확인용 사본일 뿐이며,
- * enum과 불일치하면 {@code TermCatalogReadiness}가 잘못된 seed로 판정한다(운영자가 문서별로 의미를
- * 임의 변경하는 모델이 아니다). 잘못된 seed 값이 조용히 전 회원 차단이나 필수 동의 누락으로 이어지지
- * 않게 하는 구조다.
+ * {@code term_documents}는 이 mapping을 복제하지 않는다 — 종류·버전·효력일과 제목만 들고 있고,
+ * 운영자가 문서별로 단계·필수 여부·순서를 임의 변경하는 모델이 아니다.
+
  *
  * <p>{@code required} 값은 계획(#303)의 기본값(다섯 종류 모두 필수)이다 — 제품·법무가 문서의 법적
  * 성격(단순 고지 vs 명시적 동의)을 확정하면 이 mapping과 운영 seed를 함께 갱신한다.

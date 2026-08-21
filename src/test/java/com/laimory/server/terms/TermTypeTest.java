@@ -8,8 +8,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link TermType}의 기대 mapping 계약 고정 — 이 enum이 stage 소속·필수 여부·화면 순서의 단일
- * 소유자다(DB denormalized 값은 사본). mapping을 바꾸면 운영 seed도 함께 바꿔야 한다는 신호로
- * 테스트가 깨진다.
+ * 소유자다. mapping을 바꾸면 운영 seed도 함께 바꿔야 한다는 신호로 테스트가 깨진다.
  */
 class TermTypeTest {
 

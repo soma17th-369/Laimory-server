@@ -249,9 +249,12 @@ CREATE TABLE IF NOT EXISTS push_registrations (
 -- 약관 문서(#303) — 버전마다 불변 행 하나. 개정은 UPDATE가 아니라 새 행 INSERT이며 별도 active flag 없이
 -- "effective_at <= now(KST)인 종류별 최신 행"이 현재 문서다(future version 사전 등록·cutover를 한 축으로 관리).
 -- effective_at은 Asia/Seoul 벽시계 LocalDateTime 계약(offset 없음 — 이 저장소 공통, 수동 INSERT도 KST 값으로).
--- stage/required/display_order는 코드 TermType mapping의 denormalized 사본이다 — 판정·응답은 enum이 권위이며
--- 불일치는 기동/런타임 정합성 검사(TermCatalogReadiness)가 잘못된 seed로 경보한다.
--- 승인된 법률 원문·실제 효력일 seed는 배포 전 운영 수동 INSERT로만 넣는다(예시 원문 seed 금지).
+-- 원문은 이 테이블에 담지 않는다(#320) — 게시된 버전별 page가 소유하고 이 행은 그 주소만 들고 있다.
+-- content_url은 게시 시점에 확정된 사실이라 코드에서 역산하지 않고 저장한다: 게시 host·경로 규칙이
+-- 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않고, 버전마다 다른 호스팅을 쓸 수도 있다.
+-- 단계·필수 여부·화면 순서는 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
+-- literal(오타 seed)과 https 절대 URI가 아닌 content_url은 기동 검사(TermCatalogReadiness)가 경보한다.
+-- 실제 효력일 seed는 원문 page 게시 후 운영 수동 INSERT로만 넣는다.
 CREATE TABLE IF NOT EXISTS term_documents (
     term_document_id BIGINT NOT NULL AUTO_INCREMENT,
     -- term_type은 enum literal exact-match 식별자다 → 컬럼 단위 binary collation(subject_id 선례).
@@ -259,14 +262,12 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
     -- readiness가 not-ready(fail-open)로 경보한다.
     term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- TermType literal(TERMS_OF_SERVICE 등 5종)
-    stage VARCHAR(32) NOT NULL,                      -- TermStage literal 사본(LOGIN|TIMELINE_FIRST_CREATE)
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     title VARCHAR(255) NOT NULL,
-    content LONGTEXT NOT NULL,                       -- 승인된 약관 원문 전체(불변)
-    required BOOLEAN NOT NULL,                       -- TermType.required 사본
-    display_order INT NOT NULL,                      -- TermType.displayOrder 사본(정렬 권위는 enum)
+    -- 게시된 이 버전 원문 page의 절대 https URL(불변). 서버는 이 값을 조회·검증만 하고 HTTP로 열지 않는다.
+    content_url VARCHAR(512) NOT NULL,
     effective_at DATETIME(6) NOT NULL,               -- KST 벽시계 효력 시작 시각
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
@@ -275,12 +276,12 @@ CREATE TABLE IF NOT EXISTS term_documents (
     PRIMARY KEY (term_document_id),
     UNIQUE KEY uq_term_documents_type_version (term_type, version),
     -- 같은 종류의 두 문서가 같은 시각에 동시에 최신이 되는 모호성을 DB에서 차단(current selection 결정성).
-    UNIQUE KEY uq_term_documents_type_effective (term_type, effective_at),
-    KEY idx_term_documents_stage_effective (stage, effective_at, term_type)
+    -- leftmost prefix (term_type)가 종류별 current selection도 지원해 별도 조회 index를 두지 않는다.
+    UNIQUE KEY uq_term_documents_type_effective (term_type, effective_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 회원 약관 동의 이력(#303) — (user_id, term_document_id)당 1행. 문서 버전이 불변이라 이 행이
--- "언제 어떤 내용에 동의했는지"의 권위 기록이다. accepted_at은 서버가 캡처한 KST 벽시계(클라 입력 아님)이며
+-- "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. accepted_at은 서버가 캡처한 KST 벽시계(클라 입력 아님)이며
 -- 같은 버전 재동의는 native INSERT IGNORE가 no-op해 최초 수락 시각을 보존한다(JPA auditing 미적용 —
 -- 감사 컬럼은 insert SQL이 직접 채움). owner는 인증 회원 raw user_id다(회원 account 도메인). 탈퇴 후
 -- 동의 이력 보존 정책(#302/#305)이 확정되지 않아 users FK는 두지 않는다(refresh_tokens 선례) —

@@ -35,7 +35,7 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
     long countByUserIdAndTermDocumentIdIn(Long userId, Collection<Long> termDocumentIds);
 
     /**
-     * 회원에게 남아 있는 전체 동의 이력 + 불변 문서 내용({@code acceptedAt DESC}, PK DESC 안정
+     * 회원에게 남아 있는 전체 동의 이력 + 불변 문서 행({@code acceptedAt DESC}, PK DESC 안정
      * tie-breaker). 연관 매핑 없이 FK 값으로 join한다(저장소 방침 — JPA 연관 매핑 금지).
      */
     @Query("""
