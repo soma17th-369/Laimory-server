@@ -211,31 +211,41 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 `TimelineEventType`이며, 결과 저장 transaction은 allowlist literal만 INSERT한다(미지원 literal은 결과 저장
 400 — 새 literal 활성화 순서는 "Server enum 배포 → AI writer 활성화").
 
-`term_documents`(#303)는 버전별 불변 약관 문서다. 컬럼은 핵심 4개(`term_type`·`version`·`title`·
-`effective_at`)와 감사 3개뿐이며 원문·enum 사본 컬럼이 없다(#320 — 원문은 `laimory.app` 게시 page가
-소유하고 URL은 slug+version으로 계산하므로 `content`·`content_url` 둘 다 두지 않는다). 게시 행
-UPDATE·삭제 API가 없고 개정은 새 행 INSERT이며, 현재 문서는 `effective_at <= now(KST)`의 종류별 최신
-행으로 계산한다(별도 active flag 없음). `(term_type, version)`·`(term_type, effective_at)` UNIQUE만
-가진다 — 후자의 leftmost prefix가 종류별 current selection을 지원해 별도 조회 index를 두지 않는다.
+`term_documents`(#303)는 버전별 불변 약관 문서다. 컬럼은 핵심 5개(`term_type`·`version`·`title`·
+`content_url`·`effective_at`)와 감사 3개다. 원문은 담지 않고(#320) 게시된 버전별 page가 소유하며 이 행은
+그 주소만 들고 있다. `content_url`은 게시 시점에 확정된 **사실이라 저장한다** — 코드에서 slug+version으로
+역산하면 게시 host·경로 규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리키고(동의 이력이 소급
+변조된다), 버전마다 다른 호스팅을 쓸 수도 없다. 서버는 이 값을 읽고 형식만 검사할 뿐 게시 위치 정책을
+알지 않는다. 게시 행 UPDATE·삭제 API가 없고 개정은 새 행 INSERT이며, 현재 문서는
+`effective_at <= now(KST)`의 종류별 최신 행으로 계산한다(별도 active flag 없음).
+`(term_type, version)`·`(term_type, effective_at)` UNIQUE만 가진다 — 후자의 leftmost prefix가 종류별
+current selection을 지원해 별도 조회 index를 두지 않는다.
 `version`은 exact-match 식별자라 컬럼 단위 `utf8mb4_bin`(raw_id·FID 선례),
 `term_type`은 enum literal exact-match라 컬럼 단위 `ascii_bin`이다(subject_id 선례) — 테이블 기본
 `_unicode_ci`면 소문자 오타 seed가 JPQL `IN`(enum literal)에 case-insensitive 매칭돼 `@Enumerated`
 hydration을 500으로 깨뜨리지만, binary 비교면 불일치 행이 조회에서 빠지고 readiness가
-not-ready(fail-open)로 경보한다. readiness의 raw catalog 조회는 `term_type` 한 컬럼만 native projection으로
-읽어 미지 literal도 hydration 없이 관측한다.
+not-ready(fail-open)로 경보한다. `content_url`을 `URI`가 아닌 `String`으로 매핑하는 것도 같은 이유다 —
+타입 변환을 걸면 오타 seed 행 하나가 공개 조회 hydration을 500으로 깨뜨린다. readiness의 raw catalog
+조회는 `term_type`·`content_url` 두 컬럼만 native projection으로 읽어, 미지 literal과 https 절대 URI가
+아닌 URL을 hydration 없이 관측해 기동 경보로 올린다(host는 검사하지 않는다 — 게시 위치는 운영 선택이지
+서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
 단계·필수 여부·화면 순서·원문 slug는 코드 `TermType` mapping이 단독 권위라 컬럼으로 복제하지 않는다.
 enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summary projection을 조회한다 — LOGIN gate가
 모든 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
-기존 live DB에서 #320으로 넘어갈 때는 새 Server를 먼저 배포하고(`ddl-auto=validate`는 매핑되지 않은
-잔여 컬럼을 문제 삼지 않는다) 그다음 제거 DDL을 적용한다 — 반대 순서면 구 entity가 없는 컬럼을 찾는다.
-제거 대상은 `idx_term_documents_stage_effective` index와 `content`·`stage`·`required`·`display_order`
-컬럼이다. 네 컬럼이 NOT NULL·무기본값이라 배포와 DDL 사이에 INSERT가 있으면 실패하므로, 이 전환은 두
-테이블이 0행인 pre-activation 창에서만 수행한다.
+기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
+매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
+`content_url`은 새 Server가 뜨기 전에 존재해야 한다(제거만 있던 변경과 순서가 다르다).
 
 ```sql
+-- 1) 배포 전: 새 Server가 매핑하는 컬럼을 먼저 만든다. 구 Server는 이 컬럼을 모르므로 영향 없다.
+ALTER TABLE term_documents ADD COLUMN content_url VARCHAR(512) NOT NULL AFTER title;
+
+-- 2) 신버전 Server 배포 + smoke
+
+-- 3) 배포 후: 구 entity만 쓰던 컬럼과 index를 제거한다.
 ALTER TABLE term_documents
     DROP INDEX idx_term_documents_stage_effective,
     DROP COLUMN content,
@@ -243,6 +253,10 @@ ALTER TABLE term_documents
     DROP COLUMN required,
     DROP COLUMN display_order;
 ```
+
+`content_url`과 제거 대상 네 컬럼 모두 NOT NULL·무기본값이라 행이 있으면 1단계 ADD 자체가 실패하고
+2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
+3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
 
 `users`(#305)는 회원 상태 컬럼을 가진다 — `status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'`
 (`ACTIVE`|`WITHDRAWAL_PENDING`)와 `withdrawal_requested_at DATETIME(6) NULL`. `provider_user_id`는

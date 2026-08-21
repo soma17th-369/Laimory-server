@@ -178,10 +178,11 @@ code는 추가하지 않았다.**
 누락·미지원 값은 400 `-400`이다. 응답 `terms[]`는 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
 버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
 `termType`·`version`·`title`·`contentUrl`·`required`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
-응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI
-`https://laimory.app/terms/{contentSlug}/{version}`이고 클라이언트가 WebView로 연다. `version`은
-숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는 파싱·정렬하지 않는다.
-`required`와 stage 소속·slug는 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
+응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
+WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
+아니다(현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가 강제하는
+형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
+파싱·정렬하지 않는다. `required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
 (activation 전 rollout) 404/500이 아니라 200과 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다.
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
@@ -192,7 +193,8 @@ code는 추가하지 않았다.**
 이다. 수락 시각은 서버가 batch당 한 번 캡처한 KST 벽시계이며 같은 버전 재전송은 멱등 성공(최초 수락
 시각 불변)이다. 동의 철회 API는 없다. `GET /a/api/{version}/terms/agreements`는 회원에게 남아 있는
 전체 동의 이력을 `acceptedAt DESC`(PK DESC tie-breaker)로 반환한다 — 각 원소는 조회 응답과 같은 문서
-필드(`contentUrl`은 동의한 그 버전의 URL) + `acceptedAt`이고, 이력이 없으면 404가 아니라 200과
+필드(`contentUrl`은 동의한 그 버전 행에 저장된 URL이라 이후 게시 규약이 바뀌어도 변하지 않는다) +
+`acceptedAt`이고, 이력이 없으면 404가 아니라 200과
 `agreements=[]`다. 두 약관 GET response는 access log에서 privacy skeleton으로 마스킹되어 제목과
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 

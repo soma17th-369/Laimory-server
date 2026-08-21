@@ -53,9 +53,9 @@ class TermDocumentServiceTest {
         Clock clock = Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC);
         TermDocumentService service = new TermDocumentService(termDocumentRepository, clock);
         TermDocument privacy = TermDocument.of(TermType.PRIVACY_POLICY, "1.0", "개인정보 처리방침",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
+                "https://laimory.app/terms/privacy-policy/1.0", LocalDateTime.parse("2026-08-01T00:00:00"));
         TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
+                "https://laimory.app/terms/terms-of-service/1.0", LocalDateTime.parse("2026-08-01T00:00:00"));
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
                 .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도
 

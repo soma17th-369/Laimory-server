@@ -50,8 +50,9 @@ final class AccessLogBodyMasker {
 
     // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건·
     // 약관 두 GET. 약관 응답은 #320 이후 법률 원문 대신 page URL만 담지만 skeleton을 해제하지 않는다 —
-    // 제목·URL은 allowlist 밖이라 마스크되고, 추적에 필요한 종류·버전은 구조 필드로 남는다
-    // (동의 POST request에는 원문이 없어 기존 field-level 규칙 유지).
+    // 제목·URL은 allowlist 밖이라 마스크되고 추적에 필요한 종류·버전만 구조 필드로 남는다. URL이 필요하면
+    // 그 종류·버전으로 term_documents.content_url을 읽는다(로그가 원본이 아니다).
+    // 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지.
     // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),

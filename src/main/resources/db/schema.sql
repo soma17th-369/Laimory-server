@@ -249,10 +249,11 @@ CREATE TABLE IF NOT EXISTS push_registrations (
 -- 약관 문서(#303) — 버전마다 불변 행 하나. 개정은 UPDATE가 아니라 새 행 INSERT이며 별도 active flag 없이
 -- "effective_at <= now(KST)인 종류별 최신 행"이 현재 문서다(future version 사전 등록·cutover를 한 축으로 관리).
 -- effective_at은 Asia/Seoul 벽시계 LocalDateTime 계약(offset 없음 — 이 저장소 공통, 수동 INSERT도 KST 값으로).
--- 원문은 이 테이블에 담지 않는다(#320) — laimory.app에 게시된 버전별 정적 page가 소유하고 URL은
--- term_type slug + version으로 결정되므로 content/content_url 컬럼을 두지 않는다.
--- 단계·필수 여부·화면 순서도 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
--- literal(오타 seed)은 기동/런타임 정합성 검사(TermCatalogReadiness)가 경보한다.
+-- 원문은 이 테이블에 담지 않는다(#320) — 게시된 버전별 page가 소유하고 이 행은 그 주소만 들고 있다.
+-- content_url은 게시 시점에 확정된 사실이라 코드에서 역산하지 않고 저장한다: 게시 host·경로 규칙이
+-- 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않고, 버전마다 다른 호스팅을 쓸 수도 있다.
+-- 단계·필수 여부·화면 순서는 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
+-- literal(오타 seed)과 https 절대 URI가 아닌 content_url은 기동 검사(TermCatalogReadiness)가 경보한다.
 -- 실제 효력일 seed는 원문 page 게시 후 운영 수동 INSERT로만 넣는다.
 CREATE TABLE IF NOT EXISTS term_documents (
     term_document_id BIGINT NOT NULL AUTO_INCREMENT,
@@ -265,6 +266,8 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
     title VARCHAR(255) NOT NULL,
+    -- 게시된 이 버전 원문 page의 절대 https URL(불변). 서버는 이 값을 조회·검증만 하고 HTTP로 열지 않는다.
+    content_url VARCHAR(512) NOT NULL,
     effective_at DATETIME(6) NOT NULL,               -- KST 벽시계 효력 시작 시각
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,

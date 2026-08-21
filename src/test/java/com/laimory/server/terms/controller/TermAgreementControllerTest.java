@@ -27,9 +27,7 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.service.TermAgreementCommand;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
 import com.laimory.server.terms.service.TermAgreementService;
-import com.laimory.server.terms.service.TermContentUrlFactory;
 import com.laimory.server.testsupport.AuthTestSupport;
-import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -70,9 +68,6 @@ class TermAgreementControllerTest {
 
     @MockitoBean
     private TermAgreementService termAgreementService;
-
-    @MockitoBean
-    private TermContentUrlFactory termContentUrlFactory;
 
     @Test
     void unauthenticatedRequests_rejected401BeforeService() throws Exception {
@@ -147,8 +142,6 @@ class TermAgreementControllerTest {
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of(
                 entry(TermType.PRIVACY_POLICY, "1.1", "개인정보 처리방침", "2026-08-16T09:30:05"),
                 entry(TermType.TERMS_OF_SERVICE, "1.0", "이용약관", "2026-07-02T10:00:05")));
-        stubUrl(TermType.PRIVACY_POLICY, "1.1");
-        stubUrl(TermType.TERMS_OF_SERVICE, "1.0");
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -183,14 +176,12 @@ class TermAgreementControllerTest {
                 .andExpect(jsonPath("$.body.agreements").isEmpty());
     }
 
-    private void stubUrl(TermType type, String version) {
-        when(termContentUrlFactory.create(type, version))
-                .thenReturn(URI.create("https://laimory.app/terms/" + type.contentSlug() + "/" + version));
-    }
-
     private static TermAgreementHistoryEntry entry(TermType type, String version, String title,
                                                    String acceptedAt) {
-        TermDocument document = TermDocument.of(type, version, title,
+        // 게시 URL은 동의한 그 버전 행에 저장된 값이다 — 현재 규칙으로 다시 만들지 않는다.
+        String contentUrl = "https://laimory.app/terms/"
+                + type.name().toLowerCase().replace('_', '-') + "/" + version;
+        TermDocument document = TermDocument.of(type, version, title, contentUrl,
                 LocalDateTime.parse("2026-08-01T09:30:15"));
         TermAgreement agreement = BeanUtils.instantiateClass(TermAgreement.class);
         ReflectionTestUtils.setField(agreement, "userId", USER_ID);

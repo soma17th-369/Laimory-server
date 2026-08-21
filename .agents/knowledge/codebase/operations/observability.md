@@ -93,8 +93,9 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   status·`ApiResponse` envelope의 header/code/body·약관 termType/version/required/effectiveAt/
   acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —
   새 DTO 필드는 자동 마스크, title/payload/memo/userMemory·약관 `contentUrl`·envelope `message`가 대표
-  대상). 약관 `contentUrl`을 allowlist에 넣지 않는 것은 값 자체를 로그에 남기지 않기 위해서이고,
-  추적에 필요한 종류·버전은 구조 필드로 남으므로 URL은 필요하면 그 둘로 재구성한다.
+  대상). 약관 `contentUrl`을 allowlist에 넣지 않는 것은 값 자체를 로그에 남기지 않기 위해서다 —
+  추적에 필요한 종류·버전은 구조 필드로 남으므로, URL이 필요하면 그 둘로 `term_documents.content_url`을
+  조회한다(로그가 원본이 아니다).
   allowlist 텍스트 값도 shape guard(`[A-Za-z0-9_\-.:+/]{1,64}` 전체 일치) 통과 시만 남아 공백·비ASCII·
   장문 원문은 어떤 필드명 밑에서도 남지 않는다. `error`/`errorCode`는 숫자·null만 남긴다(폴링 numeric
   code는 유지, 콜백 자유 텍스트는 마스크 — "수신 후 폐기" 계약 유지). empty·캡처 상한 초과는 파싱

@@ -91,7 +91,7 @@ class TermPersistenceIntegrationTest {
     void schema_hasNoContentOrDenormalizedColumns_andNoStageIndex() {
         // #320 최종 shape 고정 — 원문·enum 사본 컬럼과 stage 조회 index가 되살아나면 여기서 깨진다.
         assertThat(columnNames()).containsExactlyInAnyOrder("term_document_id", "term_type", "version",
-                "title", "effective_at", "created_at", "updated_at", "modified_by");
+                "title", "content_url", "effective_at", "created_at", "updated_at", "modified_by");
         assertThat(indexNames()).containsExactlyInAnyOrder("PRIMARY",
                 "uq_term_documents_type_version", "uq_term_documents_type_effective");
     }
@@ -211,8 +211,9 @@ class TermPersistenceIntegrationTest {
         // 소문자 오타 seed — term_type이 binary collation이 아니라면 IN(enum literal)에 case-insensitive
         // 매칭돼 @Enumerated hydration이 공개 조회·gate를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
         jdbcTemplate.update("INSERT INTO term_documents"
-                + " (term_type, version, title, effective_at, created_at, updated_at)"
+                + " (term_type, version, title, content_url, effective_at, created_at, updated_at)"
                 + " VALUES ('terms_of_service', 'it-lc-1', '이용약관',"
+                + "  'https://laimory.app/terms/terms-of-service/it-lc-1',"
                 + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
         // 나머지 LOGIN 필수 종류는 정상 seed — 오타 행 하나만으로 stage가 미준비여야 한다.
         saveDocument(TermType.PRIVACY_POLICY, "it-lc-ok", "2026-01-02T00:00:00");
@@ -237,7 +238,9 @@ class TermPersistenceIntegrationTest {
 
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {
         TermDocument document = termDocumentRepository.saveAndFlush(TermDocument.of(
-                type, version, "통합 테스트 제목", LocalDateTime.parse(effectiveAt)));
+                type, version, "통합 테스트 제목",
+                "https://laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version,
+                LocalDateTime.parse(effectiveAt)));
         createdDocumentIds.add(document.getTermDocumentId());
         return document;
     }

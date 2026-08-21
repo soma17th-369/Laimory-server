@@ -43,13 +43,17 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
 
     /**
      * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}
-     * literal(오타 seed)도 예외 없이 관측된다. 검사자는 이 문자열을 enum 기대 종류와 대조한다.
+     * literal(오타 seed)도 예외 없이 관측된다. 검사자는 이 문자열을 enum 기대 종류와 대조하고
+     * {@code content_url}이 https 절대 URI 형식인지 확인한다.
      */
-    @Query(value = "SELECT term_type AS termType FROM term_documents", nativeQuery = true)
+    @Query(value = "SELECT term_type AS termType, content_url AS contentUrl FROM term_documents",
+            nativeQuery = true)
     List<TermCatalogRow> findCatalogRows();
 
-    /** 정합성 검사용 raw projection — 미지 literal을 깨지 않고 나르는 문자열 view다. */
+    /** 정합성 검사용 raw projection — 잘못된 값을 깨지 않고 나르는 문자열 view다. */
     interface TermCatalogRow {
         String getTermType();
+
+        String getContentUrl();
     }
 }

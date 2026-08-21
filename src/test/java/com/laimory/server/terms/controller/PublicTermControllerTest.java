@@ -12,10 +12,8 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
-import com.laimory.server.terms.service.TermContentUrlFactory;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.testsupport.AuthTestSupport;
-import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -43,17 +41,12 @@ class PublicTermControllerTest {
     @MockitoBean
     private TermDocumentService termDocumentService;
 
-    @MockitoBean
-    private TermContentUrlFactory termContentUrlFactory;
-
     @Test
     void getCurrentTerms_withoutBearer_returns200InFixedDisplayOrder() throws Exception {
         // 로그인 전 화면에서 쓰는 public API — bearer 없이 200이어야 한다.
         when(termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN)).thenReturn(List.of(
                 document(TermType.TERMS_OF_SERVICE, "이용약관"),
                 document(TermType.PRIVACY_POLICY, "개인정보 처리방침")));
-        stubUrl(TermType.TERMS_OF_SERVICE);
-        stubUrl(TermType.PRIVACY_POLICY);
 
         mockMvc.perform(get(PATH).param("stage", "LOGIN"))
                 .andExpect(status().isOk())
@@ -108,12 +101,12 @@ class PublicTermControllerTest {
         verifyNoInteractions(termDocumentService);
     }
 
-    private void stubUrl(TermType type) {
-        when(termContentUrlFactory.create(type, VERSION))
-                .thenReturn(URI.create("https://laimory.app/terms/" + type.contentSlug() + "/" + VERSION));
+    private static TermDocument document(TermType type, String title) {
+        return TermDocument.of(type, VERSION, title, url(type), LocalDateTime.parse("2026-08-01T09:30:15"));
     }
 
-    private static TermDocument document(TermType type, String title) {
-        return TermDocument.of(type, VERSION, title, LocalDateTime.parse("2026-08-01T09:30:15"));
+    /** 게시 URL은 행에 저장된 값이라 fixture가 그대로 정한다(서버가 규칙으로 만들지 않는다). */
+    private static String url(TermType type) {
+        return "https://laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + VERSION;
     }
 }

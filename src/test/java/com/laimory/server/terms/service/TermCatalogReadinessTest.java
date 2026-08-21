@@ -169,6 +169,34 @@ class TermCatalogReadinessTest {
     }
 
     @Test
+    void startupCheck_reportsMalformedContentUrl() {
+        // 게시 URL은 운영 seed가 손으로 넣는 값이라 형식 오류가 조용히 통과하면 안 된다. host는 보지
+        // 않는다 — 게시 위치는 정책이 아니라 운영 선택이다.
+        when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
+                catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"), // https 아님
+                catalogRow("PRIVACY_POLICY", "/terms/privacy-policy/1.0"),                       // 절대 URI 아님
+                catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),                                // blank
+                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),    // 형식 OK
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://laimory.app/terms/x/1.0")));
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(5L);
+
+        readiness.verifyCatalogOnStartup();
+
+        String problems = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.ERROR)
+                .map(ILoggingEvent::getFormattedMessage)
+                .reduce("", String::concat);
+        assertThat(problems)
+                .contains("invalid contentUrl for termType=TERMS_OF_SERVICE")
+                .contains("invalid contentUrl for termType=PRIVACY_POLICY")
+                .contains("invalid contentUrl for termType=SENSITIVE_INFORMATION_CONSENT")
+                // host는 검사하지 않는다 — 형식만 맞으면 통과한다.
+                .doesNotContain("invalid contentUrl for termType=THIRD_PARTY_PROVISION_CONSENT")
+                .doesNotContain("invalid contentUrl for termType=CROSS_BORDER_TRANSFER_CONSENT");
+    }
+
+    @Test
     void startupCheck_emptyCatalog_logsWarnNotError() {
         // seed 전 반복 기동이 ERROR 경보(Discord)를 만들지 않는다 — WARN으로만 pre-activation을 알린다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of());
@@ -222,6 +250,20 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {
-        return () -> termType;
+        return catalogRow(termType, "https://laimory.app/terms/page/1.0");
+    }
+
+    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String contentUrl) {
+        return new TermDocumentRepository.TermCatalogRow() {
+            @Override
+            public String getTermType() {
+                return termType;
+            }
+
+            @Override
+            public String getContentUrl() {
+                return contentUrl;
+            }
+        };
     }
 }
