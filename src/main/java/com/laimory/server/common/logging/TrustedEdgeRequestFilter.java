@@ -244,7 +244,7 @@ public class TrustedEdgeRequestFilter extends OncePerRequestFilter {
         }
 
         private static String invalid(String value) {
-            return "app.edge.trusted-proxy-cidrs must contain IPv4/IPv6 CIDR blocks (e.g. 10.0.0.0/20): " + value;
+            return "app.edge.trusted-proxy-cidrs must contain IPv4/IPv6 CIDR blocks (e.g. 192.0.2.0/24): " + value;
         }
     }
 

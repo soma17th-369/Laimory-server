@@ -20,11 +20,15 @@ class TrustedEdgeRequestFilterTest {
     /** 현행 dev와 같은 배선 — ALB 대역이 비어 있어 loopback nginx 엣지만 신뢰한다. */
     private final TrustedEdgeRequestFilter loopbackEdge = new TrustedEdgeRequestFilter(List.of());
 
-    /** ALB 전환 후 배선 — ALB ENI가 사는 퍼블릭 서브넷 두 개를 신뢰한다. */
+    /**
+     * ALB 전환 후 배선 — ALB ENI가 사는 퍼블릭 서브넷 자리에 문서화용 합성 대역(RFC 5737)을 넣는다.
+     * 실제 대역은 배포 환경 {@code .env}가 소유한다. 인접한 두 대역을 설정해 대역 경계와 byte 정렬이
+     * 아닌 prefix 길이를 함께 고정한다.
+     */
     private final TrustedEdgeRequestFilter proxyEdge =
-            new TrustedEdgeRequestFilter(List.of("10.0.0.0/20", "10.0.16.0/20"));
+            new TrustedEdgeRequestFilter(List.of("192.0.2.0/25", "192.0.2.128/25"));
 
-    private static final String PROXY_PEER = "10.0.16.20";
+    private static final String PROXY_PEER = "192.0.2.140";
 
     @Test
     void trustedLoopback_usesSingleNormalizedIpv4_andIgnoresXffAndUserAgent() throws Exception {
@@ -205,7 +209,7 @@ class TrustedEdgeRequestFilterTest {
     @Test
     void ipv4MappedPeer_matchesIpv4Cidr() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/probe");
-        request.setRemoteAddr("::ffff:10.0.16.20");
+        request.setRemoteAddr("::ffff:192.0.2.140");
         request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "203.0.113.7");
 
         assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("203.0.113.7");
@@ -348,14 +352,14 @@ class TrustedEdgeRequestFilterTest {
 
     private static Stream<Arguments> proxyCidrBoundaries() {
         return Stream.of(
-                Arguments.of("10.0.0.0", true),
-                Arguments.of("10.0.15.255", true),
-                Arguments.of("10.0.16.0", true),
-                Arguments.of("10.0.31.255", true),
-                Arguments.of("10.0.32.0", false),
-                Arguments.of("10.0.68.10", false),
-                Arguments.of("9.255.255.255", false),
-                Arguments.of("10.1.0.1", false));
+                Arguments.of("192.0.2.0", true),
+                Arguments.of("192.0.2.127", true),
+                Arguments.of("192.0.2.128", true),
+                Arguments.of("192.0.2.255", true),
+                Arguments.of("192.0.3.0", false),
+                Arguments.of("192.0.1.255", false),
+                Arguments.of("198.51.100.10", false),
+                Arguments.of("203.0.113.200", false));
     }
 
     private static Stream<Arguments> canonicalIpv6() {
