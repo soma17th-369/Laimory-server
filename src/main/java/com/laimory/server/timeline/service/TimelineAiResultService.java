@@ -87,7 +87,9 @@ public class TimelineAiResultService {
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
 
-        AiTimelineResultRequest redacted = validatedAndRedacted(request);
+        // DB를 보지 않는 형식 검증을 먼저 해 선점 없이 400으로 끝낸다.
+        TimelineAiResultTransactionService.requireValidShape(request);
+        AiTimelineResultRequest redacted = redactEventTexts(request);
 
         // 선점: token·stage는 그대로 두고 표식만 남긴다. 실패해도 AI의 token이 살아 있어 재시도가 정상 경로다.
         RetryReceipt claimReceipt = claimReceipt(task);
@@ -151,15 +153,6 @@ public class TimelineAiResultService {
         }
         log.info("ai result replay reissued callback token: taskId={}", taskId);
         return new AiTimelineResultResponse(callbackToken);
-    }
-
-    /**
-     * DB를 보지 않는 형식 검증 뒤 Event text의 bounded 치환 사본을 만든다. 두 경로가 같은 순서로 쓴다 —
-     * 재시도의 지문이 치환본 기준이라 신규 저장과 같은 변환을 거쳐야 값이 일치한다.
-     */
-    private AiTimelineResultRequest validatedAndRedacted(AiTimelineResultRequest request) {
-        TimelineAiResultTransactionService.requireValidShape(request);
-        return redactEventTexts(request);
     }
 
     /**

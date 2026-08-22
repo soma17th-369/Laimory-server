@@ -35,7 +35,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>응답이 유실되면 AI는 이미 소비된 input token만 쥐게 되므로, 회전 시 그 token의 hash를 retry receipt로
  * 남긴다. 창(첫 요청 도착 기준) 안에 같은 token으로 다시 오면 <b>응답을 다시 조립해</b> 새 result token과
- * 함께 돌려준다 — 읽기라서 동일성 지문도 commit 증거도 필요 없다.
+ * 함께 돌려준다 — 읽기라서 선점 표식도 commit 증거도 필요 없다.
  */
 @Slf4j
 @Service
