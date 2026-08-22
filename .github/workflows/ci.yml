@@ -16,6 +16,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
       - run: .github/scripts/test-monitoring-deploy-contract.sh
+      # deploy 계약 harness는 지금까지 수동 실행에만 의존했다. 환경 분기가 들어가면서 이 harness가
+      # prod 오배포·환경 혼선을 막는 검증을 담당하므로 CI에서 항상 돌린다.
+      - run: .github/scripts/test-deploy-contract.sh
       - name: Start integration test infrastructure
         run: docker compose up -d --wait --wait-timeout 120
       - name: Run build, integration tests, and coverage

@@ -2,7 +2,7 @@
 
 ## Scope
 
-현재 dev 애플리케이션 배포, Docker runtime과 수동 운영 경계를 설명한다.
+현재 dev·prod 애플리케이션 배포, Docker runtime과 수동 운영 경계를 설명한다.
 
 ## Read When
 
@@ -16,19 +16,35 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 - live AWS, GitHub repository Variables와 host 상태
 - `application.properties`, intro/status API implementation
 
-## Current Dev Deployment
+## Current Application Deployment
 
-1. `dev` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
+`deploy.yml` 하나가 dev와 prod를 모두 배포한다. 환경은 **Resolve deploy
+environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `main` push는 prod, `workflow_dispatch`는
+필수 `environment` 입력(기본값 없음)을 따른다. 이후 어떤 step도 branch·event를 다시 보지 않고 이
+step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 instance 목록이 비면 AWS 접근 전에
+실패한다. deploy role이 두 환경의 instance를 모두 SSM 대상으로 허용하므로, 이 단일 분기가
+환경 혼선을 막는 지점이다.
+
+환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
+Swagger·geo mode), OTel service name, 그리고 nginx 블록 실행 여부뿐이다. 그 외 절차는 동일하다.
+
+1. `dev`/`main` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
    `deploy.yml` 자체가 바뀐 경우에만 workflow를 시작한다. test·문서·monitoring-only 변경은
    application을 재배포하지 않는다.
-2. `deploy-dev` concurrency group으로 배포를 직렬화한다.
+2. 환경별 concurrency group으로 배포를 직렬화한다. group 식은 YAML 키라 step 출력을 읽지 못하므로
+   Resolve step과 같은 매핑을 식으로 다시 쓴다 — 두 곳이 갈리면 직렬화가 깨지므로 함께 고친다.
 3. GitHub OIDC로 AWS deploy role을 assume한다.
 4. commit SHA tag Docker image를 ECR에 push한다.
-5. SSM으로 dev WAS에 remote script를 보낸다. script는 첫 실패 가능 명령보다 앞에서 EXIT cleanup
-   trap을 설치한다.
-6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + dev 고정값·mode
+5. 해당 환경의 host에 SSM으로 remote script를 보낸다. host가 여러 대면 **한 대씩 순차**로 보내고,
+   그 host의 SSM status가 성공이어야 다음으로 넘어간다 — 실패하면 남은 host는 건드리지 않아
+   최소 한 대가 직전 image로 남는다. script는 첫 실패 가능 명령보다 앞에서 EXIT cleanup trap을 설치한다.
+   ⚠️ ALB target deregister/register는 아직 없다. container를 내린 host는 health check가 unhealthy로
+   판정할 때까지 트래픽을 계속 받으므로 **무중단 배포가 아니다**.
+6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + 환경 고정값·mode
    exact-one, 값 비출력 — 아래 Preflight).
-7. nginx no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는 배포를 중단한다.
+7. nginx가 있는 환경에서만 no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는
+   배포를 중단한다. nginx가 없는 환경(ALB가 앱 포트에 직결)은 블록 전체를 건너뛴다 — 그대로
+   실행하면 `nginx` 부재로 배포가 이 지점에서 실패한다.
 8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
    이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read + secret 내용 계약 검증,
    `user_subject_links` schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight →
@@ -64,7 +80,7 @@ conditional PutObject·동일 bytes 검증용 GetObject·monitoring SSM 권한�
 반영하는 것이다. 실제 AWS와 host 상태가 권위 원천이다.
 
 장기 실행 container의 runtime env는 host `.env`가 단일 권위(SSOT)다. workflow는 `-e` override를
-사용하지 않고 dev 고정값(Redis prefix·application environment·geo mode·Swagger)과 AI/push mode를
+사용하지 않고 환경 고정값(Redis prefix·application environment·geo mode·Swagger)과 AI/push mode를
 exact-one으로 검증만 하며, `APP_COMMIT_SHA`가 workflow가 `.env`에 쓰는 유일한 key다. 이름과 의미만
 문서화하며 값이나 credential은 host `.env`가 권위다.
 
@@ -78,8 +94,11 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
 
 - `JWT_SECRET` minimum length, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
   `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` presence
-- dev 고정값 exact-one: `REDIS_KEY_PREFIX=dev_` · `APP_ENV=dev` · `APP_GEO_MODE=kakao` ·
-  `SWAGGER_ENABLED=true` 각각 정확히 한 줄
+- 환경 고정값 exact-one: `REDIS_KEY_PREFIX` · `APP_ENV` · `APP_GEO_MODE` · `SWAGGER_ENABLED`가
+  각각 정확히 한 줄이고 기대값과 byte 일치. 기대값은 Resolve step이 환경별로 주입한다
+  (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`).
+  값이 리터럴에서 변수로 내려갔을 뿐 exact-one·byte 일치 성질은 같다. 다만 prod의
+  `REDIS_KEY_PREFIX`는 빈 값이 정상이라, 이 키만은 Resolve step의 환경 판정이 유일한 방어선이다
 - `APP_AI_MODE` exact-one(`noop|fake|http`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도 정확히 한 줄
 - `APP_PUSH_MODE` exact-one(`noop|firebase`). `firebase`일 때만:
   `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json` exact-one과
@@ -89,7 +108,7 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   ADC 경로는 `.env`가 소유한다. `noop`이면 mount·credential 검사 없이 기동
 - `APP_TRACING_MODE` exact-one(`noop|otlp`) — 앱이 소비하지 않는 pre-flight 전용 계약 키(#277).
   `otlp`면 `JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar`와 `OTEL_*` 세트를
-  dev 고정값 byte 단위 exact-one으로 요구한다(service name `laimory-dev`, endpoint
+  고정값 byte 단위 exact-one으로 요구한다(service name `laimory-<environment>`, endpoint
   `http://10.0.32.14:4317`, protocol `grpc`, metrics/logs exporter `none`, jdbc-datasource `true`,
   query redaction 전체 목록 — full-override라 부분 목록이면 기본 서명 4종까지 벗겨지므로 값 고정).
   `OTEL_TRACES_SAMPLER`만 non-empty 유연(부하 테스트 시 ratio 일시 전환 계약).
@@ -168,7 +187,11 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
   대상·영향·rollback을 설명한 뒤 별도 승인받는다.
 - monitoring bootstrap에는 비밀 없는 자산만 두고 credential은 host의 보호 파일에만 주입한다.
 - nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
-- repository에는 production application deploy workflow가 없다.
+- prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
+  prod host 목록 repository Variable과, deploy role의 `ssm:SendCommand` Resource에 prod host를
+  추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.
+  IAM을 넓히면 "workflow도 IAM도 dev host만 안다"는 기존 이중 잠금이 사라지고 Resolve step의
+  환경 분기가 유일한 방어선이 된다.
 
 maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실행은 build·SSM 전송 없이 skip되어 기존 container와
 `.env`를 유지하며, manual dispatch는 pause를 무시한다. `build-only.yml`은 입력받은 exact
@@ -192,6 +215,9 @@ application deploy run이 0건인지 확인한다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow의 실제 variable 이름과 GitHub repository Variables를 맞춘다.
+- 배포 환경 판단은 Resolve step 한 곳에만 둔다. 다른 step이 branch·event를 다시 보고 환경을
+  정하지 않는다 — harness가 이 단일 지점 계약을 검사한다.
+- host가 여러 대인 환경은 순차 배포하고, 실패 시 남은 host로 진행하지 않는다.
 - application deploy trigger는 Docker image와 remote deploy 계약에 영향을 주는 path로만 제한한다.
 - monitoring alert workflow는 관련 path로만 trigger하고 credential을 host 밖으로 전달하지 않는다.
 - 저장소 변경만으로 live AWS나 host가 바뀐다고 설명하지 않는다.
@@ -199,8 +225,10 @@ application deploy run이 0건인지 확인한다.
 
 ## Known Gaps
 
-- application의 incomplete preflight, automatic rollback, dependency-complete readiness check와 prod app
-  workflow가 없다.
+- application의 incomplete preflight, automatic rollback, dependency-complete readiness check가 없다.
+- **무중단 배포가 아니다.** ALB target deregister/register가 없어 container를 내린 host는 health check가
+  unhealthy로 판정할 때까지 트래픽을 받는다. 순차 배포로 전체 중단만 막을 뿐이다.
+- `server.shutdown=graceful`이 설정돼 있지 않아 `docker stop` 시 진행 중 요청이 즉시 절단된다.
 
 ## Update When
 

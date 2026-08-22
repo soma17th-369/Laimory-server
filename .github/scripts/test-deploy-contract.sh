@@ -54,7 +54,7 @@ ruby -ryaml -e '
   end
   wf = load_yaml.call(ARGV[0])
   triggers = wf["on"] || wf[true]
-  abort "dev push trigger missing" unless triggers.dig("push", "branches") == ["dev"]
+  abort "dev/main push trigger missing" unless triggers.dig("push", "branches") == ["dev", "main"]
   expected_paths = [
     ".github/workflows/deploy.yml",
     ".dockerignore",
@@ -74,10 +74,42 @@ ruby -ryaml -e '
   image_digest = triggers.dig("workflow_dispatch", "inputs", "image_digest")
   abort "workflow_dispatch image_digest input missing" unless image_digest
   abort "image_digest input must be required" unless image_digest["required"] == true
+  # 수동 실행은 브랜치로 환경을 정할 근거가 없으므로 명시 선택을 강제한다(기본값 금지).
+  dispatch_env = triggers.dig("workflow_dispatch", "inputs", "environment")
+  abort "workflow_dispatch environment input missing" unless dispatch_env
+  abort "environment input must be required" unless dispatch_env["required"] == true
+  abort "environment input must be a choice of dev/prod" unless dispatch_env["options"] == ["dev", "prod"]
+  abort "environment input must not have a default" if dispatch_env.key?("default")
   push_only = "github.event_name == #{q}push#{q}"
   dispatch_only = "github.event_name == #{q}workflow_dispatch#{q}"
   gate_true = "steps.gate.outputs.deploy == #{q}true#{q}"
   steps = wf["jobs"]["deploy"]["steps"]
+  # 환경 결정의 단일 지점 계약: 배포 role이 dev/prod 인스턴스를 모두 허용하게 된 뒤로는 이 분기가
+  # prod 오배포를 막는 유일한 방어선이라, 판단이 여러 step으로 흩어지면 안 된다.
+  resolve = steps.find { |s| s["id"] == "env" }
+  abort "resolve deploy environment step missing" unless resolve
+  resolve_run = resolve["run"].to_s
+  abort "resolve step must map main to prod" unless resolve_run.include?("GITHUB_REF_NAME\" = \"main\"")
+  abort "resolve step must honor the dispatch environment input" unless resolve.dig("env", "DISPATCH_ENVIRONMENT").to_s.include?("inputs.environment")
+  abort "resolve step must read instance ids from repository variables" unless
+    resolve.dig("env", "DEV_INSTANCE_ID").to_s.include?("vars.DEV_INSTANCE_ID") &&
+    resolve.dig("env", "PROD_INSTANCE_IDS").to_s.include?("vars.PROD_INSTANCE_IDS")
+  abort "resolve step must fail closed on an unknown environment" unless resolve_run.include?("unknown deploy environment")
+  abort "resolve step must fail closed on empty instance ids" unless resolve_run.include?("no instance ids configured")
+  # harness는 아래 값들을 그대로 재현해 원격 script를 두 벌로 확장한다(dev_runner_env/prod_runner_env).
+  # workflow 쪽만 바뀌고 harness가 모르면 검증이 실물과 갈리므로 여기서 묶어둔다.
+  ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=prod",
+   "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=",
+   "EXPECT_SWAGGER_ENABLED=true", "EXPECT_SWAGGER_ENABLED=false",
+   "EXPECT_APP_GEO_MODE=kakao",
+   "HAS_NGINX=true", "HAS_NGINX=false"].each do |pair|
+    abort "resolve step must define #{pair} (harness reproduces these values)" unless resolve_run.include?(pair)
+  end
+  # workflow 레벨 env에 인스턴스가 남아 있으면 결정 지점이 둘이 된다.
+  abort "workflow env must not pin an instance id" if wf["env"].to_s.include?("INSTANCE_ID")
+  # 환경 판단은 resolve step 밖에서 반복되면 안 된다(concurrency group 식은 YAML 키라 별도).
+  other_branch_checks = steps.reject { |s| s["id"] == "env" }.count { |s| s["run"].to_s.include?("GITHUB_REF_NAME") }
+  abort "only the resolve step may inspect the branch" unless other_branch_checks.zero?
   gate = steps.find { |s| s["id"] == "gate" }
   abort "pause gate step missing" unless gate
   abort "pause gate must read vars.DEPLOY_PAUSED" unless gate.dig("env", "DEPLOY_PAUSED").to_s.include?("vars.DEPLOY_PAUSED")
@@ -99,6 +131,14 @@ ruby -ryaml -e '
   abort "ssm IMAGE_TAG must come from inputs.image_sha on dispatch" unless step.dig("env", "IMAGE_TAG").to_s.include?("inputs.image_sha")
   abort "ssm IMAGE_DIGEST must come from inputs.image_digest on dispatch" unless step.dig("env", "IMAGE_DIGEST").to_s.include?("inputs.image_digest")
   abort "deploy-existing must pull by digest" unless step["run"].to_s.include?("@$IMAGE_DIGEST")
+  # 순차 배포 계약(#337): host가 여러 대인 환경에서 한 번에 전부 보내면 두 대가 같은 순간 컨테이너를
+  # 내려 완전 중단이 된다. 한 대씩 보내고, 그 host의 status를 확인한 뒤에만 다음으로 넘어가야 한다.
+  ssm_run = step["run"].to_s
+  abort "ssm step must resolve hosts from the resolve step" unless step.dig("env", "INSTANCE_IDS").to_s.include?("steps.env.outputs.instance_ids")
+  abort "ssm step must deploy hosts sequentially" unless ssm_run.match?(/for IID in \$\{?INSTANCE_IDS/)
+  abort "ssm step must send one instance per command" unless ssm_run.include?("--instance-ids \"$IID\"")
+  abort "ssm step must not fan out to every host at once" if ssm_run.match?(/--instance-ids\s+"?\$INSTANCE_IDS/)
+  abort "ssm step must verify each host before the next" unless ssm_run.include?("remaining hosts are left untouched")
   bo = load_yaml.call(ARGV[1])
   bo_triggers = bo["on"] || bo[true]
   abort "build-only must be workflow_dispatch-only (no push trigger)" unless bo_triggers.is_a?(Hash) && bo_triggers.keys == ["workflow_dispatch"]
@@ -128,10 +168,27 @@ grep -q 'trap cleanup EXIT' "$WORK/remote_body.raw" || fail "extracted body miss
   echo 'EOF'
   echo 'printf "%s\n" "$SCRIPT"'
 } > "$WORK/driver.sh"
-env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
-    "GITHUB_EVENT_NAME=push" "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" \
-    "IMG=registry.test/laimory:$FAKE_SHA" \
-    /bin/bash "$WORK/driver.sh" > "$WORK/remote_script.sh" || fail "runner heredoc expansion"
+# 환경 파생값은 러너의 Resolve 단계가 넣는다. 여기서는 그 단계가 dev/prod에 대해 내놓는 값을
+# 그대로 재현해 두 벌로 확장한다 — 확장 결과가 갈리는 지점이 곧 환경 분기의 전부여야 한다.
+dev_runner_env() {
+  echo "ENVIRONMENT=dev"; echo "EXPECT_APP_ENV=dev"; echo "EXPECT_REDIS_KEY_PREFIX=dev_"
+  echo "EXPECT_SWAGGER_ENABLED=true"; echo "EXPECT_APP_GEO_MODE=kakao"; echo "HAS_NGINX=true"
+}
+prod_runner_env() {
+  echo "ENVIRONMENT=prod"; echo "EXPECT_APP_ENV=prod"; echo "EXPECT_REDIS_KEY_PREFIX="
+  echo "EXPECT_SWAGGER_ENABLED=false"; echo "EXPECT_APP_GEO_MODE=kakao"; echo "HAS_NGINX=false"
+}
+expand_script() {
+  # $1: runner env emitter, $2: output path, 나머지: 추가 env
+  _emitter=$1; _out=$2; shift 2
+  # shellcheck disable=SC2046
+  env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
+      "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" $($_emitter) "$@" \
+      /bin/bash "$WORK/driver.sh" > "$_out"
+}
+
+expand_script dev_runner_env "$WORK/remote_script.sh" \
+  "GITHUB_EVENT_NAME=push" "IMG=registry.test/laimory:$FAKE_SHA" || fail "runner heredoc expansion"
 SCRIPT_FILE="$WORK/remote_script.sh"
 grep -q "APP_COMMIT_SHA=\" sha" "$SCRIPT_FILE" || fail "expanded script missing upsert awk"
 grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'varchar(36)'" "$SCRIPT_FILE" \
@@ -143,11 +200,9 @@ if grep -Fq "COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'binary(16)'" "$SCRIPT
 fi
 
 # manual deploy-existing는 tag가 아닌 기록한 digest reference를 remote pull/run에 쓴다.
-env "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
-    "GITHUB_EVENT_NAME=workflow_dispatch" "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" \
-    "IMG=registry.test/laimory@$FAKE_DIGEST" \
-    /bin/bash "$WORK/driver.sh" > "$WORK/remote_dispatch_script.sh" \
-    || fail "runner deploy-existing heredoc expansion"
+expand_script dev_runner_env "$WORK/remote_dispatch_script.sh" \
+  "GITHUB_EVENT_NAME=workflow_dispatch" "IMG=registry.test/laimory@$FAKE_DIGEST" \
+  || fail "runner deploy-existing heredoc expansion"
 grep -q "^ *docker pull registry.test/laimory@$FAKE_DIGEST$" "$WORK/remote_dispatch_script.sh" \
   || fail "T0: deploy-existing remote pull must use the recorded digest"
 grep -q "^ *docker run -d .* registry.test/laimory@$FAKE_DIGEST$" "$WORK/remote_dispatch_script.sh" \
@@ -451,6 +506,61 @@ for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP
   done
 done
 ok "T5b: fixed dev keys, APP_AI_MODE and subject mode/ARN fail closed on missing/wrong/duplicate lines"
+
+# --- 9a. T5f: 환경 분기 계약(#337) — prod 확장이 prod 기대값을 박고 nginx 블록을 건너뛰며,
+# 환경이 섞이면(prod script + dev .env) 구 컨테이너 중지 전에 fail-closed한다.
+# 고정값이 리터럴에서 러너 변수로 내려갔으므로, "환경별로 정확히 이 지점만 갈린다"를 여기서 고정한다. ---
+expand_script prod_runner_env "$WORK/remote_prod_script.sh" \
+  "GITHUB_EVENT_NAME=push" "IMG=registry.test/laimory:$FAKE_SHA" || fail "T5f: prod heredoc expansion"
+PROD_SCRIPT_FILE="$WORK/remote_prod_script.sh"
+
+grep -qF 'require_exact_line APP_ENV "APP_ENV=prod"' "$PROD_SCRIPT_FILE" \
+  || fail "T5f: prod script must require APP_ENV=prod"
+grep -qF 'require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX="' "$PROD_SCRIPT_FILE" \
+  || fail "T5f: prod script must require an empty Redis key prefix"
+grep -qF 'require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=false"' "$PROD_SCRIPT_FILE" \
+  || fail "T5f: prod script must require SWAGGER_ENABLED=false"
+grep -qF 'require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-prod"' "$PROD_SCRIPT_FILE" \
+  || fail "T5f: prod OTel service name must not stay the dev literal"
+grep -qF 'if [ "false" = "true" ]; then' "$PROD_SCRIPT_FILE" \
+  || fail "T5f: prod script must disable the nginx block"
+grep -qF 'if [ "true" = "true" ]; then' "$SCRIPT_FILE" \
+  || fail "T5f: dev script must keep the nginx block enabled"
+
+prod_env_fixture() {
+  base_env_fixture
+  PATH=/usr/bin:/bin sed -i.bak \
+    -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=/' \
+    -e 's/^APP_ENV=dev$/APP_ENV=prod/' \
+    -e 's/^SWAGGER_ENABLED=true$/SWAGGER_ENABLED=false/' "$CASE_DIR/.env"
+  rm -f "$CASE_DIR/.env.bak"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+}
+
+DEV_SCRIPT_FILE="$SCRIPT_FILE"
+SCRIPT_FILE="$PROD_SCRIPT_FILE"
+
+# 환경 혼선: prod로 보내는 script에 dev host의 .env가 걸리면 배포가 진행되면 안 된다.
+new_case; base_env_fixture
+execute_script
+[ "$RC" != "0" ] || fail "T5f(cross): prod script must reject a dev .env"
+grep -q "PREFLIGHT FAILED: .env REDIS_KEY_PREFIX" "$CASE_DIR/out.log" || fail "T5f(cross): key-only diagnostic expected"
+assert_env_untouched "T5f(cross)"
+assert_no_stop_no_run "T5f(cross)"
+assert_prune_once "T5f(cross)"
+assert_no_sentinel "T5f(cross)"
+
+# prod 정상 경로: nginx 자체가 실패하도록 만들어도 배포가 성공해야 nginx 블록을 정말 건너뛴 것이다
+# (dev에서 같은 조건이 배포를 중단시키는 것은 T3a가 검증한다 — 그 대비가 이 검사의 핵심이다).
+new_case; prod_env_fixture
+execute_script "FAKE_NGINX_EXIT=1"
+[ "$RC" = "0" ] || fail "T5f(prod): success expected with nginx absent/failing, rc=$RC"
+grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5f(prod): container must start"
+assert_sha_line "T5f(prod)"
+assert_no_sentinel "T5f(prod)"
+
+SCRIPT_FILE="$DEV_SCRIPT_FILE"
+ok "T5f: env branch pins per-environment expectations, skips nginx on prod, and fails closed on mixed environments"
 
 # --- 10. T5b(http): base URL 필수 계약 ---
 for mutation in missing empty dup ; do
