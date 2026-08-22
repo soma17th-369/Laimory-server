@@ -346,16 +346,32 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 머지 전 Kibana saved query/alert가 `message` 문자열 파싱에 의존하지 않는지 확인한다. access log의
 `message`는 고정값 `http_request_completed`이며 `event` 등 top-level field 쿼리가 계약이다.
 
-현재 최외곽 ingress인 WAS nginx는 client-supplied `Laimory-Client-IP`를 전달/append하지 않고 자신이
-관찰한 `$remote_addr` 한 값으로 덮어쓴다. application의 `TrustedEdgeRequestFilter`는 원본 socket peer가
-정확히 `127.0.0.1`이고 header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를 normalize해
-downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing header와 다른 peer는
-socket address로 fallback하며 XFF와 User-Agent는 IP 결정에 사용하지 않는다. rejected 원문도 기록하지
-않는다.
+`TrustedEdgeRequestFilter`는 socket peer로 엣지를 판정하고, 엣지가 둘인 전환기라 두 계약을 동시에
+지원한다(#327). 신뢰 대역 `app.edge.trusted-proxy-cidrs`(env `APP_EDGE_TRUSTED_PROXY_CIDRS`)를 먼저
+평가하고, 매칭되지 않으면 loopback 분기를 본다 — 운영에서 두 집합은 서로소다. 설정한 CIDR이 malformed면
+기동에 실패한다.
 
-같은 loopback trust 경계의 단일 `X-Forwarded-Proto: https|http`만 scheme/secure/serverPort view를
-변환해 OAuth HTTPS redirect와 Secure cookie를 보존한다. AI 서버 등 사설망에서 애플리케이션 8080으로
-직접 접근하는 peer가 보낸 custom IP/XFP/XFF는 모두 무시한다. access log `clientIp`는 trusted-edge
+- **ALB 엣지** — peer가 신뢰 CIDR(ALB ENI가 사는 퍼블릭 서브넷) 안이면 `X-Forwarded-For` **최우측**
+  값을 client IP로 쓴다. ALB가 자신이 관찰한 TCP peer를 오른쪽에 append하므로 클라이언트가 미리 넣은
+  위조 값은 전부 왼쪽에 쌓인다(최좌측을 쓰면 위조가 그대로 통과한다). 최우측이 valid literal이 아니면
+  왼쪽으로 되돌아가지 않고 socket address로 fallback한다. header line이 여러 개면 마지막 line의
+  마지막 element만 본다. ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서
+  `Laimory-Client-IP`는 신뢰하지 않는다.
+- **loopback nginx 엣지**(전환기 한정 — nginx 제거 시 삭제 예정) — 현재 최외곽 ingress인 WAS nginx는
+  client-supplied `Laimory-Client-IP`를 전달/append하지 않고 자신이 관찰한 `$remote_addr` 한 값으로
+  덮어쓴다. peer가 정확히 `127.0.0.1`이고 header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를
+  normalize해 downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
+  header는 socket address로 fallback하며 이 엣지에서는 XFF와 User-Agent를 IP 결정에 쓰지 않는다.
+
+rejected 원문은 어느 엣지에서도 기록하지 않는다. checked-in 기본 신뢰 대역은 비어 있어(=ALB 엣지 없음)
+설정이 없는 환경은 기존 loopback 계약만 갖는다. 실제 대역은 배포 환경 `.env`가 소유한다.
+
+두 엣지 모두 단일 `X-Forwarded-Proto: https|http`만 scheme/secure/serverPort view를 변환해 OAuth HTTPS
+redirect와 Secure cookie를 보존한다. AI 서버 등 사설망에서 애플리케이션 8080으로 직접 접근하는 peer가
+보낸 custom IP/XFP/XFF는 신뢰 대역 밖이면 모두 무시한다 — 신뢰 대역을 넓게 잡으면 그 대역의 peer가
+XFF를 위조할 수 있으므로 대역은 ALB ENI가 사는 서브넷으로 제한하고 8080 인바운드를 SG로 좁힌다.
+`server.forward-headers-strategy=none`은 유지한다 — Spring `ForwardedHeaderFilter`는 필터 순서가
+충돌하고 XFF **최좌측**(위조 가능)을 remote address로 쓴다. access log `clientIp`는 trusted-edge
 filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 ## Health Signals

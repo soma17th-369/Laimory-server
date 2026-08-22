@@ -20,20 +20,23 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * 실제 Tomcat에서 <b>loopback nginx 엣지</b>의 client IP와 OAuth HTTPS redirect/session cookie 계약을
- * 검증한다(현행 dev 경로: client → nginx:443 → 127.0.0.1:8080). ALB 엣지는
- * {@link TrustedEdgeProxyIntegrationTest}가 담당한다.
+ * 실제 Tomcat에서 <b>ALB 엣지</b>의 client IP(X-Forwarded-For 최우측)와 OAuth HTTPS redirect 계약을
+ * 검증한다. 테스트 소켓의 peer는 loopback이므로 신뢰 대역을 {@code 127.0.0.1/32}로 설정해 ALB ENI 자리를
+ * 대신한다 — 필터가 설정된 CIDR을 loopback nginx 분기보다 먼저 평가하기 때문에 같은 소켓으로 ALB 경로를
+ * 재현할 수 있다. 운영에서 두 대역은 서로소다.
  */
 @Tag("integration")
 @ActiveProfiles("docker")
 @SpringBootTest(
         classes = ServerApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "management.server.port=0")
-class TrustedEdgeIntegrationTest {
+        properties = {
+                "management.server.port=0",
+                "app.edge.trusted-proxy-cidrs=127.0.0.1/32,::1/128"})
+class TrustedEdgeProxyIntegrationTest {
 
-    private static final String SPOOFED_XFF_IP = "198.51.100.9";
-    private static final String EDGE_CLIENT_IP = "203.0.113.7";
+    private static final String SPOOFED_IP = "1.2.3.4";
+    private static final String ALB_OBSERVED_IP = "203.0.113.7";
 
     private ListAppender<ILoggingEvent> accessLog;
 
@@ -53,11 +56,11 @@ class TrustedEdgeIntegrationTest {
         TrustedEdgeProbe.detachAccessLogAppender(accessLog);
     }
 
+    /** 클라이언트가 선행 주입한 XFF 값이 아니라 ALB가 오른쪽에 append한 값이 채택돼야 한다. */
     @Test
-    void trustedEdge_usesCustomIpAndExternalHttpsForOauthRedirect() throws Exception {
+    void spoofedForwardedForPrefix_losesToRightmostValue() throws Exception {
         RawHttpResponse response = TrustedEdgeProbe.oauthRequest(port,
-                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
-                "X-Forwarded-For: " + SPOOFED_XFF_IP,
+                "X-Forwarded-For: " + SPOOFED_IP + ", " + ALB_OBSERVED_IP,
                 "X-Forwarded-Proto: https");
 
         TrustedEdgeProbe.assertOauthHttpsContract(response);
@@ -65,35 +68,38 @@ class TrustedEdgeIntegrationTest {
             JsonNode log = accessLog(response);
             assertThat(log.path("event").asText()).isEqualTo("http_request_completed");
             assertThat(log.path("clientIp").asText())
-                    .isEqualTo(EDGE_CLIENT_IP)
-                    .isNotEqualTo(SPOOFED_XFF_IP);
+                    .isEqualTo(ALB_OBSERVED_IP)
+                    .isNotEqualTo(SPOOFED_IP);
         });
     }
 
+    /** 클라이언트가 별도 header line으로 주입해도 마지막 line(= ALB가 붙인 값)만 본다. */
     @Test
-    void missingCustomIp_ignoresXffButStillPreservesTrustedHttps() throws Exception {
+    void spoofedForwardedForHeaderLine_losesToLastLine() throws Exception {
         RawHttpResponse response = TrustedEdgeProbe.oauthRequest(port,
-                "X-Forwarded-For: " + SPOOFED_XFF_IP,
+                "X-Forwarded-For: " + SPOOFED_IP,
+                "X-Forwarded-For: " + ALB_OBSERVED_IP,
+                "X-Forwarded-Proto: https");
+
+        TrustedEdgeProbe.assertOauthHttpsContract(response);
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
+                assertThat(accessLog(response).path("clientIp").asText())
+                        .isEqualTo(ALB_OBSERVED_IP)
+                        .isNotEqualTo(SPOOFED_IP));
+    }
+
+    /** ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서 Laimory-Client-IP는 신뢰하지 않는다. */
+    @Test
+    void customClientIpHeader_isIgnoredAndFallsBackToSocketPeer() throws Exception {
+        RawHttpResponse response = TrustedEdgeProbe.oauthRequest(port,
+                "Laimory-Client-IP: " + SPOOFED_IP,
                 "X-Forwarded-Proto: https");
 
         TrustedEdgeProbe.assertOauthHttpsContract(response);
         Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
                 assertThat(accessLog(response).path("clientIp").asText())
                         .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER)
-                        .isNotEqualTo(SPOOFED_XFF_IP));
-    }
-
-    @Test
-    void repeatedCustomIp_fallsBackToSocketPeer() throws Exception {
-        RawHttpResponse response = TrustedEdgeProbe.oauthRequest(port,
-                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
-                "Laimory-Client-IP: " + EDGE_CLIENT_IP,
-                "X-Forwarded-Proto: https");
-
-        TrustedEdgeProbe.assertOauthHttpsContract(response);
-        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(() ->
-                assertThat(accessLog(response).path("clientIp").asText())
-                        .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER));
+                        .isNotEqualTo(SPOOFED_IP));
     }
 
     private JsonNode accessLog(RawHttpResponse response) throws Exception {
