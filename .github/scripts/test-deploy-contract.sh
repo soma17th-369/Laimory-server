@@ -89,7 +89,8 @@ ruby -ryaml -e '
   resolve = steps.find { |s| s["id"] == "env" }
   abort "resolve deploy environment step missing" unless resolve
   resolve_run = resolve["run"].to_s
-  abort "resolve step must map main to prod" unless resolve_run.include?("GITHUB_REF_NAME\" = \"main\"")
+  # 매핑 자체는 문자열이 아니라 T0b가 이 본문을 실제로 실행해 검증한다.
+  File.write(ARGV[2], resolve_run)
   abort "resolve step must honor the dispatch environment input" unless resolve.dig("env", "DISPATCH_ENVIRONMENT").to_s.include?("inputs.environment")
   abort "resolve step must read instance ids from repository variables" unless
     resolve.dig("env", "DEV_INSTANCE_ID").to_s.include?("vars.DEV_INSTANCE_ID") &&
@@ -139,6 +140,18 @@ ruby -ryaml -e '
   abort "ssm step must send one instance per command" unless ssm_run.include?("--instance-ids \"$IID\"")
   abort "ssm step must not fan out to every host at once" if ssm_run.match?(/--instance-ids\s+"?\$INSTANCE_IDS/)
   abort "ssm step must verify each host before the next" unless ssm_run.include?("remaining hosts are left untouched")
+  # `aws ssm wait command-executed`의 waiter는 delay 5 × maxAttempts 20 = 100초가 상한이라 원격
+  # script(ECR pull + health gate 최대 90초)를 다 기다리지 못한다. 상한에 걸리면 성공하는 배포가
+  # InProgress로 읽혀 실패 처리되고 남은 host가 통째로 건너뛰어진다 — 직접 폴링해야 한다.
+  # 주석은 이 계약들을 설명하느라 같은 문자열을 담으므로 실제 실행 줄만 본다.
+  ssm_code = ssm_run.lines.reject { |l| l =~ /^\s*#/ }
+  abort "ssm step must poll for terminal status, not the 100s command-executed waiter" if
+    ssm_code.any? { |l| l.include?("aws ssm wait command-executed") }
+  abort "ssm step must bound its polling" unless ssm_code.any? { |l| l.include?("POLL_DEADLINE") }
+  # 저장소가 PUBLIC이고 Actions 로그도 공개다. repository variable은 마스킹되지 않으므로
+  # instance id를 echo하지 않는다(순번 label만 남긴다).
+  abort "ssm step must not echo instance ids to the public workflow log" if
+    ssm_code.any? { |l| l =~ /echo\b.*\$\{?(IID|INSTANCE_IDS)\b/ }
   bo = load_yaml.call(ARGV[1])
   bo_triggers = bo["on"] || bo[true]
   abort "build-only must be workflow_dispatch-only (no push trigger)" unless bo_triggers.is_a?(Hash) && bo_triggers.keys == ["workflow_dispatch"]
@@ -153,8 +166,66 @@ ruby -ryaml -e '
   abort "build-only must record the ECR digest" unless image && image["run"].to_s.include?("aws ecr batch-get-image") && image["run"].to_s.include?("images[0].imageId.imageDigest") && image["run"].to_s.include?("GITHUB_OUTPUT")
   abort "build-only must not require DescribeImages" if image["run"].to_s.include?("describe-images")
   print step["run"]
-' "$WORKFLOW" "$BUILD_ONLY" > "$WORK/ssm_run.sh" || fail "extract ssm step run block / workflow-level contract"
+' "$WORKFLOW" "$BUILD_ONLY" "$WORK/resolve_run.sh" > "$WORK/ssm_run.sh" || fail "extract ssm step run block / workflow-level contract"
 ok "T0: pause gate, deploy-existing dispatch and build-only workflow contract"
+
+# --- 1a. T0b: branch → environment 매핑을 실제로 실행해 검증한다 ---
+# 문자열 존재 검사로는 if/elif 본문이 뒤바뀌어도(main→dev) 통과한다. 배포 role이 두 환경의 instance를
+# 모두 허용하게 된 뒤로는 이 매핑이 prod 오배포를 막는 유일한 지점이라 값으로 확인해야 한다.
+FAKE_DEV_ID="i-dev00000000000001"
+FAKE_PROD_IDS="i-prod0000000000001 i-prod0000000000002"
+run_resolve() {
+  # $1 event, $2 ref, $3 dispatch environment, $4(선택) PROD_INSTANCE_IDS override
+  RESOLVE_OUT="$WORK/resolve_output"; : > "$RESOLVE_OUT"
+  RESOLVE_LOG="$WORK/resolve.log"
+  env "GITHUB_EVENT_NAME=$1" "GITHUB_REF_NAME=$2" "DISPATCH_ENVIRONMENT=$3" \
+      "DEV_INSTANCE_ID=$FAKE_DEV_ID" "PROD_INSTANCE_IDS=${4-$FAKE_PROD_IDS}" \
+      "GITHUB_OUTPUT=$RESOLVE_OUT" \
+      /bin/bash "$WORK/resolve_run.sh" > "$RESOLVE_LOG" 2>&1
+  RESOLVE_RC=$?
+}
+assert_resolved() {
+  # $1 label, $2 expected key=value
+  grep -qxF "$2" "$RESOLVE_OUT" || fail "T0b($1): expected output '$2', got: $(tr '\n' ' ' < "$RESOLVE_OUT")"
+}
+
+run_resolve push refs/heads/dev ""
+[ "$RESOLVE_RC" = "0" ] || fail "T0b(dev push): resolve must succeed"
+assert_resolved "dev push" "environment=dev"
+assert_resolved "dev push" "expect_app_env=dev"
+assert_resolved "dev push" "expect_redis_key_prefix=dev_"
+assert_resolved "dev push" "expect_swagger_enabled=true"
+assert_resolved "dev push" "has_nginx=true"
+
+run_resolve push main ""
+[ "$RESOLVE_RC" = "0" ] || fail "T0b(main push): resolve must succeed"
+assert_resolved "main push" "environment=prod"
+assert_resolved "main push" "expect_app_env=prod"
+assert_resolved "main push" "expect_redis_key_prefix="
+assert_resolved "main push" "expect_swagger_enabled=false"
+assert_resolved "main push" "has_nginx=false"
+
+# 수동 실행은 branch가 아니라 입력이 이긴다(main에서 dev를 고를 수도, dev에서 prod를 고를 수도 있다).
+run_resolve workflow_dispatch main dev
+assert_resolved "dispatch dev from main" "environment=dev"
+run_resolve workflow_dispatch refs/heads/dev prod
+assert_resolved "dispatch prod from dev" "environment=prod"
+
+# fail-closed: 알 수 없는 환경 / 빈 목록 / 개수 불일치
+run_resolve workflow_dispatch main staging
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(unknown env): resolve must fail closed"
+run_resolve push main "" ""
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(empty prod ids): resolve must fail closed"
+run_resolve push main "" "i-prod0000000000001"
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(truncated prod ids): resolve must fail closed on host count"
+grep -q "expects 2 host(s)" "$RESOLVE_LOG" || fail "T0b(truncated prod ids): host count diagnostic expected"
+
+# 저장소가 PUBLIC이고 Actions 로그도 공개다. instance id를 stdout에 싣지 않는다.
+run_resolve push main ""
+if grep -qE 'i-(dev|prod)[0-9]+' "$RESOLVE_LOG"; then
+  fail "T0b(log hygiene): instance ids must not be printed to the workflow log"
+fi
+ok "T0b: branch/dispatch -> environment mapping resolves by value and fails closed"
 
 awk '/<<EOF \|\| true$/{inside=1; next} inside && /^EOF$/{exit} inside{print}' \
   "$WORK/ssm_run.sh" > "$WORK/remote_body.raw"
