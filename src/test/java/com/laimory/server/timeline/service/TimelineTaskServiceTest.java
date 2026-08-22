@@ -60,7 +60,7 @@ class TimelineTaskServiceTest {
     }
 
     @Test
-    void rotateTokenAndStage_usesProcessingCasAndTtl() {
+    void replaceProcessing_usesProcessingCasAndTtl() {
         TimelineDraftTask task = TimelineDraftTask.processing(
                 SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
         TimelineDraftTask replacement = task.withTokenAndStage(
@@ -68,8 +68,7 @@ class TimelineTaskServiceTest {
         when(timelineTaskStore.replaceIfUnchanged(
                 "t", task, replacement, Duration.ofMinutes(3))).thenReturn(true);
 
-        assertThat(service.rotateTokenAndStage(
-                "t", task, replacement.tokenHash(), ProcessStage.RESULT_PENDING)).isTrue();
+        assertThat(service.replaceProcessing("t", task, replacement)).isTrue();
 
         ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
         verify(timelineTaskStore).replaceIfUnchanged(eq("t"), eq(task), eq(replacement), ttl.capture());

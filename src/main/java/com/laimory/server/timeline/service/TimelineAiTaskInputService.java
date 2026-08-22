@@ -12,12 +12,14 @@ import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -30,29 +32,48 @@ import org.springframework.stereotype.Service;
  * <p>응답에는 DB 식별자를 담지 않는다({@code userId}·{@code dailyRecordId}·행 PK 없음). 시각은 staging의
  * wall-clock에 record timezone을 붙인 offset 값으로 나가며, 결과 저장이 같은 규칙으로 되돌린다.
  * 응답 조립 뒤 token hash와 ProcessStage를 CAS로 함께 교체하면서 PROCESSING TTL을 다시 확보한다.
+ *
+ * <p>응답이 유실되면 AI는 이미 소비된 input token만 쥐게 되므로, 회전 시 그 token의 hash를 retry receipt로
+ * 남긴다. 창(첫 요청 도착 기준) 안에 같은 token으로 다시 오면 <b>응답을 다시 조립해</b> 새 result token과
+ * 함께 돌려준다 — 읽기라서 동일성 지문도 commit 증거도 필요 없다.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TimelineAiTaskInputService {
 
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final Clock clock;
+    private final Duration retryWindow;
+
+    public TimelineAiTaskInputService(TimelineTaskService timelineTaskService,
+                                      DailyRecordService dailyRecordService,
+                                      TimelineDraftSourceItemService timelineDraftSourceItemService,
+                                      Clock clock,
+                                      @Value("${app.ai.retry-window:15s}") Duration retryWindow) {
+        this.timelineTaskService = timelineTaskService;
+        this.dailyRecordService = dailyRecordService;
+        this.timelineDraftSourceItemService = timelineDraftSourceItemService;
+        this.clock = clock;
+        this.retryWindow = retryWindow;
+    }
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
-        if (!task.matchesToken(taskToken)) {
-            log.warn("ai task input token mismatch: taskId={}", taskId);
-            throw new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH);
+        boolean replay = !task.matchesToken(taskToken);
+        if (replay) {
+            requireReissuableReplay(taskId, task, taskToken);
         }
         if (task.status() != TaskStatus.PROCESSING) {
             log.warn("ai task input on terminal task: taskId={} status={}", taskId, task.status());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
-        if (task.stage() != ProcessStage.INPUT_PENDING) {
+        // 신규는 INPUT_PENDING에서만, 재시도는 회전이 끝난 RESULT_PENDING에서만 받는다.
+        ProcessStage expectedStage = replay ? ProcessStage.RESULT_PENDING : ProcessStage.INPUT_PENDING;
+        if (task.stage() != expectedStage) {
             log.warn("ai task input on invalid stage: taskId={} stage={}", taskId, task.stage());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
@@ -77,12 +98,37 @@ public class TimelineAiTaskInputService {
                 sources.stream().map(source -> toSourceItem(source, recordZone)).toList(),
                 resultToken);
 
-        if (!timelineTaskService.rotateTokenAndStage(
-                taskId, task, TaskTokens.hash(resultToken), ProcessStage.RESULT_PENDING)) {
-            log.warn("ai task input token rotation lost race: taskId={}", taskId);
+        // 재시도는 receipt를 그대로 둔다 — previousTokenHash는 계속 최초 input token이고, 창을 갱신하면
+        // 재발급할 때마다 마감이 미끄러진다.
+        TimelineDraftTask rotated = task
+                .withTokenAndStage(TaskTokens.hash(resultToken), ProcessStage.RESULT_PENDING)
+                .withRetryReceipt(replay ? task.retryReceipt() : issuedReceipt(task));
+        if (!timelineTaskService.replaceProcessing(taskId, task, rotated)) {
+            log.warn("ai task input token rotation lost race: taskId={} replay={}", taskId, replay);
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
+        if (replay) {
+            log.info("ai task input replay reissued result token: taskId={}", taskId);
+        }
         return response;
+    }
+
+    /** 소비된 input token 재제시만 재발급 대상이다. 창 밖이거나 다른 token이면 오늘과 같은 401이다. */
+    private void requireReissuableReplay(String taskId, TimelineDraftTask task, String taskToken) {
+        if (!task.matchesPreviousToken(taskToken)) {
+            log.warn("ai task input token mismatch: taskId={} stage={}", taskId, task.stage());
+            throw new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH);
+        }
+        if (task.retryWindowExpired(clock.instant())) {
+            log.warn("ai task input retry window expired: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH);
+        }
+    }
+
+    /** 최초 회전에서 남기는 receipt. 창은 이 시점 한 번만 정한다. */
+    private TimelineDraftTask.RetryReceipt issuedReceipt(TimelineDraftTask task) {
+        return new TimelineDraftTask.RetryReceipt(
+                task.tokenHash(), null, clock.instant().plus(retryWindow));
     }
 
     /** Redis에 보존된 local window에 record timezone을 붙여 offset 값으로 변환한다. */

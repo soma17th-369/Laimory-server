@@ -90,23 +90,29 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
    `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
    entity·DB·앱 응답은 원문 유지). 성공하면 새 token hash와
-   `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다.
-2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·callback token 선점 전에
+   `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다. 같은 CAS가
+   소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
+   다시 오면 입력을 재조립하고 새 result token을 재발급한다(창 안에서만, receipt는 갱신하지 않는다).
+2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·선점 전에
    Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로 v1 치환한 요청
-   사본을 만들고 이후 단계는 치환본만 본다 — 치환 실패는 token 미선점·`RESULT_PENDING` 유지로
+   사본을 만들고 이후 단계는 치환본만 본다 — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
    끝난다(원문 fallback 없음).
-   새 callback token hash와
-   `CALLBACK_PENDING`을 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction
-   INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. 저장 예외면 가능한 경우 이전
-   result token hash와 RESULT_PENDING으로 복구한다. 성공하면 callback token 원문을 응답 body에 반환한다.
+   retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·
+   Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. **선점은
+   token을 바꾸지 않는다** — callback token 회전과 `CALLBACK_PENDING` 전이는 commit 뒤 한 번의 CAS로
+   함께 일어나고, 그 뒤에야 callback token 원문을 응답한다. 저장 예외면 선점 receipt를 지운다(token이
+   그대로라 AI 재시도가 정상 경로로 다시 돈다). 응답 유실 뒤 같은 result token으로 다시 오면 MySQL을
+   건드리지 않고 새 callback token만 재발급한다(응답 shape는 신규 저장과 같다) — 이때의 body는
+   적용할 경로가 없어(staging 삭제됨 + append-only) 대조하지 않고 무시한다.
 3. **콜백**(`POST .../callback`, 결과 응답의 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과
    저장 전 stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal
    재전송은 200, 상충은 409 `-1017`이다.
 4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
 
-**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. token 교체 뒤 응답 유실 또는 프로세스
-종료 시 AI가 다음 token을 얻지 못해 task가 PROCESSING TTL로 만료될 수 있다. MySQL commit 뒤 result 응답
-유실이면 graph도 남는다. receipt, reconciliation, 자동 callback은 두지 않는다.
+**수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. 응답 유실은 재시도 창
+(`app.ai.retry-window`, 기본 15s — 첫 요청 도착 기준 절대 마감) 안의 재요청이 retry receipt로 복구한다.
+선점 뒤 commit 전 장애는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 PROCESSING TTL로 만료된다. 창을 넘긴
+재요청도 401이며, graph가 남았어도 task는 종결되지 않는다. reconciliation과 자동 callback은 두지 않는다.
 
 ### Polling and read
 
@@ -292,7 +298,11 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - 저장 전이와 User Memory 교체는 하나의 transaction이 아니다 — 저장 API가 전이를, 결과 API가 교체를
   각각 commit한다. User Memory는 저장 성패와 무관한 보조 데이터다.
 - User Memory 갱신 접수 body와 base 지문은 사용자 guard를 잡은 뒤에 만든다.
-- Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다.
+- Redis SUCCESS는 CALLBACK_PENDING callback에서만 전이한다. FAILED는 결과 저장 선점이 살아 있는 동안
+  거절한다 — token 회전이 commit 뒤로 미뤄져 stage만으로는 "graph가 이미 쓰였을 수 있는 구간"이
+  구분되지 않으므로 선점 표식을 함께 본다.
+- 결과 저장의 stage 전이는 MySQL commit 뒤에만 한다 — `CALLBACK_PENDING`이 "graph가 확정됐다"의 유일한
+  증거이며, 그 전에는 어떤 재요청도 멱등 성공으로 처리하지 않는다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
   서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
 - 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고 Redis `ProcessStage`/CAS가 호출 순서와
@@ -301,7 +311,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 
 ## Known Gaps
 
-- 결과 저장 후 callback 유실 task의 자동 복구 경로가 없다(수용된 MVP 한계 — ai-contract 참고).
+- 결과 저장 **전**(선점~commit) 장애나 창 만료로 남은 task의 자동 복구 경로가 없다(TTL 만료 —
+  ai-contract 참고). callback 자체가 유실된 경우도 마찬가지다.
 - User Memory 갱신이 **끝내 안 된 날**(7일 retention 안에 반영 못 함)은 그 날의 내용이 memory에 영영
   반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
   없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를

@@ -105,8 +105,14 @@ Task-Token: <taskToken>
 처리 규칙:
 
 - token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
-- `INPUT_PENDING`에서만 허용한다.
-- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 CAS로 저장하고 새 token 원문을 응답한다.
+- 신규 조회는 `INPUT_PENDING`에서만 허용한다.
+- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 CAS로 저장하고 새 token 원문을 응답한다. 같은 CAS가
+  소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
+- 응답 유실 뒤 **소비된 input token으로 재조회**하면 `RESULT_PENDING`에서 입력을 다시 조립해 새 result
+  token과 함께 200으로 응답한다(재시도 표시 없음 — 마지막 응답의 token만 유효하다). 조건은 receipt의
+  token hash 일치와 재시도 창 유효 둘이며, 어긋나면 401 `-1002`다.
+- 재발급은 receipt를 갱신하지 않는다 — `previousTokenHash`는 최초 input token으로, 마감은 최초 회전
+  시각 기준으로 고정된다(재시도마다 창이 미끄러지지 않는다).
 - 시각은 record timezone 기준 offset ISO-8601이다.
 
 ### 4. 결과 저장 (AI → API)
@@ -122,7 +128,10 @@ Task-Token: <taskToken>
             "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ..."}]}
 ```
 
-- 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다.
+- 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다. **신규 저장과 재시도가 같은
+  shape를 반환한다** — AI는 어느 쪽이든 받은 token으로 SUCCESS callback을 보내면 되고 분기가 없다.
+  구분자를 응답에 싣지 않는 이유는 AI가 그걸로 다르게 동작할 일이 없어서다(서버가 taskId와 함께 INFO로
+  남긴다).
 - `question`은 Event별 선택 필드다. 필드 누락·명시적 `null`·공백 문자열은 모두 저장 값 `null`(질문 없음)로
   수렴하므로 question 도입 이전 요청 shape가 그대로 통과한다. 서버 Jackson은 미지 필드를 무시하므로
   서버 배포 전에 AI가 먼저 `question`을 보내도 400이 아니라 무시된다.
@@ -131,12 +140,28 @@ Task-Token: <taskToken>
   다르다. 누락·`null`·공백은 모두 저장 값 `null`로 수렴해 도입 이전 요청 shape가 그대로 통과하고, 서버
   배포보다 AI가 먼저 보내면 미지 필드로 무시돼 400이 아니라 값만 유실된다.
 - 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로
-  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은
-  shape 검증 뒤·callback token 선점 전이라 실패하면 token 미선점·`RESULT_PENDING` 유지로 끝난다
-  (원문 fallback 없음).
-- `RESULT_PENDING` 요청 하나만 새 token hash와 `CALLBACK_PENDING`을 CAS로 선점해 MySQL transaction을
-  실행한다. 새 token 원문은 MySQL commit 뒤 응답할 때까지 AI에 노출하지 않는다.
-- 이미 소비된 token 재요청은 token 불일치 401 `-1002`, 다른 stage 요청은 409 `-1017`이다.
+  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
+  전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
+- `RESULT_PENDING` 요청 하나만 retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점하고 MySQL
+  transaction을 실행한다. **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라
+  재요청이 특수 경로 없이 정상 경로로 다시 돈다. 회전이 commit 뒤로 미뤄져 stage만으로는 "이미 누가
+  transaction을 돌리는 중"이 구분되지 않으므로 이 표식이 동시 writer를 하나로 제한한다(없으면 두 요청이
+  겹쳐 돌아 Event·Item이 중복 삽입된다).
+- callback token 회전과 `CALLBACK_PENDING` 전이는 **commit 뒤 한 번의 CAS**로 일어난다. 그래서
+  `CALLBACK_PENDING`이 곧 "graph가 확정됐다"는 뜻이며, 새 token 원문은 그 뒤에야 응답된다. 별도 commit
+  표식은 두지 않는다 — 선점만 된 구간은 `RESULT_PENDING` + `claimedAt`으로 구분된다.
+- 응답 유실 뒤 **소비된 result token으로** 재요청하면 MySQL을 건드리지 않고 새 callback token만
+  재발급해 200 응답한다. 조건은 `CALLBACK_PENDING` + receipt token hash 일치 + 재시도 창 유효다.
+- 이 시점의 요청 body는 **대조하지 않고 무시한다.** 첫 저장이 이미 commit돼 staging이 사라졌고 graph는
+  append-only라, 다른 내용이 와도 적용할 경로 자체가 없다. 내용 대조를 넣으면 막아 주는 것은 "AI가
+  재시도 때 payload를 다시 만드는 버그"(서버·AI 인식 어긋남 — 사용자에게는 보이지 않는다)뿐인 반면,
+  직렬화가 조금만 흔들려도 정상 재시도를 거절해 task를 죽인다. 사용자에게 보이는 손해가 더 큰 쪽을
+  택하지 않는다.
+- 재시도가 성공하면 **직전 응답의 callback token은 즉시 무효**가 된다. AI는 마지막으로 받은 응답의
+  token만 사용한다.
+- receipt 없는 재요청, terminal task 재요청, 창 만료 재요청은 모두 401 `-1002`다. 선점이 살아 있는
+  구간(commit 전 장애 포함)의 중복 요청과 다른 stage 요청은 409 `-1017`다. 결과 내용이 다르다는 이유로
+  거절하는 코드는 없다.
 
 검증:
 
@@ -151,7 +176,13 @@ MySQL transaction은 DB 검증, Event/Item/junction INSERT와 채택 source DELE
 offset 시각은 record timezone wall-clock으로 정규화하고 start 충돌은 +10분 nudge, end는 start 이상으로
 clamp한다.
 
-저장 예외가 호출부까지 돌아오면 가능한 경우 이전 RESULT token hash와 `RESULT_PENDING`으로 복구한다.
+저장 예외가 호출부까지 돌아오면 선점 receipt를 지운다. token은 애초에 바뀌지 않았으므로 이 보상이
+실패해도 AI가 쥔 result token은 유효하다 — 선점 흔적만 남아 그 task의 재시도가 409로 수렴한다.
+
+재시도 창은 `app.ai.retry-window`(기본 15s)이며 **첫 요청이 서버에 도착한 시각** 기준 절대 마감이다.
+CAS마다 재확보되는 PROCESSING TTL과 달리 재발급으로 미끄러지지 않는다. AI 재시도 예산(3s 간격 × 3회 +
+실패 인지 시간)보다 크고 PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼
+늘린다.
 
 ### 5. 상태 Callback (AI → API)
 
@@ -247,10 +278,13 @@ Task-Token: <접수 body로 준 token>
 ## Failure Semantics
 
 - Redis와 MySQL을 분산 transaction으로 묶지 않는다.
-- result의 token/stage CAS 뒤 프로세스가 종료되면 새 token 원문이 AI에 전달되지 않아 task가
-  PROCESSING TTL로 만료될 수 있다.
-- MySQL commit 뒤 result 응답 유실 시 graph는 남지만 AI는 callback token을 얻지 못한다.
-- 이 경로의 receipt, reconciliation, 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
+- 입력·결과 응답이 유실돼도 재시도 창 안의 재요청은 retry receipt로 복구된다 — 입력은 응답 재조립,
+  결과는 새 callback token 재발급이며 graph는 중복되지 않는다.
+- 선점 뒤 **commit 전** 프로세스가 종료되면 stage가 `RESULT_PENDING`에 머물러 재요청이 409로 수렴하고
+  task는 PROCESSING TTL로 만료된다. 잘못된 멱등 성공을 만들지 않는 쪽이 우선이다.
+- 창을 넘긴 재요청은 저장이 끝났더라도 401 `-1002`다. graph는 남아 일반 조회 경로로 보이므로 데이터
+  손실이 아니라 task 종결 실패다.
+- 이 경로의 reconciliation과 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
 - task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다.
 - PROCESSING TTL은 3분이고 token/stage 교체마다 다시 확보한다. terminal TTL은 24시간이다.
 
@@ -268,7 +302,14 @@ User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 
 ## Invariants
 
 - dispatch body 필드명은 AI 규격이 권위다.
-- 서버간 단계마다 token을 교체하고 Redis에는 현재 token hash만 저장한다.
+- 서버간 단계마다 token을 교체하고 Redis에는 hash만 저장한다 — 현재 token hash와, 재시도 인지를 위한
+  직전 단계 token hash(retry receipt)다. 원문은 어느 쪽도 저장하지 않는다.
+- 재시도 창 동안에는 유효 자격이 둘이다: 현재 token(다음 단계 호출)과 receipt의 직전 token(같은 요청을
+  다시 제출해 다음 token을 재발급받기). 후자로 입력 조회나 callback을 할 수는 없다.
+- retry receipt는 PROCESSING 전용이며 terminal 전이 시 stage와 함께 버린다 — callback 이후의 결과
+  재요청은 인지 대상이 아니다.
+- 결과 저장의 token 회전은 **MySQL commit 뒤**에만 일어난다. 선점은 `claimedAt` 표식만 남기고 token을
+  바꾸지 않으며, 그 표식이 동시 writer를 하나로 제한한다.
 - 입력과 결과의 token hash+stage 전이는 Redis task JSON CAS다.
 - 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
 - callback body에 graph를 추가하지 않는다.
@@ -279,7 +320,10 @@ User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 
 ## Known Gaps
 
 - AI endpoint service authentication 미구현(이슈 #181).
-- result token 교체·DB commit·응답 사이 장애의 reconciliation과 자동 복구가 없다.
+- 선점과 DB commit **사이** 장애는 stage가 `RESULT_PENDING`에 머물러 복구되지 않는다(재요청 409 → TTL
+  만료). commit 이후 구간은 재시도 창 안에서 재시도 안전하다. 어느 쪽도 자동 reconciliation·redispatch는
+  없다.
+- 프로세스 즉사로 선점 receipt가 남으면 그 task의 재요청이 409로 막힌 채 TTL까지 간다(takeover 규칙 없음).
 
 ## Update When
 

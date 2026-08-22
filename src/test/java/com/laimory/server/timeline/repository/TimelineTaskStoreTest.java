@@ -461,4 +461,65 @@ class TimelineTaskStoreTest {
         }
         verify(redis, org.mockito.Mockito.never()).removeFromSortedSet(anyString(), any());
     }
+
+    private TimelineDraftTask committedTask() {
+        return processingTask()
+                .withTokenAndStage(tokenHashes("cb"), ProcessStage.CALLBACK_PENDING)
+                .withRetryReceipt(new TimelineDraftTask.RetryReceipt(
+                        tokenHashes("result"), Instant.parse("2026-05-08T13:41:08Z"),
+                        Instant.parse("2026-05-08T13:41:22Z")));
+    }
+
+    @Test
+    void save_retryReceipt_roundTripsAsNestedObject() {
+        store.save("abc", committedTask(), Duration.ofMinutes(3));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        String json = jsonCaptor.getValue();
+        assertThat(json).contains("\"retryReceipt\":{");
+        assertThat(json).contains("\"previousTokenHash\":\"" + tokenHashes("result") + "\"");
+        // 시각은 숫자 timestamp 설정과 무관하게 ISO-8601 문자열로 고정된다(@JsonFormat STRING).
+        assertThat(json).contains("\"claimedAt\":\"2026-05-08T13:41:08Z\"");
+        assertThat(json).contains("\"retryableUntil\":\"2026-05-08T13:41:22Z\"");
+    }
+
+    @Test
+    void save_receiptFieldsAreOmittedWhenAbsent() throws Exception {
+        // NON_NULL — receipt 없는 task와 입력 회전만 된 task(claimedAt 없음)의 JSON에 불필요한 키가 없다.
+        store.save("abc", processingTask(), Duration.ofMinutes(3));
+        store.save("issued", processingTask().withRetryReceipt(new TimelineDraftTask.RetryReceipt(
+                tokenHashes("input"), null, Instant.parse("2026-05-08T13:41:22Z"))), Duration.ofMinutes(3));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis, times(2)).set(anyString(), jsonCaptor.capture(), any());
+        assertThat(jsonCaptor.getAllValues().get(0)).doesNotContain("retryReceipt");
+        assertThat(jsonCaptor.getAllValues().get(1)).contains("retryReceipt").doesNotContain("claimedAt");
+        assertThat(objectMapper.readValue(jsonCaptor.getAllValues().get(1), TimelineDraftTask.class)
+                .retryReceipt().claimedAt()).isNull();
+    }
+
+    @Test
+    void save_terminalTask_dropsRetryReceipt() {
+        store.save("s", TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("cb")), Duration.ofHours(24));
+
+        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redis).set(anyString(), jsonCaptor.capture(), any());
+        assertThat(jsonCaptor.getValue()).doesNotContain("retryReceipt");
+    }
+
+    @Test
+    void find_legacyJsonWithoutRetryReceipt_deserializesWithNullReceipt() {
+        // 배포 순간 in-flight였던 구 shape — 키가 없으면 재시도가 배포 전 동작으로 퇴화할 뿐 깨지지 않는다.
+        String legacy = """
+                {"status":"PROCESSING","dailyRecordId":42,"error":null,\
+                "tokenHash":"h","stage":"CALLBACK_PENDING",\
+                "processingStartedAt":"2026-05-08T13:41:07Z","subjectId":"%s"}""".formatted(SUBJECT);
+        when(redis.get("timeline:draft-task:abc")).thenReturn(legacy);
+
+        TimelineDraftTask found = store.find("abc").orElseThrow();
+
+        assertThat(found.retryReceipt()).isNull();
+        assertThat(found.stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
+    }
 }
