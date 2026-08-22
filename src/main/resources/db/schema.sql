@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     title VARCHAR(255) NOT NULL,                     -- 검증에서 title 필수
     subtitle VARCHAR(255) NULL,
     question VARCHAR(255) NULL,                      -- AI가 Event마다 생성한 질문. 기존 행은 backfill하지 않고 NULL 유지
+    place VARCHAR(255) NULL,                         -- AI가 Event 단위로 고른 단일 장소명(source payload의 places[]와 다른 결과 필드). 기존 행은 NULL 유지
+    address VARCHAR(255) NULL,                       -- 그 Event의 주소 문자열. 표시 데이터라 조회 조건이 아니고 별도 index를 두지 않는다
     memo TEXT NULL,
     -- 감사 컬럼 (BaseEntity + AI raw INSERT용 DB default)
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

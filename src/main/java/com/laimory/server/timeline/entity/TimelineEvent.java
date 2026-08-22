@@ -55,6 +55,15 @@ public class TimelineEvent extends BaseEntity {
     /** AI가 Event마다 생성한 질문. 사용자 편집 대상이 아니며 AI 결과 저장에서만 채워진다(없으면 null). */
     private String question;
 
+    /**
+     * AI가 이 Event 단위로 고른 단일 장소명. source item payload의 복수 {@code places}와 이름·의미가 다른
+     * Event 결과 필드다. question과 같이 사용자 편집 대상이 아니며 AI 결과 저장에서만 채워진다(없으면 null).
+     */
+    private String place;
+
+    /** 이 Event의 주소 문자열. 사용자 편집 대상이 아니며 AI 결과 저장에서만 채워진다(없으면 null). */
+    private String address;
+
     @Column(columnDefinition = "TEXT")
     private String memo;
 
@@ -62,7 +71,8 @@ public class TimelineEvent extends BaseEntity {
     }
 
     private TimelineEvent(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
-                         LocalDateTime endAt, String title, String subtitle, String question) {
+                         LocalDateTime endAt, String title, String subtitle, String question,
+                         String place, String address) {
         this.dailyRecordId = dailyRecordId;
         this.eventType = eventType;
         this.startAt = startAt;
@@ -70,15 +80,20 @@ public class TimelineEvent extends BaseEntity {
         this.title = title;
         this.subtitle = subtitle;
         this.question = question;
+        this.place = place;
+        this.address = address;
     }
 
     public static TimelineEvent of(Long dailyRecordId, TimelineEventType eventType, LocalDateTime startAt,
-                                  LocalDateTime endAt, String title, String subtitle, String question) {
-        return new TimelineEvent(dailyRecordId, eventType, startAt, endAt, title, subtitle, question);
+                                  LocalDateTime endAt, String title, String subtitle, String question,
+                                  String place, String address) {
+        return new TimelineEvent(dailyRecordId, eventType, startAt, endAt, title, subtitle, question,
+                place, address);
     }
 
     /**
      * 사용자 편집으로 eventType/title/subtitle/startAt/endAt 필드를 절대값으로 교체한다(memo·하위 Item은 별도 처리).
+     * AI 결과 전용 필드(question·place·address)는 이 경로가 건드리지 않는다.
      * eventType은 요청 누락 시 서비스가 현재 값을 병합해 non-null 목표값으로 전달한다.
      * 검증(필수·길이·시간 순서)은 서비스 계층({@code TimelineEventEditService}) 책임이고 엔티티는 대입만 한다.
      */

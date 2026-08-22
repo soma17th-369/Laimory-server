@@ -54,8 +54,8 @@ public interface TimelineAiTaskApi {
 
     @Operation(summary = "AI 생성 결과 저장",
             description = "AI가 만든 Event와 채택한 source rawId를 받아 Event/Item/junction 저장과 채택 source "
-                    + "삭제를 하나의 트랜잭션으로 커밋한다. Event별 `question`은 선택 필드이며 누락·null·공백은 "
-                    + "질문 없음(null)으로 저장한다. 기존 Event는 수정하지 않는다(append-only). "
+                    + "삭제를 하나의 트랜잭션으로 커밋한다. Event별 `question`·`place`·`address`는 선택 필드이며 "
+                    + "누락·null·공백은 값 없음(null)으로 저장한다. 기존 Event는 수정하지 않는다(append-only). "
                     + "Redis token hash와 결과 저장 단계를 선점한 요청만 graph를 쓰며, 성공 응답은 "
                     + "callback용 새 taskToken을 body로 반환한다. "
                     + "작업 상태 전이(SUCCESS/FAILED)는 이 API가 아니라 콜백 API가 기록한다.")

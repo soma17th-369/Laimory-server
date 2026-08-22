@@ -54,9 +54,18 @@ class TimelineAiTaskControllerTest {
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
     private static final LocalDate DATE = LocalDate.of(2026, 6, 17);
     private static final String QUESTION = "그날 점심 자리에서 어떤 이야기가 가장 기억에 남았나요?";
-    // AI가 실제로 보내는 필드 구성과 key 순서를 그대로 둔다(question이 sourceRawIds 뒤).
+    private static final String PLACE = "성수 카페";
+    private static final String ADDRESS = "서울특별시 성동구 아차산로 17";
+    // AI가 실제로 보내는 필드 구성과 key 순서를 그대로 둔다(question·place·address가 sourceRawIds 뒤).
     private static final String RESULT_BODY = """
             {"events":[{"eventType":"MEAL","title":"점심","subtitle":"회사 근처에서 점심을 해결했어요.",
+              "startAt":"2026-06-17T12:00:00+09:00","endAt":"2026-06-17T13:00:00+09:00",
+              "sourceRawIds":["raw-1"],"question":"그날 점심 자리에서 어떤 이야기가 가장 기억에 남았나요?",
+              "place":"성수 카페","address":"서울특별시 성동구 아차산로 17"}]}
+            """;
+    // place·address 도입 이전 형식 — question은 있고 두 필드만 없다.
+    private static final String RESULT_BODY_WITHOUT_PLACE = """
+            {"events":[{"eventType":"MEAL","title":"점심","subtitle":null,
               "startAt":"2026-06-17T12:00:00+09:00","endAt":"2026-06-17T13:00:00+09:00",
               "sourceRawIds":["raw-1"],"question":"그날 점심 자리에서 어떤 이야기가 가장 기억에 남았나요?"}]}
             """;
@@ -168,6 +177,30 @@ class TimelineAiTaskControllerTest {
                 .isEqualTo(OffsetDateTime.of(DATE.atTime(12, 0), KST).toInstant());
         org.assertj.core.api.Assertions.assertThat(event.sourceRawIds()).containsExactly("raw-1");
         org.assertj.core.api.Assertions.assertThat(event.question()).isEqualTo(QUESTION);
+        org.assertj.core.api.Assertions.assertThat(event.place()).isEqualTo(PLACE);
+        org.assertj.core.api.Assertions.assertThat(event.address()).isEqualTo(ADDRESS);
+    }
+
+    @Test
+    void result_placeAndAddressAbsent_bindsNullWithoutError() throws Exception {
+        // place·address 도입 이전 요청 형식이 그대로 통과하고 두 필드는 "값 없음"으로 수렴한다.
+        when(timelineAiResultService.storeResult(anyString(), anyString(), anyString(), any()))
+                .thenReturn(new AiTimelineResultResponse("tok-3"));
+
+        mockMvc.perform(post(RESULT)
+                        .header("Task-Token", "tok-2")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(RESULT_BODY_WITHOUT_PLACE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taskToken").value("tok-3"));
+
+        ArgumentCaptor<AiTimelineResultRequest> request =
+                ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultService).storeResult(anyString(), eq("t-1"), eq("tok-2"), request.capture());
+        AiTimelineResultRequest.Event event = request.getValue().events().get(0);
+        org.assertj.core.api.Assertions.assertThat(event.question()).isEqualTo(QUESTION);
+        org.assertj.core.api.Assertions.assertThat(event.place()).isNull();
+        org.assertj.core.api.Assertions.assertThat(event.address()).isNull();
     }
 
     @Test

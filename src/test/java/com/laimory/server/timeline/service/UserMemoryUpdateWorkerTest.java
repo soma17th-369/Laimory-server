@@ -523,7 +523,7 @@ class UserMemoryUpdateWorkerTest {
     private static TimelineEvent event() {
         TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
                 LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
-                "점심", "회사 근처", "점심은 어땠나요?");
+                "점심", "회사 근처", "점심은 어땠나요?", null, null);
         event.updateMemo("응 좋았어");
         return event;
     }
@@ -532,7 +532,7 @@ class UserMemoryUpdateWorkerTest {
     private static TimelineEvent eventWithPii() {
         TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
                 LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
-                "전화 010-1234-5678", null, null);
+                "전화 010-1234-5678", null, null, null, null);
         event.updateMemo("메일 yun@example.com");
         return event;
     }

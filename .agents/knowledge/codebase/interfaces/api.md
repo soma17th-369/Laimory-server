@@ -77,8 +77,10 @@ DRAFT/SAVED DailyRecord를 `recordDate` 오름차순으로 반환하는 캘린�
 Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. Event·부모 record 없음과 부모 비소유는
 같은 404 `-404`로 은닉하고, Item이 없으면 `items=[]`다.
 
-`TimelineEventResponse`는 일별 목록·단건 조회 모두 nullable `question`(AI가 Event마다 만든 질문)을 포함한다.
-값이 없으면 `null`이며, 사용자 편집 API 입력 계약에는 없어 앱이 바꿀 수 없는 읽기 전용 필드다.
+`TimelineEventResponse`는 일별 목록·단건 조회 모두 nullable `question`(AI가 Event마다 만든 질문)과
+nullable `place`·`address`(AI가 Event 단위로 고른 장소명과 그 주소)를 포함한다. 값이 없으면 `null`이며,
+사용자 편집 API 입력 계약에는 없어 앱이 바꿀 수 없는 읽기 전용 필드다. draft polling SUCCESS의 `result`도
+같은 DTO라 세 필드가 그대로 실린다.
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
 `title`·`subtitle`·`startAt`·`endAt`(네 key 모두 필수), 선택적 `eventType`, 선택적 `memo`와 선택적

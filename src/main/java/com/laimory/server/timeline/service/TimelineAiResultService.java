@@ -82,10 +82,10 @@ public class TimelineAiResultService {
     }
 
     /**
-     * Event title/subtitle/question만 bounded 치환한 요청 사본을 만든다(wire DTO 필드 집합 불변).
+     * Event title/subtitle/question/place/address만 bounded 치환한 요청 사본을 만든다(wire DTO 필드 집합 불변).
      * 치환 전에 persistence와 같은 normalize(trim·trimToNull)를 적용한다 — shape 검증이 trim 길이로
      * 통과시킨 앞뒤 공백이 255 절단 지점을 앞당겨 token까지 잘려나가는 것을 막는다. transaction 쪽
-     * 재-trim과 이중 적용돼도 의미가 같다. subtitle/question은 nullable — null은 그대로 유지된다.
+     * 재-trim과 이중 적용돼도 의미가 같다. subtitle/question/place/address는 nullable — null은 그대로 유지된다.
      * 치환 결과는 255자 이하가 보장돼 이후 transaction의 trim·길이 검증과 충돌하지 않는다.
      */
     private AiTimelineResultRequest redactEventTexts(AiTimelineResultRequest request) {
@@ -102,6 +102,8 @@ public class TimelineAiResultService {
                     event.eventType(), title,
                     privacyRedactor.redactText(trimToNull(event.subtitle()), EVENT_TEXT_MAX_LENGTH).text(),
                     privacyRedactor.redactText(trimToNull(event.question()), EVENT_TEXT_MAX_LENGTH).text(),
+                    privacyRedactor.redactText(trimToNull(event.place()), EVENT_TEXT_MAX_LENGTH).text(),
+                    privacyRedactor.redactText(trimToNull(event.address()), EVENT_TEXT_MAX_LENGTH).text(),
                     event.startAt(), event.endAt(), event.sourceRawIds()));
         }
         return new AiTimelineResultRequest(events);

@@ -317,7 +317,7 @@ class TimelineDeletionServiceTest {
                 RECORD_DATE.atTime(9, 0),
                 null,
                 "제목",
-                null, null);
+                null, null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
         return event;
     }

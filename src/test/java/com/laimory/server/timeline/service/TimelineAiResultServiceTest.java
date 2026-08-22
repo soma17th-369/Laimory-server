@@ -72,7 +72,7 @@ class TimelineAiResultServiceTest {
 
     private AiTimelineResultRequest result() {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, "점심", null, "점심에 누구와 함께였나요?",
+                TimelineEventType.MEAL, "점심", null, "점심에 누구와 함께였나요?", null, null,
                 OffsetDateTime.of(DATE.atTime(12, 0), KST),
                 OffsetDateTime.of(DATE.atTime(13, 0), KST),
                 List.of("raw-1"))));
@@ -173,7 +173,46 @@ class TimelineAiResultServiceTest {
 
     private AiTimelineResultRequest resultWithQuestion(String question) {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, "점심", null, question,
+                TimelineEventType.MEAL, "점심", null, question, null, null,
+                OffsetDateTime.of(DATE.atTime(12, 0), KST),
+                OffsetDateTime.of(DATE.atTime(13, 0), KST),
+                List.of("raw-1"))));
+    }
+
+    @Test
+    void storeResult_placeOrAddressTooLong_rejectedBeforeClaim() {
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+
+        assertThatThrownBy(() -> service.storeResult(
+                VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceAndAddress("장".repeat(256), null)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.storeResult(
+                VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceAndAddress(null, "주".repeat(256))))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    @Test
+    void storeResult_blankPlaceAndAddress_normalizedToNullBeforeStore() {
+        // 공백 문자열은 치환 사본 단계에서 이미 null(값 없음)로 수렴한다 — transaction의 trimToNull과 같은 규칙이다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceAndAddress("   ", ""));
+
+        ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
+        AiTimelineResultRequest.Event event = stored.getValue().events().getFirst();
+        assertThat(event.place()).isNull();
+        assertThat(event.address()).isNull();
+    }
+
+    private AiTimelineResultRequest resultWithPlaceAndAddress(String place, String address) {
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심", null, null, place, address,
                 OffsetDateTime.of(DATE.atTime(12, 0), KST),
                 OffsetDateTime.of(DATE.atTime(13, 0), KST),
                 List.of("raw-1"))));
@@ -193,13 +232,14 @@ class TimelineAiResultServiceTest {
 
     @Test
     void storeResult_redactsEventTextsBeforeStore() {
-        // AI 생성 title/subtitle/question의 v1 PII는 final 저장 경로에 들어가기 전에 token으로 치환된다.
+        // AI 생성 title/subtitle/question/place/address의 v1 PII는 final 저장 경로에 들어가기 전에 token으로 치환된다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
         when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, "010-1234-5678로 예약한 점심", "메일 yun@example.com",
-                "연락처 010-9876-5432 맞나요?",
+                "연락처 010-9876-5432 맞나요?", "성수동 카페 010-1111-2222",
+                "서울특별시 성동구 아차산로 17, 문의 shop@example.com",
                 OffsetDateTime.of(DATE.atTime(12, 0), KST), OffsetDateTime.of(DATE.atTime(13, 0), KST),
                 List.of("raw-1"))));
 
@@ -211,6 +251,9 @@ class TimelineAiResultServiceTest {
         assertThat(event.title()).isEqualTo(RedactionType.PHONE.token() + "로 예약한 점심");
         assertThat(event.subtitle()).isEqualTo("메일 " + RedactionType.EMAIL.token());
         assertThat(event.question()).isEqualTo("연락처 " + RedactionType.PHONE.token() + " 맞나요?");
+        assertThat(event.place()).isEqualTo("성수동 카페 " + RedactionType.PHONE.token());
+        assertThat(event.address())
+                .isEqualTo("서울특별시 성동구 아차산로 17, 문의 " + RedactionType.EMAIL.token());
     }
 
     @Test
@@ -222,7 +265,7 @@ class TimelineAiResultServiceTest {
         when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
         String title = "가".repeat(240) + " a@b.co";
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, title, null, null,
+                TimelineEventType.MEAL, title, null, null, null, null,
                 OffsetDateTime.of(DATE.atTime(12, 0), KST), null, List.of("raw-1"))));
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
@@ -245,7 +288,7 @@ class TimelineAiResultServiceTest {
         when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(true);
         String title = " ".repeat(250) + "a@b.co";
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, title, null, null,
+                TimelineEventType.MEAL, title, null, null, null, null,
                 OffsetDateTime.of(DATE.atTime(12, 0), KST), null, List.of("raw-1"))));
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);

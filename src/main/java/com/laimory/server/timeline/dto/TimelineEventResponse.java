@@ -22,6 +22,11 @@ public record TimelineEventResponse(
         @Schema(description = "AI가 이 이벤트에 대해 생성한 질문. 없으면 null이며 편집 API로 바꿀 수 없다",
                 nullable = true)
         String question,
+        @Schema(description = "AI가 이 이벤트 단위로 고른 장소명. 없으면 null이며 편집 API로 바꿀 수 없다",
+                nullable = true, example = "성수동 카페")
+        String place,
+        @Schema(description = "이 이벤트의 주소. 없으면 null이며 편집 API로 바꿀 수 없다", nullable = true)
+        String address,
         String memo,
         List<TimelineItemResponse> items
 ) {
@@ -35,6 +40,8 @@ public record TimelineEventResponse(
                 event.getTitle(),
                 event.getSubtitle(),
                 event.getQuestion(),
+                event.getPlace(),
+                event.getAddress(),
                 event.getMemo(),
                 items
         );

@@ -114,7 +114,7 @@ class TimelineSaveFlowIntegrationTest {
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(TimelineEvent.of(recordId, TimelineEventType.MEAL,
-                        DATE.atTime(12, 10), DATE.atTime(13, 0), "점심", "회사 근처", "점심은 어땠나요?"))
+                        DATE.atTime(12, 10), DATE.atTime(13, 0), "점심", "회사 근처", "점심은 어땠나요?", null, null))
                 .getTimelineEventId();
     }
 
