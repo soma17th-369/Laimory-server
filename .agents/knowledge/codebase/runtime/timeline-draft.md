@@ -92,8 +92,9 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
    entity·DB·앱 응답은 원문 유지). 성공하면 새 token hash와
    `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다.
 2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·callback token 선점 전에
-   Event `title`/`subtitle`/`question`을 255자 token-aware bounded로 v1 치환한 요청 사본을 만들고 이후
-   단계는 치환본만 본다 — 치환 실패는 token 미선점·`RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
+   Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로 v1 치환한 요청
+   사본을 만들고 이후 단계는 치환본만 본다 — 치환 실패는 token 미선점·`RESULT_PENDING` 유지로
+   끝난다(원문 fallback 없음).
    새 callback token hash와
    `CALLBACK_PENDING`을 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·Event/Item/junction
    INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. 저장 예외면 가능한 경우 이전

@@ -84,7 +84,7 @@ class TimelineEventPhotoAddIntegrationTest {
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(TimelineEvent.of(
                 recordId, TimelineEventType.REST, DATE.atTime(9, 0), DATE.atTime(10, 0),
-                "기존 제목", "기존 부제", null))
+                "기존 제목", "기존 부제", null, null, null))
                 .getTimelineEventId();
     }
 

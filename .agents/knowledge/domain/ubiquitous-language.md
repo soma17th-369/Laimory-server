@@ -97,7 +97,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | AI 접수 요청 | AI Dispatch Request | 현재 구현 | `POST /v1/timeline` body(`taskId`·`taskToken`·`dailyRecordId`·offset `window`)다. source item은 싣지 않고 AI가 토큰으로 입력 조회 API를 호출한다. 필드명은 AI 규격이 명명 권위인 contract fixture다. |
 | AI 작업 입력 | AI Task Input | 현재 구현 | 서버가 소유하는 정규 AI 입력이다(`GET /s/api/{v}/timeline/drafts/{taskId}/input`). 기록 날짜·timezone·타임라인 윈도우·source item을 담고 DB 식별자와 사용자 ID는 노출하지 않으며, 시각은 record timezone offset ISO-8601이다. |
-| AI 생성 결과 | AI Result | 현재 구현 | AI가 만든 Event, Event별 nullable 질문과 각 Event가 채택한 `rawId` 목록이다(`POST .../result`). 서버가 검증·정규화해 Event/Item/junction으로 저장하고 채택 source를 삭제한다. confidence·추론 설명 등 저장하지 않는 출력은 계약에 없다. |
+| AI 생성 결과 | AI Result | 현재 구현 | AI가 만든 Event, Event별 nullable 질문·장소(`place`)·주소(`address`)와 각 Event가 채택한 `rawId` 목록이다(`POST .../result`). `place`는 AI가 Event 단위로 고른 단수 장소명이라 source item payload의 복수 `places`와 이름·의미가 다르다. 서버가 검증·정규화해 Event/Item/junction으로 저장하고 채택 source를 삭제한다. confidence·추론 설명 등 저장하지 않는 출력은 계약에 없다. |
 
 ## 비동기 작성 작업
 

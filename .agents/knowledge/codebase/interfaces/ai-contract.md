@@ -119,16 +119,21 @@ Task-Token: <taskToken>
 ```json
 {"events":[{"eventType":"MEAL","title":"...","subtitle":null,
             "startAt":"...","endAt":null,"sourceRawIds":["..."],
-            "question":"..."}]}
+            "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ..."}]}
 ```
 
 - 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다.
 - `question`은 Event별 선택 필드다. 필드 누락·명시적 `null`·공백 문자열은 모두 저장 값 `null`(질문 없음)로
   수렴하므로 question 도입 이전 요청 shape가 그대로 통과한다. 서버 Jackson은 미지 필드를 무시하므로
   서버 배포 전에 AI가 먼저 `question`을 보내도 400이 아니라 무시된다.
-- 저장 전에 서버가 Event `title`/`subtitle`/`question`을 255자 token-aware bounded로 v1 치환한 요청
-  사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·callback token
-  선점 전이라 실패하면 token 미선점·`RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
+- `place`·`address`도 같은 규칙의 Event별 선택 필드다. `place`는 AI가 Event 단위로 고른 **단수** 장소명,
+  `address`는 그 Event의 주소 문자열이며, 입력 조회 응답 source payload의 복수 `places[]`와 이름·의미가
+  다르다. 누락·`null`·공백은 모두 저장 값 `null`로 수렴해 도입 이전 요청 shape가 그대로 통과하고, 서버
+  배포보다 AI가 먼저 보내면 미지 필드로 무시돼 400이 아니라 값만 유실된다.
+- 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로
+  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은
+  shape 검증 뒤·callback token 선점 전이라 실패하면 token 미선점·`RESULT_PENDING` 유지로 끝난다
+  (원문 fallback 없음).
 - `RESULT_PENDING` 요청 하나만 새 token hash와 `CALLBACK_PENDING`을 CAS로 선점해 MySQL transaction을
   실행한다. 새 token 원문은 MySQL commit 뒤 응답할 때까지 AI에 노출하지 않는다.
 - 이미 소비된 token 재요청은 token 불일치 401 `-1002`, 다른 stage 요청은 409 `-1017`이다.
@@ -137,7 +142,8 @@ Task-Token: <taskToken>
 
 - event와 event별 source가 각각 1건 이상
 - `eventType`, non-blank `title`, `startAt`, `endAt >= startAt`, DB 문자열 길이
-  (`title`·`subtitle`·`question` 각각 trim 후 255자 — 한 Event의 초과가 결과 batch 전체를 400으로 만든다)
+  (`title`·`subtitle`·`question`·`place`·`address` 각각 trim 후 255자 — 한 Event의 초과가 결과 batch
+  전체를 400으로 만든다)
 - 모든 `sourceRawId`가 이 task staging source에 존재
 - 같은 record final graph에 채택 rawId가 아직 없음
 

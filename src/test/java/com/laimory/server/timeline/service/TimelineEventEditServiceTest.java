@@ -413,7 +413,7 @@ class TimelineEventEditServiceTest {
 
     private TimelineEvent originalEvent() {
         TimelineEvent event = TimelineEvent.of(
-                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제목", null);
+                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제목", null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
         return event;
     }

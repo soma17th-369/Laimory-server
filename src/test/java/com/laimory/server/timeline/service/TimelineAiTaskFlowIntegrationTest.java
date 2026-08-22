@@ -99,6 +99,8 @@ class TimelineAiTaskFlowIntegrationTest {
     private static final UUID SUBJECT_ID = id(7L);
     private static final String ZONE = "Asia/Seoul";
     private static final String QUESTION = "그날 아침 기분은 어땠나요?";
+    private static final String PLACE = "성수 카페";
+    private static final String ADDRESS = "서울특별시 성동구 아차산로 17";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
     // 다른 데이터와 충돌하지 않을 고정 날짜 — 클라 선택 날짜로 요청에 명시 전송한다(서버 파생 없음).
     private static final LocalDate DATE = LocalDate.of(2000, 1, 1);
@@ -196,6 +198,8 @@ class TimelineAiTaskFlowIntegrationTest {
             assertThat(event.getTitle()).isEqualTo("아침");
             assertThat(event.getEventType()).isEqualTo(TimelineEventType.UNKNOWN);
             assertThat(event.getQuestion()).isEqualTo(QUESTION);
+            assertThat(event.getPlace()).isEqualTo(PLACE);
+            assertThat(event.getAddress()).isEqualTo(ADDRESS);
             // offset 입력이 record timezone wall-clock으로 정규화돼 저장된다.
             assertThat(event.getStartAt()).isEqualTo(DATE.atTime(9, 0));
         });
@@ -210,6 +214,8 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(status.result().events()).hasSize(1);
         assertThat(status.result().events().get(0).items()).hasSize(1);
         assertThat(status.result().events().get(0).question()).isEqualTo(QUESTION);
+        assertThat(status.result().events().get(0).place()).isEqualTo(PLACE);
+        assertThat(status.result().events().get(0).address()).isEqualTo(ADDRESS);
 
         // 같은 결과의 콜백 재전송은 그대로 성공한다(재시도 안전 — 상태는 그대로 SUCCESS).
         callbackService.handleCallback(VERSION, taskId, callbackToken, success());
@@ -229,6 +235,24 @@ class TimelineAiTaskFlowIntegrationTest {
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getQuestion()).isNull());
+    }
+
+    /** place·address도 같은 규칙이다 — 필드 없는 형식과 공백 문자열 모두 NULL로 저장된다. */
+    @Test
+    void result_blankPlaceAndAddress_areStoredAsNull() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input, QUESTION, "  ", null));
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getPlace()).isNull();
+                    assertThat(event.getAddress()).isNull();
+                });
     }
 
     @Test
@@ -259,7 +283,7 @@ class TimelineAiTaskFlowIntegrationTest {
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
         String resultToken = input.taskToken();
         AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null, null,
+                TimelineEventType.UNKNOWN, "아침", null, null, null, null,
                 OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, invalid))
@@ -357,8 +381,13 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     private AiTimelineResultRequest resultFrom(AiTimelineTaskInputResponse input, String question) {
+        return resultFrom(input, question, PLACE, ADDRESS);
+    }
+
+    private AiTimelineResultRequest resultFrom(AiTimelineTaskInputResponse input, String question,
+                                               String place, String address) {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null, question,
+                TimelineEventType.UNKNOWN, "아침", null, question, place, address,
                 input.sourceItems().get(0).startAt(), null,
                 input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }

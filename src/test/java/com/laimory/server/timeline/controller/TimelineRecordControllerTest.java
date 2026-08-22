@@ -131,7 +131,8 @@ class TimelineRecordControllerTest {
         return new TimelineEventResponse(
                 11L, TimelineEventType.REST,
                 LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
-                "카페에서 휴식", "성수동", "누구와 함께 있었나요?", "기존 메모", List.of(item));
+                "카페에서 휴식", "성수동", "누구와 함께 있었나요?",
+                "성수 카페", "서울특별시 성동구 아차산로 17", "기존 메모", List.of(item));
     }
 
     private DailyTimelineResponse dailyTimeline() {
@@ -157,6 +158,9 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.timelines[0].emotionType").value("HAPPY"))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].timelineEventId").value(11))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].question").value("누구와 함께 있었나요?"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].place").value("성수 카페"))
+                .andExpect(jsonPath("$.body.timelines[0].events[0].address")
+                        .value("서울특별시 성동구 아차산로 17"))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].timelineItemId").value(21))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].itemType").value("PHOTO"))
                 .andExpect(jsonPath("$.body.timelines[0].events[0].items[0].rawId").value("raw-21"))
@@ -358,6 +362,8 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.timelineEventId").value(11))
                 .andExpect(jsonPath("$.body.eventType").value("REST"))
                 .andExpect(jsonPath("$.body.question").value("누구와 함께 있었나요?"))
+                .andExpect(jsonPath("$.body.place").value("성수 카페"))
+                .andExpect(jsonPath("$.body.address").value("서울특별시 성동구 아차산로 17"))
                 .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
                 .andExpect(jsonPath("$.body.items[0].payload.filename").value("u.jpg"));
 

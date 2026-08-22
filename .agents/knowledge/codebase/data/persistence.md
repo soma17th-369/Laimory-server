@@ -204,7 +204,8 @@ runtime repository/entity도 subject만 읽고 쓴다.
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
 없는 `String`(Hibernate 기본 255)이라 nullable 컬럼을 앱 배포 전에 먼저 추가해야 `ddl-auto=validate`가
-통과한다.
+통과한다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 — AI 결과 저장 transaction만
+쓰고, 조회 조건이 아닌 표시 데이터라 index를 두지 않으며, 배포 전 DDL 요구도 같다.
 
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
@@ -390,9 +391,10 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱
   dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
-- staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의 `title`/`subtitle`/`question`,
-  `user_memories.memory`는 v1 privacy 치환 후의 값이다(`clientPhotoUri`만 storage 원문 유지 — AI 전달
-  에서만 치환). 사용자 편집(Event PATCH/memo PUT)의 title·subtitle·memo는 원문 저장이다.
+- staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의
+  `title`/`subtitle`/`question`/`place`/`address`, `user_memories.memory`는 v1 privacy 치환 후의 값이다
+  (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
+  title·subtitle·memo는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다.
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.

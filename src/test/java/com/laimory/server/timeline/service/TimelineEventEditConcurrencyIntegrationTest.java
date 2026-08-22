@@ -69,7 +69,7 @@ class TimelineEventEditConcurrencyIntegrationTest {
         DailyRecord record = dailyRecordRepository.save(
                 DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(12, 0), ZONE));
         eventId = timelineEventRepository.save(
-                        TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "원래 제목", "원래 부제", null))
+                        TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "원래 제목", "원래 부제", null, null, null))
                 .getTimelineEventId();
     }
 
