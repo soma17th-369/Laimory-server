@@ -67,6 +67,13 @@ public class TimelineCallbackService {
                 log.warn("failed callback on invalid stage: taskId={} stage={}", taskId, task.stage());
                 throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
             }
+            if (task.retryReceipt() != null && task.retryReceipt().resultDigest() != null) {
+                // 결과 저장이 선점된 뒤다 — graph가 이미 commit됐을 수 있어 FAILED로 종결하면 저장된
+                // graph와 모순된다. token 회전이 commit 뒤로 미뤄져 stage만으로는 이 구간이 구분되지
+                // 않으므로 선점 표식을 함께 본다.
+                log.warn("failed callback while result claim in flight: taskId={}", taskId);
+                throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+            }
             if (!timelineTaskService.markFailedIfCurrent(taskId, task, resolveAiFailureCode(taskId, request))) {
                 handleCallbackRace(taskId, taskToken, request.status());
                 return;

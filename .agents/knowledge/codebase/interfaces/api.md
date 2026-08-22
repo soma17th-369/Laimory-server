@@ -134,7 +134,10 @@ commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
 세 endpoint 모두 현재 단계에서 받은 `Task-Token` header를 검증하고 Redis 내부 `ProcessStage`가 호출
 순서를 제한한다. 입력·결과 성공 응답은 후속 요청용 `taskToken`을 body로 반환한다. 토큰 불일치는
 401 `-1002`, 작업 없음·만료는 404 `-1001`, 현재 stage와 맞지 않는 입력·결과·callback 또는 상충
-terminal callback은 409 `-1017`다. 이미 소비된 token의 입력·결과 재요청은 401이다.
+terminal callback은 409 `-1017`다. 이미 소비된 token의 재요청은 재시도 창(기본 15s, 첫 요청 도착 기준)
+안에서만 멱등 처리된다 — 입력은 같은 입력과 새 result token을, 결과는 같은 결과일 때만
+`status=ALREADY_PROCESSED`와 새 callback token을 200으로 반환하며 graph는 다시 쓰지 않는다. 결과가
+다르면 409 `-1017`, 창 만료·저장 증거 없음은 401 `-1002`다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌

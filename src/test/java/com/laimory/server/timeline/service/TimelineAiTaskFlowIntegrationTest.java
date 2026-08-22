@@ -31,6 +31,7 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -232,23 +233,132 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
-    void resultRetry_afterTokenRotation_isRejectedWithoutDuplicatingGraph() {
+    void resultRetry_afterLostResponse_reissuesCallbackTokenWithoutDuplicatingGraph() {
+        // 200 응답이 유실된 상황 — AI는 이미 소비한 result token으로 같은 body를 다시 보낸다.
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
         String taskToken = capturedRequest().taskToken();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
         String resultToken = input.taskToken();
 
-        resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
-        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+        AiTimelineResultResponse first = resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+        assertThat(first.status()).isEqualTo(AiTimelineResultResponse.Outcome.STORED);
 
-        assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
+        AiTimelineResultResponse replay = resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+
+        assertThat(replay.status()).isEqualTo(AiTimelineResultResponse.Outcome.ALREADY_PROCESSED);
+        assertThat(replay.taskToken()).isNotEqualTo(first.taskToken()).isNotEqualTo(resultToken);
+        // receipt를 늘려도 Redis에는 여전히 hash만 남는다.
+        String rawJson = redis.get("timeline:draft-task:" + taskId);
+        assertThat(rawJson).contains("retryReceipt")
+                .doesNotContain(resultToken).doesNotContain(first.taskToken()).doesNotContain(replay.taskToken());
+
+        // Event·Item·junction 모두 한 번만 삽입되고 채택 source 삭제도 한 번만 반영된다.
+        List<TimelineEvent> events = timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
+        assertThat(events).hasSize(1);
         assertThat(timelineItemRepository.findAll())
                 .filteredOn(item -> RAW_ID.equals(item.getRawId()))
                 .hasSize(1);
+        assertThat(timelineEventItemRepository.findByTimelineEventId(events.getFirst().getTimelineEventId()))
+                .hasSize(1);
+        assertThat(draftSourceItemService.findByTaskId(taskId)).isEmpty();
+        assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
+    }
+
+    @Test
+    void resultRetry_reissuedToken_completesSuccessCallbackChain() {
+        String taskId = createDraft(sources());
+        String taskToken = capturedRequest().taskToken();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = input.taskToken();
+
+        String deadToken = resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)).taskToken();
+        String liveToken = resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)).taskToken();
+
+        // 재발급 성공으로 직전 callback token은 즉시 무효가 된다.
+        assertThatThrownBy(() -> callbackService.handleCallback(VERSION, taskId, deadToken, success()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+
+        callbackService.handleCallback(VERSION, taskId, liveToken, success());
+        assertThat(pollingService.poll(VERSION, SUBJECT_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
+
+        // terminal 전이가 receipt를 버리므로 그 뒤의 결과 재요청은 다시 401이다.
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+    }
+
+    @Test
+    void resultRetry_withDifferentPayload_returns409AndKeepsLiveCallbackToken() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        String taskToken = capturedRequest().taskToken();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = input.taskToken();
+
+        String callbackToken = resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)).taskToken();
+        AiTimelineResultRequest different = resultFrom(input, "다른 질문인가요?");
+
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, different))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+
+        // 거절된 재시도는 무해하다 — 저장된 결과도 직전 callback token도 그대로다.
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
+        assertThat(pollingService.poll(VERSION, SUBJECT_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
+    }
+
+    @Test
+    void resultRetry_afterWindowExpiry_isRejectedWithoutTouchingGraph() {
+        // 창 만료는 receipt의 절대 마감을 과거로 바꿔 재현한다(실 대기 없이 의미 동일).
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        String taskToken = capturedRequest().taskToken();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
+        String resultToken = input.taskToken();
+        resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));
+
+        TimelineDraftTask current = taskService.find(taskId).orElseThrow();
+        TimelineDraftTask.RetryReceipt receipt = current.retryReceipt();
+        assertThat(taskService.replaceProcessing(taskId, current,
+                current.withRetryReceipt(new TimelineDraftTask.RetryReceipt(
+                        receipt.previousTokenHash(), receipt.resultDigest(), receipt.committedAt(),
+                        Instant.now().minusSeconds(1))))).isTrue();
+
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
+    }
+
+    @Test
+    void inputRetry_afterLostResponse_reissuesResultTokenAndCompletesChain() {
+        // 입력 응답 유실 — AI는 이미 소비한 input token으로 다시 조회하고 새 result token으로 완주한다.
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        String inputToken = capturedRequest().taskToken();
+
+        AiTimelineTaskInputResponse first = inputService.getInput(VERSION, taskId, inputToken);
+        AiTimelineTaskInputResponse retried = inputService.getInput(VERSION, taskId, inputToken);
+
+        assertThat(retried.taskToken()).isNotEqualTo(first.taskToken());
+        assertThat(retried.sourceItems()).hasSize(first.sourceItems().size());
+        // 직전 result token은 무효다.
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, first.taskToken(), resultFrom(retried)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+
+        String callbackToken =
+                resultService.storeResult(VERSION, taskId, retried.taskToken(), resultFrom(retried)).taskToken();
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
+        assertThat(pollingService.poll(VERSION, SUBJECT_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
     }
 
     @Test
@@ -270,6 +380,8 @@ class TimelineAiTaskFlowIntegrationTest {
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
         assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
+        // 선점 흔적이 남으면 정상 재시도가 409로 막힌다 — 보상은 receipt를 지워야 한다.
+        assertThat(taskService.find(taskId).orElseThrow().retryReceipt()).isNull();
 
         // 같은 task로 올바른 결과를 다시 보내면 정상 저장된다.
         resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input));

@@ -16,6 +16,9 @@ import java.util.List;
  *
  * <p>시각은 dispatch window와 같은 offset 포함 ISO-8601이며, 서버가 DailyRecord의 {@code record_timezone}
  * wall-clock으로 정규화해 저장한다(MySQL {@code DATETIME}은 offset을 보존하지 않는다).
+ *
+ * <p>이 shape는 재시도 동일성 지문의 입력이기도 하다
+ * ({@code AiTimelineResultDigest}) — 필드를 추가·재배치하면 지문 값이 함께 바뀐다.
  */
 public record AiTimelineResultRequest(
         @Schema(description = "AI가 생성한 Event 목록. 최소 1건")

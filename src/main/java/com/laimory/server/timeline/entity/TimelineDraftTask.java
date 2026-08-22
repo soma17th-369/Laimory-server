@@ -35,6 +35,9 @@ import java.util.UUID;
  *
  * <p>{@code subjectId}는 task owner(콘텐츠 주체)다 — 세 상태 모두 보존되며, 폴링의 소유권 대조와 콜백의
  * terminal 전이·완료 push가 이 값을 쓴다(콜백은 {@code /s/api}라 request principal이 없다).
+ *
+ * <p>{@code retryReceipt}는 응답 유실 뒤 재요청을 인지하기 위한 흔적이다({@link RetryReceipt}).
+ * PROCESSING 전용이며 terminal 전이 시 stage와 함께 버린다.
  */
 public record TimelineDraftTask(
         TaskStatus status,
@@ -46,7 +49,8 @@ public record TimelineDraftTask(
         @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
-        UUID subjectId
+        UUID subjectId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) RetryReceipt retryReceipt
 ) {
 
     public TimelineDraftTask {
@@ -65,11 +69,32 @@ public record TimelineDraftTask(
         if (status != TaskStatus.PROCESSING && stage != null) {
             throw new IllegalArgumentException("terminal task에는 stage를 저장하지 않습니다");
         }
+        // 아래 둘은 요청 데이터로 도달할 수 없는 조합이라 프로그래밍 오류다 — 400으로 감추지 않는다.
+        if (status != TaskStatus.PROCESSING && retryReceipt != null) {
+            throw new IllegalStateException("terminal task에는 retry receipt를 저장하지 않습니다");
+        }
+        if (retryReceipt != null && retryReceipt.committedAt() != null
+                && stage != ProcessStage.CALLBACK_PENDING) {
+            throw new IllegalStateException("commit 확정 receipt는 CALLBACK_PENDING에만 존재합니다: " + stage);
+        }
     }
 
     /** 현재 처리 단계의 task token 검증. */
     public boolean matchesToken(String token) {
         return TaskTokens.matches(token, tokenHash);
+    }
+
+    /**
+     * 직전 단계에서 소비된 token의 재제시 검증. 현재 token 검증({@link #matchesToken})과 별개 축이며,
+     * receipt가 없으면 언제나 false다.
+     */
+    public boolean matchesPreviousToken(String token) {
+        return retryReceipt != null && TaskTokens.matches(token, retryReceipt.previousTokenHash());
+    }
+
+    /** 재시도 허용 창이 지났는지. receipt가 없으면 판정 대상이 아니라 true를 반환한다. */
+    public boolean retryWindowExpired(Instant now) {
+        return retryReceipt == null || !now.isBefore(retryReceipt.retryableUntil());
     }
 
     /** 클라이언트가 요청에 지정한 AI 이벤트 생성 범위의 local 원본(offset 없음 — 서버 내부 보존용). */
@@ -79,29 +104,91 @@ public record TimelineDraftTask(
     ) {
     }
 
+    /**
+     * 응답 유실 뒤 같은 요청이 다시 왔을 때 그것을 재시도로 인지하기 위한 흔적.
+     *
+     * <p>{@code previousTokenHash}는 직전 단계 전이에서 소비된 token의 SHA-256이다 — 재시도의 인증 수단이며
+     * "같은 결과를 다시 제출해 다음 token을 재발급받을" 권한만 갖는다(입력 조회·callback에는 쓸 수 없다).
+     * {@code retryableUntil}은 <b>첫 요청이 도착한 시각</b> 기준 절대 마감이다. CAS마다 재확보되는 task TTL과
+     * 달리 재발급으로 미끄러지지 않는다.
+     *
+     * <p>{@code resultDigest}는 결과 저장 단계에서만 채워지며 선점 표식과 payload 동일성 판정을 겸한다.
+     * {@code committedAt}은 graph transaction이 commit된 뒤에만 채운다 — <b>이 값의 존재가 "graph가
+     * 확정됐다"의 유일한 증거</b>이고, 없으면 어떤 재요청도 멱등 성공으로 처리하지 않는다.
+     *
+     * <p>네 값 모두 hash와 시각이라 token 원문도 요청 본문도 보존하지 않는다.
+     */
+    public record RetryReceipt(
+            String previousTokenHash,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String resultDigest,
+            @JsonFormat(shape = JsonFormat.Shape.STRING)
+            @JsonInclude(JsonInclude.Include.NON_NULL) Instant committedAt,
+            @JsonFormat(shape = JsonFormat.Shape.STRING) Instant retryableUntil
+    ) {
+
+        public RetryReceipt {
+            Objects.requireNonNull(previousTokenHash, "previousTokenHash");
+            Objects.requireNonNull(retryableUntil, "retryableUntil");
+        }
+
+        /** 결과 저장 선점 표식을 붙인 사본(payload 지문 = 동일성 판정 기준). */
+        public RetryReceipt claimedForResult(String digest) {
+            return new RetryReceipt(previousTokenHash, Objects.requireNonNull(digest, "resultDigest"),
+                    committedAt, retryableUntil);
+        }
+
+        /** graph commit 확정 사본. {@code retryableUntil}은 그대로 둔다 — 기산점은 첫 요청 도착 시각이다. */
+        public RetryReceipt committedAt(Instant at) {
+            return new RetryReceipt(previousTokenHash, resultDigest,
+                    Objects.requireNonNull(at, "committedAt"), retryableUntil);
+        }
+
+        public boolean committed() {
+            return committedAt != null;
+        }
+
+        public boolean matchesResultDigest(String digest) {
+            return resultDigest != null && resultDigest.equals(digest);
+        }
+    }
+
     public static TimelineDraftTask processing(UUID subjectId, long dailyRecordId, TimelineWindow timelineWindow,
                                                String tokenHash, Instant processingStartedAt) {
         return new TimelineDraftTask(TaskStatus.PROCESSING, dailyRecordId, timelineWindow, null,
-                tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, subjectId);
+                tokenHash, ProcessStage.INPUT_PENDING, processingStartedAt, subjectId, null);
     }
 
+    /**
+     * token과 stage를 바꾼 사본. {@code retryReceipt}는 <b>보존한다</b> — 재시도 재발급이 같은 stage에서
+     * token만 다시 돌리기 때문이다. receipt를 든 채 허용되지 않는 stage로 나가는 조합은 compact
+     * constructor가 거절하므로 보존이 위험을 만들지 않는다.
+     */
     public TimelineDraftTask withTokenAndStage(String nextTokenHash, ProcessStage nextStage) {
         if (status != TaskStatus.PROCESSING) {
             throw new IllegalStateException("PROCESSING task만 token과 stage를 변경할 수 있습니다: " + status);
         }
         return new TimelineDraftTask(status, dailyRecordId, timelineWindow, error,
                 Objects.requireNonNull(nextTokenHash, "nextTokenHash"),
-                Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, subjectId);
+                Objects.requireNonNull(nextStage, "nextStage"), processingStartedAt, subjectId, retryReceipt);
+    }
+
+    /** retry receipt만 교체한 사본. {@code null}을 넘기면 제거한다(선점 보상). */
+    public TimelineDraftTask withRetryReceipt(RetryReceipt nextReceipt) {
+        if (status != TaskStatus.PROCESSING) {
+            throw new IllegalStateException("PROCESSING task만 retry receipt를 가질 수 있습니다: " + status);
+        }
+        return new TimelineDraftTask(status, dailyRecordId, timelineWindow, error, tokenHash, stage,
+                processingStartedAt, subjectId, nextReceipt);
     }
 
     public static TimelineDraftTask success(UUID subjectId, long dailyRecordId, String tokenHash) {
         return new TimelineDraftTask(TaskStatus.SUCCESS, dailyRecordId, null, null,
-                tokenHash, null, null, subjectId);
+                tokenHash, null, null, subjectId, null);
     }
 
     public static TimelineDraftTask failed(UUID subjectId, long dailyRecordId, int error,
                                            String tokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null, error,
-                tokenHash, null, null, subjectId);
+                tokenHash, null, null, subjectId, null);
     }
 }

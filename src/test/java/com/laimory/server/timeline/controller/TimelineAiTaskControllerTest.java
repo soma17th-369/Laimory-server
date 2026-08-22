@@ -148,7 +148,7 @@ class TimelineAiTaskControllerTest {
     @Test
     void result_forwardsTokenHeaderAndBody_andReturnsCallbackToken() throws Exception {
         when(timelineAiResultService.storeResult(anyString(), anyString(), anyString(), any()))
-                .thenReturn(new AiTimelineResultResponse("tok-3"));
+                .thenReturn(AiTimelineResultResponse.stored("tok-3"));
 
         mockMvc.perform(post(RESULT)
                         .header("Task-Token", "tok-2")
@@ -174,7 +174,7 @@ class TimelineAiTaskControllerTest {
     void result_questionAbsentOrNull_bindsNullWithoutError() throws Exception {
         // question 도입 이전 형식과 명시적 null 모두 계약 위반이 아니라 "질문 없음"으로 수렴한다.
         when(timelineAiResultService.storeResult(anyString(), anyString(), anyString(), any()))
-                .thenReturn(new AiTimelineResultResponse("tok-3"));
+                .thenReturn(AiTimelineResultResponse.stored("tok-3"));
 
         for (String body : List.of(RESULT_BODY_WITHOUT_QUESTION, RESULT_BODY_NULL_QUESTION)) {
             mockMvc.perform(post(RESULT)

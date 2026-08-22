@@ -22,6 +22,8 @@ import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -29,13 +31,14 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 입력 DTO 조립과 INPUT → RESULT token/stage 교체를 검증한다. */
+/** 입력 DTO 조립, INPUT → RESULT token/stage 교체, 응답 유실 뒤 재발급을 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class TimelineAiTaskInputServiceTest {
 
@@ -45,8 +48,17 @@ class TimelineAiTaskInputServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
-    @InjectMocks
+
+    private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");
+    private static final Duration RETRY_WINDOW = Duration.ofSeconds(15);
+
     private TimelineAiTaskInputService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new TimelineAiTaskInputService(timelineTaskService, dailyRecordService,
+                timelineDraftSourceItemService, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
+    }
 
     private static final String VERSION = "v1";
     private static final String TASK_ID = "t";
@@ -82,8 +94,7 @@ class TimelineAiTaskInputServiceTest {
         TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         givenRecordAndSources();
-        when(timelineTaskService.rotateTokenAndStage(
-                eq(TASK_ID), eq(task), anyString(), eq(ProcessStage.RESULT_PENDING))).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -93,8 +104,14 @@ class TimelineAiTaskInputServiceTest {
         assertThat(response.window().startAt()).isEqualTo(OffsetDateTime.of(DATE.atStartOfDay(), KST));
         assertThat(response.sourceItems()).hasSize(2);
         assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
-        verify(timelineTaskService).rotateTokenAndStage(
-                TASK_ID, task, TaskTokens.hash(response.taskToken()), ProcessStage.RESULT_PENDING);
+        ArgumentCaptor<TimelineDraftTask> rotated = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), eq(task), rotated.capture());
+        assertThat(rotated.getValue().tokenHash()).isEqualTo(TaskTokens.hash(response.taskToken()));
+        assertThat(rotated.getValue().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
+        // 재시도 receipt: 소비된 input token hash와 첫 요청 도착 기준 창.
+        assertThat(rotated.getValue().retryReceipt().previousTokenHash()).isEqualTo(TOKEN_HASH);
+        assertThat(rotated.getValue().retryReceipt().retryableUntil()).isEqualTo(NOW.plus(RETRY_WINDOW));
+        assertThat(rotated.getValue().retryReceipt().committedAt()).isNull();
     }
 
     @Test
@@ -112,8 +129,7 @@ class TimelineAiTaskInputServiceTest {
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-1",
                         DATE.atTime(9, 0), null, photoPayload)));
-        when(timelineTaskService.rotateTokenAndStage(
-                eq(TASK_ID), eq(task), anyString(), eq(ProcessStage.RESULT_PENDING))).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -138,8 +154,7 @@ class TimelineAiTaskInputServiceTest {
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.CALENDAR, "raw-1",
                         DATE.atTime(9, 0), DATE.atTime(10, 0), calendarPayload)));
-        when(timelineTaskService.rotateTokenAndStage(
-                eq(TASK_ID), eq(task), anyString(), eq(ProcessStage.RESULT_PENDING))).thenReturn(true);
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -188,6 +203,69 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
-        verify(timelineTaskService, never()).rotateTokenAndStage(anyString(), any(), anyString(), any());
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+    }
+
+    /** 회전이 끝나 result token을 들고 있는 상태 — 입력 응답이 유실된 AI는 여기서 옛 input token으로 다시 온다. */
+    private TimelineDraftTask rotatedWithReceipt(java.time.Instant retryableUntil) {
+        return taskAt(ProcessStage.INPUT_PENDING)
+                .withTokenAndStage(TaskTokens.hash("result-token"), ProcessStage.RESULT_PENDING)
+                .withRetryReceipt(new TimelineDraftTask.RetryReceipt(TOKEN_HASH, null, null, retryableUntil));
+    }
+
+    @Test
+    void getInput_replayAfterLostResponse_reissuesResultToken() {
+        TimelineDraftTask rotated = rotatedWithReceipt(NOW.plus(RETRY_WINDOW));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(rotated));
+        givenRecordAndSources();
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(rotated), any())).thenReturn(true);
+
+        AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
+
+        // 입력 payload는 DB에서 그대로 다시 조립된다.
+        assertThat(response.sourceItems()).hasSize(2);
+        assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
+        assertThat(TaskTokens.matches(response.taskToken(), rotated.tokenHash())).isFalse();
+
+        ArgumentCaptor<TimelineDraftTask> reissued = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), eq(rotated), reissued.capture());
+        assertThat(reissued.getValue().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
+        assertThat(reissued.getValue().tokenHash()).isEqualTo(TaskTokens.hash(response.taskToken()));
+        // 재발급이 창을 갱신하면 마감이 계속 미끄러진다 — receipt는 최초 값 그대로여야 한다.
+        assertThat(reissued.getValue().retryReceipt()).isEqualTo(rotated.retryReceipt());
+    }
+
+    @Test
+    void getInput_replayAfterWindowExpired_rejectedBeforePersonalData() {
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(rotatedWithReceipt(NOW)));
+
+        assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+    }
+
+    @Test
+    void getInput_replayWithUnknownToken_rejectedBeforePersonalData() {
+        when(timelineTaskService.find(TASK_ID))
+                .thenReturn(Optional.of(rotatedWithReceipt(NOW.plus(RETRY_WINDOW))));
+
+        assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, "third-party"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+    }
+
+    @Test
+    void getInput_replayLostRace_returns409() {
+        TimelineDraftTask rotated = rotatedWithReceipt(NOW.plus(RETRY_WINDOW));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(rotated));
+        givenRecordAndSources();
+        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(rotated), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
     }
 }

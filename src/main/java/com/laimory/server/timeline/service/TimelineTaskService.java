@@ -75,14 +75,6 @@ public class TimelineTaskService {
         return timelineTaskStore.replaceIfUnchanged(taskId, expected, replacement, PROCESSING_TTL);
     }
 
-    public boolean rotateTokenAndStage(String taskId, TimelineDraftTask task,
-                                       String nextTokenHash, ProcessStage nextStage) {
-        if (task.status() != TaskStatus.PROCESSING) {
-            throw new IllegalStateException("PROCESSING task만 token과 stage를 변경할 수 있습니다: " + task.status());
-        }
-        return replaceProcessing(taskId, task, task.withTokenAndStage(nextTokenHash, nextStage));
-    }
-
     /** callback이 읽은 PROCESSING task가 그대로일 때만 SUCCESS로 종결한다. */
     public boolean markSuccessIfCurrent(String taskId, TimelineDraftTask task) {
         boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
