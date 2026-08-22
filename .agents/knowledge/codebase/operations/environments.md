@@ -24,26 +24,32 @@ automation을 바꿀 때 읽는다.
 | local | `docker` | Compose | default noop | default noop | default noop | default `fixture` | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | repository에 확정 정보 없음 | default noop | default noop | default noop | env 필수(무기본값 fail-fast) | off | JSON intended | empty | no app deploy workflow |
+| prod | default | prod MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 
 배포된 환경의 runtime 값은 전부 host `/home/ubuntu/app/.env`가 소유한다(workflow `-e` 주입 없음).
-dev deploy pre-flight는 dev 고정값(`REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`APP_GEO_MODE=kakao`·
-`SWAGGER_ENABLED=true`)과 `APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`,
+deploy pre-flight는 환경 고정값(`REDIS_KEY_PREFIX`·`APP_ENV`·`APP_GEO_MODE`·`SWAGGER_ENABLED`)과
+`APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`,
 `APP_SUBJECT_MODE`(값 고정 `secretsmanager`)·`APP_SUBJECT_SECRET_ARN`(ARN 형식 + runtime secret
 read·secret 내용 계약 검증 + `user_subject_links` schema 검사 동반)을 exact-one으로 검증한다.
 `SPRING_PROFILES_ACTIVE`는 `.env`에 없는 것이 정상이고 값에 `docker`가 포함되면 실패한다(docker
 프로필의 위험한 배포 기본값 차단). `AWS_REGION`은 없거나 workflow
 region과 같아야 하고 AWS credential/profile/endpoint override는 금지한다. 이들 계약을 위반하면 기존
 container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비하지 않는 pre-flight
-전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 dev 고정값 byte 단위로
+전용 계약 키다 — `otlp`면 `JAVA_TOOL_OPTIONS`(-javaagent)와 `OTEL_*` 세트를 고정값 byte 단위로
 요구하고(`OTEL_TRACES_SAMPLER`만 non-empty 유연 — 부하 테스트 ratio 전환 계약), `noop`이면 두
 계열의 잔존을 금지한다(스위치만 내려간 "조용한 부분 off" 차단). 상세 목록은 deployment.md Preflight. firebase 전환 시 ADC 경로(`GOOGLE_APPLICATION_CREDENTIALS`)도
 `.env`가 소유하고 pre-flight가 service-account 파일 존재·가독성을 검사한 뒤 read-only mount만
 추가한다. `APP_COMMIT_SHA`는 배포 workflow가 `.env`에
 원자 upsert하는 유일한 key다.
 
-prod 행은 repository에서 확인되는 application default와 automation 부재를 나타낸다. 실제 prod
-runtime 구성은 저장소가 소유하지 않으며 production workflow도 아직 없다.
+환경 고정값의 기대값은 workflow가 소유한다 — `deploy.yml`의 Resolve deploy environment step이
+branch(또는 수동 실행 입력)로 환경을 정하고 그 환경의 기대값을 원격 pre-flight에 주입한다.
+dev는 `REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`SWAGGER_ENABLED=true`, prod는 빈 prefix·`APP_ENV=prod`·
+`SWAGGER_ENABLED=false`이며 `APP_GEO_MODE=kakao`는 두 환경 공통이다. `APP_AI_MODE`·`APP_PUSH_MODE`는
+값을 고정하지 않고 허용 집합만 검사하므로 host `.env`가 실제 값의 권위다.
+
+**prod runtime 값 자체는 여전히 저장소가 소유하지 않는다** — host `.env`와 live AWS가 권위다.
+저장소가 아는 것은 "그 값이 무엇이어야 하는가"(기대값)까지이며, 실제로 무엇인지는 아니다.
 
 모든 profile에서 app port와 분리된 management port 9090을 사용한다. Actuator의 공통
 `environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev는 `.env`의
@@ -128,12 +134,13 @@ healthy Kakao provider에서도 local rejection을 받는다. #262 이후 local 
 ## Invariants
 
 - secret/credential 값을 knowledge에 복제하지 않는다.
-- application default, host `.env` 소유 값과 아직 없는 production automation을 구분한다.
+- application default, host `.env` 소유 값, workflow가 강제하는 기대값을 구분한다.
 - shared Redis의 dev prefix를 application key와 Spring Session namespace 모두에서 보존한다.
 
 ## Known Gaps
 
-- production application deploy workflow와 확정된 production runtime injection이 없다.
+- prod 배포는 `deploy.yml`의 환경 분기가 담당하지만 live 선행 조건 두 가지가 저장소 밖에 있다:
+  prod host 목록 repository Variable과 deploy role의 prod SSM 권한. 상세는 deployment.md.
 - local과 deployed environment의 실제 OAuth/S3 동작에는 별도 credential 운영이 필요하다.
 
 ## Update When
