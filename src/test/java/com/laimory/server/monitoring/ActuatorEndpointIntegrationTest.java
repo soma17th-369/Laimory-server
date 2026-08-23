@@ -89,7 +89,8 @@ class ActuatorEndpointIntegrationTest {
         ResponseEntity<String> health = http.getForEntity(managementUrl("/actuator/health"), String.class);
         assertThat(health.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode healthBody = objectMapper.readTree(health.getBody());
-        assertThat(healthBody.properties()).extracting(Map.Entry::getKey).containsOnly("status");
+        // probes 활성화(#335)로 그룹 이름 목록(groups)이 본문에 추가된다 — 컴포넌트 상세는 여전히 없다.
+        assertThat(healthBody.properties()).extracting(Map.Entry::getKey).containsOnly("status", "groups");
         assertThat(healthBody.path("status").asText()).isEqualTo("UP");
 
         ResponseEntity<String> prometheus =
@@ -106,6 +107,24 @@ class ActuatorEndpointIntegrationTest {
                 .isEqualTo(HttpStatus.OK);
         assertThat(http.getForEntity(applicationUrl("/a/api/probe"), String.class).getStatusCode())
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void exposesReadinessGroupOnMainServerPortAtReadyz() throws Exception {
+        // ALB 헬스체크 계약(#335): readiness 그룹은 메인 포트 /readyz로 노출된다 — 별도 관리
+        // 컨텍스트는 메인 앱이 연결을 못 받아도 UP일 수 있어 실제 트래픽 경로를 검사해야 한다.
+        ResponseEntity<String> readyz = http.getForEntity(applicationUrl("/readyz"), String.class);
+        assertThat(readyz.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode body = objectMapper.readTree(readyz.getBody());
+        assertThat(body.properties()).extracting(Map.Entry::getKey).containsOnly("status");
+        assertThat(body.path("status").asText()).isEqualTo("UP");
+
+        // 관리 포트의 그룹 하위 경로도 동작한다. liveness는 additional-path를 주지 않았으므로
+        // 메인 포트에 /livez가 생기지 않는다(readyz만 노출 — YAGNI).
+        assertThat(http.getForEntity(managementUrl("/actuator/health/readiness"), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(http.getForEntity(applicationUrl("/livez"), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
@@ -205,6 +224,20 @@ class ActuatorEndpointIntegrationTest {
         @org.springframework.context.annotation.Bean
         com.laimory.server.user.service.UserAccountAccessService userAccountAccessService() {
             return userId -> true;
+        }
+
+        /**
+         * readiness 그룹(#335)이 include하는 db·redis contributor의 stub — 이 컨텍스트는 실제
+         * DB/Redis autoconfig을 제외하므로, 없으면 그룹 멤버십 검증이 기동을 실패시킨다.
+         */
+        @org.springframework.context.annotation.Bean
+        org.springframework.boot.actuate.health.HealthIndicator dbHealthIndicator() {
+            return () -> org.springframework.boot.actuate.health.Health.up().build();
+        }
+
+        @org.springframework.context.annotation.Bean
+        org.springframework.boot.actuate.health.HealthIndicator redisHealthIndicator() {
+            return () -> org.springframework.boot.actuate.health.Health.up().build();
         }
     }
 
