@@ -306,7 +306,19 @@ publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한�
 파일 집합·UID 검증, hot reload와 provisioning API의 expected UID 확인을 수행하고, release 도구는
 성공 후에만 active 경로로 승격한다. rollback은 alerting 디렉터리의 Grafana-readable `0755` mode를
 보존하면서 파일만 복구한다. release 사이에서 사라진 UID는 임시 `deleteRules`로 Grafana DB에서도
-지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다. 일반 host memory는
+지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다.
+rule은 환경 중립과 환경 고정 둘로 나뉘고, 기준은 **그 rule이 읽는 시계열이 환경마다 존재하는지**다.
+환경 중립 rule(5xx 비율, p95 지연, JVM heap, Hikari, target down, host memory, filesystem,
+OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
+`on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
+선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
+커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
+자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, dev WAS에만 설치된 Filebeat stats 수집기,
+dev로 고정된 Elasticsearch index)을 읽으므로 `environment="dev"`를 유지한다.
+notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
+`notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
+대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
+일반 host memory는
 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10%
 미만이 각각 10분 지속될 때 경고한다. alert 관련 `dev` merge는 별도 GitHub workflow가 commit SHA
 release publish와 monitoring EC2 SSM 적용을 자동화하며, SSM 직전 `dev` HEAD 재확인으로 stale push의

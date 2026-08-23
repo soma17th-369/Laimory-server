@@ -137,7 +137,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'sum by (instance,host) (increase(node_vmstat_oom_kill{job="node",environment="dev"}[10m]))'
+              expr: 'sum by (environment,instance,host) (increase(node_vmstat_oom_kill{job="node"}[10m]))'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -178,7 +178,6 @@ groups:
           description: 'Inspect kernel logs and the memory/swap panels before restarting workloads.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
         labels:
-          environment: dev
           job: node
           service: laimory
           severity: critical
