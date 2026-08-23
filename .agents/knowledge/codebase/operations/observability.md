@@ -181,7 +181,7 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 - dev workflow가 application environment 값을 주입한다.
 - default profile은 JSON stream 순도를 위해 banner와 Hibernate `show-sql`을 끈다.
 
-## Dev Log Pipeline
+## Log Pipeline
 
 ```text
 Spring JSON stdout
@@ -192,7 +192,9 @@ Spring JSON stdout
 ```
 
 - Filebeat는 root로 Docker container log를 읽고 JSON decode 뒤 `service=laimory` event만 유지한다.
-- index pattern은 `laimory-{environment}-YYYY.MM.dd`다.
+  dev WAS와 **prod WAS 2대**에 배치돼 있고, 같은 Elasticsearch로 보낸다.
+- index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
+  환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
 - Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 nginx `/kibana`로 proxy한다.
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
@@ -399,9 +401,16 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   `environment="dev"`를 값으로 고정하고 있어(5xx 비율·p95 지연·JVM heap·ERROR count) prod target이
   `up`이어도 어떤 규칙도 평가되지 않는다. dashboard는 `environment` 템플릿 변수를 갖고 있어 prod가
   그대로 보이므로, "보인다"와 "알려준다"가 갈린 상태다.
-- **prod 로그는 수집되지 않는다.** Filebeat를 붙이지 않았고 Elasticsearch API key도 `laimory-dev-*`
-  한정이다. prod 앱 로그는 container json-file(10MB×3 rotation)에만 있고 SSM으로만 열람한다.
-  활성화 전 선행 조건은 이 문서 상단의 개인정보 승인 절차다.
+- **prod 로그는 Elasticsearch에 쌓이지만 Grafana에서 보이지 않는다.** prod WAS 2대의 Filebeat가
+  `laimory-prod-*`로 정상 적재하는데(2026-08-23 실측: acked == total, failed·dropped 0), Grafana
+  Elasticsearch datasource는 index가 `[laimory-dev-]YYYY.MM.DD`로 고정이고 API key도 `laimory-dev-*`
+  한정이라 Logs dashboard와 ERROR 경보가 prod를 읽지 못한다. 지금 prod 로그를 보는 경로는 Kibana와
+  SSM뿐이다.
+- **prod Filebeat self-metric이 없다.** `collect-filebeat-metrics.sh`와 timer가 dev WAS에만 있어
+  `laimory_filebeat_up`이 dev 1개뿐이다. prod 로그 파이프라인이 끊겨도 경보가 없다.
+- **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
+  요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
+  개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.
 
 ## Update When
 
