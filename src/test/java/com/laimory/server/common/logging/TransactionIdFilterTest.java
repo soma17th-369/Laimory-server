@@ -162,6 +162,21 @@ class TransactionIdFilterTest {
     }
 
     @Test
+    void completionLog_excludedPathIsStillLoggedOn5xxWithoutExceptionAttribute() throws Exception {
+        // 핸들러가 예외를 삼키고 5xx를 직접 만들면 attribute가 없다(/status 503) — 그래도 제외 경로의
+        // 장애는 남는다. 레벨은 SSOT(ExceptionType) 원칙대로 INFO — 사실 기록이 목적이다.
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(503);
+
+        filter.doFilter(request, response, new MockFilterChain());
+
+        assertThat(accessLog.list).hasSize(1);
+        assertThat(accessLog.list.get(0).getLevel()).isEqualTo(Level.INFO);
+        assertThat(encoded(accessLog.list.get(0)).get("status").asInt()).isEqualTo(503);
+    }
+
+    @Test
     void completionLog_excludedPathIsStillLoggedOnError() throws Exception {
         // 제외는 정상 완료에만 적용 — 제외 경로의 장애가 로그에서 사라지면 안 된다.
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/status");

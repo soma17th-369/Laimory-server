@@ -29,7 +29,8 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - client 노출은 response header `Transaction-Id` 하나뿐이고 envelope에는 없다.
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
-  **정상 완료만** 생략된다. 에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
+  **정상 완료만** 생략된다. 에러 — 전파 예외·`ExceptionType` attribute·attribute 없는 5xx 응답 — 는
+  경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
 - fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
   `errorCode`(공개 numeric code의 10진 문자열 projection), `exceptionType`(내부 실패 사유),
   `errorDetail`(예외 클래스명·검증 메시지),
@@ -43,7 +44,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - query string은 포함하지 않는다.
 - **log level은 HTTP status가 아니라 `ExceptionType.logLevel()`이 정한다**(access log level의 SSOT —
   status는 client 계약, level은 서버 관점 심각도로 독립 축. 같은 status라도 내부 사유에 따라
-  level이 다르다). 에러 없는 요청은 INFO, 정상 `/status`만 DEBUG.
+  level이 다르다). 에러 없는 요청은 INFO다(제외 경로의 정상 완료는 레벨이 아니라 로그 자체가 없다).
 - filter까지 전파된 unhandled exception은 effective status 500 + ERROR로 기록한다(매핑이 아니라 사실 기반).
 - exception handler는 로그 대신 `ExceptionType`(+detail)을 request attribute로 심어 access log에 합류시킨다.
   stacktrace는 catch-all과 MVC가 직접 처리하는 5xx만 남긴다(둘 다 filter가 예외 객체를 못 보는 경로).
@@ -204,8 +205,9 @@ Spring JSON stdout
 
 - Actuator는 app API 8080과 분리된 management port 9090에서 동작한다.
 - web endpoint는 `/actuator/health`와 `/actuator/prometheus`만 노출하고 discovery links와
-  env/beans/configprops/heapdump/loggers 등은 노출하지 않는다.
-- health 응답은 aggregate `status`만 보여 component/detail을 숨긴다.
+  env/beans/configprops/heapdump/loggers 등은 노출하지 않는다. health에는 readiness 그룹이 있고
+  (`/actuator/health/readiness`) 같은 그룹이 메인 포트 `/readyz`로도 노출된다(additional-path).
+- health 응답은 aggregate `status`(와 그룹 이름 목록)만 보여 component/detail을 숨긴다.
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
 - 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
@@ -394,8 +396,11 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 - `/status`: plain JSON DB connection probe
 - `/api/v1/intro`: dev deploy health gate, DB와 app config row 확인
+- `/readyz`: ALB 타깃그룹 헬스체크용 — actuator readiness 그룹(`readinessState`·`db`·`redis`만,
+  diskSpace·ping 제외)의 메인 포트 additional-path. 별도 관리 컨텍스트는 메인 앱이 연결을 못
+  받아도 UP일 수 있으므로 실제 트래픽 포트(8080)를 검사한다.
 
-둘 다 Redis·Kakao·S3 readiness를 포괄하지 않는다.
+`/status`·`/api/v1/intro`는 Redis readiness를 포괄하지 않는다. Kakao·S3는 어느 signal도 확인하지 않는다.
 
 ## Invariants
 

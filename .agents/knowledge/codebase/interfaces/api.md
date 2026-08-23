@@ -235,7 +235,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - 조회처럼 반환할 결과가 있는 성공은 typed response를 `body`에 담는다.
 - 반환할 결과가 없는 성공도 envelope를 유지하며 `body` key를 명시적 JSON null로 반환한다.
 - error code는 기존 번호를 음수화한 JSON integer이고 `body=null`이다.
-- `/status`는 infrastructure probe를 위한 plain JSON으로 envelope 밖이다.
+- `/status`·`/readyz`(actuator readiness)는 infrastructure probe를 위한 plain JSON으로 envelope 밖이다.
 - AI callback은 성공 시 body 없는 HTTP 200을 반환한다. callback `errorCode`는 JSON integer다.
 - 서버간 AI endpoint(`/s/api`)는 app envelope를 쓰지 않고 typed JSON을 직접 반환한다(에러만 envelope).
 - Entity를 직접 반환하지 않고 response DTO를 사용한다.
