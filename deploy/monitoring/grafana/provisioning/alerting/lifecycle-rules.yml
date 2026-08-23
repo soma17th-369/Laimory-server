@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot",environment="dev"}'
+              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot"}'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -59,7 +59,6 @@ groups:
           description: 'Counts PROCESSING tasks between the 90-second threshold and the three-minute TTL expiry; the gauge read prunes expired members from an atomic Redis processing index.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#timeline-processing-stuck
         labels:
-          environment: dev
           job: spring_boot
           service: laimory
           severity: warning

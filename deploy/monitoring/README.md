@@ -171,6 +171,51 @@ release에서 사라진 UID는 임시 `deleteRules`로 삭제하며, hot reload 
 UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-rule-release`에 기록한다. 이전 release로
 돌릴 때는 원하는 과거 `RELEASE_URI`로 같은 명령을 다시 실행한다.
 
+### Rule의 환경 범위
+
+alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 환경마다 존재하는지**로 갈린다.
+
+- **환경 중립 9개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
+  `laimory_hikari_saturated`, `laimory_target_down`, `laimory_host_memory_low`,
+  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`.
+  PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
+  환경마다 별개 alert instance가 나오게 한다. `environment` 라벨은 **선언하지 않는다** — Grafana가
+  조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고, 여기에 커스텀 라벨을 두면
+  쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 라벨 템플릿을 쓰지 않는 이유는 템플릿이 잘못되면
+  파일 단위 provisioning이 실패해 같은 파일의 다른 환경 경보까지 함께 죽기 때문이다.
+- **환경 고정 나머지** — 해당 환경에만 있는 자산을 읽는다. dev/monitoring 전용 exporter와 수집기
+  (`laimory_elk_memory_low`, `laimory_aws_metric_collection_failed`, `laimory_cpu_credit_low`,
+  `laimory_prometheus_*`, `laimory_mysql_connections_high`, `laimory_redis_evictions`,
+  `laimory_datastore_backend_down`), 공개된 도메인이 있어야 성립하는 probe 계열
+  (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 dev WAS에만 수집기가 설치된
+  log pipeline 계열(`laimory_log_pipeline_unhealthy`, `laimory_filebeat_output_failures`)과
+  index가 dev로 고정된 `laimory_application_error_log`. 이들은 `environment="dev"` 셀렉터와
+  `environment: dev` 라벨을 유지한다.
+
+새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
+수집기부터 설치한다.
+
+### 자동 배포 밖의 alerting 자산
+
+`deploy-monitoring.yml`과 `publish-alert-rules.sh`가 다루는 것은 `*-rules.yml`,
+`alert-rule-files.txt`, 배포 script뿐이다. 같은 디렉터리의 `notification-policy.yml`,
+`templates.yml`, `contact-points.yml`은 **merge만으로 반영되지 않는다.** 이 셋을 바꿨으면
+monitoring host SSM 세션에서 직접 반영한다. reload endpoint는 alerting provisioning 디렉터리
+전체를 다시 읽는다.
+
+```bash
+cd /opt/laimory-monitoring
+sudo install -m 0644 -b <새 파일> grafana/provisioning/alerting/<대상 파일>
+read -rp 'Grafana admin username [laimory]: ' GRAFANA_ADMIN_USER
+GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-laimory}
+curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
+  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+unset GRAFANA_ADMIN_USER
+```
+
+`notification-policy.yml`의 `group_by`는 `environment`를 포함한다. 빼면 같은 rule의 dev 알림과
+prod 알림이 한 그룹으로 묶여, 이미 활성인 그룹에 얹힌 알림이 `group_interval`만큼 지연된다.
+
 ## Secret gate
 
 다음 파일은 Git, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는

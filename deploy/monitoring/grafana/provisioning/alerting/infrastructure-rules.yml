@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'max by (instance, host) (node_memory_MemAvailable_bytes{job="node",environment="dev",host!="elk"}) / max by (instance, host) (node_memory_MemTotal_bytes{job="node",environment="dev",host!="elk"})'
+              expr: 'max by (environment, instance, host) (node_memory_MemAvailable_bytes{job="node",host!="elk"}) / max by (environment, instance, host) (node_memory_MemTotal_bytes{job="node",host!="elk"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -65,7 +65,6 @@ groups:
           description: 'MemAvailable, which accounts for reclaimable cache, has remained low.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
         labels:
-          environment: dev
           job: node
           service: laimory
           severity: warning
@@ -148,7 +147,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'max by (instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"}) / max by (instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"})'
+              expr: 'max by (environment, instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"}) / max by (environment, instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -195,7 +194,6 @@ groups:
           description: 'A real host filesystem is approaching its capacity limit; pseudo filesystems are excluded.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
         labels:
-          environment: dev
           job: node
           service: laimory
           severity: warning
