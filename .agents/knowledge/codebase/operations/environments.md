@@ -15,7 +15,7 @@ automation을 바꿀 때 읽는다.
 - `logback-spring.xml`, `docker-compose.yml`
 - `.github/workflows/deploy.yml`
 - `deploy/monitoring/*`
-- live AWS, GitHub repository Variables와 host `.env`
+- live AWS, GitHub repository Variables/Secrets(instance 목록은 Secrets)와 host `.env`
 
 ## Current Matrix
 
@@ -140,7 +140,7 @@ healthy Kakao provider에서도 local rejection을 받는다. #262 이후 local 
 ## Known Gaps
 
 - prod 배포는 `deploy.yml`의 환경 분기가 담당하지만 live 선행 조건 두 가지가 저장소 밖에 있다:
-  prod host 목록 repository Variable과 deploy role의 prod SSM 권한. 상세는 deployment.md.
+  prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과 deploy role의 prod SSM 권한. 상세는 deployment.md.
 - local과 deployed environment의 실제 OAuth/S3 동작에는 별도 credential 운영이 필요하다.
 
 ## Update When

@@ -92,9 +92,14 @@ ruby -ryaml -e '
   # 매핑 자체는 문자열이 아니라 T0b가 이 본문을 실제로 실행해 검증한다.
   File.write(ARGV[2], resolve_run)
   abort "resolve step must honor the dispatch environment input" unless resolve.dig("env", "DISPATCH_ENVIRONMENT").to_s.include?("inputs.environment")
-  abort "resolve step must read instance ids from repository variables" unless
-    resolve.dig("env", "DEV_INSTANCE_ID").to_s.include?("vars.DEV_INSTANCE_ID") &&
-    resolve.dig("env", "PROD_INSTANCE_IDS").to_s.include?("vars.PROD_INSTANCE_IDS")
+  # instance 목록은 Secrets에서만 읽는다: Actions가 step의 env: 블록을 로그에 그대로 echo하는데
+  # repository Variable은 마스킹되지 않아 PUBLIC 저장소의 공개 워크플로 로그에 instance id가 남는다.
+  # Secret은 ***로 마스킹되므로 vars.로 되돌아가는 회귀를 여기서 함께 막는다.
+  {"DEV_INSTANCE_ID" => resolve.dig("env", "DEV_INSTANCE_ID").to_s,
+   "PROD_INSTANCE_IDS" => resolve.dig("env", "PROD_INSTANCE_IDS").to_s}.each do |key, expr|
+    abort "resolve step must read #{key} from repository secrets" unless expr.include?("secrets.#{key}")
+    abort "resolve step must not read #{key} from an unmasked repository variable" if expr.include?("vars.")
+  end
   abort "resolve step must fail closed on an unknown environment" unless resolve_run.include?("unknown deploy environment")
   abort "resolve step must fail closed on empty instance ids" unless resolve_run.include?("no instance ids configured")
   # harness는 아래 값들을 그대로 재현해 원격 script를 두 벌로 확장한다(dev_runner_env/prod_runner_env).
@@ -148,8 +153,8 @@ ruby -ryaml -e '
   abort "ssm step must poll for terminal status, not the 100s command-executed waiter" if
     ssm_code.any? { |l| l.include?("aws ssm wait command-executed") }
   abort "ssm step must bound its polling" unless ssm_code.any? { |l| l.include?("POLL_DEADLINE") }
-  # 저장소가 PUBLIC이고 Actions 로그도 공개다. repository variable은 마스킹되지 않으므로
-  # instance id를 echo하지 않는다(순번 label만 남긴다).
+  # 저장소가 PUBLIC이고 Actions 로그도 공개다. instance 목록은 Secret이라 마스킹되지만
+  # 마스킹에만 기대지 않고 instance id를 echo하지 않는다(순번 label만 남긴다).
   abort "ssm step must not echo instance ids to the public workflow log" if
     ssm_code.any? { |l| l =~ /echo\b.*\$\{?(IID|INSTANCE_IDS)\b/ }
   bo = load_yaml.call(ARGV[1])
