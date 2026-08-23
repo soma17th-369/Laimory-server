@@ -1,0 +1,514 @@
+name: Deploy to EC2 (SSM)
+
+on:
+  push:
+    # dev push -> dev 환경, main push -> prod 환경. 매핑은 Resolve deploy environment 한 곳이 소유한다.
+    branches: [dev, main]
+    paths:
+      - .github/workflows/deploy.yml
+      - .dockerignore
+      - Dockerfile
+      - build.gradle
+      - gradle.properties
+      - gradle/**
+      - gradlew
+      - settings.gradle
+      - src/main/**
+  # deploy-existing: build-only가 기록한 commit SHA + digest image를 build 없이 재배포한다.
+  # 자동 rollback은 아니며, pause gate(DEPLOY_PAUSED)와 무관하게 운영자가 승인한 exact image를 기동한다.
+  workflow_dispatch:
+    inputs:
+      # push는 브랜치로 환경이 정해지지만 수동 실행은 정할 근거가 없어 명시 입력을 받는다.
+      # 잘못 고르면 그대로 나가므로 기본값을 두지 않는다(선택을 강제).
+      environment:
+        description: "배포 대상 환경"
+        required: true
+        type: choice
+        options: [dev, prod]
+      image_sha:
+        description: "배포할 기존 ECR image의 40자 commit SHA (build 없이 재배포)"
+        required: true
+        type: string
+      image_digest:
+        description: "build-only가 기록한 ECR image digest (sha256:64-hex)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write      # OIDC 필수
+  contents: read
+
+# 환경별 배포 직렬화: 동시 실행 시 옛 SHA가 최신을 덮는 레이스 차단.
+# cancel-in-progress=false → 진행 중 배포는 끊지 않고 큐잉(최신이 마지막에 실행되어 승리).
+# group은 step 출력을 못 읽으므로 아래 Resolve 단계와 같은 매핑을 식으로 다시 쓴다 —
+# 두 곳이 갈리면 서로 다른 환경이 같은 group을 쓰거나 같은 환경이 두 group으로 갈리므로 함께 고친다.
+concurrency:
+  group: deploy-${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPOSITORY: laimory
+  # 확인한 Sandbox 실측값은 repo 설정으로 주입한다(하드코딩 금지).
+  # 필수 Secrets: DEV_INSTANCE_ID, PROD_INSTANCE_IDS — Actions는 step의 env: 블록을 로그에 그대로
+  #   echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라 instance id가 공개
+  #   워크플로 로그에 남는다. Secret은 Actions가 ***로 마스킹한다.
+  # 필수 Variables: AWS_DEPLOY_ROLE_ARN, DEPLOY_PAUSED (비밀이 아니고 로그에 보여야 진단이 된다)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 환경 결정의 단일 지점. 이후 어떤 step도 브랜치·이벤트를 다시 보고 환경을 판단하지 않고
+      # 이 step의 출력만 읽는다 — 배포 role이 dev/prod 인스턴스를 모두 허용하게 된 뒤로는
+      # 이 분기가 prod 오배포를 막는 유일한 방어선이라, 판단이 여러 곳에 흩어지면 안 된다.
+      # 알 수 없는 환경·빈 인스턴스 목록은 AWS 접근 전에 fail-closed한다.
+      - name: Resolve deploy environment
+        id: env
+        env:
+          DISPATCH_ENVIRONMENT: ${{ inputs.environment }}
+          # instance 목록만 Secrets에서 읽는다 — Actions가 이 env: 블록을 공개 로그에 그대로 echo하므로
+          # Variable로 두면 매 실행마다 instance id가 남는다(Secret은 ***로 마스킹된다).
+          DEV_INSTANCE_ID: ${{ secrets.DEV_INSTANCE_ID }}
+          PROD_INSTANCE_IDS: ${{ secrets.PROD_INSTANCE_IDS }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            ENVIRONMENT="$DISPATCH_ENVIRONMENT"
+          elif [ "$GITHUB_REF_NAME" = "main" ]; then
+            ENVIRONMENT=prod
+          else
+            ENVIRONMENT=dev
+          fi
+          # 환경 고정값은 앱의 application default가 아니라 각 host .env가 소유하며, 원격 pre-flight가
+          # 이 기대값과 byte 일치를 요구한다(exact-one). 여기 값이 곧 그 계약이다.
+          # EXPECT_HOST_COUNT는 "이 환경은 몇 대인가"의 계약이다. 비어 있지 않은지만 보면 변수에서
+          # 한 대가 빠졌을 때 나머지 host가 옛 image를 계속 서빙하는데도 workflow가 성공으로 끝난다.
+          # host를 늘리거나 줄이면 instance 목록 repository secret과 이 값을 함께 고친다.
+          case "$ENVIRONMENT" in
+            dev)
+              INSTANCE_IDS="$DEV_INSTANCE_ID"
+              EXPECT_HOST_COUNT=1
+              EXPECT_APP_ENV=dev
+              EXPECT_REDIS_KEY_PREFIX=dev_
+              EXPECT_SWAGGER_ENABLED=true
+              EXPECT_APP_GEO_MODE=kakao
+              HAS_NGINX=true      # dev host는 아직 nginx 뒤에 있다
+              ;;
+            prod)
+              INSTANCE_IDS="$PROD_INSTANCE_IDS"
+              EXPECT_HOST_COUNT=2
+              EXPECT_APP_ENV=prod
+              EXPECT_REDIS_KEY_PREFIX=      # prod는 빈 prefix(dev만 dev_로 Redis 키를 격리)
+              EXPECT_SWAGGER_ENABLED=false
+              EXPECT_APP_GEO_MODE=kakao
+              HAS_NGINX=false     # prod는 ALB가 앱 포트에 직결한다 — nginx가 설치돼 있지 않다
+              ;;
+            *)
+              echo "unknown deploy environment: '$ENVIRONMENT' (expected dev or prod)" >&2; exit 1 ;;
+          esac
+          [ -n "$INSTANCE_IDS" ] \
+            || { echo "no instance ids configured for environment $ENVIRONMENT (check repository secrets)" >&2; exit 1; }
+          # 공백·콤마 어느 쪽으로 적혀 있어도 같은 개수로 센다(배포 루프와 같은 정규화).
+          set -- ${INSTANCE_IDS//,/ }
+          [ "$#" = "$EXPECT_HOST_COUNT" ] \
+            || { echo "environment $ENVIRONMENT expects $EXPECT_HOST_COUNT host(s) but the repository secret lists $#" >&2; exit 1; }
+          {
+            echo "environment=$ENVIRONMENT"
+            echo "instance_ids=$INSTANCE_IDS"
+            echo "host_count=$EXPECT_HOST_COUNT"
+            echo "expect_app_env=$EXPECT_APP_ENV"
+            echo "expect_redis_key_prefix=$EXPECT_REDIS_KEY_PREFIX"
+            echo "expect_swagger_enabled=$EXPECT_SWAGGER_ENABLED"
+            echo "expect_app_geo_mode=$EXPECT_APP_GEO_MODE"
+            echo "has_nginx=$HAS_NGINX"
+          } >> "$GITHUB_OUTPUT"
+          # 저장소가 PUBLIC이고 Actions 로그도 공개다. instance 목록은 Secret이라 ***로 마스킹되지만
+          # 마스킹에만 기대지 않고 여기서도 instance id를 로그에 싣지 않는다 — 개수만 남긴다.
+          echo "deploying to $ENVIRONMENT ($EXPECT_HOST_COUNT host(s))"
+
+      # pause gate: repo variable DEPLOY_PAUSED=true면 push 배포를 workflow 레벨에서 skip한다 —
+      # SSM 전송 자체가 없으므로 실행 중 컨테이너와 host .env(APP_COMMIT_SHA)는 그대로다.
+      # manual dispatch(deploy-existing)는 pause 중에도 실행된다.
+      - name: Check deploy pause gate
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "deploy paused (repository variable DEPLOY_PAUSED=true) - skipping build and deploy"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # deploy-existing input 형식 검증: SHA/digest가 canonical 형식이 아니면 AWS 접근 전에 실패한다.
+      - name: Validate deploy-existing inputs
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "image_sha must be a 40-char lowercase hex commit SHA" >&2; exit 1; }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "image_digest must be sha256: followed by 64 lowercase hex chars" >&2; exit 1; }
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.deploy == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.gate.outputs.deploy == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        if: steps.gate.outputs.deploy == 'true' && github.event_name == 'push'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # deploy-existing ECR 선검증: tag가 없거나 build-only가 기록한 digest와 다르면
+      # SSM 전송 전에 중단한다. 변경 가능한 tag가 다른 image를 가리키는 경우도 통과시키지 않는다.
+      - name: Verify exact image in ECR (deploy-existing)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          EXPECTED_IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          ACTUAL_IMAGE_DIGEST=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_SHA" --region "$AWS_REGION" \
+            --query 'images[0].imageId.imageDigest' --output text) \
+            || { echo "image tag $IMAGE_SHA not found in ECR repository $ECR_REPOSITORY" >&2; exit 1; }
+          [ "$ACTUAL_IMAGE_DIGEST" = "$EXPECTED_IMAGE_DIGEST" ] \
+            || { echo "image digest does not match the build-only result" >&2; exit 1; }
+          echo "exact ECR image verified for $IMAGE_SHA"
+
+      - name: Deploy via SSM (docker run)
+        if: steps.gate.outputs.deploy == 'true'
+        id: ssm
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          # manual dispatch(deploy-existing)는 checkout SHA가 아니라 input의 기존 image SHA를 배포한다.
+          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_sha || github.sha }}
+          IMAGE_DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.image_digest || '' }}
+          # 환경 파생값은 전부 Resolve 단계의 출력만 읽는다(여기서 다시 판단하지 않는다).
+          ENVIRONMENT: ${{ steps.env.outputs.environment }}
+          INSTANCE_IDS: ${{ steps.env.outputs.instance_ids }}
+          HOST_COUNT: ${{ steps.env.outputs.host_count }}
+          EXPECT_APP_ENV: ${{ steps.env.outputs.expect_app_env }}
+          EXPECT_REDIS_KEY_PREFIX: ${{ steps.env.outputs.expect_redis_key_prefix }}
+          EXPECT_SWAGGER_ENABLED: ${{ steps.env.outputs.expect_swagger_enabled }}
+          EXPECT_APP_GEO_MODE: ${{ steps.env.outputs.expect_app_geo_mode }}
+          HAS_NGINX: ${{ steps.env.outputs.has_nginx }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            IMG="$REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST"
+          else
+            IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          fi
+          # 원격 배포 스크립트: docker run 뒤 /api/v1/intro 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
+          # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
+          # 이 heredoc 본문은 .github/scripts/test-deploy-contract.sh가 그대로 추출·실행해 검증한다.
+          read -r -d '' SCRIPT <<EOF || true
+          set -e
+          # EXIT cleanup: 성공·실패 어느 종료 경로에서도 임시 .env 제거와 미사용 image 정리(prune -af)를
+          # 수행한다. 진입 즉시 원래 exit status를 저장해 그대로 반환하므로 prune 실패가 배포 성공을
+          # 실패로, 실패를 성공으로 바꾸지 않는다(고정 경고만 남김). 다른 container가 참조하는 image는
+          # Docker가 보존하고, 미참조 tagged/dangling image만 삭제된다(rollback은 ECR 재pull).
+          TMP_ENV=""
+          cleanup() {
+            STATUS=\$?
+            trap - EXIT
+            { [ -n "\$TMP_ENV" ] && rm -f "\$TMP_ENV"; } 2>/dev/null || true
+            if ! docker image prune -af >/dev/null 2>&1; then
+              echo "WARNING: docker image prune failed (deploy status unchanged)"
+            fi
+            exit \$STATUS
+          }
+          trap cleanup EXIT
+          # 경로 상수(기본이 운영 경로). LAIMORY_* override는 test-deploy-contract.sh harness가 동일한
+          # script 본문을 다른 host에서 실행하기 위한 seam이며 SSM 운영 실행에서는 설정되지 않는다.
+          ENV_FILE="\${LAIMORY_ENV_FILE:-/home/ubuntu/app/.env}"
+          CRED_FILE="\${LAIMORY_FCM_CRED_FILE:-/home/ubuntu/app/secrets/firebase-service-account.json}"
+          # .env 검증 헬퍼(값 비출력): key가 정확히 한 줄 존재하고 기대 줄과 byte 일치해야 한다.
+          # 실패 메시지는 key 이름·개수까지만 — 값은 SSM/Actions 로그에 출력하지 않는다(로그 장기 보존).
+          require_exact_line() {
+            REQ_KEY="\$1"; REQ_LINE="\$2"
+            REQ_COUNT=\$(grep -c "^\$REQ_KEY=" "\$ENV_FILE" || true)
+            [ "\$REQ_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$REQ_KEY must appear exactly once (found \$REQ_COUNT)"; exit 1; }
+            grep -qxF "\$REQ_LINE" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$REQ_KEY has unexpected value"; exit 1; }
+          }
+          # pre-flight 1 — secret presence: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를
+          # 내리기 전에 실패시켜 "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다.
+          # (JWT_SECRET은 HS256 최소 32자)
+          grep -qE '^JWT_SECRET=.{32,}\$' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env JWT_SECRET missing or shorter than 32 chars"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_ID=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_ID missing"; exit 1; }
+          grep -qE '^GOOGLE_CLIENT_SECRET=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env GOOGLE_CLIENT_SECRET missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_ID=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_ID missing"; exit 1; }
+          grep -qE '^KAKAO_CLIENT_SECRET=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env KAKAO_CLIENT_SECRET missing"; exit 1; }
+          # pre-flight 2 — runtime SSOT exact-one 검증: 장기 실행 컨테이너에 -e override가 없으므로 환경
+          # 고정값·mode가 .env에 정확히 한 줄씩 없으면 앱이 application default(빈 Redis prefix·local·
+          # noop·Swagger off)로 조용히 기동한다. 그 전에 fail-closed한다(중복 key의 --env-file 해석
+          # 순서에도 의존하지 않는다).
+          # 기대값은 러너의 Resolve 단계가 환경별로 넣는다 — 값이 리터럴에서 변수로 바뀌었을 뿐
+          # "정확히 한 줄 + byte 일치"라는 성질은 그대로다. 기대값이 비면(오타·미설정) .env의 실제
+          # 값과 어긋나 그대로 실패한다. 다만 prod의 REDIS_KEY_PREFIX는 빈 값이 정상이라,
+          # 이 키만은 Resolve 단계의 환경 판정이 유일한 방어선이다.
+          require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX=${EXPECT_REDIS_KEY_PREFIX}"
+          require_exact_line APP_ENV "APP_ENV=${EXPECT_APP_ENV}"
+          require_exact_line APP_GEO_MODE "APP_GEO_MODE=${EXPECT_APP_GEO_MODE}"
+          require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=${EXPECT_SWAGGER_ENABLED}"
+          AI_COUNT=\$(grep -c '^APP_AI_MODE=' "\$ENV_FILE" || true)
+          [ "\$AI_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must appear exactly once (found \$AI_COUNT)"; exit 1; }
+          grep -qxE 'APP_AI_MODE=(noop|fake|http)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must be one of noop|fake|http"; exit 1; }
+          if grep -qxF 'APP_AI_MODE=http' "\$ENV_FILE"; then
+            AI_URL_COUNT=\$(grep -c '^APP_AI_HTTP_BASE_URL=' "\$ENV_FILE" || true)
+            [ "\$AI_URL_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must appear exactly once when APP_AI_MODE=http (found \$AI_URL_COUNT)"; exit 1; }
+            grep -qE '^APP_AI_HTTP_BASE_URL=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must be non-empty when APP_AI_MODE=http"; exit 1; }
+          fi
+          # spring profile 가드: 배포 컨테이너는 기본 프로필로만 기동해야 한다 — .env에
+          # SPRING_PROFILES_ACTIVE가 없는 것이 정상이고, 값에 docker가 끼면 dummy JWT 기본값·
+          # localhost DB 등 배포에서 위험한 기본값과 subject fixture-key 기본값까지 켜진다
+          # (@Profile 게이팅 없음 — 이 가드와 아래 subject mode 값 고정이 배포의 fixture 금지를
+          # 담당한다). 값은 비밀이 아니지만 진단은 key 이름과 고정 문구만 낸다.
+          if grep -qE '^SPRING_PROFILES_ACTIVE=.*docker' "\$ENV_FILE"; then
+            echo "PREFLIGHT FAILED: .env SPRING_PROFILES_ACTIVE docker profile must not be active"; exit 1;
+          fi
+          # FCM push pre-flight: APP_PUSH_MODE가 credential mount 여부의 명시적 SSOT다. firebase면 ADC
+          # 경로(GOOGLE_APPLICATION_CREDENTIALS, 고정 컨테이너 경로)도 .env가 정확히 한 줄로 소유해야 하고
+          # host의 service account JSON이 있어야 배포를 진행한다(역시 구 컨테이너 중지 전 검사 — 앱은 ADC
+          # 실패 시 fail-fast). noop이면 credential·mount 없이 기동한다. 파일은 승인된 SSM 절차로 수동
+          # 배치한다. credential 원문은 Git/이미지/env 값에 두지 않고
+          # read-only 파일 mount로만 전달한다.
+          PUSH_COUNT=\$(grep -c '^APP_PUSH_MODE=' "\$ENV_FILE" || true)
+          [ "\$PUSH_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_PUSH_MODE must appear exactly once (found \$PUSH_COUNT)"; exit 1; }
+          grep -qxE 'APP_PUSH_MODE=(noop|firebase)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_PUSH_MODE must be one of noop|firebase"; exit 1; }
+          PUSH_ARGS=""
+          if grep -qxF 'APP_PUSH_MODE=firebase' "\$ENV_FILE"; then
+            require_exact_line GOOGLE_APPLICATION_CREDENTIALS "GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json"
+            { [ -f "\$CRED_FILE" ] && [ -s "\$CRED_FILE" ]; } || { echo "PREFLIGHT FAILED: APP_PUSH_MODE=firebase but \$CRED_FILE missing or empty"; exit 1; }
+            PUSH_ARGS="-v \$CRED_FILE:/run/secrets/firebase-service-account.json:ro"
+          fi
+          # tracing pre-flight(#277): APP_TRACING_MODE가 OTel agent 활성화의 명시적 SSOT다(앱은 이 키를
+          # 소비하지 않는 pre-flight 전용 계약 키). otlp면 JVM 표준 JAVA_TOOL_OPTIONS(-javaagent)와 OTEL_*
+          # 세트를 dev 고정값 byte 단위로 검증한다 — agent 2.x 기본 protocol이 http/protobuf라 grpc 누락 시
+          # 4317로 http를 쏴 trace가 조용히 유실되고, metrics/logs exporter 기본이 otlp라 none 누락 시 의도
+          # 없는 export가 가며, 잘못된 endpoint도 trace를 조용히 유실한다. redaction 목록은 full-override라
+          # 부분 목록이면 기본 서명 4종까지 벗겨져 48h trace에 비밀이 남으므로 전체 집합을 값으로 고정한다.
+          # sampler만 값 미고정(exact-one non-empty) — 부하 테스트 시 ratio로 일시 전환하는 운영 계약.
+          # noop이면 JAVA_TOOL_OPTIONS·OTEL_* 잔존을 금지해 "한 줄 지워져 조용히 꺼진 채 남는" 상태를
+          # fail-closed로 막는다.
+          TRACING_COUNT=\$(grep -c '^APP_TRACING_MODE=' "\$ENV_FILE" || true)
+          [ "\$TRACING_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_TRACING_MODE must appear exactly once (found \$TRACING_COUNT)"; exit 1; }
+          grep -qxE 'APP_TRACING_MODE=(noop|otlp)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_TRACING_MODE must be one of noop|otlp"; exit 1; }
+          if grep -qxF 'APP_TRACING_MODE=otlp' "\$ENV_FILE"; then
+            require_exact_line JAVA_TOOL_OPTIONS "JAVA_TOOL_OPTIONS=-javaagent:/otel/opentelemetry-javaagent.jar"
+            require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-${ENVIRONMENT}"
+            require_exact_line OTEL_EXPORTER_OTLP_ENDPOINT "OTEL_EXPORTER_OTLP_ENDPOINT=http://10.0.32.14:4317"
+            require_exact_line OTEL_EXPORTER_OTLP_PROTOCOL "OTEL_EXPORTER_OTLP_PROTOCOL=grpc"
+            require_exact_line OTEL_METRICS_EXPORTER "OTEL_METRICS_EXPORTER=none"
+            require_exact_line OTEL_LOGS_EXPORTER "OTEL_LOGS_EXPORTER=none"
+            require_exact_line OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED "OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED=true"
+            require_exact_line OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,sig,X-Goog-Signature,code,state,app_challenge,x,y,query"
+            SAMPLER_COUNT=\$(grep -c '^OTEL_TRACES_SAMPLER=' "\$ENV_FILE" || true)
+            [ "\$SAMPLER_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env OTEL_TRACES_SAMPLER must appear exactly once when APP_TRACING_MODE=otlp (found \$SAMPLER_COUNT)"; exit 1; }
+            grep -qE '^OTEL_TRACES_SAMPLER=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env OTEL_TRACES_SAMPLER must be non-empty when APP_TRACING_MODE=otlp"; exit 1; }
+          else
+            JTO_COUNT=\$(grep -c '^JAVA_TOOL_OPTIONS=' "\$ENV_FILE" || true)
+            [ "\$JTO_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env JAVA_TOOL_OPTIONS must not be set when APP_TRACING_MODE=noop"; exit 1; }
+            OTEL_COUNT=\$(grep -c '^OTEL_' "\$ENV_FILE" || true)
+            [ "\$OTEL_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env OTEL_* keys must not be set when APP_TRACING_MODE=noop (found \$OTEL_COUNT)"; exit 1; }
+          fi
+          # nginx access log query 제거(멱등 가드) — 이 앱 버전부터 로그인 code(/auth/app?code=, IdP 콜백 ?code=)가
+          # 쿼리로 나가므로, 배포보다 먼저 no-query log_format을 보장한다. 신규·기존 host 모두
+          # 누락된 상태로 배포되지 않도록 여기서 구조적으로 막는다(누락 시 자동 보정).
+          # \$가 붙은 nginx 변수들은 호스트에서 quoted heredoc('NGINXLOG')으로 쓰이므로 원문 그대로 파일에 들어간다.
+          # nginx가 없는 환경(ALB가 앱 포트에 직결)은 이 블록 전체를 건너뛴다 — 그대로 실행하면
+          # nginx -t 부재로 배포가 여기서 실패한다. 값은 러너의 Resolve 단계가 환경별로 넣는다.
+          if [ "${HAS_NGINX}" = "true" ]; then
+            if [ ! -f /etc/nginx/conf.d/log_format_noquery.conf ]; then
+              tee /etc/nginx/conf.d/log_format_noquery.conf > /dev/null <<'NGINXLOG'
+          log_format noquery '\$remote_addr - \$remote_user [\$time_local] "\$request_method \$uri \$server_protocol" \$status \$body_bytes_sent "\$http_user_agent"';
+          NGINXLOG
+            fi
+            grep -q 'access_log /var/log/nginx/access.log noquery' /etc/nginx/sites-available/laimory || sed -i '/client_max_body_size/a\    access_log /var/log/nginx/access.log noquery;' /etc/nginx/sites-available/laimory
+            # nginx -t 실패는 배포를 중단해야 하므로 &&로 묶지 않는다(set -e의 &&-리스트 예외 회피 — fail-closed).
+            nginx -t
+            systemctl reload nginx
+          fi
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${REGISTRY}
+          docker pull ${IMG}
+          # firebase 모드면 runtime user 관점의 읽기 가능성까지 구 컨테이너 중지 전에 검증한다 — 앱 컨테이너는
+          # Dockerfile의 appuser(UID 1001)로 실행되므로 root의 -f/-s 검사만으로는 소유권/권한 문제(예:
+          # ubuntu:0600)를 못 잡는다. 방금 pull한 image를 그대로 사용해 동일 조건(test -r)으로 확인한다.
+          # (일회성 docker run --rm은 장기 실행 컨테이너가 아니므로 -e 금지 대상이 아니다.)
+          if [ -n "\$PUSH_ARGS" ]; then
+            docker run --rm -v "\$CRED_FILE":/run/secrets/firebase-service-account.json:ro --entrypoint /bin/sh ${IMG} -c 'test -r /run/secrets/firebase-service-account.json && test -s /run/secrets/firebase-service-account.json' || { echo "PREFLIGHT FAILED: credential not readable by container runtime user - chown 1001 + chmod 0400"; exit 1; }
+          fi
+          # subject mapping pre-flight(#282): 배포 환경은 subject HMAC key를 Secrets Manager에서만 받는다.
+          # APP_SUBJECT_MODE가 secretsmanager 외 값(fixture 등)이면 테스트 고정 key로 가명화되는 조용한
+          # 사고가 되므로 mode를 값까지 고정하고, ARN 형식·runtime secret read 권한·mapping schema까지
+          # 전부 구 컨테이너 중지 전에 검사한다(ddl-auto=validate라 schema 불일치 시 새 앱이 기동 실패 —
+          # "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다). 실패 진단은 key 이름·개수
+          # 까지만 — 값(ARN·DB 접속 정보·secret)은 SSM/Actions 로그에 출력하지 않는다.
+          SUBJECT_MODE_COUNT=\$(grep -c '^APP_SUBJECT_MODE=' "\$ENV_FILE" || true)
+          [ "\$SUBJECT_MODE_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_MODE must appear exactly once (found \$SUBJECT_MODE_COUNT)"; exit 1; }
+          grep -qxF 'APP_SUBJECT_MODE=secretsmanager' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_MODE must be secretsmanager"; exit 1; }
+          ARN_COUNT=\$(grep -c '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" || true)
+          [ "\$ARN_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_SECRET_ARN must appear exactly once (found \$ARN_COUNT)"; exit 1; }
+          grep -qE '^APP_SUBJECT_SECRET_ARN=arn:aws:secretsmanager:' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_SUBJECT_SECRET_ARN must start with arn:aws:secretsmanager:"; exit 1; }
+          # 앱 region은 미설정(default ap-northeast-2) 또는 같은 값 한 줄만 허용한다. 컨테이너는 --env-file만
+          # 받으므로 AWS credential/profile/endpoint override가 한 줄이라도 있으면 runtime role과 다른 identity로
+          # 뜰 수 있어 금지한다. host CLI도 env/shared config를 제거한 subshell에서 IMDS instance profile만 쓴다.
+          SUBJECT_REGION_COUNT=\$(grep -c '^AWS_REGION=' "\$ENV_FILE" || true)
+          [ "\$SUBJECT_REGION_COUNT" -le 1 ] || { echo "PREFLIGHT FAILED: .env AWS_REGION must appear at most once (found \$SUBJECT_REGION_COUNT)"; exit 1; }
+          if [ "\$SUBJECT_REGION_COUNT" = "1" ]; then
+            grep -qxF 'AWS_REGION=${AWS_REGION}' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env AWS_REGION must match deployment region"; exit 1; }
+          fi
+          AWS_OVERRIDE_COUNT=\$(grep -cE '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|AWS_PROFILE|AWS_DEFAULT_PROFILE|AWS_SHARED_CREDENTIALS_FILE|AWS_CONFIG_FILE|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_ROLE_ARN|AWS_ROLE_SESSION_NAME|AWS_CONTAINER_CREDENTIALS_RELATIVE_URI|AWS_CONTAINER_CREDENTIALS_FULL_URI|AWS_EC2_METADATA_DISABLED|AWS_EC2_METADATA_SERVICE_ENDPOINT|AWS_ENDPOINT_URL|AWS_ENDPOINT_URL_SECRETS_MANAGER)=' "\$ENV_FILE" || true)
+          [ "\$AWS_OVERRIDE_COUNT" = "0" ] || { echo "PREFLIGHT FAILED: .env AWS credential/profile/endpoint overrides are forbidden (found \$AWS_OVERRIDE_COUNT)"; exit 1; }
+          # runtime secret read + 내용 계약 검증: host instance profile로 GetSecretValue를 1회 수행해
+          # SecretString을 shell 변수로만 받고(출력·echo·argv 어디에도 싣지 않음), 앱
+          # SecretsManagerSubjectHmacKeyConfig.parse()와 1:1 규칙을 python3에 환경변수로만 넘겨
+          # 검증한다 — JSON object · currentVersion 정수 1~32767 · currentKey base64 정확히 32바이트 ·
+          # previousVersion/previousKey 동반 존재·version 상이·key 상이·previousKey도 32바이트 ·
+          # SecretString 부재(SecretBinary 전용)면 실패. 이 계약을 어긴 secret은 새 앱이 기동 실패
+          # (자동 rollback 없음)하므로 구 컨테이너 중지 전에 잡는다. 실패 진단은 항목 이름만 내고
+          # python stderr도 버린다 — secret 값은 어떤 경로로도 로그에 닿지 않는다.
+          command -v python3 >/dev/null 2>&1 || { echo "PREFLIGHT FAILED: python3 not found on host (required for subject secret validation)"; exit 1; }
+          SUBJECT_SECRET_ARN=\$(grep '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" | cut -d= -f2-)
+          SUBJECT_SECRET_PAYLOAD=\$( unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME AWS_CONTAINER_CREDENTIALS_RELATIVE_URI AWS_CONTAINER_CREDENTIALS_FULL_URI AWS_EC2_METADATA_DISABLED AWS_EC2_METADATA_SERVICE_ENDPOINT AWS_ENDPOINT_URL AWS_ENDPOINT_URL_SECRETS_MANAGER; AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null aws secretsmanager get-secret-value --secret-id "\$SUBJECT_SECRET_ARN" --region ${AWS_REGION} --query SecretString --output json 2>/dev/null ) || { echo "PREFLIGHT FAILED: subject secret read failed (runtime role GetSecretValue or ARN)"; exit 1; }
+          SUBJECT_SECRET_DIAG=\$(SUBJECT_SECRET_PAYLOAD="\$SUBJECT_SECRET_PAYLOAD" python3 -c '
+          import base64, json, os, sys
+          def die(msg):
+              print(msg)
+              sys.exit(1)
+          payload = json.loads(os.environ["SUBJECT_SECRET_PAYLOAD"])
+          if payload is None:
+              die("SecretString missing (SecretBinary-only secret is not supported)")
+          try:
+              root = json.loads(payload)
+          except Exception:
+              die("is not valid JSON")
+          if not isinstance(root, dict):
+              die("must be a JSON object")
+          def ver(field):
+              value = root.get(field)
+              if isinstance(value, bool) or not isinstance(value, int):
+                  die(field + " must be an integer")
+              if value <= 0 or value > 32767:
+                  die(field + " must be a positive SMALLINT")
+              return value
+          def key(field):
+              value = root.get(field)
+              if not isinstance(value, str):
+                  die(field + " must be a string")
+              try:
+                  decoded = base64.b64decode(value, validate=True)
+              except Exception:
+                  die(field + " must be valid base64")
+              if len(decoded) != 32:
+                  die(field + " must decode to exactly 32 bytes")
+              return decoded
+          current_version = ver("currentVersion")
+          current_key = key("currentKey")
+          if (root.get("previousVersion") is None) != (root.get("previousKey") is None):
+              die("previousVersion and previousKey must be present together")
+          if root.get("previousVersion") is not None:
+              if ver("previousVersion") == current_version:
+                  die("previousVersion must differ from currentVersion")
+              if key("previousKey") == current_key:
+                  die("currentKey and previousKey must differ")
+          ' 2>/dev/null) || { echo "PREFLIGHT FAILED: subject secret \${SUBJECT_SECRET_DIAG:-validation could not run}"; exit 1; }
+          SUBJECT_SECRET_PAYLOAD=""
+          # mapping schema: 앱 datasource와 같은 DB_HOST:3306/laimory를 검사한다. 앱이 소비하는 DB_* 3개를
+          # exact-one non-empty로 먼저 확인한 뒤(값 비출력), 고정 태그 mysql:8.0 client로 column 수·정확한
+          # type/nullability·단일-column PK/UNIQUE를 모두 판정한다. 추가 raw user_id나 composite index도
+          # 실패한다. password는 docker 인자에 값을 싣지 않도록 -e MYSQL_PWD 환경 전달만 쓴다.
+          for DB_KEY in DB_HOST DB_USERNAME DB_PASSWORD; do
+            DB_KEY_COUNT=\$(grep -c "^\$DB_KEY=" "\$ENV_FILE" || true)
+            [ "\$DB_KEY_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$DB_KEY must appear exactly once (found \$DB_KEY_COUNT)"; exit 1; }
+            grep -qE "^\$DB_KEY=.+" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$DB_KEY must be non-empty"; exit 1; }
+          done
+          DB_HOST_VAL=\$(grep '^DB_HOST=' "\$ENV_FILE" | cut -d= -f2-)
+          DB_USER_VAL=\$(grep '^DB_USERNAME=' "\$ENV_FILE" | cut -d= -f2-)
+          DB_PASS_VAL=\$(grep '^DB_PASSWORD=' "\$ENV_FILE" | cut -d= -f2-)
+          SUBJECT_SCHEMA_SQL="SELECT CASE WHEN (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links') = 3 AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND ((COLUMN_NAME = 'user_lookup_key' AND COLUMN_TYPE = 'binary(32)' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'varchar(36)' AND CHARACTER_SET_NAME = 'ascii' AND COLLATION_NAME = 'ascii_bin' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'lookup_key_version' AND COLUMN_TYPE = 'smallint' AND IS_NULLABLE = 'NO'))) = 3 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY') = 1 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'user_lookup_key' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1 AND EXISTS (SELECT 1 FROM (SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND NON_UNIQUE = 0 AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME = 'subject_id' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1) subject_unique) THEN 1 ELSE 0 END"
+          SCHEMA_MATCH=\$(MYSQL_PWD="\$DB_PASS_VAL" docker run --rm --network host -e MYSQL_PWD mysql:8.0 mysql -h"\$DB_HOST_VAL" -P3306 -u"\$DB_USER_VAL" -N -B -e "\$SUBJECT_SCHEMA_SQL" laimory 2>/dev/null) || { echo "PREFLIGHT FAILED: subject mapping schema query failed"; exit 1; }
+          [ "\$SCHEMA_MATCH" = "1" ] || { echo "PREFLIGHT FAILED: user_subject_links schema mismatch"; exit 1; }
+          # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
+          # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
+          # 같은 디렉터리 temp + rename(같은 filesystem이라 원자적)으로 부분 쓰기를 막고 0600·owner를
+          # 보존한다. 기존 APP_COMMIT_SHA= 줄은 개수와 무관하게 전부 제거하고 정확히 한 줄만 남긴다
+          # (줄 시작의 정확한 KEY=만 대상 — 유사 이름 key는 건드리지 않는다).
+          TMP_ENV=\$(mktemp "\$ENV_FILE.XXXXXX")
+          awk -v sha="${IMAGE_TAG}" 'index(\$0, "APP_COMMIT_SHA=") == 1 { next } { print } END { print "APP_COMMIT_SHA=" sha }' "\$ENV_FILE" > "\$TMP_ENV"
+          chmod 600 "\$TMP_ENV"
+          chown --reference="\$ENV_FILE" "\$TMP_ENV"
+          mv -f "\$TMP_ENV" "\$ENV_FILE"
+          TMP_ENV=""
+          docker stop laimory 2>/dev/null || true
+          docker rm laimory 2>/dev/null || true
+          # 장기 실행 컨테이너의 runtime env source는 --env-file(.env) 하나다 — -e/--env 없음(.env가 SSOT).
+          # 환경 고정값(REDIS_KEY_PREFIX·APP_ENV·APP_GEO_MODE·SWAGGER_ENABLED)과 AI/push mode는
+          # 위 pre-flight가 exact-one으로 fail-closed 보장한다 — 기대값은 환경별로 주입된다.
+          # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
+          # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount(ADC 경로는 .env가 소유).
+          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}
+          echo "waiting for /api/v1/intro ..."
+          ok=0
+          for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
+          if [ "\$ok" != "1" ]; then echo "HEALTH CHECK FAILED"; docker logs --tail 80 laimory 2>&1 || true; exit 1; fi
+          EOF
+          jq -n --arg s "$SCRIPT" '{commands: [$s]}' > params.json
+          # host가 여러 대인 환경은 한 대씩 순차 배포한다 — 동시에 보내면 두 대가 같은 순간 컨테이너를
+          # 내려 완전 중단이 된다. 각 host의 health gate를 통과한 뒤에만 다음으로 넘어가고, 실패하면
+          # 남은 host는 건드리지 않아 최소 한 대는 직전 이미지로 남는다.
+          # ⚠️ ALB deregister/register는 이번 범위 밖이다(#337) — 컨테이너를 내린 host는 헬스체크가
+          # unhealthy로 판정할 때까지 트래픽을 계속 받아 5xx를 낸다. 무중단이 아니다.
+          HOST_INDEX=0
+          for IID in ${INSTANCE_IDS//,/ }; do
+            HOST_INDEX=$((HOST_INDEX + 1))
+            # 로그에는 순번만 쓴다 — instance id는 공개 Actions 로그에 남기지 않는다(위 Resolve 참조).
+            HOST_LABEL="host $HOST_INDEX/$HOST_COUNT"
+            echo "::group::deploy $ENVIRONMENT $HOST_LABEL"
+            CMD_ID=$(aws ssm send-command \
+              --document-name "AWS-RunShellScript" \
+              --instance-ids "$IID" \
+              --comment "Deploy ${IMAGE_TAG} to $ENVIRONMENT" \
+              --parameters file://params.json \
+              --query "Command.CommandId" --output text)
+            echo "Sent SSM command: $CMD_ID"
+            sleep 5   # invocation 등록 레이스 방지
+            # `aws ssm wait command-executed`를 쓰지 않는다: 그 waiter는 delay 5 × maxAttempts 20 =
+            # 100초가 상한인데, 원격 script는 ECR pull + health gate(최대 90초)만으로 그 근처까지 간다.
+            # 상한에 걸리면 배포가 성공하는 중에도 InProgress로 읽혀 실패 처리되고, 루프가 남은 host를
+            # 건너뛰어 환경에 서로 다른 image가 남는다. 그래서 종료 상태가 나올 때까지 직접 폴링한다.
+            POLL_DEADLINE=$((SECONDS + 900))
+            while : ; do
+              STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" \
+                --query Status --output text 2>/dev/null || echo Pending)
+              case "$STATUS" in
+                Success|Failed|Cancelled|TimedOut) break ;;
+              esac
+              [ "$SECONDS" -lt "$POLL_DEADLINE" ] || { STATUS=WorkflowPollTimeout; break; }
+              sleep 5
+            done
+            echo "----- stdout -----"
+            aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query StandardOutputContent --output text || true
+            echo "----- stderr -----"
+            aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query StandardErrorContent --output text || true
+            echo "Status: $STATUS"
+            echo "::endgroup::"
+            [ "$STATUS" = "Success" ] \
+              || { echo "deploy failed on $HOST_LABEL ($STATUS) - remaining hosts are left untouched" >&2; exit 1; }
+          done

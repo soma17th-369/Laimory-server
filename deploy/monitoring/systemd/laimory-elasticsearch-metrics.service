@@ -1,0 +1,17 @@
+[Unit]
+Description=Laimory Elasticsearch health metric collector
+Wants=network-online.target
+After=network-online.target node_exporter.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/opt/laimory-monitoring/.env
+ExecCondition=/usr/bin/test -s /opt/laimory-monitoring/secrets/elasticsearch_api_key
+ExecStart=/opt/laimory-monitoring/scripts/collect-elasticsearch-metrics.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/laimory-monitoring/secrets/elasticsearch_api_key
+ReadWritePaths=/var/lib/node_exporter/textfile_collector

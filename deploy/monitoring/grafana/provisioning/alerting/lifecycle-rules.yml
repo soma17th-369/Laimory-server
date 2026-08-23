@@ -1,0 +1,66 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-lifecycle-stuck
+    folder: Laimory
+    interval: 30s
+    rules:
+      - uid: laimory_processing_stuck
+        title: Timeline task stuck in PROCESSING
+        dashboardUid: laimory-overview
+        panelId: 18
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot",environment="dev"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: '{{ $values.B.Value }} timeline task(s) have remained PROCESSING for at least 90 seconds.'
+          description: 'Counts PROCESSING tasks between the 90-second threshold and the three-minute TTL expiry; the gauge read prunes expired members from an atomic Redis processing index.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#timeline-processing-stuck
+        labels:
+          environment: dev
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false

@@ -1,20 +1,21 @@
 package com.laimory.server.appconfig;
 
+import com.laimory.server.common.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 앱 구동 설정(공개) API 구현. HTTP 문서·계약은 {@link AppConfigApi}.
+ */
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1")
-public class AppConfigController {
+public class AppConfigController implements AppConfigApi {
 
     private final AppConfigService appConfigService;
 
-    @GetMapping("/intro")
-    public ResponseEntity<AppConfigResponse> intro() {
-        return ResponseEntity.ok(appConfigService.getAppConfig());
+    @Override
+    public ResponseEntity<ApiResponse<AppConfigResponse>> intro(String applicationVersion) {
+        return ResponseEntity.ok(ApiResponse.success(appConfigService.getAppConfig(applicationVersion)));
     }
 }

@@ -55,9 +55,21 @@ out/
 ### VS Code ###
 .vscode/
 
+### Python ###
+__pycache__/
+*.py[cod]
+
 ### Security & Local Config ###
 application-local.yml
 application-local.properties
 application-secret.yml
 application-secret.properties
 .env
+.env.*
+/deploy/monitoring/secrets/
+
+### Agent Local Plans ###
+/.agents/plans/
+
+### Per-PR Digest Comments ###
+/.agents/digest/

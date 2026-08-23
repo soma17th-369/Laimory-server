@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.soma369.laimory.debug",
+      "sha256_cert_fingerprints": [
+        "95:7C:55:EE:29:A5:D4:71:73:47:FB:6A:D3:60:06:9A:4D:06:82:9F:B5:48:D3:E7:4C:23:35:38:90:53:95:8B"
+      ]
+    }
+  }
+]

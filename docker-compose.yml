@@ -1,0 +1,37 @@
+# 로컬 개발용 인프라 (MySQL 8 + Redis 7).
+# private-zone의 운영 인프라엔 로컬에서 접속 불가하므로 로컬은 이걸로 테스트한다.
+# 사용: docker compose up -d  ->  SPRING_PROFILES_ACTIVE=docker ./gradlew bootRun
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: laimory-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: laimory
+      MYSQL_USER: laimory
+      MYSQL_PASSWORD: laimory
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      # schema.sql은 빈 데이터 볼륨 첫 기동 시에만 자동 적용된다(스키마 변경 시 볼륨 재생성 필요).
+      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - laimory-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: laimory-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  laimory-mysql-data:

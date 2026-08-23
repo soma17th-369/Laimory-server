@@ -1,0 +1,19 @@
+[Unit]
+Description=Laimory Prometheus and Grafana monitoring stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/laimory-monitoring
+ExecCondition=/opt/laimory-monitoring/scripts/validate-secrets.sh
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecReload=/usr/bin/docker compose kill -s SIGHUP prometheus
+ExecStop=/usr/bin/docker compose stop
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

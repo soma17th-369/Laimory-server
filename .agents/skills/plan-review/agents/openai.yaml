@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Review"
+  short_description: "Review plans for evidence-backed blockers."
+  default_prompt: "Use $plan-review to decide whether this plan is safe enough to implement and report only evidence-backed plan-level blockers."

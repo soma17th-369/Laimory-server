@@ -1,0 +1,334 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-infrastructure
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_host_memory_low
+        title: Host memory low
+        dashboardUid: laimory-infrastructure
+        panelId: 3
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (instance, host) (node_memory_MemAvailable_bytes{job="node",environment="dev",host!="elk"}) / max by (instance, host) (node_memory_MemTotal_bytes{job="node",environment="dev",host!="elk"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.15], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'Available memory is below 15% on {{ $labels.host }}.'
+          description: 'MemAvailable, which accounts for reclaimable cache, has remained low.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_elk_memory_low
+        title: ELK host memory low
+        dashboardUid: laimory-infrastructure
+        panelId: 3
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (instance, host) (node_memory_MemAvailable_bytes{job="node",environment="dev",host="elk"}) / max by (instance, host) (node_memory_MemTotal_bytes{job="node",environment="dev",host="elk"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.1], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'Available memory is below 10% on ELK.'
+          description: 'ELK MemAvailable has remained below 10% for 10 minutes; inspect Elasticsearch heap, filesystem cache, swap, and OOM history.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_filesystem_low
+        title: Filesystem space low
+        dashboardUid: laimory-infrastructure
+        panelId: 4
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"}) / max by (instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",environment="dev",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.2], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Filesystem free space is below 20% on {{ $labels.host }} {{ $labels.mountpoint }}.'
+          description: 'A real host filesystem is approaching its capacity limit; pseudo filesystems are excluded.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_mysql_connections_high
+        title: MySQL connection pressure
+        dashboardUid: laimory-infrastructure
+        panelId: 7
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (host) (mysql_global_status_threads_connected{job="mysqld",environment="dev"}) / clamp_min(max by (host) (mysql_global_variables_max_connections{job="mysqld",environment="dev"}), 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.8], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'MySQL connections exceed 80% of max_connections.'
+          description: 'The dev MySQL server is approaching its configured connection limit.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#mysql-or-redis-pressure
+        labels:
+          environment: dev
+          instance: dev-mysql
+          job: mysqld
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_redis_evictions
+        title: Redis evictions detected
+        dashboardUid: laimory-infrastructure
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'sum(increase(redis_evicted_keys_total{job="redis",environment="dev"}[5m]))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [], type: gt }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Redis has continuously reported key evictions.'
+          description: 'The five-minute eviction increase remained positive; inspect memory policy and capacity.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#mysql-or-redis-pressure
+        labels:
+          environment: dev
+          instance: redis
+          job: redis
+          service: laimory
+          severity: warning
+        isPaused: false

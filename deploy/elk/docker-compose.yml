@@ -1,0 +1,111 @@
+# ELK 박스(dev-elk, 사설 10.0.32.13) 스택 — Filebeat + ES + Kibana 중 ES/Kibana.
+# Filebeat는 로그를 생산하는 WAS 박스에서 별도로 돈다(deploy/elk/filebeat.yml).
+#
+# 비밀(ELASTIC/KIBANA/FILEBEAT_PASSWORD)·버전·힙은 전부 같은 디렉터리의 .env 에서 온다
+# (user_data 가 시드, chmod 600). 이 파일 자체엔 비밀이 없다.
+#
+# 운용: persistent Spot EC2 상시 가동. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작되며,
+# es/kibana 는 restart:unless-stopped 라 함께 복구된다. setup 은 restart:"no" 라 최초 up 1회만
+# 실행된다(ILM/템플릿/비번은 esdata 볼륨에 이미 있음).
+#
+# 인증 ON + 내부 HTTP(TLS off): 프라이빗 서브넷 + SG(9200·5601 ← WAS SG만)가 기밀 경계.
+# 외부 노출은 dev-was nginx TLS(443)에서 종단한다.
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    environment:
+      - node.name=laimory-es
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false      # nginx(WAS)에서 TLS 종단 — 사설 구간은 평문
+      - xpack.security.transport.ssl.enabled=false  # single-node 라 transport TLS 불필요
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS}
+      - bootstrap.memory_lock=false                 # 무스왑 EC2 + stop/start 마찰 회피(의도적)
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"     # Filebeat(WAS) 수신. 공개 아님 — SG 로 WAS SG 만 허용.
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -sf -u "elastic:$${ELASTIC_PASSWORD}" "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s" >/dev/null
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # ES healthy 후 1회(멱등): kibana_system 비번 설정 + ILM/템플릿 PUT + filebeat_writer 최소권한 role/user.
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    restart: "no"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+      - FILEBEAT_PASSWORD=${FILEBEAT_PASSWORD}
+    volumes:
+      - ./ilm-policy.json:/setup/ilm-policy.json:ro
+      - ./index-template.json:/setup/index-template.json:ro
+    # compose 변수전개를 피하려고 런타임 $ 는 $$ 로 이스케이프(컨테이너 셸이 자기 env 에서 해석).
+    command:
+      - bash
+      - -c
+      - |
+        set -eu
+        ES=http://elasticsearch:9200
+        echo "waiting for elasticsearch security..."
+        until curl -sf -u "elastic:$${ELASTIC_PASSWORD}" "$$ES/_cluster/health?wait_for_status=yellow&timeout=5s" >/dev/null; do
+          sleep 5
+        done
+        echo "setting kibana_system password"
+        until curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X POST "$$ES/_security/user/kibana_system/_password" \
+          -H 'Content-Type: application/json' -d "{\"password\":\"$${KIBANA_PASSWORD}\"}" >/dev/null; do
+          sleep 5
+        done
+        echo "installing ILM policy + index template"
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_ilm/policy/laimory-logs" \
+          -H 'Content-Type: application/json' --data-binary @/setup/ilm-policy.json >/dev/null
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_index_template/laimory" \
+          -H 'Content-Type: application/json' --data-binary @/setup/index-template.json >/dev/null
+        echo "creating filebeat_writer role + user"
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_security/role/filebeat_writer" \
+          -H 'Content-Type: application/json' \
+          -d '{"cluster":["monitor"],"indices":[{"names":["laimory-*"],"privileges":["auto_configure","create_doc"]}]}' >/dev/null
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_security/user/filebeat_writer" \
+          -H 'Content-Type: application/json' \
+          -d "{\"password\":\"$${FILEBEAT_PASSWORD}\",\"roles\":[\"filebeat_writer\"]}" >/dev/null
+        echo "creating suhyun444 superuser (personal login; elastic 예약유저 대신 사용, 비번=elastic과 동일)"
+        curl -sf -u "elastic:$${ELASTIC_PASSWORD}" -X PUT "$$ES/_security/user/suhyun444" \
+          -H 'Content-Type: application/json' \
+          -d "{\"password\":\"$${ELASTIC_PASSWORD}\",\"roles\":[\"superuser\"],\"full_name\":\"suhyun444\"}" >/dev/null
+        echo "setup complete"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      # dev-was nginx 서브패스(/kibana) 리버스 프록시용 — 없으면 asset/redirect 가 / 로 나가 빈 화면.
+      - SERVER_BASEPATH=/kibana
+      - SERVER_REWRITEBASEPATH=true
+      - SERVER_PUBLICBASEURL=https://dev.laimory.app/kibana
+      - NODE_OPTIONS=--max-old-space-size=512
+    ports:
+      - "5601:5601"     # dev-was nginx 가 프록시. 공개 아님 — SG 로 WAS SG 만 허용.
+    restart: unless-stopped
+
+volumes:
+  esdata:

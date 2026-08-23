@@ -1,0 +1,217 @@
+name: laimory-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v3.13.1}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=12GB
+      - --storage.tsdb.wal-compression
+      - --query.timeout=2m
+      - --query.max-concurrency=10
+      - --web.enable-lifecycle
+      - --log.format=json
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+    expose:
+      - "9090"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # 2g → 1g(#277): 실사용 135MiB(active series 14,761)로 7.5배 여유 — 회수분을 tempo 예산으로 재배정.
+    mem_limit: 1g
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  tempo:
+    image: grafana/tempo:${TEMPO_VERSION:-2.10.7}
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - tempo-data:/var/tempo
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+    ports:
+      # OTLP gRPC 수신은 private IP에만 publish(dev WAS → 4317). 4318(http)은 열지 않는다(#277 D5).
+      - "${MONITORING_PRIVATE_IP:-127.0.0.2}:4317:4317"
+    expose:
+      - "3200"
+    restart: unless-stopped
+    # healthcheck 없음(규율의 명시적 예외): 공식 이미지가 distroless(shell/wget 부재)이고 native
+    # `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너 내부 검사 수단이 없다. 대체 확인은
+    # grafana 컨테이너 경유 `wget -q --spider http://tempo:3200/ready` + OTLP ingest smoke(README Tempo 절).
+    mem_limit: 768m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:${BLACKBOX_EXPORTER_VERSION:-v0.28.0}
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+      - --log.format=json
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+    expose:
+      - "9115"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9115/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:${MYSQLD_EXPORTER_VERSION:-v0.19.0}
+    command:
+      - --config.my-cnf=/run/secrets/mysql_exporter_my_cnf
+      - --mysqld.address=${DEV_MYSQL_ADDRESS:-10.0.32.12:3306}
+      - --no-collect.slave_status
+      - --no-collect.info_schema.innodb_cmp
+      - --no-collect.info_schema.innodb_cmpmem
+      - --no-collect.info_schema.query_response_time
+      - --log.format=json
+    volumes:
+      - ./secrets/mysql_exporter_my.cnf:/run/secrets/mysql_exporter_my_cnf:ro
+    expose:
+      - "9104"
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9104/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 192m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  redis-exporter:
+    image: oliver006/redis_exporter:${REDIS_EXPORTER_VERSION:-v1.87.0-alpine}
+    command:
+      - --redis.addr=${REDIS_ADDRESS:-redis://10.0.32.11:6379}
+      - --redis.user=${REDIS_EXPORTER_USERNAME:-laimory_monitoring}
+      - --redis.password-file=/run/secrets/redis_exporter_password.json
+      - --config-command=-
+      - --exclude-latency-histogram-metrics
+      - --ping-on-connect
+      - --disable-exporting-key-values
+      - --disable-scrape-endpoint
+      - --connection-timeout=5s
+      - --log-format=json
+    volumes:
+      - ./secrets/redis_exporter_password.json:/run/secrets/redis_exporter_password.json:ro
+    expose:
+      - "9121"
+    # Secret consumer는 process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd로 시작한다.
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9121/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 192m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-13.1.1}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-laimory}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_SECRET_KEY__FILE: /run/secrets/grafana_secret_key
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      ELASTICSEARCH_URL: ${ELASTICSEARCH_URL:-http://10.0.32.13:9200}
+      GF_LOG_MODE: console
+      GF_LOG_FORMAT: json
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+      - ./secrets/grafana_admin_password:/run/secrets/grafana_admin_password:ro
+      - ./secrets/grafana_secret_key:/run/secrets/grafana_secret_key:ro
+      - ./secrets/elasticsearch_api_key:/run/secrets/elasticsearch_api_key:ro
+      - ./secrets/discord_webhook_url:/run/secrets/discord_webhook_url:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "${MONITORING_PRIVATE_IP:-127.0.0.2}:3000:3000"
+    # Process 실패만 Docker가 복구하고, boot/daemon 재시작 뒤에는 systemd secret gate로 시작한다.
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 0.75
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  prometheus-data:
+  tempo-data:
+  grafana-data:

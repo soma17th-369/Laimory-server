@@ -1,0 +1,51 @@
+# WAS 박스에서 도는 Filebeat 설정(ELK 박스 아님). 앱 컨테이너 stdout(JSON) 을 ES 로 직송한다.
+# 비밀 없음 — ${FILEBEAT_PASSWORD} 는 컨테이너 env(docker run -e)로 주입한다.
+
+# host의 textfile collector가 loopback으로만 읽는다. 외부 SG/포트 개방은 하지 않는다.
+http.enabled: true
+http.host: 127.0.0.1
+http.port: 5066
+#
+# 이중 JSON: Docker json-file 이 앱 JSON 라인을 {"log":"...","stream":..} 봉투로 감싼다.
+# container 입력이 봉투를 벗기고(→ message 에 앱 원문 JSON), decode_json_fields 가 앱 JSON 을 루트로 승격.
+#
+# ⚠️ 8.x 전용(type: container). 9.x 는 filestream + container parser + ndjson parser 로 재작성 필요.
+
+filebeat.inputs:
+  - type: container            # 8.x 전용(9.x는 filestream+container parser로 재작성)
+    paths:
+      - /var/lib/docker/containers/*/*.log
+
+processors:
+  - decode_json_fields:
+      when:
+        regexp:
+          message: '^\s*\{'    # 비-JSON 라인(부팅 초기 stdout) decode 실패 방지
+      fields: ["message"]
+      target: ""
+      overwrite_keys: true
+  - drop_event:
+      when:
+        not:
+          equals:
+            service: "laimory" # 피드백 루프·타 컨테이너·비-JSON 라인 차단(decode 후 service 판정)
+  - timestamp:
+      field: "@timestamp"
+      layouts:                 # Go reference layout — 단수 `layout`/`ISO8601+offset` 표기 금지
+        - "2006-01-02T15:04:05.999-07:00"
+        - "2006-01-02T15:04:05.999Z"
+      ignore_missing: true
+      ignore_failure: true
+  - drop_fields:
+      # 인프라/Filebeat 메타(host.name·log.offset·log.file.path 등)는 로그 열람에 불필요 → 제거.
+      fields: ["@version", "agent", "ecs", "input", "stream", "host", "log"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["http://10.0.32.13:9200"]
+  username: "filebeat_writer"
+  password: "${FILEBEAT_PASSWORD}"
+  index: "laimory-%{[environment]}-%{+yyyy.MM.dd}"
+
+setup.template.enabled: false  # 템플릿/ILM은 ELK setup 서비스가 선생성 — Filebeat는 관여 안 함
+setup.ilm.enabled: false

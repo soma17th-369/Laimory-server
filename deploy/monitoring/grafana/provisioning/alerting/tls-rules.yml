@@ -1,0 +1,125 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-tls
+    folder: Laimory
+    interval: 1h
+    rules:
+      - uid: laimory_tls_expiry_warning
+        title: TLS certificate expires within 30 days
+        dashboardUid: laimory-overview
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 7200, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time()) and (probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time() >= 1209600)'
+              instant: true
+              intervalMs: 60000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [2592000], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'The dev TLS certificate expires within 30 days.'
+          description: 'The warning is gated above 14 days so it does not duplicate the critical alert.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#tls-certificate-expiry
+        labels:
+          environment: dev
+          job: blackbox_https
+          service: laimory
+          severity: warning
+        isPaused: false
+
+      - uid: laimory_tls_expiry_critical
+        title: TLS certificate expires within 14 days
+        dashboardUid: laimory-overview
+        panelId: 13
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 7200, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'probe_ssl_earliest_cert_expiry{job="blackbox_https",environment="dev"} - time()'
+              instant: true
+              intervalMs: 60000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [1209600], type: lt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'The dev TLS certificate expires within 14 days.'
+          description: 'Automatic renewal has not produced a sufficiently long-lived certificate.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#tls-certificate-expiry
+        labels:
+          environment: dev
+          job: blackbox_https
+          service: laimory
+          severity: critical
+        isPaused: false

@@ -2,7 +2,6 @@ package com.laimory.server;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.sql.DataSource;
@@ -10,13 +9,16 @@ import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * 운영 확인용 API 구현. HTTP 문서·계약은 {@link SystemApi}.
+ */
 @RestController
 @RequiredArgsConstructor
-public class SystemController {
+public class SystemController implements SystemApi {
 
     private final DataSource dataSource;
 
-    @GetMapping("/status")
+    @Override
     public ResponseEntity<Map<String, String>> status() {
         Map<String, String> result = new HashMap<>();
 

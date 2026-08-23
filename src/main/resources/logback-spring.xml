@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  로그 출력 프로파일 게이팅:
+  - 기본(EC2, !docker): ELK 수집용 JSON을 stdout으로. Docker json-file 드라이버가 캡처한다(파일/볼륨 불필요).
+  - docker(로컬 개발): 사람이 읽는 텍스트 콘솔.
+  transactionId는 MDC로 자동 포함된다(JSON은 encoder가 MDC 전체 출력, 텍스트는 %X 패턴).
+-->
+<configuration>
+    <!-- Boot 기본 변수/컨버터 로드 — 이 include가 없으면 logging.* 프로퍼티 연동이 끊긴다 -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- EC2(기본 프로파일): JSON stdout. environment는 docker run -e APP_ENV로 주입(미설정=local) -->
+    <springProfile name="!docker">
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"laimory","environment":"${APP_ENV:-local}"}</customFields>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- 로컬(docker 프로파일): 텍스트 콘솔 + transactionId -->
+    <springProfile name="docker">
+        <appender name="TEXT_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{transactionId:-no-tx}] [%thread] %logger{36} - %msg %marker%n</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="TEXT_CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

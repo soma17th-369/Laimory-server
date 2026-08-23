@@ -1,0 +1,14 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: Discord
+    receivers:
+      - uid: laimory_discord
+        type: discord
+        disableResolveMessage: false
+        settings:
+          url: "$__file{/run/secrets/discord_webhook_url}"
+          use_discord_username: false
+          title: '{{ template "laimory.discord.title" . }}'
+          message: '{{ template "laimory.discord.message" . }}'
