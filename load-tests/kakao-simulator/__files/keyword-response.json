@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "same_name": {
+      "region": [],
+      "keyword": "서울 테스트구 시뮬레이터로 251",
+      "selected_region": ""
+    },
+    "pageable_count": 2,
+    "total_count": 2,
+    "is_end": true
+  },
+  "documents": [
+    {
+      "id": "2570001",
+      "place_name": "Laimory 테스트카페",
+      "category_name": "테스트 > 카페",
+      "category_group_code": "CE7",
+      "category_group_name": "카페",
+      "phone": "",
+      "address_name": "서울 테스트구 테스트동 251",
+      "road_address_name": "서울 테스트구 시뮬레이터로 251",
+      "x": "126.9668",
+      "y": "37.534",
+      "place_url": "https://example.invalid/places/2570001",
+      "distance": "0"
+    },
+    {
+      "id": "2570002",
+      "place_name": "Laimory 테스트식당",
+      "category_name": "테스트 > 음식점",
+      "category_group_code": "FD6",
+      "category_group_name": "음식점",
+      "phone": "",
+      "address_name": "서울 테스트구 테스트동 251",
+      "road_address_name": "서울 테스트구 시뮬레이터로 251",
+      "x": "126.9668",
+      "y": "37.534",
+      "place_url": "https://example.invalid/places/2570002",
+      "distance": "1"
+    }
+  ]
+}

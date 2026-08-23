@@ -1,0 +1,33 @@
+{
+  "id": "02570000-0000-4000-8000-000000000001",
+  "name": "kakao-coord2address-success",
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/v2/local/geo/coord2address.json",
+    "headers": {
+      "Authorization": {
+        "equalTo": "KakaoAK k6-257-dummy"
+      }
+    },
+    "queryParameters": {
+      "x": {
+        "matches": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+      },
+      "y": {
+        "matches": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+      },
+      "input_coord": {
+        "absent": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;charset=UTF-8"
+    },
+    "bodyFileName": "coord2address-response.json",
+    "fixedDelayMilliseconds": 50
+  }
+}
