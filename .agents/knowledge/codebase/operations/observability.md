@@ -119,7 +119,9 @@ skeleton 마스킹으로 access log에 남지 않는다(구조 필드만 남는�
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
-개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
+개인정보처리방침 변경을 먼저 완료해야 한다. 2026-08-23 기준 prod 배포 경로가 생겼으므로 이 전제는 더 이상 성립하지 않는다 — body logging을
+끄고 켜는 runtime flag를 두는 선택지가 열렸고, 그렇게 하면 개인정보 승인 절차를 공개 일정에서
+분리할 수 있다. 아직 flag는 없다.
 
 polling GET response body는 #281에서 전체 placeholder였고 #312부터 skeleton이다 — 이벤트 제목·부제·
 질문·payload 등 원문 필드는 `"***"`, envelope·status·numeric `error`·이벤트/아이템 구조는 남는다.
@@ -179,7 +181,7 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 - dev workflow가 application environment 값을 주입한다.
 - default profile은 JSON stream 순도를 위해 banner와 Hibernate `show-sql`을 끈다.
 
-## Dev Log Pipeline
+## Log Pipeline
 
 ```text
 Spring JSON stdout
@@ -190,7 +192,9 @@ Spring JSON stdout
 ```
 
 - Filebeat는 root로 Docker container log를 읽고 JSON decode 뒤 `service=laimory` event만 유지한다.
-- index pattern은 `laimory-{environment}-YYYY.MM.dd`다.
+  dev WAS와 **prod WAS 2대**에 배치돼 있고, 같은 Elasticsearch로 보낸다.
+- index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
+  환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
 - Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 nginx `/kibana`로 proxy한다.
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
@@ -253,15 +257,15 @@ Spring JSON stdout
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
 
-## Dev Metrics Assets
+## Metrics Assets
 
 repository에는 Prometheus, Grafana, blackbox와 central MySQL/Redis exporter의 구성 자산이 있다.
 Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
-node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK의 private interface:9100에만 bind하는
-systemd service다. pinned release archive SHA를 검증하며 prod에는 설치하지 않는다. textfile collector는
+node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
+interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
 root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
@@ -393,6 +397,20 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
+- **prod는 지표만 수집되고 경보는 없다.** alert rule의 PromQL과 Elasticsearch 질의가
+  `environment="dev"`를 값으로 고정하고 있어(5xx 비율·p95 지연·JVM heap·ERROR count) prod target이
+  `up`이어도 어떤 규칙도 평가되지 않는다. dashboard는 `environment` 템플릿 변수를 갖고 있어 prod가
+  그대로 보이므로, "보인다"와 "알려준다"가 갈린 상태다.
+- **prod 로그는 Elasticsearch에 쌓이지만 Grafana에서 보이지 않는다.** prod WAS 2대의 Filebeat가
+  `laimory-prod-*`로 정상 적재하는데(2026-08-23 실측: acked == total, failed·dropped 0), Grafana
+  Elasticsearch datasource는 index가 `[laimory-dev-]YYYY.MM.DD`로 고정이고 API key도 `laimory-dev-*`
+  한정이라 Logs dashboard와 ERROR 경보가 prod를 읽지 못한다. 지금 prod 로그를 보는 경로는 Kibana와
+  SSM뿐이다.
+- **prod Filebeat self-metric이 없다.** `collect-filebeat-metrics.sh`와 timer가 dev WAS에만 있어
+  `laimory_filebeat_up`이 dev 1개뿐이다. prod 로그 파이프라인이 끊겨도 경보가 없다.
+- **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
+  요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
+  개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.
 
 ## Update When
 
