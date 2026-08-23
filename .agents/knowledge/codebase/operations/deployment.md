@@ -75,7 +75,7 @@ Grafana-readable alerting 디렉터리 mode를 유지한 채 파일만 복구한
 Grafana admin password는 monitoring host의 `0400` secret file만이 소유한다. workflow, S3 release,
 SSM command와 process argument에는 credential을 전달하지 않는다. application deploy와 monitoring
 deploy는 별도 concurrency group을 사용하며, alert와 무관한 merge는 monitoring deploy를 시작하지 않는다.
-live 자동화의 선행 조건은 repository의 monitoring instance/bucket Variable과 deploy role의 scoped S3
+live 자동화의 선행 조건은 repository의 monitoring instance/bucket Secret과 deploy role의 scoped S3
 conditional PutObject·동일 bytes 검증용 GetObject·monitoring SSM 권한을 Console/검토된 CLI로
 반영하는 것이다. 실제 AWS와 host 상태가 권위 원천이다.
 
@@ -215,10 +215,11 @@ application deploy run이 0건인지 확인한다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow가 읽는 이름과 GitHub repository 설정을 맞춘다. instance 목록
-  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`)은 Secrets, 나머지(`AWS_DEPLOY_ROLE_ARN`·
-  `DEPLOY_PAUSED`·monitoring instance/bucket)는 Variables다. Actions가 step의 `env:` 블록을
-  로그에 그대로 echo하는데 Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, instance 목록을
-  Variable로 되돌리지 않는다 — harness가 `vars.` 회귀를 검사한다.
+  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`)과 monitoring instance/bucket
+  (`MONITORING_INSTANCE_ID`·`MONITORING_BACKUP_BUCKET`)은 Secrets, 나머지
+  (`AWS_DEPLOY_ROLE_ARN`·`DEPLOY_PAUSED`)는 Variables다. Actions가 step의 `env:` 블록을
+  로그에 그대로 echo하는데 Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, host 식별자를
+  Variable로 되돌리지 않는다 — 두 deploy harness가 `vars.` 회귀를 검사한다.
 - 배포 환경 판단은 Resolve step 한 곳에만 둔다. 다른 step이 branch·event를 다시 보고 환경을
   정하지 않는다 — harness가 이 단일 지점 계약을 검사한다.
 - host가 여러 대인 환경은 순차 배포하고, 실패 시 남은 host로 진행하지 않는다.

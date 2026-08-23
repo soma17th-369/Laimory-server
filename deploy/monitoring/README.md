@@ -119,14 +119,19 @@ workflow는 commit SHA prefix에 `If-None-Match: *` 조건으로 각 파일을 �
 `workflow_dispatch` release는 이 자동 최신성 검사를 우회한다. 다른 path만 바뀐 merge에는 monitoring
 workflow가 실행되지 않는다.
 
-repository Variables와 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. 권한 변경은
+repository 설정과 live IAM은 workflow를 merge하기 전에 아래 계약을 충족해야 한다. 권한 변경은
 조회 결과와 영향을 검토하고 별도 승인받은 Console 또는 CLI 작업으로 반영한다.
 
-| Repository Variable | 값 |
-|---|---|
-| `AWS_DEPLOY_ROLE_ARN` | GitHub OIDC deploy role ARN |
-| `MONITORING_INSTANCE_ID` | dev monitoring EC2 instance ID |
-| `MONITORING_BACKUP_BUCKET` | monitoring bootstrap을 가진 backup bucket 이름 |
+| 이름 | 종류 | 값 |
+|---|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | Variable | GitHub OIDC deploy role ARN |
+| `MONITORING_INSTANCE_ID` | Secret | dev monitoring EC2 instance ID |
+| `MONITORING_BACKUP_BUCKET` | Secret | monitoring bootstrap을 가진 backup bucket 이름 |
+
+instance id와 bucket 이름은 Secret이다. Actions는 workflow의 `env:` 블록을 모든 step 헤더의 로그에
+그대로 echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, Variable로 두면 매
+실행 로그에 두 값이 평문으로 남는다. Secret은 `***`로 마스킹된다. `AWS_DEPLOY_ROLE_ARN`은 비밀이
+아니고 값이 보여야 진단이 되므로 Variable로 남긴다.
 
 - GitHub deploy role: `s3:if-none-match` header가 있는 요청만 허용하는 alert release prefix
   `s3:PutObject`, 같은 bytes 재시도 검증용 `s3:GetObject`, monitoring EC2와

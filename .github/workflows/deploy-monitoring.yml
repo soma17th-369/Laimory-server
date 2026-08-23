@@ -24,8 +24,12 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  BACKUP_BUCKET: ${{ vars.MONITORING_BACKUP_BUCKET }}
-  INSTANCE_ID: ${{ vars.MONITORING_INSTANCE_ID }}
+  # instance id와 bucket 이름은 Secrets에서 읽는다 — Actions는 이 workflow-level env: 블록을 모든 step
+  # 헤더의 로그에 그대로 echo하는데, repository Variable은 secret과 달리 마스킹되지 않고 이 저장소는
+  # PUBLIC이라 값이 공개 로그에 반복해서 남는다. Secret은 Actions가 ***로 마스킹한다.
+  # AWS_DEPLOY_ROLE_ARN은 비밀이 아니고 로그에 보여야 진단이 되므로 Variable로 남긴다.
+  BACKUP_BUCKET: ${{ secrets.MONITORING_BACKUP_BUCKET }}
+  INSTANCE_ID: ${{ secrets.MONITORING_INSTANCE_ID }}
 
 jobs:
   deploy-alert-rules:
@@ -33,13 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate deployment variables
+      - name: Validate deployment settings
         env:
           AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
         run: |
           test -n "$AWS_ROLE_ARN" || { echo "missing repository variable: AWS_DEPLOY_ROLE_ARN" >&2; exit 1; }
-          test -n "$BACKUP_BUCKET" || { echo "missing repository variable: MONITORING_BACKUP_BUCKET" >&2; exit 1; }
-          test -n "$INSTANCE_ID" || { echo "missing repository variable: MONITORING_INSTANCE_ID" >&2; exit 1; }
+          test -n "$BACKUP_BUCKET" || { echo "missing repository secret: MONITORING_BACKUP_BUCKET" >&2; exit 1; }
+          test -n "$INSTANCE_ID" || { echo "missing repository secret: MONITORING_INSTANCE_ID" >&2; exit 1; }
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4

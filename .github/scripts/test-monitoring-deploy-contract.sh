@@ -30,8 +30,15 @@ ruby -ryaml -e '
   abort "contents permission must be read-only" unless workflow.dig("permissions", "contents") == "read"
   abort "monitoring concurrency group changed" unless workflow.dig("concurrency", "group") == "deploy-monitoring-alert-rules-dev"
   abort "monitoring deploy must queue, not cancel" unless workflow.dig("concurrency", "cancel-in-progress") == false
-  abort "monitoring instance variable missing" unless workflow.dig("env", "INSTANCE_ID") == "${{ vars.MONITORING_INSTANCE_ID }}"
-  abort "monitoring bucket variable missing" unless workflow.dig("env", "BACKUP_BUCKET") == "${{ vars.MONITORING_BACKUP_BUCKET }}"
+  # instance id와 bucket 이름은 Secrets에서만 읽는다: Actions가 workflow-level env: 블록을 모든 step
+  # 헤더의 로그에 그대로 echo하는데 repository Variable은 마스킹되지 않아 PUBLIC 저장소의 공개 로그에
+  # 값이 남는다. Secret은 ***로 마스킹되므로 vars.로 되돌아가는 회귀를 여기서 함께 막는다.
+  {"INSTANCE_ID" => "MONITORING_INSTANCE_ID",
+   "BACKUP_BUCKET" => "MONITORING_BACKUP_BUCKET"}.each do |env_key, name|
+    expr = workflow.dig("env", env_key).to_s
+    abort "monitoring #{env_key} must read repository secret #{name}" unless expr.include?("secrets.#{name}")
+    abort "monitoring #{env_key} must not read an unmasked repository variable" if expr.include?("vars.")
+  end
 
   steps = workflow.dig("jobs", "deploy-alert-rules", "steps")
   abort "deploy job missing" unless steps
