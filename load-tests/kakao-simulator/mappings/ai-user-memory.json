@@ -1,0 +1,49 @@
+{
+  "id": "02570000-0000-4000-8000-000000000004",
+  "name": "ai-user-memory-dispatch",
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/user-memory",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.taskId"
+      },
+      {
+        "matchesJsonPath": "$.taskToken"
+      },
+      {
+        "matchesJsonPath": "$.dailyTimelines"
+      }
+    ]
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"taskId\":\"{{jsonPath request.body '$.taskId'}}\",\"status\":\"PROCESSING\"}",
+    "transformers": [
+      "response-template"
+    ],
+    "fixedDelayMilliseconds": 50
+  },
+  "serveEventListeners": [
+    {
+      "name": "webhook",
+      "parameters": {
+        "method": "POST",
+        "url": "http://10.0.4.78:8080/s/api/v1/user-memory/updates/{{jsonPath originalRequest.body '$.taskId'}}/result",
+        "headers": {
+          "Content-Type": "application/json",
+          "Task-Token": "{{jsonPath originalRequest.body '$.taskToken'}}"
+        },
+        "body": "{\"status\":\"SUCCESS\",\"userMemory\":{\"schemaVersion\":\"1.0\",\"updatedAt\":\"2026-01-01T00:00:00Z\",\"currentFocus\":\"[SIMULATOR] fake user memory\"},\"errorCode\":null,\"error\":null}",
+        "delay": {
+          "type": "fixed",
+          "milliseconds": 60000
+        }
+      }
+    }
+  ]
+}
