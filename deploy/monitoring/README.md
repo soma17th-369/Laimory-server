@@ -11,7 +11,7 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
   metrics generator off (#277)
 - Grafana: Prometheus metrics, read-only Elasticsearch dev log datasource와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
-- node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK의 private IP:9100
+- node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK와 prod WAS 2대의 private IP:9100
 - textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
@@ -221,8 +221,8 @@ private IPv4를 얻어 그 주소의 9100에만 bind한다. textfile collector d
 `/var/lib/node_exporter/textfile_collector` 하나로 고정하고 root oneshot collector가 atomic rename한
 비밀 없는 `.prom` 파일만 읽는다.
 
-살아 있는 monitoring, dev WAS, dev MySQL, Redis, ELK 각 host의 SSM 세션에서 같은 명령을 실행한다.
-prod host에는 설치하지 않는다. 기존 Redis host처럼 AWS CLI가 아직 없으면 먼저 아래처럼 설치한다.
+살아 있는 monitoring, dev WAS, dev MySQL, Redis, ELK와 prod WAS 2대 각 host의 SSM 세션에서 같은
+명령을 실행한다. 기존 Redis host처럼 AWS CLI가 아직 없으면 먼저 아래처럼 설치한다.
 
 ```bash
 if ! command -v aws >/dev/null; then

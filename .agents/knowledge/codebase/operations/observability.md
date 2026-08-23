@@ -119,7 +119,9 @@ skeleton 마스킹으로 access log에 남지 않는다(구조 필드만 남는�
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
-개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
+개인정보처리방침 변경을 먼저 완료해야 한다. 2026-08-23 기준 prod 배포 경로가 생겼으므로 이 전제는 더 이상 성립하지 않는다 — body logging을
+끄고 켜는 runtime flag를 두는 선택지가 열렸고, 그렇게 하면 개인정보 승인 절차를 공개 일정에서
+분리할 수 있다. 아직 flag는 없다.
 
 polling GET response body는 #281에서 전체 placeholder였고 #312부터 skeleton이다 — 이벤트 제목·부제·
 질문·payload 등 원문 필드는 `"***"`, envelope·status·numeric `error`·이벤트/아이템 구조는 남는다.
@@ -253,15 +255,15 @@ Spring JSON stdout
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
 
-## Dev Metrics Assets
+## Metrics Assets
 
 repository에는 Prometheus, Grafana, blackbox와 central MySQL/Redis exporter의 구성 자산이 있다.
 Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
-node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK의 private interface:9100에만 bind하는
-systemd service다. pinned release archive SHA를 검증하며 prod에는 설치하지 않는다. textfile collector는
+node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
+interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
 root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
@@ -393,6 +395,13 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
+- **prod는 지표만 수집되고 경보는 없다.** alert rule의 PromQL과 Elasticsearch 질의가
+  `environment="dev"`를 값으로 고정하고 있어(5xx 비율·p95 지연·JVM heap·ERROR count) prod target이
+  `up`이어도 어떤 규칙도 평가되지 않는다. dashboard는 `environment` 템플릿 변수를 갖고 있어 prod가
+  그대로 보이므로, "보인다"와 "알려준다"가 갈린 상태다.
+- **prod 로그는 수집되지 않는다.** Filebeat를 붙이지 않았고 Elasticsearch API key도 `laimory-dev-*`
+  한정이다. prod 앱 로그는 container json-file(10MB×3 rotation)에만 있고 SSM으로만 열람한다.
+  활성화 전 선행 조건은 이 문서 상단의 개인정보 승인 절차다.
 
 ## Update When
 
