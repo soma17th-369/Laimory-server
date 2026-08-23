@@ -30,7 +30,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
  *       {@code logLevel()}이 정한다(access 로그 레벨의 SSOT — status는 클라이언트 계약, 레벨은
  *       서버 관점 심각도로 독립 축). 에러 없는 요청은 INFO.</li>
  *   <li>{@link ExcludedPaths}(정상 완료가 아무 정보도 담지 않는 트래픽 — 헬스체크·favicon)는
- *       정상 완료 시 로그를 남기지 않는다. 에러·미처리 예외는 경로와 무관하게 남고,
+ *       정상 완료 시 로그를 남기지 않는다. 에러 — 전파된 예외, {@link ExceptionType} attribute,
+ *       그리고 attribute 없이 핸들러가 직접 만든 5xx 응답 — 는 경로와 무관하게 남고,
  *       tx 발급·MDC·응답 헤더도 항상 유지된다.</li>
  *   <li>미처리 예외가 필터까지 전파되면 ERROR + effective status 500으로 기록 후 그대로 rethrow한다
  *       — 최초 dispatch의 부분 body는 이후 최종 응답이 아닐 수 있어 고정 placeholder로 남긴다.</li>
@@ -95,8 +96,8 @@ public class TransactionIdFilter extends OncePerRequestFilter {
                                long start, Throwable caught) {
         String path = request.getRequestURI();                    // query string 제외(presigned 서명·토큰 유출 방지)
         ExceptionType type = (ExceptionType) request.getAttribute(RequestLogAttributes.EXCEPTION_TYPE);
-        if (caught == null && type == null && ExcludedPaths.contains(path)) {
-            return; // 정상 완료한 제외 경로만 생략 — 에러는 경로와 무관하게 남긴다
+        if (caught == null && type == null && response.getStatus() < 500 && ExcludedPaths.contains(path)) {
+            return; // 정상 완료한 제외 경로만 생략 — 에러(전파 예외·attribute·5xx)는 경로와 무관하게 남긴다
         }
         long latencyMs = (System.nanoTime() - start) / 1_000_000;
         int status = caught != null ? 500 : response.getStatus(); // 예외 전파 시 아직 200인 status 오기록 방지
