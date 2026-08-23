@@ -49,8 +49,11 @@ concurrency:
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: laimory
-  # 확인한 Sandbox 실측값은 repo Variables로 주입한다(하드코딩 금지).
-  # 필수 변수: DEV_INSTANCE_ID, PROD_INSTANCE_IDS, AWS_DEPLOY_ROLE_ARN
+  # 확인한 Sandbox 실측값은 repo 설정으로 주입한다(하드코딩 금지).
+  # 필수 Secrets: DEV_INSTANCE_ID, PROD_INSTANCE_IDS — Actions는 step의 env: 블록을 로그에 그대로
+  #   echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라 instance id가 공개
+  #   워크플로 로그에 남는다. Secret은 Actions가 ***로 마스킹한다.
+  # 필수 Variables: AWS_DEPLOY_ROLE_ARN, DEPLOY_PAUSED (비밀이 아니고 로그에 보여야 진단이 된다)
 
 jobs:
   deploy:
@@ -66,8 +69,10 @@ jobs:
         id: env
         env:
           DISPATCH_ENVIRONMENT: ${{ inputs.environment }}
-          DEV_INSTANCE_ID: ${{ vars.DEV_INSTANCE_ID }}
-          PROD_INSTANCE_IDS: ${{ vars.PROD_INSTANCE_IDS }}
+          # instance 목록만 Secrets에서 읽는다 — Actions가 이 env: 블록을 공개 로그에 그대로 echo하므로
+          # Variable로 두면 매 실행마다 instance id가 남는다(Secret은 ***로 마스킹된다).
+          DEV_INSTANCE_ID: ${{ secrets.DEV_INSTANCE_ID }}
+          PROD_INSTANCE_IDS: ${{ secrets.PROD_INSTANCE_IDS }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             ENVIRONMENT="$DISPATCH_ENVIRONMENT"
@@ -80,7 +85,7 @@ jobs:
           # 이 기대값과 byte 일치를 요구한다(exact-one). 여기 값이 곧 그 계약이다.
           # EXPECT_HOST_COUNT는 "이 환경은 몇 대인가"의 계약이다. 비어 있지 않은지만 보면 변수에서
           # 한 대가 빠졌을 때 나머지 host가 옛 image를 계속 서빙하는데도 workflow가 성공으로 끝난다.
-          # host를 늘리거나 줄이면 repository variable과 이 값을 함께 고친다.
+          # host를 늘리거나 줄이면 instance 목록 repository secret과 이 값을 함께 고친다.
           case "$ENVIRONMENT" in
             dev)
               INSTANCE_IDS="$DEV_INSTANCE_ID"
@@ -104,11 +109,11 @@ jobs:
               echo "unknown deploy environment: '$ENVIRONMENT' (expected dev or prod)" >&2; exit 1 ;;
           esac
           [ -n "$INSTANCE_IDS" ] \
-            || { echo "no instance ids configured for environment $ENVIRONMENT (check repository variables)" >&2; exit 1; }
+            || { echo "no instance ids configured for environment $ENVIRONMENT (check repository secrets)" >&2; exit 1; }
           # 공백·콤마 어느 쪽으로 적혀 있어도 같은 개수로 센다(배포 루프와 같은 정규화).
           set -- ${INSTANCE_IDS//,/ }
           [ "$#" = "$EXPECT_HOST_COUNT" ] \
-            || { echo "environment $ENVIRONMENT expects $EXPECT_HOST_COUNT host(s) but the repository variable lists $#" >&2; exit 1; }
+            || { echo "environment $ENVIRONMENT expects $EXPECT_HOST_COUNT host(s) but the repository secret lists $#" >&2; exit 1; }
           {
             echo "environment=$ENVIRONMENT"
             echo "instance_ids=$INSTANCE_IDS"
@@ -119,8 +124,8 @@ jobs:
             echo "expect_app_geo_mode=$EXPECT_APP_GEO_MODE"
             echo "has_nginx=$HAS_NGINX"
           } >> "$GITHUB_OUTPUT"
-          # 저장소가 PUBLIC이고 Actions 로그도 공개다. repository variable은 secret과 달리 마스킹되지
-          # 않으므로 instance id를 로그에 싣지 않는다 — 개수만 남긴다.
+          # 저장소가 PUBLIC이고 Actions 로그도 공개다. instance 목록은 Secret이라 ***로 마스킹되지만
+          # 마스킹에만 기대지 않고 여기서도 instance id를 로그에 싣지 않는다 — 개수만 남긴다.
           echo "deploying to $ENVIRONMENT ($EXPECT_HOST_COUNT host(s))"
 
       # pause gate: repo variable DEPLOY_PAUSED=true면 push 배포를 workflow 레벨에서 skip한다 —

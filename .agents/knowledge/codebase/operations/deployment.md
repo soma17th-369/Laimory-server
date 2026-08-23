@@ -13,7 +13,7 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 - `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`, `.github/workflows/ci.yml`
 - `Dockerfile`
 - `deploy/monitoring/*`
-- live AWS, GitHub repository Variables와 host 상태
+- live AWS, GitHub repository Variables/Secrets(instance 목록은 Secrets)와 host 상태
 - `application.properties`, intro/status API implementation
 
 ## Current Application Deployment
@@ -182,13 +182,13 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
 ## Manual Operations
 
 - 저장소는 전체 AWS topology와 신규 host 초기화를 자동화하지 않는다.
-- live AWS, GitHub repository Variables와 실제 host 상태가 운영 구성의 권위 원천이다.
+- live AWS, GitHub repository Variables/Secrets와 실제 host 상태가 운영 구성의 권위 원천이다.
 - AWS 작업은 먼저 `sandbox` SSO를 확인하고 조회와 SSM 비변경 진단으로 제한한다. AWS·host 수정은
   대상·영향·rollback을 설명한 뒤 별도 승인받는다.
 - monitoring bootstrap에는 비밀 없는 자산만 두고 credential은 host의 보호 파일에만 주입한다.
 - nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
 - prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
-  prod host 목록 repository Variable과, deploy role의 `ssm:SendCommand` Resource에 prod host를
+  prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과, deploy role의 `ssm:SendCommand` Resource에 prod host를
   추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.
   IAM을 넓히면 "workflow도 IAM도 dev host만 안다"는 기존 이중 잠금이 사라지고 Resolve step의
   환경 분기가 유일한 방어선이 된다.
@@ -214,7 +214,11 @@ application deploy run이 0건인지 확인한다.
   바꾸지 않는다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
-- deploy workflow의 실제 variable 이름과 GitHub repository Variables를 맞춘다.
+- deploy workflow가 읽는 이름과 GitHub repository 설정을 맞춘다. instance 목록
+  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`)은 Secrets, 나머지(`AWS_DEPLOY_ROLE_ARN`·
+  `DEPLOY_PAUSED`·monitoring instance/bucket)는 Variables다. Actions가 step의 `env:` 블록을
+  로그에 그대로 echo하는데 Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, instance 목록을
+  Variable로 되돌리지 않는다 — harness가 `vars.` 회귀를 검사한다.
 - 배포 환경 판단은 Resolve step 한 곳에만 둔다. 다른 step이 branch·event를 다시 보고 환경을
   정하지 않는다 — harness가 이 단일 지점 계약을 검사한다.
 - host가 여러 대인 환경은 순차 배포하고, 실패 시 남은 host로 진행하지 않는다.
