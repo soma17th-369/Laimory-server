@@ -38,6 +38,10 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
   keyword place search 1회, 정상 2회 외부 호출한다(주소가 없는 좌표는 keyword search를 생략해 1회).
 - keyword search 결과는 "같은 주소(건물)의 입주 장소" 보장이 아니라 주소 질의어 + 반경 50m 매칭의
   실측 관찰 기반 휴리스틱이다.
+- **좌표 실패는 coord2address 실패뿐이다**: keyword 콜이 최종 실패하면 분류(REMOTE·`LOCAL_REJECTED`·
+  `NOT_PERMITTED`·shape·logical deadline)를 가리지 않고 빈 장소 목록으로 강등해 이미 확보한 주소와
+  건물명을 보존한다 — 그 좌표는 실패가 아니라 "주소만 있는 성공"이다. 강등해도 콜 단위 관측
+  (logical timer·warn 로그·circuit 통계)은 그대로 남는다.
 - **HTTP 실행과 품질 판정 분리**: 외부 호출은 unique coordinate로 dedupe하고, 예상된 실패는 error가
   아니라 좌표별 최종 outcome으로 materialize해 나머지 조회를 계속한다(`GeoLookupOutcome`).
   부분 실패 허용/거절은 timeline 계층의 품질 판정(`GeoEnrichmentPolicy`)이 aggregate로 정한다 —
