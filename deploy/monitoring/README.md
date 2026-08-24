@@ -439,15 +439,22 @@ grafana/provisioning/dashboards/json/laimory-overview.json
 grafana/provisioning/dashboards/json/laimory-jvm-spring.json
 grafana/provisioning/dashboards/json/laimory-infrastructure.json
 grafana/provisioning/dashboards/json/laimory-logs.json
+scripts/backup-ebs-snapshot.sh
+scripts/backup-mysql-dump.sh
 scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh
 scripts/collect-filebeat-metrics.sh
+scripts/configure-mysql-backup-user.sh
 systemd/laimory-aws-metrics.service
 systemd/laimory-aws-metrics.timer
+systemd/laimory-ebs-snapshot.service
+systemd/laimory-ebs-snapshot.timer
 systemd/laimory-elasticsearch-metrics.service
 systemd/laimory-elasticsearch-metrics.timer
 systemd/laimory-filebeat-metrics.service
 systemd/laimory-filebeat-metrics.timer
+systemd/laimory-mysqldump-backup.service
+systemd/laimory-mysqldump-backup.timer
 ASSETS
 if aws s3api head-object --bucket "$BACKUP_BUCKET" \
   --key bootstrap/elk/filebeat.yml --profile sandbox >/dev/null 2>&1; then
@@ -658,6 +665,91 @@ sudo systemctl start laimory-filebeat-metrics.service
 curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" |
   grep '^laimory_filebeat_'
 ```
+
+## prod MySQL backup
+
+prod MySQL은 관리형이 아니라 백업이 저절로 생기지 않는다. AWS Backup·DLM은 조직 SCP로 거부되어
+(2026-08-24 policy simulation 실측: `backup-storage:*` 명시 거부) EBS 스냅샷도 직접 호출로 만든다.
+백업은 두 갈래이고 각 갈래의 마지막 성공이 26시간을 넘으면 `backup-rules.yml`의 rule이 발화한다.
+
+- **논리 덤프** — prod MySQL host의 `laimory-mysqldump-backup.timer`(매일 04:15 KST)가
+  `mysqldump --single-transaction`을 gzip해 backup bucket `prod-mysql/mysqldump/`(30일 만료
+  lifecycle)로 올린다. **일관된 복구의 권위는 이쪽이다.**
+- **EBS 스냅샷** — monitoring host의 `laimory-ebs-snapshot.timer`(매일 04:30 KST)가 root volume
+  snapshot 생성 → 완료 대기 → 14일 초과분 prune → 최신 완료 시각을 textfile metric으로 기록한다.
+  스냅샷은 crash-consistent(전원 차단과 동일)이며 복원 기동은 InnoDB crash recovery 경로다.
+
+두 host 모두 node_exporter textfile collector가 전제다(위 node_exporter 설치 절차 참고).
+IAM은 로컬 운영자 권한으로 반영한다 — prod MySQL role의 `laimory-prod-mysqldump-s3-put`
+(dump prefix 한정 `s3:PutObject`)과 monitoring role의 `laimory-prod-mysql-ebs-snapshot`
+(생성은 대상 volume 한정, 삭제는 `laimory-backup=prod-mysql` tag 조건).
+
+설정 파일은 각 host가 소유하며 저장소에 두지 않는다(버킷 이름에 계정 ID 포함).
+
+```bash
+# prod MySQL host: /etc/laimory/mysqldump-backup.env (root 0600)
+MYSQL_USER='laimory_backup'
+MYSQL_PASSWORD='<backup password>'
+S3_PREFIX='s3://<backup bucket>/prod-mysql/mysqldump'
+
+# monitoring host: /etc/laimory/ebs-snapshot-backup.env (root 0600)
+VOLUME_ID='<prod MySQL root EBS volume id>'
+RETENTION_DAYS=14
+```
+
+prod MySQL host 설치 — 백업 계정을 만들고(대화형: backup password 입력. MySQL은 host 네이티브
+설치이고 root는 socket 인증이라 root password는 필요 없다) script/unit을 설치한다.
+timer enable 직후 service를 1회 실행해 첫 metric을 만든다 — 이게 없으면 absent 절이 즉시 발화한다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/configure-mysql-backup-user.sh" \
+  /tmp/configure-mysql-backup-user.sh --region ap-northeast-2 --only-show-errors
+sudo bash /tmp/configure-mysql-backup-user.sh
+sudo rm -f /tmp/configure-mysql-backup-user.sh
+
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/backup-mysql-dump.sh" \
+  /usr/local/sbin/backup-laimory-mysql-dump --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-mysqldump-backup.service" \
+  /etc/systemd/system/laimory-mysqldump-backup.service --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-mysqldump-backup.timer" \
+  /etc/systemd/system/laimory-mysqldump-backup.timer --region ap-northeast-2 --only-show-errors
+sudo chmod 0750 /usr/local/sbin/backup-laimory-mysql-dump
+sudo chmod 0644 /etc/systemd/system/laimory-mysqldump-backup.*
+sudo install -d -m 0700 /etc/laimory
+sudo vi /etc/laimory/mysqldump-backup.env   # 위 포맷, 저장 후 chmod 0600
+sudo chmod 0600 /etc/laimory/mysqldump-backup.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now laimory-mysqldump-backup.timer
+sudo systemctl start laimory-mysqldump-backup.service
+```
+
+monitoring host 설치 — 같은 순서로 설치하고 1회 실행한다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/backup-ebs-snapshot.sh" \
+  /opt/laimory-monitoring/scripts/backup-ebs-snapshot.sh --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-ebs-snapshot.service" \
+  /etc/systemd/system/laimory-ebs-snapshot.service --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-ebs-snapshot.timer" \
+  /etc/systemd/system/laimory-ebs-snapshot.timer --region ap-northeast-2 --only-show-errors
+sudo chmod 0750 /opt/laimory-monitoring/scripts/backup-ebs-snapshot.sh
+sudo chmod 0644 /etc/systemd/system/laimory-ebs-snapshot.*
+sudo install -d -m 0700 /etc/laimory
+sudo vi /etc/laimory/ebs-snapshot-backup.env   # 위 포맷, 저장 후 chmod 0600
+sudo chmod 0600 /etc/laimory/ebs-snapshot-backup.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now laimory-ebs-snapshot.timer
+sudo systemctl start laimory-ebs-snapshot.service
+```
+
+확인은 설정이 아니라 산출물로 한다 — `laimory_mysqldump_up`·`laimory_ebs_snapshot_up`이 1이고
+`*_last_success_unixtime_seconds`가 갱신되는지, S3 dump object와 EC2 snapshot 실물이 생기는지,
+service를 의도적으로 1회 실패시켜(예: env 파일 임시 이동) 두 alert가 발화하는지 본다.
+
+정리(uninstall)는 각 host에서 timer disable → unit/script/`.prom`/설정 파일 제거, 로컬 운영자
+권한에서 위 inline policy 2건과 bucket lifecycle rule(`expire-prod-mysqldump-30d`) 제거다.
 
 ## Discord smoke test
 

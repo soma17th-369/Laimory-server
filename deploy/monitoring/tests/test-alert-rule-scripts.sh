@@ -301,9 +301,10 @@ PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PUBL
   PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
   "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null
 PUBLISHED_PREFIX="$PUBLISH_ROOT/bootstrap/monitoring/releases/alert-rules/$PUBLISH_RELEASE"
-test "$(wc -l < "$PUBLISHED_PREFIX/SHA256SUMS" | tr -d ' ')" = "8"
+test "$(wc -l < "$PUBLISHED_PREFIX/SHA256SUMS" | tr -d ' ')" = "9"
 test "$(wc -l < "$PUBLISHED_PREFIX/tools/SHA256SUMS" | tr -d ' ')" = "2"
 test -f "$PUBLISHED_PREFIX/infrastructure-rules.yml"
+test -f "$PUBLISHED_PREFIX/backup-rules.yml"
 test -f "$PUBLISHED_PREFIX/tools/deploy-alert-rules.sh"
 ! grep -q -- '--profile' "$PUBLISH_AWS_LOG"
 grep -q -- 's3api put-object' "$PUBLISH_AWS_LOG"
