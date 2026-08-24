@@ -25,7 +25,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. `subject_id + record_date`는 유일하다. |
 | 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
-| 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 확정한다. 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
+| 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 최초 확정한다. 확정 후에는 `PUT .../daily-records/{recordDate}/emotion`이 SAVED record의 감정만 교체한다(status 불변·멱등, DRAFT는 409 `-1020`, User Memory 재enqueue 없음). 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
 | 작성완료 | Saved | 현재 구현 | `SAVED` enum, 같은 날짜 draft append 거부(`-1003`), 그리고 사용자가 필수 `emotionType` body와 함께 `DRAFT→SAVED`로 전환하는 `POST .../daily-records/{recordDate}/save`가 모두 있다. Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제는 SAVED에서도 허용된다. 전이는 하루 감정과 함께 동기 커밋이라 200이 곧 저장 완료이고, 뒤따르는 User Memory 갱신은 별개 흐름이다. |
 
@@ -33,7 +33,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. |
+| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 연결 Item이 없다(`items=[]`, 사진은 생성 후 Event PATCH `photosToAdd`로 추가). |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |

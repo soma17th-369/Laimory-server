@@ -91,7 +91,8 @@ DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나뿐이다 — AI 결과도 서버 결과 저장
-transaction이 쓰고, Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가도 같은 계층이 commit한다.
+transaction이 쓰고, Event PATCH의 Event/memo 수정·수동 PHOTO Item/junction 추가·수동 Event 생성
+(#326 — Item 없는 단일 Event insert)도 같은 계층이 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
 FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
@@ -200,6 +201,15 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
 명시 삭제 후 mapping을 마지막에 지우는 계약이다. 이 owner 테이블들에는 raw `user_id` 컬럼이 없고
 runtime repository/entity도 subject만 읽고 쓴다.
+
+`daily_records.emotion_type`(`VARCHAR(32) NULL`)의 writer는 JPA bulk UPDATE 둘뿐이다 — save의
+`markSaved`(감정과 `status=SAVED`를 함께 최초 확정, `WHERE status='DRAFT'`)와 SAVED 전용 감정 수정
+`updateSavedEmotion`(감정만 교체, `WHERE status='SAVED'` — #325). 둘 다 영향 행 수가 판정 기준이고
+bulk UPDATE라 JPA auditing을 우회하므로 `updated_at`을 app Clock 파라미터로 직접 채운다(`modified_by`
+NULL). 감정 수정은 비트랜잭션 사전 조회 → update-first 트랜잭션 writer 경계를 쓴다 — MySQL 기본
+`REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에 묶으면 첫 조회가 고정한 snapshot이 동시
+삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
+`daily_records`·`timeline_events` 컬럼만 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정

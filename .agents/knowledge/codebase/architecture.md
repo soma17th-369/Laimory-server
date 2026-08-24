@@ -61,6 +61,17 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 소유권·DRAFT를 다시 확인해 Event/memo + PHOTO Item/junction을 한 번에 commit한다. 두 경로 모두 날짜
 단위 Redis admission 없이 자기 DB transaction 경계만 가진다.
 
+하루 감정 수정(#325)은 저장과 같은 2계층 경계다 — 비트랜잭션 오케스트레이터
+(`DailyRecordEmotionUpdateService`)가 날짜 사전 조회로 404·DRAFT 409를 거르고 ID snapshot만 별도
+`@Transactional` writer(`DailyRecordEmotionUpdateTransactionService`)에 넘긴다. writer는 트랜잭션의
+첫 DB 작업으로 SAVED 조건부 UPDATE를 실행하고 0행일 때만 재조회로 실패를 분류한다 — 사전 조회를
+트랜잭션 밖에 두는 이유는 MySQL `REPEATABLE READ`에서 첫 조회가 snapshot을 고정해 실패 재조회가
+동시 삭제 전 행을 다시 볼 수 있기 때문이다(`TimelineSaveService` → `TimelineSaveTransactionService`와
+같은 형태). 수동 Event 생성(#326)은 `TimelineEventCreateService`의 public `@Transactional` 메서드
+하나가 소유 record 재확인·입력 검증·Event insert를 소유하고 leaf `TimelineEventService.save`만
+사용한다. Event 상세 필드 공통 규칙은 package-private `TimelineEventInputRules`가 소유해 PATCH/생성이
+공유한다.
+
 Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan PHOTO delete-job insert·원문
 PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. Event-Item
 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 직접 DELETE로 지운다 —

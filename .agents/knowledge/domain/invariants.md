@@ -71,10 +71,20 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   미지원 literal은 결과 저장 400이다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
 - `DRAFT→SAVED` 전이는 조건부 UPDATE(`WHERE status='DRAFT'`)의 영향 행 수가 유일한 판정 기준이자 이
   흐름의 유일한 직렬화 지점이다. 요청 필수 `emotionType`(5단계 enum)과 `status=SAVED`는 이 UPDATE
-  하나로 함께 확정된다 — 감정·상태의 다른 write 지점은 없고 부분 상태도 없다. 사전 검증을 통과한
+  하나로 함께 **최초 확정**된다 — 부분 상태는 없다. 사전 검증을 통과한
   요청 둘이 겹쳐도 하나만 1을 받아 승자의 감정만 남고 나머지는 부수효과
   없이 롤백된다(0행은 재조회로 이미 SAVED 409 / 없음·비소유 404로 분류). 저장 전 DRAFT와 과거
   SAVED 행의 null 감정은 backfill하지 않는 정상 legacy 값이다.
+- 감정의 write 지점은 둘뿐이다 — save의 최초 확정 UPDATE와, SAVED 전용 감정 수정 PUT의 조건부
+  UPDATE(`WHERE status='SAVED'`, status 불변). 후자도 영향 행 수가 판정 기준이고 0행은 재조회로
+  DRAFT 409 `-1020` / 없음·비소유 404 / 동일 감정 SAVED 멱등 성공으로 분류한다. DRAFT에 감정을
+  미리 쓰는 경로는 없으며(`DRAFT + non-null emotionType` 상태 없음), 감정 수정은 User Memory 갱신을
+  새로 enqueue하지 않는다.
+- 수동 Event 생성(`POST .../daily-records/{recordDate}/events`)은 기존 DailyRecord에만 허용한다
+  (DRAFT/SAVED 모두, 없음·비소유 404 은닉 — DailyRecord 자동 생성 없음). 소유 record 재확인과 Event
+  insert는 하나의 transaction이다. 수동 Event의 `question`/`place`/`address`는 항상 null이고 연결
+  Item은 0건이며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드
+  규칙(title·subtitle·시간·memo)은 Event PATCH와 같은 단일 규칙을 공유한다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
