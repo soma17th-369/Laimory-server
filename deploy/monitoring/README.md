@@ -9,10 +9,10 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 - Prometheus: 30초 수집, TSDB 7일 또는 12GB 중 먼저 도달한 제한
 - Tempo: dev WAS의 OTLP gRPC(4317) trace 수신, 로컬 스토리지 `block_retention: 48h`,
   metrics generator off (#277)
-- Grafana: Prometheus metrics, read-only Elasticsearch dev log datasource와 Tempo trace datasource
+- Grafana: Prometheus metrics, read-only Elasticsearch log datasource(`laimory-*` wildcard)와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK와 prod WAS 2대의 private IP:9100
-- textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
+- textfile collector: monitoring의 CloudWatch/Elasticsearch와 WAS(dev·prod)의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
 - alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
@@ -187,10 +187,12 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
   (`laimory_elk_memory_low`, `laimory_aws_metric_collection_failed`, `laimory_cpu_credit_low`,
   `laimory_prometheus_*`, `laimory_mysql_connections_high`, `laimory_redis_evictions`,
   `laimory_datastore_backend_down`), 공개된 도메인이 있어야 성립하는 probe 계열
-  (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 dev WAS에만 수집기가 설치된
+  (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 환경 공유 자산인
+  Elasticsearch의 수집기·클러스터 상태를 monitoring host로 고정해 읽는
+  `laimory_elasticsearch_unhealthy`. 이들은 `environment="dev"` 셀렉터를 유지한다.
   log pipeline 계열(`laimory_log_pipeline_unhealthy`, `laimory_filebeat_output_failures`)과
-  index가 dev로 고정된 `laimory_application_error_log`. 이들은 `environment="dev"` 셀렉터와
-  `environment: dev` 라벨을 유지한다.
+  wildcard index를 environment terms로 나눠 평가하는 `laimory_application_error_log`는
+  환경 중립이다.
 
 새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
 수집기부터 설치한다.
@@ -377,12 +379,12 @@ curl -fsS -u elastic \
   -X POST http://10.0.32.13:9200/_security/api_key \
   -H 'Content-Type: application/json' \
   -d '{
-    "name":"grafana-laimory-dev-logs",
+    "name":"grafana-laimory-logs",
     "role_descriptors":{
       "grafana_logs_reader":{
         "cluster":["monitor"],
         "indices":[{
-          "names":["laimory-dev-*"],
+          "names":["laimory-*"],
           "privileges":["read","view_index_metadata"]
         }]
       }
@@ -403,13 +405,47 @@ printf 'header = "Authorization: ApiKey %s"\n' "$API_KEY" |
     -H 'Content-Type: application/json' \
     -d '{
       "index":[{
-        "names":["laimory-dev-*"],
+        "names":["laimory-*"],
         "privileges":["read","view_index_metadata","write","delete"]
       }]
     }' |
   jq .
 unset API_KEY
 ```
+
+## Log pipeline wildcard rollout
+
+datasource(`grafana/provisioning/datasources/elasticsearch.yml`)와 Logs dashboard는 alert rule
+자동 배포 대상이 아니다. 순서가 어긋나면 수집기-부재 분기가 오발화하거나(1을 건너뛰고 rule을
+먼저 배포), prod ERROR 경보가 dev index만 읽어 동작하지 않는다(4를 생략).
+
+1. **prod WAS 2대에 Filebeat 수집기 설치** — 위 collector 설치 절차 그대로. rule 배포 전에 끝낸다.
+2. **`dev` merge** — alert rule은 자동 배포된다.
+3. **(운영자 로컬)** `Existing live rollout`의 upload 절차로 두 자산을 S3에 올린다:
+   `grafana/provisioning/datasources/elasticsearch.yml` ·
+   `grafana/provisioning/dashboards/json/laimory-logs.json`
+4. **monitoring host** — 기존 파일을 backup한 뒤 교체하고, 위 절차로 API key를 `laimory-*` 범위로
+   재발급해 secret을 교체한 다음 Grafana를 재시작한다(datasource provisioning은 시작 시에만 로드).
+
+```bash
+cd /opt/laimory-monitoring
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+sudo install -d -m 0700 "rollback/log-wildcard-$STAMP"
+sudo cp grafana/provisioning/datasources/elasticsearch.yml "rollback/log-wildcard-$STAMP/"
+sudo cp grafana/provisioning/dashboards/json/laimory-logs.json "rollback/log-wildcard-$STAMP/"
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+sudo aws s3 cp "$BASE/grafana/provisioning/datasources/elasticsearch.yml" \
+  grafana/provisioning/datasources/elasticsearch.yml --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/grafana/provisioning/dashboards/json/laimory-logs.json" \
+  grafana/provisioning/dashboards/json/laimory-logs.json --region ap-northeast-2 --only-show-errors
+# 이 시점에 elasticsearch_api_key를 laimory-* 범위로 재발급해 교체한다 (위 절차)
+sudo docker compose restart grafana
+```
+
+rollback은 backup 파일 2개를 제자리에 복원하고 이전 범위의 key로 secret을 되돌린 뒤 grafana를
+재시작한다. datasource는 uid(`elasticsearch-dev`)가 같아 삭제 전용 provisioning 없이 파일 교체만으로
+되돌아간다.
 
 ## Existing live rollout
 
@@ -433,6 +469,7 @@ while IFS= read -r asset; do
 done <<'ASSETS'
 docker-compose.yml
 tempo/tempo.yml
+grafana/provisioning/datasources/elasticsearch.yml
 grafana/provisioning/datasources/tempo.yml
 node-exporter/install.sh
 grafana/provisioning/dashboards/json/laimory-overview.json
@@ -642,7 +679,7 @@ queue/busy/read-write latency를 수집한다. 여덟 query가 모두 `Complete`
 read-only API key로 cluster health와 가장 최근 dev log 시각을 읽는다. API key가 아직 비어 있으면
 service의 `ExecCondition`이 수집을 건너뛴다.
 
-dev WAS의 Filebeat HTTP stats는 `127.0.0.1:5066`에만 열고,
+WAS의 Filebeat HTTP stats는 `127.0.0.1:5066`에만 열고,
 `laimory-filebeat-metrics.timer`가 output result/queue/active/harvester 지표로 변환한다. SG나 public
 port는 추가하지 않는다. 최근 log 시각은 무트래픽과 장애를 구분할 수 없으므로 표시만 하고 freshness
 alert 조건으로 쓰지 않는다.

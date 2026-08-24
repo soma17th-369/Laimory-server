@@ -67,7 +67,7 @@ class GrafanaAlertProvisioningAssetTest {
         }
 
         assertThat(groupNames).hasSize(9);
-        assertThat(ruleUids).hasSize(25);
+        assertThat(ruleUids).hasSize(26);
         assertMemoryRule(rulesByUid.get("laimory_host_memory_low"), "host!=\"elk\"", 0.15);
         assertMemoryRule(rulesByUid.get("laimory_elk_memory_low"), "host=\"elk\"", 0.1);
         assertApplicationErrorRule(rulesByUid.get("laimory_application_error_log"));
@@ -100,6 +100,7 @@ class GrafanaAlertProvisioningAssetTest {
         assertThat(rule.get("for")).isEqualTo("0s");
         assertThat(rule.get("noDataState")).isEqualTo("OK");
         assertThat(map(rule.get("labels")).get("severity")).isEqualTo("warning");
+        assertThat(map(rule.get("labels"))).doesNotContainKey("environment");
 
         List<Map<String, Object>> data = listOfMaps(rule.get("data"));
         Map<String, Object> query = data.stream()
@@ -109,23 +110,24 @@ class GrafanaAlertProvisioningAssetTest {
         assertThat(query.get("datasourceUid")).isEqualTo("elasticsearch-dev");
         Map<String, Object> queryModel = map(query.get("model"));
         assertThat(queryModel.get("query"))
-                .isEqualTo("service:laimory AND environment:dev AND level:ERROR");
+                .isEqualTo("service:laimory AND level:ERROR");
         assertThat(listOfMaps(queryModel.get("metrics")))
                 .singleElement()
                 .satisfies(metric -> assertThat(metric)
                         .containsEntry("id", "1")
                         .containsEntry("type", "count"));
-        assertThat(listOfMaps(queryModel.get("bucketAggs")))
-                .singleElement()
-                .satisfies(histogram -> {
-                    assertThat(histogram)
-                            .containsEntry("field", "@timestamp")
-                            .containsEntry("id", "2")
-                            .containsEntry("type", "date_histogram");
-                    assertThat(map(histogram.get("settings")))
-                            .containsEntry("interval", "1m")
-                            .containsEntry("min_doc_count", 0);
-                });
+        List<Map<String, Object>> bucketAggs = listOfMaps(queryModel.get("bucketAggs"));
+        assertThat(bucketAggs).hasSize(2);
+        assertThat(bucketAggs.getFirst())
+                .containsEntry("field", "environment")
+                .containsEntry("type", "terms");
+        assertThat(bucketAggs.getLast())
+                .containsEntry("field", "@timestamp")
+                .containsEntry("id", "2")
+                .containsEntry("type", "date_histogram");
+        assertThat(map(bucketAggs.getLast().get("settings")))
+                .containsEntry("interval", "1m")
+                .containsEntry("min_doc_count", 0);
 
         Map<String, Object> reduce = data.stream()
                 .filter(item -> "B".equals(item.get("refId")))

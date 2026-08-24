@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(1 - laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) or (time() - laimory_filebeat_last_attempt_unixtime_seconds{job="node",environment="dev",host="dev-was"} > 180) or (absent(laimory_filebeat_up{job="node",environment="dev",host="dev-was"}) and on(job,environment,host) (up{job="node",environment="dev",host="dev-was"} == 1)) or (1 - laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) or (time() - laimory_elasticsearch_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 180) or (absent(laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1)) or laimory_elasticsearch_cluster_status{job="node",environment="dev",host="monitoring",status="red"}'
+              expr: '((1 - laimory_filebeat_up{job="node"}) > 0) or (time() - laimory_filebeat_last_attempt_unixtime_seconds{job="node"} > 180) or ((up{job="node",host=~"(dev|prod)-was(-[0-9]+)?"} == 1) unless on(job,environment,host) laimory_filebeat_up{job="node"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -55,11 +55,65 @@ groups:
         execErrState: Error
         for: 5m
         annotations:
-          summary: 'Filebeat stats, Elasticsearch health collection, or the Elasticsearch cluster is unhealthy.'
-          description: 'A node target-down alert covers missing node_exporter series; this alert covers a reachable collector reporting failure.'
+          summary: 'Filebeat stats collection is unhealthy on a WAS host.'
+          description: 'A node target-down alert covers missing node_exporter series; this alert covers a WAS host whose Filebeat collector reports failure, stops refreshing, or is missing.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
         labels:
-          environment: dev
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_elasticsearch_unhealthy
+        title: Elasticsearch collection unhealthy
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) > 0) or (time() - laimory_elasticsearch_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 180) or (absent(laimory_elasticsearch_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1)) or (laimory_elasticsearch_cluster_status{job="node",environment="dev",host="monitoring",status="red"} == 1)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'Elasticsearch health collection on the monitoring host, or the Elasticsearch cluster itself, is unhealthy.'
+          description: 'Elasticsearch is a shared asset across environments; this rule is intentionally pinned to the monitoring host collector.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
+        labels:
           service: laimory
           severity: critical
         isPaused: false
@@ -76,7 +130,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'sum(increase(laimory_filebeat_output_events_total{job="node",environment="dev",host="dev-was",result=~"failed|dropped"}[10m]))'
+              expr: 'sum by (environment, host) (increase(laimory_filebeat_output_events_total{job="node",result=~"failed|dropped"}[10m]))'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -114,11 +168,9 @@ groups:
         for: 0s
         annotations:
           summary: 'Filebeat reported failed or dropped output events in the last ten minutes.'
-          description: 'Inspect Filebeat container logs, queue pressure, Elasticsearch availability, and credentials.'
+          description: 'Inspect Filebeat container logs, queue pressure, Elasticsearch availability, and credentials on the affected host.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#log-pipeline
         labels:
-          environment: dev
-          host: dev-was
           service: laimory
           severity: warning
         isPaused: false

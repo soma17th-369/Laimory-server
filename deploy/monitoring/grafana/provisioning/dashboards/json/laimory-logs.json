@@ -506,7 +506,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max(laimory_filebeat_up{job=\"node\", environment=\"$environment\", host=\"dev-was\"})",
+          "expr": "min(laimory_filebeat_up{job=\"node\", environment=\"$environment\"})",
           "instant": true,
           "legendFormat": "Filebeat",
           "range": false,
@@ -586,7 +586,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max(laimory_elasticsearch_up{job=\"node\", environment=\"$environment\", host=\"monitoring\"})",
+          "expr": "max(laimory_elasticsearch_up{job=\"node\", host=\"monitoring\"})",
           "instant": true,
           "legendFormat": "Elasticsearch",
           "range": false,
@@ -684,7 +684,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_elasticsearch_cluster_status{job=\"node\", environment=\"$environment\", host=\"monitoring\"} == 1",
+          "expr": "laimory_elasticsearch_cluster_status{job=\"node\", host=\"monitoring\"} == 1",
           "instant": true,
           "legendFormat": "{{status}}",
           "range": false,
@@ -737,7 +737,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "time() - max(laimory_elasticsearch_latest_log_timestamp_seconds{job=\"node\", environment=\"$environment\", host=\"monitoring\"})",
+          "expr": "time() - max(laimory_elasticsearch_latest_log_timestamp_seconds{job=\"node\", host=\"monitoring\"})",
           "instant": true,
           "legendFormat": "age",
           "range": false,
@@ -790,7 +790,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", host=\"dev-was\", result=\"acked\"}[$__rate_interval])",
+          "expr": "sum(rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", result=\"acked\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "acked",
           "range": true,
@@ -802,7 +802,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", host=\"dev-was\", result=\"failed\"}[$__rate_interval])",
+          "expr": "sum(rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", result=\"failed\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "failed",
           "range": true,
@@ -814,7 +814,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", host=\"dev-was\", result=\"dropped\"}[$__rate_interval])",
+          "expr": "sum(rate(laimory_filebeat_output_events_total{job=\"node\", environment=\"$environment\", result=\"dropped\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "dropped",
           "range": true,
@@ -880,7 +880,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_filebeat_queue_filled_ratio{job=\"node\", environment=\"$environment\", host=\"dev-was\"}",
+          "expr": "max(laimory_filebeat_queue_filled_ratio{job=\"node\", environment=\"$environment\"})",
           "instant": false,
           "legendFormat": "queue filled",
           "range": true,
@@ -892,7 +892,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_filebeat_events_active{job=\"node\", environment=\"$environment\", host=\"dev-was\"}",
+          "expr": "max(laimory_filebeat_events_active{job=\"node\", environment=\"$environment\"})",
           "instant": false,
           "legendFormat": "pipeline active",
           "range": true,
@@ -904,7 +904,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_filebeat_harvesters_open{job=\"node\", environment=\"$environment\", host=\"dev-was\"}",
+          "expr": "max(laimory_filebeat_harvesters_open{job=\"node\", environment=\"$environment\"})",
           "instant": false,
           "legendFormat": "harvesters",
           "range": true,
@@ -970,7 +970,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_elasticsearch_active_shards_ratio{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "expr": "laimory_elasticsearch_active_shards_ratio{job=\"node\", host=\"monitoring\"}",
           "instant": false,
           "legendFormat": "active shard ratio",
           "range": true,
@@ -982,7 +982,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_elasticsearch_unassigned_shards{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "expr": "laimory_elasticsearch_unassigned_shards{job=\"node\", host=\"monitoring\"}",
           "instant": false,
           "legendFormat": "unassigned shards",
           "range": true,
@@ -1024,7 +1024,7 @@
           "refId": "PrometheusVariableQueryEditor-Environment"
         },
         "refresh": 2,
-        "regex": "/^dev$/",
+        "regex": "/^(dev|prod)$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"

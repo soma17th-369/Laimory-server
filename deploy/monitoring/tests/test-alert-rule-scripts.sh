@@ -35,14 +35,22 @@ ruby -ryaml -e '
   abort "application ERROR alert missing" unless rule
   abort "application ERROR alert must fire without a pending period" unless rule["for"] == "0s"
   abort "application ERROR alert must be warning severity" unless rule.dig("labels", "severity") == "warning"
+  abort "application ERROR alert must not pin an environment label" if rule.dig("labels", "environment")
   abort "application ERROR alert must treat empty search results as OK" unless rule["noDataState"] == "OK"
 
   query = rule.fetch("data").find { |item| item["refId"] == "A" }
   abort "Elasticsearch query missing" unless query["datasourceUid"] == "elasticsearch-dev"
-  abort "ERROR query contract changed" unless query.dig("model", "query") == "service:laimory AND environment:dev AND level:ERROR"
+  abort "ERROR query contract changed" unless query.dig("model", "query") == "service:laimory AND level:ERROR"
   abort "ERROR alert must count documents" unless query.dig("model", "metrics") == [{ "id" => "1", "type" => "count" }]
-  histogram = query.dig("model", "bucketAggs", 0)
-  abort "ERROR alert must use a one-minute date histogram" unless histogram == {
+  terms = query.dig("model", "bucketAggs", 0)
+  abort "ERROR alert must group by environment first" unless terms == {
+    "field" => "environment",
+    "id" => "3",
+    "settings" => { "min_doc_count" => "1", "order" => "desc", "orderBy" => "_term", "size" => "10" },
+    "type" => "terms",
+  }
+  histogram = query.dig("model", "bucketAggs", 1)
+  abort "ERROR alert must use a one-minute date histogram as the last bucket aggregation" unless histogram == {
     "field" => "@timestamp",
     "id" => "2",
     "settings" => { "interval" => "1m", "min_doc_count" => 0 },

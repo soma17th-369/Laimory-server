@@ -280,14 +280,14 @@ GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
 
 Grafana는 `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs` 네 dashboard를 file
 provisioning한다. Prometheus datasource UID는 `prometheus`, Elasticsearch UID는 `elasticsearch-dev`다.
-Elasticsearch API key는 `laimory-dev-*`의 read/view metadata와 cluster monitor만 갖고, Discord native
+Elasticsearch API key는 `laimory-*`의 read/view metadata와 cluster monitor만 갖고, Discord native
 contact point는 firing/resolved를 모두 보낸다. alert message에는 raw log/body, transactionId,
 user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrape 성공과 backend 연결·인증
 성공은 별도로 판단해 `mysql_up`/`redis_up` 실패도 alert한다.
 
-Elasticsearch의 `service=laimory AND environment=dev AND level=ERROR` count를 1분 histogram으로
-평가해 최근 5분 합계가 1 이상이면 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
-않으며, notification의 runbook URL은 현재 dev Kibana data view에서 최근 15분 ERROR 문서와
+Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로 나눠 1분 histogram으로
+평가해 최근 5분 합계가 1 이상인 환경마다 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
+않으며, notification의 runbook URL은 dev host의 Kibana data view에서 전 환경 최근 15분 ERROR 문서와
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
@@ -319,8 +319,13 @@ OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않�
 `on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
 선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
-자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, dev WAS에만 설치된 Filebeat stats 수집기,
-dev로 고정된 Elasticsearch index)을 읽으므로 `environment="dev"`를 유지한다.
+자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, 환경 공유 자산인 Elasticsearch의
+monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으므로 `environment="dev"`를
+유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
+`laimory_application_error_log`는 wildcard index(`laimory-*`)를 environment terms(마지막 date
+histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
+`((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
+staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이라 threshold(>0)를 넘지 못한다.
 `backup-rules.yml`의 백업 신선도 rule 2종(prod MySQL mysqldump·EBS snapshot의 26h staleness)은 각각
 prod MySQL host와 monitoring host의 backup timer가 쓰는 textfile 시계열 하나씩만 읽는 환경 고정
 rule이다 — 백업 체계 자체의 계약은 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
@@ -421,17 +426,11 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
-- **prod 지표 경보는 있고 로그 경보는 없다.** 지표 기반 rule 9개는 환경 중립이라 prod에서도
-  평가된다(5xx 비율·p95 지연·JVM heap·Hikari·target down·host memory·filesystem·OOM kill·
-  PROCESSING stuck). 반면 로그 기반 rule은 전부 dev 고정이라 prod ERROR 로그와 prod 로그
-  파이프라인 장애는 아무 알림을 내지 않는다.
-- **prod 로그는 Elasticsearch에 쌓이지만 Grafana에서 보이지 않는다.** prod WAS 2대의 Filebeat가
-  `laimory-prod-*`로 정상 적재하는데(2026-08-23 실측: acked == total, failed·dropped 0), Grafana
-  Elasticsearch datasource는 index가 `[laimory-dev-]YYYY.MM.DD`로 고정이고 API key도 `laimory-dev-*`
-  한정이라 Logs dashboard와 ERROR 경보가 prod를 읽지 못한다. 지금 prod 로그를 보는 경로는 Kibana와
-  SSM뿐이다.
-- **prod Filebeat self-metric이 없다.** `collect-filebeat-metrics.sh`와 timer가 dev WAS에만 있어
-  `laimory_filebeat_up`이 dev 1개뿐이다. prod 로그 파이프라인이 끊겨도 경보가 없다.
+- **로그 경보도 환경 중립이다(#348).** 지표 기반 rule 9개에 더해 log pipeline 계열과 ERROR 로그
+  경보가 prod를 평가한다. Grafana ES datasource는 `laimory-*` wildcard이고 API key도 `laimory-*`
+  범위다. 단, datasource·dashboard json은 자동 배포 대상이 아니라 host 수동 적용이 필요하고,
+  Filebeat self-metric 수집기는 prod WAS 2대 설치가 전제다(설치 전에 rule이 먼저 배포되면
+  수집기-부재 분기가 오발화한다).
 - **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
   요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
   개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.
