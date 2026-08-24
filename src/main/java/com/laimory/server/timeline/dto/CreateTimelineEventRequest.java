@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
 /**
  * 타임라인 Event 수동 생성(POST) 요청 — {@code eventType·title·subtitle·startAt·endAt} 5개 키를
  * <b>모두 보내는</b> 계약(키 누락은 400). subtitle·endAt은 값이 nullable이고, eventType은 명시적
- * {@code null}도 400이다(미지원 literal 포함). title·startAt의 {@code null}은 서비스 검증에서 400이다.
+ * {@code null}·미지원 literal·숫자 등 비문자열 token(Jackson ordinal coercion 차단)이 모두 400이다.
+ * title·startAt의 {@code null}은 서비스 검증에서 400이다.
  *
  * <p>{@code memo}만 optional 키다 — 누락과 null 모두 신규 Event의 메모 없음을 뜻해 PATCH와 달리
  * presence 구분이 없다. {@code photosToAdd}·{@code question}·{@code place}·{@code address}·item은
@@ -27,8 +28,8 @@ import java.time.LocalDateTime;
 @JsonDeserialize(using = CreateTimelineEventRequest.KeyPresenceDeserializer.class)
 public record CreateTimelineEventRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "REST",
-                description = "이벤트 분류. 키·값 모두 필수 — 누락·명시적 null·미지원 literal은 400. "
-                        + "허용값은 응답의 eventType과 같다(UNKNOWN 포함).")
+                description = "이벤트 분류. 키·값 모두 필수 — 누락·명시적 null·미지원 literal·숫자 등 "
+                        + "비문자열은 400. 허용값은 응답의 eventType과 같다(UNKNOWN 포함).")
         TimelineEventType eventType,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "카페에서 휴식",
                 description = "이벤트 제목. 앞뒤 공백 제거 후 1~255자 필수 — null이거나 공백뿐이면 400.")
@@ -54,7 +55,8 @@ public record CreateTimelineEventRequest(
     /**
      * 5개 키의 presence를 강제하는 역직렬화기. 키가 하나라도 없으면 {@code MismatchedInputException}을
      * 던지고, Spring MVC가 {@code HttpMessageNotReadableException}(→ 400 {@code -400})으로 매핑한다 —
-     * 깨진 JSON과 같은 경로다. eventType은 값도 non-null 계약이라 명시적 null을 여기서 거부한다.
+     * 깨진 JSON과 같은 경로다. eventType은 값도 non-null 문자열 literal 계약이라 명시적 null과
+     * 숫자 등 비문자열 token(Jackson의 enum ordinal coercion)을 여기서 거부한다.
      * 키가 다 있으면 값 변환은 context에 위임한다(포맷 오류도 동일하게 400).
      */
     static final class KeyPresenceDeserializer extends StdDeserializer<CreateTimelineEventRequest> {
@@ -78,12 +80,18 @@ public record CreateTimelineEventRequest(
                             "required key is missing: %s", key);
                 }
             }
-            if (node.get(EVENT_TYPE_KEY).isNull()) {
+            JsonNode eventTypeValue = node.get(EVENT_TYPE_KEY);
+            if (eventTypeValue.isNull()) {
                 context.reportInputMismatch(CreateTimelineEventRequest.class,
                         "eventType must not be null");
             }
+            // Jackson 기본 coercion은 숫자를 enum ordinal로 받아들인다 — 문자열 literal 계약이라 차단한다.
+            if (!eventTypeValue.isTextual()) {
+                context.reportInputMismatch(CreateTimelineEventRequest.class,
+                        "eventType must be a string literal");
+            }
             return new CreateTimelineEventRequest(
-                    context.readTreeAsValue(node.get(EVENT_TYPE_KEY), TimelineEventType.class),
+                    context.readTreeAsValue(eventTypeValue, TimelineEventType.class),
                     readNullable(context, node, "title", String.class),
                     readNullable(context, node, "subtitle", String.class),
                     readNullable(context, node, "startAt", LocalDateTime.class),

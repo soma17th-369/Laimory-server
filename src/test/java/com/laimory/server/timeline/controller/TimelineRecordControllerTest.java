@@ -1069,6 +1069,17 @@ class TimelineRecordControllerTest {
     }
 
     @Test
+    void updateDailyRecordEmotion_numericEmotionTypeReturns400WithoutCallingService() throws Exception {
+        // Jackson 기본 coercion은 숫자를 enum ordinal로 받아들인다 — 문자열 literal 계약이라 400이다.
+        mockMvc.perform(put(EMOTION_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(dailyRecordEmotionUpdateService);
+    }
+
+    @Test
     void updateDailyRecordEmotion_malformedJsonReturns400WithoutCallingService() throws Exception {
         mockMvc.perform(put(EMOTION_DATE_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":"))
@@ -1176,6 +1187,20 @@ class TimelineRecordControllerTest {
     void createTimelineEvent_unsupportedEventTypeLiteralRejected400WithoutCallingService() throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
         body.put("eventType", "PICNIC");
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineEventCreateService);
+    }
+
+    @Test
+    void createTimelineEvent_numericEventTypeRejected400WithoutCallingService() throws Exception {
+        // Jackson 기본 coercion은 숫자를 enum ordinal로 받아들인다 — 문자열 literal 계약이라 400이다.
+        ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
+        body.put("eventType", 1);
 
         mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
