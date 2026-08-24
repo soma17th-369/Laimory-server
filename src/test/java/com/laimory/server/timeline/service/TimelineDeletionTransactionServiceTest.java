@@ -114,6 +114,7 @@ class TimelineDeletionTransactionServiceTest {
                         1.0,
                         2.0,
                         null,
+                        null, null,
                         "https://cdn.example/" + filename)));
         ReflectionTestUtils.setField(item, "timelineItemId", itemId);
         return item;

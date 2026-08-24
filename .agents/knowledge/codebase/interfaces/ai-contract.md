@@ -95,7 +95,10 @@ Task-Token: <taskToken>
   payload는 staging 시점에 v1 privacy 치환을 거친 저장본이라 텍스트 값에 `[REDACTED_*]` token literal이
   섞일 수 있고, PHOTO `clientPhotoUri`는 응답 조립 시 값 전체가 `[REDACTED_DEVICE_URI]` 고정 token으로
   바뀐다(DB·앱 응답은 원문 유지 — 필드 집합·구조는 불변).
-  지오코딩이 허용 범위에서 부분 실패한 STAY/MOVEMENT payload는 `address` key가 생략되고
+  PHOTO payload도 좌표를 가지면 STAY/MOVEMENT와 같은 `address`·`places`를 갖는다(서버 지오코딩 enrich).
+  좌표가 없는 PHOTO와 Event PATCH로 수동 추가된 PHOTO에는 두 필드가 없다 — 수동 추가는 enrich 경로를
+  타지 않는다.
+  지오코딩이 허용 범위에서 부분 실패한 payload는 `address` key가 생략되고
   `places: []`다(NON_NULL 직렬화 — 정상 "주소 없음"과 같은 wire shape, 실패 marker 필드는 없음).
   품질 guard(고유 좌표 실패 20% 이하·시간순 연속 실패 3개 미만)를 넘는 batch는 draft 생성 자체가
   502로 거절돼 이 API에 도달하지 않는다.

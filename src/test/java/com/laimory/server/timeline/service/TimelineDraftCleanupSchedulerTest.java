@@ -170,6 +170,7 @@ class TimelineDraftCleanupSchedulerTest {
     private TimelineDraftSourceItem photoRow(long rowId, String filename) {
         return photoRow(rowId, MAPPER.valueToTree(new PhotoPayload(
                 filename, "content://x", 1.0, 2.0, null,
+                null, null,
                 "https://cdn.example/hash/photos/" + filename)));
     }
 

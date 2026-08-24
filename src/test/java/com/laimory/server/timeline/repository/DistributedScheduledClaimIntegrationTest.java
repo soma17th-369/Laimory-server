@@ -153,6 +153,7 @@ class DistributedScheduledClaimIntegrationTest {
                         null,
                         null,
                         null,
+                        null, null,
                         "https://cdn.example/" + filename)));
         return timelineItemRepository.save(item).getTimelineItemId();
     }

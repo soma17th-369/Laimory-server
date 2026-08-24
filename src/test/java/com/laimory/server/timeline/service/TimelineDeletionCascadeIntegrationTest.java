@@ -167,6 +167,7 @@ class TimelineDeletionCascadeIntegrationTest {
     private Long savePhotoLinkedTo(String rawId, String filename, int hour, Long... eventIds) {
         PhotoPayload payload = new PhotoPayload(
                 filename, "content://fixture/" + rawId, null, null, null,
+                null, null,
                 "https://cdn.example/" + PhotoObjectKeys.subjectFullKey(filename, subjectId));
         TimelineItem item = timelineItemRepository.save(TimelineItem.of(
                 ItemType.PHOTO, rawId, DATE.atTime(hour, 0), null, objectMapper.valueToTree(payload)));

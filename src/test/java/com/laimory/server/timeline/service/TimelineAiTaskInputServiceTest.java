@@ -125,7 +125,8 @@ class TimelineAiTaskInputServiceTest {
         ObjectNode photoPayload = new ObjectMapper().createObjectNode()
                 .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
                 .put("clientPhotoUri", "content://media/external/images/42")
-                .put("latitude", 37.5665);
+                .put("latitude", 37.5665)
+                .put("address", "서울 성동구 성수이로 10");
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-1",
                         DATE.atTime(9, 0), null, photoPayload)));
@@ -138,6 +139,8 @@ class TimelineAiTaskInputServiceTest {
         // 다른 필드는 그대로 전달된다(값만 치환 — 필드 집합 불변).
         assertThat(projected.get("filename").textValue()).isEqualTo("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         assertThat(projected.get("latitude").doubleValue()).isEqualTo(37.5665);
+        // #324: PHOTO 지오코딩 enrich 필드도 payload 통과로 AI에 그대로 나간다(projection이 손대지 않는다).
+        assertThat(projected.get("address").textValue()).isEqualTo("서울 성동구 성수이로 10");
         // 저장 payload 원본은 미변형(deep copy 뒤 치환).
         assertThat(photoPayload.get("clientPhotoUri").textValue())
                 .isEqualTo("content://media/external/images/42");
