@@ -12,4 +12,5 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/node_exporter/textfile_collector /var/lib/laimory
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+StateDirectory=laimory
