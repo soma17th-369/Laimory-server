@@ -443,16 +443,56 @@ class KakaoMapPlaceProviderTest {
         assertThat(server.getRequestCount()).isEqualTo(1);
     }
 
+    // ── #259: keyword 실패는 좌표 실패가 아니라 "주소만 있는 성공"으로 강등 ──
+
     @Test
-    void lookup_throwsPermanent_whenKeywordResponseShapeBroken() {
-        // shape 검증은 콜 단위로 걸린다 — 두 번째 콜(keyword)의 깨진 응답도 같은 계약으로 던진다.
+    void lookup_keepsAddress_whenKeywordResponseShapeBroken() {
+        // shape 오류도 keyword 콜의 실패일 뿐이라 좌표 전체를 실패시키지 않는다 — 확보한 주소는 보존한다.
         enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", null));
         enqueueJson("{\"foo\":1}");
 
-        assertThatThrownBy(this::lookup)
-                .isInstanceOfSatisfying(MapPlaceLookupException.class,
-                        e -> assertThat(e.clientMayRetryLater()).isFalse());
+        GeoPlace geo = lookup();
+
+        assertThat(geo.address()).isEqualTo("서울 용산구 청파로20길 95");
+        assertThat(geo.places()).isEmpty();
         assertThat(server.getRequestCount()).isEqualTo(2);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {401, 403, 429, 500})
+    void lookup_keepsAddressAndBuildingName_whenKeywordFails_regardlessOfCategory(int status) {
+        // 강등은 분류를 가리지 않는다 — 주소는 이미 확보했고 keyword 실패 사유는 그 유효성과 무관하다.
+        // LOCAL_REJECTED·NOT_PERMITTED도 같은 MapPlaceLookupException 분기를 타 구조적으로 함께 덮인다
+        // (pool 고갈·circuit 자체의 동작 검증은 KakaoGeoResourceBoundaryTest 담당).
+        enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", "서울드래곤시티"));
+        enqueueStatus(status);
+        if (status >= 500) {
+            // 전이 실패는 콜 단위 재시도(max-attempts 2)를 소진한 뒤에야 최종 실패가 된다.
+            enqueueStatus(status);
+        }
+
+        GeoPlace geo = lookup();
+
+        assertThat(geo.address()).isEqualTo("서울 용산구 청파로20길 95");
+        // 건물명은 keyword 없이도 살아남는다 — 강등 경로도 mergeBuildingName을 그대로 통과한다.
+        assertThat(geo.places()).containsExactly("서울드래곤시티");
+    }
+
+    @Test
+    void lookup_stillRecordsKeywordFailure_whenDegradedToAddressOnly() {
+        // 강등해도 콜 단위 관측은 사라지지 않는다 — logical timer 실패 기록과 circuit 실패 계수가 남는다.
+        enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", null));
+        enqueueStatus(500);
+        enqueueStatus(500);
+
+        GeoPlace geo = lookup();
+
+        assertThat(geo.address()).isEqualTo("서울 용산구 청파로20길 95");
+        assertThat(logicalCount("keyword", "exhausted")).isEqualTo(1);
+        assertThat(logicalCount("coord2address", "success")).isEqualTo(1);
+        // coord2address 1회 성공 + keyword 2회(최초·재시도) 실패.
+        assertThat(circuitBreaker.getMetrics().getNumberOfFailedCalls()).isEqualTo(2);
+        assertThat(circuitBreaker.getMetrics().getNumberOfSuccessfulCalls()).isEqualTo(1);
     }
 
     @Test
@@ -501,6 +541,12 @@ class KakaoMapPlaceProviderTest {
         var counter = meterRegistry.find("laimory.geo.http.attempts")
                 .tag("endpoint", endpoint).tag("attempt", attempt).counter();
         return counter == null ? 0 : counter.count();
+    }
+
+    private long logicalCount(String endpoint, String outcome) {
+        var timer = meterRegistry.find("laimory.geo.http.logical")
+                .tag("endpoint", endpoint).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
     }
 
     private double retryCount(String endpoint, String failureKind) {
