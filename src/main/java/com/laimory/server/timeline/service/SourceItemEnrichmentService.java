@@ -84,8 +84,10 @@ public class SourceItemEnrichmentService {
     @WithSpan
     public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, UUID subjectId) {
         long startNanos = System.nanoTime();
+        // 축이 둘이다: D2 시간축 관측(STAY/MOVEMENT)과 조회 전용 좌표(PHOTO). 조회는 둘의 합집합으로 한다.
         List<CoordinateObservation> observations = collectObservations(sourceItems);
-        Set<Coordinate> coordinates = lookupCoordinates(observations, sourceItems);
+        Set<Coordinate> coordinates = uniqueCoordinates(observations);
+        coordinates.addAll(collectPhotoCoordinates(sourceItems));
         // 공개 입력 상한 — 외부 I/O 전 기존 validation 400/-400 경로(IllegalArgumentException).
         // 상한·개수만 메시지에 담는다(좌표 금지). sourceItems 배열 길이가 아니라 필터 뒤 unique 좌표 수 기준이다.
         if (coordinates.size() > maxUniqueCoordinates) {
@@ -136,17 +138,22 @@ public class SourceItemEnrichmentService {
         return observations;
     }
 
-    /**
-     * 실제로 조회할 unique 좌표 — D2 관측 좌표(STAY/MOVEMENT)에 좌표를 가진 PHOTO를 더한 합집합이다.
-     * 관측 좌표를 먼저 넣어 기존 요청의 구독 시작 순서를 그대로 두고, PHOTO는 그 뒤에 source 순서로 붙인다
-     * ({@link LinkedHashSet} — 결정적 순서). 같은 좌표를 STAY와 PHOTO가 공유하면 조회는 1회다.
-     */
-    private static Set<Coordinate> lookupCoordinates(List<CoordinateObservation> observations,
-            List<SourceItemDto> sourceItems) {
+    /** 관측 좌표를 순서 보존해 dedupe한다. 호출부가 사진 좌표를 더하므로 새 가변 Set을 돌려준다. */
+    private static Set<Coordinate> uniqueCoordinates(List<CoordinateObservation> observations) {
         Set<Coordinate> coordinates = new LinkedHashSet<>();
         for (CoordinateObservation observation : observations) {
             coordinates.add(observation.coordinate());
         }
+        return coordinates;
+    }
+
+    /**
+     * 조회 전용 PHOTO 좌표를 source 순서로 수집한다 — 관측을 만들지 않으므로 D2 축에 들어가지 않는다
+     * (클래스 javadoc의 판정 축 분리 참고). 관측 좌표와 합칠 때 같은 좌표는 {@link LinkedHashSet}이
+     * 접어 조회가 1회로 유지된다.
+     */
+    private static Set<Coordinate> collectPhotoCoordinates(List<SourceItemDto> sourceItems) {
+        Set<Coordinate> coordinates = new LinkedHashSet<>();
         for (SourceItemDto src : sourceItems) {
             if (src.payload() instanceof PhotoPayload photo && hasCoordinate(photo)) {
                 coordinates.add(new Coordinate(photo.latitude(), photo.longitude()));
