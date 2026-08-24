@@ -16,7 +16,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(laimory_mysqldump_up{job="node",environment="prod",host="prod-mysql"} == 0) or (time() - laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"} > 93600) or (absent(laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"}) and on(job,environment,host) (up{job="node",environment="prod",host="prod-mysql"} == 1))'
+              expr: '((1 - laimory_mysqldump_up{job="node",environment="prod",host="prod-mysql"}) > 0) or (time() - laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"} > 93600) or (absent(laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"}) and on(job,environment,host) (up{job="node",environment="prod",host="prod-mysql"} == 1))'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -71,7 +71,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(laimory_ebs_snapshot_up{job="node",environment="dev",host="monitoring"} == 0) or (time() - laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 93600) or (absent(laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              expr: '((1 - laimory_ebs_snapshot_up{job="node",environment="dev",host="monitoring"}) > 0) or (time() - laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 93600) or (absent(laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
