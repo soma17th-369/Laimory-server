@@ -12,7 +12,7 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 - Grafana: Prometheus metrics, read-only Elasticsearch dev log datasource와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK와 prod WAS 2대의 private IP:9100
-- textfile collector: monitoring의 CloudWatch/Elasticsearch와 dev WAS의 Filebeat self-metric
+- textfile collector: monitoring의 CloudWatch/Elasticsearch와 WAS(dev·prod)의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
 - alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
@@ -187,10 +187,12 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
   (`laimory_elk_memory_low`, `laimory_aws_metric_collection_failed`, `laimory_cpu_credit_low`,
   `laimory_prometheus_*`, `laimory_mysql_connections_high`, `laimory_redis_evictions`,
   `laimory_datastore_backend_down`), 공개된 도메인이 있어야 성립하는 probe 계열
-  (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 dev WAS에만 수집기가 설치된
+  (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 환경 공유 자산인
+  Elasticsearch의 수집기·클러스터 상태를 monitoring host로 고정해 읽는
+  `laimory_elasticsearch_unhealthy`. 이들은 `environment="dev"` 셀렉터를 유지한다.
   log pipeline 계열(`laimory_log_pipeline_unhealthy`, `laimory_filebeat_output_failures`)과
-  index가 dev로 고정된 `laimory_application_error_log`. 이들은 `environment="dev"` 셀렉터와
-  `environment: dev` 라벨을 유지한다.
+  wildcard index를 environment terms로 나눠 평가하는 `laimory_application_error_log`는
+  환경 중립이다.
 
 새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
 수집기부터 설치한다.
@@ -377,12 +379,12 @@ curl -fsS -u elastic \
   -X POST http://10.0.32.13:9200/_security/api_key \
   -H 'Content-Type: application/json' \
   -d '{
-    "name":"grafana-laimory-dev-logs",
+    "name":"grafana-laimory-logs",
     "role_descriptors":{
       "grafana_logs_reader":{
         "cluster":["monitor"],
         "indices":[{
-          "names":["laimory-dev-*"],
+          "names":["laimory-*"],
           "privileges":["read","view_index_metadata"]
         }]
       }
@@ -403,7 +405,7 @@ printf 'header = "Authorization: ApiKey %s"\n' "$API_KEY" |
     -H 'Content-Type: application/json' \
     -d '{
       "index":[{
-        "names":["laimory-dev-*"],
+        "names":["laimory-*"],
         "privileges":["read","view_index_metadata","write","delete"]
       }]
     }' |
@@ -642,7 +644,7 @@ queue/busy/read-write latency를 수집한다. 여덟 query가 모두 `Complete`
 read-only API key로 cluster health와 가장 최근 dev log 시각을 읽는다. API key가 아직 비어 있으면
 service의 `ExecCondition`이 수집을 건너뛴다.
 
-dev WAS의 Filebeat HTTP stats는 `127.0.0.1:5066`에만 열고,
+WAS의 Filebeat HTTP stats는 `127.0.0.1:5066`에만 열고,
 `laimory-filebeat-metrics.timer`가 output result/queue/active/harvester 지표로 변환한다. SG나 public
 port는 추가하지 않는다. 최근 log 시각은 무트래픽과 장애를 구분할 수 없으므로 표시만 하고 freshness
 alert 조건으로 쓰지 않는다.
