@@ -120,6 +120,8 @@ class TimelineEventPhotoAddService {
             if (!RawIds.isCanonicalUuid(photo.rawId())) {
                 throw new IllegalArgumentException("photo rawId is not a canonical UUID: index=" + i);
             }
+            requireSecondPrecision(photo.startAt(), "startAt", i);
+            requireSecondPrecision(photo.endAt(), "endAt", i);
             UpdateTimelineEventPhotoPayloadRequest payload = photo.payload();
             if (payload == null) {
                 throw new IllegalArgumentException("photo requires payload: index=" + i);
@@ -272,5 +274,12 @@ class TimelineEventPhotoAddService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** MySQL timeline_items DATETIME 정밀도와 재사용 비교를 맞춰 소수 초가 조용히 손실되지 않게 한다. */
+    private void requireSecondPrecision(LocalDateTime value, String field, int index) {
+        if (value != null && value.getNano() != 0) {
+            throw new IllegalArgumentException("photo " + field + " must use second precision: index=" + index);
+        }
     }
 }

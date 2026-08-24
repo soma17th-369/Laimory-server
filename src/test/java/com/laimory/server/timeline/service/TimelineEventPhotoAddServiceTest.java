@@ -96,6 +96,14 @@ class TimelineEventPhotoAddServiceTest {
                         photo("01ARZ3NDEKTSV4RRFFQ69G5FAV", FILENAME_1, "content://photo"))),
                 Arguments.of("non-uuid 36 chars rawId", List.of(
                         photo("x".repeat(36), FILENAME_1, "content://photo"))),
+                Arguments.of("fractional startAt", List.of(new UpdateTimelineEventPhotoRequest(
+                        RAW_ID_1, START.plusNanos(1), null,
+                        new UpdateTimelineEventPhotoPayloadRequest(
+                                FILENAME_1, "content://photo", 37.5665, 126.978)))),
+                Arguments.of("fractional endAt", List.of(new UpdateTimelineEventPhotoRequest(
+                        RAW_ID_1, START, START.plusNanos(1),
+                        new UpdateTimelineEventPhotoPayloadRequest(
+                                FILENAME_1, "content://photo", 37.5665, 126.978)))),
                 Arguments.of("null payload", List.of(
                         new UpdateTimelineEventPhotoRequest(RAW_ID_1, START, null, null))),
                 Arguments.of("invalid filename", List.of(photo(RAW_ID_1, "../photo.jpg", "content://photo"))),

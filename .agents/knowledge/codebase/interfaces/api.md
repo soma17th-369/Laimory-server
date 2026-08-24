@@ -87,6 +87,7 @@ nullable `place`·`address`(AI가 Event 단위로 고른 장소명과 그 주소
 `photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
 배열은 Item 변경 없음이며 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
+nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추기 위해 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
 규칙이며 위반은 400이다. 같은 record의 기존 PHOTO를 rawId로 재사용할 때 저장된 startAt/endAt과
 클라이언트 입력 payload가 요청과 다르면 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
@@ -140,7 +141,7 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
 `photosToAdd`도 optional 키다(누락/빈 배열은 사진 없음, 명시적 null·비배열은 400). 사진 입력·개수·
 rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400)·pending delete job
-재연결 규칙은 Event PATCH와 같고, Event·PHOTO
+재연결 규칙은 Event PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO
 Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
 S3 object 존재를 확인하지 않는다. 유효한 `PROCESSING` delete job은 409 `-1019`, 사진 수 초과는 400
 `-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은

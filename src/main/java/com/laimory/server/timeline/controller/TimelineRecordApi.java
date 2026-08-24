@@ -152,6 +152,7 @@ public interface TimelineRecordApi {
                     + "보내면 허용 literal로 교체한다(명시적 null·미지원 값은 400). "
                     + "memo는 누락 시 유지, null/공백이면 제거, 그 외 원문 저장이다. "
                     + "photosToAdd는 누락/빈 배열이면 변경 없고 명시적 null이면 400이며, PHOTO만 append한다. "
+                    + "PHOTO startAt/endAt은 nullable이지만 값이 있으면 초 단위만 허용한다(소수 초는 400). "
                     + "클라이언트가 S3 업로드 성공을 확인한 뒤 호출해야 한다. 서버는 S3 존재 여부를 확인하지 않고, "
                     + "description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 생성한다. "
                     + "같은 rawId 재시도는 저장된 시간·클라이언트 입력 payload가 모두 같을 때만 no-op 또는 "
@@ -163,7 +164,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — 4개 키 중 누락 · title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null · endAt이 startAt보다 이전 · eventType 명시적 null/미지원 literal · "
-                            + "memo 500자 초과 · photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌·"
+                            + "memo 500자 초과 · photosToAdd null/PHOTO 입력 오류·PHOTO 시각 소수 초·rawId·filename 충돌·"
                             + "기존 PHOTO 입력 불일치 · "
                             + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -363,6 +364,7 @@ public interface TimelineRecordApi {
                     + "없으면 400이다. eventType·title·startAt의 null은 400, subtitle·endAt은 값이 nullable이다. "
                     + "memo는 optional 키다(누락/null/공백뿐은 메모 없음, 그 외 trim 없이 원문 최대 500자). "
                     + "photosToAdd도 optional 키다 — 누락/빈 배열은 사진 없음, 명시적 null은 400이며, "
+                    + "PHOTO startAt/endAt은 nullable이지만 값이 있으면 초 단위만 허용한다(소수 초는 400). "
                     + "검증·중복·개수·기존 PHOTO 재사용·재시도 수렴 규칙은 기존 Event PATCH photosToAdd와 "
                     + "동일하다. 같은 rawId의 기존 PHOTO는 저장된 시간·클라이언트 입력 payload가 모두 같을 "
                     + "때만 재사용하고, 다르면 400이다. 클라이언트가 presign·S3 업로드 성공을 확인한 뒤 호출해야 하며 서버는 S3 존재 "
@@ -383,7 +385,7 @@ public interface TimelineRecordApi {
                             + "5개 키 중 누락 · eventType null/미지원 literal/숫자 등 비문자열 · "
                             + "title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null/시간 포맷 오류 · endAt이 startAt보다 이전 · memo 500자 초과 · "
-                            + "photosToAdd null/PHOTO 입력 오류/rawId·filename 충돌·기존 PHOTO 입력 불일치 · "
+                            + "photosToAdd null/PHOTO 입력 오류·PHOTO 시각 소수 초·rawId·filename 충돌·기존 PHOTO 입력 불일치 · "
                             + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),

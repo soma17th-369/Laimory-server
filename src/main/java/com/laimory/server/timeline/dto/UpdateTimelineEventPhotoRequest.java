@@ -14,10 +14,10 @@ public record UpdateTimelineEventPhotoRequest(
                         + "재사용할 때 저장된 시간·클라이언트 입력 payload가 요청과 다르면 400이다.")
         String rawId,
         @Schema(example = "2026-07-08T14:05:00", nullable = true,
-                description = "사진 시각. 선택이며 보정 없이 저장한다.")
+                description = "사진 시각. 선택이며 초 단위만 허용한다(소수 초는 400). 보정 없이 저장한다.")
         LocalDateTime startAt,
         @Schema(example = "2026-07-08T14:05:00", nullable = true,
-                description = "사진 종료 시각. 선택이며 보정 없이 저장한다.")
+                description = "사진 종료 시각. 선택이며 초 단위만 허용한다(소수 초는 400). 보정 없이 저장한다.")
         LocalDateTime endAt,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
                 description = "수동 PHOTO 입력. description은 받지 않고 photoUrl은 서버가 생성한다.")

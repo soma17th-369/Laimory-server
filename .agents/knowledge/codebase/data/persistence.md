@@ -399,6 +399,8 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
   다르거나 같은 rawId의 non-PHOTO면 400이다. legacy로 같은 rawId의 PHOTO가 여러 행이면 대상 Event에
   연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복 행은 허용하며 조회·삭제는
   `timeline_item_id` 기준이다.
+- 수동 PHOTO의 nullable startAt/endAt은 `timeline_items.start_at/end_at`의 `DATETIME` 초 단위 정밀도와
+  재사용 비교를 맞추기 위해 소수 초를 입력 경계에서 거절한다.
 - `raw_id`(source·final 둘 다)는 대소문자 구분 opaque 식별자라 **컬럼 단위 `utf8mb4_bin` collation**을 쓴다
   (FID 선례와 동일; 테이블 기본 `_unicode_ci`와 다름). 서버 dedupe(Java String)·기존 rawId 제외(HashSet/IN)와
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱

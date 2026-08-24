@@ -316,6 +316,25 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
+    void PHOTO_소수초_입력은_DB_저장_전에_400이고_행이_생기지_않는다() {
+        long itemCountBefore = timelineItemRepository.count();
+        UpdateTimelineEventPhotoRequest fractional = new UpdateTimelineEventPhotoRequest(
+                RAW_ID, DATE.atTime(14, 5).plusNanos(1), null,
+                new UpdateTimelineEventPhotoPayloadRequest(
+                        FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0));
+
+        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "소수 초 사진", null,
+                        DATE.atTime(14, 0), null, null, List.of(fractional))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("photo startAt must use second precision: index=0");
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
+        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
+    }
+
+    @Test
     void 같은_record의_기존_PHOTO_rawId는_신규_Item_없이_junction만_추가된다() {
         TimelineEventResponse first = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "첫 이벤트", null,

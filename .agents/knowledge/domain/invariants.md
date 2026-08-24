@@ -251,6 +251,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 수동 PHOTO는 client가 S3 업로드 성공 뒤 Event PATCH 또는 Event 생성 POST로 보내며 서버는 S3 object
   존재 여부를 확인하지 않는다. 입력 payload는 `description`·`photoUrl`을 받지 않고, final payload는
   `description=null`과 서버가 만든 `photoUrl`을 저장한다.
+- 수동 PHOTO의 nullable startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 정밀도에 맞춰 초 단위만
+  허용하고 소수 초는 저장 전에 400으로 거절한다.
 - 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. Android는 같은 로컬 사진이어도 presign을
   새로 요청하고 응답의 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거 filename을 재사용하지
   않는다. 이미 S3 업로드를 마친 **동일 pending addition**의 PATCH 재시도만 그 pending filename을

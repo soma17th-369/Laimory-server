@@ -167,6 +167,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   취득하지 않는다.
 - `photosToAdd`의 rawId는 draft source와 같은 canonical lowercase UUID 규칙(`RawIds`)으로 검증하고
   위반은 400이다(오류 메시지에 원문 없음).
+- nullable PHOTO startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 저장 정밀도와 재사용 비교를 맞추기
+  위해 초 단위만 허용하며 소수 초는 최초 저장 전에 400이다.
 - request rawId는 입력 순서의 첫 항목을 사용한다. 같은 record의 같은 rawId가 non-PHOTO면 400, PHOTO면
   기존 Item을 재사용하고 대상 Event에 이미 연결됐으면 no-op이다. legacy PHOTO 중복은 대상 Event 연결 행을
   우선하고 없으면 가장 작은 Item ID를 고른다. 기존 PHOTO를 재사용할 때 요청의 startAt/endAt과 클라이언트
