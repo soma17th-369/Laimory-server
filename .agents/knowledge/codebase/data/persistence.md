@@ -395,9 +395,10 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
   Event에 재사용할 수 있다.
 - `timeline_items.raw_id`는 DB UNIQUE가 없다 — draft는 API 사전 제외 + AI write 직전 재검사로 방어하고,
   수동 PHOTO 추가는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
-  Event에 이미 연결된 PHOTO는 no-op이고 같은 rawId의 non-PHOTO는 400이다. legacy로 같은 rawId의 PHOTO가
-  여러 행이면 대상 Event에 연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복
-  행은 허용하며 조회·삭제는 `timeline_item_id` 기준이다.
+  Event에 이미 연결된 PHOTO는 no-op이고, 재사용 저장본의 startAt/endAt과 클라이언트 입력 payload가 요청과
+  다르거나 같은 rawId의 non-PHOTO면 400이다. legacy로 같은 rawId의 PHOTO가 여러 행이면 대상 Event에
+  연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복 행은 허용하며 조회·삭제는
+  `timeline_item_id` 기준이다.
 - `raw_id`(source·final 둘 다)는 대소문자 구분 opaque 식별자라 **컬럼 단위 `utf8mb4_bin` collation**을 쓴다
   (FID 선례와 동일; 테이블 기본 `_unicode_ci`와 다름). 서버 dedupe(Java String)·기존 rawId 제외(HashSet/IN)와
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱

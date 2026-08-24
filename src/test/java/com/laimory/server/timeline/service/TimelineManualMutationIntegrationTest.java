@@ -73,6 +73,7 @@ class TimelineManualMutationIntegrationTest {
     private static final String ZONE = "Asia/Seoul";
     private static final String RAW_ID = "0190c1d2-0001-7000-8000-000000000001";
     private static final String FILENAME = "0190c1d2-0002-7000-8000-000000000002.jpg";
+    private static final String OTHER_FILENAME = "0190c1d2-0003-7000-8000-000000000003.jpg";
 
     @Autowired
     private TimelineSaveService timelineSaveService;
@@ -337,6 +338,28 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
+    void 기존_PHOTO_rawId의_입력이_다르면_400이고_새_Event도_롤백된다() {
+        TimelineEventResponse first = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "첫 이벤트", null,
+                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
+        trackItems(first);
+        long eventCountBefore = timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId).size();
+        long itemCountBefore = timelineItemRepository.count();
+
+        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.MEAL, "롤백할 이벤트", null,
+                        DATE.atTime(16, 0), null, null, List.of(photoInput(RAW_ID, OTHER_FILENAME)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("photo input does not match existing rawId");
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId))
+                .hasSize((int) eventCountBefore);
+        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
+    }
+
+    @Test
     void PENDING_delete_job은_취소되고_보존_Item이_재연결된다() {
         Long preservedItemId = plantOrphanPhotoItemWithJob();
 
@@ -353,6 +376,27 @@ class TimelineManualMutationIntegrationTest {
         assertThat(timelineEventItemRepository.findByTimelineEventId(response.timelineEventId()))
                 .extracting(TimelineEventItem::getTimelineItemId)
                 .containsExactly(preservedItemId);
+    }
+
+    @Test
+    void PENDING_delete_job_PHOTO의_입력이_다르면_400이고_job_취소도_롤백된다() {
+        Long preservedItemId = plantOrphanPhotoItemWithJob();
+        UpdateTimelineEventPhotoRequest mismatched = new UpdateTimelineEventPhotoRequest(
+                RAW_ID, DATE.atTime(14, 5), null,
+                new UpdateTimelineEventPhotoPayloadRequest(
+                        FILENAME, "content://photo/changed", 37.5, 127.0));
+
+        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "재연결 거절", null,
+                        DATE.atTime(14, 0), null, null, List.of(mismatched))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("photo input does not match existing rawId");
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?",
+                Long.class, preservedItemId)).isEqualTo(1);
     }
 
     @Test
@@ -409,8 +453,10 @@ class TimelineManualMutationIntegrationTest {
     /** 삭제 대기 중 보존된 orphan PHOTO Item과 그 PENDING delete job을 심는다. */
     private Long plantOrphanPhotoItemWithJob() {
         TimelineItem preserved = timelineItemRepository.save(TimelineItem.of(
-                ItemType.PHOTO, RAW_ID, DATE.atTime(13, 0), null,
-                objectMapper.createObjectNode().put("filename", FILENAME)));
+                ItemType.PHOTO, RAW_ID, DATE.atTime(14, 5), null,
+                objectMapper.valueToTree(new PhotoPayload(
+                        FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0,
+                        null, null, null, null))));
         trackedItemIds.add(preserved.getTimelineItemId());
         String objectKey = PhotoObjectKeys.subjectFullKey(FILENAME, subjectId);
         assertThat(timelinePhotoDeleteJobService.insertIfAbsent(preserved.getTimelineItemId(), objectKey))

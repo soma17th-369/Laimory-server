@@ -22,6 +22,7 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
+import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -31,6 +32,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -172,12 +175,34 @@ class TimelineEventEditTransactionServiceTest {
         verify(photoUrlService, never()).buildSubjectUrl(any(), any());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"startAt", "endAt", "filename", "clientPhotoUri", "latitude", "longitude"})
+    void updateEvent_existingPhotoInputMismatchFailsBeforeEventMutation(String mismatchedField) {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+        TimelineEvent other = event(OTHER_EVENT_ID);
+        TimelineItem existing = item(21L, ItemType.PHOTO, RAW_ID);
+        stubRecordGraph(
+                List.of(event, other),
+                List.of(TimelineEventItem.of(OTHER_EVENT_ID, 21L)),
+                List.of(existing));
+
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
+                command(true, "새 메모", List.of(photoWithMismatch(mismatchedField)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("photo input does not match existing rawId");
+
+        assertOriginalState(event, "기존 메모");
+        verifyNoWrites();
+    }
+
     @Test
     void updateEvent_pendingDeleteJob_relinksPreservedItemWithoutCreatingDuplicate() {
         TimelineEvent event = stubOwnedDraftEvent();
         stubRecordGraph(List.of(event), List.of(), List.of());
         when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
                 .thenReturn(Optional.of(31L));
+        when(timelineItemService.findById(31L)).thenReturn(Optional.of(item(31L, ItemType.PHOTO, RAW_ID)));
 
         service.updateEvent(SUBJECT_ID, EVENT_ID,
                 command(false, null, List.of(photo(RAW_ID, FILENAME))));
@@ -190,6 +215,24 @@ class TimelineEventEditTransactionServiceTest {
             assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
             assertThat(link.getTimelineItemId()).isEqualTo(31L);
         });
+    }
+
+    @Test
+    void updateEvent_pendingDeleteJobInputMismatchFailsBeforeEventMutation() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+        stubRecordGraph(List.of(event), List.of(), List.of());
+        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
+                .thenReturn(Optional.of(31L));
+        when(timelineItemService.findById(31L)).thenReturn(Optional.of(item(31L, ItemType.PHOTO, RAW_ID)));
+
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
+                command(true, "새 메모", List.of(photoWithMismatch("clientPhotoUri")))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("photo input does not match existing rawId");
+
+        assertOriginalState(event, "기존 메모");
+        verifyNoWrites();
     }
 
     @Test
@@ -308,9 +351,17 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     private TimelineItem item(Long itemId, ItemType itemType, String rawId) {
+        ObjectMapper mapper = new ObjectMapper();
+        LocalDateTime startAt = RECORD_DATE.atTime(8, 0);
+        JsonNode payload = mapper.createObjectNode().put("stored", true);
+        if (itemType == ItemType.PHOTO) {
+            startAt = RECORD_DATE.atTime(14, 5);
+            payload = mapper.valueToTree(new PhotoPayload(
+                    FILENAME, "content://photo/1", 37.5665, 126.9780,
+                    null, null, null, PHOTO_URL));
+        }
         TimelineItem item = TimelineItem.of(
-                itemType, rawId, RECORD_DATE.atTime(8, 0), null,
-                new ObjectMapper().createObjectNode().put("stored", true));
+                itemType, rawId, startAt, null, payload);
         ReflectionTestUtils.setField(item, "timelineItemId", itemId);
         return item;
     }
@@ -337,6 +388,20 @@ class TimelineEventEditTransactionServiceTest {
                 "content://photo/1",
                 37.5665,
                 126.9780);
+    }
+
+    private TimelineEventPhotoAddService.PhotoToAdd photoWithMismatch(String field) {
+        TimelineEventPhotoAddService.PhotoToAdd matching = photo(RAW_ID, FILENAME);
+        return new TimelineEventPhotoAddService.PhotoToAdd(
+                matching.rawId(),
+                field.equals("startAt") ? matching.startAt().plusMinutes(1) : matching.startAt(),
+                field.equals("endAt") ? matching.startAt().plusMinutes(1) : matching.endAt(),
+                field.equals("filename")
+                        ? "0190a1b2-0004-7000-8000-000000000004.jpg"
+                        : matching.filename(),
+                field.equals("clientPhotoUri") ? "content://photo/changed" : matching.clientPhotoUri(),
+                field.equals("latitude") ? 37.0 : matching.latitude(),
+                field.equals("longitude") ? 127.0 : matching.longitude());
     }
 
     private void assertOriginalState(TimelineEvent event, String memo) {

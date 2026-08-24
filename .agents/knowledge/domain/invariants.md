@@ -55,7 +55,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
   race/legacy 중복 행 허용). 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request rawId 중복을 첫
   항목 우선으로 접고, 같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op
-  처리한다. 같은 rawId의 non-PHOTO Item이 있으면 입력 전체를 거절한다.
+  처리한다. 재사용 PHOTO의 저장된 startAt/endAt과 클라이언트 입력 payload가 요청과 다르거나 같은 rawId의
+  non-PHOTO Item이 있으면 입력 전체를 거절한다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).

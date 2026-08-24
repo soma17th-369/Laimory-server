@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
@@ -23,6 +24,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -142,8 +144,9 @@ class TimelineEventPhotoAddService {
     }
 
     /**
-     * 같은 DailyRecord의 rawId 후보를 new/reuse/no-op으로 분류한다. 분류와 모든 DB-dependent 검증을
-     * entity mutation보다 먼저 끝내 validation 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
+     * 같은 DailyRecord의 rawId 후보를 new/reuse/no-op으로 분류한다. 재사용할 PHOTO의 저장된 시간과
+     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 분류와 모든 DB-dependent
+     * 검증을 entity mutation보다 먼저 끝내 validation 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
      */
     @Transactional(propagation = Propagation.MANDATORY)
     PhotoChanges resolve(DailyRecord record, Long targetEventId, List<PhotoToAdd> requestedPhotos) {
@@ -180,8 +183,17 @@ class TimelineEventPhotoAddService {
             }
             if (candidates.isEmpty()) {
                 String objectKey = PhotoObjectKeys.subjectFullKey(requested.filename(), record.getSubjectId());
-                timelinePhotoDeleteJobService.cancelPendingForRelink(objectKey, requested.rawId())
-                        .ifPresentOrElse(existingItemIdsToLink::add, () -> newPhotos.add(requested));
+                Long pendingItemId = timelinePhotoDeleteJobService
+                        .cancelPendingForRelink(objectKey, requested.rawId())
+                        .orElse(null);
+                if (pendingItemId == null) {
+                    newPhotos.add(requested);
+                } else {
+                    TimelineItem pendingItem = timelineItemService.findById(pendingItemId)
+                            .orElseThrow(() -> new IllegalStateException("relinked PHOTO item not found"));
+                    requireMatchingClientInput(pendingItem, requested);
+                    existingItemIdsToLink.add(pendingItemId);
+                }
                 continue;
             }
 
@@ -191,6 +203,7 @@ class TimelineEventPhotoAddService {
                     .orElseGet(() -> candidates.stream()
                             .min(Comparator.comparing(TimelineItem::getTimelineItemId))
                             .orElseThrow());
+            requireMatchingClientInput(reusable, requested);
             if (!targetItemIds.contains(reusable.getTimelineItemId())) {
                 existingItemIdsToLink.add(reusable.getTimelineItemId());
             }
@@ -233,6 +246,28 @@ class TimelineEventPhotoAddService {
             timelineEventItemService.saveAll(links);
         }
         return List.copyOf(linkedItemIds);
+    }
+
+    /** 같은 rawId Item 재사용은 요청 값을 버리는 update가 아니다. 클라이언트 입력 저장본이 다르면 400으로 거절한다. */
+    private void requireMatchingClientInput(TimelineItem storedItem, PhotoToAdd requested) {
+        PhotoPayload storedPayload;
+        try {
+            storedPayload = objectMapper.treeToValue(storedItem.getPayload(), PhotoPayload.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("existing PHOTO payload cannot be parsed", exception);
+        }
+        if (storedPayload == null) {
+            throw new IllegalStateException("existing PHOTO payload is null");
+        }
+
+        if (!Objects.equals(storedItem.getStartAt(), requested.startAt())
+                || !Objects.equals(storedItem.getEndAt(), requested.endAt())
+                || !Objects.equals(storedPayload.filename(), requested.filename())
+                || !Objects.equals(storedPayload.clientPhotoUri(), requested.clientPhotoUri())
+                || !Objects.equals(storedPayload.latitude(), requested.latitude())
+                || !Objects.equals(storedPayload.longitude(), requested.longitude())) {
+            throw new IllegalArgumentException("photo input does not match existing rawId");
+        }
     }
 
     private boolean isBlank(String value) {
