@@ -32,7 +32,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 version별 동작은 service가 결정한다.
 
 보호 operation 27개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-users GET /me·DELETE /me + terms agreements GET/POST)는 `bearerAuth` security requirement와
+user GET/DELETE + terms agreements GET/POST)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
@@ -225,7 +225,7 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
 미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /me 포함)과 fail-open
+403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /user 포함)과 fail-open
 계약은 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions
