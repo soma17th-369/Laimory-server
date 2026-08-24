@@ -120,7 +120,7 @@ class ApiAuthenticationContractTest {
         // timeline 18개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
         // Event Item 연결 해제·월별 GET 포함)
         // + push-registrations PUT/DELETE 2개 + push-settings GET/PUT/PUT 3개
-        // + users GET /me·DELETE /me 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개.
+        // + user GET/DELETE 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개.
         assertThat(protectedOperations().count()).isEqualTo(27);
     }
 

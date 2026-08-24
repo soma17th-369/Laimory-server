@@ -31,7 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * 내 회원 정보 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/DELETE /me)·인증 게이트(401)·envelope·
+ * 내 회원 정보 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/DELETE /user)·인증 게이트(401)·envelope·
  * nullable nickname의 명시적 JSON null·탈퇴 202(body=null)와 "userId는 인증 principal에서 서비스로 전달"
  * 계약을 검증한다. 인프라 0. (hidden principal·bearerAuth 문서 계약은
  * {@code arch.ApiAuthenticationContractTest} 소유.)
@@ -41,7 +41,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class UserControllerTest {
 
     private static final long USER_ID = 7L;
-    private static final String PATH = "/a/api/v1/users/me";
+    private static final String PATH = "/a/api/v1/user";
 
     @Autowired
     private MockMvc mockMvc;

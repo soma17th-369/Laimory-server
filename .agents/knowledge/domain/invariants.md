@@ -292,7 +292,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
-  등록/이력·내 회원 조회·회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
+  등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
   PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
 - 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded

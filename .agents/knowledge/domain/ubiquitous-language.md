@@ -136,7 +136,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
 | 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
-| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/users/me`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
+| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
 | 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
@@ -166,7 +166,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서 행이 불변이라 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
-| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /me·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
+| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | seed 존재·`term_type` literal 유효성·현재 필수 문서 커버리지 판정(`TermCatalogReadiness`)이다. 기동 검사와 요청별 판정이 bounded 전이 로그·metric(`laimory.terms.catalog.ready`·`laimory.terms.gate.fail_open`)으로 알리되 기동·공개 조회를 막지 않는다. 로그 수위는 상태 성격으로 가른다 — 테이블이 완전히 빈 pre-activation(법무 원문 대기, 예정된 fail-open)은 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·오타 literal) ready에서 퇴행한 경우는 ERROR(경보 대상)다. gauge/counter는 수위와 무관하게 동일 기록한다. |
 
 ## 푸시 알림
