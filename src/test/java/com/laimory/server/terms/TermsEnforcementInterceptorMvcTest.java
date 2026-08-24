@@ -159,7 +159,7 @@ class TermsEnforcementInterceptorMvcTest {
 
         String agreementBody = "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}";
 
-        mockMvc.perform(get("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
+        mockMvc.perform(get("/a/api/v1/user").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk());
         mockMvc.perform(put("/a/api/v1/push-registrations").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(pushBody))
@@ -173,7 +173,7 @@ class TermsEnforcementInterceptorMvcTest {
         mockMvc.perform(get("/a/api/v1/terms/agreements").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk());
         // #305: 미동의 사용자도 탈퇴할 수 있다 — LOGIN gate를 타지 않고 202까지 도달한다.
-        mockMvc.perform(delete("/a/api/v1/users/me").with(authenticatedUser(USER_ID)))
+        mockMvc.perform(delete("/a/api/v1/user").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isAccepted());
         // #314: 미동의 상태에서도 수신 설정을 조회하고 광고 수신을 거부할 수 있어야 한다.
         mockMvc.perform(get("/a/api/v1/push-settings").with(authenticatedUser(USER_ID)))

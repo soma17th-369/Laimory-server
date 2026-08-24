@@ -182,12 +182,12 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
 도입해야 한다.
 
-`GET /a/api/{version}/users/me`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
+`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 
-`DELETE /a/api/{version}/users/me`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
+`DELETE /a/api/{version}/user`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
 bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`이다 — 202는 논리 탈퇴(이후 이
 회원의 모든 `/a/api` 접근·token/refresh 발급 차단), 이 transaction이 관측한 기존 refresh 전량 폐기,
 push 등록 삭제, 개인정보 삭제 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL

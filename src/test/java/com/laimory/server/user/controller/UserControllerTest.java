@@ -41,7 +41,7 @@ import org.springframework.test.web.servlet.MvcResult;
 class UserControllerTest {
 
     private static final long USER_ID = 7L;
-    private static final String PATH = "/a/api/v1/users/me";
+    private static final String PATH = "/a/api/v1/user";
 
     @Autowired
     private MockMvc mockMvc;

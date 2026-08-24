@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  */
 @Tag(name = "User", description = "회원 정보 — 인증 사용자 본인의 회원 정보 조회")
 @SecurityRequirement(name = "bearerAuth")
-@RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/users")
+@RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/user")
 public interface UserApi {
 
     @Operation(summary = "내 회원 정보 조회",
@@ -40,7 +40,7 @@ public interface UserApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료 — 유효 토큰의 회원 행 "
                             + "없음도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
-    @GetMapping("/me")
+    @GetMapping
     // LOGIN 약관 gate exemption(#303): 계정 확인은 동의 전에도 가능해야 한다(bearer 인증은 그대로 요구).
     @LoginTermsExempt
     ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(
@@ -63,7 +63,7 @@ public interface UserApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료 — 이미 탈퇴·최종 "
                             + "삭제된 회원도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
-    @DeleteMapping("/me")
+    @DeleteMapping
     // LOGIN 약관 gate exemption(#303): 미동의 사용자도 탈퇴할 수 있어야 한다(bearer 인증·ACTIVE 검사는 그대로).
     @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> withdraw(
