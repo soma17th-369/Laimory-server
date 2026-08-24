@@ -282,7 +282,7 @@ public class SourceItemEnrichmentService {
         return new SourceItemDto(src.itemType(), src.rawId(), src.startAt(), src.endAt(), reconstructed);
     }
 
-    private MovementEndpoint reconstructEndpoint(MovementEndpoint endpoint, Map<Coordinate, GeoPlace> lookups) {
+    private static MovementEndpoint reconstructEndpoint(MovementEndpoint endpoint, Map<Coordinate, GeoPlace> lookups) {
         // 수집(collectGeoInputs)과 같은 규칙으로 키를 만들므로 map에 항상 존재한다(D6).
         GeoPlace geo = lookups.get(new Coordinate(endpoint.latitude(), endpoint.longitude()));
         return new MovementEndpoint(
