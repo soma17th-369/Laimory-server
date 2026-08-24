@@ -18,7 +18,7 @@ public interface SystemApi {
     @Operation(summary = "헬스체크", description = "DB 연결을 확인한다. 앱-facing envelope이 아닌 평문 JSON으로 응답한다.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "정상(status=UP)", useReturnTypeSchema = true),
-            @ApiResponse(responseCode = "503", description = "DB 연결 실패(status=DOWN, error 포함)", useReturnTypeSchema = true)
+            @ApiResponse(responseCode = "503", description = "DB 연결 실패(status=DOWN)", useReturnTypeSchema = true)
     })
     @GetMapping("/status")
     ResponseEntity<Map<String, String>> status();

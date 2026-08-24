@@ -1,0 +1,16 @@
+services:
+  kakao-simulator:
+    image: wiremock/wiremock:3.13.2
+    container_name: laimory-kakao-simulator
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./mappings:/home/wiremock/mappings:ro
+      - ./__files:/home/wiremock/__files:ro
+    command:
+      - --async-response-enabled
+      - --async-response-threads=64
+      - --container-threads=32
+      - --disable-request-logging
+      - --max-request-journal-entries=50000
+    restart: unless-stopped

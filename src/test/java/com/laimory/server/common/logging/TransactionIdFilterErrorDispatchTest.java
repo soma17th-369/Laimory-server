@@ -37,7 +37,12 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootTest(
         classes = TransactionIdFilterErrorDispatchTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "management.server.port=-1"
+        properties = {
+                "management.server.port=-1",
+                // 이 컨텍스트는 DB/Redis autoconfig을 제외해 운영 readiness 그룹(db·redis 포함)의
+                // 멤버십 검증에 걸린다 — error dispatch 검증과 무관하므로 테스트 한정으로 축소한다.
+                "management.endpoint.health.group.readiness.include=readinessState"
+        }
 )
 class TransactionIdFilterErrorDispatchTest {
 

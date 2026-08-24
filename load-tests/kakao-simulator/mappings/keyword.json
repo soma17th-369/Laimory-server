@@ -1,0 +1,51 @@
+{
+  "id": "02570000-0000-4000-8000-000000000002",
+  "name": "kakao-keyword-success",
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/v2/local/search/keyword.json",
+    "headers": {
+      "Authorization": {
+        "equalTo": "KakaoAK k6-257-dummy"
+      }
+    },
+    "queryParameters": {
+      "query": {
+        "equalTo": "서울 테스트구 시뮬레이터로 251"
+      },
+      "x": {
+        "matches": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+      },
+      "y": {
+        "matches": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$"
+      },
+      "radius": {
+        "equalTo": "50"
+      },
+      "sort": {
+        "equalTo": "distance"
+      },
+      "category_group_code": {
+        "absent": true
+      },
+      "rect": {
+        "absent": true
+      },
+      "page": {
+        "absent": true
+      },
+      "size": {
+        "absent": true
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json;charset=UTF-8"
+    },
+    "bodyFileName": "keyword-response.json",
+    "fixedDelayMilliseconds": 50
+  }
+}

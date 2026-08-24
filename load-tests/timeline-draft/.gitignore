@@ -1,0 +1,8 @@
+# runtime artifact 격리 — 이 디렉터리 규칙은 load-tests/timeline-draft/ 안에만 적용된다(anchored).
+# 여기에는 access token, user/task manifest, k6 raw 결과와 실행 로그가 쌓인다. 어느 것도 커밋하지 않는다.
+/.artifacts/*
+!/.artifacts/.gitkeep
+
+# 로컬에서 만든 env 파일(JWT_SECRET 등)이 실수로 추적되지 않게 한다.
+/*.env
+/.env

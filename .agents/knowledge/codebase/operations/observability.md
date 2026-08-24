@@ -29,7 +29,8 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - client 노출은 response header `Transaction-Id` 하나뿐이고 envelope에는 없다.
 - filter가 request당 한 줄 `http_request_completed` access log를 남긴다.
   예외는 `ExcludedPaths`뿐 — 등재 기준은 **"정상 완료가 아무 정보도 담지 않는 트래픽"**(헬스체크·favicon)이고
-  **정상 완료만** 생략된다. 에러·미처리 예외는 경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
+  **정상 완료만** 생략된다. 에러 — 전파 예외·`ExceptionType` attribute·attribute 없는 5xx 응답 — 는
+  경로와 무관하게 남는다. tx 발급·MDC는 제외와 무관하게 유지된다.
 - fields는 `HttpAccessLog` record가 스키마다: `event`, `method`, `path`, `status`, `latencyMs`,
   `errorCode`(공개 numeric code의 10진 문자열 projection), `exceptionType`(내부 실패 사유),
   `errorDetail`(예외 클래스명·검증 메시지),
@@ -43,7 +44,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - query string은 포함하지 않는다.
 - **log level은 HTTP status가 아니라 `ExceptionType.logLevel()`이 정한다**(access log level의 SSOT —
   status는 client 계약, level은 서버 관점 심각도로 독립 축. 같은 status라도 내부 사유에 따라
-  level이 다르다). 에러 없는 요청은 INFO, 정상 `/status`만 DEBUG.
+  level이 다르다). 에러 없는 요청은 INFO다(제외 경로의 정상 완료는 레벨이 아니라 로그 자체가 없다).
 - filter까지 전파된 unhandled exception은 effective status 500 + ERROR로 기록한다(매핑이 아니라 사실 기반).
 - exception handler는 로그 대신 `ExceptionType`(+detail)을 request attribute로 심어 access log에 합류시킨다.
   stacktrace는 catch-all과 MVC가 직접 처리하는 5xx만 남긴다(둘 다 filter가 예외 객체를 못 보는 경로).
@@ -119,7 +120,9 @@ skeleton 마스킹으로 access log에 남지 않는다(구조 필드만 남는�
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
 현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
-개인정보처리방침 변경을 먼저 완료해야 한다. 현재 prod 배포 경로가 없어 별도 runtime flag는 두지 않는다.
+개인정보처리방침 변경을 먼저 완료해야 한다. 2026-08-23 기준 prod 배포 경로가 생겼으므로 이 전제는 더 이상 성립하지 않는다 — body logging을
+끄고 켜는 runtime flag를 두는 선택지가 열렸고, 그렇게 하면 개인정보 승인 절차를 공개 일정에서
+분리할 수 있다. 아직 flag는 없다.
 
 polling GET response body는 #281에서 전체 placeholder였고 #312부터 skeleton이다 — 이벤트 제목·부제·
 질문·payload 등 원문 필드는 `"***"`, envelope·status·numeric `error`·이벤트/아이템 구조는 남는다.
@@ -179,7 +182,7 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 - dev workflow가 application environment 값을 주입한다.
 - default profile은 JSON stream 순도를 위해 banner와 Hibernate `show-sql`을 끈다.
 
-## Dev Log Pipeline
+## Log Pipeline
 
 ```text
 Spring JSON stdout
@@ -190,7 +193,9 @@ Spring JSON stdout
 ```
 
 - Filebeat는 root로 Docker container log를 읽고 JSON decode 뒤 `service=laimory` event만 유지한다.
-- index pattern은 `laimory-{environment}-YYYY.MM.dd`다.
+  dev WAS와 **prod WAS 2대**에 배치돼 있고, 같은 Elasticsearch로 보낸다.
+- index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
+  환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
 - Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 nginx `/kibana`로 proxy한다.
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
@@ -200,8 +205,9 @@ Spring JSON stdout
 
 - Actuator는 app API 8080과 분리된 management port 9090에서 동작한다.
 - web endpoint는 `/actuator/health`와 `/actuator/prometheus`만 노출하고 discovery links와
-  env/beans/configprops/heapdump/loggers 등은 노출하지 않는다.
-- health 응답은 aggregate `status`만 보여 component/detail을 숨긴다.
+  env/beans/configprops/heapdump/loggers 등은 노출하지 않는다. health에는 readiness 그룹이 있고
+  (`/actuator/health/readiness`) 같은 그룹이 메인 포트 `/readyz`로도 노출된다(additional-path).
+- health 응답은 aggregate `status`(와 그룹 이름 목록)만 보여 component/detail을 숨긴다.
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
 - 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
@@ -253,15 +259,15 @@ Spring JSON stdout
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
 
-## Dev Metrics Assets
+## Metrics Assets
 
 repository에는 Prometheus, Grafana, blackbox와 central MySQL/Redis exporter의 구성 자산이 있다.
 Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
-node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK의 private interface:9100에만 bind하는
-systemd service다. pinned release archive SHA를 검증하며 prod에는 설치하지 않는다. textfile collector는
+node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
+interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
 root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
@@ -302,7 +308,19 @@ publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한�
 파일 집합·UID 검증, hot reload와 provisioning API의 expected UID 확인을 수행하고, release 도구는
 성공 후에만 active 경로로 승격한다. rollback은 alerting 디렉터리의 Grafana-readable `0755` mode를
 보존하면서 파일만 복구한다. release 사이에서 사라진 UID는 임시 `deleteRules`로 Grafana DB에서도
-지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다. 일반 host memory는
+지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다.
+rule은 환경 중립과 환경 고정 둘로 나뉘고, 기준은 **그 rule이 읽는 시계열이 환경마다 존재하는지**다.
+환경 중립 rule(5xx 비율, p95 지연, JVM heap, Hikari, target down, host memory, filesystem,
+OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
+`on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
+선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
+커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
+자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, dev WAS에만 설치된 Filebeat stats 수집기,
+dev로 고정된 Elasticsearch index)을 읽으므로 `environment="dev"`를 유지한다.
+notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
+`notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
+대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
+일반 host memory는
 MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10%
 미만이 각각 10분 지속될 때 경고한다. alert 관련 `dev` merge는 별도 GitHub workflow가 commit SHA
 release publish와 monitoring EC2 SSM 적용을 자동화하며, SSM 직전 `dev` HEAD 재확인으로 stale push의
@@ -378,8 +396,11 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
 
 - `/status`: plain JSON DB connection probe
 - `/api/v1/intro`: dev deploy health gate, DB와 app config row 확인
+- `/readyz`: ALB 타깃그룹 헬스체크용 — actuator readiness 그룹(`readinessState`·`db`·`redis`만,
+  diskSpace·ping 제외)의 메인 포트 additional-path. 별도 관리 컨텍스트는 메인 앱이 연결을 못
+  받아도 UP일 수 있으므로 실제 트래픽 포트(8080)를 검사한다.
 
-둘 다 Redis·Kakao·S3 readiness를 포괄하지 않는다.
+`/status`·`/api/v1/intro`는 Redis readiness를 포괄하지 않는다. Kakao·S3는 어느 signal도 확인하지 않는다.
 
 ## Invariants
 
@@ -393,6 +414,20 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
+- **prod 지표 경보는 있고 로그 경보는 없다.** 지표 기반 rule 9개는 환경 중립이라 prod에서도
+  평가된다(5xx 비율·p95 지연·JVM heap·Hikari·target down·host memory·filesystem·OOM kill·
+  PROCESSING stuck). 반면 로그 기반 rule은 전부 dev 고정이라 prod ERROR 로그와 prod 로그
+  파이프라인 장애는 아무 알림을 내지 않는다.
+- **prod 로그는 Elasticsearch에 쌓이지만 Grafana에서 보이지 않는다.** prod WAS 2대의 Filebeat가
+  `laimory-prod-*`로 정상 적재하는데(2026-08-23 실측: acked == total, failed·dropped 0), Grafana
+  Elasticsearch datasource는 index가 `[laimory-dev-]YYYY.MM.DD`로 고정이고 API key도 `laimory-dev-*`
+  한정이라 Logs dashboard와 ERROR 경보가 prod를 읽지 못한다. 지금 prod 로그를 보는 경로는 Kibana와
+  SSM뿐이다.
+- **prod Filebeat self-metric이 없다.** `collect-filebeat-metrics.sh`와 timer가 dev WAS에만 있어
+  `laimory_filebeat_up`이 dev 1개뿐이다. prod 로그 파이프라인이 끊겨도 경보가 없다.
+- **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
+  요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
+  개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.
 
 ## Update When
 

@@ -65,7 +65,6 @@ groups:
           description: 'The target has returned no successful scrape for at least two minutes.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#target-down
         labels:
-          environment: dev
           service: laimory
           severity: critical
         isPaused: false
