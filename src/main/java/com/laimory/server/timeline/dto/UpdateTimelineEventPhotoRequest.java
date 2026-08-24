@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
 
-/** Event PATCH에서 append할 PHOTO Item 하나. itemType은 PHOTO로 고정되어 요청으로 받지 않는다. */
+/** Event PATCH 또는 수동 Event 생성 POST에서 추가할 PHOTO Item 하나. itemType은 PHOTO로 고정된다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record UpdateTimelineEventPhotoRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,

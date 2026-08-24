@@ -33,7 +33,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 연결 Item이 없다(`items=[]`, 사진은 생성 후 Event PATCH `photosToAdd`로 추가). |
+| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
@@ -58,7 +58,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. 서버 내부 행 식별자이며 AI에는 노출하지 않는다(AI는 `rawId`로만 식별한다). |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, Event PATCH의 PHOTO 추가는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 결과에서 Event에 연결한 staging source item이다. 서버 결과 저장 transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -67,7 +67,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 아이템 페이로드 | Timeline Item Payload | 현재 구현 | HTTP input/enrich에서 쓰는 sealed payload 공통 interface다. |
-| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명, 서버 지오코딩 enrich(`address`·`places`)와 서버가 만든 `photoUrl`을 담는다. `address`/`places`는 좌표가 있는 draft 사진에만 채워진다 — Event PATCH의 수동 PHOTO 입력은 enrich 경로를 타지 않아 두 필드가 없고, `filename`·`clientPhotoUri`·좌표만 받아 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
+| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명, 서버 지오코딩 enrich(`address`·`places`)와 서버가 만든 `photoUrl`을 담는다. `address`/`places`는 좌표가 있는 draft 사진에만 채워진다 — Event PATCH와 Event 생성 POST의 수동 PHOTO 입력은 enrich 경로를 타지 않아 두 필드가 없고, `filename`·`clientPhotoUri`·좌표만 받아 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
 | 일정 페이로드 | Calendar Payload | 현재 구현 | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
 | 머문 곳 페이로드 | Stay Payload | 현재 구현 | 필수 좌표와 서버 파생 주소·주변 장소·머문 시간 텍스트를 담는다. |
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
@@ -89,7 +89,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
-| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 Event PATCH가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태이고 `available_at`은 다음 claim 가능 시각이다. job은 원 Item을 FK로 참조하며 신규 job은 다음 날부터 claim한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
+| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태이고 `available_at`은 다음 claim 가능 시각이다. job은 원 Item을 FK로 참조하며 신규 job은 다음 날부터 claim한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
 
 ## AI 타임라인 이벤트 생성
 
@@ -124,7 +124,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | 새 callback token hash와 Redis `CALLBACK_PENDING`을 CAS로 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 실패하면 가능한 경우 이전 result token hash와 `RESULT_PENDING`으로 복구한다. |
-| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
+| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
 | rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, 결과 저장 transaction이 write 직전 재검사한다. |

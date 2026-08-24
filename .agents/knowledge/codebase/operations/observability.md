@@ -87,11 +87,11 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
   사용자 사생활 원문을 담는 지정 15개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326) — request 7개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361) — request 7개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
   User Memory result POST),
   response 8개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
-  POST — 입력 title/subtitle/memo를 echo하므로 request와 함께 대상, 공개 약관 GET
+  POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). 감정 수정 PUT
   `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·

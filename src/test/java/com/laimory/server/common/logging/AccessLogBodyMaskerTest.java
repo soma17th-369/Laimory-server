@@ -306,6 +306,49 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
+    void manualEventCreatePhotosKeepStructureAndCollapsePayload() throws Exception {
+        // #361 photosToAdd — request의 rawId/시각 구조 필드는 남고 payload subtree(filename·URI·좌표)는 붕괴한다.
+        String rawRequest = """
+                {"eventType":"REST","title":"RAW_TITLE_361_NEVER_LOG","subtitle":null,
+                 "startAt":"2026-07-08T14:00:00","endAt":null,
+                 "photosToAdd":[{"rawId":"0190a1b2-0001-7000-8000-000000000001",
+                 "startAt":"2026-07-08T14:05:00","endAt":null,
+                 "payload":{"filename":"RAW_FILE_361_NEVER_LOG.jpg","clientPhotoUri":"content://media/1001",
+                 "latitude":37.5665,"longitude":126.978}}]}
+                """;
+        JsonNode maskedRequest = objectMapper.readTree(
+                maskRequest("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events", rawRequest));
+
+        assertThat(maskedRequest.at("/photosToAdd/0/rawId").asText())
+                .isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(maskedRequest.at("/photosToAdd/0/startAt").asText()).isEqualTo("2026-07-08T14:05:00");
+        assertThat(maskedRequest.at("/photosToAdd/0/endAt").isNull()).isTrue();
+        assertThat(maskedRequest.at("/photosToAdd/0/payload").asText()).isEqualTo("***");
+        assertThat(maskedRequest.toString())
+                .doesNotContain("RAW_FILE_361_NEVER_LOG", "content://media/1001", "37.5665");
+
+        // response의 items — timelineItemId/itemType/rawId는 남고 payload(photoUrl 포함)는 붕괴한다.
+        String rawResponse = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"timelineEventId\":11,"
+                + "\"eventType\":\"REST\",\"startAt\":\"2026-07-08T14:00:00\",\"endAt\":null,"
+                + "\"title\":\"RAW_TITLE_361_NEVER_LOG\",\"subtitle\":null,\"question\":null,\"place\":null,"
+                + "\"address\":null,\"memo\":null,\"items\":[{\"timelineItemId\":21,\"itemType\":\"PHOTO\","
+                + "\"rawId\":\"0190a1b2-0001-7000-8000-000000000001\",\"startAt\":\"2026-07-08T14:05:00\","
+                + "\"endAt\":null,\"payload\":{\"filename\":\"RAW_FILE_361_NEVER_LOG.jpg\","
+                + "\"photoUrl\":\"https://cdn.example/RAW_URL_361_NEVER_LOG.jpg\"}}]}}";
+        JsonNode maskedResponse = objectMapper.readTree(masker.maskResponse(
+                new MockHttpServletRequest("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
+                jsonResponse(), bytes(rawResponse), false));
+
+        assertThat(maskedResponse.at("/body/items/0/timelineItemId").asInt()).isEqualTo(21);
+        assertThat(maskedResponse.at("/body/items/0/itemType").asText()).isEqualTo("PHOTO");
+        assertThat(maskedResponse.at("/body/items/0/rawId").asText())
+                .isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(maskedResponse.at("/body/items/0/payload").asText()).isEqualTo("***");
+        assertThat(maskedResponse.toString())
+                .doesNotContain("RAW_FILE_361_NEVER_LOG", "RAW_URL_361_NEVER_LOG", "RAW_TITLE_361_NEVER_LOG");
+    }
+
+    @Test
     void manualEventCreatePathDoesNotCaptureOtherMethodsOrEmotionPut() {
         // 같은 날짜 계열 경로의 다른 method는 오매칭하지 않는다 — 감정 PUT body는 enum뿐이라 대상이 아니다.
         assertThat(maskRequest("PUT", "/a/api/v1/timeline/daily-records/2026-07-08/emotion",

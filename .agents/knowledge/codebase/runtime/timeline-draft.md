@@ -81,10 +81,11 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    있으므로 — FAILED로 덮거나 재저장(TTL 연장)하지 않고 PROCESSING을 유지한다(AI callback이 종결하거나
    task TTL 3m 만료가 회수). 502는 접수 확인 실패지 미접수 증명이 아니다.
 
-같은 날짜의 draft, non-empty `photosToAdd` Event PATCH, Event/DailyRecord DELETE 사이에는 공통 Redis
-admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 쓰지 않아 배포 전에 남은 key도
-작업을 막지 않고 기존 TTL로 자연 만료한다. 따라서 409 `-1016`으로 같은 날짜 작업을 선거절하지 않는다.
-공통 admission과 대체 DB lock·retry·upsert가 모두 없으며, 실제 동시 경합의 graph 정합성은 별도 과제다.
+같은 날짜의 draft, 수동 Event 생성/편집(non-empty `photosToAdd` 포함), Event/DailyRecord DELETE
+사이에는 공통 Redis admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 쓰지 않아
+배포 전에 남은 key도 작업을 막지 않고 기존 TTL로 자연 만료한다. 따라서 409 `-1016`으로 같은 날짜 작업을
+선거절하지 않는다. 공통 admission과 대체 DB lock·retry·upsert가 모두 없으며, 실제 동시 경합의 graph
+정합성은 별도 과제다.
 
 `app.ai.mode=noop`은 아무 요청도 만들지 않아 task가 만료된다.
 `fake`는 실 AI와 같은 순서로 자기 서버의 입력·결과·콜백 endpoint를 실제 HTTP로 호출하며 retry하지 않는다.
@@ -169,13 +170,17 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
 - request rawId는 입력 순서의 첫 항목을 사용한다. 같은 record의 같은 rawId가 non-PHOTO면 400, PHOTO면
   기존 Item을 재사용하고 대상 Event에 이미 연결됐으면 no-op이다. legacy PHOTO 중복은 대상 Event 연결 행을
   우선하고 없으면 가장 작은 Item ID를 고른다. 신규 후보끼리 filename이 중복되면 400이다.
-- 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며,
-  payload는 `filename`·`clientPhotoUri`·좌표만 받아 `description=null`과 server-derived `photoUrl`로 저장한다.
+- 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 Event PATCH 또는 Event 생성 POST의 `photosToAdd`로
+  전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며, payload는 `filename`·`clientPhotoUri`·좌표만
+  받아 `description=null`과 server-derived `photoUrl`로 저장한다. 두 API는 같은 검증·분류·저장
+  컴포넌트를 사용한다.
 - 수동 Event 생성(`POST .../daily-records/{recordDate}/events`, #326)은 AI draft 흐름 밖의 동기 편집
   계열이다 — draft task·Redis stage·dispatch를 전혀 거치지 않고, 기존 record(DRAFT/SAVED)에
-  `question`/`place`/`address` null·Item 없는 Event 하나를 한 transaction으로 insert한다. 상세 필드
-  규칙은 PATCH와 같은 공통 규칙(`TimelineEventInputRules`)이고 +10분 충돌 보정은 없다(AI 결과 저장
-  전용). record가 없으면 404이며 DailyRecord를 만들지 않는다(선생성은 draft POST 소유).
+  `question`/`place`/`address`가 null인 Event를 만든다. optional `photosToAdd`가 있으면 Event·PHOTO
+  Item·junction을 하나의 transaction으로 commit하고, 실패하면 Event insert까지 rollback한다. 사진
+  규칙은 PATCH와 같은 공유 컴포넌트, 상세 필드 규칙은 공통 `TimelineEventInputRules`가 소유하며 +10분
+  충돌 보정은 없다(AI 결과 저장 전용). record가 없으면 404이며 DailyRecord를 만들지 않는다(선생성은
+  draft POST 소유).
 - 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
   응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 이미 업로드를 마친 **동일
   pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있다. 서버는 full object key의
@@ -309,7 +314,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   없이 그 단계 전체를 중단한다(fail-closed).
 - 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
   유지하고 AI 전달 DTO 조립에서만 치환한다.
-- `rawId`는 draft source·Event PATCH PHOTO 양쪽에서 canonical lowercase UUID(version 무관)만
+- `rawId`는 draft source와 수동 PHOTO 입력(Event PATCH·Event 생성 POST)에서 canonical lowercase
+  UUID(version 무관)만
   허용한다(위반 400, 허용값 무정규화 저장).
 - 저장 전이와 User Memory 교체는 하나의 transaction이 아니다 — 저장 API가 전이를, 결과 API가 교체를
   각각 commit한다. User Memory는 저장 성패와 무관한 보조 데이터다.
@@ -319,8 +325,8 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   구분되지 않으므로 선점 표식을 함께 본다.
 - 결과 저장의 stage 전이는 MySQL commit 뒤에만 한다 — `CALLBACK_PENDING`이 "graph가 확정됐다"의 유일한
   증거이며, 그 전에는 어떤 재요청도 멱등 성공으로 처리하지 않는다.
-- draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH의 수동 PHOTO Item/junction도
-  서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
+- draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH와 Event 생성 POST의 수동
+  PHOTO Item/junction도 서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
 - 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고 Redis `ProcessStage`/CAS가 호출 순서와
   동시 writer를 제한한다.
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).

@@ -91,8 +91,8 @@ DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나뿐이다 — AI 결과도 서버 결과 저장
-transaction이 쓰고, Event PATCH의 Event/memo 수정·수동 PHOTO Item/junction 추가·수동 Event 생성
-(#326 — Item 없는 단일 Event insert)도 같은 계층이 commit한다.
+transaction이 쓰고, Event PATCH의 Event/memo 수정·수동 PHOTO Item/junction 추가와 수동 Event 생성
+(#326/#361 — Event + optional PHOTO Item/junction)도 같은 계층이 각각 한 transaction으로 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
 FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
@@ -365,7 +365,8 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
 full key는 DB column으로 저장하지 않는다. live 경로와 저장된 `photoUrl`은 subject 기반
 `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}` 단일 규칙을 사용한다.
-Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를 조회하지 않는다.
+Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를
+조회하지 않는다.
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
@@ -390,9 +391,10 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
-  연결하고, Event PATCH는 같은 record의 기존 PHOTO Item을 대상 Event에 재사용할 수 있다.
+  연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 같은 record의 기존 PHOTO Item을 대상
+  Event에 재사용할 수 있다.
 - `timeline_items.raw_id`는 DB UNIQUE가 없다 — draft는 API 사전 제외 + AI write 직전 재검사로 방어하고,
-  Event PATCH는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
+  수동 PHOTO 추가는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
   Event에 이미 연결된 PHOTO는 no-op이고 같은 rawId의 non-PHOTO는 400이다. legacy로 같은 rawId의 PHOTO가
   여러 행이면 대상 Event에 연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복
   행은 허용하며 조회·삭제는 `timeline_item_id` 기준이다.

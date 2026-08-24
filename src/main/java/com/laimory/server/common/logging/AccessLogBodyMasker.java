@@ -40,7 +40,7 @@ final class AccessLogBodyMasker {
 
     // 사용자 원문(draft 항목·Event·memo·AI result·User Memory result·FAILED callback error)을 담는
     // request body. drafts는 photo-uploads(presign)를 제외하기 위해 정확히 끝나는 경로만 매칭한다.
-    // 수동 Event 생성 POST(#326)의 title/subtitle/memo도 사용자 원문이다.
+    // 수동 Event 생성 POST(#326/#361)의 title/subtitle/memo/photosToAdd payload도 사용자 원문이다.
     private static final List<PrivacyBodyPath> PRIVACY_REQUEST_PATHS = List.of(
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/drafts$")),
             new PrivacyBodyPath("PATCH", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")),
@@ -56,7 +56,7 @@ final class AccessLogBodyMasker {
     // 그 종류·버전으로 term_documents.content_url을 읽는다(로그가 원본이 아니다).
     // 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지.
     // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
-    // 수동 Event 생성 POST response는 입력 title/subtitle/memo를 echo하므로 request와 함께 대상이다.
+    // 수동 Event 생성 POST response는 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 대상이다.
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records$")),

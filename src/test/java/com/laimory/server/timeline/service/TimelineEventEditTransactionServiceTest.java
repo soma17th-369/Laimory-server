@@ -72,14 +72,20 @@ class TimelineEventEditTransactionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelineEventEditTransactionService(
+        // 사진 분류·저장은 실제 공유 컴포넌트(mock leaf 주입)를 태워 "PATCH 동작이 리팩터 전후 동일"을
+        // 기존 시나리오 단언 무수정으로 고정한다(개수 상한은 이 writer 시나리오와 무관).
+        TimelineEventPhotoAddService photoAddService = new TimelineEventPhotoAddService(
                 timelineEventService,
-                dailyRecordService,
                 timelineEventItemService,
                 timelineItemService,
                 timelinePhotoDeleteJobService,
                 photoUrlService,
-                new ObjectMapper());
+                new ObjectMapper(),
+                20);
+        service = new TimelineEventEditTransactionService(
+                timelineEventService,
+                dailyRecordService,
+                photoAddService);
         lenient().when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), any()))
                 .thenReturn(Optional.empty());
     }
@@ -310,7 +316,7 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     private TimelineEventEditCommand command(boolean memoPresent, String memo,
-                                             List<TimelineEventEditCommand.PhotoToAdd> photos) {
+                                             List<TimelineEventPhotoAddService.PhotoToAdd> photos) {
         return new TimelineEventEditCommand(
                 TimelineEventType.MEAL,
                 "새 제목",
@@ -322,8 +328,8 @@ class TimelineEventEditTransactionServiceTest {
                 photos);
     }
 
-    private TimelineEventEditCommand.PhotoToAdd photo(String rawId, String filename) {
-        return new TimelineEventEditCommand.PhotoToAdd(
+    private TimelineEventPhotoAddService.PhotoToAdd photo(String rawId, String filename) {
+        return new TimelineEventPhotoAddService.PhotoToAdd(
                 rawId,
                 RECORD_DATE.atTime(14, 5),
                 null,

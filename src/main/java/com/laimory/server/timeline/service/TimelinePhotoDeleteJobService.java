@@ -37,7 +37,7 @@ public class TimelinePhotoDeleteJobService {
 
     /**
      * 같은 Item 또는 object의 기존 작업을 보존하면서 없을 때만 enqueue한다. 신규 job은 삭제 transaction과
-     * 경합한 Event PATCH가 먼저 commit하도록 다음 Seoul calendar day 00:00부터 claim 가능하게 한다.
+     * 경합한 수동 PHOTO 추가가 먼저 commit하도록 다음 Seoul calendar day 00:00부터 claim 가능하게 한다.
      *
      * @return 새 행을 만들었으면 {@code true}, UNIQUE 충돌로 기존 작업을 유지했으면 {@code false}
      */
@@ -94,7 +94,8 @@ public class TimelinePhotoDeleteJobService {
     }
 
     /**
-     * Event PATCH가 같은 object의 삭제 대기 job을 취소하고 보존 Item을 재사용한다.
+     * 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 같은 object의 삭제 대기 job을 취소하고 보존 Item을
+     * 재사용한다.
      * 유효한 PROCESSING job은 S3 삭제 중이므로 같은 object를 새 Item으로 만들지 않게 409로 거절한다.
      */
     @Transactional

@@ -136,13 +136,17 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 수동 생성한다(DRAFT/SAVED 모두, DailyRecord 자동 생성 없음 — 없음·비소유는 404 `-404` 은닉).
 `eventType`·`title`·`subtitle`·`startAt`·`endAt` 5개 키는 모두 필수다(키 누락 400). `eventType`은
 명시적 null도 400이고 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 값이 nullable이고,
-`memo`만 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자). 상세 필드
-규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은 Event PATCH와 같은
-규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
+`memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
+`photosToAdd`도 optional 키다(누락/빈 배열은 사진 없음, 명시적 null·비배열은 400). 사진 입력·개수·
+rawId 중복·같은 record PHOTO 재사용·pending delete job 재연결 규칙은 Event PATCH와 같고, Event·PHOTO
+Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
+S3 object 존재를 확인하지 않는다. 유효한 `PROCESSING` delete job은 409 `-1019`, 사진 수 초과는 400
+`-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
+Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
 `200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
-`question`/`place`/`address`=null, `items=[]`다. Item/PHOTO 동시 생성은 없다 — 사진은 생성 응답의
-ID로 기존 Event PATCH `photosToAdd`를 호출해 추가한다. body는 있는데 Content-Type이 없거나 JSON이
-아니면 415 `-415`이고, User Memory 갱신은 새로 등록하지 않는다.
+`question`/`place`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면
+`items=[]`). body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`이고, User Memory 갱신은
+새로 등록하지 않는다.
 
 `POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자
 문서 전체와 교체하는 서버간 endpoint다. 성공·실패가 같은 경로로 오며 `status`가 갈래를 정한다(FAILED도
