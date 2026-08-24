@@ -317,6 +317,9 @@ OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않�
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
 자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, dev WAS에만 설치된 Filebeat stats 수집기,
 dev로 고정된 Elasticsearch index)을 읽으므로 `environment="dev"`를 유지한다.
+`backup-rules.yml`의 백업 신선도 rule 2종(prod MySQL mysqldump·EBS snapshot의 26h staleness)은 각각
+prod MySQL host와 monitoring host의 backup timer가 쓰는 textfile 시계열 하나씩만 읽는 환경 고정
+rule이다 — 백업 체계 자체의 계약은 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
