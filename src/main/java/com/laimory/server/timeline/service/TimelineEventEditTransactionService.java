@@ -62,9 +62,11 @@ public class TimelineEventEditTransactionService {
             links.add(TimelineEventItem.of(timelineEventId, itemId));
         }
         for (TimelineEventEditCommand.PhotoToAdd photo : photoChanges.newPhotos()) {
+            // address/places는 draft enrich 전용이라 수동 추가 경로에서는 채우지 않는다(#324) —
+            // 이 경로는 지오코딩을 타지 않으므로 같은 타입에 주소가 있는 사진과 없는 사진이 공존한다.
             PhotoPayload payload = new PhotoPayload(
                     photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
-                    null, photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
+                    null, null, null, photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
             TimelineItem item = timelineItemService.save(TimelineItem.of(
                     ItemType.PHOTO, photo.rawId(), photo.startAt(), photo.endAt(),
                     objectMapper.valueToTree(payload)));

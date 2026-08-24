@@ -306,6 +306,11 @@ public class TimelineDraftTaskService {
                     if (isBlank(photo.clientPhotoUri())) {
                         throw new IllegalArgumentException("PHOTO sourceItem requires clientPhotoUri: index=" + i);
                     }
+                    // PHOTO 좌표는 선택이라 둘 다 없으면 통과한다. 다만 하나라도 주면 지오코딩 대상이 되므로
+                    // STAY/MOVEMENT와 같은 기준으로 검증한다 — 부분·NaN·범위 밖 좌표가 Kakao 질의로 나가지 않게.
+                    if (photo.latitude() != null || photo.longitude() != null) {
+                        requireValidCoordinate(photo.latitude(), photo.longitude(), "PHOTO", i);
+                    }
                 }
                 case CalendarPayload calendar -> requireItemType(src.itemType(), ItemType.CALENDAR, i);
                 case StayPayload stay -> {

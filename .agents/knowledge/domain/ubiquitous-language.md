@@ -67,7 +67,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 아이템 페이로드 | Timeline Item Payload | 현재 구현 | HTTP input/enrich에서 쓰는 sealed payload 공통 interface다. |
-| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명과 서버가 만든 `photoUrl`을 담는다. AI writer는 설명을 붙일 수 있지만 Event PATCH의 수동 PHOTO 입력은 `filename`·`clientPhotoUri`·좌표만 받고 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
+| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명, 서버 지오코딩 enrich(`address`·`places`)와 서버가 만든 `photoUrl`을 담는다. `address`/`places`는 좌표가 있는 draft 사진에만 채워진다 — Event PATCH의 수동 PHOTO 입력은 enrich 경로를 타지 않아 두 필드가 없고, `filename`·`clientPhotoUri`·좌표만 받아 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
 | 일정 페이로드 | Calendar Payload | 현재 구현 | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
 | 머문 곳 페이로드 | Stay Payload | 현재 구현 | 필수 좌표와 서버 파생 주소·주변 장소·머문 시간 텍스트를 담는다. |
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |

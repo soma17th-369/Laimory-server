@@ -127,6 +127,7 @@ class TimelineRecordControllerTest {
                 21L, ItemType.PHOTO, "raw-21",
                 LocalDateTime.parse("2026-07-08T14:05:00"), null,
                 objectMapper.valueToTree(new PhotoPayload("u.jpg", "content://x", 1.0, 2.0, null,
+                        null, null,
                         "https://cdn.example/u.jpg")));
         return new TimelineEventResponse(
                 11L, TimelineEventType.REST,

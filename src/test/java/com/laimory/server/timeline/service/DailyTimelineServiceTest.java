@@ -94,7 +94,7 @@ class DailyTimelineServiceTest {
         StayPayload stay = new StayPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
         TimelineItem photoItem = item(21L, ItemType.PHOTO, "raw-21", t,
                 new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x",
-                        1.0, 2.0, null, "https://cdn.example/x"));
+                        1.0, 2.0, null, null, null, "https://cdn.example/x"));
         TimelineItem stayItem = TimelineItem.of(ItemType.STAY, "raw-22", t.plusHours(1), t.plusHours(2),
                 MAPPER.valueToTree(stay));
         ReflectionTestUtils.setField(stayItem, "timelineItemId", 22L);
@@ -342,7 +342,7 @@ class DailyTimelineServiceTest {
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L, 12L)))
                 .thenReturn(List.of(TimelineEventItem.of(11L, 21L), TimelineEventItem.of(12L, 21L)));
         TimelineItem shared = item(21L, ItemType.PHOTO, "raw-21", t,
-                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null, null));
+                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null, null, null, null));
         when(timelineItemService.findByIds(List.of(21L))).thenReturn(List.of(shared));
 
         DailyTimelineResponse result = dailyTimelineService.getDailyTimeline(300L);
@@ -369,7 +369,7 @@ class DailyTimelineServiceTest {
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L)))
                 .thenReturn(List.of(TimelineEventItem.of(11L, 21L), TimelineEventItem.of(11L, 22L)));
         TimelineItem timed = item(21L, ItemType.PHOTO, "raw-21", t,
-                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null, null));
+                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x", 1.0, 2.0, null, null, null, null));
         TimelineItem untimed = item(22L, ItemType.NOTIFICATION, "raw-22", null,
                 MAPPER.createObjectNode().put("title", "n"));
         when(timelineItemService.findByIds(List.of(21L, 22L))).thenReturn(List.of(timed, untimed));

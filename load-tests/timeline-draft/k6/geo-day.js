@@ -4,10 +4,9 @@
 // (STAY 13 + MOVEMENT 양끝 24) → 정상 시 Kakao 74콜. 실환경 하루치 요청이 지오코딩 경로 전체
 // (WebClient pool/pending, timeout/retry/circuit, servlet worker 대기)를 실제 비율로 통과한다.
 //
-// 실행 전제 두 가지(순서대로):
-//   1. dev `.env`에 `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상 — 현재 공개 상한 30을 실측 하루(37)가
-//      넘어서 안 올리면 외부 호출 전에 400/-400으로 거절된다.
-//   2. #257 simulator 전환(`APP_GEO_KAKAO_BASE_URL` + dummy key) — 실제 Kakao면 요청 하나가 74콜이다.
+// 실행 전제:
+//   #257 simulator 전환(`APP_GEO_KAKAO_BASE_URL` + dummy key) — 실제 Kakao면 요청 하나가 74콜이다.
+//   좌표 상한(`app.geo.max-unique-coordinates`)은 기본 100이라 실측 하루(37)에 override가 필요 없다.
 //
 // 실행 예(repo root 기준):
 //   RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 \

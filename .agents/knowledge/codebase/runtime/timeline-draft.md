@@ -38,7 +38,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    Redis용), SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 필터 뒤 지오코딩 대상 unique coordinate가 30개
+5. geo/photo enrich를 DB transaction 밖에서 수행한다. 지오코딩 대상은 STAY 좌표, MOVEMENT start/end와
+   **좌표를 가진 PHOTO**의 합집합이다(PHOTO 좌표는 선택 — 둘 다 없으면 비대상이고, 한쪽만 있거나
+   범위 밖이면 입력 경계가 400 `-400`으로 거절한다). 필터 뒤 unique coordinate가 100개
    (`app.geo.max-unique-coordinates`)를 넘으면 외부 호출 전에 400 `-400`으로 거절한다. 지오코딩은 좌표별
    최종 outcome을 materialize해 품질 판정한다 — unique 실패 20% 초과(`5F > U`) 또는 시간순(observation
    `startAt`/MOVEMENT END는 `endAt`-or-`startAt`, `rawId`·START<END tie-break) 연속 실패 3개면 저장 전
@@ -46,6 +48,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    `places=[]`로 계속한다. 단 **`LOCAL_REJECTED`(자기 pool 혼잡)는 upstream 품질 신호가 아니므로
    두 규칙 어디에도 계수하지 않고**(D2에서는 무정보 skip — reset 아님) 해당 좌표만 fallback으로
    강등한다(#262). local 혼잡만으로는 502가 나지 않는다.
+   **PHOTO 좌표는 조회·상한·실패율(D1)에는 합류하지만 시간순 연속 실패(D2) 축에는 관측을 만들지 않는다** —
+   사진은 시간축에 조밀하게 뭉쳐, 같은 자리에서 찍은 사진 3장이 공유하는 좌표가 한 번 실패하는 것만으로
+   하루 draft 전체가 502가 되기 때문이다(임계값 3은 하루 25개 안팎이 흩어진 STAY/MOVEMENT 기준이다).
+   성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다.
 6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.

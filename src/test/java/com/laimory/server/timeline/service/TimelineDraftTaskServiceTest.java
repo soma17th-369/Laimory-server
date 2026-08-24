@@ -135,7 +135,7 @@ class TimelineDraftTaskServiceTest {
 
     private List<SourceItemDto> oneSource() {
         return List.of(new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)));
     }
 
     @Test
@@ -413,6 +413,45 @@ class TimelineDraftTaskServiceTest {
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
     }
 
+    // ── #324: PHOTO 좌표는 선택이되, 주면 STAY/MOVEMENT와 같은 기준으로 검증한다 ──
+
+    @Test
+    void createDraftTask_acceptsPhotoWithoutCoordinate() {
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
+
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
+                List.of(photoSource(null, null)));
+
+        assertThat(taskId).isNotBlank();
+    }
+
+    @Test
+    void createDraftTask_rejectsPhotoWithPartialCoordinate() {
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
+                List.of(photoSource(37.5, null))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
+                List.of(photoSource(null, 127.0))))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(sourceItemEnrichmentService, never()).enrich(anyList(), any());
+    }
+
+    @Test
+    void createDraftTask_rejectsPhotoWithOutOfRangeOrNaNCoordinate() {
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
+                List.of(photoSource(91.0, 127.0))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
+                List.of(photoSource(37.5, Double.NaN))))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(sourceItemEnrichmentService, never()).enrich(anyList(), any());
+    }
+
+    private static SourceItemDto photoSource(Double latitude, Double longitude) {
+        return new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                new PhotoPayload(VALID_FILENAME, "content://x", latitude, longitude, null, null, null, null));
+    }
+
     @Test
     void createDraftTask_rejectsNullRecordDate() {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, null, RECORD_AT, ZONE, WINDOW, oneSource()))
@@ -470,7 +509,7 @@ class TimelineDraftTaskServiceTest {
     @Test
     void createDraftTask_rejectsNullItemType() {
         List<SourceItemDto> sources = List.of(
-                new SourceItemDto(null, RAW_ID_1, null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null, null)));
+                new SourceItemDto(null, RAW_ID_1, null, null, new PhotoPayload("u", "content://x", 1.0, 2.0, null, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -489,7 +528,7 @@ class TimelineDraftTaskServiceTest {
         // 400으로 앞당긴다. lookup/저장/디스패치 어느 것도 시작되지 않아야 한다. nullable endAt은 그대로 허용.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, RAW_ID_1, null, null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -505,7 +544,7 @@ class TimelineDraftTaskServiceTest {
         // rawId는 전 타입 공통 필수(envelope 필드). blank → 400(저장 전).
         List<SourceItemDto> blankRawId = List.of(new SourceItemDto(
                 ItemType.PHOTO, " ", LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
+                new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, blankRawId))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineDraftPreparationService, never()).prepareDraft(any(), any(), any(), anyString(), anyList());
@@ -519,9 +558,9 @@ class TimelineDraftTaskServiceTest {
         String uuidV7 = "0190a1b2-7c3d-7f6a-8b9c-0d1e2f3a4b5c";
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.PHOTO, uuidV4, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)),
+                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)),
                 new SourceItemDto(ItemType.PHOTO, uuidV7, LocalDateTime.of(2026, 6, 17, 10, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null)));
+                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null, null, null)));
 
         service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
 
@@ -548,7 +587,7 @@ class TimelineDraftTaskServiceTest {
         for (String rawId : invalidRawIds) {
             List<SourceItemDto> sources = List.of(new SourceItemDto(
                     ItemType.PHOTO, rawId, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                    new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)));
+                    new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)));
             assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                     .isInstanceOf(IllegalArgumentException.class)
                     .satisfies(e -> assertThat(e.getMessage()).doesNotContain(rawId));
@@ -567,7 +606,7 @@ class TimelineDraftTaskServiceTest {
                 new SourceItemDto(ItemType.NOTIFICATION, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 21, 12), null,
                         new NotificationPayload("Messenger", "새 메시지", "연락처 010-1234-5678")),
                 new SourceItemDto(ItemType.PHOTO, RAW_ID_2, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://media/external/images/42", 1.0, 2.0, null, null)));
+                        new PhotoPayload(VALID_FILENAME, "content://media/external/images/42", 1.0, 2.0, null, null, null, null)));
 
         service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
 
@@ -620,7 +659,7 @@ class TimelineDraftTaskServiceTest {
         // PHOTO filename이 UUIDv7+허용ext 패턴이 아니면 입력 경계에서 400으로 막는다(저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null, null)));
+                new PhotoPayload("../etc/passwd", "content://x", 1.0, 2.0, null, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -630,7 +669,7 @@ class TimelineDraftTaskServiceTest {
         // clientPhotoUri는 1차 로컬 캐싱용이라 PHOTO엔 필수다(누락/blank → 400, 저장 전).
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null, null)));
+                new PhotoPayload(VALID_FILENAME, null, 1.0, 2.0, null, null, null, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -775,9 +814,9 @@ class TimelineDraftTaskServiceTest {
 
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)),
+                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)),
                 new SourceItemDto(ItemType.PHOTO, RAW_ID_2, LocalDateTime.of(2026, 6, 17, 10, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null)));
+                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null, null, null)));
 
         service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
 
@@ -815,9 +854,9 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null)),
+                        new PhotoPayload(VALID_FILENAME, "content://x", 1.0, 2.0, null, null, null, null)),
                 new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 10, 0), null,
-                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null)));
+                        new PhotoPayload(VALID_FILENAME, "content://y", 1.0, 2.0, null, null, null, null)));
 
         service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
 
