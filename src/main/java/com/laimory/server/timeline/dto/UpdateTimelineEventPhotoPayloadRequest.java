@@ -3,7 +3,7 @@ package com.laimory.server.timeline.dto;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
 
-/** Event PATCH로 수동 추가하는 PHOTO의 클라이언트 입력 payload. */
+/** Event PATCH 또는 수동 Event 생성 POST로 추가하는 PHOTO의 클라이언트 입력 payload. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record UpdateTimelineEventPhotoPayloadRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,

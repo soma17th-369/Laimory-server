@@ -1331,6 +1331,168 @@ class TimelineRecordControllerTest {
         verifyNoInteractions(timelineEventCreateService);
     }
 
+    // --- createTimelineEvent photosToAdd (#361) ---
+
+    @Test
+    void createTimelineEvent_missingPhotosToAddKeyPassesEmptyList() throws Exception {
+        when(timelineEventCreateService.createEvent(any(), any(), any(LocalDate.class), any()))
+                .thenReturn(createdManualEvent());
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
+
+        ArgumentCaptor<CreateTimelineEventRequest> request =
+                ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService)
+                .createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        assertThat(request.getValue().photosToAdd()).isEmpty();
+    }
+
+    @Test
+    void createTimelineEvent_parsesPhotosToAddAndIgnoresAiAndServerOnlyPayloadFields() throws Exception {
+        when(timelineEventCreateService.createEvent(any(), any(), any(LocalDate.class), any()))
+                .thenReturn(createdManualEvent());
+        String body = """
+                {
+                  "eventType": "REST",
+                  "title": "카페에서 휴식",
+                  "subtitle": "성수동",
+                  "startAt": "2026-07-08T14:00:00",
+                  "endAt": "2026-07-08T15:00:00",
+                  "photosToAdd": [
+                    {
+                      "rawId": "0190a1b2-0001-7000-8000-000000000001",
+                      "startAt": "2026-07-08T14:05:00",
+                      "endAt": null,
+                      "payload": {
+                        "filename": "0190a1b2-0002-7000-8000-000000000002.jpg",
+                        "clientPhotoUri": "content://media/external/images/media/1001",
+                        "latitude": 37.5665,
+                        "longitude": 126.978,
+                        "description": "클라이언트가 넣을 수 없는 AI 값",
+                        "photoUrl": "https://attacker.example/photo.jpg"
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<CreateTimelineEventRequest> request =
+                ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService)
+                .createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        CreateTimelineEventRequest parsed = request.getValue();
+        assertThat(parsed.photosToAdd()).hasSize(1);
+        assertThat(parsed.photosToAdd().get(0).rawId())
+                .isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(parsed.photosToAdd().get(0).startAt())
+                .isEqualTo(LocalDateTime.parse("2026-07-08T14:05:00"));
+        assertThat(parsed.photosToAdd().get(0).endAt()).isNull();
+        assertThat(parsed.photosToAdd().get(0).payload().filename())
+                .isEqualTo("0190a1b2-0002-7000-8000-000000000002.jpg");
+        assertThat(parsed.photosToAdd().get(0).payload().clientPhotoUri())
+                .isEqualTo("content://media/external/images/media/1001");
+        assertThat(objectMapper.valueToTree(parsed.photosToAdd().get(0).payload()).has("description")).isFalse();
+        assertThat(objectMapper.valueToTree(parsed.photosToAdd().get(0).payload()).has("photoUrl")).isFalse();
+    }
+
+    @Test
+    void createTimelineEvent_emptyPhotosToAddArrayIsAcceptedAsNoPhotos() throws Exception {
+        when(timelineEventCreateService.createEvent(any(), any(), any(LocalDate.class), any()))
+                .thenReturn(createdManualEvent());
+        ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
+        body.putArray("photosToAdd");
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
+
+        ArgumentCaptor<CreateTimelineEventRequest> request =
+                ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService)
+                .createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        assertThat(request.getValue().photosToAdd()).isEmpty();
+    }
+
+    @Test
+    void createTimelineEvent_explicitNullPhotosToAddRejected400WithoutCallingService() throws Exception {
+        ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
+        body.putNull("photosToAdd");
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineEventCreateService);
+    }
+
+    @Test
+    void createTimelineEvent_nonArrayPhotosToAddRejected400WithoutCallingService() throws Exception {
+        ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
+        body.put("photosToAdd", "not-an-array");
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+
+        verifyNoInteractions(timelineEventCreateService);
+    }
+
+    @Test
+    void createTimelineEvent_mapsPhotoCountExceededTo400With1004() throws Exception {
+        doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 20))
+                .when(timelineEventCreateService).createEvent(any(), any(), any(LocalDate.class), any());
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-1004));
+    }
+
+    @Test
+    void createTimelineEvent_mapsPhotoDeleteInProgressTo409With1019() throws Exception {
+        doThrow(new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS))
+                .when(timelineEventCreateService).createEvent(any(), any(), any(LocalDate.class), any());
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.header.code").value(-1019));
+    }
+
+    @Test
+    void createTimelineEvent_exposesServiceReturnedItemsInResponse() throws Exception {
+        TimelineItemResponse createdPhoto = new TimelineItemResponse(
+                21L, ItemType.PHOTO, "0190a1b2-0001-7000-8000-000000000001",
+                LocalDateTime.parse("2026-07-08T14:05:00"), null,
+                objectMapper.valueToTree(new PhotoPayload(
+                        "0190a1b2-0002-7000-8000-000000000002.jpg", "content://media/1001", 37.5665, 126.978,
+                        null, null, null, "https://cdn.example/u.jpg")));
+        TimelineEventResponse withItems = new TimelineEventResponse(
+                99L, TimelineEventType.REST,
+                LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
+                "카페에서 휴식", "성수동", null, null, null, "책을 읽었다.", List.of(createdPhoto));
+        when(timelineEventCreateService.createEvent(any(), any(), any(LocalDate.class), any()))
+                .thenReturn(withItems);
+
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.timelineEventId").value(99))
+                .andExpect(jsonPath("$.body.items[0].timelineItemId").value(21))
+                .andExpect(jsonPath("$.body.items[0].itemType").value("PHOTO"))
+                .andExpect(jsonPath("$.body.items[0].payload.photoUrl").value("https://cdn.example/u.jpg"));
+    }
+
     private void assertBodyIsExplicitNull(org.springframework.test.web.servlet.MvcResult result) throws Exception {
         JsonNode response = objectMapper.readTree(result.getResponse().getContentAsByteArray());
         assertThat(response.has("body")).isTrue();

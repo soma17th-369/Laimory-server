@@ -313,7 +313,7 @@ class TimelineDeletionCascadeIntegrationTest {
                 .extracting(TimelinePhotoDeleteJob::getStatus)
                 .isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
 
-        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+        TimelineEventPhotoAddService.PhotoToAdd photo = new TimelineEventPhotoAddService.PhotoToAdd(
                 rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
                 null, null);
         timelineEventEditTransactionService.updateEvent(
@@ -351,7 +351,7 @@ class TimelineDeletionCascadeIntegrationTest {
                         + "where timeline_photo_delete_job_id = ?",
                 LocalDateTime.now().plusDays(1), job.getTimelinePhotoDeleteJobId());
 
-        TimelineEventEditCommand.PhotoToAdd photo = new TimelineEventEditCommand.PhotoToAdd(
+        TimelineEventPhotoAddService.PhotoToAdd photo = new TimelineEventPhotoAddService.PhotoToAdd(
                 rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
                 null, null);
         TimelineEventEditCommand command = new TimelineEventEditCommand(

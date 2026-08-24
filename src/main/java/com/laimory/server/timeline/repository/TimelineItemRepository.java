@@ -15,7 +15,7 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     List<String> findRawIdsByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);
 
-    /** Event PATCH PHOTO append의 rawId type/reuse/no-op 분류용 full entity 조회. */
+    /** 수동 PHOTO 추가(Event PATCH·Event 생성 POST)의 rawId type/reuse/no-op 분류용 full entity 조회. */
     @Query("select ti from TimelineItem ti where ti.timelineItemId in :itemIds and ti.rawId in :rawIds")
     List<TimelineItem> findByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);

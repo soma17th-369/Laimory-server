@@ -9,6 +9,8 @@ import com.laimory.server.timeline.TimelineEventType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 타임라인 Event 수동 생성(POST) 요청 — {@code eventType·title·subtitle·startAt·endAt} 5개 키를
@@ -16,10 +18,11 @@ import java.time.LocalDateTime;
  * {@code null}·미지원 literal·숫자 등 비문자열 token(Jackson ordinal coercion 차단)이 모두 400이다.
  * title·startAt의 {@code null}은 서비스 검증에서 400이다.
  *
- * <p>{@code memo}만 optional 키다 — 누락과 null 모두 신규 Event의 메모 없음을 뜻해 PATCH와 달리
- * presence 구분이 없다. {@code photosToAdd}·{@code question}·{@code place}·{@code address}·item은
- * 이 요청의 schema에 없다 — 사진은 생성 응답의 {@code timelineEventId}로 기존 Event PATCH
- * {@code photosToAdd}를 호출해 추가한다.
+ * <p>{@code memo}는 optional 키다 — 누락과 null 모두 신규 Event의 메모 없음을 뜻해 PATCH와 달리
+ * presence 구분이 없다. {@code photosToAdd}도 optional 키이며 규칙은 Event PATCH와 동일하다 —
+ * 키 누락·빈 배열은 사진 없음, 명시적 null·비배열은 400, 원소 DTO는 PATCH의
+ * {@link UpdateTimelineEventPhotoRequest}를 그대로 재사용한다(사진 입력 계약의 단일 원천).
+ * {@code question}·{@code place}·{@code address}·item은 이 요청의 schema에 없다.
  *
  * <p>Jackson 기본 역직렬화는 키 누락도 {@code null}로 만들어 "누락=400 / 명시적 null=비움"을 구분할 수
  * 없으므로, {@link KeyPresenceDeserializer}가 5개 키의 존재를 먼저 검증한다
@@ -49,7 +52,12 @@ public record CreateTimelineEventRequest(
         @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true,
                 description = "이벤트 메모. optional 키 — 누락과 null 모두 메모 없음이고, 공백뿐도 없음으로 "
                         + "정규화한다. 그 외 원문을 저장한다(최대 500자).")
-        String memo
+        String memo,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED,
+                description = "함께 생성·연결할 PHOTO Item 목록. optional 키 — 누락 또는 빈 배열은 사진 "
+                        + "없음이며 명시적 null은 400. 검증·중복·개수·오류 규칙은 Event PATCH photosToAdd와 "
+                        + "동일하고, 클라이언트가 presign·S3 업로드 성공을 확인한 뒤 보낸다.")
+        List<UpdateTimelineEventPhotoRequest> photosToAdd
 ) {
 
     /**
@@ -57,14 +65,16 @@ public record CreateTimelineEventRequest(
      * 던지고, Spring MVC가 {@code HttpMessageNotReadableException}(→ 400 {@code -400})으로 매핑한다 —
      * 깨진 JSON과 같은 경로다. eventType은 값도 non-null 문자열 literal 계약이라 명시적 null과
      * 숫자 등 비문자열 token(Jackson의 enum ordinal coercion)을 여기서 거부한다.
+     * photosToAdd는 PATCH와 같은 optional 키 규칙(누락=empty, 명시적 null·비배열=400)이다.
      * 키가 다 있으면 값 변환은 context에 위임한다(포맷 오류도 동일하게 400).
      */
     static final class KeyPresenceDeserializer extends StdDeserializer<CreateTimelineEventRequest> {
 
-        private static final java.util.List<String> REQUIRED_KEYS =
-                java.util.List.of("eventType", "title", "subtitle", "startAt", "endAt");
+        private static final List<String> REQUIRED_KEYS =
+                List.of("eventType", "title", "subtitle", "startAt", "endAt");
         private static final String EVENT_TYPE_KEY = "eventType";
         private static final String MEMO_KEY = "memo";
+        private static final String PHOTOS_TO_ADD_KEY = "photosToAdd";
 
         KeyPresenceDeserializer() {
             super(CreateTimelineEventRequest.class);
@@ -96,13 +106,34 @@ public record CreateTimelineEventRequest(
                     readNullable(context, node, "subtitle", String.class),
                     readNullable(context, node, "startAt", LocalDateTime.class),
                     readNullable(context, node, "endAt", LocalDateTime.class),
-                    readNullable(context, node, MEMO_KEY, String.class));
+                    readNullable(context, node, MEMO_KEY, String.class),
+                    readPhotosToAdd(context, node));
         }
 
         private <T> T readNullable(DeserializationContext context, JsonNode node, String key, Class<T> type)
                 throws IOException {
             JsonNode value = node.get(key);
             return value == null || value.isNull() ? null : context.readTreeAsValue(value, type);
+        }
+
+        /** 키 누락은 empty(사진 없음), 명시적 null·배열 아닌 값은 400. null element는 서비스 검증까지 보존한다. */
+        private List<UpdateTimelineEventPhotoRequest> readPhotosToAdd(
+                DeserializationContext context, JsonNode node) throws IOException {
+            if (!node.has(PHOTOS_TO_ADD_KEY)) {
+                return List.of();
+            }
+            JsonNode value = node.get(PHOTOS_TO_ADD_KEY);
+            if (value.isNull() || !value.isArray()) {
+                context.reportInputMismatch(CreateTimelineEventRequest.class,
+                        "photosToAdd must be an array when present");
+            }
+            List<UpdateTimelineEventPhotoRequest> photos = new ArrayList<>(value.size());
+            for (JsonNode photo : value) {
+                photos.add(photo.isNull()
+                        ? null
+                        : context.readTreeAsValue(photo, UpdateTimelineEventPhotoRequest.class));
+            }
+            return photos;
         }
     }
 }

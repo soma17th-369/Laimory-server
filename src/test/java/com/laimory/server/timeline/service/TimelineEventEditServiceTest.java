@@ -55,9 +55,7 @@ class TimelineEventEditServiceTest {
     private static final LocalDateTime NEW_START = LocalDateTime.of(2026, 7, 8, 14, 0);
     private static final LocalDateTime NEW_END = LocalDateTime.of(2026, 7, 8, 15, 30);
     private static final String RAW_ID_1 = "0190a1b2-0001-7000-8000-000000000001";
-    private static final String RAW_ID_2 = "0190a1b2-0002-7000-8000-000000000002";
     private static final String FILENAME_1 = "0190a1b2-0001-7000-8000-000000000001.jpg";
-    private static final String FILENAME_2 = "0190a1b2-0002-7000-8000-000000000002.png";
     @Mock
     private TimelineEventService timelineEventService;
     @Mock
@@ -69,11 +67,22 @@ class TimelineEventEditServiceTest {
 
     @BeforeEach
     void setUp() {
+        // 사진 입력 검증은 실제 공유 컴포넌트를 태워 "검증 실패 시 writer 미호출" 오케스트레이션 계약을
+        // 리팩터 전후 동일하게 고정한다(규칙 자체는 TimelineEventPhotoAddServiceTest 소유). leaf 의존은
+        // requireValidPhotos가 쓰지 않으므로 mock으로 충분하다.
+        TimelineEventPhotoAddService photoAddService = new TimelineEventPhotoAddService(
+                timelineEventService,
+                org.mockito.Mockito.mock(TimelineEventItemService.class),
+                org.mockito.Mockito.mock(TimelineItemService.class),
+                org.mockito.Mockito.mock(TimelinePhotoDeleteJobService.class),
+                org.mockito.Mockito.mock(com.laimory.server.timeline.photo.PhotoUrlService.class),
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                MAX_PHOTO_COUNT);
         service = new TimelineEventEditService(
                 timelineEventService,
                 dailyRecordService,
                 transactionService,
-                MAX_PHOTO_COUNT);
+                photoAddService);
     }
 
     // --- PATCH owner/DRAFT 선검증 ---
@@ -218,13 +227,14 @@ class TimelineEventEditServiceTest {
 
     // --- PATCH PHOTO 검증/dedupe ---
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("invalidPhotoLists")
-    void updateEvent_rejectsInvalidPhotoBeforeWriter(String ignored,
-                                                     List<UpdateTimelineEventPhotoRequest> photos) {
+    @Test
+    void updateEvent_invalidPhotoInputRejectedBeforeWriter() {
+        // 개별 사진 입력 규칙은 TimelineEventPhotoAddServiceTest가 소유한다 — 여기서는 검증 실패가
+        // writer 호출 전에 전파되는 오케스트레이션 계약만 대표 케이스로 고정한다.
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, null, false, photos);
+                null, "제목", null, NEW_START, null, null, false,
+                List.of(photo("   ", FILENAME_1, "content://photo")));
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -233,7 +243,7 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
-    void updateEvent_checksPhotoCountBeforeRawIdDedupe() {
+    void updateEvent_photoCountExceededRejectedBeforeWriter() {
         stubOwnedDraftEvent();
         UpdateTimelineEventPhotoRequest samePhoto = photo(RAW_ID_1, FILENAME_1, "content://same");
         UpdateTimelineEventRequest request = request(
@@ -244,24 +254,7 @@ class TimelineEventEditServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_COUNT_EXCEEDED);
                     assertThat(exception.getErrorCode()).isEqualTo(-1004);
-                    assertThat(exception.getArgs()).containsExactly(MAX_PHOTO_COUNT);
                 });
-
-        verifyNoInteractions(transactionService);
-    }
-
-    @Test
-    void updateEvent_invalidRawIdMessageDoesNotContainRawId() {
-        // GlobalExceptionHandler가 IAE 메시지를 로그에 남기므로 rawId 원문을 메시지에 싣지 않는다.
-        stubOwnedDraftEvent();
-        String invalidRawId = "0190A1B2-0001-7000-8000-000000000001";
-        UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, null, false,
-                List.of(photo(invalidRawId, FILENAME_1, "content://photo")));
-
-        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .satisfies(e -> assertThat(e.getMessage()).doesNotContain(invalidRawId));
 
         verifyNoInteractions(transactionService);
     }
@@ -297,14 +290,16 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
-    void updateEvent_duplicateRawIdKeepsFirstPhoto() {
+    void updateEvent_duplicateRawIdKeepsFirstPhotoInCommand() {
+        // dedupe 규칙 자체는 TimelineEventPhotoAddServiceTest 소유 — 여기서는 dedupe 결과가 command로
+        // 전달되는 pass-through만 고정한다.
         stubOwnedDraftEvent();
         UpdateTimelineEventPhotoRequest first = new UpdateTimelineEventPhotoRequest(
                 RAW_ID_1, NEW_START, null,
                 new UpdateTimelineEventPhotoPayloadRequest(FILENAME_1, "content://first", 37.1, 127.1));
         UpdateTimelineEventPhotoRequest duplicate = new UpdateTimelineEventPhotoRequest(
                 RAW_ID_1, NEW_END, NEW_END,
-                new UpdateTimelineEventPhotoPayloadRequest(FILENAME_2, "content://second", 38.2, 128.2));
+                new UpdateTimelineEventPhotoPayloadRequest(FILENAME_1, "content://second", 38.2, 128.2));
         UpdateTimelineEventRequest request = request(
                 null, "제목", null, NEW_START, null, null, false, List.of(first, duplicate));
 
@@ -314,7 +309,7 @@ class TimelineEventEditServiceTest {
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
         assertThat(commandCaptor.getValue().photosToAdd()).containsExactly(
-                new TimelineEventEditCommand.PhotoToAdd(
+                new TimelineEventPhotoAddService.PhotoToAdd(
                         RAW_ID_1, NEW_START, null, FILENAME_1, "content://first", 37.1, 127.1));
     }
 
@@ -465,22 +460,4 @@ class TimelineEventEditServiceTest {
                         null, "제목", null, NEW_START, NEW_START.minusNanos(1), null, false, List.of())));
     }
 
-    private static Stream<Arguments> invalidPhotoLists() {
-        return Stream.of(
-                Arguments.of("null photosToAdd", null),
-                Arguments.of("null element", java.util.Arrays.asList((UpdateTimelineEventPhotoRequest) null)),
-                Arguments.of("blank rawId", List.of(photo("   ", FILENAME_1, "content://photo"))),
-                // canonical lowercase UUID(version 무관)가 아니면 전부 400 — draft source와 같은 규칙.
-                Arguments.of("rawId over 36", List.of(photo("r".repeat(37), FILENAME_1, "content://photo"))),
-                Arguments.of("uppercase uuid rawId", List.of(
-                        photo("0190A1B2-0001-7000-8000-000000000001", FILENAME_1, "content://photo"))),
-                Arguments.of("ulid-like rawId", List.of(
-                        photo("01ARZ3NDEKTSV4RRFFQ69G5FAV", FILENAME_1, "content://photo"))),
-                Arguments.of("non-uuid 36 chars rawId", List.of(
-                        photo("x".repeat(36), FILENAME_1, "content://photo"))),
-                Arguments.of("null payload", List.of(
-                        new UpdateTimelineEventPhotoRequest(RAW_ID_1, NEW_START, null, null))),
-                Arguments.of("invalid filename", List.of(photo(RAW_ID_1, "../photo.jpg", "content://photo"))),
-                Arguments.of("blank clientPhotoUri", List.of(photo(RAW_ID_1, FILENAME_1, "   "))));
-    }
 }

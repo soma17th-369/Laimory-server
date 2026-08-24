@@ -15,17 +15,19 @@ import org.springframework.core.ResolvableType;
 class CreateTimelineEventRequestSchemaTest {
 
     @Test
-    void eventCreate_requiresExactlyTheFiveKeys_andOnlyMemoIsOptional() {
+    void eventCreate_requiresExactlyTheFiveKeys_andMemoAndPhotosAreOptional() {
         Map<String, Schema> schemas = ModelConverters.getInstance().readAll(CreateTimelineEventRequest.class);
         Schema request = schemas.get("CreateTimelineEventRequest");
 
         assertThat(request.getRequired())
                 .containsExactlyInAnyOrder("eventType", "title", "subtitle", "startAt", "endAt");
+        // photosToAdd는 #361부터 optional 키다 — properties에는 있고 required에는 없다.
         assertThat(request.getProperties().keySet())
-                .containsExactlyInAnyOrder("eventType", "title", "subtitle", "startAt", "endAt", "memo");
-        // Item/PHOTO 동시 생성과 AI 결과 전용 필드는 request schema에 없다.
+                .containsExactlyInAnyOrder(
+                        "eventType", "title", "subtitle", "startAt", "endAt", "memo", "photosToAdd");
+        // AI 결과 전용 필드는 request schema에 없다.
         assertThat(request.getProperties())
-                .doesNotContainKeys("photosToAdd", "question", "place", "address", "items");
+                .doesNotContainKeys("question", "place", "address", "items");
     }
 
     @Test
