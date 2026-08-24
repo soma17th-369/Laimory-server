@@ -100,6 +100,7 @@ class GrafanaAlertProvisioningAssetTest {
         assertThat(rule.get("for")).isEqualTo("0s");
         assertThat(rule.get("noDataState")).isEqualTo("OK");
         assertThat(map(rule.get("labels")).get("severity")).isEqualTo("warning");
+        assertThat(map(rule.get("labels"))).doesNotContainKey("environment");
 
         List<Map<String, Object>> data = listOfMaps(rule.get("data"));
         Map<String, Object> query = data.stream()

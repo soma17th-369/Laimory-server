@@ -413,6 +413,40 @@ printf 'header = "Authorization: ApiKey %s"\n' "$API_KEY" |
 unset API_KEY
 ```
 
+## Log pipeline wildcard rollout
+
+datasource(`grafana/provisioning/datasources/elasticsearch.yml`)와 Logs dashboard는 alert rule
+자동 배포 대상이 아니다. 순서가 어긋나면 수집기-부재 분기가 오발화하거나(1을 건너뛰고 rule을
+먼저 배포), prod ERROR 경보가 dev index만 읽어 동작하지 않는다(4를 생략).
+
+1. **prod WAS 2대에 Filebeat 수집기 설치** — 위 collector 설치 절차 그대로. rule 배포 전에 끝낸다.
+2. **`dev` merge** — alert rule은 자동 배포된다.
+3. **(운영자 로컬)** `Existing live rollout`의 upload 절차로 두 자산을 S3에 올린다:
+   `grafana/provisioning/datasources/elasticsearch.yml` ·
+   `grafana/provisioning/dashboards/json/laimory-logs.json`
+4. **monitoring host** — 기존 파일을 backup한 뒤 교체하고, 위 절차로 API key를 `laimory-*` 범위로
+   재발급해 secret을 교체한 다음 Grafana를 재시작한다(datasource provisioning은 시작 시에만 로드).
+
+```bash
+cd /opt/laimory-monitoring
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+sudo install -d -m 0700 "rollback/log-wildcard-$STAMP"
+sudo cp grafana/provisioning/datasources/elasticsearch.yml "rollback/log-wildcard-$STAMP/"
+sudo cp grafana/provisioning/dashboards/json/laimory-logs.json "rollback/log-wildcard-$STAMP/"
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+sudo aws s3 cp "$BASE/grafana/provisioning/datasources/elasticsearch.yml" \
+  grafana/provisioning/datasources/elasticsearch.yml --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "$BASE/grafana/provisioning/dashboards/json/laimory-logs.json" \
+  grafana/provisioning/dashboards/json/laimory-logs.json --region ap-northeast-2 --only-show-errors
+# 이 시점에 elasticsearch_api_key를 laimory-* 범위로 재발급해 교체한다 (위 절차)
+sudo docker compose restart grafana
+```
+
+rollback은 backup 파일 2개를 제자리에 복원하고 이전 범위의 key로 secret을 되돌린 뒤 grafana를
+재시작한다. datasource는 uid(`elasticsearch-dev`)가 같아 삭제 전용 provisioning 없이 파일 교체만으로
+되돌아간다.
+
 ## Existing live rollout
 
 이 절차는 이미 만들어진 monitoring/WAS를 바꾸는 수동 SSM 경로다. 자동 provisioning은 하지 않는다.
@@ -435,6 +469,7 @@ while IFS= read -r asset; do
 done <<'ASSETS'
 docker-compose.yml
 tempo/tempo.yml
+grafana/provisioning/datasources/elasticsearch.yml
 grafana/provisioning/datasources/tempo.yml
 node-exporter/install.sh
 grafana/provisioning/dashboards/json/laimory-overview.json

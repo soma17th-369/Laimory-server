@@ -35,6 +35,7 @@ ruby -ryaml -e '
   abort "application ERROR alert missing" unless rule
   abort "application ERROR alert must fire without a pending period" unless rule["for"] == "0s"
   abort "application ERROR alert must be warning severity" unless rule.dig("labels", "severity") == "warning"
+  abort "application ERROR alert must not pin an environment label" if rule.dig("labels", "environment")
   abort "application ERROR alert must treat empty search results as OK" unless rule["noDataState"] == "OK"
 
   query = rule.fetch("data").find { |item| item["refId"] == "A" }

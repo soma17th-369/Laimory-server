@@ -970,7 +970,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_elasticsearch_active_shards_ratio{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "expr": "laimory_elasticsearch_active_shards_ratio{job=\"node\", host=\"monitoring\"}",
           "instant": false,
           "legendFormat": "active shard ratio",
           "range": true,
@@ -982,7 +982,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "laimory_elasticsearch_unassigned_shards{job=\"node\", environment=\"$environment\", host=\"monitoring\"}",
+          "expr": "laimory_elasticsearch_unassigned_shards{job=\"node\", host=\"monitoring\"}",
           "instant": false,
           "legendFormat": "unassigned shards",
           "range": true,
