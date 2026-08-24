@@ -9,7 +9,7 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 - Prometheus: 30초 수집, TSDB 7일 또는 12GB 중 먼저 도달한 제한
 - Tempo: dev WAS의 OTLP gRPC(4317) trace 수신, 로컬 스토리지 `block_retention: 48h`,
   metrics generator off (#277)
-- Grafana: Prometheus metrics, read-only Elasticsearch dev log datasource와 Tempo trace datasource
+- Grafana: Prometheus metrics, read-only Elasticsearch log datasource(`laimory-*` wildcard)와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, dev MySQL, Redis, ELK와 prod WAS 2대의 private IP:9100
 - textfile collector: monitoring의 CloudWatch/Elasticsearch와 WAS(dev·prod)의 Filebeat self-metric
