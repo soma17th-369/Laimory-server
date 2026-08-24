@@ -269,11 +269,24 @@ jobs:
           require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=${EXPECT_SWAGGER_ENABLED}"
           AI_COUNT=\$(grep -c '^APP_AI_MODE=' "\$ENV_FILE" || true)
           [ "\$AI_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must appear exactly once (found \$AI_COUNT)"; exit 1; }
-          grep -qxE 'APP_AI_MODE=(noop|fake|http)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must be one of noop|fake|http"; exit 1; }
+          grep -qxE 'APP_AI_MODE=(noop|fake|http|agentcore)' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_MODE must be one of noop|fake|http|agentcore"; exit 1; }
           if grep -qxF 'APP_AI_MODE=http' "\$ENV_FILE"; then
             AI_URL_COUNT=\$(grep -c '^APP_AI_HTTP_BASE_URL=' "\$ENV_FILE" || true)
             [ "\$AI_URL_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must appear exactly once when APP_AI_MODE=http (found \$AI_URL_COUNT)"; exit 1; }
             grep -qE '^APP_AI_HTTP_BASE_URL=.+' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_HTTP_BASE_URL must be non-empty when APP_AI_MODE=http"; exit 1; }
+          fi
+          if grep -qxF 'APP_AI_MODE=agentcore' "\$ENV_FILE"; then
+            # AgentCore mode(#338): 앱이 Bedrock AgentCore Runtime을 InvokeAgentRuntime으로 호출한다.
+            # 대상 Runtime ARN과 endpoint(qualifier)가 .env에 정확히 한 줄씩 non-empty여야 하고, ARN은
+            # full Runtime ARN이면서 배포 region이어야 한다(다른 리전 ARN이면 앱이 기동 실패 — 구 컨테이너를
+            # 내린 뒤에 알게 되는 것을 막는다). 진단은 key 이름·개수까지만 낸다.
+            # 자격증명은 runtime role(IMDS)만 쓰므로 아래 AWS override 금지 규칙이 그대로 적용된다.
+            for AGENTCORE_KEY in APP_AI_AGENTCORE_RUNTIME_ARN APP_AI_AGENTCORE_ENDPOINT; do
+              AGENTCORE_COUNT=\$(grep -c "^\$AGENTCORE_KEY=" "\$ENV_FILE" || true)
+              [ "\$AGENTCORE_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$AGENTCORE_KEY must appear exactly once when APP_AI_MODE=agentcore (found \$AGENTCORE_COUNT)"; exit 1; }
+              grep -qE "^\$AGENTCORE_KEY=.+" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$AGENTCORE_KEY must be non-empty when APP_AI_MODE=agentcore"; exit 1; }
+            done
+            grep -qE '^APP_AI_AGENTCORE_RUNTIME_ARN=arn:aws[a-zA-Z-]*:bedrock-agentcore:${AWS_REGION}:[0-9]{12}:runtime/.+\$' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_AI_AGENTCORE_RUNTIME_ARN must be a full AgentCore Runtime ARN in ${AWS_REGION}"; exit 1; }
           fi
           # spring profile 가드: 배포 컨테이너는 기본 프로필로만 기동해야 한다 — .env에
           # SPRING_PROFILES_ACTIVE가 없는 것이 정상이고, 값에 docker가 끼면 dummy JWT 기본값·
