@@ -72,10 +72,19 @@ snapshot_id=$(aws ec2 create-snapshot --region "$region" --volume-id "$VOLUME_ID
   --tag-specifications "ResourceType=snapshot,Tags=[{Key=$TAG_KEY,Value=$TAG_VALUE}]" \
   --query SnapshotId --output text) || record_state_and_fail "create-snapshot"
 
-# 작은 볼륨은 수 분 안에 끝난다. wait 시간 초과 시 이번 run은 실패로 기록하지만 스냅샷 자체는
-# 백그라운드에서 계속 진행되므로, 완료되면 다음 run의 last_success가 자연히 회복된다.
-aws ec2 wait snapshot-completed --region "$region" --snapshot-ids "$snapshot_id" \
-  || record_state_and_fail "snapshot $snapshot_id not completed in time"
+# 첫 스냅샷은 사용 블록 전체를 복사해 수십 분 걸릴 수 있다(이후 증분은 수 분). 45분까지 폴링하고,
+# 초과 시 이번 run은 실패로 기록하지만 스냅샷 자체는 백그라운드에서 계속 진행되므로 완료되면
+# 다음 run의 last_success가 자연히 회복된다.
+deadline=$((SECONDS + 2700))
+state=pending
+while (( SECONDS < deadline )); do
+  state=$(aws ec2 describe-snapshots --region "$region" --snapshot-ids "$snapshot_id" \
+    --query 'Snapshots[0].State' --output text) || record_state_and_fail "describe snapshot state"
+  [[ $state == completed ]] && break
+  [[ $state == error ]] && record_state_and_fail "snapshot $snapshot_id entered error state"
+  sleep 30
+done
+[[ $state == completed ]] || record_state_and_fail "snapshot $snapshot_id not completed in time"
 
 snapshots=$(describe_tagged) || record_state_and_fail "describe-snapshots"
 cutoff=$(date -u -d "-${RETENTION_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
