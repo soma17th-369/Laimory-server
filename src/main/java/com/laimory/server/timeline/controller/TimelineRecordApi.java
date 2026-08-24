@@ -3,11 +3,13 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
+import com.laimory.server.timeline.dto.CreateTimelineEventRequest;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
+import com.laimory.server.timeline.dto.UpdateDailyRecordEmotionRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import io.swagger.v3.oas.annotations.Operation;
@@ -316,4 +318,73 @@ public interface TimelineRecordApi {
             @Parameter(description = "저장할 기록 날짜", example = "2026-07-08")
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate,
             @RequestBody SaveDailyRecordRequest request);
+
+    @Operation(summary = "저장 완료 하루 기록의 감정 수정",
+            description = "인증 사용자가 선택한 날짜의 SAVED 하루 기록의 확정 감정을 요청 값으로 교체한다. "
+                    + "recordDate는 yyyy-MM-dd 형식이며 서버에서 계산·timezone 보정하지 않는다. "
+                    + "request body의 `emotionType`은 필수다(VERY_HAPPY·HAPPY·NEUTRAL·UNHAPPY·VERY_UNHAPPY). "
+                    + "대상은 SAVED 기록뿐이다 — DRAFT의 최초 감정 확정은 기존 저장 API"
+                    + "(POST /daily-records/{recordDate}/save)가 담당하며, DRAFT에 요청하면 `-1020`으로 "
+                    + "거절된다. 같은 값 재요청도 멱등 성공이고 동시 수정은 마지막으로 커밋된 값이 남는다. "
+                    + "저장 API와 달리 이 수정은 User Memory 갱신을 새로 등록하지 않는다"
+                    + "(SAVED 후 편집과 같은 정책).")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "수정 성공(body=null)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음(zero-byte, "
+                            + "Content-Type 유무 무관) · emotionType 누락/null/미지원 값/숫자 등 비문자열 · "
+                            + "깨진 JSON"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "`-1020` — 하루 기록이 아직 DRAFT라 수정할 확정 감정이 없음. "
+                            + "감정은 저장 API로 처음 확정한다"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "415",
+                    description = "`-415` — body는 있는데 Content-Type이 없거나 JSON이 아님")
+    })
+    @PutMapping("/daily-records/{recordDate}/emotion")
+    ResponseEntity<ApiResponse<Void>> updateDailyRecordEmotion(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @Parameter(description = "감정을 수정할 기록 날짜", example = "2026-07-08")
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate,
+            @RequestBody UpdateDailyRecordEmotionRequest request);
+
+    @Operation(summary = "하루 기록에 타임라인 Event 수동 생성",
+            description = "인증 사용자가 선택한 날짜의 기존 하루 기록에 Event를 하나 생성한다(DRAFT/SAVED 모두). "
+                    + "recordDate는 yyyy-MM-dd 형식이며 서버에서 계산·timezone 보정하지 않는다. "
+                    + "하루 기록 자체를 자동 생성하지 않는다 — 해당 날짜 기록이 없으면 404다. "
+                    + "eventType·title·subtitle·startAt·endAt 5개 키를 모두 보내는 계약이다: 키가 하나라도 "
+                    + "없으면 400이다. eventType·title·startAt의 null은 400, subtitle·endAt은 값이 nullable이다. "
+                    + "memo만 optional 키다(누락/null/공백뿐은 메모 없음, 그 외 trim 없이 원문 최대 500자). "
+                    + "필드 규칙은 기존 Event PATCH와 같고, 시간은 보낸 값 그대로 저장한다 — AI 결과 저장의 "
+                    + "+10분 충돌 보정은 없다. 수동 Event의 question·place·address는 null이고 연결 Item은 "
+                    + "빈 목록이다(사진은 생성 응답의 timelineEventId로 기존 Event PATCH photosToAdd를 호출해 "
+                    + "추가한다). 이 생성은 User Memory 갱신을 새로 등록하지 않는다(SAVED 후 편집과 같은 정책).")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "생성 성공 — 생성된 timelineEventId와 Event 표현"
+                            + "(question/place/address=null, items=[]) 반환", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음·깨진 JSON · "
+                            + "5개 키 중 누락 · eventType null/미지원 literal/숫자 등 비문자열 · "
+                            + "title null/공백·255자 초과 · subtitle 255자 초과 · "
+                            + "startAt null/시간 포맷 오류 · endAt이 startAt보다 이전 · memo 500자 초과"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 해당 날짜의 내 하루 기록이 없음(존재 여부는 구분해 주지 않는다)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "415",
+                    description = "`-415` — body는 있는데 Content-Type이 없거나 JSON이 아님")
+    })
+    @PostMapping("/daily-records/{recordDate}/events")
+    ResponseEntity<ApiResponse<TimelineEventResponse>> createTimelineEvent(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @Parameter(description = "Event를 생성할 기록 날짜", example = "2026-07-08")
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate recordDate,
+            @RequestBody CreateTimelineEventRequest request);
 }

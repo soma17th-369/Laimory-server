@@ -112,6 +112,7 @@ class AccessLogBodyMaskerTest {
                 Arguments.of("POST", "/a/api/v1/timeline/drafts"),
                 Arguments.of("PATCH", "/a/api/v12/timeline/events/42"),
                 Arguments.of("PUT", "/a/api/v1/timeline/events/42/memo"),
+                Arguments.of("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),
                 Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"));
@@ -277,6 +278,45 @@ class AccessLogBodyMaskerTest {
                         + "\"contentUrl\":\"***\",\"required\":true,"
                         + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}")
                 .doesNotContain("laimory.app");
+    }
+
+    @Test
+    void manualEventCreateRequestAndResponseKeepStructureAndMaskUserText() {
+        // #326 수동 Event 생성 — request의 title/subtitle/memo와 이를 echo하는 response에서 원문이 남지 않는다.
+        assertThat(maskRequest("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events",
+                "{\"eventType\":\"REST\",\"title\":\"RAW_TITLE_326_NEVER_LOG\",\"subtitle\":\"성수동\","
+                        + "\"startAt\":\"2026-07-08T14:00:00\",\"endAt\":null,\"memo\":\"RAW_MEMO_326_NEVER_LOG\"}"))
+                .isEqualTo("{\"eventType\":\"REST\",\"title\":\"***\",\"subtitle\":\"***\","
+                        + "\"startAt\":\"2026-07-08T14:00:00\",\"endAt\":null,\"memo\":\"***\"}")
+                .doesNotContain("RAW_TITLE_326_NEVER_LOG", "RAW_MEMO_326_NEVER_LOG", "성수동");
+
+        String rawResponse = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"timelineEventId\":11,"
+                + "\"eventType\":\"REST\",\"startAt\":\"2026-07-08T14:00:00\",\"endAt\":null,"
+                + "\"title\":\"RAW_TITLE_326_NEVER_LOG\",\"subtitle\":null,\"question\":null,\"place\":null,"
+                + "\"address\":null,\"memo\":\"RAW_MEMO_326_NEVER_LOG\",\"items\":[]}}";
+        assertThat(masker.maskResponse(
+                new MockHttpServletRequest("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
+                jsonResponse(), bytes(rawResponse), false))
+                // allowlist 밖 필드는 null-여부도 숨긴다(타입 무관 MASK) — 수동 생성의 question/place/address null 포함.
+                .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"timelineEventId\":11,"
+                        + "\"eventType\":\"REST\",\"startAt\":\"2026-07-08T14:00:00\",\"endAt\":null,"
+                        + "\"title\":\"***\",\"subtitle\":\"***\",\"question\":\"***\",\"place\":\"***\","
+                        + "\"address\":\"***\",\"memo\":\"***\",\"items\":[]}}")
+                .doesNotContain("RAW_TITLE_326_NEVER_LOG", "RAW_MEMO_326_NEVER_LOG");
+    }
+
+    @Test
+    void manualEventCreatePathDoesNotCaptureOtherMethodsOrEmotionPut() {
+        // 같은 날짜 계열 경로의 다른 method는 오매칭하지 않는다 — 감정 PUT body는 enum뿐이라 대상이 아니다.
+        assertThat(maskRequest("PUT", "/a/api/v1/timeline/daily-records/2026-07-08/emotion",
+                "{\"emotionType\":\"HAPPY\"}"))
+                .isEqualTo("{\"emotionType\":\"HAPPY\"}");
+        assertThat(maskRequest("GET", "/a/api/v1/timeline/daily-records/2026-07-08/events", "{\"safe\":\"kept\"}"))
+                .isEqualTo("{\"safe\":\"kept\"}");
+        assertThat(masker.maskResponse(
+                new MockHttpServletRequest("GET", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
+                jsonResponse(), bytes("{\"safe\":\"kept\"}"), false))
+                .isEqualTo("{\"safe\":\"kept\"}");
     }
 
     @Test

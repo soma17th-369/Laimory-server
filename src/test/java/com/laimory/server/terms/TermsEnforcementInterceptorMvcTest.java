@@ -29,9 +29,11 @@ import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.controller.TimelineRecordController;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
+import com.laimory.server.timeline.service.DailyRecordEmotionUpdateService;
 import com.laimory.server.timeline.service.DailyTimelineService;
 import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDeletionService;
+import com.laimory.server.timeline.service.TimelineEventCreateService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
@@ -109,6 +111,10 @@ class TermsEnforcementInterceptorMvcTest {
     private TimelineDeletionService timelineDeletionService;
     @MockitoBean
     private TimelineSaveService timelineSaveService;
+    @MockitoBean
+    private DailyRecordEmotionUpdateService dailyRecordEmotionUpdateService;
+    @MockitoBean
+    private TimelineEventCreateService timelineEventCreateService;
     @MockitoBean
     private PushRegistrationService pushRegistrationService;
     @MockitoBean

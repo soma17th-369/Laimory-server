@@ -31,7 +31,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 25개(timeline 16 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 27개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 users GET /me·DELETE /me + terms agreements GET/POST)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -122,6 +122,27 @@ zero-byte body(Content-Type 유무 무관)·`emotionType` 누락/null/미지원 
 body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. **새 error code는 추가하지 않았다.**
 commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
 그 성패는 이 응답과 무관하며 클라이언트가 조회할 대상이 아니다. ID 기반 deprecated 경로는 만들지 않았다.
+
+`PUT /a/api/{version}/timeline/daily-records/{recordDate}/emotion`(#325)은 저장 완료(SAVED) record의
+확정 감정을 필수 body `{"emotionType": "..."}`(save와 같은 5개 literal)로 교체한다. 대상은 SAVED뿐이다 —
+DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요청하면 409 `-1020`
+(`DAILY_RECORD_NOT_SAVED`, 신규 code)이다. status는 바꾸지 않고 같은 값 재요청도 멱등 성공이다
+(동시 수정은 마지막 commit이 남는다). 성공은 `200 + ApiResponse<Void>`·`body=null`, 없음·비소유는
+404 `-404`, 잘못된 날짜 형식·zero-byte body·`emotionType` 누락/null/미지원 literal·깨진 JSON은
+400 `-400`, body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. save와 달리 User Memory
+갱신을 새로 등록하지 않는다(SAVED 후 편집과 같은 정책).
+
+`POST /a/api/{version}/timeline/daily-records/{recordDate}/events`(#326)는 기존 하루 기록에 Event를
+수동 생성한다(DRAFT/SAVED 모두, DailyRecord 자동 생성 없음 — 없음·비소유는 404 `-404` 은닉).
+`eventType`·`title`·`subtitle`·`startAt`·`endAt` 5개 키는 모두 필수다(키 누락 400). `eventType`은
+명시적 null도 400이고 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 값이 nullable이고,
+`memo`만 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자). 상세 필드
+규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은 Event PATCH와 같은
+규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
+`200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
+`question`/`place`/`address`=null, `items=[]`다. Item/PHOTO 동시 생성은 없다 — 사진은 생성 응답의
+ID로 기존 Event PATCH `photosToAdd`를 호출해 추가한다. body는 있는데 Content-Type이 없거나 JSON이
+아니면 415 `-415`이고, User Memory 갱신은 새로 등록하지 않는다.
 
 `POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자
 문서 전체와 교체하는 서버간 endpoint다. 성공·실패가 같은 경로로 오며 `status`가 갈래를 정한다(FAILED도

@@ -8,7 +8,6 @@ import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.photo.PhotoFilenames;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>통합 PATCH는 소유권 사전 확인과 입력 정규화를 먼저 수행한 뒤 별도
  * {@link TimelineEventEditTransactionService}에서 Event·memo·PHOTO Item·junction 변경을 하나의
  * transaction으로 commit한다. PROCESSING·SAVED 중에도 PATCH와 memo PUT은 허용된다.
+ * 상세 필드 공통 규칙(title·subtitle·시간·memo)은 수동 Event 생성과 {@link TimelineEventInputRules}로
+ * 공유한다.
  *
  * <p>이벤트 없음·record 없음·비소유는 모두 404(-404)로 은닉한다. 사용자 입력 문자열·사진
  * 식별자는 로그에 남기지 않는다.
@@ -32,11 +33,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 public class TimelineEventEditService {
-
-    private static final int MAX_TITLE_LENGTH = 255;
-    private static final int MAX_SUBTITLE_LENGTH = 255;
-    /** User Memory 갱신 접수 계약이 확정한 상한. 초과 memo는 AI가 422로 거절하므로 입력에서 막는다. */
-    private static final int MAX_MEMO_LENGTH = 500;
 
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
@@ -68,7 +64,7 @@ public class TimelineEventEditService {
     public void updateMemo(String applicationVersion, UUID subjectId, Long timelineEventId, String memo) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEvent(subjectId, timelineEventId);
-        event.updateMemo(normalizeMemo(memo));
+        event.updateMemo(TimelineEventInputRules.normalizeMemo(memo));
     }
 
     /** owner 검증은 입력 검증·DB mutation보다 먼저 수행한다. */
@@ -86,10 +82,10 @@ public class TimelineEventEditService {
         if (request == null) {
             throw new IllegalArgumentException("request is required");
         }
-        String title = requireValidTitle(request.title());
-        String subtitle = normalizeSubtitle(request.subtitle());
-        requireValidTimeRange(request.startAt(), request.endAt());
-        String memo = request.memoPresent() ? normalizeMemo(request.memo()) : null;
+        String title = TimelineEventInputRules.requireValidTitle(request.title());
+        String subtitle = TimelineEventInputRules.normalizeSubtitle(request.subtitle());
+        TimelineEventInputRules.requireValidTimeRange(request.startAt(), request.endAt());
+        String memo = request.memoPresent() ? TimelineEventInputRules.normalizeMemo(request.memo()) : null;
         List<TimelineEventEditCommand.PhotoToAdd> photos = requireValidPhotos(request.photosToAdd());
         return new TimelineEventEditCommand(
                 request.eventType(), title, subtitle, request.startAt(), request.endAt(),
@@ -141,47 +137,6 @@ public class TimelineEventEditService {
                     photosToAdd.size() - deduped.size(), deduped.size());
         }
         return List.copyOf(deduped);
-    }
-
-    private String requireValidTitle(String title) {
-        if (title == null || title.isBlank()) {
-            throw new IllegalArgumentException("title is required");
-        }
-        String stripped = title.strip();
-        if (stripped.length() > MAX_TITLE_LENGTH) {
-            throw new IllegalArgumentException("title is too long: length=" + stripped.length());
-        }
-        return stripped;
-    }
-
-    private String normalizeSubtitle(String subtitle) {
-        if (subtitle == null || subtitle.isBlank()) {
-            return null;
-        }
-        String stripped = subtitle.strip();
-        if (stripped.length() > MAX_SUBTITLE_LENGTH) {
-            throw new IllegalArgumentException("subtitle is too long: length=" + stripped.length());
-        }
-        return stripped;
-    }
-
-    private void requireValidTimeRange(LocalDateTime startAt, LocalDateTime endAt) {
-        if (startAt == null) {
-            throw new IllegalArgumentException("startAt is required");
-        }
-        if (endAt != null && endAt.isBefore(startAt)) {
-            throw new IllegalArgumentException("endAt is before startAt");
-        }
-    }
-
-    private String normalizeMemo(String memo) {
-        if (memo == null || memo.isBlank()) {
-            return null;
-        }
-        if (memo.length() > MAX_MEMO_LENGTH) {
-            throw new IllegalArgumentException("memo is too long: length=" + memo.length());
-        }
-        return memo;
     }
 
     private boolean isBlank(String value) {

@@ -125,6 +125,25 @@ class DailyRecordServiceTest {
         assertThat(dailyRecordService.markSaved(100L, SUBJECT, EmotionType.UNHAPPY)).isZero();
     }
 
+    @Test
+    void updateSavedEmotion_delegatesConditionalUpdateWithEmotionAndClockNow() {
+        // SAVED 전용 감정 교체도 레포의 조건부 UPDATE 하나로 위임된다(status 불변·별도 entity write 없음).
+        LocalDateTime now = LocalDateTime.now(clock);
+        when(dailyRecordRepository.updateSavedEmotion(100L, SUBJECT, EmotionType.HAPPY, now)).thenReturn(1);
+
+        assertThat(dailyRecordService.updateSavedEmotion(100L, SUBJECT, EmotionType.HAPPY)).isEqualTo(1);
+
+        verify(dailyRecordRepository).updateSavedEmotion(100L, SUBJECT, EmotionType.HAPPY, now);
+    }
+
+    @Test
+    void updateSavedEmotion_returnsZeroWhenConditionalUpdateMatchesNoRow() {
+        when(dailyRecordRepository.updateSavedEmotion(100L, SUBJECT, EmotionType.UNHAPPY, LocalDateTime.now(clock)))
+                .thenReturn(0);
+
+        assertThat(dailyRecordService.updateSavedEmotion(100L, SUBJECT, EmotionType.UNHAPPY)).isZero();
+    }
+
     // --- findOrCreateDraft (finalize 트랜잭션에 합류: REQUIRED) ---
 
     @Test

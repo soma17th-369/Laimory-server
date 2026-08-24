@@ -171,6 +171,11 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   우선하고 없으면 가장 작은 Item ID를 고른다. 신규 후보끼리 filename이 중복되면 400이다.
 - 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며,
   payload는 `filename`·`clientPhotoUri`·좌표만 받아 `description=null`과 server-derived `photoUrl`로 저장한다.
+- 수동 Event 생성(`POST .../daily-records/{recordDate}/events`, #326)은 AI draft 흐름 밖의 동기 편집
+  계열이다 — draft task·Redis stage·dispatch를 전혀 거치지 않고, 기존 record(DRAFT/SAVED)에
+  `question`/`place`/`address` null·Item 없는 Event 하나를 한 transaction으로 insert한다. 상세 필드
+  규칙은 PATCH와 같은 공통 규칙(`TimelineEventInputRules`)이고 +10분 충돌 보정은 없다(AI 결과 저장
+  전용). record가 없으면 404이며 DailyRecord를 만들지 않는다(선생성은 draft POST 소유).
 - 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
   응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 이미 업로드를 마친 **동일
   pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있다. 서버는 full object key의
@@ -206,8 +211,13 @@ admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 �
   enum, 누락·null·미지원 값·zero-byte body는 400, body 있는 비JSON Content-Type은 415). `(request
   subjectId, recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로
   <b>부수효과 전에</b> 거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
-  감정과 상태를 함께 전이한다(이 UPDATE가 감정·상태의 유일한 write 지점). 영향 행 수 0은
+  감정과 상태를 함께 <b>최초 확정</b>한다(상태의 유일한 write 지점). 영향 행 수 0은
   재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
+- 확정 후 감정 수정은 `PUT .../daily-records/{recordDate}/emotion`(#325)이 담당한다 — 같은 2계층
+  경계로 SAVED 조건부 UPDATE(`WHERE status='SAVED'`, status 불변)만 실행하고, DRAFT는 409
+  `-1020`으로 거절한다(최초 확정은 save 소유). 같은 값 재요청은 멱등 성공이다. 이 수정은 아래의
+  User Memory 갱신 대기 큐에 <b>넣지 않는다</b> — 접수 이후 편집이 반영되지 않을 수 있다는 기존
+  정책(SAVED 후 Event 편집)과 같다.
 - **전이와 User Memory 교체는 서로 다른 API가 담당하는 서로 다른 transaction이다.** 저장 API는 전이만
   commit하고 200을 반환하며, 교체는 10초+ 뒤 AI가 결과를 들고 왔을 때
   `POST /s/api/{version}/user-memory/updates/{taskId}/result`가 수행한다. 그래서 사용자의 저장이 AI의

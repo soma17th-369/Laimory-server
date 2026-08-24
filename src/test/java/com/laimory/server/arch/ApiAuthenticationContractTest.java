@@ -3,6 +3,7 @@ package com.laimory.server.arch;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.push.controller.PushRegistrationApi;
+import com.laimory.server.push.controller.PushSettingApi;
 import com.laimory.server.terms.controller.PublicTermApi;
 import com.laimory.server.terms.controller.TermAgreementApi;
 import com.laimory.server.timeline.controller.TimelineApi;
@@ -25,7 +26,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
- * {@code /a/api} 보호 API 21개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
+ * {@code /a/api} 보호 API 27개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
@@ -51,6 +52,7 @@ class ApiAuthenticationContractTest {
             TimelineApi.class, PrincipalKind.CONTENT_SUBJECT,
             TimelineRecordApi.class, PrincipalKind.CONTENT_SUBJECT,
             PushRegistrationApi.class, PrincipalKind.CONTENT_SUBJECT,
+            PushSettingApi.class, PrincipalKind.CONTENT_SUBJECT,
             UserApi.class, PrincipalKind.ACCOUNT_USER_ID,
             TermAgreementApi.class, PrincipalKind.ACCOUNT_USER_ID);
 
@@ -114,11 +116,12 @@ class ApiAuthenticationContractTest {
     }
 
     @Test
-    void protectedOperationCount_isTwentyTwo() {
-        // timeline 16개(날짜 GET/DELETE·저장 POST·Event 단건 GET·Event Item 연결 해제·월별 GET 포함)
-        // + push-registrations PUT/DELETE 2개 + users GET /me·DELETE /me 2개(#305 탈퇴 추가)
-        // + terms agreements GET/POST 2개.
-        assertThat(protectedOperations().count()).isEqualTo(22);
+    void protectedOperationCount_isTwentySeven() {
+        // timeline 18개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
+        // Event Item 연결 해제·월별 GET 포함)
+        // + push-registrations PUT/DELETE 2개 + push-settings GET/PUT/PUT 3개
+        // + users GET /me·DELETE /me 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개.
+        assertThat(protectedOperations().count()).isEqualTo(27);
     }
 
     @Test

@@ -249,7 +249,10 @@ POST {base-url}/v1/user-memory
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - `emotionType`은 저장 API가 확정한 하루 감정이다 — non-null 값 도메인은 `VERY_HAPPY`·`HAPPY`·
   `NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY` 5종이고, 저장 전 DRAFT·legacy SAVED 행은 null일 수 있으나
-  저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변).
+  저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변). 저장 후 SAVED 감정
+  수정 PUT(#325)과 수동 Event 생성 POST(#326)는 <b>User Memory 갱신을 재enqueue하지 않는다</b> — 아직
+  dispatch되지 않은 기존 pending이 있으면 접수 시점 스냅샷에 최신 DB 값이 실릴 수 있지만, 이미
+  접수·반영된 갱신을 이 API들이 다시 유발하는 계약은 아니다(SAVED 후 편집 미반영과 같은 현재 정책).
 
 ```http
 POST /s/api/{version}/user-memory/updates/{taskId}/result

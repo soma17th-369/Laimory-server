@@ -1,0 +1,234 @@
+package com.laimory.server.timeline.service;
+
+import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.testsupport.SubjectMappingFixtures;
+import com.laimory.server.timeline.DailyRecordStatus;
+import com.laimory.server.timeline.EmotionType;
+import com.laimory.server.timeline.TimelineEventType;
+import com.laimory.server.timeline.dto.CreateTimelineEventRequest;
+import com.laimory.server.timeline.dto.DailyTimelineResponse;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
+import com.laimory.server.timeline.entity.DailyRecord;
+import com.laimory.server.timeline.entity.TimelineEvent;
+import com.laimory.server.timeline.repository.DailyRecordRepository;
+import com.laimory.server.timeline.repository.TimelineEventRepository;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+
+/**
+ * 수동 mutation(#325 감정 수정·#326 Event 수동 생성) 통합 검증(MySQL).
+ *
+ * <p>고정하는 계약:
+ * <ul>
+ *   <li>SAVED 감정 수정은 감정과 {@code updated_at}만 바꾸고 status는 불변이다. DRAFT는 {@code -1020}으로
+ *       거절되고 {@code emotion_type}은 null로 남는다.</li>
+ *   <li>같은 값 재요청·순차 변경은 성공하고 마지막 감정이 조회 API에 보인다. 사전 조회 뒤 삭제된
+ *       snapshot ID는 stale 성공/500이 아니라 404다.</li>
+ *   <li>기존 save API는 여전히 {@code DRAFT→SAVED + 최초 감정}을 한 UPDATE로 처리한다.</li>
+ *   <li>수동 Event는 DRAFT/SAVED 모두에 insert되며 question/place/address null·junction/Item 0건이고,
+ *       날짜 조회에서 startAt/ID 정렬대로 노출된다. 타인 subject·없는 날짜에는 행이 생기지 않는다.</li>
+ * </ul>
+ */
+@SpringBootTest
+@ActiveProfiles("docker")
+@Tag("integration")
+class TimelineManualMutationIntegrationTest {
+
+    private static final LocalDate DATE = LocalDate.of(2000, 2, 5);
+    private static final LocalDate ABSENT_DATE = LocalDate.of(2000, 2, 6);
+    private static final String ZONE = "Asia/Seoul";
+
+    @Autowired
+    private TimelineSaveService timelineSaveService;
+    @Autowired
+    private DailyRecordEmotionUpdateService dailyRecordEmotionUpdateService;
+    @Autowired
+    private DailyRecordEmotionUpdateTransactionService dailyRecordEmotionUpdateTransactionService;
+    @Autowired
+    private TimelineEventCreateService timelineEventCreateService;
+    @Autowired
+    private DailyTimelineService dailyTimelineService;
+    @Autowired
+    private DailyRecordRepository dailyRecordRepository;
+    @Autowired
+    private TimelineEventRepository timelineEventRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    // 다른 테스트·잔여 데이터와 겹치지 않도록 실행마다 임의 사용자로 격리한다.
+    private UUID subjectId;
+    private Long recordId;
+
+    @BeforeEach
+    void setUp() {
+        subjectId = UUID.randomUUID();
+        ensureExists(jdbcTemplate, subjectId);
+        recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
+                .getDailyRecordId();
+    }
+
+    @AfterEach
+    void cleanUp() {
+        List.of(DATE, ABSENT_DATE).forEach(date ->
+                dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, date)
+                        .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())));
+        SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
+        jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
+    }
+
+    // --- #325 SAVED 감정 수정 ---
+
+    @Test
+    void SAVED_감정_수정은_감정과_updated_at만_바꾸고_status는_불변이다() {
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+        LocalDateTime updatedAtAfterSave =
+                dailyRecordRepository.findById(recordId).orElseThrow().getUpdatedAt();
+
+        dailyRecordEmotionUpdateService.updateEmotion("v1", subjectId, DATE, EmotionType.VERY_UNHAPPY);
+
+        DailyRecord updated = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(updated.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(updated.getEmotionType()).isEqualTo(EmotionType.VERY_UNHAPPY);
+        assertThat(updated.getUpdatedAt()).isAfter(updatedAtAfterSave);
+    }
+
+    @Test
+    void DRAFT는_1020으로_거절되고_emotion_type은_null로_남는다() {
+        assertThatThrownBy(() -> dailyRecordEmotionUpdateService.updateEmotion(
+                "v1", subjectId, DATE, EmotionType.HAPPY))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_SAVED);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1020);
+                });
+
+        DailyRecord record = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(record.getStatus()).isEqualTo(DailyRecordStatus.DRAFT);
+        assertThat(record.getEmotionType()).isNull();
+    }
+
+    @Test
+    void 같은_값_재요청과_순차_변경은_성공하고_마지막_감정이_조회에_보인다() {
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+
+        assertThatCode(() -> {
+            dailyRecordEmotionUpdateService.updateEmotion("v1", subjectId, DATE, EmotionType.HAPPY);
+            dailyRecordEmotionUpdateService.updateEmotion("v1", subjectId, DATE, EmotionType.NEUTRAL);
+            dailyRecordEmotionUpdateService.updateEmotion("v1", subjectId, DATE, EmotionType.NEUTRAL);
+        }).doesNotThrowAnyException();
+
+        DailyTimelineResponse daily = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE);
+        assertThat(daily.status()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(daily.emotionType()).isEqualTo(EmotionType.NEUTRAL);
+    }
+
+    @Test
+    void 사전_조회_뒤_삭제된_snapshot_ID는_stale_성공이_아니라_404다() {
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+        dailyRecordRepository.deleteById(recordId);
+
+        // 오케스트레이터의 사전 조회와 트랜잭션 writer 사이에 삭제가 끼어든 경합을 재현한다 —
+        // writer는 자기 트랜잭션의 첫 DB 작업이 UPDATE라 stale snapshot을 보지 않는다.
+        assertThatThrownBy(() -> dailyRecordEmotionUpdateTransactionService.updateEmotion(
+                subjectId, recordId, EmotionType.NEUTRAL))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.DAILY_RECORD_NOT_FOUND);
+                    assertThat(exception.getErrorCode()).isEqualTo(-404);
+                });
+    }
+
+    @Test
+    void 기존_save는_여전히_DRAFT에서_SAVED와_최초_감정을_한_번에_확정한다() {
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.VERY_HAPPY);
+
+        DailyRecord saved = dailyRecordRepository.findById(recordId).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(DailyRecordStatus.SAVED);
+        assertThat(saved.getEmotionType()).isEqualTo(EmotionType.VERY_HAPPY);
+    }
+
+    // --- #326 Event 수동 생성 ---
+
+    @Test
+    void DRAFT와_SAVED_모두에_생성되고_AI_필드는_null_audit_컬럼은_채워진다() {
+        TimelineEventResponse onDraft = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "카페에서 휴식", "성수동",
+                        DATE.atTime(14, 0), DATE.atTime(15, 0), " 책을 읽었다. "));
+
+        timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
+        TimelineEventResponse onSaved = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.MEAL, "저녁", null,
+                        DATE.atTime(19, 0), null, null));
+
+        for (TimelineEventResponse response : List.of(onDraft, onSaved)) {
+            assertThat(response.timelineEventId()).isNotNull();
+            assertThat(response.question()).isNull();
+            assertThat(response.place()).isNull();
+            assertThat(response.address()).isNull();
+            assertThat(response.items()).isEmpty();
+        }
+
+        TimelineEvent stored = timelineEventRepository.findById(onDraft.timelineEventId()).orElseThrow();
+        assertThat(stored.getDailyRecordId()).isEqualTo(recordId);
+        assertThat(stored.getQuestion()).isNull();
+        assertThat(stored.getPlace()).isNull();
+        assertThat(stored.getAddress()).isNull();
+        assertThat(stored.getMemo()).isEqualTo(" 책을 읽었다. ");
+        assertThat(stored.getCreatedAt()).isNotNull();
+        assertThat(stored.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void 수동_Event는_junction과_Item이_없고_날짜_조회에서_정렬대로_노출된다() {
+        Long later = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "휴식", null,
+                        DATE.atTime(15, 0), null, null)).timelineEventId();
+        Long earlier = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.MEAL, "점심", null,
+                        DATE.atTime(12, 0), null, null)).timelineEventId();
+
+        for (Long eventId : List.of(later, earlier)) {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM timeline_event_items WHERE timeline_event_id = ?",
+                    Long.class, eventId)).isZero();
+        }
+
+        DailyTimelineResponse daily = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE);
+        assertThat(daily.events())
+                .extracting(TimelineEventResponse::timelineEventId)
+                .containsExactly(earlier, later);
+        assertThat(daily.events()).allSatisfy(event -> assertThat(event.items()).isEmpty());
+    }
+
+    @Test
+    void 타인_subject나_없는_날짜에는_행이_생기지_않는다() {
+        CreateTimelineEventRequest request = new CreateTimelineEventRequest(
+                TimelineEventType.REST, "휴식", null, DATE.atTime(14, 0), null, null);
+
+        assertThatThrownBy(() -> timelineEventCreateService.createEvent(
+                "v1", UUID.randomUUID(), DATE, request))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(-404));
+        assertThatThrownBy(() -> timelineEventCreateService.createEvent(
+                "v1", subjectId, ABSENT_DATE, request))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
+    }
+}
