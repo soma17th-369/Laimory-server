@@ -24,9 +24,19 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 애플리케이션은 schema를 생성·변경하지 않는다.
 
-이 저장소의 `DATETIME` 컬럼은 전부 `Asia/Seoul` 벽시계 계약(offset 없는 `LocalDateTime`, `Instant`
-매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을 기동 시 `Asia/Seoul`로 고정한다(#371 —
-`TimeZoneConfig` `@PostConstruct`가 권위, `main()`은 이중 안전장치, 스케줄러 `Clock` bean도 존 명시).
+이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
+계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
+기동 시 `Asia/Seoul`로 고정한다(#371 — `TimeZoneConfig` `@PostConstruct`가 권위, `main()`은 이중
+안전장치, 스케줄러 `Clock` bean도 존 명시).
+
+MySQL 세션 timezone은 여전히 UTC(SYSTEM)다 — URL의 `serverTimezone`은 세션을 바꾸지 않는다
+(Connector/J `connectionTimeZone` alias, `forceConnectionTimeZoneToSession` 기본 false). 그래서
+**서버가 생성하는 시각은 계약의 알려진 예외로 UTC 벽시계다**: ① `timeline_draft_source_items.
+cleanup_available_at`은 DB `DEFAULT CURRENT_TIMESTAMP(6)`가 채운다(#371 범위 제외 — 비교 조건이
+9시간 이르게 참이 되는 문제는 별도 판단). ② `users`·`refresh_tokens`의 일부 JPQL bulk update가
+`updated_at = CURRENT_TIMESTAMP`(서버 평가)를 쓴다. 둘 다 표시·감사값이라 판정에는 쓰이지 않는다.
+`timeline_events`/`timeline_items` 감사 컬럼과 `timeline_photo_delete_jobs.available_at`의
+DEFAULT/ON UPDATE는 앱 경로가 항상 컬럼을 명시해 발동하지 않는 fallback이다(운영 raw SQL에서만 의미).
 JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거치는 바인딩(Hibernate
 엔티티·JPQL·native query)은 "JVM 기본 존으로 해석 → 선언 존으로 렌더링"을 타므로, 두 존이 다르면
 (JVM=UTC일 때 +9h) 저장 리터럴이 밀리고 읽기가 대칭으로 상쇄해 왕복 테스트로는 드러나지 않는다 —
