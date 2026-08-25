@@ -211,7 +211,7 @@ sudo install -m 0644 -b <새 파일> grafana/provisioning/alerting/<대상 파�
 read -rp 'Grafana admin username [laimory]: ' GRAFANA_ADMIN_USER
 GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-laimory}
 curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+  http://localhost:3000/api/admin/provisioning/alerting/reload
 unset GRAFANA_ADMIN_USER
 ```
 
@@ -223,7 +223,7 @@ prod 알림이 한 그룹으로 묶여, 이미 활성인 그룹에 얹힌 알림
 다음 파일은 Git, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
 Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장애만 Docker가 복구한다.
 비밀이 없는 Prometheus와 blackbox는 `unless-stopped`를 유지한다. host boot는 systemd가 전체 stack을
-시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 여섯 secret을
+시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 일곱 secret을
 다시 확인한다.
 
 | 파일 | 소비 UID:GID | 내용 |
@@ -232,11 +232,12 @@ Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장
 | `grafana_secret_key` | `472:0` | datasource/contact credential 암호화 key |
 | `elasticsearch_api_key` | `472:0` | Elasticsearch create API key 응답의 `encoded` 값 |
 | `discord_webhook_url` | `472:0` | 지정 Discord channel incoming webhook URL |
+| `google_oauth_client_secret` | `472:0` | Grafana Google OAuth client secret (client ID는 `.env`의 `GRAFANA_GOOGLE_CLIENT_ID`) |
 | `mysql_exporter_my.cnf` | `65534:0` | exporter 전용 `[client]` credential |
 | `redis_exporter_password.json` | `59000:59000` | exporter URI별 password JSON |
 
 parent directory는 `0700 root:root`, 각 파일은 `0400`이다. systemd는
-`scripts/validate-secrets.sh`로 여섯 파일의 non-empty/owner/mode를 모두 확인하므로 일부만 준비된
+`scripts/validate-secrets.sh`로 일곱 파일의 non-empty/owner/mode를 모두 확인하므로 일부만 준비된
 stack은 시작하지 않는다. 비밀이 없는 Prometheus와 blackbox만 먼저 기동할 수 있다.
 
 SSM Session Manager로 monitoring host에 접속한 뒤 stdin 전용 helper로 주입한다.
@@ -252,6 +253,10 @@ openssl rand -hex 32 | sudo scripts/install-secret.sh grafana_secret_key
 
 read -rsp 'Discord webhook URL: ' SECRET_VALUE; echo
 printf %s "$SECRET_VALUE" | sudo scripts/install-secret.sh discord_webhook_url
+unset SECRET_VALUE
+
+read -rsp 'Google OAuth client secret: ' SECRET_VALUE; echo
+printf %s "$SECRET_VALUE" | sudo scripts/install-secret.sh google_oauth_client_secret
 unset SECRET_VALUE
 ```
 
@@ -802,19 +807,19 @@ GRAFANA_ADMIN_USER=${GRAFANA_ADMIN_USER:-laimory}
 sudo install -m 0644 grafana/smoke/smoke-rule.firing.yml \
   grafana/provisioning/alerting/smoke-rule.yml
 curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+  http://localhost:3000/api/admin/provisioning/alerting/reload
 # Discord firing 도착 확인
 
 sudo install -m 0644 grafana/smoke/smoke-rule.resolved.yml \
   grafana/provisioning/alerting/smoke-rule.yml
 curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+  http://localhost:3000/api/admin/provisioning/alerting/reload
 # Discord resolved 도착 확인
 
 sudo install -m 0644 grafana/smoke/smoke-rule.delete.yml \
   grafana/provisioning/alerting/smoke-rule.yml
 curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
-  http://localhost:3000/grafana/api/admin/provisioning/alerting/reload
+  http://localhost:3000/api/admin/provisioning/alerting/reload
 sudo rm /opt/laimory-monitoring/grafana/provisioning/alerting/smoke-rule.yml
 unset GRAFANA_ADMIN_USER
 ```
@@ -1021,6 +1026,6 @@ aws iam delete-role-policy --profile sandbox \
 철거할 때만 각 host의 node_exporter와 MySQL/Redis monitoring identity를 함께 disable/revoke한다.
 stack rollback은
 `sudo systemctl stop laimory-monitoring`으로 수행하며 TSDB/Grafana volume은 보존한다. 다시 올릴 때는
-`sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. `/grafana/`를 개방했다면
-dev WAS에서 `/usr/local/sbin/laimory-grafana-proxy disable`로 Grafana include만 제거해 Kibana를
-보존한다.
+`sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. 외부 노출을 끊을 때는
+prod ALB의 `grafana.laimory.app` host 규칙을 삭제한다(#368) — Kibana host 규칙과 독립이라 Kibana는
+보존된다.

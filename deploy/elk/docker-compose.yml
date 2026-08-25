@@ -8,8 +8,8 @@
 # es/kibana 는 restart:unless-stopped 라 함께 복구된다. setup 은 restart:"no" 라 최초 up 1회만
 # 실행된다(ILM/템플릿/비번은 esdata 볼륨에 이미 있음).
 #
-# 인증 ON + 내부 HTTP(TLS off): 프라이빗 서브넷 + SG(9200·5601 ← WAS SG만)가 기밀 경계.
-# 외부 노출은 dev-was nginx TLS(443)에서 종단한다.
+# 인증 ON + 내부 HTTP(TLS off): 프라이빗 서브넷 + SG(9200 ← WAS SG, 5601 ← WAS SG·ALB SG)가 기밀 경계.
+# 외부 노출은 prod ALB(kibana.laimory.app host 규칙, ACM TLS 종단)로 한다(#368).
 
 services:
   elasticsearch:
@@ -98,13 +98,11 @@ services:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
-      # dev-was nginx 서브패스(/kibana) 리버스 프록시용 — 없으면 asset/redirect 가 / 로 나가 빈 화면.
-      - SERVER_BASEPATH=/kibana
-      - SERVER_REWRITEBASEPATH=true
-      - SERVER_PUBLICBASEURL=https://dev.laimory.app/kibana
+      # 전용 host(kibana.laimory.app)로 노출하므로 서브패스(SERVER_BASEPATH) 설정은 쓰지 않는다(#368).
+      - SERVER_PUBLICBASEURL=https://kibana.laimory.app
       - NODE_OPTIONS=--max-old-space-size=512
     ports:
-      - "5601:5601"     # dev-was nginx 가 프록시. 공개 아님 — SG 로 WAS SG 만 허용.
+      - "5601:5601"     # prod ALB 가 프록시. 공개 아님 — SG 로 WAS SG·ALB SG 만 허용.
     restart: unless-stopped
 
 volumes:

@@ -67,7 +67,7 @@ ruby -ryaml -e '
   description = rule.dig("annotations", "description").to_s
   abort "notification must not interpolate raw query values" if (summary + description).include?("{{")
   url = rule.dig("annotations", "runbook_url").to_s
-  abort "Kibana ERROR investigation link missing" unless url.start_with?("https://dev.laimory.app/kibana/app/discover#/")
+  abort "Kibana ERROR investigation link missing" unless url.start_with?("https://kibana.laimory.app/app/discover#/")
   abort "Kibana data view contract missing" unless url.include?("8e3c574e-45cc-430f-ae74-b91c277b8249")
   abort "Kibana ERROR filter missing" unless url.include?("level%3A%22ERROR%22")
 ' "$MONITORING_DIR/grafana/provisioning/alerting/application-rules.yml"
