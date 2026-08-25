@@ -147,7 +147,7 @@ class GrafanaAlertProvisioningAssetTest {
 
         Map<String, Object> annotations = map(rule.get("annotations"));
         assertThat((String) annotations.get("runbook_url"))
-                .startsWith("https://dev.laimory.app/kibana/app/discover#/")
+                .startsWith("https://kibana.laimory.app/app/discover#/")
                 .contains("level%3A%22ERROR%22");
         assertThat((String) annotations.get("summary")).doesNotContain("{{");
         assertThat((String) annotations.get("description")).doesNotContain("{{");
