@@ -197,13 +197,17 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
 새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
 수집기부터 설치한다.
 
-### 자동 배포 밖의 alerting 자산
+### 자동 배포 밖의 자산
 
 `deploy-monitoring.yml`과 `publish-alert-rules.sh`가 다루는 것은 `*-rules.yml`,
-`alert-rule-files.txt`, 배포 script뿐이다. 같은 디렉터리의 `notification-policy.yml`,
-`templates.yml`, `contact-points.yml`은 **merge만으로 반영되지 않는다.** 이 셋을 바꿨으면
-monitoring host SSM 세션에서 직접 반영한다. reload endpoint는 alerting provisioning 디렉터리
-전체를 다시 읽는다.
+`alert-rule-files.txt`, 배포 script(`deploy/publish/validate-alert-rules.sh`)뿐이다.
+그 밖의 모든 자산은 **merge만으로 반영되지 않고** monitoring host SSM 세션에서 직접 반영한다:
+
+- 같은 alerting 디렉터리의 `notification-policy.yml`, `templates.yml`, `contact-points.yml`
+  — reload endpoint가 alerting provisioning 디렉터리 전체를 다시 읽는다
+- `datasources/*.yml` — reload도 없다. **Grafana 기동 시에만 로드**되므로 재시작까지 필요하다(#370)
+- `docker-compose.yml`(monitoring·elk), `dashboards/json/*.json`, `prometheus/prometheus.yml`,
+  `scripts/install-secret.sh`·`validate-secrets.sh`
 
 ```bash
 cd /opt/laimory-monitoring
@@ -263,6 +267,12 @@ unset SECRET_VALUE
 Grafana admin username 기본값은 `laimory`다. admin password는 최초 DB 생성 때 각인된다. 이후 파일만
 바꾸지 말고 Grafana admin password reset 절차를 사용한다. `grafana_secret_key`는 재부팅과 재배포에도
 유지해야 기존 암호화 값을 읽는다.
+
+Google OAuth 사용자를 추가할 때는 Grafana에 이메일로 선등록한 뒤 **첫 로그인 전에**
+`GF_AUTH_OAUTH_ALLOW_INSECURE_EMAIL_LOOKUP=true`를 임시로 켠다. Grafana 기본값은 OAuth 로그인을
+이메일로 매칭하지 않으므로, auth 링크가 없는 선등록 계정은 `allow_sign_up=false`에 걸려
+"Sign up is disabled"로 거부된다(2026-08-26 실측). 첫 로그인으로 링크가 생기면
+(`authLabels: ["Google"]`) 플래그를 제거하고 재시작한다 — 이후 로그인은 링크로 매칭된다.
 
 ## Exporter identity와 secret
 

@@ -298,7 +298,9 @@ Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link
 
 Grafana는 prod ALB의 `grafana.laimory.app` host 규칙으로 노출한다(#368). 브라우저 로그인은
 Grafana 자체 Google OAuth이며 `[auth.google] allow_sign_up=false`라 미리 등록된 Grafana 사용자
-이메일만 로그인된다. admin Basic 인증은 alert 배포기 등 localhost 자동화 전용이다.
+이메일만 로그인된다. admin Basic 인증은 alert 배포기 등 localhost 자동화용이다 — 외부(ALB) 경로의
+`POST /login`·`Authorization: Basic` 차단(#368 A13)은 아직 적용 전이라, 그전까지는 공유 admin
+비밀번호로도 외부 로그인이 가능하다.
 Prometheus target file의 실제 IP와 적용 상태는 live host가
 소유하며 현재 repository 상태만으로 rollout 완료를 의미하지 않는다.
 

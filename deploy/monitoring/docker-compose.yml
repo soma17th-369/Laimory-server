@@ -176,7 +176,7 @@ services:
       GF_AUTH_GOOGLE_ENABLED: "true"
       # GF_USERS_ALLOW_SIGN_UP과 별개 키다 — 이 값이 false여야 미리 등록된 사용자 이메일만 Google 로그인된다.
       GF_AUTH_GOOGLE_ALLOW_SIGN_UP: "false"
-      GF_AUTH_GOOGLE_CLIENT_ID: ${GRAFANA_GOOGLE_CLIENT_ID:-}
+      GF_AUTH_GOOGLE_CLIENT_ID: ${GRAFANA_GOOGLE_CLIENT_ID:?GRAFANA_GOOGLE_CLIENT_ID must be set in .env}
       GF_AUTH_GOOGLE_CLIENT_SECRET__FILE: /run/secrets/google_oauth_client_secret
       GF_AUTH_GOOGLE_SCOPES: openid email profile
       GF_USERS_ALLOW_SIGN_UP: "false"
