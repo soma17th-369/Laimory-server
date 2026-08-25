@@ -1,5 +1,6 @@
 package com.laimory.server.common.redis;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -12,13 +13,19 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.ZSetOperations;
-import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.core.types.Expiration;
+import org.springframework.data.redis.serializer.RedisSerializer;
 
 /**
  * RedisGateway가 논리 키 앞에 환경 prefix를 올바르게 부착하는지 검증한다(prefix 동작의 단일 검증 지점).
@@ -32,8 +39,20 @@ class RedisGatewayTest {
     private ValueOperations<String, String> valueOps;
     @Mock
     private ZSetOperations<String, String> zSetOps;
+    @Mock
+    private RedisConnection connection;
+    @Mock
+    private RedisStringCommands stringCommands;
 
     private static final String LOGICAL_KEY = "timeline:draft-task:abc";
+
+    /** {@code template.execute(RedisCallback)}이 mock connection으로 callback을 실제 실행하게 한다. */
+    private void runCallbacksWithMockConnection() {
+        when(template.getStringSerializer()).thenReturn(RedisSerializer.string());
+        when(connection.stringCommands()).thenReturn(stringCommands);
+        when(template.execute(ArgumentMatchers.<RedisCallback<Boolean>>any()))
+                .thenAnswer(invocation -> invocation.<RedisCallback<Boolean>>getArgument(0).doInRedis(connection));
+    }
 
     @Test
     void emptyPrefix_usesLogicalKeyAsIs() {
@@ -64,25 +83,40 @@ class RedisGatewayTest {
     }
 
     @Test
-    void compareAndSet_prefixesOnlyTaskKey_andPassesScriptArguments() {
+    void setIfPresentKeepingTtl_prefixesKey_andSendsXxKeepTtl() {
+        runCallbacksWithMockConnection();
         RedisGateway redis = new RedisGateway(template, "dev_");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of("dev_timeline:draft-task:abc")),
-                eq("old-json"), eq("new-json"), eq("180000"))).thenReturn(1L);
+        when(stringCommands.set(any(byte[].class), any(byte[].class), any(Expiration.class), eq(SetOption.ifPresent())))
+                .thenReturn(true);
 
-        assertThat(redis.compareAndSet(
-                LOGICAL_KEY, "old-json", "new-json", Duration.ofMinutes(3))).isTrue();
+        assertThat(redis.setIfPresentKeepingTtl(LOGICAL_KEY, "new-json")).isTrue();
+
+        ArgumentCaptor<byte[]> keyCaptor = ArgumentCaptor.forClass(byte[].class);
+        ArgumentCaptor<byte[]> valueCaptor = ArgumentCaptor.forClass(byte[].class);
+        ArgumentCaptor<Expiration> expirationCaptor = ArgumentCaptor.forClass(Expiration.class);
+        verify(stringCommands).set(keyCaptor.capture(), valueCaptor.capture(),
+                expirationCaptor.capture(), eq(SetOption.ifPresent()));
+        assertThat(new String(keyCaptor.getValue(), UTF_8)).isEqualTo("dev_timeline:draft-task:abc");
+        assertThat(new String(valueCaptor.getValue(), UTF_8)).isEqualTo("new-json");
+        assertThat(expirationCaptor.getValue().isKeepTtl()).isTrue();
     }
 
     @Test
-    void compareAndSet_returnsFalseOnValueMismatch() {
-        RedisGateway redis = new RedisGateway(template, "");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(),
-                eq(List.of(LOGICAL_KEY)), eq("old-json"), eq("terminal-json"), eq("86400000")))
-                .thenReturn(0L);
+    void setIfPresent_prefixesKey_andSendsXxWithPxTtl_missingKeyReturnsFalse() {
+        runCallbacksWithMockConnection();
+        RedisGateway redis = new RedisGateway(template, "dev_");
+        when(stringCommands.set(any(byte[].class), any(byte[].class), any(Expiration.class), eq(SetOption.ifPresent())))
+                .thenReturn(false);
 
-        assertThat(redis.compareAndSet(
-                LOGICAL_KEY, "old-json", "terminal-json", Duration.ofHours(24))).isFalse();
+        assertThat(redis.setIfPresent(LOGICAL_KEY, "terminal-json", Duration.ofHours(24))).isFalse();
+
+        ArgumentCaptor<byte[]> keyCaptor = ArgumentCaptor.forClass(byte[].class);
+        ArgumentCaptor<Expiration> expirationCaptor = ArgumentCaptor.forClass(Expiration.class);
+        verify(stringCommands).set(keyCaptor.capture(), any(byte[].class),
+                expirationCaptor.capture(), eq(SetOption.ifPresent()));
+        assertThat(new String(keyCaptor.getValue(), UTF_8)).isEqualTo("dev_timeline:draft-task:abc");
+        assertThat(expirationCaptor.getValue().isKeepTtl()).isFalse();
+        assertThat(expirationCaptor.getValue().getExpirationTimeInMilliseconds()).isEqualTo(86_400_000L);
     }
 
     @Test
@@ -209,13 +243,14 @@ class RedisGatewayTest {
     }
 
     @Test
-    void compareAndSet_nullFromTemplate_throwsIllegalState() {
+    void setIfPresent_nullFromTemplate_throwsIllegalState() {
+        when(template.getStringSerializer()).thenReturn(RedisSerializer.string());
+        when(template.execute(ArgumentMatchers.<RedisCallback<Boolean>>any())).thenReturn(null);
         RedisGateway redis = new RedisGateway(template, "");
-        when(template.execute(ArgumentMatchers.<RedisScript<Long>>any(), any(), any(Object[].class)))
-                .thenReturn(null);
 
-        assertThatThrownBy(() -> redis.compareAndSet(
-                LOGICAL_KEY, "old", "new", Duration.ofMinutes(1)))
+        assertThatThrownBy(() -> redis.setIfPresentKeepingTtl(LOGICAL_KEY, "new"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> redis.setIfPresent(LOGICAL_KEY, "new", Duration.ofMinutes(1)))
                 .isInstanceOf(IllegalStateException.class);
     }
 

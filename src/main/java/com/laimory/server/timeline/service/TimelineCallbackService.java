@@ -18,7 +18,13 @@ import org.springframework.stereotype.Service;
  * push만 수행한다. 결과를 조립·검증·저장하지 않는다.
  *
  * <p>terminal task의 같은 결과 재전송은 200, 상충 결과는 409다. SUCCESS는 CALLBACK_PENDING,
- * FAILED는 INPUT_PENDING 또는 RESULT_PENDING에서만 허용한다.
+ * FAILED는 INPUT_PENDING 또는 선점되지 않은 RESULT_PENDING에서만 허용한다 — result 선점
+ * ({@code retryReceipt.claimed()}) 중 FAILED는 409다. 선점은 token/stage를 바꾸지 않아 기존 검증만으로는
+ * transaction 진행 중을 구분하지 못하는데, 여기서 terminal을 먼저 확정하면 commit 회전의 native
+ * {@code SET XX}가 terminal 위에 PROCESSING을 되쓴다.
+ *
+ * <p>terminal 저장은 native {@code SET XX PX 24시간}이고 성공 뒤에만 index 제거·push enqueue를 실행한다.
+ * write 실패는 검증 뒤 task 만료뿐이라 404로 수렴하며 만료 task를 부활시키지 않는다.
  */
 @Slf4j
 @Service
@@ -67,9 +73,17 @@ public class TimelineCallbackService {
                 log.warn("failed callback on invalid stage: taskId={} stage={}", taskId, task.stage());
                 throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
             }
-            if (!timelineTaskService.markFailedIfCurrent(taskId, task, resolveAiFailureCode(taskId, request))) {
-                handleCallbackRace(taskId, taskToken, request.status());
-                return;
+            if (task.stage() == ProcessStage.RESULT_PENDING
+                    && task.retryReceipt() != null && task.retryReceipt().claimed()) {
+                // result 선점 중 — 아직 살아 있는 transaction의 commit 회전·선점 해제보다 terminal을
+                // 먼저 확정하면 후속 SET XX가 terminal 위에 PROCESSING을 되쓴다. 선점 뒤 crash한 task는
+                // 기존 계약대로 TTL 만료(404)로 끝난다.
+                log.warn("failed callback while result claimed: taskId={}", taskId);
+                throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+            }
+            if (!timelineTaskService.markFailedIfPresent(taskId, task, resolveAiFailureCode(taskId, request))) {
+                log.warn("failed callback task expired before terminal write: taskId={}", taskId);
+                throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
             }
             enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.FAILED);
             return;
@@ -79,27 +93,11 @@ public class TimelineCallbackService {
             log.warn("success callback on invalid stage: taskId={} stage={}", taskId, task.stage());
             throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
         }
-        if (!timelineTaskService.markSuccessIfCurrent(taskId, task)) {
-            handleCallbackRace(taskId, taskToken, request.status());
-            return;
+        if (!timelineTaskService.markSuccessIfPresent(taskId, task)) {
+            log.warn("success callback task expired before terminal write: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
         enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.SUCCESS);
-    }
-
-    /** callback CAS 경합 뒤 최신 terminal 상태가 같은 결과면 멱등 성공, 나머지는 상충이다. */
-    private void handleCallbackRace(String taskId, String taskToken, TaskStatus requestedStatus) {
-        TimelineDraftTask latest = timelineTaskService.find(taskId)
-                .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
-        if (!latest.matchesToken(taskToken)) {
-            throw new BusinessException(ExceptionType.TASK_TOKEN_MISMATCH);
-        }
-        if (latest.status() == requestedStatus) {
-            log.info("terminal callback race resolved as replay: taskId={} status={}", taskId, requestedStatus);
-            return;
-        }
-        log.warn("callback token race rejected: taskId={} stored={} requested={}",
-                taskId, latest.status(), requestedStatus);
-        throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
     }
 
     /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. */

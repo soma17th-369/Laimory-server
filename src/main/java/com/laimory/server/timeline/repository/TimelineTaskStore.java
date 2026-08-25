@@ -26,9 +26,11 @@ import org.springframework.stereotype.Component;
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  *
  * <p><b>불변식:</b> task JSON의 status/owner가 유일한 권위다. 전역/사용자 index는 각각 관측·조회
- * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. 서버간 stage와 callback terminal 전이는 현재
- * task JSON 전체를 기대값으로 비교하는 {@link #replaceIfUnchanged} 단일-key CAS를 사용한다. processing
- * index는 task write 뒤 native command로 갱신하며, 실패하면 최신 task JSON을 기준으로 멱등 보정한다.
+ * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. 서버간 stage 전이는 native {@code SET XX KEEPTTL},
+ * callback terminal 전이는 native {@code SET XX PX}로 저장한다 — key 존재 여부만 보고 기존 값은
+ * 비교하지 않으므로(expected-value CAS 아님) 잘못된 요청 차단은 write 전 token/status/stage 검증이
+ * 담당한다. processing index는 최초 PROCESSING 저장과 terminal 전이에서만 native command로 갱신하며,
+ * 실패하면 같은 의도의 명령을 한 번 재시도한다.
  */
 @Slf4j
 @Component
@@ -52,14 +54,17 @@ public class TimelineTaskStore {
                 + USER_PROCESSING_INDEX_KEY_SUFFIX;
     }
 
+    /**
+     * 최초 PROCESSING 생성과 dispatch 확정 실패의 unconditional write 전용이다. PROCESSING이면 두
+     * processing index에 최초 등록하고 subject index TTL을 걸며, terminal이면 index에서 제거한다.
+     */
     public void save(String taskId, TimelineDraftTask task, Duration ttl) {
-        try {
-            String json = objectMapper.writeValueAsString(task);
-            requireProcessingStartedAt(task, taskId);
-            redis.set(KEY_PREFIX + taskId, json, ttl);
-            syncIndexes(taskId, task, ttl);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
+        requireProcessingStartedAt(task, taskId);
+        redis.set(KEY_PREFIX + taskId, serialize(taskId, task), ttl);
+        if (task.status() == TaskStatus.PROCESSING) {
+            registerProcessingIndexes(taskId, task, ttl);
+        } else {
+            removeProcessingIndexes(taskId, task.subjectId());
         }
     }
 
@@ -72,24 +77,33 @@ public class TimelineTaskStore {
     }
 
     /**
-     * Redis의 현재 task JSON이 {@code expected}와 같을 때만 {@code replacement}로 바꾼다.
-     * PROCESSING replacement는 index를 유지·갱신하고 terminal replacement는 두 processing index에서
-     * 제거한다.
+     * PROCESSING task 내부 상태(token hash·stage·retry receipt)를 교체한다. native {@code SET XX KEEPTTL}
+     * 이라 최초 PROCESSING 저장이 정한 만료 시각을 보존하고 만료된 task를 부활시키지 않는다.
+     * processing index는 건드리지 않는다 — 등록은 최초 저장이, 제거는 terminal 전이가 담당한다.
+     * 반환 {@code false}는 write 시점에 task key가 없다는 뜻(만료)이다.
      */
-    public boolean replaceIfUnchanged(String taskId, TimelineDraftTask expected,
-                                      TimelineDraftTask replacement, Duration ttl) {
-        try {
-            String expectedJson = objectMapper.writeValueAsString(expected);
-            String replacementJson = objectMapper.writeValueAsString(replacement);
-            requireProcessingStartedAt(replacement, taskId);
-            if (!redis.compareAndSet(KEY_PREFIX + taskId, expectedJson, replacementJson, ttl)) {
-                return false;
-            }
-            syncIndexes(taskId, replacement, ttl);
-            return true;
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
+    public boolean saveProcessingIfPresent(String taskId, TimelineDraftTask replacement) {
+        if (replacement.status() != TaskStatus.PROCESSING) {
+            throw new IllegalStateException("PROCESSING task만 저장할 수 있습니다: " + taskId);
         }
+        requireProcessingStartedAt(replacement, taskId);
+        return redis.setIfPresentKeepingTtl(KEY_PREFIX + taskId, serialize(taskId, replacement));
+    }
+
+    /**
+     * task를 terminal(SUCCESS/FAILED)로 교체한다. native {@code SET XX PX}라 만료된 task를 부활시키지
+     * 않고, write가 성공한 뒤에만 두 processing index에서 member를 제거한다.
+     * 반환 {@code false}는 write 시점에 task key가 없다는 뜻(만료)이다.
+     */
+    public boolean saveTerminalIfPresent(String taskId, TimelineDraftTask terminal, Duration ttl) {
+        if (terminal.status() == TaskStatus.PROCESSING) {
+            throw new IllegalStateException("terminal task만 저장할 수 있습니다: " + taskId);
+        }
+        if (!redis.setIfPresent(KEY_PREFIX + taskId, serialize(taskId, terminal), ttl)) {
+            return false;
+        }
+        removeProcessingIndexes(taskId, terminal.subjectId());
+        return true;
     }
 
     private static void requireProcessingStartedAt(TimelineDraftTask task, String taskId) {
@@ -98,58 +112,58 @@ public class TimelineTaskStore {
         }
     }
 
-    private void syncIndexes(String taskId, TimelineDraftTask task, Duration ttl) {
+    /**
+     * 최초 PROCESSING 저장 직후 한 번만 실행한다 — 이후 PROCESSING write는 index를 갱신하지 않으므로
+     * subject index TTL도 최초 저장 기준으로 고정된다(같은 subject의 새 task 생성만 TTL을 다시 건다).
+     */
+    private void registerProcessingIndexes(String taskId, TimelineDraftTask task, Duration ttl) {
         String userIndexKey = subjectProcessingIndexKey(task.subjectId());
-        if (task.status() == TaskStatus.PROCESSING) {
-            long score = task.processingStartedAt().toEpochMilli();
-            runIndexCommand(taskId, task, ttl, GLOBAL_INDEX, "add",
-                    () -> redis.addToSortedSet(PROCESSING_INDEX_KEY, taskId, score));
-            runIndexCommand(taskId, task, ttl, USER_INDEX, "add",
-                    () -> redis.addToSortedSet(userIndexKey, taskId, score));
-            try {
-                if (!redis.expire(userIndexKey, ttl)) {
-                    repairIndex(taskId, task, ttl, USER_INDEX, "expire", null);
-                }
-            } catch (RuntimeException primaryFailure) {
-                repairIndex(taskId, task, ttl, USER_INDEX, "expire", primaryFailure);
+        long score = task.processingStartedAt().toEpochMilli();
+        runIndexCommand(GLOBAL_INDEX, "add",
+                () -> redis.addToSortedSet(PROCESSING_INDEX_KEY, taskId, score));
+        runIndexCommand(USER_INDEX, "add",
+                () -> redis.addToSortedSet(userIndexKey, taskId, score));
+        try {
+            if (!redis.expire(userIndexKey, ttl)) {
+                repairIndex(USER_INDEX, "expire", () -> readdAndExpire(userIndexKey, taskId, score, ttl), null);
             }
-            return;
+        } catch (RuntimeException primaryFailure) {
+            repairIndex(USER_INDEX, "expire",
+                    () -> readdAndExpire(userIndexKey, taskId, score, ttl), primaryFailure);
         }
-
-        runIndexCommand(taskId, task, ttl, GLOBAL_INDEX, "remove",
-                () -> redis.removeFromSortedSet(PROCESSING_INDEX_KEY, List.of(taskId)));
-        runIndexCommand(taskId, task, ttl, USER_INDEX, "remove",
-                () -> redis.removeFromSortedSet(userIndexKey, List.of(taskId)));
     }
 
-    private void runIndexCommand(String taskId, TimelineDraftTask writtenTask, Duration ttl,
-                                 String index, String operation, Runnable command) {
+    /** PEXPIRE=false는 subject index key가 사라졌다는 뜻이라 member를 다시 넣은 뒤 TTL을 다시 건다. */
+    private void readdAndExpire(String userIndexKey, String taskId, long score, Duration ttl) {
+        redis.addToSortedSet(userIndexKey, taskId, score);
+        if (!redis.expire(userIndexKey, ttl)) {
+            throw new IllegalStateException("Redis user processing index TTL 보정에 실패했습니다");
+        }
+    }
+
+    private void removeProcessingIndexes(String taskId, UUID subjectId) {
+        runIndexCommand(GLOBAL_INDEX, "remove",
+                () -> redis.removeFromSortedSet(PROCESSING_INDEX_KEY, List.of(taskId)));
+        runIndexCommand(USER_INDEX, "remove",
+                () -> redis.removeFromSortedSet(subjectProcessingIndexKey(subjectId), List.of(taskId)));
+    }
+
+    private void runIndexCommand(String index, String operation, Runnable command) {
         try {
             command.run();
         } catch (RuntimeException primaryFailure) {
-            repairIndex(taskId, writtenTask, ttl, index, operation, primaryFailure);
+            repairIndex(index, operation, command, primaryFailure);
         }
     }
 
-    /** 실패·응답 유실 뒤 최신 권위 task를 읽어 해당 index 하나만 현재 상태로 수렴시킨다. */
-    private void repairIndex(String taskId, TimelineDraftTask writtenTask, Duration ttl,
-                             String index, String operation, RuntimeException primaryFailure) {
+    /**
+     * task를 다시 읽거나 status별 반대 명령으로 뒤집지 않고 원래 의도를 그대로 한 번 재시도한다 —
+     * 최초 등록은 AI dispatch 전이라 terminal 전이와 겹치지 않고, ZADD/ZREM은 동일 member 반복이
+     * 멱등이다. 두 번째 실패는 task 상태를 rollback하지 않고 metric·warn log로만 관측한다.
+     */
+    private void repairIndex(String index, String operation, Runnable repair, RuntimeException primaryFailure) {
         try {
-            Optional<TimelineDraftTask> latest = find(taskId);
-            if (latest.isPresent() && latest.get().status() == TaskStatus.PROCESSING) {
-                TimelineDraftTask latestTask = latest.get();
-                long score = latestTask.processingStartedAt().toEpochMilli();
-                String indexKey = GLOBAL_INDEX.equals(index)
-                        ? PROCESSING_INDEX_KEY : subjectProcessingIndexKey(latestTask.subjectId());
-                redis.addToSortedSet(indexKey, taskId, score);
-                if (USER_INDEX.equals(index) && !redis.expire(indexKey, ttl)) {
-                    throw new IllegalStateException("Redis user processing index TTL 보정에 실패했습니다");
-                }
-            } else {
-                String indexKey = GLOBAL_INDEX.equals(index)
-                        ? PROCESSING_INDEX_KEY : subjectProcessingIndexKey(writtenTask.subjectId());
-                redis.removeFromSortedSet(indexKey, List.of(taskId));
-            }
+            repair.run();
             recordRepair(index, operation, "success");
         } catch (RuntimeException repairFailure) {
             recordRepair(index, operation, "failed");
@@ -157,6 +171,14 @@ public class TimelineTaskStore {
                     index, operation,
                     primaryFailure == null ? "missing-key" : primaryFailure.getClass().getSimpleName(),
                     repairFailure.getClass().getSimpleName());
+        }
+    }
+
+    private String serialize(String taskId, TimelineDraftTask task) {
+        try {
+            return objectMapper.writeValueAsString(task);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("TimelineDraftTask 직렬화에 실패했습니다: " + taskId, e);
         }
     }
 

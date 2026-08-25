@@ -152,16 +152,24 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
 - 호출 순서는 PROCESSING task의 내부 `ProcessStage`
   (`INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`)가 제한한다.
-- token hash+stage 교체와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua
-  CAS다.
+- token hash+stage 교체는 native `SET XX KEEPTTL`, callback terminal 전이는 native `SET XX PX`다 —
+  timeline task에 Lua script는 없다. `XX`는 key 존재만 보고 기존 값을 비교하지 않으므로(expected-value
+  CAS 아님) 잘못된 요청 차단은 write 전 token/status/stage 검증이 담당하고, write `false`(만료)는 task를
+  부활시키지 않고 404 `-1001`로 수렴한다. 이 계약이 보장하는 것은 통제된 단일·순차 AI writer의 timeout
+  재시도 멱등성이며, 같은 task/token 요청 둘이 첫 state write 전에 실제 동시 실행되는 경우는
+  last-write-wins로 수용한다(현재 그런 writer 경로 없음).
 - 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
-- 결과 저장은 retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점한 요청 하나만 실행한다. 선점은
-  token을 바꾸지 않으며, callback token 회전과 `CALLBACK_PENDING` 전이는 MySQL commit 뒤 한 번의
-  CAS로 함께 일어난다. MySQL 실패가 호출부로 돌아오면 선점 receipt를 지운다(token은 그대로다).
-  회전이 commit 뒤라 stage만으로는 transaction 진행 구간이 구분되지 않으므로, 이 표식이 없으면 동시
+- 결과 저장은 retry receipt에 선점 표식(`claimedAt`)을 심는 write로 선점하고, 저장된 claim을 읽은 뒤늦은
+  same-token 재시도는 409로 끝나 transaction에 재진입하지 않는다. 선점은 token을 바꾸지 않으며,
+  callback token 회전과 `CALLBACK_PENDING` 전이는 MySQL commit 뒤 한 번의 native write로 함께 일어난다.
+  MySQL 실패가 호출부로 돌아오면 최초 RESULT_PENDING snapshot으로 선점을 되돌린다(token은 그대로다).
+  회전이 commit 뒤라 stage만으로는 transaction 진행 구간이 구분되지 않으므로, 이 표식이 없으면 뒤늦은
   요청이 겹쳐 돌아 Event·Item이 중복 삽입된다.
-- `CALLBACK_PENDING` 도달이 graph 확정의 유일한 증거다(회전과 commit이 같은 CAS에 묶여 있다). 응답 유실 뒤 재시도 창 안에 소비된 result token으로
+- 선점(`RESULT_PENDING` + `claimedAt`) 중 FAILED callback은 409로 거절한다 — 아직 살아 있는 transaction의
+  commit 회전·선점 해제(`SET XX`)가 먼저 확정된 terminal 위에 PROCESSING을 되쓰는 것을 막는다. 선점 뒤
+  crash한 task는 기존 계약대로 TTL 만료(404)로 끝난다.
+- `CALLBACK_PENDING` 도달이 graph 확정의 유일한 증거다 — MySQL commit 뒤 callback token과 stage를 하나의 Redis write로 회전하므로, 이 stage는 commit 이후에만 존재한다. 응답 유실 뒤 재시도 창 안에 소비된 result token으로
   다시 오면 MySQL을 건드리지 않고 새 callback token만 재발급한다(응답 shape는 신규 저장과 동일).
   receipt 부재·창
   만료·terminal은 401 `-1002`, 선점 중(commit 전) 중복 요청은 409 `-1017`다. 재시도 body는 적용 경로가 없어 대조
@@ -176,12 +184,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
 - callback·User Memory 결과의 자유 text `error`는 사용자 원문이 섞일 수 있어 저장·클라이언트 노출은
   물론 application log에도 남기지 않는다(수신 후 폐기 — taskId와 bounded numeric code만 로깅).
-- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.
+- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/미선점 RESULT_PENDING에서만 허용한다(선점 중 FAILED 409는 위 claim guard 항목).
 - terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
 - 결과 저장 commit 후 callback 자체가 오지 않으면 원 task는 PROCESSING TTL로 만료되고 저장된 graph는
   남는다 — 자동 복구(redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 3분이며 token/stage 교체마다 다시 확보한다(`processingStartedAt`은 보존).
-  terminal task TTL은 24시간, staging retention은 7일이다.
+- `PROCESSING` TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체는 `KEEPTTL`이라 만료
+  시각을 연장하지 않으며, 폴링 `elapsedSeconds`·stuck 관측·task 만료가 전부 최초 `processingStartedAt`
+  기준으로 일치한다. terminal task TTL은 24시간, staging retention은 7일이다.
 - Redis와 MySQL은 분산 transaction으로 묶지 않는다. commit 뒤 응답 유실은 재시도 창 안의 재요청이
   복구하지만, 선점 뒤 **commit 전** 프로세스 종료는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 창 만료 뒤
   재요청도 401이다 — 그 task는 TTL 만료로 끝나며 자동 reconciliation은 없다.
@@ -190,16 +199,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를
   미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
-  전용이다 — TTL 재확보에도 바뀌지 않고 terminal 전이 시 폐기한다.
+  전용이다 — stage write에도 바뀌지 않고 terminal 전이 시 폐기한다.
 - subject별 진행 작업 index(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)는 조회 후보일 뿐이다 —
   task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
   소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
   요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
 - task JSON은 먼저 저장하고 보조 전역·사용자 processing index는 native Redis 명령으로 갱신한다.
-  PROCESSING은 ZADD(+사용자 index PEXPIRE), terminal은 ZREM하며 각 명령 실패·응답 유실과
-  PEXPIRE=false는 최신 task JSON을 다시 읽어 해당 index만 멱등 보정한다. `TimelineTaskStore#save`가
-  모든 lifecycle write의 단일 지점이고 task JSON status/owner가 유일한 권위다. 사용자 index key TTL은
-  마지막 PROCESSING 저장 뒤 3분 inactivity cleanup이며 member별 TTL이 아니다.
+  최초 PROCESSING 생성만 ZADD(+사용자 index PEXPIRE 3분)하고, terminal 전이만 ZREM한다 — 중간
+  stage write는 index에 어떤 명령도 보내지 않는다. 각 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고
+  같은 의도의 명령을 한 번 재시도한다(두 번째 실패는 metric·warn 관측만). task JSON status/owner가
+  유일한 권위다. 사용자 index key TTL은 마지막 **task 생성** 뒤 3분 inactivity cleanup이며 member별
+  TTL이 아니다 — task 수명도 생성 기준 3분이라 index가 유효 member보다 먼저 사라지지 않는다.
 - PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
   timestamp는 0 clamp). PROCESSING task에는 기준 시각이 항상 존재한다.
 

@@ -22,12 +22,15 @@ import org.springframework.stereotype.Service;
 /**
  * AI 결과를 저장한다.
  *
- * <p>순서가 load-bearing이다. 선점 CAS는 <b>token을 바꾸지 않고</b> 선점 표식만 receipt에 남겨
- * 동시 writer를 하나로 제한한다 — MySQL이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
- * 정상 경로로 다시 돈다. callback token 회전과 stage 전이는 <b>commit 뒤 한 번의 CAS</b>로 일어난다.
+ * <p>순서가 load-bearing이다. 선점 write는 <b>token을 바꾸지 않고</b> 선점 표식만 receipt에 남겨
+ * 순차 재시도를 409로 수렴시킨다 — MySQL이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
+ * 정상 경로로 다시 돈다. callback token 회전과 stage 전이는 <b>commit 뒤 한 번의 native write</b>로
+ * 일어난다. 모든 write는 {@code SET XX KEEPTTL}이라 최초 PROCESSING 만료 시각을 보존하고, 만료된
+ * task를 부활시키지 않는다(write 실패는 404).
  *
  * <p>그래서 {@code CALLBACK_PENDING}이 곧 "graph가 확정됐다"는 뜻이다. 선점과 commit 사이에 프로세스가
  * 죽으면 stage가 {@code RESULT_PENDING}에 머물러 어떤 재요청도 멱등 성공으로 오인되지 않는다.
+ * 선점 중 FAILED callback은 callback 검증이 409로 거절해 terminal이 이 구간에 끼어들지 않는다.
  *
  * <p>응답 유실 뒤 소비된 result token으로 다시 오면 MySQL을 건드리지 않고 새 callback token만
  * 재발급한다(멱등). 이 시점의 body는 적용할 경로가 없어 무시한다 — staging은 이미 삭제됐고 graph는
@@ -94,26 +97,26 @@ public class TimelineAiResultService {
         // 선점: token·stage는 그대로 두고 표식만 남긴다. 실패해도 AI의 token이 살아 있어 재시도가 정상 경로다.
         RetryReceipt claimReceipt = claimReceipt(task);
         TimelineDraftTask claimed = task.withRetryReceipt(claimReceipt);
-        if (!timelineTaskService.replaceProcessing(taskId, task, claimed)) {
-            log.warn("ai result claim lost race: taskId={}", taskId);
-            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+        if (!timelineTaskService.saveProcessingIfPresent(taskId, claimed)) {
+            log.warn("ai result task expired before claim: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
 
         try {
             timelineAiResultTransactionService.store(taskId, task.subjectId(), task.dailyRecordId(), redacted);
         } catch (RuntimeException storageFailure) {
-            releaseClaim(taskId, claimed, task, storageFailure);
+            releaseClaim(taskId, task, storageFailure);
             throw storageFailure;
         }
 
         String callbackToken = TaskTokens.generate();
         TimelineDraftTask committed =
                 claimed.withTokenAndStage(TaskTokens.hash(callbackToken), ProcessStage.CALLBACK_PENDING);
-        if (!timelineTaskService.replaceProcessing(taskId, claimed, committed)) {
-            // 선점 뒤 task를 바꿀 수 있는 경로가 없으므로 여기 도달하면 TTL 만료뿐이다. graph는 남고
+        if (!timelineTaskService.saveProcessingIfPresent(taskId, committed)) {
+            // 선점 중 FAILED callback은 검증이 거절하므로 여기 도달하면 TTL 만료뿐이다. graph는 남고
             // task는 복구되지 않는다 — 응답 유실과 같은 결과라 재요청도 받아줄 수 없다.
-            log.error("ai result commit rotation lost task: taskId={}", taskId);
-            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+            log.error("ai result task expired before commit rotation: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
         return new AiTimelineResultResponse(callbackToken);
     }
@@ -145,11 +148,9 @@ public class TimelineAiResultService {
         String callbackToken = TaskTokens.generate();
         TimelineDraftTask reissued =
                 task.withTokenAndStage(TaskTokens.hash(callbackToken), ProcessStage.CALLBACK_PENDING);
-        if (!timelineTaskService.replaceProcessing(taskId, task, reissued)) {
-            // 진 쪽이 방금 만든 token은 저장된 적이 없어 돌려주면 callback에서 401이 된다 — 재조회로
-            // 멱등 성공 처리하지 않는다(callback race와 달리 응답 자체가 서버가 만든 비밀이다).
-            log.warn("ai result replay lost race: taskId={}", taskId);
-            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+        if (!timelineTaskService.saveProcessingIfPresent(taskId, reissued)) {
+            log.warn("ai result replay task expired before reissue: taskId={}", taskId);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
         log.info("ai result replay reissued callback token: taskId={}", taskId);
         return new AiTimelineResultResponse(callbackToken);
@@ -164,11 +165,13 @@ public class TimelineAiResultService {
         return new RetryReceipt(task.tokenHash(), now, now.plus(retryWindow));
     }
 
-    /** 저장 실패 뒤 선점을 되돌린다. 실패해도 예외를 덮지 않는다 — 원인은 storage 쪽이다. */
-    private void releaseClaim(String taskId, TimelineDraftTask claimed, TimelineDraftTask original,
-                              RuntimeException storageFailure) {
+    /**
+     * 저장 실패 뒤 최초 요청에서 읽은 RESULT_PENDING snapshot으로 선점을 되돌린다. task가 이미
+     * 만료됐으면(false) 부활시키지 않고 넘어가며, 실패해도 예외를 덮지 않는다 — 원인은 storage 쪽이다.
+     */
+    private void releaseClaim(String taskId, TimelineDraftTask original, RuntimeException storageFailure) {
         try {
-            if (!timelineTaskService.replaceProcessing(taskId, claimed, original)) {
+            if (!timelineTaskService.saveProcessingIfPresent(taskId, original)) {
                 log.warn("ai result claim release skipped after storage failure: taskId={}", taskId);
             }
         } catch (RuntimeException releaseFailure) {

@@ -31,7 +31,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>응답에는 DB 식별자를 담지 않는다({@code userId}·{@code dailyRecordId}·행 PK 없음). 시각은 staging의
  * wall-clock에 record timezone을 붙인 offset 값으로 나가며, 결과 저장이 같은 규칙으로 되돌린다.
- * 응답 조립 뒤 token hash와 ProcessStage를 CAS로 함께 교체하면서 PROCESSING TTL을 다시 확보한다.
+ * 응답 조립 뒤 token hash와 ProcessStage를 native {@code SET XX KEEPTTL}로 함께 교체한다 — 최초
+ * PROCESSING 만료 시각은 보존되고, write 시점에 task가 만료됐으면 부활 없이 404로 끝난다.
  *
  * <p>응답이 유실되면 AI는 이미 소비된 input token만 쥐게 되므로, 회전 시 그 token의 hash를 retry receipt로
  * 남긴다. 창(첫 요청 도착 기준) 안에 같은 token으로 다시 오면 <b>응답을 다시 조립해</b> 새 result token과
@@ -103,9 +104,9 @@ public class TimelineAiTaskInputService {
         TimelineDraftTask rotated = task
                 .withTokenAndStage(TaskTokens.hash(resultToken), ProcessStage.RESULT_PENDING)
                 .withRetryReceipt(replay ? task.retryReceipt() : issuedReceipt(task));
-        if (!timelineTaskService.replaceProcessing(taskId, task, rotated)) {
-            log.warn("ai task input token rotation lost race: taskId={} replay={}", taskId, replay);
-            throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
+        if (!timelineTaskService.saveProcessingIfPresent(taskId, rotated)) {
+            log.warn("ai task input task expired before token rotation: taskId={} replay={}", taskId, replay);
+            throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
         if (replay) {
             log.info("ai task input replay reissued result token: taskId={}", taskId);

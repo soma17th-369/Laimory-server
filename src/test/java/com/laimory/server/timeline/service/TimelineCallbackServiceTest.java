@@ -67,11 +67,11 @@ class TimelineCallbackServiceTest {
     void successAtCallbackPending_marksTerminalAndPushes() {
         TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
-        when(timelineTaskService.markSuccessIfCurrent(TASK_ID, task)).thenReturn(true);
+        when(timelineTaskService.markSuccessIfPresent(TASK_ID, task)).thenReturn(true);
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success());
 
-        verify(timelineTaskService).markSuccessIfCurrent(TASK_ID, task);
+        verify(timelineTaskService).markSuccessIfPresent(TASK_ID, task);
         verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
     }
 
@@ -83,7 +83,7 @@ class TimelineCallbackServiceTest {
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
-        verify(timelineTaskService, never()).markSuccessIfCurrent(
+        verify(timelineTaskService, never()).markSuccessIfPresent(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
     }
 
@@ -91,12 +91,12 @@ class TimelineCallbackServiceTest {
     void failedBeforeResult_marksTerminalAndPushes() {
         TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
-        when(timelineTaskService.markFailedIfCurrent(
+        when(timelineTaskService.markFailedIfPresent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
 
-        verify(timelineTaskService).markFailedIfCurrent(
+        verify(timelineTaskService).markFailedIfPresent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
         verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
     }
@@ -112,7 +112,7 @@ class TimelineCallbackServiceTest {
             String rawError = "RAW_AI_ERROR_TEXT_281_NEVER_LOG";
             TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
             when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
-            when(timelineTaskService.markFailedIfCurrent(
+            when(timelineTaskService.markFailedIfPresent(
                     TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
 
             service.handleCallback(VERSION, TASK_ID, TASK_TOKEN,
@@ -172,15 +172,58 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
-    void concurrentSameSuccess_isResolvedAsReplayWithoutSecondPush() {
-        TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
-        when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(task),
-                        Optional.of(TimelineDraftTask.success(SUBJECT_ID, RECORD_ID, TOKEN_HASH)));
-        when(timelineTaskService.markSuccessIfCurrent(TASK_ID, task)).thenReturn(false);
+    void failedWhileResultClaimed_returns409WithoutTerminalWrite() {
+        // 선점은 token/stage를 바꾸지 않아 기존 검증만으로는 transaction 진행 중을 구분하지 못한다 —
+        // 여기서 terminal을 확정하면 commit 회전의 SET XX가 terminal 위에 PROCESSING을 되쓴다.
+        TimelineDraftTask claimed = taskAt(ProcessStage.RESULT_PENDING)
+                .withRetryReceipt(new TimelineDraftTask.RetryReceipt(
+                        TOKEN_HASH, Instant.parse("2026-06-17T03:10:00Z"),
+                        Instant.parse("2026-06-17T03:10:15Z")));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(claimed));
 
-        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success());
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+        verify(timelineTaskService, never()).markFailedIfPresent(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
+        verifyNoInteractions(timelineCompletionPushNotifier);
+    }
 
+    @Test
+    void failedWithUnclaimedReceipt_isStillAccepted() {
+        // 입력 회전이 남긴 receipt(claimedAt 없음)는 선점이 아니다 — FAILED는 그대로 허용된다.
+        TimelineDraftTask issued = taskAt(ProcessStage.RESULT_PENDING)
+                .withRetryReceipt(new TimelineDraftTask.RetryReceipt(
+                        TOKEN_HASH, null, Instant.parse("2026-06-17T03:10:15Z")));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(issued));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, issued, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
+
+        verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+    }
+
+    @Test
+    void terminalWriteMissing_returns404WithoutPush() {
+        // 검증 뒤 write 시점에 task가 만료된 경우 — XX=false는 부활 없이 404이고 push도 없다.
+        TimelineDraftTask success = taskAt(ProcessStage.CALLBACK_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(success));
+        when(timelineTaskService.markSuccessIfPresent(TASK_ID, success)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, success()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
+
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, pending, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verifyNoInteractions(timelineCompletionPushNotifier);
     }
 }

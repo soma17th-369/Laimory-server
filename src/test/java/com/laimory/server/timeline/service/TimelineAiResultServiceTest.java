@@ -92,16 +92,16 @@ class TimelineAiResultServiceTest {
 
     @Test
     void storeResult_claimsWithoutRotating_thenRotatesAfterCommit() {
-        // 선점 CAS는 token·stage를 그대로 두고 지문만 남긴다 — MySQL이 실패해도 AI의 token이 살아 있어
+        // 선점 write는 token·stage를 그대로 두고 지문만 남긴다 — MySQL이 실패해도 AI의 token이 살아 있어
         // 재시도가 특수 경로 없이 정상 경로로 다시 돈다. 회전과 stage 전이는 commit 뒤 한 번에 일어난다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         AiTimelineResultResponse response = service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
 
         ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService, times(2)).replaceProcessing(eq(TASK_ID), any(), written.capture());
+        verify(timelineTaskService, times(2)).saveProcessingIfPresent(eq(TASK_ID), written.capture());
 
         TimelineDraftTask claimed = written.getAllValues().get(0);
         assertThat(claimed.stage()).isEqualTo(ProcessStage.RESULT_PENDING);
@@ -113,7 +113,7 @@ class TimelineAiResultServiceTest {
         TimelineDraftTask committed = written.getAllValues().get(1);
         assertThat(committed.stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
         assertThat(committed.matchesToken(response.taskToken())).isTrue();
-        // 창은 선점 시점에 정해지고 commit CAS가 갱신하지 않는다(기산점 = 첫 요청 도착).
+        // 창은 선점 시점에 정해지고 commit 회전이 갱신하지 않는다(기산점 = 첫 요청 도착).
         assertThat(committed.retryReceipt().retryableUntil()).isEqualTo(NOW.plus(RETRY_WINDOW));
 
         assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
@@ -124,7 +124,7 @@ class TimelineAiResultServiceTest {
     void storeResult_storageFailure_releasesClaimAndKeepsResultToken() {
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         doThrow(new RuntimeException("db down"))
                 .when(timelineAiResultTransactionService).store(anyString(), any(), anyLong(), any());
 
@@ -132,24 +132,41 @@ class TimelineAiResultServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("db down");
 
-        // 보상은 선점 제거뿐이다 — token은 애초에 바뀌지 않았으므로 AI 재시도가 정상 경로로 다시 돈다.
-        ArgumentCaptor<TimelineDraftTask> claimed = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), claimed.capture(), eq(pending));
-        assertThat(claimed.getValue().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
-        assertThat(claimed.getValue().tokenHash()).isEqualTo(TOKEN_HASH);
-        assertThat(claimed.getValue().retryReceipt()).isNotNull();
+        // 보상은 최초 RESULT_PENDING snapshot 복원뿐이다 — token은 애초에 바뀌지 않았으므로 AI 재시도가
+        // 정상 경로로 다시 돈다.
+        ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService, times(2)).saveProcessingIfPresent(eq(TASK_ID), written.capture());
+        TimelineDraftTask claimed = written.getAllValues().get(0);
+        assertThat(claimed.stage()).isEqualTo(ProcessStage.RESULT_PENDING);
+        assertThat(claimed.tokenHash()).isEqualTo(TOKEN_HASH);
+        assertThat(claimed.retryReceipt().claimed()).isTrue();
+        assertThat(written.getAllValues().get(1)).isEqualTo(pending);
     }
 
     @Test
-    void storeResult_concurrentClaim_returns409() {
+    void storeResult_taskExpiredBeforeClaim_returns404() {
+        // 검증 뒤 write 시점에 task가 만료된 경우 — XX=false는 부활 없이 404이고 transaction에 들어가지 않는다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(pending), any())).thenReturn(false);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(false);
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    @Test
+    void storeResult_taskExpiredBeforeCommitRotation_returns404_withoutTaskRevival() {
+        // graph는 이미 commit됐지만 task가 만료됐다 — 응답 유실과 같은 결과로 404이며 task를 되살리지 않는다.
+        TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true, false);
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
+        verify(timelineAiResultTransactionService).store(TASK_ID, SUBJECT_ID, RECORD_ID, result());
     }
 
     @Test
@@ -179,7 +196,7 @@ class TimelineAiResultServiceTest {
     void storeResult_withoutQuestion_isStored() {
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         AiTimelineResultRequest legacy = resultWithQuestion(null);
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, legacy);
@@ -195,7 +212,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(
                 VERSION, TASK_ID, TASK_TOKEN, resultWithQuestion("질".repeat(256))))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 
@@ -218,7 +235,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(
                 VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceAndAddress(null, "주".repeat(256))))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 
@@ -227,7 +244,7 @@ class TimelineAiResultServiceTest {
         // 공백 문자열은 치환 사본 단계에서 이미 null(값 없음)로 수렴한다 — transaction의 trimToNull과 같은 규칙이다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceAndAddress("   ", ""));
 
@@ -254,7 +271,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(
                 VERSION, TASK_ID, TASK_TOKEN, new AiTimelineResultRequest(List.of())))
                 .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 
@@ -263,7 +280,7 @@ class TimelineAiResultServiceTest {
         // AI 생성 title/subtitle/question/place/address의 v1 PII는 final 저장 경로에 들어가기 전에 token으로 치환된다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, "010-1234-5678로 예약한 점심", "메일 yun@example.com",
                 "연락처 010-9876-5432 맞나요?", "성수동 카페 010-1111-2222",
@@ -290,7 +307,7 @@ class TimelineAiResultServiceTest {
         // 255 이하를 유지하고 placeholder literal이 잘리지 않는다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         String title = "가".repeat(240) + " a@b.co";
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, title, null, null, null, null,
@@ -313,7 +330,7 @@ class TimelineAiResultServiceTest {
         // persistence와 같은 normalize를 치환 전에 적용해 token이 보존돼야 한다.
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         String title = " ".repeat(250) + "a@b.co";
         AiTimelineResultRequest request = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, title, null, null, null, null,
@@ -338,7 +355,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 
@@ -354,7 +371,7 @@ class TimelineAiResultServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("redactor down");
 
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
 
@@ -369,10 +386,10 @@ class TimelineAiResultServiceTest {
     /** 1차 저장을 실제로 한 번 돌려 commit 확정 task를 얻는다 — 지문도 실물 치환 경로로 만들어진다. */
     private TimelineDraftTask storeOnceAndCaptureCommitted(AiTimelineResultRequest request) {
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), any(), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, request);
         ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService, times(2)).replaceProcessing(eq(TASK_ID), any(), written.capture());
+        verify(timelineTaskService, times(2)).saveProcessingIfPresent(eq(TASK_ID), written.capture());
         return written.getAllValues().get(1);
     }
 
@@ -389,7 +406,7 @@ class TimelineAiResultServiceTest {
         verify(timelineAiResultTransactionService, times(1)).store(anyString(), any(), anyLong(), any());
 
         ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService, times(3)).replaceProcessing(eq(TASK_ID), any(), written.capture());
+        verify(timelineTaskService, times(3)).saveProcessingIfPresent(eq(TASK_ID), written.capture());
         TimelineDraftTask reissued = written.getAllValues().get(2);
         assertThat(reissued.stage()).isEqualTo(ProcessStage.CALLBACK_PENDING);
         assertThat(reissued.matchesToken(replay.taskToken())).isTrue();
@@ -423,7 +440,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
-        verify(timelineTaskService, times(2)).replaceProcessing(eq(TASK_ID), any(), any());
+        verify(timelineTaskService, times(2)).saveProcessingIfPresent(eq(TASK_ID), any());
     }
 
     @Test
@@ -449,19 +466,19 @@ class TimelineAiResultServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
         verifyNoInteractions(timelineAiResultTransactionService);
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
     }
 
     @Test
-    void storeResult_replayLostRace_returns409() {
-        // 진 쪽이 방금 만든 token은 저장된 적이 없다 — 돌려주면 callback에서 401이 되므로 409로 끝낸다.
+    void storeResult_replayTaskExpiredBeforeReissue_returns404() {
+        // 재발급 write 시점에 task가 만료된 경우 — 부활 없이 404이고 graph도 다시 쓰지 않는다.
         TimelineDraftTask committed = storeOnceAndCaptureCommitted(result());
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(committed));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(committed), any())).thenReturn(false);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(false);
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
         verify(timelineAiResultTransactionService, times(1)).store(anyString(), any(), anyLong(), any());
     }
 }

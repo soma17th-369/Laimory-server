@@ -348,7 +348,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         TimelineDraftTask current = taskService.find(taskId).orElseThrow();
         TimelineDraftTask.RetryReceipt receipt = current.retryReceipt();
-        assertThat(taskService.replaceProcessing(taskId, current,
+        assertThat(taskService.saveProcessingIfPresent(taskId,
                 current.withRetryReceipt(new TimelineDraftTask.RetryReceipt(
                         receipt.previousTokenHash(), receipt.claimedAt(),
                         Instant.now().minusSeconds(1))))).isTrue();

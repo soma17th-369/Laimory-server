@@ -223,8 +223,8 @@ Spring JSON stdout
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
-    task write 뒤 processing index 명령 실패·응답 유실 또는 사용자 index PEXPIRE=false를 최신 task
-    기준으로 보정한 시도 수. 식별자와 Redis key는 tag에 넣지 않는다
+    최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
+    없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다
   - `laimory.push.delivery{type=TIMELINE_COMPLETION|DAILY_REMINDER, result=success|failed}`:
     FCM batch response가 확인한 발송 결과 수. 차원은 고정 알림 종류와 결과뿐이다(#314).
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
