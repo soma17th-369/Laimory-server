@@ -4,9 +4,10 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.core.types.Expiration;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,16 +23,6 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class RedisGateway {
-
-    // token/stage와 terminal 전이는 task JSON 한 key만 compare-and-set한다. 보조 processing index는
-    // task write 성공 뒤 native command로 갱신·보정하므로 script의 원자 경계에 포함하지 않는다.
-    private static final RedisScript<Long> COMPARE_AND_SET = new DefaultRedisScript<>("""
-            if redis.call('get', KEYS[1]) ~= ARGV[1] then
-                return 0
-            end
-            redis.call('set', KEYS[1], ARGV[2], 'PX', ARGV[3])
-            return 1
-            """, Long.class);
 
     private final StringRedisTemplate template;
     private final String prefix;
@@ -62,11 +53,33 @@ public class RedisGateway {
         return template.opsForValue().getAndDelete(prefix + logicalKey);
     }
 
-    /** 현재 값이 {@code expectedValue}와 같을 때만 새 값과 TTL로 교체한다. missing key는 실패한다. */
-    public boolean compareAndSet(String logicalKey, String expectedValue, String newValue, Duration ttl) {
-        Long result = template.execute(COMPARE_AND_SET,
-                List.of(prefix + logicalKey), expectedValue, newValue, String.valueOf(ttl.toMillis()));
-        return requireScriptResult(result, logicalKey) == 1;
+    /**
+     * key가 이미 있을 때만 값을 교체하고 <b>기존 TTL을 보존</b>한다(SET XX KEEPTTL, Redis 6.0+).
+     * 존재 여부만 보며 기존 값은 비교하지 않는다 — expected-value CAS가 아니다.
+     * 반환 {@code false}는 missing key(만료·소멸)다.
+     */
+    public boolean setIfPresentKeepingTtl(String logicalKey, String value) {
+        return setIfPresent(logicalKey, value, Expiration.keepTtl());
+    }
+
+    /**
+     * key가 이미 있을 때만 값을 새 TTL과 함께 교체한다(SET XX PX). 존재 여부만 보며 기존 값은
+     * 비교하지 않는다 — expected-value CAS가 아니다. 반환 {@code false}는 missing key(만료·소멸)다.
+     */
+    public boolean setIfPresent(String logicalKey, String value, Duration ttl) {
+        return setIfPresent(logicalKey, value, Expiration.milliseconds(ttl.toMillis()));
+    }
+
+    private boolean setIfPresent(String logicalKey, String value, Expiration expiration) {
+        byte[] rawKey = template.getStringSerializer().serialize(prefix + logicalKey);
+        byte[] rawValue = template.getStringSerializer().serialize(value);
+        Boolean result = template.execute((RedisCallback<Boolean>) connection ->
+                connection.stringCommands().set(rawKey, rawValue, expiration, SetOption.ifPresent()));
+        if (result == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis set이 null을 반환했습니다: " + logicalKey);
+        }
+        return result;
     }
 
     /**
@@ -179,13 +192,5 @@ public class RedisGateway {
             throw new IllegalStateException("Redis zrem이 null을 반환했습니다: " + logicalSortedSetKey);
         }
         return removed;
-    }
-
-    private static long requireScriptResult(Long result, String logicalKey) {
-        if (result == null) {
-            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
-            throw new IllegalStateException("Redis script가 null을 반환했습니다: " + logicalKey);
-        }
-        return result;
     }
 }

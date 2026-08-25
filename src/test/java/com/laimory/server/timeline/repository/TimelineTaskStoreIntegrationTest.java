@@ -13,7 +13,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -242,54 +241,105 @@ class TimelineTaskStoreIntegrationTest {
     }
 
     @Test
-    void replaceIfUnchanged_missingTaskDoesNotResurrectIt() {
-        String taskId = "it-missing-cas-" + UUID.randomUUID();
-        TimelineDraftTask expected = TimelineDraftTask.processing(
-                SUBJECT, 42L, null, tokenHashes("old"), Instant.now());
-        TimelineDraftTask replacement = expected.withTokenAndStage(
-                tokenHashes("next"), ProcessStage.RESULT_PENDING);
+    void saveProcessingIfPresent_missingTaskDoesNotResurrectIt() {
+        String taskId = "it-missing-xx-" + UUID.randomUUID();
+        TimelineDraftTask replacement = TimelineDraftTask.processing(
+                SUBJECT, 42L, null, tokenHashes("old"), Instant.now())
+                .withTokenAndStage(tokenHashes("next"), ProcessStage.RESULT_PENDING);
 
-        assertThat(timelineTaskStore.replaceIfUnchanged(
-                taskId, expected, replacement, Duration.ofMinutes(3))).isFalse();
+        assertThat(timelineTaskStore.saveProcessingIfPresent(taskId, replacement)).isFalse();
         assertThat(timelineTaskStore.find(taskId)).isEmpty();
     }
 
     @Test
-    void replaceIfUnchanged_concurrentRequestsHaveOneWinner() throws Exception {
-        UUID user = uniqueSubjectId();
-        String taskId = "it-cas-race-" + UUID.randomUUID();
-        TimelineDraftTask expected = TimelineDraftTask.processing(
-                user, 42L, null, tokenHashes("old"), Instant.now());
-        TimelineDraftTask first = expected.withTokenAndStage(
-                tokenHashes("first"), ProcessStage.RESULT_PENDING);
-        TimelineDraftTask second = expected.withTokenAndStage(
-                tokenHashes("second"), ProcessStage.RESULT_PENDING);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch start = new CountDownLatch(1);
-        try {
-            timelineTaskStore.save(taskId, expected, Duration.ofMinutes(3));
-            Future<Boolean> firstResult = executor.submit(() -> {
-                ready.countDown();
-                start.await();
-                return timelineTaskStore.replaceIfUnchanged(
-                        taskId, expected, first, Duration.ofMinutes(3));
-            });
-            Future<Boolean> secondResult = executor.submit(() -> {
-                ready.countDown();
-                start.await();
-                return timelineTaskStore.replaceIfUnchanged(
-                        taskId, expected, second, Duration.ofMinutes(3));
-            });
-            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-            start.countDown();
+    void saveTerminalIfPresent_missingTaskDoesNotResurrectIt() {
+        String taskId = "it-missing-terminal-" + UUID.randomUUID();
 
-            assertThat(List.of(firstResult.get(5, TimeUnit.SECONDS),
-                    secondResult.get(5, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
-            assertThat(timelineTaskStore.find(taskId).orElseThrow()).isIn(first, second);
+        assertThat(timelineTaskStore.saveTerminalIfPresent(taskId,
+                TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("cb")), Duration.ofHours(24))).isFalse();
+        assertThat(timelineTaskStore.find(taskId)).isEmpty();
+    }
+
+    @Test
+    void saveProcessingIfPresent_keepsInitialExpiry_despiteRepeatedWrites() throws Exception {
+        // SET XX KEEPTTL — 짧은 TTL 동안 stage write를 반복해도 최초 만료 시각이 밀리지 않는다.
+        // 매 write가 TTL을 재확보했다면(PX) key는 deadline까지 계속 살아남는다.
+        UUID user = uniqueSubjectId();
+        String taskId = "it-keepttl-" + UUID.randomUUID();
+        try {
+            long t0 = System.currentTimeMillis();
+            TimelineDraftTask task = TimelineDraftTask.processing(
+                    user, 42L, null, tokenHashes("h"), Instant.now());
+            timelineTaskStore.save(taskId, task, Duration.ofSeconds(2));
+
+            int rotation = 0;
+            while (timelineTaskStore.find(taskId).isPresent()
+                    && System.currentTimeMillis() - t0 < 10_000) {
+                timelineTaskStore.saveProcessingIfPresent(taskId, task.withTokenAndStage(
+                        tokenHashes("next-" + rotation++), ProcessStage.RESULT_PENDING));
+                Thread.sleep(200);
+            }
+
+            assertThat(timelineTaskStore.find(taskId)).isEmpty();
+            assertThat(System.currentTimeMillis() - t0).isLessThan(6_000);
+            // 만료 뒤 write는 key를 부활시키지 않는다.
+            assertThat(timelineTaskStore.saveProcessingIfPresent(taskId, task.withTokenAndStage(
+                    tokenHashes("late"), ProcessStage.RESULT_PENDING))).isFalse();
+            assertThat(timelineTaskStore.find(taskId)).isEmpty();
         } finally {
-            start.countDown();
-            executor.shutdownNow();
+            cleanupTask(user, taskId);
+        }
+    }
+
+    @Test
+    void saveTerminalIfPresent_persistsTerminalWithTtl_andRemovesIndexMembers() {
+        UUID user = uniqueSubjectId();
+        String taskId = "it-terminal-xx-" + UUID.randomUUID();
+        try {
+            timelineTaskStore.save(taskId, TimelineDraftTask.processing(
+                    user, 42L, null, tokenHashes("h"), Instant.now()), Duration.ofMinutes(3));
+            TimelineDraftTask terminal = TimelineDraftTask.success(user, 42L, tokenHashes("cb"));
+
+            assertThat(timelineTaskStore.saveTerminalIfPresent(taskId, terminal, Duration.ofMinutes(1))).isTrue();
+
+            assertThat(timelineTaskStore.find(taskId).orElseThrow()).isEqualTo(terminal);
+            assertThat(redisGateway.getSortedSetReverseRange(
+                    TimelineTaskStore.subjectProcessingIndexKey(user))).isEmpty();
+        } finally {
+            cleanupTask(user, taskId);
+        }
+    }
+
+    @Test
+    void userIndex_stageWrite_leavesMembersAndExpiryUntouched() throws Exception {
+        // stage write는 index에 어떤 명령도 보내지 않는다 — member는 그대로고, index는 task 생성 시점
+        // TTL로 task와 함께 소멸한다. stage write가 index TTL을 다시 걸었다면 task 만료 뒤에도
+        // 그만큼 더 살아남아 아래 짧은 창을 넘긴다.
+        UUID user = uniqueSubjectId();
+        String userIndexKey = TimelineTaskStore.subjectProcessingIndexKey(user);
+        String taskId = "it-stage-index-" + UUID.randomUUID();
+        try {
+            TimelineDraftTask task = TimelineDraftTask.processing(
+                    user, 42L, null, tokenHashes("h"), Instant.now());
+            timelineTaskStore.save(taskId, task, Duration.ofMillis(2_500));
+            Thread.sleep(1_500);
+            assertThat(timelineTaskStore.saveProcessingIfPresent(taskId, task.withTokenAndStage(
+                    tokenHashes("next"), ProcessStage.RESULT_PENDING))).isTrue();
+            assertThat(redisGateway.getSortedSetReverseRange(userIndexKey)).containsExactly(taskId);
+
+            long deadline = System.currentTimeMillis() + 6_000;
+            while (timelineTaskStore.find(taskId).isPresent() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            assertThat(timelineTaskStore.find(taskId)).isEmpty();
+
+            deadline = System.currentTimeMillis() + 1_200;
+            while (!redisGateway.getSortedSetReverseRange(userIndexKey).isEmpty()
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            assertThat(redisGateway.getSortedSetReverseRange(userIndexKey)).isEmpty();
+        } finally {
             cleanupTask(user, taskId);
         }
     }
@@ -458,10 +508,10 @@ class TimelineTaskStoreIntegrationTest {
 
     @Test
     void userIndex_newTaskRefreshesKeyTtl_andKeyExpiresAfterInactivity() throws Exception {
-        // T20(D11): 사용자 index key TTL은 PROCESSING 저장마다 task와 같은 값으로 갱신된다 — 갱신이 없으면
-        // 첫 task TTL에 key가 통째로 사라져 이후 task까지 유실된다. 마지막 생성 뒤 TTL 동안 새 생성이
-        // 없으면 key 전체가 자연 소멸한다(production 3m 상수 전달은 TimelineTaskServiceTest가 고정 —
-        // 여기는 short-TTL analog로 만료 의미만 검증한다).
+        // T20(D11): 사용자 index key TTL은 **새 task 생성**마다 task와 같은 값으로 다시 걸린다(stage write는
+        // 갱신하지 않음) — 생성이 갱신하지 않으면 첫 task TTL에 key가 통째로 사라져 이후 task까지 유실된다.
+        // 마지막 생성 뒤 TTL 동안 새 생성이 없으면 key 전체가 자연 소멸한다(production 3m 상수 전달은
+        // TimelineTaskServiceTest가 고정 — 여기는 short-TTL analog로 만료 의미만 검증한다).
         UUID user = uniqueSubjectId();
         Duration shortTtl = Duration.ofSeconds(3);
         String userIndexKey = TimelineTaskStore.subjectProcessingIndexKey(user);

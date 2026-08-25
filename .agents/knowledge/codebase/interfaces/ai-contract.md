@@ -74,9 +74,14 @@ INPUT_PENDING
   → SUCCESS
 ```
 
-- token hash+stage 교체와 terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는 단일-key Redis
-  Lua CAS다. missing task는 CAS에 실패해 만료 task를 부활시키지 않는다. processing index는 이 원자
-  경계 밖의 보조 데이터이며 task write 뒤 native 명령과 최신 task 기준 보정으로 수렴한다.
+- token hash+stage 교체는 native `SET XX KEEPTTL`, terminal 전이는 native `SET XX PX 24h`다 — timeline
+  task에 Lua script는 없다. `XX`는 key 존재만 보고 값을 비교하지 않으므로 잘못된 요청 차단은 write 전
+  token/status/stage 검증이 담당하고, missing task는 write에 실패해(404) 만료 task를 부활시키지 않는다.
+  `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 3분 만료 시각을 연장하지 않는다. 이 계약은 통제된
+  단일·순차 AI writer의 timeout 재시도(첫 재시도 약 3.5초 뒤)를 보장 대상으로 하며, 같은 task/token
+  요청 둘을 첫 state write 전에 실제 동시 실행하는 경우는 last-write-wins로 수용한다. processing
+  index는 보조 데이터로 최초 PROCESSING 생성과 terminal 전이에서만 갱신하고, 실패는 같은 의도의 명령을
+  한 번 재시도한다.
 - 외부 polling 상태는 계속 `PROCESSING`/`SUCCESS`/`FAILED`만 노출한다.
 
 ### 3. 입력 조회 (AI → API)
@@ -109,8 +114,8 @@ Task-Token: <taskToken>
 
 - token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
 - 신규 조회는 `INPUT_PENDING`에서만 허용한다.
-- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 CAS로 저장하고 새 token 원문을 응답한다. 같은 CAS가
-  소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
+- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 native write로 저장하고 새 token 원문을 응답한다.
+  같은 write가 소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
 - 응답 유실 뒤 **소비된 input token으로 재조회**하면 `RESULT_PENDING`에서 입력을 다시 조립해 새 result
   token과 함께 200으로 응답한다(재시도 표시 없음 — 마지막 응답의 token만 유효하다). 조건은 receipt의
   token hash 일치와 재시도 창 유효 둘이며, 어긋나면 401 `-1002`다.
@@ -145,12 +150,13 @@ Task-Token: <taskToken>
 - 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로
   v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
   전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
-- `RESULT_PENDING` 요청 하나만 retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점하고 MySQL
-  transaction을 실행한다. **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라
-  재요청이 특수 경로 없이 정상 경로로 다시 돈다. 회전이 commit 뒤로 미뤄져 stage만으로는 "이미 누가
-  transaction을 돌리는 중"이 구분되지 않으므로 이 표식이 동시 writer를 하나로 제한한다(없으면 두 요청이
-  겹쳐 돌아 Event·Item이 중복 삽입된다).
-- callback token 회전과 `CALLBACK_PENDING` 전이는 **commit 뒤 한 번의 CAS**로 일어난다. 그래서
+- retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 MySQL transaction을 실행한다.
+  **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
+  정상 경로로 다시 돈다. 회전이 commit 뒤로 미뤄져 stage만으로는 "이미 누가 transaction을 돌리는 중"이
+  구분되지 않으므로, 저장된 claim을 읽은 뒤늦은 same-token 재시도는 409로 끝나 transaction에 재진입하지
+  않는다(없으면 요청이 겹쳐 돌아 Event·Item이 중복 삽입된다). 같은 이유로 선점 중 FAILED callback도
+  409다.
+- callback token 회전과 `CALLBACK_PENDING` 전이는 **commit 뒤 한 번의 native write**로 일어난다. 그래서
   `CALLBACK_PENDING`이 곧 "graph가 확정됐다"는 뜻이며, 새 token 원문은 그 뒤에야 응답된다. 별도 commit
   표식은 두지 않는다 — 선점만 된 구간은 `RESULT_PENDING` + `claimedAt`으로 구분된다.
 - 응답 유실 뒤 **소비된 result token으로** 재요청하면 MySQL을 건드리지 않고 새 callback token만
@@ -183,9 +189,9 @@ clamp한다.
 실패해도 AI가 쥔 result token은 유효하다 — 선점 흔적만 남아 그 task의 재시도가 409로 수렴한다.
 
 재시도 창은 `app.ai.retry-window`(기본 15s)이며 **첫 요청이 서버에 도착한 시각** 기준 절대 마감이다.
-CAS마다 재확보되는 PROCESSING TTL과 달리 재발급으로 미끄러지지 않는다. AI 재시도 예산(3s 간격 × 3회 +
-실패 인지 시간)보다 크고 PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼
-늘린다.
+최초 시작 기준으로 고정된 PROCESSING TTL과 마찬가지로 재발급으로 미끄러지지 않는다. AI 재시도 예산
+(시도당 timeout 3s·첫 backoff 0.5s·최대 3회 — 첫 재시도 약 3.5초 뒤, 실패 확정 약 10.5초)보다 크고
+PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
 
 ### 5. 상태 Callback (AI → API)
 
@@ -196,9 +202,13 @@ Task-Token: <taskToken>
 
 - body는 `status`, `errorCode`, `error`뿐이다.
 - SUCCESS는 `CALLBACK_PENDING`에서만 허용한다.
-- FAILED는 결과 저장 전인 `INPUT_PENDING`/`RESULT_PENDING`에서만 허용한다.
+- FAILED는 결과 저장 전인 `INPUT_PENDING`/미선점 `RESULT_PENDING`에서만 허용한다 — 결과 선점
+  (`RESULT_PENDING` + `claimedAt`) 중에는 409 `-1017`이다. 아직 살아 있는 transaction의 commit 회전·선점
+  해제(`SET XX`)보다 terminal을 먼저 확정하면 terminal 위에 PROCESSING이 되쓰이기 때문이며, 선점 뒤
+  crash한 task는 기존 계약대로 TTL 만료(404)로 끝난다.
 - terminal task의 같은 callback 재전송은 200, 상충 결과는 409 `-1017`이다.
-- terminal CAS에 처음 성공한 요청만 완료 push를 예약한다.
+- terminal write(`SET XX PX 24h`)에 성공한 요청만 완료 push를 예약한다 — write 시점 만료(`XX=false`)는
+  404이고 index 제거·push를 실행하지 않는다.
 - FAILED `errorCode`는 음수 JSON integer이며 미지 값은 `-1008`로 수렴한다. 자유 text `error`는 사용자
   원문이 섞일 수 있어 저장·클라이언트 노출은 물론 서버 로그에도 남기지 않는다(수신 후 폐기 — 서버는
   taskId와 bounded numeric code만 로깅하고, wire 계약 유지를 위해 필드만 유지한다).
@@ -292,7 +302,7 @@ Task-Token: <접수 body로 준 token>
   손실이 아니라 task 종결 실패다.
 - 이 경로의 reconciliation과 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
 - task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다.
-- PROCESSING TTL은 3분이고 token/stage 교체마다 다시 확보한다. terminal TTL은 24시간이다.
+- PROCESSING TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체(`KEEPTTL`)가 연장하지 않는다. terminal TTL은 24시간이다.
 
 ## Current Implementations
 
@@ -315,8 +325,10 @@ User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 
 - retry receipt는 PROCESSING 전용이며 terminal 전이 시 stage와 함께 버린다 — callback 이후의 결과
   재요청은 인지 대상이 아니다.
 - 결과 저장의 token 회전은 **MySQL commit 뒤**에만 일어난다. 선점은 `claimedAt` 표식만 남기고 token을
-  바꾸지 않으며, 그 표식이 동시 writer를 하나로 제한한다.
-- 입력과 결과의 token hash+stage 전이는 Redis task JSON CAS다.
+  바꾸지 않으며, 그 표식이 뒤늦은 same-token 재시도의 transaction 재진입과 선점 중 FAILED callback을
+  막는다.
+- 입력과 결과의 token hash+stage 전이는 native `SET XX KEEPTTL`이다 — 최초 PROCESSING 만료 시각을
+  보존하고 만료 task를 부활시키지 않는다.
 - 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
 - callback body에 graph를 추가하지 않는다.
 - 실제 token 값을 문서·로그에 기록하지 않는다.

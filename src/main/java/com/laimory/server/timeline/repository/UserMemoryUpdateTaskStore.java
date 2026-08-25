@@ -18,7 +18,8 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>key 존재 자체가 진행 중</b>이라 status 필드도, terminal 값을 남기는 저장도 없다 — 종결은 삭제다.
  * 그래서 뒤늦게 도착한 결과나 중복 결과는 자연히 404로 떨어지고, AI는 4xx를 재시도 중단 신호로 읽는다.
- * 단계가 하나뿐이라 index도 CAS도 두지 않는다(draft task와의 차이).
+ * 단계가 하나뿐이라 index도 조건부 write도 두지 않는다(draft task와의 차이 — 그쪽은 processing
+ * index와 native {@code SET XX} write를 쓴다).
  *
  * <p><b>guard가 미반영 큐가 아니라 여기 있는 이유</b>: guard가 답하는 질문은 "이 사용자의 갱신이 지금
  * 진행 중인가"이고, 그건 큐("아직 반영 안 된 날이 무엇인가")가 아니라 작업의 상태다. TTL도 task와 같은

@@ -65,9 +65,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
    task JSON 저장 뒤 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
    (`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)를 native Redis 명령으로 갱신한다.
-   PROCESSING은 두 index에 시작 시각 score로 taskId를 ZADD하고 subject index key TTL을 PROCESSING
-   TTL로 갱신하며, terminal은 두 index에서 ZREM한다. 각 index 명령 실패·응답 유실과 PEXPIRE=false는
-   최신 task JSON을 다시 읽어 해당 index를 멱등 보정한다. 전역 index는 90초 초과 stuck gauge에만,
+   **최초 PROCESSING 생성만** 두 index에 시작 시각 score로 taskId를 ZADD하고 subject index key TTL을
+   PROCESSING TTL로 걸며, terminal 전이만 두 index에서 ZREM한다 — 중간 stage write는 index에 어떤
+   명령도 보내지 않는다. 각 index 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고 같은 의도의 명령을
+   한 번 재시도한다(두 번째 실패는 metric·warn 관측만). 전역 index는 90초 초과 stuck gauge에만,
    사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·callback 계약의 권위는 JSON이다.
 8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
    기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
@@ -97,23 +98,27 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
    entity·DB·앱 응답은 원문 유지). 성공하면 새 token hash와
-   `RESULT_PENDING`을 CAS 저장하고 새 token 원문을 응답 body의 `taskToken`으로 반환한다. 같은 CAS가
+   `RESULT_PENDING`을 native `SET XX KEEPTTL`로 저장하고 새 token 원문을 응답 body의 `taskToken`으로
+   반환한다(최초 만료 시각 보존 — write 시점 만료면 부활 없이 404). 같은 write가
    소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
    다시 오면 입력을 재조립하고 새 result token을 재발급한다(창 안에서만, receipt는 갱신하지 않는다).
 2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·선점 전에
    Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로 v1 치환한 요청
    사본을 만들고 이후 단계는 치환본만 본다 — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
    끝난다(원문 fallback 없음).
-   retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점한 요청만 DB 검증·시각 정규화·+10분 nudge/clamp·
-   Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다. **선점은
-   token을 바꾸지 않는다** — callback token 회전과 `CALLBACK_PENDING` 전이는 commit 뒤 한 번의 CAS로
-   함께 일어나고, 그 뒤에야 callback token 원문을 응답한다. 저장 예외면 선점 receipt를 지운다(token이
-   그대로라 AI 재시도가 정상 경로로 다시 돈다). 응답 유실 뒤 같은 result token으로 다시 오면 MySQL을
+   retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 DB 검증·시각 정규화·+10분 nudge/clamp·
+   Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다 — 저장된
+   claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. **선점은
+   token을 바꾸지 않는다** — callback token 회전과 `CALLBACK_PENDING` 전이는 commit 뒤 한 번의 native
+   write로 함께 일어나고, 그 뒤에야 callback token 원문을 응답한다. 저장 예외면 최초 `RESULT_PENDING`
+   snapshot으로 선점을 되돌린다(token이 그대로라 AI 재시도가 정상 경로로 다시 돈다). 응답 유실 뒤 같은 result token으로 다시 오면 MySQL을
    건드리지 않고 새 callback token만 재발급한다(응답 shape는 신규 저장과 같다) — 이때의 body는
    적용할 경로가 없어(staging 삭제됨 + append-only) 대조하지 않고 무시한다.
 3. **콜백**(`POST .../callback`, 결과 응답의 `Task-Token`): SUCCESS는 CALLBACK_PENDING, FAILED는 결과
-   저장 전 stage에서만 허용한다. terminal CAS에 처음 성공한 요청만 완료 푸시를 예약하고 같은 terminal
-   재전송은 200, 상충은 409 `-1017`이다.
+   저장 전 stage(INPUT_PENDING/미선점 RESULT_PENDING)에서만 허용한다 — 결과 선점(`claimedAt`) 중
+   FAILED는 409다(아직 살아 있는 transaction의 후속 `SET XX`가 terminal 위에 PROCESSING을 되쓰는 것을
+   막는다). terminal 저장은 native `SET XX PX 24h`이고 성공한 요청만 index 제거와 완료 푸시를 예약하며
+   (`XX=false`는 404·부활 없음), 같은 terminal 재전송은 200, 상충은 409 `-1017`이다.
 4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
 
 **수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. 응답 유실은 재시도 창
@@ -274,8 +279,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   `ZADD NX`가, 목록의 일관성은 `ZRANGEBYSCORE` 한 번이, 배치 실행 중 삽입은 목록과 개수가 공유하는
   score 상한(`now`)이 막는다. 청소(`ZREMRANGEBYSCORE`)가 건드리는 범위는 추가되는 score와 retention
   만큼 떨어져 있어 서로를 지우지 못한다. 여러 명령을 한 원자 경계로 묶을 이유가 없어 평범한 명령을
-  쓴다. draft task도 단일-winner가 필요한 task JSON 전이에만 단일-key Lua CAS를 유지하고, 보조
-  processing index는 native 명령과 최신 task 기준 보정으로 수렴시킨다.
+  쓴다. draft task 전이도 Lua 없이 native `SET XX`(KEEPTTL/PX)와 write 전 검증·claim 표식으로 순차
+  재시도를 막고, 보조 processing index는 생성/terminal 시점의 native 명령과 동일 명령 1회 재시도로
+  수렴시킨다.
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 밀려 있는 동안 앞선 날짜의 갱신이 문서를
   바꾸므로, 미리 조립해 두면 낡은 문서를 base로 삼게 되고 미루는 것 자체가 무의미해진다.
 - 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
@@ -296,14 +302,15 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 
 ### Retention and cleanup
 
-- PROCESSING TTL: 3분(입력 조회·stage 전이마다 재확보) / SUCCESS·FAILED TTL: 24시간 /
-  source staging retention: 7일
+- PROCESSING TTL: 최초 PROCESSING 저장 기준 절대 3분(입력 조회·stage 전이는 `KEEPTTL`이라 연장 없음) /
+  SUCCESS·FAILED TTL: 24시간 / source staging retention: 7일
 - PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이
   404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
 - PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 3분(PROCESSING TTL)보다 오래된 고아
   member를 정리한다.
-- 사용자별 진행 작업 index key는 PROCESSING 저장마다 TTL이 3분으로 갱신되고, 마지막 생성 뒤 3분
-  inactivity면 통째로 만료한다(key TTL은 member별 TTL이 아님). member 회수는 terminal ZREM과 목록 조회
+- 사용자별 진행 작업 index key는 새 task 생성마다 TTL이 3분으로 다시 걸리고(stage write는 갱신 안 함),
+  마지막 생성 뒤 3분 inactivity면 통째로 만료한다(key TTL은 member별 TTL이 아님 — task 수명도 생성 기준
+  3분이라 index가 유효 member보다 먼저 소멸하지 않는다). member 회수는 terminal ZREM과 목록 조회
   lazy prune이 담당하며 별도 sweep은 없다 — 3분 미만 간격 생성이 terminal·조회 없이 계속되면 만료
   member가 누적될 수 있다(수용된 MVP trade-off).
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)이다. 채택된 source는 결과 저장 transaction에서
@@ -331,8 +338,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   증거이며, 그 전에는 어떤 재요청도 멱등 성공으로 처리하지 않는다.
 - draft 결과 graph는 서버가 소유한다(결과 저장 transaction). Event PATCH와 Event 생성 POST의 수동
   PHOTO Item/junction도 서버 transaction이다. AI는 어떤 테이블도 직접 쓰지 않는다.
-- 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고 Redis `ProcessStage`/CAS가 호출 순서와
-  동시 writer를 제한한다.
+- 단계마다 회전하는 task token은 매 요청 hash 비교로 검증하고, Redis `ProcessStage`와 claim 표식이
+  호출 순서·순차 재시도를 제한한다(native `SET XX`는 값을 비교하지 않으므로 차단은 write 전 검증 몫이다).
 - 완료 푸시는 결과 전달 경로가 아니다 — polling이 권위 원천·유실 안전망이다(durable retry/outbox 없음).
 
 ## Known Gaps
