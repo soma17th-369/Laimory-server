@@ -24,6 +24,15 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 애플리케이션은 schema를 생성·변경하지 않는다.
 
+이 저장소의 `DATETIME` 컬럼은 전부 `Asia/Seoul` 벽시계 계약(offset 없는 `LocalDateTime`, `Instant`
+매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을 기동 시 `Asia/Seoul`로 고정한다(#371 —
+`TimeZoneConfig` `@PostConstruct`가 권위, `main()`은 이중 안전장치, 스케줄러 `Clock` bean도 존 명시).
+JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거치는 바인딩(Hibernate
+엔티티·JPQL·native query)은 "JVM 기본 존으로 해석 → 선언 존으로 렌더링"을 타므로, 두 존이 다르면
+(JVM=UTC일 때 +9h) 저장 리터럴이 밀리고 읽기가 대칭으로 상쇄해 왕복 테스트로는 드러나지 않는다 —
+비대칭은 `JdbcTimeFrameIntegrationTest`가 서버측 `DATE_FORMAT` 리터럴로 감지한다(UTC CI가 회귀를
+잡는다). `JdbcTemplate`의 `setObject(LocalDateTime)`와 raw SQL 리터럴은 변환 없이 벽시계 그대로다.
+
 주요 저장 영역:
 
 - `app_config`
