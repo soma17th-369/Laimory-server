@@ -390,10 +390,10 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
   왼쪽으로 되돌아가지 않고 socket address로 fallback한다. header line이 여러 개면 마지막 line의
   마지막 element만 본다. ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서
   `Laimory-Client-IP`는 신뢰하지 않는다.
-- **loopback nginx 엣지**(전환기 한정 — nginx 제거 시 삭제 예정) — 현재 최외곽 ingress인 WAS nginx는
-  client-supplied `Laimory-Client-IP`를 전달/append하지 않고 자신이 관찰한 `$remote_addr` 한 값으로
-  덮어쓴다. peer가 정확히 `127.0.0.1`이고 header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를
-  normalize해 downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
+- **loopback 엣지**(#327 nginx 전환기의 잔재 코드 경로 — dev가 ALB 직결로 전환(#369)돼 배포 환경
+  트래픽은 더 이상 타지 않는다. 코드 경로 제거는 후속 정리 후보) — peer가 정확히 `127.0.0.1`이고
+  `Laimory-Client-IP` header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를 normalize해
+  downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
   header는 socket address로 fallback하며 이 엣지에서는 XFF와 User-Agent를 IP 결정에 쓰지 않는다.
 
 rejected 원문은 어느 엣지에서도 기록하지 않는다. checked-in 기본 신뢰 대역은 비어 있어(=ALB 엣지 없음)
