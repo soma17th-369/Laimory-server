@@ -24,10 +24,10 @@ import java.time.ZoneId;
 public final class RecordDates {
 
     /** MySQL 8.0 {@code DATE} 지원 범위의 하한(양끝 포함) — 계약상 좁히기다(그 아래도 저장은 된다). */
-    public static final LocalDate MIN_RECORD_DATE = LocalDate.of(1000, 1, 1);
+    private static final LocalDate MIN_RECORD_DATE = LocalDate.of(1000, 1, 1);
 
     /** MySQL 8.0 {@code DATE} 지원 범위의 상한(양끝 포함) — 초과하면 INSERT가 실제로 실패한다. */
-    public static final LocalDate MAX_RECORD_DATE = LocalDate.of(9999, 12, 31);
+    private static final LocalDate MAX_RECORD_DATE = LocalDate.of(9999, 12, 31);
 
     private RecordDates() {
     }
