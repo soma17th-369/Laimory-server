@@ -73,7 +73,7 @@ application 배포·health gate 의존성이 아니다.
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
   넣으면 그 peer의 `X-Forwarded-For` 최우측만 client IP로 신뢰한다. checked-in 기본값은 비어 있어
-  loopback nginx 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
+  loopback 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
 - tracing(#277 — 앱 미소비, deploy pre-flight·JVM/agent가 소비): `APP_TRACING_MODE`,
   `JAVA_TOOL_OPTIONS`(-javaagent 주입), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_METRICS_EXPORTER`,

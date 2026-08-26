@@ -153,7 +153,7 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 
 - Java 21 multi-stage image, runtime non-root UID 1001
 - application port 8080, host network
-- management port 9090도 host network에 bind된다. nginx는 Actuator를 proxy하지 않으며, live 접근은
+- management port 9090도 host network에 bind된다. live 접근은
   monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
 - 현재 image SHA는 모든 meter의 공통 tag가 아니라 `laimory.build.info` 한 meter에만 노출한다.
@@ -183,7 +183,7 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
 - AWS 작업은 먼저 `sandbox` SSO를 확인하고 조회와 SSM 비변경 진단으로 제한한다. AWS·host 수정은
   대상·영향·rollback을 설명한 뒤 별도 승인받는다.
 - monitoring bootstrap에는 비밀 없는 자산만 두고 credential은 host의 보호 파일에만 주입한다.
-- nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
+- DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
 - prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
   prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과, deploy role의 `ssm:SendCommand` Resource에 prod host를
   추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.
