@@ -11,6 +11,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.config.TimelineWorkerExecutorConfig;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
@@ -29,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import software.amazon.awssdk.core.exception.SdkClientException;
 
@@ -78,6 +83,52 @@ class TimelinePhotoDeleteWorkerTest {
 
         verifyNoInteractions(s3PhotoStorageService);
         verify(jobService, never()).completeSucceeded(anyList());
+    }
+
+    @Test
+    void expiredJobsAreAlertedWithCountOnlyAndNoIdentifiers() {
+        when(properties.isWorkerEnabled()).thenReturn(true);
+        when(properties.getBatchSize()).thenReturn(250);
+        when(jobService.countExpired()).thenReturn(3L);
+        when(jobService.claimEligible(250)).thenReturn(List.of());
+
+        List<ILoggingEvent> events = captureWorkerLogs(worker::deletePendingPhotoObjects);
+
+        List<ILoggingEvent> errors = events.stream()
+                .filter(event -> event.getLevel() == Level.ERROR)
+                .toList();
+        assertThat(errors).hasSize(1);
+        assertThat(errors.get(0).getFormattedMessage())
+                .contains("expiredCount=3")
+                .doesNotContain("hash/photos");
+    }
+
+    @Test
+    void zeroExpiredJobsEmitNoErrorLog() {
+        when(properties.isWorkerEnabled()).thenReturn(true);
+        when(properties.getBatchSize()).thenReturn(250);
+        when(jobService.countExpired()).thenReturn(0L);
+        when(jobService.claimEligible(250)).thenReturn(List.of());
+
+        List<ILoggingEvent> events = captureWorkerLogs(worker::deletePendingPhotoObjects);
+
+        assertThat(events).noneMatch(event -> event.getLevel() == Level.ERROR);
+    }
+
+    @Test
+    void expiredCountFailureLogsWarnAndDoesNotBlockClaims() {
+        TimelinePhotoDeleteJob job = job(91L, "hash/photos/deleted.jpg");
+        enableWithJobs(job);
+        when(jobService.countExpired()).thenThrow(new IllegalStateException("db unavailable"));
+        when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
+                .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
+
+        List<ILoggingEvent> events = captureWorkerLogs(worker::deletePendingPhotoObjects);
+
+        verify(jobService).completeSucceeded(List.of(job));
+        assertThat(events).noneMatch(event -> event.getLevel() == Level.ERROR);
+        assertThat(events).anyMatch(event -> event.getLevel() == Level.WARN
+                && event.getFormattedMessage().contains("만료 job count 조회 실패"));
     }
 
     @Test
@@ -269,6 +320,20 @@ class TimelinePhotoDeleteWorkerTest {
         } finally {
             executor.shutdown();
         }
+    }
+
+    private List<ILoggingEvent> captureWorkerLogs(Runnable run) {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        Logger logger = (Logger) LoggerFactory.getLogger(TimelinePhotoDeleteWorker.class);
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            run.run();
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+        return List.copyOf(appender.list);
     }
 
     private void enableWithJobs(TimelinePhotoDeleteJob... jobs) {

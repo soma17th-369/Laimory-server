@@ -22,9 +22,10 @@ import org.springframework.stereotype.Component;
 /**
  * MySQL PHOTO delete-job을 여러 process/thread에서 batch claim해 처리하는 worker.
  *
- * <p>짧은 claim transaction이 {@code SKIP LOCKED}로 작업을 분리하고 다음 날까지 eligibility를 미룬 뒤
- * commit한다. S3 호출은 DB transaction 밖이며 성공이 확인된 job과 원문 PHOTO Item만 짧은 별도
- * transaction으로 최종 삭제한다. 실패·응답 누락·SDK 예외는 두 행을 남긴다.
+ * <p>짧은 claim transaction이 {@code SKIP LOCKED}로 KST 생성일 기준 D+1~D+3 처리 창의 작업을 분리하고
+ * {@code updated_at}을 갱신해 같은 날 재선택을 막은 뒤 commit한다. S3 호출은 DB transaction 밖이며
+ * 성공이 확인된 job과 원문 PHOTO Item만 짧은 별도 transaction으로 최종 삭제한다. 실패·응답 누락·SDK
+ * 예외는 두 행을 남긴다. 처리 창을 벗어난 미완료 job은 재시도하지 않고 건수만 ERROR로 경보한다.
  */
 @Slf4j
 @Component
@@ -60,6 +61,7 @@ public class TimelinePhotoDeleteWorker {
             log.info("PHOTO 삭제 worker 이전 run이 아직 실행 중이어서 trigger를 건너뜀");
             return;
         }
+        alertExpiredJobs();
 
         ScheduledWorkerRunBudget budget = new ScheduledWorkerRunBudget(
                 properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
@@ -199,7 +201,27 @@ public class TimelinePhotoDeleteWorker {
         return batchResult;
     }
 
-    /** retry 상태 전환 실패 시에도 job은 PROCESSING+다음 available_at으로 남아 다음 일일 claim에서 복구된다. */
+    /**
+     * 처리 창을 벗어나 재시도에서 제외된 미완료 job이 있으면 건수만 ERROR로 남겨 기존 application
+     * ERROR 경보를 발화시킨다. job ID·Item ID·object key는 로그에 싣지 않고, count 조회 실패는 이번
+     * run의 claim 처리를 막지 않는다.
+     */
+    private void alertExpiredJobs() {
+        long expiredCount;
+        try {
+            expiredCount = jobService.countExpired();
+        } catch (RuntimeException exception) {
+            log.warn("PHOTO 삭제 만료 job count 조회 실패(claim 처리는 계속): exceptionType={}",
+                    exception.getClass().getSimpleName());
+            return;
+        }
+        if (expiredCount > 0) {
+            log.error("PHOTO 삭제 job 처리 창(D+1~D+3) 만료: expiredCount={} — job과 PHOTO Item은 보존됨",
+                    expiredCount);
+        }
+    }
+
+    /** retry 상태 전환 실패 시에도 job은 PROCESSING으로 남고, 다음 일일 claim이 stale로 재선점해 복구한다. */
     private void markPendingForRetry(List<TimelinePhotoDeleteJob> jobs) {
         if (jobs.isEmpty()) {
             return;
@@ -207,7 +229,7 @@ public class TimelinePhotoDeleteWorker {
         try {
             jobService.markPendingForRetry(jobs);
         } catch (RuntimeException exception) {
-            log.warn("PHOTO 삭제 job PENDING 전환 실패(다음 availableAt에 재claim): count={} exceptionType={}",
+            log.warn("PHOTO 삭제 job PENDING 전환 실패(다음 일일 실행에서 stale 재claim): count={} exceptionType={}",
                     jobs.size(), exception.getClass().getSimpleName());
         }
     }

@@ -35,7 +35,7 @@ MySQL 세션 timezone은 여전히 UTC(SYSTEM)다 — URL의 `serverTimezone`은
 cleanup_available_at`은 DB `DEFAULT CURRENT_TIMESTAMP(6)`가 채운다(#371 범위 제외 — 비교 조건이
 9시간 이르게 참이 되는 문제는 별도 판단). ② `users`·`refresh_tokens`의 일부 JPQL bulk update가
 `updated_at = CURRENT_TIMESTAMP`(서버 평가)를 쓴다. 둘 다 표시·감사값이라 판정에는 쓰이지 않는다.
-`timeline_events`/`timeline_items` 감사 컬럼과 `timeline_photo_delete_jobs.available_at`의
+`timeline_events`/`timeline_items` 감사 컬럼의
 DEFAULT/ON UPDATE는 앱 경로가 항상 컬럼을 명시해 발동하지 않는 fallback이다(운영 raw SQL에서만 의미).
 JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거치는 바인딩(Hibernate
 엔티티·JPQL·native query)은 "JVM 기본 존으로 해석 → 선언 존으로 렌더링"을 타므로, 두 존이 다르면
@@ -49,7 +49,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
 - `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
-  `available_at`=다음 claim eligibility, 성공 시 Item과 행 삭제)
+  처리 창=`created_at` 기준 KST D+1~D+3, 같은 날 재선택 방지=`updated_at`, 성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, `cleanup_available_at`=retention cleanup
   eligibility)
@@ -126,25 +126,30 @@ auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.no
 
 `timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
-가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 timestamp를 직접
-채운다. `status`는 `PENDING`/`PROCESSING` 두 값이고 default `PENDING`은 기존 행 backfill과 구 binary
-INSERT 호환용이다. 신규 writer는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하도록 `available_at`을 다음
-Seoul calendar day 00:00으로 명시한다(DB default current timestamp는 구 binary 호환용). worker는
-checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
-모든 process에서 발화한다. 각 bounded worker는 짧은 transaction으로
-`available_at <= :eligibleAt` 행을 `(available_at, created_at, PK)` 순서로 최대 250개
-`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `status=PROCESSING`과 `available_at`을 다음 calendar day 00:00
-`Asia/Seoul`로 옮긴 뒤 commit한다. `eligibleAt`과 다음 시각은 같은 application Clock instant를 KST로
-변환해 parameter로 바인딩하며 DB `NOW()`를 eligibility 비교에 쓰지 않는다. 그 뒤 현재 junction을
-재확인해 다시 연결된 Item의 job을 취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공
-job을 먼저 지운 뒤 해당 Item을 같은 completion transaction에서 지운다. job 삭제가 0건이면 재연결 취소나
-선행 completion일 수 있으므로 Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다.
-명시적 실패·응답 누락·SDK 예외는 `PENDING`으로 되돌리고, crash 행은 `PROCESSING`으로 다음 일일 실행까지
-남는다. 둘 다 `available_at` 만료 뒤 재claim되며 이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다.
-실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며, Item 삭제가 실패하면 job 삭제도
-rollback된다. Event PATCH는 subject+filename의 full object key로 job을 locking read한다. `PENDING` 또는
-만료된 `PROCESSING`이면 job을 취소하고 보존 Item의 PHOTO/rawId 일치를 확인해 같은 Item을 재연결한다.
-유효한 `PROCESSING`이면 409 `-1019`로 거절한다. pre-S3 association 재검증은 다른 재연결 경로의 방어선으로
+가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 service가 캡처한
+KST 시각 하나를 `created_at`/`updated_at`에 직접 채운다 — `created_at`은 처리 창, `updated_at`은 같은
+날 재선택 방지의 기준이라 두 컬럼이 같은 프레임이어야 한다. `status`는 `PENDING`/`PROCESSING` 두 값이고
+INSERT는 상태를 명시하지 않고 default `PENDING`을 쓴다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일
+실행뿐이다 — 생성 당일 제외는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하게 하고, 창 제한은
+영구 실패 job 하나가 매일 외부 I/O를 반복하는 것을 막는다. worker는 checked-in default인 매일 03:00
+`Asia/Seoul`(cron/zone 환경 override 가능)에 모든 process에서 발화한다. 각 bounded worker는 짧은
+transaction으로 처리 창 안이면서 `updated_at < 오늘 00:00`인 행을 `(created_at, PK)` 순서로 최대 250개
+`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `status=PROCESSING`과 `updated_at=claim 시각`을
+기록한 뒤 commit한다. 창 경계와 claim 시각은 같은 application Clock instant를 KST로 변환해 parameter로
+바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. 그 뒤 현재 junction을 재확인해 다시 연결된 Item의 job을
+취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을
+같은 completion transaction에서 지운다. job 삭제가 0건이면 재연결 취소나 선행 completion일 수 있으므로
+Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다. 명시적 실패·응답 누락·SDK
+예외는 `PENDING`으로 되돌리고(`updated_at`이 claim 시각이라 같은 날 재선택 없음), crash 행은
+`PROCESSING`으로 남는다. 둘 다 처리 창 안이면 `updated_at`이 전날이 된 다음 일일 실행이 재claim하며
+이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다. 창을 벗어난 미완료 행은 재시도 없이 job과
+원문 PHOTO Item을 보존하고, worker가 run 시작에 건수만 조회해 0보다 크면 `expiredCount`만 담은 ERROR
+로그로 기존 application ERROR 경보를 발화시킨다(식별자·object key 미포함, count 조회 실패는 WARN 후
+claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
+않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. Event PATCH는 subject+filename의 full object
+key로 job을 locking read한다. `PENDING` 또는 `updated_at`이 전날 이전인 stale `PROCESSING`이면 job을
+취소하고 보존 Item의 PHOTO/rawId 일치를 확인해 같은 Item을 재연결한다. 오늘 claim된 `PROCESSING`이면
+409 `-1019`로 거절한다. pre-S3 association 재검증은 다른 재연결 경로의 방어선으로
 계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
