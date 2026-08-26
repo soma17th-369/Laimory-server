@@ -37,22 +37,24 @@ public class TimelinePhotoDeleteJobService {
 
     /**
      * 같은 Item 또는 object의 기존 작업을 보존하면서 없을 때만 enqueue한다. 신규 job은 삭제 transaction과
-     * 경합한 수동 PHOTO 추가가 먼저 commit하도록 다음 Seoul calendar day 00:00부터 claim 가능하게 한다.
+     * 경합한 수동 PHOTO 추가가 먼저 commit하도록 생성 당일 claim 대상에서 제외된다(claim의
+     * {@code created_at < todayStart} 조건). 처리 창과 저장 시각의 기준이 일치하도록 KST 시각 하나를
+     * 캡처해 두 감사 컬럼에 같이 쓴다.
      *
      * @return 새 행을 만들었으면 {@code true}, UNIQUE 충돌로 기존 작업을 유지했으면 {@code false}
      */
     public boolean insertIfAbsent(long timelineItemId, String objectKey) {
         requireValidTimelineItemId(timelineItemId);
         requireValidObjectKey(objectKey);
-        ZonedDateTime now = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE);
-        LocalDateTime initialAvailableAt = now.toLocalDate().plusDays(1).atStartOfDay();
+        LocalDateTime auditAt = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE).toLocalDateTime();
         return timelinePhotoDeleteJobRepository
-                .insertIfAbsent(timelineItemId, objectKey, initialAvailableAt) == 1;
+                .insertIfAbsent(timelineItemId, objectKey, auditAt) == 1;
     }
 
     /**
-     * 현재 eligible한 작업을 row lock으로 분리하고 다음 일일 실행 전 eligibility 시각으로 미룬다.
-     * 반환 시 transaction과 row lock은 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
+     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 작업을 row lock으로 분리하고
+     * {@code updated_at}을 claim 시각으로 갱신해 같은 날 재선택을 막는다. 반환 시 transaction과 row
+     * lock은 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
      */
     @Transactional
     public List<TimelinePhotoDeleteJob> claimEligible(int limit) {
@@ -60,10 +62,11 @@ public class TimelinePhotoDeleteJobService {
             throw new IllegalArgumentException("limit must be between 1 and " + MAX_BATCH_SIZE);
         }
         ZonedDateTime now = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE);
-        LocalDateTime eligibleAt = now.toLocalDateTime();
-        LocalDateTime nextAvailableAt = now.toLocalDate().plusDays(1).atStartOfDay();
+        LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
+        LocalDateTime windowStart = todayStart.minusDays(3);
+        LocalDateTime claimedAt = now.toLocalDateTime();
         List<TimelinePhotoDeleteJob> jobs = timelinePhotoDeleteJobRepository
-                .findEligibleForUpdateSkipLocked(eligibleAt, limit);
+                .findClaimableForUpdateSkipLocked(windowStart, todayStart, limit);
         if (jobs.isEmpty()) {
             return List.of();
         }
@@ -71,12 +74,19 @@ public class TimelinePhotoDeleteJobService {
         List<Long> jobIds = jobs.stream()
                 .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
                 .toList();
-        int deferred = timelinePhotoDeleteJobRepository.markProcessingUntil(
-                jobIds, TimelinePhotoDeleteJobStatus.PROCESSING, nextAvailableAt);
-        if (deferred != jobIds.size()) {
+        int claimed = timelinePhotoDeleteJobRepository.markProcessing(
+                jobIds, TimelinePhotoDeleteJobStatus.PROCESSING, claimedAt);
+        if (claimed != jobIds.size()) {
             throw new IllegalStateException("PHOTO delete job claim count mismatch");
         }
         return List.copyOf(jobs);
+    }
+
+    /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
+    public long countExpired() {
+        LocalDateTime windowStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)
+                .toLocalDate().atStartOfDay().minusDays(3);
+        return timelinePhotoDeleteJobRepository.countCreatedBefore(windowStart);
     }
 
     /** S3 실패·검증 실패 job을 PATCH가 다시 취소할 수 있는 PENDING으로 되돌린다. */
@@ -96,7 +106,8 @@ public class TimelinePhotoDeleteJobService {
     /**
      * 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 같은 object의 삭제 대기 job을 취소하고 보존 Item을
      * 재사용한다.
-     * 유효한 PROCESSING job은 S3 삭제 중이므로 같은 object를 새 Item으로 만들지 않게 409로 거절한다.
+     * 오늘 claim된 PROCESSING job은 S3 삭제 중이므로 같은 object를 새 Item으로 만들지 않게 409로
+     * 거절한다. {@code updated_at}이 전날 이전인 PROCESSING은 crash가 남긴 stale 행이라 취소를 허용한다.
      */
     @Transactional
     public Optional<Long> cancelPendingForRelink(String objectKey, String rawId) {
@@ -107,9 +118,10 @@ public class TimelinePhotoDeleteJobService {
             return Optional.empty();
         }
 
-        LocalDateTime now = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE).toLocalDateTime();
+        LocalDateTime todayStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)
+                .toLocalDate().atStartOfDay();
         if (job.getStatus() == TimelinePhotoDeleteJobStatus.PROCESSING
-                && job.getAvailableAt().isAfter(now)) {
+                && !job.getUpdatedAt().isBefore(todayStart)) {
             throw new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
         }
 

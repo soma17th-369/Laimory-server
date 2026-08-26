@@ -211,12 +211,13 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
 - Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 모든 REST
   process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
-  eligible job을 250개 단위 `FOR UPDATE SKIP LOCKED`로 나눠 claim한다. claim transaction이
-  `status=PROCESSING`과 `available_at`을 다음 KST calendar day 00:00으로 기록하고 commit한 뒤 verbose
-  `DeleteObjects`를 호출하며,
+  KST 생성일 기준 D+1~D+3 처리 창 안의 job을 250개 단위 `FOR UPDATE SKIP LOCKED`로 나눠 claim한다.
+  claim transaction이 `status=PROCESSING`과 `updated_at=claim 시각`을 기록해 같은 날 재선택을 막고
+  commit한 뒤 verbose `DeleteObjects`를 호출하며,
   `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. process당 concurrency 1,
-  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 만료된
-  `PROCESSING`으로 다음 일일 실행에서 재claim한다.
+  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 stale
+  `PROCESSING`으로 다음 일일 실행에서 재claim한다. 처리 창을 벗어난 미완료 job은 재시도 없이 보존되고
+  worker가 run 시작에 건수만 ERROR 로그로 경보한다.
   실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은 다음 실행까지 MySQL에 남는다.
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신

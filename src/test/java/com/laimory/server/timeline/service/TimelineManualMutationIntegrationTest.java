@@ -421,10 +421,12 @@ class TimelineManualMutationIntegrationTest {
     @Test
     void 유효한_PROCESSING_delete_job은_409이고_Event_행이_생기지_않는다() {
         Long preservedItemId = plantOrphanPhotoItemWithJob();
+        // 오늘 claim된 active PROCESSING을 재현한다. DB NOW()는 세션 tz(UTC) 프레임이라 쓰지 않고
+        // KST 벽시계를 Java에서 바인딩한다.
         jdbcTemplate.update(
-                "UPDATE timeline_photo_delete_jobs SET status = 'PROCESSING', "
-                        + "available_at = DATE_ADD(NOW(), INTERVAL 2 DAY) WHERE timeline_item_id = ?",
-                preservedItemId);
+                "UPDATE timeline_photo_delete_jobs SET status = 'PROCESSING', updated_at = ? "
+                        + "WHERE timeline_item_id = ?",
+                LocalDateTime.now(), preservedItemId);
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "재연결 시도", null,

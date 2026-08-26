@@ -89,7 +89,10 @@ class DistributedScheduledClaimIntegrationTest {
             assertThat(photoJobService.insertIfAbsent(
                     photoItemIds.get(index), "claim-test/photos/" + index + ".jpg")).isTrue();
         }
-        jdbcTemplate.update("update timeline_photo_delete_jobs set available_at = '2000-01-01 00:00:00'");
+        // KST 처리 창(D+1~D+3) 안의 어제 생성·어제 마지막 갱신으로 맞춰 오늘 run의 claim 대상이 되게 한다.
+        LocalDateTime withinWindow = LocalDateTime.now().toLocalDate().atStartOfDay().minusHours(12);
+        jdbcTemplate.update("update timeline_photo_delete_jobs set created_at = ?, updated_at = ?",
+                withinWindow, withinWindow);
 
         List<List<TimelinePhotoDeleteJob>> claims = claimConcurrently(
                 () -> photoJobService.claimEligible(ROW_COUNT / 2));

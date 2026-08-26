@@ -257,7 +257,10 @@ Spring JSON stdout
 - 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
 - PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, process당 concurrency 1,
   batch 250, 최대 4 batch/60초다. 정상 job도 최대 약 24시간 대기하며 missed run을 catch-up하지 않고
-  다음 실행까지 MySQL에 보존한다. 이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
+  다음 실행까지 MySQL에 보존한다. 처리 기회는 KST 생성일 기준 D+1~D+3 일일 실행뿐이고, 창을 벗어난
+  미완료 job은 재시도 없이 보존하며 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존
+  `service=laimory AND level=ERROR` 경보를 발화시킨다(job ID·Item ID·object key 미포함).
+  이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
   각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
   DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
 - draft retention cleanup도 custom meter를 등록하지 않는다. 각 process가 run 시작 설정과 batch/run 종료의

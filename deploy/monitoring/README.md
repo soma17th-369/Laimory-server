@@ -910,7 +910,10 @@ target alert가 원인을 알린다. index는 관측 전용이므로 task 상태
 모든 process의 worker는 매일 03:00 KST에 250개 단위 `SKIP LOCKED` claim으로 서로 다른 job을 처리한다.
 checked-in 기본은 process당 concurrency 1, 최대 4 batch/60초이므로 process 하나가 약 1,000건, 계획된
 두 process가 약 2,000건까지 한 run에서 claim할 수 있다. 정상 job도 다음 실행까지 최대 약 24시간 대기할
-수 있고 S3 실패·crash·process 전체 run budget 초과분은 다음 날 실행으로 이월된다. dev WAS에서는 전체
+수 있고 S3 실패·crash·process 전체 run budget 초과분은 다음 날 실행으로 이월된다. 처리 기회는 KST
+생성일 기준 D+1~D+3 세 번의 일일 실행뿐이다 — 창을 벗어난 미완료 job은 더 이월되지 않고 보존되며,
+worker가 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존 application ERROR 경보가 발화한다
+(job ID·object key 미포함). dev WAS에서는 전체
 환경을 출력하지 말고 각 container의
 `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CONCURRENCY`,
 `TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN` 값만 확인한다.
@@ -924,8 +927,9 @@ log의 `PHOTO 삭제 worker run 시작`, `PHOTO 삭제 batch 완료`, `PHOTO 삭
 `claimed`, `relinkedCancelled`, `requested`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
 `deferred`, 단계별 오류 수와 `durationMs`를 process-wide run budget, MySQL/Hikari 상태, S3/IAM 오류와
 함께 확인한다. 실패
-job과 그 FK가 가리키는 원문 PHOTO Item은 다음 날 재시도되는 복구 권위이므로 둘 중 하나를 수동 삭제하거나
-object key를 로그에 복사하지 않는다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존
+job과 그 FK가 가리키는 원문 PHOTO Item은 처리 창 안에서 재시도되는 복구 권위이므로 둘 중 하나를 수동
+삭제하거나 object key를 로그에 복사하지 않는다. 처리 창이 끝난 만료 job과 Item도 원인 확인을 위해
+보존한다 — 만료 ERROR 경보를 받으면 수동 삭제 대신 원인을 조사한다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존
 provisioning 파일을 백업한 뒤 자산을 반영하고 Grafana provisioning reload/restart 절차를 따른다.
 
 ### AWS metric collection

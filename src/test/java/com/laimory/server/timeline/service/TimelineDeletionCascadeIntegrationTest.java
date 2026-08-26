@@ -347,9 +347,9 @@ class TimelineDeletionCascadeIntegrationTest {
         timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
         jdbcTemplate.update(
-                "update timeline_photo_delete_jobs set status = 'PROCESSING', available_at = ? "
+                "update timeline_photo_delete_jobs set status = 'PROCESSING', updated_at = ? "
                         + "where timeline_photo_delete_job_id = ?",
-                LocalDateTime.now().plusDays(1), job.getTimelinePhotoDeleteJobId());
+                LocalDateTime.now(), job.getTimelinePhotoDeleteJobId());
 
         TimelineEventPhotoAddService.PhotoToAdd photo = new TimelineEventPhotoAddService.PhotoToAdd(
                 rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,

@@ -115,14 +115,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
   Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
 - DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
-  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. 각 worker는 외부 I/O 전에 짧은
-  transaction에서 eligible job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고 `available_at`을
-  다음 KST calendar day 00:00으로 옮기면서 `PENDING`/만료 `PROCESSING`을 `PROCESSING`으로 전이한다.
+  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
+  D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
+  처리하지 않은(`updated_at < 오늘 00:00`) job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고
+  `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
   commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
-  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 다음 일일
-  실행에서 재시도하고, 정상 실패는 `PENDING`으로 되돌린다. 이미 다른 worker가 완료한 행은 오류가 아니라
-  idempotent 완료로 수렴한다.
-  애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다.
+  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 처리 창
+  안의 다음 일일 실행에서 재시도하고, 정상 실패는 `PENDING`으로 되돌린다. 이미 다른 worker가 완료한
+  행은 오류가 아니라 idempotent 완료로 수렴한다. 처리 창을 벗어난 미완료 job은 재시도 없이 원문 Item과
+  함께 보존하고 worker가 건수만 ERROR 로그로 경보한다.
+  애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
+  보장하지 않는다.
   별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
   진행한다(orphan 허용 — draft cleanup과 동일 규칙).
