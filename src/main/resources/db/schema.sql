@@ -309,9 +309,9 @@ CREATE TABLE IF NOT EXISTS term_agreements (
 -- ── 푸시 수신 설정(#314) ──
 
 -- subject 축 설정 버킷(subject당 한 행). worker·배치가 subject만 들고 읽는 설정이 늘어도 컬럼 2개짜리
--- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 전체 push 마스터 하나뿐이다.
--- push_enabled는 모든 push의 전체 ON/OFF이며 기본은 ON이다 — 예정 알림과 타임라인 완료 통지가
--- 모두 이 값을 읽는다(#367: 마스터 OFF가 곧 전체 차단이라야 탈퇴가 FID를 지우지 않고 발송만 막는다).
+-- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 예정 알림 마스터 하나뿐이다.
+-- push_enabled는 예정 알림 전체 ON/OFF이며 기본은 ON이다(타임라인 완료 통지는 이 스위치를 읽지 않는다).
+-- 탈퇴는 이 행을 지우지 않고 false로만 바꾼다(#367 — 삭제는 운영 요청 경로에서 하지 않는다).
 -- 알림이 늘어도 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유).
 -- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 물리 삭제는 #302 소유).
 CREATE TABLE IF NOT EXISTS subject_preferences (

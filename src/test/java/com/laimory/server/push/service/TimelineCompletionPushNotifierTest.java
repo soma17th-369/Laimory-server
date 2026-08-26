@@ -6,10 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -55,8 +53,6 @@ class TimelineCompletionPushNotifierTest {
     @Mock
     private PushRegistrationService pushRegistrationService;
     @Mock
-    private SubjectPreferenceService subjectPreferenceService;
-    @Mock
     private PushMessageSender pushMessageSender;
     @Mock
     private PushMetrics pushMetrics;
@@ -70,8 +66,6 @@ class TimelineCompletionPushNotifierTest {
         logAppender = new ListAppender<>();
         logAppender.start();
         notifierLogger.addAppender(logAppender);
-        // 기존 회귀는 전부 마스터 ON 전제다 — OFF·조회 실패는 아래 전용 테스트가 덮는다.
-        lenient().when(subjectPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(true);
     }
 
     @AfterEach
@@ -80,29 +74,8 @@ class TimelineCompletionPushNotifierTest {
     }
 
     private TimelineCompletionPushNotifier notifier() {
-        return new TimelineCompletionPushNotifier(pushRegistrationService, subjectPreferenceService,
+        return new TimelineCompletionPushNotifier(pushRegistrationService,
                 pushMessageSender, pushMetrics, FIXED_CLOCK);
-    }
-
-    @Test
-    void notifyAsync_masterOff_stopsBeforeAnyLookupOrSend() {
-        // 탈퇴는 FID를 지우지 않고 마스터만 내린다 — 이 gate가 in-flight 작업의 완료 push를 막는 지점이다.
-        when(subjectPreferenceService.findPushEnabled(SUBJECT_ID)).thenReturn(false);
-
-        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
-
-        verifyNoInteractions(pushRegistrationService, pushMessageSender, pushMetrics);
-    }
-
-    @Test
-    void notifyAsync_masterLookupFailure_isIsolatedAndDoesNotAssumeOn() {
-        // 조회 장애를 ON으로 추정하면 탈퇴 회원에게 발송될 수 있다 — 기존 async 격리로 조용히 끝낸다.
-        when(subjectPreferenceService.findPushEnabled(SUBJECT_ID))
-                .thenThrow(new IllegalStateException("subject preference row is missing"));
-
-        notifier().notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.SUCCESS);
-
-        verifyNoInteractions(pushRegistrationService, pushMessageSender, pushMetrics);
     }
 
     @Test

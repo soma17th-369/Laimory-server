@@ -19,10 +19,11 @@ import org.springframework.stereotype.Service;
  * FCM은 결과의 권위 원천이 아니라 조회를 유도하는 완료 신호다 — 실패·유실은 로그만 남기고 기존 polling·
  * 앱 재진입 동기화가 안전망이다.
  *
- * <p>전체 푸시 마스터가 OFF면 FID 조회·발송·metric 전에 끝낸다(#367). 이 알림은 사용자가 직접 시작한
- * 작업의 결과인 정보성 통지지만, 마스터 OFF가 <b>모든</b> push의 차단을 뜻해야 탈퇴가 FID를 지우지 않고도
- * in-flight 작업의 발송을 막을 수 있다. 설정 행 누락·DB 조회 장애는 ON으로 추정하지 않고 아래 격리에서
- * 실패로 처리된다 — 못 보내는 쪽이 안전한 방향이다.
+ * <p>예정 알림 마스터(`push_enabled`)를 읽지 않는다 — 이 알림은 사용자가 직접 시작한 작업의 결과인
+ * 정보성 통지라 리텐션 목적의 예정 알림과 성격이 다르다(#319 결정 유지). 탈퇴 회원의 FID는 #367부터
+ * 보존되므로, 탈퇴 직전 시작해 3분 TTL 안에 완료된 in-flight 작업 하나가 완료 push를 받을 수 있다 —
+ * 내용이 taskId·상태뿐인 일반 문구라 이 좁은 창을 수용한다(설정을 끈 정상 사용자의 완료 통지를
+ * 함께 막는 대가가 더 크다).
  *
  * <p>{@code TimelineCallbackService}의 self-invocation이 아닌 별도 빈이라 {@code @Async} 프록시가 실제로
  * 적용된다(executor는 {@code AsyncConfig}의 Boot 기본 {@code applicationTaskExecutor}). async body의
@@ -37,7 +38,6 @@ import org.springframework.stereotype.Service;
 public class TimelineCompletionPushNotifier {
 
     private final PushRegistrationService pushRegistrationService;
-    private final SubjectPreferenceService subjectPreferenceService;
     private final PushMessageSender pushMessageSender;
     private final PushMetrics pushMetrics;
     private final Clock clock;
@@ -45,14 +45,6 @@ public class TimelineCompletionPushNotifier {
     @Async
     public void notifyAsync(UUID subjectId, String taskId, TaskStatus status) {
         try {
-            // 마스터 OFF면 여기서 끝낸다 — 탈퇴는 FID를 지우지 않고 이 스위치만 내리므로, 이 gate가
-            // 없으면 탈퇴 뒤 완료된 in-flight 작업의 push가 그대로 나간다.
-            // 억제도 관측 대상이다 — 로그가 없으면 "OFF라 안 보냄"과 "notifier가 아예 안 돎"이 구분되지 않는다.
-            if (!subjectPreferenceService.findPushEnabled(subjectId)) {
-                log.info("timeline completion push suppressed (push master off): taskId={} taskStatus={}",
-                        taskId, status);
-                return;
-            }
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면
             // (lastRegisteredAt > snapshotAt) 무효 정리에서 보호된다.
             LocalDateTime snapshotAt = LocalDateTime.now(clock);

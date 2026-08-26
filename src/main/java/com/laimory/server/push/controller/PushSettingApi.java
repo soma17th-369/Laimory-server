@@ -53,10 +53,10 @@ public interface PushSettingApi {
             @Parameter(hidden = true) @CurrentSubject UUID subjectId);
 
     @Operation(summary = "전체 푸시 수신 ON/OFF",
-            description = "**모든 push의 전체 스위치**를 바꾼다. OFF는 예정 알림(리마인더 등)뿐 아니라 "
-                    + "**타임라인 완료 통지까지 차단한다**(#367 — 이 스위치가 곧 전체 차단이어야 탈퇴가 FID를 "
-                    + "지우지 않고도 발송을 막을 수 있다). 알림별 설정값·시각은 그대로 보존하므로 다시 켜면 "
-                    + "이전 설정으로 재개하며 지나간 알림을 몰아 보내지 않는다. 같은 값 재요청은 멱등 성공이다.")
+            description = "예정 알림(리마인더 등) 전체 스위치를 바꾼다. OFF는 예정 알림을 차단하지만 알림별 "
+                    + "설정값·시각은 그대로 보존한다(다시 켜면 이전 설정으로 재개하며 지나간 알림을 몰아 "
+                    + "보내지 않는다). **타임라인 완료 통지는 이 스위치와 무관하게 발송된다** — 사용자가 "
+                    + "직접 시작한 작업의 결과 통지이기 때문이다. 같은 값 재요청은 멱등 성공이다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "변경 성공(body 없음)", useReturnTypeSchema = true),

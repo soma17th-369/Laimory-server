@@ -15,8 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * subject별 전체 push 마스터의 단일 관문(예정 알림과 타임라인 완료 통지 모두 이 값을 통과해야 발송된다).
- * 신규 행은 기본 ON이며, 행을 만드는 것은 가입
+ * subject별 예정 알림 마스터의 단일 관문. 신규 행은 기본 ON이며, 행을 만드는 것은 가입
  * transaction과 rollout backfill뿐이다 — 설정 쓰기는 행을 만들지 않는다.
  *
  * <p>행 부재는 깨진 불변식이라 조회·쓰기 모두 던진다. 예외는 worker의 batch 조회 하나로, 거기서는

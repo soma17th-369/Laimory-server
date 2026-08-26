@@ -7,8 +7,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(description = "푸시 수신 설정 조회 응답")
 public record PushSettingsResponse(
-        @Schema(description = "전체 푸시 수신 여부 — 예정 알림(리마인더 등)과 타임라인 완료 통지를 모두 "
-                        + "가르는 마스터 스위치다(#367). OFF면 어떤 push도 발송하지 않는다",
+        @Schema(description = "예정 알림 전체 수신 여부(리마인더 등 — 타임라인 완료 통지는 이 스위치와 무관)",
                 requiredMode = Schema.RequiredMode.REQUIRED)
         boolean pushEnabled,
 
