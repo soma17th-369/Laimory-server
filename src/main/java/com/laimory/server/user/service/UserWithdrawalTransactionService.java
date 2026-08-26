@@ -60,8 +60,8 @@ public class UserWithdrawalTransactionService {
         }
         // 탈퇴 회원은 일반 request 경로를 다시 타지 않으므로 이 해석이 마지막 lazy rekey 기회다(§4.2).
         UUID subjectId = subjectMappingService.getRequired(userId);
-        // 마스터를 먼저 끄고 일일 설정을 끈다. 마스터 OFF 하나로 예정 알림과 타임라인 완료 push가 모두
-        // 막히므로, 중간에 실패해도 남는 상태가 "덜 발송되는" 쪽이다(행 누락은 어차피 전체 rollback).
+        // 마스터 OFF 하나로 예정 알림과 타임라인 완료 push가 모두 막힌다. 어느 UPDATE든 0행이면 예외가
+        // 전파돼 이 transaction 전체가 rollback되므로 중간 상태는 존재하지 않는다.
         subjectPreferenceService.updatePushEnabled(subjectId, false);
         dailyNotificationPreferenceService.updateEnabled(subjectId, false);
         accountErasureJobService.enqueue(userId);

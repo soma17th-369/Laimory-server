@@ -75,7 +75,10 @@ public interface DailyNotificationPreferenceRepository
                       @Param("enabled") boolean enabled,
                       @Param("nextDueAt") LocalDateTime nextDueAt);
 
-    /** 탈퇴 transaction 합류용 — 마스터보다 먼저 지운다(FK RESTRICT). 0행 허용(멱등). */
+    /**
+     * 일일 알림 행 삭제 — 마스터보다 먼저 지운다(FK RESTRICT). 0행 허용(멱등).
+     * 탈퇴는 삭제 대신 OFF로 바뀌었으므로(#367) 프로덕션 호출자가 없다 — #302 물리 삭제용이다.
+     */
     @Modifying
     @Transactional
     @Query("delete from DailyNotificationPreference p where p.subjectId = :subjectId")

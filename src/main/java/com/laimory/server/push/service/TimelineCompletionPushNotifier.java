@@ -47,7 +47,10 @@ public class TimelineCompletionPushNotifier {
         try {
             // 마스터 OFF면 여기서 끝낸다 — 탈퇴는 FID를 지우지 않고 이 스위치만 내리므로, 이 gate가
             // 없으면 탈퇴 뒤 완료된 in-flight 작업의 push가 그대로 나간다.
+            // 억제도 관측 대상이다 — 로그가 없으면 "OFF라 안 보냄"과 "notifier가 아예 안 돎"이 구분되지 않는다.
             if (!subjectPreferenceService.findPushEnabled(subjectId)) {
+                log.info("timeline completion push suppressed (push master off): taskId={} taskStatus={}",
+                        taskId, status);
                 return;
             }
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면

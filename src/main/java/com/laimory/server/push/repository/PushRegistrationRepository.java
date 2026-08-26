@@ -54,8 +54,11 @@ public interface PushRegistrationRepository extends JpaRepository<PushRegistrati
                                                    @Param("fid") String firebaseInstallationId);
 
     /**
-     * 탈퇴 transaction의 subject 단위 전체 해제(#305) — REQUIRED 전파로 호출자 transaction에 합류하며
-     * 미존재 삭제는 0행(멱등)이다. 반환 = 삭제 행 수.
+     * subject 단위 FID 전체 해제 — REQUIRED 전파로 호출자 transaction에 합류하며 미존재 삭제는
+     * 0행(멱등)이다. 반환 = 삭제 행 수.
+     *
+     * <p>탈퇴는 이제 FID를 지우지 않으므로(#367) 프로덕션 호출자가 없다 — #302 물리 삭제 worker를
+     * 위해 남겨 둔 메서드다(현재는 테스트 정리에서만 쓰인다).
      */
     @Modifying
     @Transactional

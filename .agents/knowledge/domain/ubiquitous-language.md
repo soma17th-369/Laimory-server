@@ -136,7 +136,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
 | 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
-| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
+| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·전체 push 마스터 OFF·일일 알림 OFF·삭제 작업 접수를 commit하고 202를 반환한다. **행은 지우지 않는다**(#367 — refresh·FID·설정 2행 모두 보존, 물리 삭제는 #302 소유). 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
 | 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
