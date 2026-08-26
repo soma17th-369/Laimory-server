@@ -1,5 +1,6 @@
 application-rules.yml
 availability-rules.yml
+backup-rules.yml
 extended-infrastructure-rules.yml
 infrastructure-rules.yml
 lifecycle-rules.yml

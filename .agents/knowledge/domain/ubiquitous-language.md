@@ -25,7 +25,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. `subject_id + record_date`는 유일하다. |
 | 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
-| 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 확정한다. 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
+| 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 최초 확정한다. 확정 후에는 `PUT .../daily-records/{recordDate}/emotion`이 SAVED record의 감정만 교체한다(status 불변·멱등, DRAFT는 409 `-1020`, User Memory 재enqueue 없음). 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
 | 작성완료 | Saved | 현재 구현 | `SAVED` enum, 같은 날짜 draft append 거부(`-1003`), 그리고 사용자가 필수 `emotionType` body와 함께 `DRAFT→SAVED`로 전환하는 `POST .../daily-records/{recordDate}/save`가 모두 있다. Event 수정·메모·삭제(Event/DailyRecord)·Event-Item 연결 해제는 SAVED에서도 허용된다. 전이는 하루 감정과 함께 동기 커밋이라 200이 곧 저장 완료이고, 뒤따르는 User Memory 갱신은 별개 흐름이다. |
 
@@ -33,7 +33,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. |
+| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
@@ -58,7 +58,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. 서버 내부 행 식별자이며 AI에는 노출하지 않는다(AI는 `rawId`로만 식별한다). |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, Event PATCH의 PHOTO 추가는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다(같은 rawId의 non-PHOTO는 거절). |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다. 재사용 시 저장된 시간·클라이언트 입력 payload가 요청과 다르거나 같은 rawId의 non-PHOTO면 400이다. |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 결과에서 Event에 연결한 staging source item이다. 서버 결과 저장 transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -67,7 +67,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 아이템 페이로드 | Timeline Item Payload | 현재 구현 | HTTP input/enrich에서 쓰는 sealed payload 공통 interface다. |
-| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명과 서버가 만든 `photoUrl`을 담는다. AI writer는 설명을 붙일 수 있지만 Event PATCH의 수동 PHOTO 입력은 `filename`·`clientPhotoUri`·좌표만 받고 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
+| 사진 페이로드 | Photo Payload | 현재 구현 | final JSON은 `filename`, `clientPhotoUri`, 좌표, nullable 설명, 서버 지오코딩 enrich(`address`·`places`)와 서버가 만든 `photoUrl`을 담는다. `address`/`places`는 좌표가 있는 draft 사진에만 채워진다 — Event PATCH와 Event 생성 POST의 수동 PHOTO 입력은 enrich 경로를 타지 않아 두 필드가 없고, `filename`·`clientPhotoUri`·좌표만 받아 `description=null`로 저장한다. 해당 입력에는 `photoUrl`도 없으며 서버가 subjectId와 filename에서 생성한다. |
 | 일정 페이로드 | Calendar Payload | 현재 구현 | 일정 제목, 위치 텍스트, 설명, 종일 여부를 담는다. |
 | 머문 곳 페이로드 | Stay Payload | 현재 구현 | 필수 좌표와 서버 파생 주소·주변 장소·머문 시간 텍스트를 담는다. |
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
@@ -89,7 +89,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
-| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 Event PATCH가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태이고 `available_at`은 다음 claim 가능 시각이다. job은 원 Item을 FK로 참조하며 신규 job은 다음 날부터 claim한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
+| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일 실행뿐이며 claim이 `updated_at`을 갱신해 같은 날 재선택을 막고, 처리 창을 벗어난 미완료 job은 재시도 없이 보존되며 건수만 ERROR 로그로 경보된다. job은 원 Item을 FK로 참조한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
 
 ## AI 타임라인 이벤트 생성
 
@@ -106,12 +106,12 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작성 작업 | Draft Task | 현재 구현 | DRAFT daily record를 비동기로 만드는 작업 resource다. POST가 즉시 반환하고 상태는 Redis에 둔다. |
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
-| AI 작성 콜백 | AI Draft Callback | 현재 구현 | 결과 저장을 마친 뒤(또는 실패했을 때) 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 `errorCode`는 음수 JSON integer다. 서버는 Redis terminal CAS와 완료 푸시만 한다. SUCCESS는 `CALLBACK_PENDING`, FAILED는 결과 저장 전 stage에서만 받으며 같은 terminal 재전송은 200·상충은 `-1017`이다. |
+| AI 작성 콜백 | AI Draft Callback | 현재 구현 | 결과 저장을 마친 뒤(또는 실패했을 때) 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 `errorCode`는 음수 JSON integer다. 서버는 Redis terminal 저장(native `SET XX PX 24h`)과 완료 푸시만 한다. SUCCESS는 `CALLBACK_PENDING`, FAILED는 결과 저장 전 stage에서만 받되 결과 선점(`claimedAt`) 중에는 `-1017`로 거절하며, 같은 terminal 재전송은 200·상충은 `-1017`, write 시점 만료는 `-1001`이다. |
 | 작업 토큰 | Task Token | 현재 구현 | 서버간 각 단계가 현재 요청을 인증하는 opaque 256-bit bearer token이다. dispatch가 최초 token을 전달하고 입력·결과 성공 응답이 다음 token을 body로 반환한다. 원문은 저장·로그하지 않고 Redis task에 현재 SHA-256 hash만 보존해 매 요청 검증한다. |
-| 처리 단계 | Process Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. token hash와 함께 현재 task JSON 전체 CAS로 전이한다. |
+| 처리 단계 | Process Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. token hash와 함께 native `SET XX KEEPTTL` write로 전이한다 — 최초 PROCESSING 만료 시각을 보존하고 만료 task를 부활시키지 않는다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI 입력 조회 응답에서 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 내보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
-| subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — task write 뒤 native ZADD/ZREM(+PEXPIRE)하고 실패 시 최신 task 기준 멱등 보정하며, 목록 API도 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 PROCESSING 저장마다 3분으로 갱신되는 inactivity cleanup이다. |
+| subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 최초 PROCESSING 생성 때 ZADD(+PEXPIRE 3분), terminal 전이 때 ZREM하며(중간 stage write는 index 무명령) 실패 시 같은 의도의 명령을 한 번 재시도한다. 목록 API도 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 새 task 생성마다 3분으로 다시 걸리는 inactivity cleanup이다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
 
 ## 저장 규칙
@@ -123,8 +123,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
-| AI 결과 단일 트랜잭션 | 현재 구현 | 새 callback token hash와 Redis `CALLBACK_PENDING`을 CAS로 선점한 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit한다. 실패하면 가능한 경우 이전 result token hash와 `RESULT_PENDING`으로 복구한다. |
-| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 PHOTO는 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
+| AI 결과 단일 트랜잭션 | 현재 구현 | retry receipt에 선점 표식(`claimedAt`)을 남긴 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit하고, commit 뒤 한 번의 native write로 callback token hash와 Redis `CALLBACK_PENDING`으로 회전한다. 저장 실패는 가능한 경우 최초 `RESULT_PENDING` snapshot으로 복구한다. |
+| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
 | rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, 결과 저장 transaction이 write 직전 재검사한다. |
@@ -136,7 +136,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
 | 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
-| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/users/me`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
+| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
 | 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
@@ -166,7 +166,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서 행이 불변이라 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
-| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /me·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
+| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | seed 존재·`term_type` literal 유효성·현재 필수 문서 커버리지 판정(`TermCatalogReadiness`)이다. 기동 검사와 요청별 판정이 bounded 전이 로그·metric(`laimory.terms.catalog.ready`·`laimory.terms.gate.fail_open`)으로 알리되 기동·공개 조회를 막지 않는다. 로그 수위는 상태 성격으로 가른다 — 테이블이 완전히 빈 pre-activation(법무 원문 대기, 예정된 fail-open)은 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·오타 literal) ready에서 퇴행한 경우는 ERROR(경보 대상)다. gauge/counter는 수위와 무관하게 동일 기록한다. |
 
 ## 푸시 알림

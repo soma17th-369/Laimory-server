@@ -25,9 +25,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
 - draft source item의 `startAt`은 전 타입 필수이고 `endAt`은 nullable이다(누락 `startAt`은 저장·외부
   호출 전 400).
-- `rawId`는 draft source와 Event PATCH `photosToAdd` 양쪽에서 canonical lowercase UUID(8-4-4-4-12,
-  version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고 오류 메시지에 rawId 원문을
-  싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
+- `rawId`는 draft source와 수동 PHOTO `photosToAdd`(Event PATCH·Event 생성 POST)에서 canonical
+  lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고
+  오류 메시지에 rawId 원문을 싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
 - 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(enrich본 `redactTree`,
   `clientPhotoUri`만 storage 원문), AI 결과 Event `title`/`subtitle`/`question`/`place`/`address`(255자
   token-aware bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를
@@ -53,17 +53,19 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `SAVED` record에는 새 draft source를 append하지 않는다.
 - 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
   중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
-  race/legacy 중복 행 허용). Event PATCH의 PHOTO 추가는 request rawId 중복을 첫 항목 우선으로 접고,
-  같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다. 같은 rawId의
+  race/legacy 중복 행 허용). 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request rawId 중복을 첫
+  항목 우선으로 접고, 같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op
+  처리한다. 재사용 PHOTO의 저장된 startAt/endAt과 클라이언트 입력 payload가 요청과 다르거나 같은 rawId의
   non-PHOTO Item이 있으면 입력 전체를 거절한다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
 - same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
-  Event에만 연결하고, Event PATCH는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
+  Event에만 연결하고, 수동 PHOTO 추가는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
 - draft 결과 저장(Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
-  transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가도 서버가
-  별도의 하나의 DB transaction으로 commit한다. AI는 어떤 테이블도 직접 쓰지 않는다.
+  transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가와 수동
+  Event 생성의 Event + optional PHOTO Item/junction 추가도 각각 서버의 하나의 DB transaction으로
+  commit한다. AI는 어떤 테이블도 직접 쓰지 않는다.
 - Redis `SUCCESS` 전이는 결과 transaction 뒤 task가 `CALLBACK_PENDING`일 때만 한다.
 - event `startAt`의 정확한 충돌은 +10분씩 미는 best-effort다(적용 주체는 서버 결과 저장 transaction).
   DB unique invariant는 아니다. event `endAt`은 조정된 start보다 앞서지 않도록 clamp한다.
@@ -71,10 +73,21 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   미지원 literal은 결과 저장 400이다(새 literal 활성화 순서: Server enum 배포 → AI writer 활성화).
 - `DRAFT→SAVED` 전이는 조건부 UPDATE(`WHERE status='DRAFT'`)의 영향 행 수가 유일한 판정 기준이자 이
   흐름의 유일한 직렬화 지점이다. 요청 필수 `emotionType`(5단계 enum)과 `status=SAVED`는 이 UPDATE
-  하나로 함께 확정된다 — 감정·상태의 다른 write 지점은 없고 부분 상태도 없다. 사전 검증을 통과한
+  하나로 함께 **최초 확정**된다 — 부분 상태는 없다. 사전 검증을 통과한
   요청 둘이 겹쳐도 하나만 1을 받아 승자의 감정만 남고 나머지는 부수효과
   없이 롤백된다(0행은 재조회로 이미 SAVED 409 / 없음·비소유 404로 분류). 저장 전 DRAFT와 과거
   SAVED 행의 null 감정은 backfill하지 않는 정상 legacy 값이다.
+- 감정의 write 지점은 둘뿐이다 — save의 최초 확정 UPDATE와, SAVED 전용 감정 수정 PUT의 조건부
+  UPDATE(`WHERE status='SAVED'`, status 불변). 후자도 영향 행 수가 판정 기준이고 0행은 재조회로
+  DRAFT 409 `-1020` / 없음·비소유 404 / 동일 감정 SAVED 멱등 성공으로 분류한다. DRAFT에 감정을
+  미리 쓰는 경로는 없으며(`DRAFT + non-null emotionType` 상태 없음), 감정 수정은 User Memory 갱신을
+  새로 enqueue하지 않는다.
+- 수동 Event 생성(`POST .../daily-records/{recordDate}/events`)은 기존 DailyRecord에만 허용한다
+  (DRAFT/SAVED 모두, 없음·비소유 404 은닉 — DailyRecord 자동 생성 없음). 소유 record 재확인·Event
+  insert·optional PHOTO Item/junction 추가는 하나의 transaction이다. 사진 분류·저장 실패 시 Event
+  insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`는 항상 null이고, 시각은 보낸 값
+  그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드 규칙(title·subtitle·시간·memo)과
+  사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
@@ -102,21 +115,24 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
   Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
 - DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
-  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. 각 worker는 외부 I/O 전에 짧은
-  transaction에서 eligible job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고 `available_at`을
-  다음 KST calendar day 00:00으로 옮기면서 `PENDING`/만료 `PROCESSING`을 `PROCESSING`으로 전이한다.
+  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
+  D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
+  처리하지 않은(`updated_at < 오늘 00:00`) job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고
+  `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
   commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
-  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 다음 일일
-  실행에서 재시도하고, 정상 실패는 `PENDING`으로 되돌린다. 이미 다른 worker가 완료한 행은 오류가 아니라
-  idempotent 완료로 수렴한다.
-  애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다.
+  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 처리 창
+  안의 다음 일일 실행에서 재시도하고, 정상 실패는 `PENDING`으로 되돌린다. 이미 다른 worker가 완료한
+  행은 오류가 아니라 idempotent 완료로 수렴한다. 처리 창을 벗어난 미완료 job은 재시도 없이 원문 Item과
+  함께 보존하고 worker가 건수만 ERROR 로그로 경보한다.
+  애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
+  보장하지 않는다.
   별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
 - 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
   진행한다(orphan 허용 — draft cleanup과 동일 규칙).
-- 같은 날짜의 draft(AI 작업), Event PATCH의 수동 PHOTO 추가, Event/DailyRecord 삭제 사이에는 공통
-  Redis admission guard가 없다. 각 작업의 입력·소유권·DRAFT preflight와 자기 DB transaction 경계는
-  유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나 지우지
-  않으며 기존 TTL로 자연 만료한다.
+- 같은 날짜의 draft(AI 작업), 수동 Event 생성/편집(수동 PHOTO 추가 포함), Event/DailyRecord 삭제
+  사이에는 공통 Redis admission guard가 없다. 각 작업의 입력·소유권 preflight와 자기 DB transaction
+  경계는 유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나
+  지우지 않으며 기존 TTL로 자연 만료한다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
 - Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
   Item은 record FK가 없어 cascade되지 않는다. 삭제 대상에만 연결된 non-PHOTO와 job을 만들 수 없는 손상
@@ -139,16 +155,24 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   hash만 Redis task에 저장하고 모든 요청에서 다시 검증한다.
 - 호출 순서는 PROCESSING task의 내부 `ProcessStage`
   (`INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`)가 제한한다.
-- token hash+stage 교체와 callback terminal 전이는 현재 Redis task JSON 전체를 기대값으로 비교하는 Lua
-  CAS다.
+- token hash+stage 교체는 native `SET XX KEEPTTL`, callback terminal 전이는 native `SET XX PX`다 —
+  timeline task에 Lua script는 없다. `XX`는 key 존재만 보고 기존 값을 비교하지 않으므로(expected-value
+  CAS 아님) 잘못된 요청 차단은 write 전 token/status/stage 검증이 담당하고, write `false`(만료)는 task를
+  부활시키지 않고 404 `-1001`로 수렴한다. 이 계약이 보장하는 것은 통제된 단일·순차 AI writer의 timeout
+  재시도 멱등성이며, 같은 task/token 요청 둘이 첫 state write 전에 실제 동시 실행되는 경우는
+  last-write-wins로 수용한다(현재 그런 writer 경로 없음).
 - 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
-- 결과 저장은 retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점한 요청 하나만 실행한다. 선점은
-  token을 바꾸지 않으며, callback token 회전과 `CALLBACK_PENDING` 전이는 MySQL commit 뒤 한 번의
-  CAS로 함께 일어난다. MySQL 실패가 호출부로 돌아오면 선점 receipt를 지운다(token은 그대로다).
-  회전이 commit 뒤라 stage만으로는 transaction 진행 구간이 구분되지 않으므로, 이 표식이 없으면 동시
+- 결과 저장은 retry receipt에 선점 표식(`claimedAt`)을 심는 write로 선점하고, 저장된 claim을 읽은 뒤늦은
+  same-token 재시도는 409로 끝나 transaction에 재진입하지 않는다. 선점은 token을 바꾸지 않으며,
+  callback token 회전과 `CALLBACK_PENDING` 전이는 MySQL commit 뒤 한 번의 native write로 함께 일어난다.
+  MySQL 실패가 호출부로 돌아오면 최초 RESULT_PENDING snapshot으로 선점을 되돌린다(token은 그대로다).
+  회전이 commit 뒤라 stage만으로는 transaction 진행 구간이 구분되지 않으므로, 이 표식이 없으면 뒤늦은
   요청이 겹쳐 돌아 Event·Item이 중복 삽입된다.
-- `CALLBACK_PENDING` 도달이 graph 확정의 유일한 증거다(회전과 commit이 같은 CAS에 묶여 있다). 응답 유실 뒤 재시도 창 안에 소비된 result token으로
+- 선점(`RESULT_PENDING` + `claimedAt`) 중 FAILED callback은 409로 거절한다 — 아직 살아 있는 transaction의
+  commit 회전·선점 해제(`SET XX`)가 먼저 확정된 terminal 위에 PROCESSING을 되쓰는 것을 막는다. 선점 뒤
+  crash한 task는 기존 계약대로 TTL 만료(404)로 끝난다.
+- `CALLBACK_PENDING` 도달이 graph 확정의 유일한 증거다 — MySQL commit 뒤 callback token과 stage를 하나의 Redis write로 회전하므로, 이 stage는 commit 이후에만 존재한다. 응답 유실 뒤 재시도 창 안에 소비된 result token으로
   다시 오면 MySQL을 건드리지 않고 새 callback token만 재발급한다(응답 shape는 신규 저장과 동일).
   receipt 부재·창
   만료·terminal은 401 `-1002`, 선점 중(commit 전) 중복 요청은 409 `-1017`다. 재시도 body는 적용 경로가 없어 대조
@@ -163,12 +187,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
 - callback·User Memory 결과의 자유 text `error`는 사용자 원문이 섞일 수 있어 저장·클라이언트 노출은
   물론 application log에도 남기지 않는다(수신 후 폐기 — taskId와 bounded numeric code만 로깅).
-- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/RESULT_PENDING에서만 허용한다.
+- SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/미선점 RESULT_PENDING에서만 허용한다(선점 중 FAILED 409는 위 claim guard 항목).
 - terminal task에 같은 결과가 다시 오면 200(멱등), SUCCESS↔FAILED 상충은 409 `-1017`다.
 - 결과 저장 commit 후 callback 자체가 오지 않으면 원 task는 PROCESSING TTL로 만료되고 저장된 graph는
   남는다 — 자동 복구(redispatch)를 추가하지 않는 것이 수용된 MVP 한계다.
-- `PROCESSING` TTL은 3분이며 token/stage 교체마다 다시 확보한다(`processingStartedAt`은 보존).
-  terminal task TTL은 24시간, staging retention은 7일이다.
+- `PROCESSING` TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체는 `KEEPTTL`이라 만료
+  시각을 연장하지 않으며, 폴링 `elapsedSeconds`·stuck 관측·task 만료가 전부 최초 `processingStartedAt`
+  기준으로 일치한다. terminal task TTL은 24시간, staging retention은 7일이다.
 - Redis와 MySQL은 분산 transaction으로 묶지 않는다. commit 뒤 응답 유실은 재시도 창 안의 재요청이
   복구하지만, 선점 뒤 **commit 전** 프로세스 종료는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 창 만료 뒤
   재요청도 401이다 — 그 task는 TTL 만료로 끝나며 자동 reconciliation은 없다.
@@ -177,16 +202,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를
   미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
-  전용이다 — TTL 재확보에도 바뀌지 않고 terminal 전이 시 폐기한다.
+  전용이다 — stage write에도 바뀌지 않고 terminal 전이 시 폐기한다.
 - subject별 진행 작업 index(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)는 조회 후보일 뿐이다 —
   task JSON의 status/owner가 유일한 권위이며 index 단독으로 응답을 만들지 않는다. 목록 API는 principal
   소유 PROCESSING taskId만 최신순으로 반환하고 만료·terminal·타인 소유 member는 존재 비노출로 제외 후
   요청 사용자 index에서만 best-effort ZREM한다(역직렬화 불가 JSON은 500이며 자동 삭제하지 않는다).
 - task JSON은 먼저 저장하고 보조 전역·사용자 processing index는 native Redis 명령으로 갱신한다.
-  PROCESSING은 ZADD(+사용자 index PEXPIRE), terminal은 ZREM하며 각 명령 실패·응답 유실과
-  PEXPIRE=false는 최신 task JSON을 다시 읽어 해당 index만 멱등 보정한다. `TimelineTaskStore#save`가
-  모든 lifecycle write의 단일 지점이고 task JSON status/owner가 유일한 권위다. 사용자 index key TTL은
-  마지막 PROCESSING 저장 뒤 3분 inactivity cleanup이며 member별 TTL이 아니다.
+  최초 PROCESSING 생성만 ZADD(+사용자 index PEXPIRE 3분)하고, terminal 전이만 ZREM한다 — 중간
+  stage write는 index에 어떤 명령도 보내지 않는다. 각 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고
+  같은 의도의 명령을 한 번 재시도한다(두 번째 실패는 metric·warn 관측만). task JSON status/owner가
+  유일한 권위다. 사용자 index key TTL은 마지막 **task 생성** 뒤 3분 inactivity cleanup이며 member별
+  TTL이 아니다 — task 수명도 생성 기준 3분이라 index가 유효 member보다 먼저 사라지지 않는다.
 - PROCESSING polling의 `elapsedSeconds`는 완료된 초이며 음수가 되지 않는다(시계 역행·future
   timestamp는 0 clamp). PROCESSING task에는 기준 시각이 항상 존재한다.
 
@@ -235,9 +261,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - S3 key는 서버가 subjectId와 filename에서 파생하며 client가 full key를 정하지 않는다.
 - presigned PUT은 content type과 content length를 서명에 묶는다.
 - `photoUrl`은 save 시 materialize한다. CDN domain이나 key 규칙 변경에는 기존 payload backfill이 필요하다.
-- Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내며 서버는 S3 object 존재 여부를 확인하지
-  않는다. 입력 payload는 `description`·`photoUrl`을 받지 않고, final payload는 `description=null`과
-  서버가 만든 `photoUrl`을 저장한다.
+- 수동 PHOTO는 client가 S3 업로드 성공 뒤 Event PATCH 또는 Event 생성 POST로 보내며 서버는 S3 object
+  존재 여부를 확인하지 않는다. 입력 payload는 `description`·`photoUrl`을 받지 않고, final payload는
+  `description=null`과 서버가 만든 `photoUrl`을 저장한다.
+- 수동 PHOTO의 nullable startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 정밀도에 맞춰 초 단위만
+  허용하고 소수 초는 저장 전에 400으로 거절한다.
 - 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. Android는 같은 로컬 사진이어도 presign을
   새로 요청하고 응답의 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거 filename을 재사용하지
   않는다. 이미 S3 업로드를 마친 **동일 pending addition**의 PATCH 재시도만 그 pending filename을
@@ -282,7 +310,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
-  등록/이력·내 회원 조회·회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
+  등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
   PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
 - 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded

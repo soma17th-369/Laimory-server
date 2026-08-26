@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS daily_records (
     record_date DATE NOT NULL,
     record_at DATETIME NOT NULL,                     -- 클라가 보낸 기록 벽시계 시각(같은 날 여러 task면 마지막에 finalize된 값). record_timezone과 짝지어 절대시각 복원
     record_timezone VARCHAR(64) NOT NULL,           -- record_at·이벤트/아이템 wall-clock을 절대시각으로 해석할 zone
-    emotion_type VARCHAR(32) NULL,                  -- 별도 save(DRAFT->SAVED)에서 설정
+    emotion_type VARCHAR(32) NULL,                  -- save(DRAFT->SAVED)가 최초 확정, SAVED 전용 감정 PUT이 후속 수정
     status VARCHAR(32) NOT NULL,                     -- DRAFT|SAVED
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
@@ -105,24 +105,25 @@ CREATE TABLE IF NOT EXISTS timeline_event_items (
 
 -- 마지막 Event 참조가 사라지는 PHOTO의 S3 삭제 의무와 원문 Item을 MySQL commit과 함께 보존하는 작업 테이블.
 -- 원 TimelineItem은 job이 존재하는 동안 남고, worker가 S3 성공 뒤 job→Item 순서로 한 transaction에서 지운다.
--- PENDING은 PATCH 취소·재연결 가능, PROCESSING은 S3 삭제 중이다. 신규 writer는 available_at을 다음 Seoul calendar day로 명시해 동시 request
--- transaction이 먼저 수렴하게 한다. default는 구 binary INSERT 호환용이다. claim은 여러 process/thread의
--- 같은 날 중복 선택을 막고 실패·crash 행을 다음 일일 실행에서 다시 선택하게 한다.
+-- PENDING은 PATCH 취소·재연결 가능, PROCESSING은 S3 삭제 중이다. 처리 대상은 KST 생성일 D 기준
+-- D+1~D+3 일일 실행뿐이다(claim이 created_at 처리 창과 updated_at < 오늘 00:00으로 판정) — 같은 날
+-- 중복 선택을 막고, 실패·crash 행은 updated_at이 전날이 된 다음 일일 실행이 다시 claim한다. 창을
+-- 벗어난 미완료 행은 재시도 없이 보존되고 worker가 건수만 ERROR 로그로 경보한다.
 CREATE TABLE IF NOT EXISTS timeline_photo_delete_jobs (
     timeline_photo_delete_job_id BIGINT NOT NULL AUTO_INCREMENT,
     timeline_item_id BIGINT NOT NULL,
     object_key VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    available_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
+    -- 감사 컬럼 (BaseEntity; native insert-if-absent가 KST 시각을 직접 채움 — created_at은 처리 창,
+    -- updated_at은 같은 날 재선택 방지의 기준이라 두 컬럼이 같은 프레임이어야 한다)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (timeline_photo_delete_job_id),
     UNIQUE KEY uq_timeline_photo_delete_jobs_item (timeline_item_id),
     UNIQUE KEY uq_timeline_photo_delete_jobs_object (object_key),
-    KEY idx_timeline_photo_delete_jobs_available
-        (available_at, created_at, timeline_photo_delete_job_id),
+    KEY idx_timeline_photo_delete_jobs_claim
+        (created_at, timeline_photo_delete_job_id),
     CONSTRAINT fk_timeline_photo_delete_jobs_item
         FOREIGN KEY (timeline_item_id) REFERENCES timeline_items (timeline_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

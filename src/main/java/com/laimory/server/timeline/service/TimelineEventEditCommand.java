@@ -13,17 +13,6 @@ record TimelineEventEditCommand(
         LocalDateTime endAt,
         boolean memoPresent,
         String memo,
-        List<PhotoToAdd> photosToAdd
+        List<TimelineEventPhotoAddService.PhotoToAdd> photosToAdd
 ) {
-
-    record PhotoToAdd(
-            String rawId,
-            LocalDateTime startAt,
-            LocalDateTime endAt,
-            String filename,
-            String clientPhotoUri,
-            Double latitude,
-            Double longitude
-    ) {
-    }
 }

@@ -14,6 +14,9 @@ callback body를 바꿀 때 읽는다.
 ## Authoritative Sources
 
 - `TimelineAiDispatcher` implementations와 dispatch DTO
+- `AgentCoreDispatchClient`, `AgentCoreTimelineAiDispatcher`, `AgentCoreUserMemoryUpdateDispatcher`,
+  `AgentCoreProperties` (transport 구현은 `com.laimory.server.agentcore`, Spring 배선은 `config.AgentCoreClientConfig`
+  패키지에 모여 있다 — AWS SDK 의존은 이 패키지 밖으로 나가지 않는다), `AgentCoreDispatchRequest`/`AiRequestType`
 - `TimelineAiTaskApi`, 입력·결과 DTO와 service
 - `TimelineCallbackApi`, callback DTO와 service
 - `TaskTokens`, `ProcessStage`, `TimelineDraftTask`, `TimelineTaskStore`
@@ -52,6 +55,33 @@ Content-Type: application/json
   PROCESSING을 유지하고 draft POST는 502 `-1009`로 끝난다.
 - AI endpoint 자체 service authentication은 아직 없다(private network 전제).
 
+### 1a. AgentCore transport (`app.ai.mode=agentcore`)
+
+**transport만 다르고 접수 계약은 §1과 같다** — 같은 body가 HTTP POST 대신 Bedrock AgentCore Runtime의
+`InvokeAgentRuntime` payload로 나간다.
+
+```json
+{"requestType": "TIMELINE", "payload": {"taskId": "...", "taskToken": "...", "dailyRecordId": 42,
+  "window": {"startAt": "2026-07-22T00:00:00+09:00", "endAt": "2026-07-23T00:00:00+09:00"}}}
+```
+
+- `requestType`은 `TIMELINE` 또는 `USER_MEMORY_UPDATE`다. AgentCore Runtime은 endpoint 하나로 두 작업을
+  받으므로 HTTP mode의 경로 분기(`/v1/timeline`·`/v1/user-memory`)를 이 값이 대신하고, AI Server가 이
+  값으로 payload를 기존 접수 DTO로 역직렬화·라우팅한다.
+- wrapper는 봉투일 뿐이다 — payload의 필드명·시각 포맷·`taskToken` 계약은 HTTP mode와 같다.
+- 요청은 `contentType`·`accept`가 `application/json`이고, `runtimeSessionId`는 `timeline-`/`user-memory-`
+  prefix + taskId(난수 UUID)라 AgentCore 계약(33~256자)을 항상 만족한다. 대상은 full Runtime ARN이고
+  endpoint 이름은 qualifier로 보낸다.
+- 접수 성공은 AgentCore 응답 `statusCode` 2xx + `{"taskId":<동일>,"status":"PROCESSING"}`다. 응답 body는
+  8KiB까지만 읽고 초과분은 abort한다(ack는 수십 byte).
+- 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
+  pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
+  runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
+- 접수 대기 상한은 SDK `apiCallTimeout`(7s)·`apiCallAttemptTimeout`(5s)이 소유하며 PROCESSING TTL의
+  절반보다 짧다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
+- 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
+  §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
+
 ### 2. 회전 Task Token과 Redis Process Stage
 
 입력 조회·결과 저장·callback은 각 단계에서 받은 현재 token을 같은 header 이름으로 제시한다.
@@ -74,9 +104,14 @@ INPUT_PENDING
   → SUCCESS
 ```
 
-- token hash+stage 교체와 terminal 전이는 현재 task JSON 전체를 기대값으로 비교하는 단일-key Redis
-  Lua CAS다. missing task는 CAS에 실패해 만료 task를 부활시키지 않는다. processing index는 이 원자
-  경계 밖의 보조 데이터이며 task write 뒤 native 명령과 최신 task 기준 보정으로 수렴한다.
+- token hash+stage 교체는 native `SET XX KEEPTTL`, terminal 전이는 native `SET XX PX 24h`다 — timeline
+  task에 Lua script는 없다. `XX`는 key 존재만 보고 값을 비교하지 않으므로 잘못된 요청 차단은 write 전
+  token/status/stage 검증이 담당하고, missing task는 write에 실패해(404) 만료 task를 부활시키지 않는다.
+  `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 3분 만료 시각을 연장하지 않는다. 이 계약은 통제된
+  단일·순차 AI writer의 timeout 재시도(첫 재시도 약 3.5초 뒤)를 보장 대상으로 하며, 같은 task/token
+  요청 둘을 첫 state write 전에 실제 동시 실행하는 경우는 last-write-wins로 수용한다. processing
+  index는 보조 데이터로 최초 PROCESSING 생성과 terminal 전이에서만 갱신하고, 실패는 같은 의도의 명령을
+  한 번 재시도한다.
 - 외부 polling 상태는 계속 `PROCESSING`/`SUCCESS`/`FAILED`만 노출한다.
 
 ### 3. 입력 조회 (AI → API)
@@ -95,7 +130,10 @@ Task-Token: <taskToken>
   payload는 staging 시점에 v1 privacy 치환을 거친 저장본이라 텍스트 값에 `[REDACTED_*]` token literal이
   섞일 수 있고, PHOTO `clientPhotoUri`는 응답 조립 시 값 전체가 `[REDACTED_DEVICE_URI]` 고정 token으로
   바뀐다(DB·앱 응답은 원문 유지 — 필드 집합·구조는 불변).
-  지오코딩이 허용 범위에서 부분 실패한 STAY/MOVEMENT payload는 `address` key가 생략되고
+  PHOTO payload도 좌표를 가지면 STAY/MOVEMENT와 같은 `address`·`places`를 갖는다(서버 지오코딩 enrich).
+  좌표가 없는 PHOTO와 Event PATCH·Event 생성 POST로 수동 추가된 PHOTO에는 두 필드가 없다 — 수동
+  추가는 enrich 경로를 타지 않는다.
+  지오코딩이 허용 범위에서 부분 실패한 payload는 `address` key가 생략되고
   `places: []`다(NON_NULL 직렬화 — 정상 "주소 없음"과 같은 wire shape, 실패 marker 필드는 없음).
   품질 guard(고유 좌표 실패 20% 이하·시간순 연속 실패 3개 미만)를 넘는 batch는 draft 생성 자체가
   502로 거절돼 이 API에 도달하지 않는다.
@@ -106,8 +144,8 @@ Task-Token: <taskToken>
 
 - token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
 - 신규 조회는 `INPUT_PENDING`에서만 허용한다.
-- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 CAS로 저장하고 새 token 원문을 응답한다. 같은 CAS가
-  소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
+- 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 native write로 저장하고 새 token 원문을 응답한다.
+  같은 write가 소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
 - 응답 유실 뒤 **소비된 input token으로 재조회**하면 `RESULT_PENDING`에서 입력을 다시 조립해 새 result
   token과 함께 200으로 응답한다(재시도 표시 없음 — 마지막 응답의 token만 유효하다). 조건은 receipt의
   token hash 일치와 재시도 창 유효 둘이며, 어긋나면 401 `-1002`다.
@@ -142,12 +180,13 @@ Task-Token: <taskToken>
 - 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로
   v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
   전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
-- `RESULT_PENDING` 요청 하나만 retry receipt에 선점 표식(`claimedAt`)을 심는 CAS로 선점하고 MySQL
-  transaction을 실행한다. **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라
-  재요청이 특수 경로 없이 정상 경로로 다시 돈다. 회전이 commit 뒤로 미뤄져 stage만으로는 "이미 누가
-  transaction을 돌리는 중"이 구분되지 않으므로 이 표식이 동시 writer를 하나로 제한한다(없으면 두 요청이
-  겹쳐 돌아 Event·Item이 중복 삽입된다).
-- callback token 회전과 `CALLBACK_PENDING` 전이는 **commit 뒤 한 번의 CAS**로 일어난다. 그래서
+- retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 MySQL transaction을 실행한다.
+  **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
+  정상 경로로 다시 돈다. 회전이 commit 뒤로 미뤄져 stage만으로는 "이미 누가 transaction을 돌리는 중"이
+  구분되지 않으므로, 저장된 claim을 읽은 뒤늦은 same-token 재시도는 409로 끝나 transaction에 재진입하지
+  않는다(없으면 요청이 겹쳐 돌아 Event·Item이 중복 삽입된다). 같은 이유로 선점 중 FAILED callback도
+  409다.
+- callback token 회전과 `CALLBACK_PENDING` 전이는 **commit 뒤 한 번의 native write**로 일어난다. 그래서
   `CALLBACK_PENDING`이 곧 "graph가 확정됐다"는 뜻이며, 새 token 원문은 그 뒤에야 응답된다. 별도 commit
   표식은 두지 않는다 — 선점만 된 구간은 `RESULT_PENDING` + `claimedAt`으로 구분된다.
 - 응답 유실 뒤 **소비된 result token으로** 재요청하면 MySQL을 건드리지 않고 새 callback token만
@@ -180,9 +219,9 @@ clamp한다.
 실패해도 AI가 쥔 result token은 유효하다 — 선점 흔적만 남아 그 task의 재시도가 409로 수렴한다.
 
 재시도 창은 `app.ai.retry-window`(기본 15s)이며 **첫 요청이 서버에 도착한 시각** 기준 절대 마감이다.
-CAS마다 재확보되는 PROCESSING TTL과 달리 재발급으로 미끄러지지 않는다. AI 재시도 예산(3s 간격 × 3회 +
-실패 인지 시간)보다 크고 PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼
-늘린다.
+최초 시작 기준으로 고정된 PROCESSING TTL과 마찬가지로 재발급으로 미끄러지지 않는다. AI 재시도 예산
+(시도당 timeout 3s·첫 backoff 0.5s·최대 3회 — 첫 재시도 약 3.5초 뒤, 실패 확정 약 10.5초)보다 크고
+PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
 
 ### 5. 상태 Callback (AI → API)
 
@@ -193,9 +232,13 @@ Task-Token: <taskToken>
 
 - body는 `status`, `errorCode`, `error`뿐이다.
 - SUCCESS는 `CALLBACK_PENDING`에서만 허용한다.
-- FAILED는 결과 저장 전인 `INPUT_PENDING`/`RESULT_PENDING`에서만 허용한다.
+- FAILED는 결과 저장 전인 `INPUT_PENDING`/미선점 `RESULT_PENDING`에서만 허용한다 — 결과 선점
+  (`RESULT_PENDING` + `claimedAt`) 중에는 409 `-1017`이다. 아직 살아 있는 transaction의 commit 회전·선점
+  해제(`SET XX`)보다 terminal을 먼저 확정하면 terminal 위에 PROCESSING이 되쓰이기 때문이며, 선점 뒤
+  crash한 task는 기존 계약대로 TTL 만료(404)로 끝난다.
 - terminal task의 같은 callback 재전송은 200, 상충 결과는 409 `-1017`이다.
-- terminal CAS에 처음 성공한 요청만 완료 push를 예약한다.
+- terminal write(`SET XX PX 24h`)에 성공한 요청만 완료 push를 예약한다 — write 시점 만료(`XX=false`)는
+  404이고 index 제거·push를 실행하지 않는다.
 - FAILED `errorCode`는 음수 JSON integer이며 미지 값은 `-1008`로 수렴한다. 자유 text `error`는 사용자
   원문이 섞일 수 있어 저장·클라이언트 노출은 물론 서버 로그에도 남기지 않는다(수신 후 폐기 — 서버는
   taskId와 bounded numeric code만 로깅하고, wire 계약 유지를 위해 필드만 유지한다).
@@ -244,9 +287,14 @@ POST {base-url}/v1/user-memory
   순서가 의미를 가지므로, 큐 진입 순서가 아니라 기록 날짜 순으로 싣고 초과분(=더 나중 날짜)이 다음
   실행 몫이 된다.
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
+- `agentcore` mode에서는 이 body가 `{"requestType":"USER_MEMORY_UPDATE","payload":{...}}` wrapper로
+  나간다(§1a). body·ack·실패 분류 계약은 그대로다.
 - `emotionType`은 저장 API가 확정한 하루 감정이다 — non-null 값 도메인은 `VERY_HAPPY`·`HAPPY`·
   `NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY` 5종이고, 저장 전 DRAFT·legacy SAVED 행은 null일 수 있으나
-  저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변).
+  저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변). 저장 후 SAVED 감정
+  수정 PUT(#325)과 수동 Event 생성 POST(#326)는 <b>User Memory 갱신을 재enqueue하지 않는다</b> — 아직
+  dispatch되지 않은 기존 pending이 있으면 접수 시점 스냅샷에 최신 DB 값이 실릴 수 있지만, 이미
+  접수·반영된 갱신을 이 API들이 다시 유발하는 계약은 아니다(SAVED 후 편집 미반영과 같은 현재 정책).
 
 ```http
 POST /s/api/{version}/user-memory/updates/{taskId}/result
@@ -286,22 +334,30 @@ Task-Token: <접수 body로 준 token>
   손실이 아니라 task 종결 실패다.
 - 이 경로의 reconciliation과 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
 - task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다.
-- PROCESSING TTL은 3분이고 token/stage 교체마다 다시 확보한다. terminal TTL은 24시간이다.
+- PROCESSING TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체(`KEEPTTL`)가 연장하지 않는다. terminal TTL은 24시간이다.
 
 ## Current Implementations
 
 - `noop`: dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
+- `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
+  `InvokeAgentRuntime`으로 접수시킨다(§1a).
 
-User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
+User Memory 갱신도 같은 `app.ai.mode` 스위치로 네 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
 필수 필드만 채운 결정적 stub 문서로 자기 서버의 결과 endpoint를 실제 호출, `http`는 실 AI 연동이다.
 `http` dispatch의 read timeout은 반드시 유한해야 한다 — 이 호출은 요청 스레드가 아니라 async 실행기
-또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다.
+또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다. `agentcore`는 두 흐름을
+같은 Runtime endpoint로 보내고 wrapper의 `requestType`이 AI 쪽 라우팅 키다 — 대기 상한은 SDK
+timeout이 소유한다.
 
 ## Invariants
 
 - dispatch body 필드명은 AI 규격이 권위다.
+- AgentCore wrapper는 봉투일 뿐이다 — `requestType`만 더하고 payload 계약(필드명·시각 포맷·token)은
+  바꾸지 않는다.
+- 우리 → AI 접수는 어떤 transport에서도 재시도하지 않는다 — `agentcore`는 SDK 자동 재시도까지 꺼서
+  같은 taskId 이중 접수를 막는다.
 - 서버간 단계마다 token을 교체하고 Redis에는 hash만 저장한다 — 현재 token hash와, 재시도 인지를 위한
   직전 단계 token hash(retry receipt)다. 원문은 어느 쪽도 저장하지 않는다.
 - 재시도 창 동안에는 유효 자격이 둘이다: 현재 token(다음 단계 호출)과 receipt의 직전 token(같은 요청을
@@ -309,8 +365,10 @@ User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 
 - retry receipt는 PROCESSING 전용이며 terminal 전이 시 stage와 함께 버린다 — callback 이후의 결과
   재요청은 인지 대상이 아니다.
 - 결과 저장의 token 회전은 **MySQL commit 뒤**에만 일어난다. 선점은 `claimedAt` 표식만 남기고 token을
-  바꾸지 않으며, 그 표식이 동시 writer를 하나로 제한한다.
-- 입력과 결과의 token hash+stage 전이는 Redis task JSON CAS다.
+  바꾸지 않으며, 그 표식이 뒤늦은 same-token 재시도의 transaction 재진입과 선점 중 FAILED callback을
+  막는다.
+- 입력과 결과의 token hash+stage 전이는 native `SET XX KEEPTTL`이다 — 최초 PROCESSING 만료 시각을
+  보존하고 만료 task를 부활시키지 않는다.
 - 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
 - callback body에 graph를 추가하지 않는다.
 - 실제 token 값을 문서·로그에 기록하지 않는다.

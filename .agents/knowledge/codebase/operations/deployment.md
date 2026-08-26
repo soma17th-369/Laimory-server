@@ -26,7 +26,7 @@ step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 ins
 환경 혼선을 막는 지점이다.
 
 환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
-Swagger·geo mode), OTel service name, 그리고 nginx 블록 실행 여부뿐이다. 그 외 절차는 동일하다.
+Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
 
 1. `dev`/`main` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
    `deploy.yml` 자체가 바뀐 경우에만 workflow를 시작한다. test·문서·monitoring-only 변경은
@@ -42,20 +42,17 @@ Swagger·geo mode), OTel service name, 그리고 nginx 블록 실행 여부뿐�
    판정할 때까지 트래픽을 계속 받으므로 **무중단 배포가 아니다**.
 6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + 환경 고정값·mode
    exact-one, 값 비출력 — 아래 Preflight).
-7. nginx가 있는 환경에서만 no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는
-   배포를 중단한다. nginx가 없는 환경(ALB가 앱 포트에 직결)은 블록 전체를 건너뛴다 — 그대로
-   실행하면 `nginx` 부재로 배포가 이 지점에서 실패한다.
-8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
+7. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
    이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read + secret 내용 계약 검증,
    `user_subject_links` schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight →
    upsert 순서를 강제한다.
-9. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
+8. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
    원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
-10. 기존 `laimory` container를 stop/remove한다.
-11. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
+9. 기존 `laimory` container를 stop/remove한다.
+10. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
     rotated `json-file` logging; firebase면 read-only credential mount만 추가).
-12. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
-13. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
+11. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
+12. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
     어떤 container도 참조하지 않는 tagged/dangling image가 제거되고, prune 실패는 고정 경고만 남기며
     원래 배포 status를 바꾸지 않는다.
 
@@ -99,7 +96,9 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`).
   값이 리터럴에서 변수로 내려갔을 뿐 exact-one·byte 일치 성질은 같다. 다만 prod의
   `REDIS_KEY_PREFIX`는 빈 값이 정상이라, 이 키만은 Resolve step의 환경 판정이 유일한 방어선이다
-- `APP_AI_MODE` exact-one(`noop|fake|http`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도 정확히 한 줄
+- `APP_AI_MODE` exact-one(`noop|fake|http|agentcore`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도
+  정확히 한 줄, `agentcore`면 `APP_AI_AGENTCORE_RUNTIME_ARN`·`APP_AI_AGENTCORE_ENDPOINT`가 각각
+  정확히 한 줄 non-empty이고 ARN은 배포 region의 full Runtime ARN이어야 한다(#338)
 - `APP_PUSH_MODE` exact-one(`noop|firebase`). `firebase`일 때만:
   `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json` exact-one과
   `/home/ubuntu/app/secrets/firebase-service-account.json` 존재·non-empty 검사 후, pull한 image의
@@ -156,7 +155,7 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 
 - Java 21 multi-stage image, runtime non-root UID 1001
 - application port 8080, host network
-- management port 9090도 host network에 bind된다. nginx는 Actuator를 proxy하지 않으며, live 접근은
+- management port 9090도 host network에 bind된다. live 접근은
   monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
 - 현재 image SHA는 모든 meter의 공통 tag가 아니라 `laimory.build.info` 한 meter에만 노출한다.
@@ -173,11 +172,19 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
   prune하므로 없을 수 있다 — rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해
   재배포한다.
 
-PHOTO delete worker는 checked-in default가 on이므로 live MySQL에 additive job table이 적용된 환경에서만
-배포한다. 배포된 container는 다음 03:00 KST부터 pending job을 처리한다. 즉시 중지하거나 schema 선행
-조건을 아직 충족하지 못한 환경은 host `.env`의 worker flag를 false로 바꾸고 deploy workflow를 재실행해
-container를 재생성한다. pending job row는 수동 삭제하지 않는다. job은 보존 중인 원문 PHOTO Item을 FK로
-참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만 단독 삭제하지 않는다.
+PHOTO delete worker는 checked-in default가 on이고 배포된 container는 다음 03:00 KST부터 pending job을
+처리한다. worker의 claim 판정은 `timeline_photo_delete_jobs`가 `available_at` 없는 신 schema이고 감사
+컬럼(`created_at`/`updated_at`)이 앱 바인딩 KST 프레임인 것을 전제한다. 이 schema가 아직 반영되지 않은
+live 환경(dev·prod)은 일회성 비호환 cutover가 선행돼야 하며 순서가 불변식이다: ① 새 claim index
+`(created_at, PK)` 추가 → ② worker off로 container 재생성 → ③ job insert/cancel 가능한 API 쓰기 중지
+(행 수 증가 정지 확인) → ④ 잔존 행 감사 시각 `+9h` 정규화(기존 행은 `current_timestamp(6)`가 채운
+UTC 프레임; 0건이면 생략) → ⑤ 새 binary 배포(worker off 유지) → ⑥ old index·`available_at` DROP →
+⑦ 쓰기 재개 → ⑧ worker 재활성. 정규화 이후 구 binary로 되돌리려면 쓰기 중지·worker off를 유지한 채
+감사 시각 `-9h` 원복이 먼저고, column DROP 이후라면 `available_at`과 old index 복원까지 선행해야 한다.
+단계별 SQL과 검증 항목은 PR #377 본문에 있다. 즉시 중지하거나 cutover 전인 환경은 host `.env`의 worker
+flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생성한다. pending job row는 수동 삭제하지
+않는다. job은 보존 중인 원문 PHOTO Item을 FK로 참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만
+단독 삭제하지 않는다.
 
 ## Manual Operations
 
@@ -187,6 +194,11 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
   대상·영향·rollback을 설명한 뒤 별도 승인받는다.
 - monitoring bootstrap에는 비밀 없는 자산만 두고 credential은 host의 보호 파일에만 주입한다.
 - nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
+- AI dispatcher mode 전환(`APP_AI_MODE`)은 host `.env` 변경 + **container 재생성**으로만 반영된다.
+  `agentcore` 활성화 순서는 ① AI Server가 wrapper `requestType` 라우팅을 배포 ② App runtime IAM role에
+  대상 Runtime 한정 `bedrock-agentcore:InvokeAgentRuntime` 부여(대상·영향·rollback 설명 후 별도 승인)
+  ③ `.env`에 `APP_AI_MODE=agentcore`와 Runtime ARN·endpoint를 넣고 재배포다. rollback은 `.env`를 이전
+  mode로 되돌리고 다시 재생성하는 것뿐이며, 이미 접수된 task는 AI 결과 또는 TTL이 종결한다.
 - prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
   prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과, deploy role의 `ssm:SendCommand` Resource에 prod host를
   추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.

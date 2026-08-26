@@ -348,7 +348,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         TimelineDraftTask current = taskService.find(taskId).orElseThrow();
         TimelineDraftTask.RetryReceipt receipt = current.retryReceipt();
-        assertThat(taskService.replaceProcessing(taskId, current,
+        assertThat(taskService.saveProcessingIfPresent(taskId,
                 current.withRetryReceipt(new TimelineDraftTask.RetryReceipt(
                         receipt.previousTokenHash(), receipt.claimedAt(),
                         Instant.now().minusSeconds(1))))).isTrue();
@@ -517,6 +517,6 @@ class TimelineAiTaskFlowIntegrationTest {
 
     private List<SourceItemDto> sources() {
         return List.of(new SourceItemDto(ItemType.PHOTO, RAW_ID, DATE.atTime(9, 0), null,
-                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://p", 37.5, 127.0, null, null)));
+                new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://p", 37.5, 127.0, null, null, null, null)));
     }
 }

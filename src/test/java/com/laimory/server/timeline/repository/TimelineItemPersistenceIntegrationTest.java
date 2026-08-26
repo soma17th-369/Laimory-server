@@ -119,6 +119,7 @@ class TimelineItemPersistenceIntegrationTest {
     void persistsAndReloadsAllPayloadSubtypes() throws Exception {
         PhotoPayload photo = new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg",
                 "content://media/external/images/media/12345", 37.5445, 127.0557, "사진 설명",
+                null, null,
                 "https://cdn.example/hash/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회의실 A", "설명", false);
         StayPayload stay = new StayPayload(37.5445, 127.0557,
@@ -182,10 +183,10 @@ class TimelineItemPersistenceIntegrationTest {
         // append rawId 필터가 쓰는 projection 쿼리 — 메서드명/JPQL 정합을 실 DB로 검증(mockito론 못 잡음).
         TimelineItem itemA = timelineItemRepository.save(TimelineItem.of(ItemType.PHOTO, "raw-a",
                 LocalDateTime.of(2026, 5, 10, 9, 0), null, objectMapper.valueToTree(
-                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://a", 1.0, 2.0, null, null))));
+                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://a", 1.0, 2.0, null, null, null, null))));
         TimelineItem itemB = timelineItemRepository.save(TimelineItem.of(ItemType.PHOTO, "raw-b",
                 LocalDateTime.of(2026, 5, 10, 10, 0), null, objectMapper.valueToTree(
-                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://b", 1.0, 2.0, null, null))));
+                        new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://b", 1.0, 2.0, null, null, null, null))));
         em.flush();
         em.clear();
 

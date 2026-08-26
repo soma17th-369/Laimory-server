@@ -94,7 +94,7 @@ class TimelineAiTaskInputServiceTest {
         TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
         givenRecordAndSources();
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -105,7 +105,7 @@ class TimelineAiTaskInputServiceTest {
         assertThat(response.sourceItems()).hasSize(2);
         assertThat(response.taskToken()).matches("[A-Za-z0-9_-]{43}");
         ArgumentCaptor<TimelineDraftTask> rotated = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), eq(task), rotated.capture());
+        verify(timelineTaskService).saveProcessingIfPresent(eq(TASK_ID), rotated.capture());
         assertThat(rotated.getValue().tokenHash()).isEqualTo(TaskTokens.hash(response.taskToken()));
         assertThat(rotated.getValue().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
         // 재시도 receipt: 소비된 input token hash와 첫 요청 도착 기준 창.
@@ -125,11 +125,12 @@ class TimelineAiTaskInputServiceTest {
         ObjectNode photoPayload = new ObjectMapper().createObjectNode()
                 .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
                 .put("clientPhotoUri", "content://media/external/images/42")
-                .put("latitude", 37.5665);
+                .put("latitude", 37.5665)
+                .put("address", "서울 성동구 성수이로 10");
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-1",
                         DATE.atTime(9, 0), null, photoPayload)));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -138,6 +139,8 @@ class TimelineAiTaskInputServiceTest {
         // 다른 필드는 그대로 전달된다(값만 치환 — 필드 집합 불변).
         assertThat(projected.get("filename").textValue()).isEqualTo("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         assertThat(projected.get("latitude").doubleValue()).isEqualTo(37.5665);
+        // #324: PHOTO 지오코딩 enrich 필드도 payload 통과로 AI에 그대로 나간다(projection이 손대지 않는다).
+        assertThat(projected.get("address").textValue()).isEqualTo("서울 성동구 성수이로 10");
         // 저장 payload 원본은 미변형(deep copy 뒤 치환).
         assertThat(photoPayload.get("clientPhotoUri").textValue())
                 .isEqualTo("content://media/external/images/42");
@@ -154,7 +157,7 @@ class TimelineAiTaskInputServiceTest {
         when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.CALENDAR, "raw-1",
                         DATE.atTime(9, 0), DATE.atTime(10, 0), calendarPayload)));
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(task), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -203,7 +206,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-404));
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
     }
 
     /** 회전이 끝나 result token을 들고 있는 상태 — 입력 응답이 유실된 AI는 여기서 옛 input token으로 다시 온다. */
@@ -218,7 +221,7 @@ class TimelineAiTaskInputServiceTest {
         TimelineDraftTask rotated = rotatedWithReceipt(NOW.plus(RETRY_WINDOW));
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(rotated));
         givenRecordAndSources();
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(rotated), any())).thenReturn(true);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
 
@@ -228,7 +231,7 @@ class TimelineAiTaskInputServiceTest {
         assertThat(TaskTokens.matches(response.taskToken(), rotated.tokenHash())).isFalse();
 
         ArgumentCaptor<TimelineDraftTask> reissued = ArgumentCaptor.forClass(TimelineDraftTask.class);
-        verify(timelineTaskService).replaceProcessing(eq(TASK_ID), eq(rotated), reissued.capture());
+        verify(timelineTaskService).saveProcessingIfPresent(eq(TASK_ID), reissued.capture());
         assertThat(reissued.getValue().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
         assertThat(reissued.getValue().tokenHash()).isEqualTo(TaskTokens.hash(response.taskToken()));
         // 재발급이 창을 갱신하면 마감이 계속 미끄러진다 — receipt는 최초 값 그대로여야 한다.
@@ -243,7 +246,7 @@ class TimelineAiTaskInputServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
         verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
-        verify(timelineTaskService, never()).replaceProcessing(anyString(), any(), any());
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
     }
 
     @Test
@@ -258,14 +261,15 @@ class TimelineAiTaskInputServiceTest {
     }
 
     @Test
-    void getInput_replayLostRace_returns409() {
+    void getInput_taskExpiredBeforeRotation_returns404() {
+        // 검증 뒤 write 시점에 task가 만료된 경우 — XX=false는 부활 없이 404로 수렴한다.
         TimelineDraftTask rotated = rotatedWithReceipt(NOW.plus(RETRY_WINDOW));
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(rotated));
         givenRecordAndSources();
-        when(timelineTaskService.replaceProcessing(eq(TASK_ID), eq(rotated), any())).thenReturn(false);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(false);
 
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
     }
 }

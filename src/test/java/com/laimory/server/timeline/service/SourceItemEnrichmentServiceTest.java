@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -52,6 +53,7 @@ class SourceItemEnrichmentServiceTest {
     private static final java.util.UUID SUBJECT_ID =
             com.laimory.server.testsupport.TestSubjects.id(1L);
     private static final int MAX_UNIQUE_COORDINATES = 30;
+    private static final String VALID_FILENAME = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
 
     @Mock
     private GeocodingService geocodingService;
@@ -149,13 +151,14 @@ class SourceItemEnrichmentServiceTest {
     }
 
     @Test
-    void enrich_injectsPhotoUrl_ignoringClientValue_withoutGeocoding() {
+    void enrich_injectsPhotoUrl_ignoringClientValue_withoutGeocoding_whenPhotoHasNoCoordinate() {
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
         when(photoUrlService.buildSubjectUrl(filename, SUBJECT_ID))
                 .thenReturn("https://cdn.example/abc/photos/" + filename);
         // 클라가 photoUrl을 위조해 보내도 서버 파생값으로만 덮어쓴다. 나머지 필드·envelope은 보존.
         SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
-                new PhotoPayload(filename, "content://x", 1.0, 2.0, "설명", "https://evil.example/fake.jpg"));
+                new PhotoPayload(filename, "content://x", null, null, "설명", null, null,
+                        "https://evil.example/fake.jpg"));
 
         List<SourceItemDto> enriched = service().enrich(List.of(photo), SUBJECT_ID);
 
@@ -167,10 +170,105 @@ class SourceItemEnrichmentServiceTest {
         assertThat(reconstructed.photoUrl()).isEqualTo("https://cdn.example/abc/photos/" + filename);
         assertThat(reconstructed.filename()).isEqualTo(filename);
         assertThat(reconstructed.clientPhotoUri()).isEqualTo("content://x");
-        assertThat(reconstructed.latitude()).isEqualTo(1.0);
-        assertThat(reconstructed.longitude()).isEqualTo(2.0);
         assertThat(reconstructed.description()).isEqualTo("설명");
-        // PHOTO는 latitude/longitude 필드가 있어도 지오코딩 비대상 — 좌표가 수집되지 않아 lookupAll 자체를 생략한다.
+        // 좌표 없는 PHOTO는 조회 대상이 아니라 enrich 필드도 비어 있고, 수집 좌표가 0이라 lookupAll을 생략한다.
+        assertThat(reconstructed.address()).isNull();
+        assertThat(reconstructed.places()).isNull();
+        verifyNoInteractions(geocodingService);
+    }
+
+    // ── #324: 좌표를 가진 PHOTO도 지오코딩 대상(조회·상한·D1) — 단 D2 시간축에는 관측을 만들지 않는다 ──
+
+    @Test
+    void enrich_geocodesPhotoCoordinate_andInjectsAddressAndPlaces() {
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
+        when(photoUrlService.buildSubjectUrl(filename, SUBJECT_ID)).thenReturn("https://cdn.example/p.jpg");
+        Coordinate photoAt = new Coordinate(37.5445, 127.0559);
+        stubLookupAll(Map.of(photoAt, new GeoPlace("서울 성동구 성수이로 10", List.of("블루보틀 성수"))));
+        // 클라가 보낸 address/places는 서버 파생이라 무시하고 조회 결과로만 채운다(mass assignment 방어).
+        SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
+                new PhotoPayload(filename, "content://x", 37.5445, 127.0559, "설명",
+                        "클라가 보낸 가짜 주소", List.of("가짜 장소"), null));
+
+        PhotoPayload reconstructed = (PhotoPayload) service().enrich(List.of(photo), SUBJECT_ID)
+                .get(0).payload();
+
+        assertThat(reconstructed.address()).isEqualTo("서울 성동구 성수이로 10");
+        assertThat(reconstructed.places()).containsExactly("블루보틀 성수");
+        assertThat(reconstructed.latitude()).isEqualTo(37.5445);
+        assertThat(reconstructed.longitude()).isEqualTo(127.0559);
+        assertThat(reconstructed.photoUrl()).isEqualTo("https://cdn.example/p.jpg");
+    }
+
+    @Test
+    void enrich_looksUpSharedCoordinateOnce_whenStayAndPhotoOverlap() {
+        when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn("https://cdn.example/p.jpg");
+        Coordinate shared = new Coordinate(37.5340, 126.9668);
+        stubLookupAll(Map.of(shared, new GeoPlace("서울 마포구 양화로 100", List.of("합정 카페"))));
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.STAY, "r1", T, T.plusHours(1),
+                        new StayPayload(37.5340, 126.9668, null, null, null)),
+                new SourceItemDto(ItemType.PHOTO, "r2", T.plusMinutes(10), null,
+                        new PhotoPayload(VALID_FILENAME, "content://x", 37.5340, 126.9668, null,
+                                null, null, null)));
+
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Set<Coordinate>> captor = ArgumentCaptor.forClass(Set.class);
+        verify(geocodingService).lookupAll(captor.capture());
+        assertThat(captor.getValue()).containsExactly(shared);
+        assertThat(((StayPayload) enriched.get(0).payload()).address()).isEqualTo("서울 마포구 양화로 100");
+        assertThat(((PhotoPayload) enriched.get(1).payload()).address()).isEqualTo("서울 마포구 양화로 100");
+    }
+
+    @Test
+    void enrich_countsPhotoFailureInFailureRatio_andRejectsBeyondLimit() {
+        // 성공 STAY 3 + 실패 PHOTO 1 → (F,U)=(1,4)로 5*1=5 > 4라 D1이 거절한다. 사진 좌표도 실패율에 계수된다.
+        Coordinate failing = new Coordinate(37.9999, 127.9999);
+        stubOutcomes(Map.of(), Map.of(failing, MapPlaceLookupException.remoteTransient("keyword http 500", null)));
+        List<SourceItemDto> sources = new ArrayList<>(distinctStays(3));
+        sources.add(new SourceItemDto(ItemType.PHOTO, "raw-photo", T.plusHours(5), null,
+                new PhotoPayload(VALID_FILENAME, "content://x", 37.9999, 127.9999, null, null, null, null)));
+
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1014));
+    }
+
+    @Test
+    void enrich_doesNotLetPhotoBurstTriggerConsecutiveFailureRule() {
+        when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn("https://cdn.example/p.jpg");
+        // 같은 자리에서 찍은 사진 3장이 한 좌표를 공유하고 그 좌표 조회가 실패한다.
+        // 사진은 D2 관측을 만들지 않으므로 "시간순 연속 실패 3"에 걸리지 않는다.
+        // D1이 먼저 거절하지 않도록 성공 좌표 5개를 둬 (F,U)=(1,6)으로 맞춘다.
+        Coordinate failing = new Coordinate(37.9999, 127.9999);
+        stubOutcomes(Map.of(), Map.of(failing, MapPlaceLookupException.remoteTransient("keyword http 500", null)));
+        List<SourceItemDto> sources = new ArrayList<>(distinctStays(5));
+        for (int i = 0; i < 3; i++) {
+            sources.add(new SourceItemDto(ItemType.PHOTO, "raw-photo-" + i, T.plusHours(5).plusMinutes(i), null,
+                    new PhotoPayload(VALID_FILENAME, "content://x", 37.9999, 127.9999, null, null, null, null)));
+        }
+
+        List<SourceItemDto> enriched = service().enrich(sources, SUBJECT_ID);
+
+        // 거절되지 않고, 실패 좌표만 D5 fallback(address 없음·places 빈 배열)으로 이어진다.
+        assertThat(enriched).hasSize(8);
+        PhotoPayload photo = (PhotoPayload) enriched.get(5).payload();
+        assertThat(photo.address()).isNull();
+        assertThat(photo.places()).isEmpty();
+    }
+
+    @Test
+    void enrich_countsPhotoCoordinateTowardCap() {
+        // STAY 30개(=상한)에 사진 좌표 1개가 더해지면 상한을 넘어 외부 호출 전에 거절된다.
+        List<SourceItemDto> sources = new ArrayList<>(distinctStays(MAX_UNIQUE_COORDINATES));
+        sources.add(new SourceItemDto(ItemType.PHOTO, "raw-photo", T.plusHours(5), null,
+                new PhotoPayload(VALID_FILENAME, "content://x", 37.9999, 127.9999, null, null, null, null)));
+
+        assertThatThrownBy(() -> service().enrich(sources, SUBJECT_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unique geo coordinates");
         verifyNoInteractions(geocodingService);
     }
 

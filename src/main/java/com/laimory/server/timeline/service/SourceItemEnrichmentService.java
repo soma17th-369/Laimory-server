@@ -36,14 +36,20 @@ import org.springframework.stereotype.Service;
  * 파생한 무서명 CloudFront 서빙 URL이다(AI가 서버간 입력 조회 API로 소비).
  * 저장은 payload 통짜 직렬화라 이 재구성본이 곧 저장본이다.
  *
- * <p><b>2-pass 구조</b>: ① 지오코딩 대상 좌표(STAY 좌표·MOVEMENT start/end만 — PHOTO는 latitude/longitude
- * 필드가 있어도 지오코딩 비대상)를 시간순 관측({@link CoordinateObservation})과 함께 {@link LinkedHashSet}으로
- * dedupe 수집하고 ② 한 번에 병렬 조회({@link GeocodingService#lookupAll}) 후 ③ 품질 판정을 통과하면 완성된
- * map으로 재구성한다. 좌표가 없으면(PHOTO/HEALTH만) lookupAll 자체를 생략한다. source 결과 순서와 envelope
- * 필드는 그대로 보존한다.
+ * <p><b>2-pass 구조</b>: ① 한 번의 순회로 조회 대상 좌표와 시간축 관측을 함께 모으고
+ * ({@code collectGeoInputs}) ② 좌표를 한 번에 병렬 조회({@link GeocodingService#lookupAll}) 후
+ * ③ 품질 판정을 통과하면 완성된 map으로 재구성한다. 좌표가 하나도 없으면 lookupAll 자체를 생략한다.
+ * source 결과 순서와 envelope 필드는 그대로 보존한다.
+ *
+ * <p><b>조회 대상과 판정 축은 다르다</b>: 조회 대상은 STAY 좌표·MOVEMENT start/end에 <b>좌표를 가진 PHOTO</b>가
+ * 합류한 합집합이다. 반면 시간순 관측({@link CoordinateObservation})은 STAY/MOVEMENT만 만든다 — PHOTO는
+ * D1(실패율)에는 합류하지만 <b>D2(시간순 연속 실패 3) 축에는 관측을 만들지 않는다</b>. D2가 관측 단위로
+ * 계수하는데 사진은 시간축에 조밀하게 뭉쳐, 같은 자리에서 찍은 사진 3장의 좌표 조회가 한 번만 실패해도
+ * 하루 draft 전체가 502가 되기 때문이다. 하루 25개 안팎이 흩어진 STAY/MOVEMENT를 전제로 정한 임계값이라
+ * 사진에는 의미가 달라진다. D1은 {@code outcomes.size()} 기반이라 합집합을 넘기면 자동으로 합류한다.
  *
  * <p><b>공개 입력 상한(D9/D17)</b>: rawId dedupe·기존 저장 item 제외 뒤 실제 lookup할 unique coordinate가
- * {@code app.geo.max-unique-coordinates}(기본 30)를 넘으면 외부 호출 전에 400/{@code -400}으로 거절한다.
+ * {@code app.geo.max-unique-coordinates}(기본 100)를 넘으면 외부 호출 전에 400/{@code -400}으로 거절한다.
  *
  * <p><b>부분 실패 판정(D1/D2/D7)</b>: materialize된 좌표별 최종 outcome으로 전체 실패 20% 초과 또는 시간순
  * 연속 3개 실패면 저장 전에 502(영구 포함 {@code -1015}, 아니면 {@code -1014})로 거절한다. 허용되면 성공
@@ -64,7 +70,7 @@ public class SourceItemEnrichmentService {
             GeocodingService geocodingService,
             PhotoUrlService photoUrlService,
             GeoMetrics geoMetrics,
-            @Value("${app.geo.max-unique-coordinates:30}") int maxUniqueCoordinates) {
+            @Value("${app.geo.max-unique-coordinates:100}") int maxUniqueCoordinates) {
         if (maxUniqueCoordinates < 1) {
             throw new IllegalStateException(
                     "app.geo.max-unique-coordinates must be >= 1 but was " + maxUniqueCoordinates);
@@ -79,8 +85,9 @@ public class SourceItemEnrichmentService {
     @WithSpan
     public List<SourceItemDto> enrich(List<SourceItemDto> sourceItems, UUID subjectId) {
         long startNanos = System.nanoTime();
-        List<CoordinateObservation> observations = collectObservations(sourceItems);
-        Set<Coordinate> coordinates = uniqueCoordinates(observations);
+        GeoInputs inputs = collectGeoInputs(sourceItems);
+        List<CoordinateObservation> observations = inputs.observations();
+        Set<Coordinate> coordinates = inputs.coordinates();
         // 공개 입력 상한 — 외부 I/O 전 기존 validation 400/-400 경로(IllegalArgumentException).
         // 상한·개수만 메시지에 담는다(좌표 금지). sourceItems 배열 길이가 아니라 필터 뒤 unique 좌표 수 기준이다.
         if (coordinates.size() > maxUniqueCoordinates) {
@@ -103,40 +110,68 @@ public class SourceItemEnrichmentService {
     }
 
     /**
-     * 지오코딩 대상 좌표 관측만 수집한다. 수집 대상은 STAY 좌표와 MOVEMENT start/end뿐 —
-     * PHOTO는 좌표 필드가 있어도 비대상(현행 계약 보존), 그 외 타입도 미수집. source encounter order를
-     * 보존해 병렬 구독 시작 순서를 결정적으로 유지한다(완료 순서는 비결정 — 판정에는 쓰지 않는다).
+     * 한 번의 순회로 두 축을 함께 모은다 — <b>타입별로 무엇을 기여하는지가 이 switch 한 곳에 있다</b>.
+     *
+     * <ul>
+     *   <li>STAY: 좌표 1개 + 관측 1개</li>
+     *   <li>MOVEMENT: start/end 좌표 2개 + 관측 2개</li>
+     *   <li>PHOTO: 좌표만(둘 다 있을 때) — <b>관측을 만들지 않아 D2 축에 오르지 않는다</b></li>
+     *   <li>그 외: 기여 없음</li>
+     * </ul>
+     *
+     * <p>좌표는 source encounter order를 보존한 {@link LinkedHashSet}이라 dedupe되면서도 병렬 구독 시작
+     * 순서가 결정적이다(완료 순서는 비결정 — 판정에는 쓰지 않는다). 사진 좌표가 STAY 좌표와 같으면 접혀
+     * 조회는 1회이며, 그 좌표는 STAY 관측을 통해 D2 축에 이미 올라 있다.
+     * 관측은 List라 같은 좌표의 반복이 D2 연속 계수에 그대로 반영된다.
      * {@code startAt}은 검증 경계(requireValidSourceItems)가 필수를 보장한 뒤라 null 케이스가 없다.
      */
-    private static List<CoordinateObservation> collectObservations(List<SourceItemDto> sourceItems) {
+    private static GeoInputs collectGeoInputs(List<SourceItemDto> sourceItems) {
         List<CoordinateObservation> observations = new ArrayList<>();
+        Set<Coordinate> coordinates = new LinkedHashSet<>();
         for (SourceItemDto src : sourceItems) {
             switch (src.payload()) {
-                case StayPayload stay -> observations.add(new CoordinateObservation(
-                        new Coordinate(stay.latitude(), stay.longitude()), src.startAt(), src.rawId(), 0));
+                case StayPayload stay -> {
+                    Coordinate at = new Coordinate(stay.latitude(), stay.longitude());
+                    coordinates.add(at);
+                    observations.add(new CoordinateObservation(at, src.startAt(), src.rawId(), 0));
+                }
                 case MovementPayload movement -> {
-                    observations.add(new CoordinateObservation(
-                            new Coordinate(movement.start().latitude(), movement.start().longitude()),
-                            src.startAt(), src.rawId(), 0));
+                    Coordinate start = new Coordinate(
+                            movement.start().latitude(), movement.start().longitude());
+                    Coordinate end = new Coordinate(
+                            movement.end().latitude(), movement.end().longitude());
+                    coordinates.add(start);
+                    coordinates.add(end);
+                    observations.add(new CoordinateObservation(start, src.startAt(), src.rawId(), 0));
                     // MOVEMENT END 시각은 endAt이 있으면 그 값, 없으면 startAt(best-known timestamp, D3).
                     LocalDateTime endObservedAt = src.endAt() != null ? src.endAt() : src.startAt();
-                    observations.add(new CoordinateObservation(
-                            new Coordinate(movement.end().latitude(), movement.end().longitude()),
-                            endObservedAt, src.rawId(), 1));
+                    observations.add(new CoordinateObservation(end, endObservedAt, src.rawId(), 1));
+                }
+                case PhotoPayload photo -> {
+                    if (hasCoordinate(photo)) {
+                        coordinates.add(new Coordinate(photo.latitude(), photo.longitude()));
+                    }
                 }
                 default -> {
                 }
             }
         }
-        return observations;
+        return new GeoInputs(observations, coordinates);
     }
 
-    private static Set<Coordinate> uniqueCoordinates(List<CoordinateObservation> observations) {
-        Set<Coordinate> coordinates = new LinkedHashSet<>();
-        for (CoordinateObservation observation : observations) {
-            coordinates.add(observation.coordinate());
-        }
-        return coordinates;
+    /**
+     * 수집 결과 — {@code observations}는 D2 시간축(관측 단위 계수라 List),
+     * {@code coordinates}는 실제로 조회할 unique 좌표(dedupe·상한·D1 분모).
+     */
+    private record GeoInputs(List<CoordinateObservation> observations, Set<Coordinate> coordinates) {
+    }
+
+    /**
+     * PHOTO 좌표는 선택이라 둘 다 있을 때만 조회 대상이다. 부분·범위 밖 좌표는 입력 경계
+     * (TimelineDraftTaskService)가 이미 400으로 걸러낸 뒤다.
+     */
+    private static boolean hasCoordinate(PhotoPayload photo) {
+        return photo.latitude() != null && photo.longitude() != null;
     }
 
     /**
@@ -228,10 +263,16 @@ public class SourceItemEnrichmentService {
                     reconstructEndpoint(movement.start(), lookups),
                     reconstructEndpoint(movement.end(), lookups),
                     movement.transports(), movement.distanceMeters());
-            case PhotoPayload photo -> new PhotoPayload(
-                    photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
-                    photo.description(),
-                    photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
+            case PhotoPayload photo -> {
+                // 좌표가 없는 사진은 조회 대상이 아니므로 enrich 필드도 비운다(NON_NULL — key 생략).
+                GeoPlace geo = hasCoordinate(photo)
+                        ? lookups.get(new Coordinate(photo.latitude(), photo.longitude()))
+                        : GeoPlace.EMPTY;
+                yield new PhotoPayload(
+                        photo.filename(), photo.clientPhotoUri(), photo.latitude(), photo.longitude(),
+                        photo.description(), geo.address(), geo.places(),
+                        photoUrlService.buildSubjectUrl(photo.filename(), subjectId));
+            }
             default -> src.payload();
         };
         if (reconstructed == src.payload()) {
@@ -241,8 +282,8 @@ public class SourceItemEnrichmentService {
         return new SourceItemDto(src.itemType(), src.rawId(), src.startAt(), src.endAt(), reconstructed);
     }
 
-    private MovementEndpoint reconstructEndpoint(MovementEndpoint endpoint, Map<Coordinate, GeoPlace> lookups) {
-        // 수집(collectObservations)과 같은 규칙으로 키를 만들므로 map에 항상 존재한다(D6).
+    private static MovementEndpoint reconstructEndpoint(MovementEndpoint endpoint, Map<Coordinate, GeoPlace> lookups) {
+        // 수집(collectGeoInputs)과 같은 규칙으로 키를 만들므로 map에 항상 존재한다(D6).
         GeoPlace geo = lookups.get(new Coordinate(endpoint.latitude(), endpoint.longitude()));
         return new MovementEndpoint(
                 endpoint.latitude(), endpoint.longitude(), geo.address(), geo.places());

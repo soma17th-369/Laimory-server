@@ -1,0 +1,117 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: laimory-backup
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_mysqldump_stale
+        title: MySQL dump backup stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_mysqldump_up{job="node",environment="prod",host="prod-mysql"}) > 0) or (time() - laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"} > 93600) or (absent(laimory_mysqldump_last_success_unixtime_seconds{job="node",environment="prod",host="prod-mysql"}) and on(job,environment,host) (up{job="node",environment="prod",host="prod-mysql"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'prod MySQL logical dump has not succeeded in over 26 hours, or the latest run failed.'
+          description: 'Inspect laimory-mysqldump-backup.service logs on the prod MySQL host, S3 upload permissions, and the backup account.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prod-mysql-backup
+        labels:
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_ebs_snapshot_stale
+        title: MySQL EBS snapshot backup stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_ebs_snapshot_up{job="node",environment="dev",host="monitoring"}) > 0) or (time() - laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 93600) or (absent(laimory_ebs_snapshot_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'prod MySQL EBS snapshot has not completed in over 26 hours, or the latest snapshot run failed.'
+          description: 'Inspect laimory-ebs-snapshot.service logs on the monitoring host, snapshot IAM permissions, and EC2 snapshot state.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prod-mysql-backup
+        labels:
+          service: laimory
+          severity: critical
+        isPaused: false

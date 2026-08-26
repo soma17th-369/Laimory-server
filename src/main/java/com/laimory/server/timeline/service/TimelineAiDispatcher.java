@@ -16,7 +16,8 @@ import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
  * 호출부가 PROCESSING을 유지한다. 어느 경우든 호출부는 draft POST를 502(-1009)로 실패시킨다.
  *
  * <p>구현 선택은 {@code app.ai.mode}: {@code noop}(기본 — AI 미연동, prod 안전) /
- * {@code fake}(dev — in-process fake가 서버간 계약을 호출) / {@code http}(실 AI HTTP 연동).
+ * {@code fake}(dev — in-process fake가 서버간 계약을 호출) / {@code http}(실 AI HTTP 연동) /
+ * {@code agentcore}(실 AI 연동 — Bedrock AgentCore Runtime에 공통 wrapper로 접수, #338).
  * ⚠️ {@code request.taskToken}은 비밀이므로 어떤 구현도 절대 로그하지 않는다.
  */
 public interface TimelineAiDispatcher {

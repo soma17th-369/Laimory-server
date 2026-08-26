@@ -60,20 +60,33 @@ class TimelineTaskServiceTest {
     }
 
     @Test
-    void replaceProcessing_usesProcessingCasAndTtl() {
+    void saveProcessingIfPresent_usesKeepTtlStoreApi_withoutExpectedSnapshotOrTtl() {
+        // expected snapshot도 TTL 인자도 없다 — 최초 만료 시각은 store의 KEEPTTL write가 보존한다.
+        TimelineDraftTask replacement = TimelineDraftTask.processing(
+                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
+                .withTokenAndStage(tokenHashes("next"), ProcessStage.RESULT_PENDING);
+        when(timelineTaskStore.saveProcessingIfPresent("t", replacement)).thenReturn(true);
+
+        assertThat(service.saveProcessingIfPresent("t", replacement)).isTrue();
+
+        verify(timelineTaskStore).saveProcessingIfPresent("t", replacement);
+        assertThat(replacement.processingStartedAt()).isEqualTo(STARTED_AT);
+    }
+
+    @Test
+    void markTerminalIfPresent_stores24hTtl_andRecordsMetricOnlyOnSuccess() {
         TimelineDraftTask task = TimelineDraftTask.processing(
-                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
-        TimelineDraftTask replacement = task.withTokenAndStage(
-                tokenHashes("next"), ProcessStage.RESULT_PENDING);
-        when(timelineTaskStore.replaceIfUnchanged(
-                "t", task, replacement, Duration.ofMinutes(3))).thenReturn(true);
+                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
+                .withTokenAndStage(tokenHashes("cb"), ProcessStage.CALLBACK_PENDING);
+        when(timelineTaskStore.saveTerminalIfPresent(eq("t"), any(), eq(Duration.ofHours(24))))
+                .thenReturn(true, false);
 
-        assertThat(service.replaceProcessing("t", task, replacement)).isTrue();
+        assertThat(service.markSuccessIfPresent("t", task)).isTrue();
+        verify(timelineMetrics).recordTerminalSuccess();
 
-        ArgumentCaptor<Duration> ttl = ArgumentCaptor.forClass(Duration.class);
-        verify(timelineTaskStore).replaceIfUnchanged(eq("t"), eq(task), eq(replacement), ttl.capture());
-        assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
-        assertThat(task.processingStartedAt()).isEqualTo(STARTED_AT);
+        // missing(만료)이면 metric을 올리지 않는다.
+        assertThat(service.markFailedIfPresent("t", task, ExceptionType.AI_REPORTED_FAILURE)).isFalse();
+        verify(timelineMetrics, never()).recordTerminalFailed();
     }
 
     @Test
@@ -123,9 +136,9 @@ class TimelineTaskServiceTest {
                 SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
                 .withTokenAndStage(tokenHashes("hash"), ProcessStage.CALLBACK_PENDING);
         doThrow(new RuntimeException("redis down")).when(timelineTaskStore)
-                .replaceIfUnchanged(eq("t"), eq(task), any(), any());
+                .saveTerminalIfPresent(eq("t"), any(), any());
 
-        assertThatThrownBy(() -> service.markSuccessIfCurrent("t", task))
+        assertThatThrownBy(() -> service.markSuccessIfPresent("t", task))
                 .isInstanceOf(RuntimeException.class);
 
         verify(timelineMetrics, never()).recordTerminalSuccess();

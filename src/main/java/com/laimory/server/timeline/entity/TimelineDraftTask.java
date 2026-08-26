@@ -105,16 +105,17 @@ public record TimelineDraftTask(
      *
      * <p>{@code previousTokenHash}는 직전 단계 전이에서 소비된 token의 SHA-256이다 — 재시도의 인증 수단이며
      * "같은 결과를 다시 제출해 다음 token을 재발급받을" 권한만 갖는다(입력 조회·callback에는 쓸 수 없다).
-     * {@code retryableUntil}은 <b>첫 요청이 도착한 시각</b> 기준 절대 마감이다. CAS마다 재확보되는 task TTL과
-     * 달리 재발급으로 미끄러지지 않는다.
+     * {@code retryableUntil}은 <b>첫 요청이 도착한 시각</b> 기준 절대 마감이다 — 최초 PROCESSING 시작
+     * 기준으로 고정된 task TTL과 마찬가지로 재발급으로 미끄러지지 않는다.
      *
      * <p>{@code claimedAt}은 결과 저장을 선점한 시각이다 — 회전이 commit 뒤로 미뤄져 stage만으로는
-     * "이미 누가 transaction을 돌리고 있는" 구간이 구분되지 않으므로, 이 표식이 동시 writer를 하나로
-     * 제한한다(없으면 두 요청이 겹쳐 돌아 Event·Item이 중복 삽입된다).
+     * "이미 누가 transaction을 돌리고 있는" 구간이 구분되지 않으므로, 이 표식이 뒤늦은 same-token
+     * 재시도의 transaction 재진입과 선점 중 FAILED callback의 terminal 확정을 막는다(없으면 요청이
+     * 겹쳐 돌아 Event·Item이 중복 삽입되거나 terminal이 PROCESSING으로 되쓰인다).
      *
-     * <p>"graph가 확정됐다"는 stage가 말한다 — 회전과 commit이 같은 CAS에 묶여 있어
-     * {@code CALLBACK_PENDING}은 저장이 끝났다는 뜻이고, 선점만 된 구간은 {@code RESULT_PENDING} +
-     * {@code claimedAt}으로 구분된다. 별도 commit 표식을 두지 않는다.
+     * <p>"graph가 확정됐다"는 stage가 말한다 — MySQL commit 뒤에야 token 회전과 stage 전이를 하나의
+     * Redis write로 수행하므로 {@code CALLBACK_PENDING}은 저장이 끝났다는 뜻이고, 선점만 된 구간은
+     * {@code RESULT_PENDING} + {@code claimedAt}으로 구분된다. 별도 commit 표식을 두지 않는다.
      *
      * <p>세 값 모두 hash와 시각이라 token 원문도 요청 본문도 보존하지 않는다.
      */

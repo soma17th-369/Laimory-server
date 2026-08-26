@@ -63,9 +63,9 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void insertIfAbsent_defersNewJobToNextSeoulCalendarDayAndReportsWhetherInserted() {
-        LocalDateTime initialAvailableAt = LocalDateTime.of(2026, 8, 15, 0, 0);
-        when(repository.insertIfAbsent(1L, "hash/photos/photo.jpg", initialAvailableAt)).thenReturn(1, 0);
+    void insertIfAbsent_writesSingleSeoulAuditTimeAndReportsWhetherInserted() {
+        LocalDateTime auditAt = LocalDateTime.of(2026, 8, 14, 3, 30);
+        when(repository.insertIfAbsent(1L, "hash/photos/photo.jpg", auditAt)).thenReturn(1, 0);
 
         assertThat(service.insertIfAbsent(1L, "hash/photos/photo.jpg")).isTrue();
         assertThat(service.insertIfAbsent(1L, "hash/photos/photo.jpg")).isFalse();
@@ -81,44 +81,51 @@ class TimelinePhotoDeleteJobServiceTest {
                 .isThrownBy(() -> service.insertIfAbsent(1L, " "));
 
         verify(repository, never()).insertIfAbsent(
-                0L, "hash/photos/photo.jpg", LocalDateTime.of(2026, 8, 15, 0, 0));
+                0L, "hash/photos/photo.jpg", LocalDateTime.of(2026, 8, 14, 3, 30));
         verify(repository, never()).insertIfAbsent(
-                1L, "한글/photos/photo.jpg", LocalDateTime.of(2026, 8, 15, 0, 0));
+                1L, "한글/photos/photo.jpg", LocalDateTime.of(2026, 8, 14, 3, 30));
         verify(repository, never()).insertIfAbsent(
-                1L, " ", LocalDateTime.of(2026, 8, 15, 0, 0));
+                1L, " ", LocalDateTime.of(2026, 8, 14, 3, 30));
     }
 
     @Test
-    void claimEligible_usesSeoulClockAndDefersToNextCalendarDayMidnight() {
+    void claimEligible_queriesSeoulThreeDayWindowAndMarksUpdatedAtWithClaimTime() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
         when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
-        LocalDateTime eligibleAt = LocalDateTime.of(2026, 8, 14, 3, 30);
-        when(repository.findEligibleForUpdateSkipLocked(eligibleAt, 250))
+        LocalDateTime windowStart = LocalDateTime.of(2026, 8, 11, 0, 0);
+        LocalDateTime todayStart = LocalDateTime.of(2026, 8, 14, 0, 0);
+        LocalDateTime claimedAt = LocalDateTime.of(2026, 8, 14, 3, 30);
+        when(repository.findClaimableForUpdateSkipLocked(windowStart, todayStart, 250))
                 .thenReturn(List.of(first, second));
-        when(repository.markProcessingUntil(
-                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING,
-                LocalDateTime.of(2026, 8, 15, 0, 0)))
+        when(repository.markProcessing(
+                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING, claimedAt))
                 .thenReturn(2);
 
         assertThat(service.claimEligible(250)).containsExactly(first, second);
 
-        verify(repository).markProcessingUntil(
-                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING,
-                LocalDateTime.of(2026, 8, 15, 0, 0));
+        verify(repository).markProcessing(
+                List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING, claimedAt);
     }
 
     @Test
     void claimEligible_validatesBatchAndDoesNotUpdateEmptySelection() {
-        when(repository.findEligibleForUpdateSkipLocked(
-                LocalDateTime.of(2026, 8, 14, 3, 30), 250))
+        when(repository.findClaimableForUpdateSkipLocked(
+                LocalDateTime.of(2026, 8, 11, 0, 0), LocalDateTime.of(2026, 8, 14, 0, 0), 250))
                 .thenReturn(List.of());
 
         assertThat(service.claimEligible(250)).isEmpty();
-        verify(repository, never()).markProcessingUntil(
+        verify(repository, never()).markProcessing(
                 List.of(), TimelinePhotoDeleteJobStatus.PROCESSING,
-                LocalDateTime.of(2026, 8, 15, 0, 0));
+                LocalDateTime.of(2026, 8, 14, 3, 30));
         assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(0));
         assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(1_001));
+    }
+
+    @Test
+    void countExpired_usesSameSeoulWindowBoundaryAsClaim() {
+        when(repository.countCreatedBefore(LocalDateTime.of(2026, 8, 11, 0, 0))).thenReturn(3L);
+
+        assertThat(service.countExpired()).isEqualTo(3L);
     }
 
     @Test
@@ -150,11 +157,12 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void cancelPendingForRelink_rejectsActiveProcessingJob() {
+    void cancelPendingForRelink_rejectsProcessingJobClaimedToday() {
         when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
                 .thenReturn(Optional.of(first));
         when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PROCESSING);
-        when(first.getAvailableAt()).thenReturn(LocalDateTime.of(2026, 8, 15, 0, 0));
+        // 오늘 00:00 경계 포함(>= todayStart)이 active다.
+        when(first.getUpdatedAt()).thenReturn(LocalDateTime.of(2026, 8, 14, 0, 0));
 
         assertThatThrownBy(() -> service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
@@ -162,6 +170,24 @@ class TimelinePhotoDeleteJobServiceTest {
                                 .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
 
         verify(timelineItemService, never()).findById(org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void cancelPendingForRelink_cancelsStaleProcessingJobFromPreviousDay() {
+        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
+                .thenReturn(Optional.of(first));
+        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PROCESSING);
+        when(first.getUpdatedAt()).thenReturn(LocalDateTime.of(2026, 8, 13, 23, 59));
+        when(first.getTimelineItemId()).thenReturn(101L);
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(timelineItemService.findById(101L)).thenReturn(Optional.of(item));
+        when(item.getItemType()).thenReturn(ItemType.PHOTO);
+        when(item.getRawId()).thenReturn("raw-photo");
+        when(item.getTimelineItemId()).thenReturn(101L);
+        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(1);
+
+        assertThat(service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
+                .contains(101L);
     }
 
     @Test

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Laimory prod MySQL dump backup daily at 04:15 KST
+
+[Timer]
+OnCalendar=*-*-* 19:15:00 UTC
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

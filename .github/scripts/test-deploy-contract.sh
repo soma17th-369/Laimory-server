@@ -2,7 +2,7 @@
 # deploy.yml SSM 원격 배포 script의 계약 테스트 harness.
 #
 # production heredoc 본문을 deploy.yml에서 그대로 추출해(복사본 금지) 러너와 동일한 unquoted-heredoc
-# 확장으로 SCRIPT를 재현한 뒤, fake docker/aws/curl/nginx PATH와 temp .env fixture로 실행한다.
+# 확장으로 SCRIPT를 재현한 뒤, fake docker/aws/curl PATH와 temp .env fixture로 실행한다.
 # LAIMORY_ENV_FILE / LAIMORY_FCM_CRED_FILE seam으로 운영 경로 대신 fixture 경로를 준다.
 # 검증 계약: 계획 #197의 T1~T10 — exact-one preflight fail-closed, APP_COMMIT_SHA 원자 upsert,
 # pre-stop 실패의 .env/SHA 보존, secret 비출력, 모든 종료 경로의 prune -af 1회와 원래 status 보존.
@@ -107,8 +107,7 @@ ruby -ryaml -e '
   ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=prod",
    "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=",
    "EXPECT_SWAGGER_ENABLED=true", "EXPECT_SWAGGER_ENABLED=false",
-   "EXPECT_APP_GEO_MODE=kakao",
-   "HAS_NGINX=true", "HAS_NGINX=false"].each do |pair|
+   "EXPECT_APP_GEO_MODE=kakao"].each do |pair|
     abort "resolve step must define #{pair} (harness reproduces these values)" unless resolve_run.include?(pair)
   end
   # workflow 레벨 env에 인스턴스가 남아 있으면 결정 지점이 둘이 된다.
@@ -200,7 +199,6 @@ assert_resolved "dev push" "environment=dev"
 assert_resolved "dev push" "expect_app_env=dev"
 assert_resolved "dev push" "expect_redis_key_prefix=dev_"
 assert_resolved "dev push" "expect_swagger_enabled=true"
-assert_resolved "dev push" "has_nginx=true"
 
 run_resolve push main ""
 [ "$RESOLVE_RC" = "0" ] || fail "T0b(main push): resolve must succeed"
@@ -208,7 +206,6 @@ assert_resolved "main push" "environment=prod"
 assert_resolved "main push" "expect_app_env=prod"
 assert_resolved "main push" "expect_redis_key_prefix="
 assert_resolved "main push" "expect_swagger_enabled=false"
-assert_resolved "main push" "has_nginx=false"
 
 # 수동 실행은 branch가 아니라 입력이 이긴다(main에서 dev를 고를 수도, dev에서 prod를 고를 수도 있다).
 run_resolve workflow_dispatch main dev
@@ -248,11 +245,11 @@ grep -q 'trap cleanup EXIT' "$WORK/remote_body.raw" || fail "extracted body miss
 # 그대로 재현해 두 벌로 확장한다 — 확장 결과가 갈리는 지점이 곧 환경 분기의 전부여야 한다.
 dev_runner_env() {
   echo "ENVIRONMENT=dev"; echo "EXPECT_APP_ENV=dev"; echo "EXPECT_REDIS_KEY_PREFIX=dev_"
-  echo "EXPECT_SWAGGER_ENABLED=true"; echo "EXPECT_APP_GEO_MODE=kakao"; echo "HAS_NGINX=true"
+  echo "EXPECT_SWAGGER_ENABLED=true"; echo "EXPECT_APP_GEO_MODE=kakao"
 }
 prod_runner_env() {
   echo "ENVIRONMENT=prod"; echo "EXPECT_APP_ENV=prod"; echo "EXPECT_REDIS_KEY_PREFIX="
-  echo "EXPECT_SWAGGER_ENABLED=false"; echo "EXPECT_APP_GEO_MODE=kakao"; echo "HAS_NGINX=false"
+  echo "EXPECT_SWAGGER_ENABLED=false"; echo "EXPECT_APP_GEO_MODE=kakao"
 }
 expand_script() {
   # $1: runner env emitter, $2: output path, 나머지: 추가 env
@@ -358,27 +355,6 @@ if [ "$1" = "secretsmanager" ]; then
   exit 0
 fi
 echo "fake-ecr-password"
-exit 0
-STUBEOF
-
-cat > "$STUB/nginx" <<'STUBEOF'
-#!/usr/bin/env bash
-exit "${FAKE_NGINX_EXIT:-0}"
-STUBEOF
-
-cat > "$STUB/systemctl" <<'STUBEOF'
-#!/usr/bin/env bash
-exit 0
-STUBEOF
-
-cat > "$STUB/tee" <<'STUBEOF'
-#!/usr/bin/env bash
-cat > /dev/null
-exit 0
-STUBEOF
-
-cat > "$STUB/sed" <<'STUBEOF'
-#!/usr/bin/env bash
 exit 0
 STUBEOF
 
@@ -537,7 +513,7 @@ for failure in FAKE_MKTEMP_FAIL FAKE_AWK_FAIL FAKE_CHMOD_FAIL FAKE_CHOWN_EXIT FA
 done
 ok "T3: upsert failures preserve .env bytes/SHA and never reach docker stop"
 
-# --- 8. T3a: pre-stop 각 지점 실패의 보존 계약(login/pull/UID/nginx) ---
+# --- 8. T3a: pre-stop 각 지점 실패의 보존 계약(login/pull/UID) ---
 run_prestop_failure() {
   # $1 label, $2 fixture(base|firebase), $3 env override
   new_case
@@ -549,11 +525,10 @@ run_prestop_failure() {
   assert_prune_once "T3a($1)"
   assert_no_sentinel "T3a($1)"
 }
-run_prestop_failure "nginx" base "FAKE_NGINX_EXIT=1"
 run_prestop_failure "login" base "FAKE_LOGIN_EXIT=1"
 run_prestop_failure "pull" base "FAKE_PULL_EXIT=1"
 run_prestop_failure "uid-check" firebase "FAKE_UID_CHECK_EXIT=1"
-ok "T3a: nginx/login/pull/UID failures preserve .env and never stop the old container"
+ok "T3a: login/pull/UID failures preserve .env and never stop the old container"
 
 # --- 9. T5b: dev 고정 key + APP_AI_MODE exact-one fail-closed(누락·오값·중복) ---
 mutate_env() {
@@ -583,7 +558,7 @@ for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP
 done
 ok "T5b: fixed dev keys, APP_AI_MODE and subject mode/ARN fail closed on missing/wrong/duplicate lines"
 
-# --- 9a. T5f: 환경 분기 계약(#337) — prod 확장이 prod 기대값을 박고 nginx 블록을 건너뛰며,
+# --- 9a. T5f: 환경 분기 계약(#337) — prod 확장이 prod 기대값을 박고,
 # 환경이 섞이면(prod script + dev .env) 구 컨테이너 중지 전에 fail-closed한다.
 # 고정값이 리터럴에서 러너 변수로 내려갔으므로, "환경별로 정확히 이 지점만 갈린다"를 여기서 고정한다. ---
 expand_script prod_runner_env "$WORK/remote_prod_script.sh" \
@@ -598,10 +573,6 @@ grep -qF 'require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=false"' "$PROD_SCR
   || fail "T5f: prod script must require SWAGGER_ENABLED=false"
 grep -qF 'require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-prod"' "$PROD_SCRIPT_FILE" \
   || fail "T5f: prod OTel service name must not stay the dev literal"
-grep -qF 'if [ "false" = "true" ]; then' "$PROD_SCRIPT_FILE" \
-  || fail "T5f: prod script must disable the nginx block"
-grep -qF 'if [ "true" = "true" ]; then' "$SCRIPT_FILE" \
-  || fail "T5f: dev script must keep the nginx block enabled"
 
 prod_env_fixture() {
   base_env_fixture
@@ -626,17 +597,16 @@ assert_no_stop_no_run "T5f(cross)"
 assert_prune_once "T5f(cross)"
 assert_no_sentinel "T5f(cross)"
 
-# prod 정상 경로: nginx 자체가 실패하도록 만들어도 배포가 성공해야 nginx 블록을 정말 건너뛴 것이다
-# (dev에서 같은 조건이 배포를 중단시키는 것은 T3a가 검증한다 — 그 대비가 이 검사의 핵심이다).
+# prod 정상 경로: prod 기대값 fixture로 배포가 끝까지 성공해야 한다.
 new_case; prod_env_fixture
-execute_script "FAKE_NGINX_EXIT=1"
-[ "$RC" = "0" ] || fail "T5f(prod): success expected with nginx absent/failing, rc=$RC"
+execute_script
+[ "$RC" = "0" ] || fail "T5f(prod): success expected, rc=$RC"
 grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5f(prod): container must start"
 assert_sha_line "T5f(prod)"
 assert_no_sentinel "T5f(prod)"
 
 SCRIPT_FILE="$DEV_SCRIPT_FILE"
-ok "T5f: env branch pins per-environment expectations, skips nginx on prod, and fails closed on mixed environments"
+ok "T5f: env branch pins per-environment expectations and fails closed on mixed environments"
 
 # --- 10. T5b(http): base URL 필수 계약 ---
 for mutation in missing empty dup ; do
@@ -666,6 +636,69 @@ cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 execute_script
 [ "$RC" = "0" ] || fail "T5b(http/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
 ok "T5b(http): APP_AI_HTTP_BASE_URL exact-one non-empty enforced only for http mode"
+
+# --- 10b. T5b(agentcore): Runtime ARN·endpoint 필수 계약(#338) ---
+# 앱은 agentcore mode에서만 이 두 key를 소비하고 누락·blank·형식 오류에 기동 실패한다. 그 실패를
+# 구 컨테이너를 내린 뒤에 알게 되지 않도록 preflight가 같은 계약을 먼저 강제한다.
+# ARN 리전은 배포 리전(harness 확장값 ap-test-1)과 같아야 한다 — client는 배포 리전으로 만들어진다.
+AGENTCORE_ARN="arn:aws:bedrock-agentcore:ap-test-1:123456789012:runtime/laimory_ai-AbCdEf"
+switch_to_agentcore() {
+  PATH=/usr/bin:/bin sed -i.bak 's/^APP_AI_MODE=fake$/APP_AI_MODE=agentcore/' "$CASE_DIR/.env"
+  rm -f "$CASE_DIR/.env.bak"
+}
+for key in APP_AI_AGENTCORE_RUNTIME_ARN APP_AI_AGENTCORE_ENDPOINT ; do
+  for mutation in missing empty dup ; do
+    new_case; base_env_fixture
+    switch_to_agentcore
+    # 대상 key만 변형하고 나머지 필수 key는 정상값으로 채운다(진단이 다른 key로 미끄러지지 않게).
+    [ "$key" = "APP_AI_AGENTCORE_RUNTIME_ARN" ] || echo "APP_AI_AGENTCORE_RUNTIME_ARN=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+    [ "$key" = "APP_AI_AGENTCORE_ENDPOINT" ] || echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+    case "$mutation" in
+      missing) : ;;
+      empty) echo "$key=" >> "$CASE_DIR/.env" ;;
+      dup) if [ "$key" = "APP_AI_AGENTCORE_RUNTIME_ARN" ]; then
+             echo "$key=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+             echo "$key=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+           else
+             echo "$key=DEFAULT" >> "$CASE_DIR/.env"
+             echo "$key=OTHER" >> "$CASE_DIR/.env"
+           fi ;;
+    esac
+    chmod 600 "$CASE_DIR/.env"
+    cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+    execute_script
+    [ "$RC" != "0" ] || fail "T5b(agentcore/$key/$mutation): preflight failure expected"
+    grep -q "PREFLIGHT FAILED: .env $key" "$CASE_DIR/out.log" || fail "T5b(agentcore/$key/$mutation): key-only diagnostic expected"
+    assert_env_untouched "T5b(agentcore/$key/$mutation)"
+    assert_no_stop_no_run "T5b(agentcore/$key/$mutation)"
+    assert_prune_once "T5b(agentcore/$key/$mutation)"
+    assert_no_sentinel "T5b(agentcore/$key/$mutation)"
+  done
+done
+for bad_arn in "laimory_ai-AbCdEf" "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/laimory_ai-AbCdEf" ; do
+  new_case; base_env_fixture
+  switch_to_agentcore
+  echo "APP_AI_AGENTCORE_RUNTIME_ARN=$bad_arn" >> "$CASE_DIR/.env"
+  echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5b(agentcore/arn): preflight failure expected for a non-deployment-region or partial ARN"
+  grep -q "PREFLIGHT FAILED: .env APP_AI_AGENTCORE_RUNTIME_ARN" "$CASE_DIR/out.log" || fail "T5b(agentcore/arn): diagnostic expected"
+  assert_env_untouched "T5b(agentcore/arn)"
+  assert_no_stop_no_run "T5b(agentcore/arn)"
+  assert_prune_once "T5b(agentcore/arn)"
+  assert_no_sentinel "T5b(agentcore/arn)"
+done
+new_case; base_env_fixture
+switch_to_agentcore
+echo "APP_AI_AGENTCORE_RUNTIME_ARN=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5b(agentcore/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+ok "T5b(agentcore): Runtime ARN·endpoint exact-one non-empty and ARN shape/region enforced only for agentcore mode"
 
 # --- 10a. T5c: tracing 계약 — otlp 필수 세트 fail-closed + noop 잔존 금지 ---
 TRACING_REQUIRED_KEYS="JAVA_TOOL_OPTIONS OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_ENDPOINT \

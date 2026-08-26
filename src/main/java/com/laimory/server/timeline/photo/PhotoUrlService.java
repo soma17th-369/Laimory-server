@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
  * 쿼리스트링 없음). 전체 key는 {@link PhotoObjectKeys}의 subject 규칙으로 파생하고,
  * CDN 도메인({@code photo.cdn.domain})만 설정에서 주입한다.
  *
- * <p>PHOTO payload 저장 전 주입용이다 — draft enrich와 Event PATCH writer가 이 URL을 payload의
+ * <p>PHOTO payload 저장 전 주입용이다 — draft enrich와 수동 PHOTO writer가 이 URL을 payload의
  * {@code photoUrl}로 넣어 DB에 저장하고, 응답은 저장본을 그대로 통과시킨다(읽기 시점 재구성 없음).
  * live 경로는 {@link #buildSubjectUrl}을 사용한다.
  */

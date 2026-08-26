@@ -31,8 +31,8 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 25개(timeline 16 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-users GET /me·DELETE /me + terms agreements GET/POST)는 `bearerAuth` security requirement와
+보호 operation 27개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+user GET/DELETE + terms agreements GET/POST)는 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
@@ -87,8 +87,10 @@ nullable `place`·`address`(AI가 Event 단위로 고른 장소명과 그 주소
 `photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
 배열은 Item 변경 없음이며 명시적 null은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
+nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추기 위해 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
-규칙이며 위반은 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+규칙이며 위반은 400이다. 같은 record의 기존 PHOTO를 rawId로 재사용할 때 저장된 startAt/endAt과
+클라이언트 입력 payload가 요청과 다르면 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
@@ -122,6 +124,32 @@ zero-byte body(Content-Type 유무 무관)·`emotionType` 누락/null/미지원 
 body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. **새 error code는 추가하지 않았다.**
 commit 뒤 서버가 User Memory 갱신을 별도로 진행하지만
 그 성패는 이 응답과 무관하며 클라이언트가 조회할 대상이 아니다. ID 기반 deprecated 경로는 만들지 않았다.
+
+`PUT /a/api/{version}/timeline/daily-records/{recordDate}/emotion`(#325)은 저장 완료(SAVED) record의
+확정 감정을 필수 body `{"emotionType": "..."}`(save와 같은 5개 literal)로 교체한다. 대상은 SAVED뿐이다 —
+DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요청하면 409 `-1020`
+(`DAILY_RECORD_NOT_SAVED`, 신규 code)이다. status는 바꾸지 않고 같은 값 재요청도 멱등 성공이다
+(동시 수정은 마지막 commit이 남는다). 성공은 `200 + ApiResponse<Void>`·`body=null`, 없음·비소유는
+404 `-404`, 잘못된 날짜 형식·zero-byte body·`emotionType` 누락/null/미지원 literal·깨진 JSON은
+400 `-400`, body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`다. save와 달리 User Memory
+갱신을 새로 등록하지 않는다(SAVED 후 편집과 같은 정책).
+
+`POST /a/api/{version}/timeline/daily-records/{recordDate}/events`(#326)는 기존 하루 기록에 Event를
+수동 생성한다(DRAFT/SAVED 모두, DailyRecord 자동 생성 없음 — 없음·비소유는 404 `-404` 은닉).
+`eventType`·`title`·`subtitle`·`startAt`·`endAt` 5개 키는 모두 필수다(키 누락 400). `eventType`은
+명시적 null도 400이고 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 값이 nullable이고,
+`memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
+`photosToAdd`도 optional 키다(누락/빈 배열은 사진 없음, 명시적 null·비배열은 400). 사진 입력·개수·
+rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400)·pending delete job
+재연결 규칙은 Event PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO
+Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
+S3 object 존재를 확인하지 않는다. 유효한 `PROCESSING` delete job은 409 `-1019`, 사진 수 초과는 400
+`-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
+Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
+`200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
+`question`/`place`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면
+`items=[]`). body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`이고, User Memory 갱신은
+새로 등록하지 않는다.
 
 `POST /s/api/{version}/user-memory/updates/{taskId}/result`는 AI가 만든 새 User Memory 문서를 사용자
 문서 전체와 교체하는 서버간 endpoint다. 성공·실패가 같은 경로로 오며 `status`가 갈래를 정한다(FAILED도
@@ -161,12 +189,12 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
 도입해야 한다.
 
-`GET /a/api/{version}/users/me`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
+`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 
-`DELETE /a/api/{version}/users/me`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
+`DELETE /a/api/{version}/user`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
 bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`이다 — 202는 논리 탈퇴(이후 이
 회원의 모든 `/a/api` 접근·token/refresh 발급 차단), 이 transaction이 관측한 기존 refresh 전량 폐기,
 push 등록 삭제, 개인정보 삭제 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
@@ -204,7 +232,7 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
 미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /me 포함)과 fail-open
+403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /user 포함)과 fail-open
 계약은 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions

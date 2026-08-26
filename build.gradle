@@ -30,10 +30,13 @@ dependencies {
 	// WebClient(지오코딩 좌표 간 병렬 조회)용 — 서블릿 MVC 유지(web과 공존 시 WebApplicationType은 SERVLET).
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
 	// AWS SDK v2: S3 presigned PUT 업로드 + 객체 삭제(사진 저장 인프라). S3Presigner도 s3 모듈에 포함.
-	implementation platform('software.amazon.awssdk:bom:2.31.6')
+	implementation platform('software.amazon.awssdk:bom:2.54.2')
 	implementation 'software.amazon.awssdk:s3'
 	// Secrets Manager: subject 매핑 HMAC key를 기동 시 1회 로드(#282 — app.subject.mode=secretsmanager).
 	implementation 'software.amazon.awssdk:secretsmanager'
+	// Bedrock AgentCore data plane: AI 접수를 InvokeAgentRuntime으로 보낸다(#338 — app.ai.mode=agentcore).
+	// 이 모듈은 SDK 2.32.2부터 배포돼 BOM을 2.54.2로 올렸다(s3·secretsmanager도 같은 BOM이 정렬).
+	implementation 'software.amazon.awssdk:bedrockagentcore'
 	// JSON 구조화 로그(ELK 수집용 stdout). Spring BOM 비관리 → 버전 명시. 8.x = logback 1.5.x 호환.
 	implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
 	// 자체 JWT(access token) HS256 서명/검증. Spring BOM 비관리 → 버전 명시.

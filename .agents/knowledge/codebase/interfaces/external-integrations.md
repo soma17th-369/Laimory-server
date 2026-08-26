@@ -34,10 +34,15 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
 ### Kakao Maps
 
 - mode는 `noop|kakao`다. dev workflow는 Kakao mode를 켜고 기본값은 noop이다.
+- 조회 대상은 STAY 좌표, MOVEMENT start/end와 좌표를 가진 PHOTO의 합집합을 dedupe한 unique coordinate다.
 - unique coordinate마다 reverse geocoding 1회 + 주소(도로명 우선, 지번 fallback)를 질의어로 한
   keyword place search 1회, 정상 2회 외부 호출한다(주소가 없는 좌표는 keyword search를 생략해 1회).
 - keyword search 결과는 "같은 주소(건물)의 입주 장소" 보장이 아니라 주소 질의어 + 반경 50m 매칭의
   실측 관찰 기반 휴리스틱이다.
+- **좌표 실패는 coord2address 실패뿐이다**: keyword 콜이 최종 실패하면 분류(REMOTE·`LOCAL_REJECTED`·
+  `NOT_PERMITTED`·shape·logical deadline)를 가리지 않고 빈 장소 목록으로 강등해 이미 확보한 주소와
+  건물명을 보존한다 — 그 좌표는 실패가 아니라 "주소만 있는 성공"이다. 강등해도 콜 단위 관측
+  (logical timer·warn 로그·circuit 통계)은 그대로 남는다.
 - **HTTP 실행과 품질 판정 분리**: 외부 호출은 unique coordinate로 dedupe하고, 예상된 실패는 error가
   아니라 좌표별 최종 outcome으로 materialize해 나머지 조회를 계속한다(`GeoLookupOutcome`).
   부분 실패 허용/거절은 timeline 계층의 품질 판정(`GeoEnrichmentPolicy`)이 aggregate로 정한다 —
@@ -68,6 +73,7 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
 - 좌표, request URL/query, response body를 log/metric tag에 넣지 않는다(관측 계약은
   [observability](../operations/observability.md)).
 - `address`, `places`, `durationText`는 server-derived이며 client 값을 무시한다.
+  `address`·`places`는 STAY·MOVEMENT endpoint와 **draft 경로의 좌표를 가진 PHOTO**에 채워진다.
 
 credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 
@@ -77,12 +83,12 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 - signature는 content type과 content length를 묶는다.
 - object key namespace는 subject 기반
   `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}` 단일 규칙이다.
-  presign/enrich/Event PATCH/cleanup/delete job 모두 `PhotoObjectKeys.subjectFullKey`과
+  presign/enrich/수동 PHOTO 추가/cleanup/delete job 모두 `PhotoObjectKeys.subjectFullKey`과
   `PhotoUrlService.buildSubjectUrl`을 사용한다.
 - response/AI가 쓰는 `photoUrl`은 unsigned CloudFront URL이며 payload에 materialize한다.
-- Event PATCH의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내는 계약이다. 서버는 object 존재 여부를
-  HEAD하지 않고, 입력에 `description`·`photoUrl`을 받지 않으며 `description=null`과 server-derived
-  `photoUrl`을 final payload에 저장한다.
+- Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 S3 업로드 성공 뒤 보내는 계약이다. 서버는
+  object 존재 여부를 HEAD하지 않고, 입력에 `description`·`photoUrl`을 받지 않으며
+  `description=null`과 server-derived `photoUrl`을 final payload에 저장한다.
 - key/CDN domain 변경은 기존 payload backfill을 검토한다.
 - cleanup은 만료 draft photo object를 먼저 지우고 성공 뒤 DB row를 삭제한다.
 - finalized PHOTO는 Event/DailyRecord hard delete transaction이 원문 PHOTO Item과 MySQL delete-job을

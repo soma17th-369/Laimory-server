@@ -16,7 +16,9 @@ import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * 타임라인 이벤트. daily_record에 plain Long FK로 연결(@OneToMany 미사용 - 서비스=레포 1개 규칙 보존).
- * memo는 사용자가 나중에 작성하므로 생성 시점엔 비어 있다.
+ * 생성 경로는 둘이다 — AI 결과 저장은 question/place/address를 채울 수 있고 memo는 비워 두며,
+ * 수동 생성(POST .../daily-records/{recordDate}/events)은 question/place/address가 항상 null인
+ * 읽기 전용 계약이고 optional memo를 함께 받을 수 있다.
  *
  * <p>{@code @DynamicUpdate}: 통합 PATCH에서 memo가 생략된 요청과 memo PUT이 서로 다른 필드 그룹을
  * 갱신할 수 있다. Hibernate 기본 UPDATE는 모든 updatable 컬럼을 SET에 포함하므로, 두 요청이 같은 row를 읽고

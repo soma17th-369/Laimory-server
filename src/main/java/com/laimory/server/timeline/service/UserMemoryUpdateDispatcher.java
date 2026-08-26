@@ -19,7 +19,8 @@ import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
  * memory 반영만 누락된다.
  *
  * <p>구현 선택은 {@code app.ai.mode}: {@code noop}(기본 — AI 미연동, prod 안전) /
- * {@code fake}(dev — in-process fake가 서버간 계약을 호출) / {@code http}(실 AI HTTP 연동).
+ * {@code fake}(dev — in-process fake가 서버간 계약을 호출) / {@code http}(실 AI HTTP 연동) /
+ * {@code agentcore}(실 AI 연동 — Bedrock AgentCore Runtime에 공통 wrapper로 접수, #338).
  * ⚠️ {@code request.taskToken}은 비밀이므로 어떤 구현도 절대 로그하지 않는다.
  */
 public interface UserMemoryUpdateDispatcher {

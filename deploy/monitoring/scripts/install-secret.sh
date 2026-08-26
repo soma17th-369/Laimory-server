@@ -6,7 +6,7 @@ SECRET_NAME="${1:?secret name is required}"
 SECRETS_DIR="${MONITORING_SECRETS_DIR:-/opt/laimory-monitoring/secrets}"
 
 case "$SECRET_NAME" in
-  grafana_admin_password|grafana_secret_key|elasticsearch_api_key|discord_webhook_url)
+  grafana_admin_password|grafana_secret_key|elasticsearch_api_key|discord_webhook_url|google_oauth_client_secret)
     OWNER=472
     GROUP=0
     ;;

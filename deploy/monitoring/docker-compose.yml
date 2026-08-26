@@ -162,15 +162,23 @@ services:
       prometheus:
         condition: service_healthy
     environment:
-      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000/grafana/}
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # grafana.laimory.app 전용 host로 노출한다(#368) — 서브패스 서빙은 쓰지 않는다.
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-laimory}
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_SECURITY_SECRET_KEY__FILE: /run/secrets/grafana_secret_key
       GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}
-      GF_SECURITY_COOKIE_SAMESITE: strict
+      # strict면 OAuth 콜백 후 교차 사이트 내비게이션에 세션 쿠키가 붙지 않아 로그인 루프가 된다.
+      GF_SECURITY_COOKIE_SAMESITE: lax
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_GOOGLE_ENABLED: "true"
+      # GF_USERS_ALLOW_SIGN_UP과 별개 키다 — 이 값이 false여야 미리 등록된 사용자 이메일만 Google 로그인된다.
+      GF_AUTH_GOOGLE_ALLOW_SIGN_UP: "false"
+      GF_AUTH_GOOGLE_CLIENT_ID: ${GRAFANA_GOOGLE_CLIENT_ID:?GRAFANA_GOOGLE_CLIENT_ID must be set in .env}
+      GF_AUTH_GOOGLE_CLIENT_SECRET__FILE: /run/secrets/google_oauth_client_secret
+      GF_AUTH_GOOGLE_SCOPES: openid email profile
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_ALLOW_ORG_CREATE: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -190,6 +198,7 @@ services:
       - ./secrets/grafana_secret_key:/run/secrets/grafana_secret_key:ro
       - ./secrets/elasticsearch_api_key:/run/secrets/elasticsearch_api_key:ro
       - ./secrets/discord_webhook_url:/run/secrets/discord_webhook_url:ro
+      - ./secrets/google_oauth_client_secret:/run/secrets/google_oauth_client_secret:ro
     ports:
       - "127.0.0.1:3000:3000"
       - "${MONITORING_PRIVATE_IP:-127.0.0.2}:3000:3000"

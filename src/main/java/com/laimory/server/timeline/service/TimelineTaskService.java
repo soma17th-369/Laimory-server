@@ -21,11 +21,12 @@ import org.springframework.stereotype.Service;
 
 /**
  * timeline draft 작업 상태 leaf 서비스. 자신과 1:1인 TimelineTaskStore에만 접근한다.
- * 처리중(PROCESSING)은 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
+ * 처리중(PROCESSING)은 최초 저장 기준 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
  * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
  *
- * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 task JSON 전체 CAS로 교체한다.
+ * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 native
+ * {@code SET XX KEEPTTL}로 교체해 최초 만료 시각을 보존한다 — 어떤 stage write도 TTL을 연장하지 않는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -40,7 +41,10 @@ public class TimelineTaskService {
 
     // AI 접수는 202 즉시 반환, 정상 inference·callback은 3분 내 종료가 운영 목표 — 사용자에게
     // 무기한 PROCESSING을 노출하지 않기 위해 callback 없는 task는 이 TTL이 회수한다.
-    static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
+    // transport 구현이 접수 대기 상한을 이 값에 맞춰 기동 시 검증한다(http는 같은 패키지, agentcore는
+    // com.laimory.server.ai.agentcore) — 그래서 package-private이 아니라 public이다.
+    public static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
+
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
 
     private final TimelineTaskStore timelineTaskStore;
@@ -62,22 +66,21 @@ public class TimelineTaskService {
     }
 
     /**
-     * PROCESSING task의 TTL만 3분으로 다시 확보한다(JSON은 그대로 재저장 — {@code processingStartedAt}
-     * 보존이라 폴링 {@code elapsedSeconds} 의미가 바뀌지 않는다).
-     *
-     * <p>AI가 입력을 조회한 시점부터 추론이 시작되고, 결과 저장 뒤에도 콜백이 남는다 — 최초 3분을
-     * dispatch 시점부터 소진시키면 정상 처리가 마지막 단계에서 만료로 잘릴 수 있다.
+     * PROCESSING task 내부 상태(token hash·stage·retry receipt)를 교체한다. native {@code SET XX KEEPTTL}
+     * 이라 최초 PROCESSING 저장이 정한 3분 만료 시각을 보존한다 — {@code processingStartedAt}도 그대로라
+     * 폴링 {@code elapsedSeconds}·task 만료·stuck 관측이 전부 최초 시작 기준으로 일치한다.
+     * 반환 {@code false}는 write 시점에 task가 만료됐다는 뜻이다(호출부는 404로 수렴한다).
      */
-    public boolean replaceProcessing(String taskId, TimelineDraftTask expected, TimelineDraftTask replacement) {
-        if (expected.status() != TaskStatus.PROCESSING || replacement.status() != TaskStatus.PROCESSING) {
+    public boolean saveProcessingIfPresent(String taskId, TimelineDraftTask replacement) {
+        if (replacement.status() != TaskStatus.PROCESSING) {
             throw new IllegalStateException("PROCESSING task만 교체할 수 있습니다");
         }
-        return timelineTaskStore.replaceIfUnchanged(taskId, expected, replacement, PROCESSING_TTL);
+        return timelineTaskStore.saveProcessingIfPresent(taskId, replacement);
     }
 
-    /** callback이 읽은 PROCESSING task가 그대로일 때만 SUCCESS로 종결한다. */
-    public boolean markSuccessIfCurrent(String taskId, TimelineDraftTask task) {
-        boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
+    /** callback이 읽은 PROCESSING task가 아직 살아 있으면 SUCCESS로 종결한다. false는 만료(404)다. */
+    public boolean markSuccessIfPresent(String taskId, TimelineDraftTask task) {
+        boolean saved = timelineTaskStore.saveTerminalIfPresent(taskId,
                 TimelineDraftTask.success(task.subjectId(), task.dailyRecordId(), task.tokenHash()), TERMINAL_TTL);
         if (saved) {
             timelineMetrics.recordTerminalSuccess();
@@ -101,12 +104,12 @@ public class TimelineTaskService {
         timelineMetrics.recordTerminalFailed();
     }
 
-    /** callback이 읽은 PROCESSING task가 그대로일 때만 FAILED로 종결한다. */
-    public boolean markFailedIfCurrent(String taskId, TimelineDraftTask task, ExceptionType failureType) {
+    /** callback이 읽은 PROCESSING task가 아직 살아 있으면 FAILED로 종결한다. false는 만료(404)다. */
+    public boolean markFailedIfPresent(String taskId, TimelineDraftTask task, ExceptionType failureType) {
         if (!TASK_FAILURE_TYPES.contains(failureType)) {
             throw new IllegalStateException("task 실패 분류 타입이 아닙니다: " + failureType);
         }
-        boolean saved = timelineTaskStore.replaceIfUnchanged(taskId, task,
+        boolean saved = timelineTaskStore.saveTerminalIfPresent(taskId,
                 TimelineDraftTask.failed(task.subjectId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
                 TERMINAL_TTL);
         if (saved) {

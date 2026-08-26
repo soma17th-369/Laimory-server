@@ -28,7 +28,7 @@ automation을 바꿀 때 읽는다.
 
 배포된 환경의 runtime 값은 전부 host `/home/ubuntu/app/.env`가 소유한다(workflow `-e` 주입 없음).
 deploy pre-flight는 환경 고정값(`REDIS_KEY_PREFIX`·`APP_ENV`·`APP_GEO_MODE`·`SWAGGER_ENABLED`)과
-`APP_AI_MODE`/`APP_PUSH_MODE`/`APP_TRACING_MODE`,
+`APP_AI_MODE`(`noop|fake|http|agentcore`)/`APP_PUSH_MODE`/`APP_TRACING_MODE`,
 `APP_SUBJECT_MODE`(값 고정 `secretsmanager`)·`APP_SUBJECT_SECRET_ARN`(ARN 형식 + runtime secret
 read·secret 내용 계약 검증 + `user_subject_links` schema 검사 동반)을 exact-one으로 검증한다.
 `SPRING_PROFILES_ACTIVE`는 `.env`에 없는 것이 정상이고 값에 `docker`가 포함되면 실패한다(docker
@@ -46,7 +46,9 @@ container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비�
 branch(또는 수동 실행 입력)로 환경을 정하고 그 환경의 기대값을 원격 pre-flight에 주입한다.
 dev는 `REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`SWAGGER_ENABLED=true`, prod는 빈 prefix·`APP_ENV=prod`·
 `SWAGGER_ENABLED=false`이며 `APP_GEO_MODE=kakao`는 두 환경 공통이다. `APP_AI_MODE`·`APP_PUSH_MODE`는
-값을 고정하지 않고 허용 집합만 검사하므로 host `.env`가 실제 값의 권위다.
+값을 고정하지 않고 허용 집합만 검사하므로 host `.env`가 실제 값의 권위다. `APP_AI_MODE=agentcore`면
+`APP_AI_AGENTCORE_RUNTIME_ARN`(배포 리전의 full Runtime ARN)과 `APP_AI_AGENTCORE_ENDPOINT`도 exact-one
+non-empty로 함께 검증한다.
 
 **prod runtime 값 자체는 여전히 저장소가 소유하지 않는다** — host `.env`와 live AWS가 권위다.
 저장소가 아는 것은 "그 값이 무엇이어야 하는가"(기대값)까지이며, 실제로 무엇인지는 아니다.
@@ -61,8 +63,9 @@ host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redi
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
-열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 dev WAS nginx/SSM을 통해서만
-접근하며, monitoring 장애는 application 배포·health gate 의존성이 아니다.
+열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 `grafana.laimory.app`
+(prod ALB·자체 Google OAuth, #368)과 SSM port forwarding으로 접근하며, monitoring 장애는
+application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
 
@@ -72,13 +75,16 @@ OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
   넣으면 그 peer의 `X-Forwarded-For` 최우측만 client IP로 신뢰한다. checked-in 기본값은 비어 있어
-  loopback nginx 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
+  loopback 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
 - tracing(#277 — 앱 미소비, deploy pre-flight·JVM/agent가 소비): `APP_TRACING_MODE`,
   `JAVA_TOOL_OPTIONS`(-javaagent 주입), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_METRICS_EXPORTER`,
   `OTEL_LOGS_EXPORTER`, `OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED`,
   `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS`
 - `APP_AI_MODE`, `APP_GEO_MODE`, `KAKAO_REST_API_KEY`, `APP_GEO_LOOKUP_CONCURRENCY`,
+- AgentCore mode 전용(`app.ai.mode=agentcore`에서만 소비·기동 시 형식·리전 검증):
+  `APP_AI_AGENTCORE_RUNTIME_ARN`, `APP_AI_AGENTCORE_ENDPOINT`(자격증명은 SDK 기본 체인 —
+  access key property를 추가하지 않는다)
   `APP_GEO_MAX_UNIQUE_COORDINATES`(공개 제품 상한 — 운영 tuning으로 낮추지 않음)
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
   upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):
