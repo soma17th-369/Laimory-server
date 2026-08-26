@@ -846,15 +846,15 @@ source-limited SG와 대상 private port를 순서대로 확인한다. app의 90
 
 ### HTTPS probe failed
 
-DNS, TLS 만료, nginx, `/status` 응답을 분리해 확인한다. `/status`가 성공해도 Redis, Kakao, S3까지
-ready라는 뜻은 아니다.
+DNS, TLS 만료, ALB(리스너 규칙·타깃 헬스), `/status` 응답을 분리해 확인한다. `/status`가 성공해도
+Redis, Kakao, S3까지 ready라는 뜻은 아니다.
 
 ### TLS certificate expiry
 
-Overview의 남은 시간을 확인한 뒤 dev WAS에서 `sudo certbot certificates`,
-`sudo systemctl status certbot.timer`를 본다. 만료 30일 전 warning과 14일 전 critical은 겹치지 않는다.
-필요하면 `sudo certbot renew --dry-run` 후 실제 갱신을 수행하고 `sudo nginx -t`,
-`sudo systemctl reload nginx`를 거쳐 blackbox의 새 만료 시각을 확인한다.
+dev·prod 모두 prod ALB의 ACM 인증서(`*.laimory.app` 포함)로 종단하며 ACM이 자동 갱신한다(#369).
+만료 30일 전 warning과 14일 전 critical은 겹치지 않는다. 경보가 뜨면 ACM 콘솔에서 해당 인증서의
+갱신 상태와 실패 사유를 확인한다 — 주 원인은 DNS 검증 CNAME 레코드 소실이며, Route53에서 복원하면
+ACM이 재시도한다. 갱신 후 blackbox의 새 만료 시각을 확인한다.
 
 ### HTTP errors or latency
 
