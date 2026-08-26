@@ -1,5 +1,6 @@
-package com.laimory.server.timeline.agentcore;
+package com.laimory.server.config;
 
+import com.laimory.server.agentcore.AgentCoreProperties;
 import com.laimory.server.timeline.service.TimelineTaskService;
 import java.time.Duration;
 import java.util.regex.Matcher;

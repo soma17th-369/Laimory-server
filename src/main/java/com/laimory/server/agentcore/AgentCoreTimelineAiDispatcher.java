@@ -1,6 +1,6 @@
-package com.laimory.server.timeline.agentcore;
+package com.laimory.server.agentcore;
 
-import com.laimory.server.timeline.dto.AgentCoreDispatchRequest;
+import com.laimory.server.agentcore.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.service.TimelineAiDispatcher;
 import lombok.RequiredArgsConstructor;

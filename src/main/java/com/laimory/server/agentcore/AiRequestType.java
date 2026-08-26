@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.dto;
+package com.laimory.server.agentcore;
 
 /**
  * AgentCore 접수 wrapper가 싣는 요청 종류({@code app.ai.mode=agentcore} — #338).

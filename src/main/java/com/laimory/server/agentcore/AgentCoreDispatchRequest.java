@@ -1,5 +1,7 @@
-package com.laimory.server.timeline.dto;
+package com.laimory.server.agentcore;
 
+import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
 import java.util.Objects;
 
 /**

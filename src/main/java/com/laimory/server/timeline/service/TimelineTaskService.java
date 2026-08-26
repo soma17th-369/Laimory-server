@@ -41,7 +41,7 @@ public class TimelineTaskService {
     // AI 접수는 202 즉시 반환, 정상 inference·callback은 3분 내 종료가 운영 목표 — 사용자에게
     // 무기한 PROCESSING을 노출하지 않기 위해 callback 없는 task는 이 TTL이 회수한다.
     // transport 구현이 접수 대기 상한을 이 값에 맞춰 기동 시 검증한다(http는 같은 패키지, agentcore는
-    // com.laimory.server.timeline.agentcore) — 그래서 package-private이 아니라 public이다.
+    // com.laimory.server.ai.agentcore) — 그래서 package-private이 아니라 public이다.
     public static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
 

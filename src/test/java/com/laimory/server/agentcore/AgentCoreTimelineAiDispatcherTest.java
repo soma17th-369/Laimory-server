@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.agentcore;
+package com.laimory.server.agentcore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;

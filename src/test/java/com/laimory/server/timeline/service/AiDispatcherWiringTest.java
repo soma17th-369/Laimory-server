@@ -3,10 +3,10 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.config.AsyncConfig;
-import com.laimory.server.timeline.agentcore.AgentCoreClientConfig;
-import com.laimory.server.timeline.agentcore.AgentCoreDispatchClient;
-import com.laimory.server.timeline.agentcore.AgentCoreTimelineAiDispatcher;
-import com.laimory.server.timeline.agentcore.AgentCoreUserMemoryUpdateDispatcher;
+import com.laimory.server.config.AgentCoreClientConfig;
+import com.laimory.server.agentcore.AgentCoreDispatchClient;
+import com.laimory.server.agentcore.AgentCoreTimelineAiDispatcher;
+import com.laimory.server.agentcore.AgentCoreUserMemoryUpdateDispatcher;
 import java.time.Clock;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;

@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.dto;
+package com.laimory.server.agentcore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TimelineEventType;
+import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;

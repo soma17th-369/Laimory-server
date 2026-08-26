@@ -15,7 +15,7 @@ callback body를 바꿀 때 읽는다.
 
 - `TimelineAiDispatcher` implementations와 dispatch DTO
 - `AgentCoreDispatchClient`, `AgentCoreTimelineAiDispatcher`, `AgentCoreUserMemoryUpdateDispatcher`,
-  `AgentCoreClientConfig`/`AgentCoreProperties` (transport 구현은 `com.laimory.server.timeline.agentcore`
+  `AgentCoreProperties` (transport 구현은 `com.laimory.server.agentcore`, Spring 배선은 `config.AgentCoreClientConfig`
   패키지에 모여 있다 — AWS SDK 의존은 이 패키지 밖으로 나가지 않는다), `AgentCoreDispatchRequest`/`AiRequestType`
 - `TimelineAiTaskApi`, 입력·결과 DTO와 service
 - `TimelineCallbackApi`, callback DTO와 service

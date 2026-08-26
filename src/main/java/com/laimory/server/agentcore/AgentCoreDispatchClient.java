@@ -1,7 +1,7 @@
-package com.laimory.server.timeline.agentcore;
+package com.laimory.server.agentcore;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.timeline.dto.AgentCoreDispatchRequest;
+import com.laimory.server.agentcore.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchResponse;
 import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
 import java.io.IOException;
