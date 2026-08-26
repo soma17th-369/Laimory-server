@@ -229,10 +229,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(필수 body `emotionType` — 5단계
   enum, 누락·null·미지원 값·zero-byte body는 400, body 있는 비JSON Content-Type은 415). `(request
   subjectId, recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로
-  <b>부수효과 전에</b> 거절한다. 그 뒤 저장된 `recordTimezone` 기준 오늘보다 미래인 recordDate를 400
-  `-400`으로 거절해 `DRAFT→SAVED` 확정을 막는다(#366 — timezone을 알아야 판정할 수 있어 조회 뒤이고,
-  조회는 부수효과가 아니다). 이 검사는 SAVED 판정보다 <b>뒤</b>라 이미 확정된 record는 미래 날짜여도
-  기존 409를 그대로 받는다. 이어서 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
+  <b>부수효과 전에</b> 거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
   감정과 상태를 함께 <b>최초 확정</b>한다(상태의 유일한 write 지점). 영향 행 수 0은
   재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
 - 확정 후 감정 수정은 `PUT .../daily-records/{recordDate}/emotion`(#325)이 담당한다 — 같은 2계층

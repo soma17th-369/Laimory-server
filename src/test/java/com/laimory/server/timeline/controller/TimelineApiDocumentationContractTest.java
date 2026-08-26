@@ -47,8 +47,9 @@ class TimelineApiDocumentationContractTest {
     }
 
     @Test
-    void draftAndSaveOperations_documentFutureRecordDateRejection() {
-        // 하루 기록을 실제로 만들거나 확정하는 두 경로만 미래 날짜를 거절한다 — 조회·삭제는 대상이 아니다.
+    void draftOperationAlone_documentsFutureRecordDateRejection() {
+        // 미래 날짜를 거절하는 경로는 DailyRecord를 만드는 draft 생성 하나뿐이다 —
+        // 생성 경로가 그 하나라 save를 포함한 나머지 API에는 미래 제한이 없다.
         // getDeclaredMethods()는 순서를 보장하지 않는다 — findFirst 대신 개수를 고정해야 두 번째 설명이
         // 생겼을 때 비결정적으로 통과하지 않고 실패한다.
         List<String> draftDescriptions = Arrays.stream(TimelineApi.class.getDeclaredMethods())
@@ -61,15 +62,15 @@ class TimelineApiDocumentationContractTest {
         assertThat(draftDescriptions).hasSize(1);
         assertThat(draftDescriptions.getFirst()).contains("미래");
 
-        List<String> saveDescriptions = Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
+        // {recordDate} path API 다섯 개는 범위만 광고하고 미래 제한을 광고하지 않는다.
+        List<String> recordApiFutureDescriptions = Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
                 .filter(method -> method.getAnnotation(ApiResponses.class) != null)
                 .flatMap(method -> Arrays.stream(method.getAnnotation(ApiResponses.class).value()))
                 .filter(response -> "400".equals(response.responseCode()))
                 .map(ApiResponse::description)
                 .filter(description -> description.contains("미래"))
                 .toList();
-        assertThat(saveDescriptions).hasSize(1);
-        assertThat(saveDescriptions.getFirst()).contains("timezone");
+        assertThat(recordApiFutureDescriptions).isEmpty();
     }
 
     @Test

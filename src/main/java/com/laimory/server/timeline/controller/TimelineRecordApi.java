@@ -303,7 +303,7 @@ public interface TimelineRecordApi {
                     description = "저장 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖 · "
-                            + "recordDate가 저장된 record의 timezone 기준 오늘보다 미래 · body 없음(zero-byte, "
+                            + "body 없음(zero-byte, "
                             + "Content-Type 유무 무관) · emotionType 누락/null/미지원 값 · 깨진 JSON"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
