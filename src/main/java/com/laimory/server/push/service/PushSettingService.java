@@ -38,7 +38,7 @@ public class PushSettingService {
                         TIME_FORMAT.format(dailyReminder.notificationTime())));
     }
 
-    /** 예정 알림 마스터 ON/OFF — 일일 알림 설정값은 보존한다. */
+    /** 전체 push 마스터 ON/OFF(예정 알림 + 타임라인 완료 통지) — 알림별 설정값은 보존한다. */
     public void updatePushEnabled(String applicationVersion, UUID subjectId, Boolean enabled) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         subjectPreferenceService.updatePushEnabled(subjectId, requireEnabled(enabled));

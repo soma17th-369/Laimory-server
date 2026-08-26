@@ -14,7 +14,9 @@ import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.repository.PushRegistrationRepository;
+import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
@@ -46,7 +48,8 @@ import org.springframework.test.context.ActiveProfiles;
 /**
  * 회원 탈퇴 ↔ 실 MySQL·Redis 왕복 검증(#305).
  *
- * <p>단일 transaction commit(상태·탈퇴 시각·identity release·refresh 전량 폐기·push 삭제·PENDING job),
+ * <p>단일 transaction commit(상태·탈퇴 시각·identity release·알림 마스터/일일 OFF·PENDING job — #367부터
+ * refresh·FID·설정 행은 <b>삭제하지 않고 보존</b>한다),
  * 부분 실패 전체 rollback, 멱등·동시 탈퇴의 단일 job 수렴, 즉시 재가입의 새 userId·새 subject 수렴과
  * 탈퇴→재가입→재탈퇴 generation별 nullable UNIQUE, stale Kakao nickname 갱신의 부활 차단, 탈퇴 뒤
  * app-code 교환 -2002/refresh 회전 -2003(INFO — WARN 재사용 아님) 수렴을 검증한다.
@@ -85,6 +88,10 @@ class UserWithdrawalIntegrationTest {
     @Autowired
     private PushRegistrationRepository pushRegistrationRepository;
     @Autowired
+    private SubjectPreferenceService subjectPreferenceService;
+    @Autowired
+    private DailyNotificationPreferenceService dailyNotificationPreferenceService;
+    @Autowired
     private AccountErasureJobRepository accountErasureJobRepository;
     @Autowired
     private AppCodeService appCodeService;
@@ -107,7 +114,7 @@ class UserWithdrawalIntegrationTest {
                 .filter(token -> createdUserIds.contains(token.getUserId()))
                 .forEach(refreshTokenRepository::delete);
         createdSubjectIds.forEach(pushRegistrationRepository::deleteAllBySubjectId);
-        // 탈퇴가 이미 지웠으면 no-op — 탈퇴하지 않은 fixture 회원의 설정 행을 mapping보다 먼저 정리한다.
+        // #367부터 탈퇴는 설정 행을 지우지 않으므로 여기서 항상 정리한다(mapping FK보다 먼저).
         createdSubjectIds.forEach(subjectId ->
                 SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId));
         createdUserIds.forEach(userRepository::deleteById);
@@ -135,7 +142,27 @@ class UserWithdrawalIntegrationTest {
     }
 
     @Test
-    void withdraw_commitsStatusIdentityRefreshPushAndSingleJobInOneTransaction() {
+    void withdraw_dailyNotificationRowMissing_rollsBackStatusIdentityMasterAndJob() {
+        // 알림 OFF 실패가 회원 전이·identity release·마스터 OFF·job enqueue를 함께 되돌리는지 —
+        // 삼키면 "탈퇴는 접수됐는데 알림은 켜진" 상태가 commit된다. 일일 설정 행을 지워 0행을 만든다.
+        User user = provision(randomProviderUserId(), null);
+        long userId = user.getUserId();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        jdbcTemplate.update("delete from daily_notification_preferences where subject_id = ?", subjectId.toString());
+
+        assertThatThrownBy(() -> userWithdrawalService.withdraw("v1", userId))
+                .isInstanceOf(IllegalStateException.class);
+
+        User untouched = userRepository.findById(userId).orElseThrow();
+        assertThat(untouched.getStatus()).isEqualTo(UserStatus.ACTIVE);
+        assertThat(untouched.getWithdrawalRequestedAt()).isNull();
+        assertThat(untouched.getProviderUserId()).isNotNull();      // identity release도 되돌아간다
+        assertThat(subjectPreferenceService.findPushEnabled(subjectId)).isTrue(); // 선행 마스터 OFF도 rollback
+        assertThat(jobsOf(userId)).isEmpty();
+    }
+
+    @Test
+    void withdraw_commitsStatusIdentityNotificationOffAndSingleJobInOneTransaction() {
         User user = provision(randomProviderUserId(), "탈퇴전닉");
         long userId = user.getUserId();
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
@@ -151,12 +178,20 @@ class UserWithdrawalIntegrationTest {
         assertThat(withdrawn.getProviderUserId()).isNull();           // identity release — 같은 UPDATE
         assertThat(userAccountService.isActive(userId)).isFalse();    // 이후 /a/api ACTIVE 검사는 전부 401
 
+        // #367: 탈퇴는 행을 지우지 않는다 — refresh는 발급 당시 상태 그대로, FID 등록도 보존된다.
+        // 사용 차단은 아래 refresh 회전 테스트가 검증하는 ACTIVE 검사가 담당하고, 물리 삭제는 #302 소유다.
         List<RefreshToken> refreshRows = refreshTokenRepository.findAll().stream()
                 .filter(token -> token.getUserId() == userId)
                 .toList();
         assertThat(refreshRows).hasSize(2)
-                .allMatch(token -> token.getStatus() == RefreshTokenStatus.REVOKED);
-        assertThat(pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId)).isEmpty();
+                .allMatch(token -> token.getStatus() == RefreshTokenStatus.ACTIVE);
+        assertThat(pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId))
+                .containsExactly("fid-" + userId);
+
+        // 발송 차단은 삭제가 아니라 OFF다 — 두 설정 행은 남고 값만 false다.
+        assertThat(subjectPreferenceService.findPushEnabled(subjectId)).isFalse();
+        assertThat(dailyNotificationPreferenceService.find(subjectId)).isPresent()
+                .get().matches(preference -> !preference.isEnabled());
 
         List<AccountErasureJob> jobs = jobsOf(userId);
         assertThat(jobs).hasSize(1);
@@ -204,10 +239,13 @@ class UserWithdrawalIntegrationTest {
         assertThat(withdrawn.getStatus()).isEqualTo(UserStatus.WITHDRAWAL_PENDING);
         assertThat(withdrawn.getProviderUserId()).isNull();
         assertThat(jobsOf(userId)).hasSize(1);
+        // loser는 부수효과를 반복하지 않고, 승자도 refresh 행을 건드리지 않는다(#367 — 삭제·폐기 없음).
         assertThat(refreshTokenRepository.findAll().stream()
                 .filter(token -> token.getUserId() == userId)
                 .toList()).isNotEmpty()
-                .allMatch(token -> token.getStatus() == RefreshTokenStatus.REVOKED);
+                .allMatch(token -> token.getStatus() == RefreshTokenStatus.ACTIVE);
+        assertThat(subjectPreferenceService.findPushEnabled(
+                createdSubjectIds.get(createdSubjectIds.size() - 1))).isFalse();
     }
 
     /** 탈퇴 commit 직후 같은 provider 로그인은 old row 재활성화가 아니라 새 userId·새 subject 신규 가입이다. */
@@ -315,12 +353,18 @@ class UserWithdrawalIntegrationTest {
     void refreshRotationAfterWithdrawal_convergesToInvalid2003_notWarnReuse() {
         User user = provision(randomProviderUserId(), null);
         long userId = user.getUserId();
-        String revokedByWithdrawal = refreshTokenService.issue(userId);
+        String preservedByWithdrawal = refreshTokenService.issue(userId);
 
         userWithdrawalService.withdraw("v1", userId);
 
-        // ① 탈퇴가 REVOKED로 만든 행 — 재사용 탐지(REUSED·WARN·전체 폐기)가 아니라 INVALID(INFO)다.
-        assertThatThrownBy(() -> authTokenService.refresh("v1", revokedByWithdrawal))
+        // 행 자체는 ACTIVE로 남는다 — 사용 차단과 물리 삭제는 다른 축이다(삭제는 #302).
+        assertThat(refreshTokenRepository.findAll().stream()
+                .filter(token -> token.getUserId() == userId)
+                .toList()).allMatch(token -> token.getStatus() == RefreshTokenStatus.ACTIVE);
+
+        // ① 탈퇴가 보존한 ACTIVE 행 — 폐기하지 않아도 회전 전 owner ACTIVE 검사가 거절한다(#367).
+        //    재사용 탐지(REUSED·WARN·전체 폐기)가 아니라 INVALID(INFO)로 수렴하는 것이 계약이다.
+        assertThatThrownBy(() -> authTokenService.refresh("v1", preservedByWithdrawal))
                 .isInstanceOfSatisfying(BusinessException.class, e -> {
                     assertThat(e.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(e.getErrorCode()).isEqualTo(-2003);

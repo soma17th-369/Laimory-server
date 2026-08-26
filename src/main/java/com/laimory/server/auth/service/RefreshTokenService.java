@@ -101,14 +101,6 @@ public class RefreshTokenService {
         return new Rotation(current.getUserId(), newRefresh);
     }
 
-    /**
-     * 탈퇴 transaction 합류용(#305) — 그 transaction이 관측한 사용자 refresh 전체를 {@code REVOKED}로
-     * 폐기한다(멱등 — repository의 조건부 UPDATE가 REQUIRED 전파로 호출자 transaction에 합류).
-     */
-    public void revokeAllForUser(long userId) {
-        refreshTokenRepository.revokeAllByUserId(userId);
-    }
-
     /** 로그아웃: 해당 refresh만 폐기한다. 멱등 — 미존재/이미 폐기여도 조용히 성공(유효성 오라클 차단). */
     public void revoke(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {

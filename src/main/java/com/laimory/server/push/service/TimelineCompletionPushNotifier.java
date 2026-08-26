@@ -19,9 +19,10 @@ import org.springframework.stereotype.Service;
  * FCM은 결과의 권위 원천이 아니라 조회를 유도하는 완료 신호다 — 실패·유실은 로그만 남기고 기존 polling·
  * 앱 재진입 동기화가 안전망이다.
  *
- * <p>전체 푸시 마스터가 OFF면 FID 조회 전에 끝낸다. 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
- * 보존하려고 ON으로 읽는다 — 이 알림은 사용자가 직접 시작한 작업의 결과인 정보성 통지라 광고 동의
- * gate를 적용하지 않는다. DB 조회 장애는 ON으로 숨기지 않고 아래 격리에서 실패로 처리된다.
+ * <p>전체 푸시 마스터가 OFF면 FID 조회·발송·metric 전에 끝낸다(#367). 이 알림은 사용자가 직접 시작한
+ * 작업의 결과인 정보성 통지지만, 마스터 OFF가 <b>모든</b> push의 차단을 뜻해야 탈퇴가 FID를 지우지 않고도
+ * in-flight 작업의 발송을 막을 수 있다. 설정 행 누락·DB 조회 장애는 ON으로 추정하지 않고 아래 격리에서
+ * 실패로 처리된다 — 못 보내는 쪽이 안전한 방향이다.
  *
  * <p>{@code TimelineCallbackService}의 self-invocation이 아닌 별도 빈이라 {@code @Async} 프록시가 실제로
  * 적용된다(executor는 {@code AsyncConfig}의 Boot 기본 {@code applicationTaskExecutor}). async body의
@@ -36,6 +37,7 @@ import org.springframework.stereotype.Service;
 public class TimelineCompletionPushNotifier {
 
     private final PushRegistrationService pushRegistrationService;
+    private final SubjectPreferenceService subjectPreferenceService;
     private final PushMessageSender pushMessageSender;
     private final PushMetrics pushMetrics;
     private final Clock clock;
@@ -43,6 +45,11 @@ public class TimelineCompletionPushNotifier {
     @Async
     public void notifyAsync(UUID subjectId, String taskId, TaskStatus status) {
         try {
+            // 마스터 OFF면 여기서 끝낸다 — 탈퇴는 FID를 지우지 않고 이 스위치만 내리므로, 이 gate가
+            // 없으면 탈퇴 뒤 완료된 in-flight 작업의 push가 그대로 나간다.
+            if (!subjectPreferenceService.findPushEnabled(subjectId)) {
+                return;
+            }
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면
             // (lastRegisteredAt > snapshotAt) 무효 정리에서 보호된다.
             LocalDateTime snapshotAt = LocalDateTime.now(clock);

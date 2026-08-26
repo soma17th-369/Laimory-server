@@ -106,11 +106,6 @@ public class DailyNotificationPreferenceService {
         return List.copyOf(due);
     }
 
-    /** 탈퇴 transaction 합류용 — 마스터 삭제보다 먼저 호출한다(FK RESTRICT). */
-    public void deleteForSubject(UUID subjectId) {
-        dailyNotificationPreferenceRepository.deleteBySubjectId(subjectId);
-    }
-
     /** 다음 예정 시각 — 현재 이후 첫 occurrence다(오늘 고정 시각이 아직 미래면 오늘, 아니면 다음 날). */
     static LocalDateTime computeNextDueAt(LocalDateTime nowKst) {
         LocalDate today = nowKst.toLocalDate();
