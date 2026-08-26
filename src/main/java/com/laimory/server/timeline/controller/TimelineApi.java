@@ -153,7 +153,9 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — 필수값 누락·불량 입력(recordDate/recordAt/recordTimeZone/"
                             + "timelineWindow/sourceItems 등, 각 sourceItem의 startAt 누락, "
-                            + "window의 `startTime >= endTime`, 지오코딩 대상 고유 좌표 30개 초과 포함)"),
+                            + "window의 `startTime >= endTime`, 지오코딩 대상 고유 좌표 30개 초과 포함). "
+                            + "recordDate가 `1000-01-01`~`9999-12-31` 범위 밖이거나 `recordTimeZone` 기준 "
+                            + "오늘보다 미래이면 record 조회·지오코딩·저장·AI dispatch 전에 거절한다"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",

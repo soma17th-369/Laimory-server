@@ -115,7 +115,9 @@ public class TimelineDraftTaskService {
         requireValidSourceItems(sourceItems);
 
         // recordTimeZone은 record 저장·AI transport window의 offset 변환에 쓰므로 유효성부터 검증(잘못된 zone → IAE → 400).
-        RecordDates.requireValidTimeZone(recordTimeZone);
+        // 같은 자리에서 recordDate의 DATE 범위와 "요청 timezone 기준 미래 아님"까지 확정한다 — 아래의 record
+        // 조회·enrich·staging·Redis·dispatch가 전부 부수효과라 그 앞에서 끊어야 한다.
+        RecordDates.requireNotFutureRecordDate(recordDate, recordTimeZone, clock.instant());
 
         // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row·task owner는 전부
         // 인증 경계에서 해석한 subjectId 하나만 쓴다 — 지점이 갈리면 남의 키로 URL을 파생하거나

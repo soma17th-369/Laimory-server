@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.common.RecordDates;
 import com.laimory.server.timeline.dto.CreateTimelineEventRequest;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DailyTimelinesResponse;
@@ -56,6 +57,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     @Override
     public ResponseEntity<ApiResponse<DailyTimelineResponse>> getDailyTimelineByDate(
             String applicationVersion, UUID subjectId, LocalDate recordDate) {
+        RecordDates.requireValidRecordDate(recordDate);
         return ResponseEntity.ok(ApiResponse.success(
                 dailyTimelineService.getDailyTimeline(applicationVersion, subjectId, recordDate)));
     }
@@ -112,6 +114,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     @Override
     public ResponseEntity<ApiResponse<Void>> deleteDailyRecordByDate(
             String applicationVersion, UUID subjectId, LocalDate recordDate) {
+        RecordDates.requireValidRecordDate(recordDate);
         timelineDeletionService.deleteDailyRecordByDate(applicationVersion, subjectId, recordDate);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
@@ -119,6 +122,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     @Override
     public ResponseEntity<ApiResponse<Void>> saveDailyRecord(
             String applicationVersion, UUID subjectId, LocalDate recordDate, SaveDailyRecordRequest request) {
+        RecordDates.requireValidRecordDate(recordDate);
         timelineSaveService.save(applicationVersion, subjectId, recordDate, request.emotionType());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
@@ -127,6 +131,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     public ResponseEntity<ApiResponse<Void>> updateDailyRecordEmotion(
             String applicationVersion, UUID subjectId, LocalDate recordDate,
             UpdateDailyRecordEmotionRequest request) {
+        RecordDates.requireValidRecordDate(recordDate);
         dailyRecordEmotionUpdateService.updateEmotion(
                 applicationVersion, subjectId, recordDate, request.emotionType());
         return ResponseEntity.ok(ApiResponse.success(null));
@@ -135,6 +140,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     @Override
     public ResponseEntity<ApiResponse<TimelineEventResponse>> createTimelineEvent(
             String applicationVersion, UUID subjectId, LocalDate recordDate, CreateTimelineEventRequest request) {
+        RecordDates.requireValidRecordDate(recordDate);
         return ResponseEntity.ok(ApiResponse.success(
                 timelineEventCreateService.createEvent(applicationVersion, subjectId, recordDate, request)));
     }

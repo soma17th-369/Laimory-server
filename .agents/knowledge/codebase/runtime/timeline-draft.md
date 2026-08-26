@@ -29,8 +29,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 2. MVC 경계에서 인증 principal을 해석한 request subjectId 하나가 record 조회·enrich photo key·staging
    row·Redis task owner에 동일하게 흐른다. task는 subject owner를 세 상태 모두 보존한다.
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
-   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). source item도
-   같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
+   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). recordDate는
+   `1000-01-01`~`9999-12-31`(MySQL `DATE` 범위) 안이어야 하고 요청 `recordTimeZone` 기준 오늘보다 미래면
+   400 `-400`이다(#366) — 이 검증이 record 조회·enrich·staging·Redis·dispatch 전에 놓여 아무것도
+   만들어지지 않는다. 오늘 판정에 쓰는 instant는 `Clock`에서 읽으며, polling 기준인
+   `processingStartedAt`은 preparation commit 뒤 다시 읽는 별개 값이다(입력 검증 시각을 재사용하지 않는다).
+   source item도 같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
    `rawId`는 canonical lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용하고 위반은 400 `-400`이다.
    임의 문자열에 개인정보가 실리는 것을 막는 경계라 오류 메시지에 rawId 원문을 싣지 않으며, 허용값은
    서버 정규화 없이 그대로 저장한다.

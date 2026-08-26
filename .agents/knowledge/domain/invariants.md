@@ -20,6 +20,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Timeline
 
 - `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(subject_id, record_date)`는 유일하다.
+  값 범위는 MySQL `DATE`와 같은 `1000-01-01`~`9999-12-31`(양끝 포함)이며, `{recordDate}` path 다섯 API는
+  범위 밖 값을 service 호출 전에 400 `-400`으로 거절한다. 미래 날짜는 **하루 기록을 만드는 draft 생성
+  하나만** 요청 `recordTimeZone` 기준으로 거절한다 — 오늘 판정은 서버 zone이 아니라 그 기록의 timezone이
+  결정한다. `DailyRecord` 생성 경로가 draft 하나뿐이라 이 경계 하나로 미래 날짜 record 자체가 생기지
+  않으므로, save를 포함한 나머지 API에는 미래 검사를 두지 않는다.
 - draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을
   보존하며 AI transport에는 record timezone 기반 offset ISO로 변환해 전달한다. `recordDate`·`recordAt`·
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
