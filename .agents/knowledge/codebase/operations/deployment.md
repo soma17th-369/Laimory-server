@@ -173,11 +173,19 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
   prune하므로 없을 수 있다 — rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해
   재배포한다.
 
-PHOTO delete worker는 checked-in default가 on이므로 live MySQL에 additive job table이 적용된 환경에서만
-배포한다. 배포된 container는 다음 03:00 KST부터 pending job을 처리한다. 즉시 중지하거나 schema 선행
-조건을 아직 충족하지 못한 환경은 host `.env`의 worker flag를 false로 바꾸고 deploy workflow를 재실행해
-container를 재생성한다. pending job row는 수동 삭제하지 않는다. job은 보존 중인 원문 PHOTO Item을 FK로
-참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만 단독 삭제하지 않는다.
+PHOTO delete worker는 checked-in default가 on이고 배포된 container는 다음 03:00 KST부터 pending job을
+처리한다. worker의 claim 판정은 `timeline_photo_delete_jobs`가 `available_at` 없는 신 schema이고 감사
+컬럼(`created_at`/`updated_at`)이 앱 바인딩 KST 프레임인 것을 전제한다. 이 schema가 아직 반영되지 않은
+live 환경(dev·prod)은 일회성 비호환 cutover가 선행돼야 하며 순서가 불변식이다: ① 새 claim index
+`(created_at, PK)` 추가 → ② worker off로 container 재생성 → ③ job insert/cancel 가능한 API 쓰기 중지
+(행 수 증가 정지 확인) → ④ 잔존 행 감사 시각 `+9h` 정규화(기존 행은 `current_timestamp(6)`가 채운
+UTC 프레임; 0건이면 생략) → ⑤ 새 binary 배포(worker off 유지) → ⑥ old index·`available_at` DROP →
+⑦ 쓰기 재개 → ⑧ worker 재활성. 정규화 이후 구 binary로 되돌리려면 쓰기 중지·worker off를 유지한 채
+감사 시각 `-9h` 원복이 먼저고, column DROP 이후라면 `available_at`과 old index 복원까지 선행해야 한다.
+단계별 SQL과 검증 항목은 PR #377 본문에 있다. 즉시 중지하거나 cutover 전인 환경은 host `.env`의 worker
+flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생성한다. pending job row는 수동 삭제하지
+않는다. job은 보존 중인 원문 PHOTO Item을 FK로 참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만
+단독 삭제하지 않는다.
 
 ## Manual Operations
 
