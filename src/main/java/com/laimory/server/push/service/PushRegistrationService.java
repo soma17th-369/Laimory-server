@@ -50,14 +50,6 @@ public class PushRegistrationService {
     }
 
     /**
-     * 탈퇴 transaction 합류용(#305) — subject의 push 등록 전부 삭제(멱등, 0행 허용).
-     * repository delete가 REQUIRED 전파로 호출자 transaction에 합류한다.
-     */
-    public void unregisterAllForSubject(UUID subjectId) {
-        pushRegistrationRepository.deleteAllBySubjectId(subjectId);
-    }
-
-    /**
      * FCM이 영구 무효로 판정한 FID 등록 제거. 빈 목록이면 query 없이 no-op.
      * {@code snapshotAt}(발송 대상 조회 시각) 이후 갱신된 재등록은 지우지 않는다 — 지연 도착한 무효 응답이
      * 최신 등록을 삭제하는 레이스 차단.

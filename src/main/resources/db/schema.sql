@@ -311,8 +311,9 @@ CREATE TABLE IF NOT EXISTS term_agreements (
 -- subject 축 설정 버킷(subject당 한 행). worker·배치가 subject만 들고 읽는 설정이 늘어도 컬럼 2개짜리
 -- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 예정 알림 마스터 하나뿐이다.
 -- push_enabled는 예정 알림 전체 ON/OFF이며 기본은 ON이다(타임라인 완료 통지는 이 스위치를 읽지 않는다).
+-- 탈퇴는 이 행을 지우지 않고 false로만 바꾼다(#367 — 삭제는 운영 요청 경로에서 하지 않는다).
 -- 알림이 늘어도 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유).
--- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 탈퇴가 명시 삭제 소유).
+-- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 물리 삭제는 #302 소유).
 CREATE TABLE IF NOT EXISTS subject_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -331,7 +332,8 @@ CREATE TABLE IF NOT EXISTS subject_preferences (
 -- PK가 subject_id 단독이라 두 번째 일일 알림은 이 테이블에 담을 수 없다. 그때는 컬럼도 판별자도 아니라
 -- 새 테이블을 만든다(#321 — 값이 하나뿐인 판별자를 걷어낸 결과로 수용한 제약).
 -- next_due_at은 Asia/Seoul 벽시계 계약(offset 없음 — 이 저장소 공통).
--- master FK는 RESTRICT라 이 행 정리를 빠뜨린 탈퇴가 master 삭제를 조용히 통과하지 못한다.
+-- master FK는 RESTRICT라 이 행을 남긴 채 master를 지우지 못한다 — 탈퇴는 두 행을 지우지 않고
+-- enabled=false로만 바꾸므로(#367) 이 제약은 #302 물리 삭제의 순서 방어로 남는다.
 CREATE TABLE IF NOT EXISTS daily_notification_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,

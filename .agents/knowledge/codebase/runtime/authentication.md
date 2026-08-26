@@ -121,9 +121,11 @@ handoff를 그대로 사용한다.
 - 회원 account API(`GET/DELETE /a/api/{version}/user`)는 principal userId를 직접 받는다. GET은
   users 행을 endpoint 안에서 조회하며, 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로
   수렴한다(존재 비노출). DELETE(#305 탈퇴)는 단일 DB transaction으로 조건부
-  `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + 기존 refresh 전량
-  REVOKED + subject push 등록 삭제 + userId-only PENDING 삭제 작업(insert-if-absent)을 commit하고
-  202를 반환한다. 영향 0행은 fresh 조회로 분류한다 — `WITHDRAWAL_PENDING`이면 멱등 202, 회원 없음은
+  `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + push 마스터 OFF +
+  일일 알림 OFF + userId-only PENDING 삭제 작업(insert-if-absent)을 commit하고
+  202를 반환한다. **이 transaction은 행을 지우지 않는다**(#367) — refresh 행과 push 등록(FID)은
+  보존되고, old credential의 사용·연장 차단은 매 요청 `/a/api` 검사와 발급·회전 전 `ACTIVE` 조회가
+  이미 담당한다(전량 REVOKED는 즉시 차단의 필수 조건이 아니었다). 보존 행의 물리 삭제는 #302 소유다. 영향 0행은 fresh 조회로 분류한다 — `WITHDRAWAL_PENDING`이면 멱등 202, 회원 없음은
   401 `-2001`. 탈퇴 회원 행은 절대 `ACTIVE`로 되돌리지 않으며 같은 provider의 다음 로그인은 released
   identity로 `findOrCreate` 신규 생성 경로(새 userId·새 subject)를 탄다 — 과거 콘텐츠·약관 동의와
   연결되지 않는다.

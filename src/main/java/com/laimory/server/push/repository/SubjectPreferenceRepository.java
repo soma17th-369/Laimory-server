@@ -39,7 +39,10 @@ public interface SubjectPreferenceRepository extends JpaRepository<SubjectPrefer
     @Query("update SubjectPreference p set p.pushEnabled = :pushEnabled where p.subjectId = :subjectId")
     int updatePushEnabled(@Param("subjectId") UUID subjectId, @Param("pushEnabled") boolean pushEnabled);
 
-    /** 탈퇴 transaction 합류용 — 일일 알림 행을 먼저 지운 뒤 호출한다(FK RESTRICT). 0행 허용(멱등). */
+    /**
+     * 마스터 행 삭제 — 일일 알림 행을 먼저 지운 뒤 호출한다(FK RESTRICT). 0행 허용(멱등).
+     * 탈퇴는 삭제 대신 OFF로 바뀌었으므로(#367) 프로덕션 호출자가 없다 — #302 물리 삭제용이다.
+     */
     @Modifying
     @Transactional
     @Query("delete from SubjectPreference p where p.subjectId = :subjectId")

@@ -58,8 +58,9 @@ public class RefreshTokenService {
      *
      * <p>{@code ownerActive}는 발급 전에 수행하는 소유 회원의 일반 ACTIVE 검사다(#305 §5.4 —
      * {@code AuthTokenService}가 {@code UserAccountAccessService#isActive}를 넘긴다). 탈퇴/삭제 회원의
-     * 회전은 — 탈퇴가 폐기한 REVOKED 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN 재사용 경로에
+     * 회전은 — 탈퇴가 보존한 ACTIVE 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN 재사용 경로에
      * 들어가기 전에 credential 무효와 구분 없는 {@code REFRESH_TOKEN_INVALID}(INFO)로 수렴한다.
+     * 탈퇴는 refresh를 폐기하지 않으므로(#367) 이 ACTIVE 검사가 유일한 차단 지점이다.
      * 검사 통과 직후 탈퇴와 겹친 in-flight 회전은 §5.1의 제한된 예외다.
      *
      * <p><b>회전 승자의 claim + 새 refresh 저장은 한 트랜잭션</b>으로 묶는다(아래 {@code transactionTemplate}).
@@ -99,14 +100,6 @@ public class RefreshTokenService {
             throw new BusinessException(ExceptionType.REFRESH_TOKEN_REUSED);
         }
         return new Rotation(current.getUserId(), newRefresh);
-    }
-
-    /**
-     * 탈퇴 transaction 합류용(#305) — 그 transaction이 관측한 사용자 refresh 전체를 {@code REVOKED}로
-     * 폐기한다(멱등 — repository의 조건부 UPDATE가 REQUIRED 전파로 호출자 transaction에 합류).
-     */
-    public void revokeAllForUser(long userId) {
-        refreshTokenRepository.revokeAllByUserId(userId);
     }
 
     /** 로그아웃: 해당 refresh만 폐기한다. 멱등 — 미존재/이미 폐기여도 조용히 성공(유효성 오라클 차단). */

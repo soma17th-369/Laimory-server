@@ -232,6 +232,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   추정하지 않고 발송 대상에서 제외한다.
 - 타임라인 완료 통지는 **마스터 스위치와 무관하게 발송한다** — 사용자가 직접 시작한 작업의 결과
   통지라 예정(리텐션) 알림과 성격이 다르다. 따라서 마스터가 실제로 막는 것은 예정 알림뿐이다.
+  탈퇴 회원의 FID는 #367부터 보존되므로, 탈퇴 직전 시작해 task TTL(3분) 안에 완료된 in-flight 작업
+  하나가 완료 push를 받을 수 있다 — 내용이 taskId·상태뿐인 일반 문구라 이 좁은 창을 수용한다
+  (설정을 끈 정상 사용자의 완료 통지를 함께 막는 대가가 더 크다).
 - 일일 리마인더는 기본 ON이고 발송 시각은 서버가 21:00(`Asia/Seoul`)으로 고정한다(#318). 사용자
   조작은 일일 알림 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
 - 설정 조회는 쓰기를 하지 않으며 행이 없으면 쓰기와 같은 이유로 던진다 — 기본값으로 가리면 조회가
@@ -339,10 +342,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애만 fail-closed
   500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
   성립한 뒤에만 기록한다.
-- 탈퇴(#305)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
-  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록·일일 알림 설정·마스터
-  삭제(FK RESTRICT 순서) + userId-only
-  PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). 동시성 판정은 조건부
+- 탈퇴(#305, #367)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
+  `provider_user_id` NULL release + `subject_preferences.push_enabled=false` +
+  `daily_notification_preferences.enabled=false` + userId-only
+  PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). **삭제는 하지 않는다** —
+  refresh 행·push 등록(FID)·두 알림 설정 행은 모두 보존하고 발송 차단은 OFF로 표현하며, 물리 삭제는
+  #302가 소유한다. 두 UPDATE의 0행은 예외로 전파돼 회원 전이·identity release·선행 UPDATE·job enqueue를
+  함께 rollback한다(알림이 켜진 채 탈퇴만 접수되는 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
   수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 old
   credential의 사용·연장 불가를 뜻한다.

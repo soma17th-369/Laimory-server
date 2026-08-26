@@ -53,7 +53,11 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, `cleanup_available_at`=retention cleanup
   eligibility)
-- `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업)
+- `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업).
+  탈퇴 transaction은 `refresh_tokens`·`push_registrations`·`subject_preferences`·
+  `daily_notification_preferences` 행을 **지우지 않는다**(#367) — 알림 두 행은 `false`로 UPDATE하고
+  나머지는 그대로 둔다. 이 행들의 물리 삭제는 #302 삭제 worker가 소유하므로, 탈퇴 회원의 잔존 행은
+  누락이 아니라 설계다.
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`

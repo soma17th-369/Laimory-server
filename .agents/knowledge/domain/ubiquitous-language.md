@@ -136,7 +136,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
 | 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
-| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
+| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·전체 push 마스터 OFF·일일 알림 OFF·삭제 작업 접수를 commit하고 202를 반환한다. **행은 지우지 않는다**(#367 — refresh·FID·설정 2행 모두 보존, 물리 삭제는 #302 소유). 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
 | 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
@@ -178,7 +178,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
 | subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터 하나뿐이다. |
-| 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. |
+| 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송하는 예정 알림이다(#318). 기본 ON/21:00이고 사용자는 끄기만 할 수 있으며 시각은 서버 고정이라 사용자가 고르지 않는다(별도 법정 동의 절차 없음 — 정보성 통지, 수신거부 수단은 일일 알림 OFF). |
 | occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |

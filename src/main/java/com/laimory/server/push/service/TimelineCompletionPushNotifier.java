@@ -19,9 +19,11 @@ import org.springframework.stereotype.Service;
  * FCM은 결과의 권위 원천이 아니라 조회를 유도하는 완료 신호다 — 실패·유실은 로그만 남기고 기존 polling·
  * 앱 재진입 동기화가 안전망이다.
  *
- * <p>전체 푸시 마스터가 OFF면 FID 조회 전에 끝낸다. 마스터 행이 아직 없는 rollout 창에서는 기존 동작을
- * 보존하려고 ON으로 읽는다 — 이 알림은 사용자가 직접 시작한 작업의 결과인 정보성 통지라 광고 동의
- * gate를 적용하지 않는다. DB 조회 장애는 ON으로 숨기지 않고 아래 격리에서 실패로 처리된다.
+ * <p>예정 알림 마스터(`push_enabled`)를 읽지 않는다 — 이 알림은 사용자가 직접 시작한 작업의 결과인
+ * 정보성 통지라 리텐션 목적의 예정 알림과 성격이 다르다(#319 결정 유지). 탈퇴 회원의 FID는 #367부터
+ * 보존되므로, 탈퇴 직전 시작해 3분 TTL 안에 완료된 in-flight 작업 하나가 완료 push를 받을 수 있다 —
+ * 내용이 taskId·상태뿐인 일반 문구라 이 좁은 창을 수용한다(설정을 끈 정상 사용자의 완료 통지를
+ * 함께 막는 대가가 더 크다).
  *
  * <p>{@code TimelineCallbackService}의 self-invocation이 아닌 별도 빈이라 {@code @Async} 프록시가 실제로
  * 적용된다(executor는 {@code AsyncConfig}의 Boot 기본 {@code applicationTaskExecutor}). async body의
