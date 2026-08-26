@@ -27,8 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 전체 푸시 마스터 leaf 검증 — 행 부재는 조회·쓰기 모두 던지고, worker의 batch 판정만 추정 없이
- * 결과에서 제외한다는 계약을 고정한다.
+ * subject 축 설정 leaf 검증 — 마스터와 온보딩 완료 여부 모두 행 부재는 조회·쓰기에서 던지고, worker의
+ * batch 판정만 추정 없이 결과에서 제외한다는 계약을 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 class SubjectPreferenceServiceTest {
@@ -45,18 +45,24 @@ class SubjectPreferenceServiceTest {
     }
 
     private static SubjectPreference preference(boolean enabled) {
+        return preference(enabled, false);
+    }
+
+    private static SubjectPreference preference(boolean enabled, boolean onboardingCompleted) {
         SubjectPreference preference = new SubjectPreference() {
         };
         ReflectionTestUtils.setField(preference, "subjectId", SUBJECT_ID);
         ReflectionTestUtils.setField(preference, "pushEnabled", enabled);
+        ReflectionTestUtils.setField(preference, "onboardingCompleted", onboardingCompleted);
         return preference;
     }
 
     @Test
-    void createDefault_isEnabledWithKstAuditTime() {
+    void createDefault_isEnabledAndNotOnboardedWithKstAuditTime() {
+        // 두 기본값을 INSERT에 명시한다 — DB default에만 맡기면 기본값 권위가 코드와 스키마로 갈린다.
         service().createDefaultIfAbsent(SUBJECT_ID);
 
-        verify(subjectPreferenceRepository).insertIfAbsent(SUBJECT_ID.toString(), true, NOW_KST);
+        verify(subjectPreferenceRepository).insertIfAbsent(SUBJECT_ID.toString(), true, false, NOW_KST);
     }
 
     @Test
@@ -67,7 +73,7 @@ class SubjectPreferenceServiceTest {
 
         assertThatThrownBy(() -> service().findPushEnabled(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
-        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
     }
 
     @Test
@@ -76,7 +82,7 @@ class SubjectPreferenceServiceTest {
 
         assertThat(service().findPushEnabled(SUBJECT_ID)).isFalse();
 
-        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
     }
 
     @Test
@@ -87,7 +93,68 @@ class SubjectPreferenceServiceTest {
 
         assertThatThrownBy(() -> service().updatePushEnabled(SUBJECT_ID, false))
                 .isInstanceOf(IllegalStateException.class);
-        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), any());
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    void findOnboardingCompleted_returnsStoredValueWithoutWriting() {
+        // 저장값이 권위다 — 약관 동의 이력이나 기록 존재 여부로 계산하지 않고, 조회가 값을 바꾸지 않는다.
+        when(subjectPreferenceRepository.findById(SUBJECT_ID))
+                .thenReturn(Optional.of(preference(true, true)));
+
+        assertThat(service().findOnboardingCompleted(SUBJECT_ID)).isTrue();
+
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
+        verify(subjectPreferenceRepository, never()).markOnboardingCompleted(any());
+    }
+
+    @Test
+    void findOnboardingCompleted_defaultRowIsFalse() {
+        when(subjectPreferenceRepository.findById(SUBJECT_ID))
+                .thenReturn(Optional.of(preference(true, false)));
+
+        assertThat(service().findOnboardingCompleted(SUBJECT_ID)).isFalse();
+    }
+
+    @Test
+    void findOnboardingCompleted_missingRow_failsLoudlyWithoutWriting() {
+        // 행 부재를 false로 가리면 앱이 온보딩을 다시 태우고 그 완료 요청은 다시 0행으로 실패한다 —
+        // 조회도 마스터와 같은 운영 신호를 낸다.
+        when(subjectPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().findOnboardingCompleted(SUBJECT_ID))
+                .isInstanceOf(IllegalStateException.class);
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    void completeOnboarding_matchedRowSucceeds() {
+        // 이미 true인 행도 matched row 1이라 반복 호출이 멱등 성공한다(changed 기준이면 깨진다).
+        when(subjectPreferenceRepository.markOnboardingCompleted(SUBJECT_ID)).thenReturn(1);
+
+        service().completeOnboarding(SUBJECT_ID);
+
+        verify(subjectPreferenceRepository).markOnboardingCompleted(SUBJECT_ID);
+    }
+
+    @Test
+    void completeOnboarding_whenRowMissing_failsLoudlyWithoutCreating() {
+        // 0행은 값이 같아서가 아니라 행이 없다는 뜻이다 — 쓰기 경로는 행을 만들지 않는다.
+        when(subjectPreferenceRepository.markOnboardingCompleted(SUBJECT_ID)).thenReturn(0);
+
+        assertThatThrownBy(() -> service().completeOnboarding(SUBJECT_ID))
+                .isInstanceOf(IllegalStateException.class);
+        verify(subjectPreferenceRepository, never()).insertIfAbsent(anyString(), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    void completeOnboarding_doesNotTouchPushMaster() {
+        // 온보딩 완료는 알림 설정을 건드리지 않는다(컬럼 단위 UPDATE).
+        when(subjectPreferenceRepository.markOnboardingCompleted(SUBJECT_ID)).thenReturn(1);
+
+        service().completeOnboarding(SUBJECT_ID);
+
+        verify(subjectPreferenceRepository, never()).updatePushEnabled(any(), anyBoolean());
     }
 
     @Test

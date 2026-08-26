@@ -31,8 +31,9 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 27개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-user GET/DELETE + terms agreements GET/POST)는 `bearerAuth` security requirement와
+보호 operation 29개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST)는
+`bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
@@ -195,6 +196,19 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 절차를 두지 않으며 리마인더의 수신거부 수단은 일일 알림 OFF다 — 영리 목적의
 광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
 도입해야 한다.
+
+`GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
+조회·기록 계약이다. GET은 인증 subject의 저장된 `onboardingCompleted` boolean 하나를 반환하고, POST는
+그 값을 `true`로 전이한다. 값의 단일 권위는 저장된 subject 설정(`subject_preferences.onboarding_completed`)
+이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 자동 동기화하지 않는다 — 약관 개정도 저장된
+완료 상태를 되돌리지 않는다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
+subject의 반복 POST도 같은 `200 + body=null`로 멱등 성공한다(matched row 기준 — 값이 같아도 0행이
+아니다). POST는 request body가 없다: 대상은 언제나 인증 subject 자신이고 바꿀 값도 하나뿐이다. 두
+operation 모두 `@LoginTermsExempt`라 약관 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마칠 수 있으며
+bearer 인증과 `ACTIVE` 회원 검사는 그대로 요구한다. 설정 행이 없으면 push 설정과 같은 정책으로 조회·기록
+모두 기본값 추정이나 조용한 no-op 없이 500이다 — `false`로 가리면 앱이 온보딩을 다시 태우고 그 완료
+요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지한다(응답에
+다른 상태를 미리 넣거나 provider 병렬 aggregation framework를 만들지 않는다).
 
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는

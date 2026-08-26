@@ -17,6 +17,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.initializer.controller.AppInitializerController;
+import com.laimory.server.initializer.dto.InitializerResponse;
+import com.laimory.server.initializer.service.AppInitializerService;
+import com.laimory.server.onboarding.controller.OnboardingController;
+import com.laimory.server.onboarding.service.OnboardingService;
 import com.laimory.server.push.controller.PushRegistrationController;
 import com.laimory.server.push.controller.PushSettingController;
 import com.laimory.server.push.dto.PushSettingsResponse;
@@ -65,7 +70,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @WebMvcTest(controllers = {TimelineController.class, TimelineRecordController.class,
         PushRegistrationController.class, PushSettingController.class, UserController.class,
-        TermAgreementController.class})
+        TermAgreementController.class, AppInitializerController.class, OnboardingController.class})
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TermsEnforcementInterceptorMvcTest {
 
@@ -125,6 +130,10 @@ class TermsEnforcementInterceptorMvcTest {
     private UserWithdrawalService userWithdrawalService;
     @MockitoBean
     private TermAgreementService termAgreementService;
+    @MockitoBean
+    private AppInitializerService appInitializerService;
+    @MockitoBean
+    private OnboardingService onboardingService;
 
     @BeforeEach
     void resolveSubject() {
@@ -147,8 +156,9 @@ class TermsEnforcementInterceptorMvcTest {
 
     @Test
     void exemptOperations_neverConsultTermsGate_andRemainAccessible() throws Exception {
-        // 동의 등록/이력·내 회원 조회·회원 탈퇴(#305)·push PUT/DELETE는 LOGIN gate 판정 자체를 타지
-        // 않는다 — 미동의(gate가 403을 던질 상태)에서도 접근 가능함이 이 exemption의 의미다.
+        // 동의 등록/이력·내 회원 조회·회원 탈퇴(#305)·push PUT/DELETE·앱 초기화 조회와 온보딩 완료(#382)는
+        // LOGIN gate 판정 자체를 타지 않는다 — 미동의(gate가 403을 던질 상태)에서도 접근 가능함이 이
+        // exemption의 의미다.
         when(userService.getProfile("v1", USER_ID))
                 .thenReturn(User.of(Provider.KAKAO, "sub-303", null, "라이머"));
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of());
@@ -156,6 +166,8 @@ class TermsEnforcementInterceptorMvcTest {
         when(pushSettingService.getSettings("v1", SUBJECT_ID)).thenReturn(new PushSettingsResponse(
                 true,
                 new PushSettingsResponse.DailyReminder(false, "21:00")));
+        when(appInitializerService.getInitialState("v1", SUBJECT_ID))
+                .thenReturn(new InitializerResponse(false));
 
         String agreementBody = "{\"agreements\":[{\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"2026-08-15\"}]}";
 
@@ -184,12 +196,20 @@ class TermsEnforcementInterceptorMvcTest {
         mockMvc.perform(put("/a/api/v1/push-settings/daily-reminder/enabled").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
                 .andExpect(status().isOk());
+        // #382: 온보딩은 약관 동의와 독립된 절차다 — 미동의 상태에서도 시작 상태를 읽고 완료를 기록한다.
+        mockMvc.perform(get("/a/api/v1/initializer").with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/a/api/v1/onboarding/complete").with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk());
 
         verifyNoInteractions(termsEnforcementService);
         // 미동의 상태에서도 계정 전환 PUT은 서비스까지 도달한다(재결합 자체는 service/persistence 테스트 소유).
         verify(pushRegistrationService).register("v1", SUBJECT_ID, "fid-303");
         verify(pushRegistrationService).unregister("v1", SUBJECT_ID, "fid-303");
         verify(userWithdrawalService).withdraw("v1", USER_ID);
+        // 미동의 상태에서도 두 신규 operation이 controller를 넘어 service까지 도달한다.
+        verify(appInitializerService).getInitialState("v1", SUBJECT_ID);
+        verify(onboardingService).completeOnboarding("v1", SUBJECT_ID);
     }
 
     @Test

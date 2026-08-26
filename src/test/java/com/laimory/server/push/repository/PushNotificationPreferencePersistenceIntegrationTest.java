@@ -6,8 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.entity.DailyNotificationPreference;
+import com.laimory.server.push.entity.SubjectPreference;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushSettingService;
+import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Instant;
@@ -31,7 +33,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * 푸시 설정·스케줄 테이블의 실 MySQL 왕복 검증.
+ * subject 축 설정·스케줄 테이블의 실 MySQL 왕복 검증(마스터·온보딩 완료 여부·일일 알림).
  *
  * <ul>
  *   <li>{@code ddl-auto=validate}이므로 컨텍스트 기동 자체가 엔티티↔DDL 정합을 검증한다(감사 컬럼 포함).</li>
@@ -68,6 +70,9 @@ class PushNotificationPreferencePersistenceIntegrationTest {
     private PushSettingService pushSettingService;
 
     @Autowired
+    private SubjectPreferenceService subjectPreferenceService;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
@@ -82,7 +87,7 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     private void givenSubject(UUID subjectId) {
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
-        subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, LocalDateTime.now());
+        subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, false, LocalDateTime.now());
     }
 
     private void givenDueSchedule(UUID subjectId, LocalDateTime nextDueAt) {
@@ -100,6 +105,10 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         return dailyNotificationPreferenceRepository.findById(subjectId).orElseThrow();
     }
 
+    private SubjectPreference reloadPreference(UUID subjectId) {
+        return subjectPreferenceRepository.findById(subjectId).orElseThrow();
+    }
+
     // --- 기본 행 생성 ---
 
     @Test
@@ -108,8 +117,9 @@ class PushNotificationPreferencePersistenceIntegrationTest {
         SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
         LocalDateTime now = LocalDateTime.of(2026, 7, 21, 12, 0);
 
-        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, now)).isEqualTo(1);
-        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), false, now)).isZero();
+        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), true, false, now))
+                .isEqualTo(1);
+        assertThat(subjectPreferenceRepository.insertIfAbsent(subjectId.toString(), false, true, now)).isZero();
         assertThat(dailyNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(),
                 false, LocalDateTime.of(2026, 7, 21, 21, 0), now)).isEqualTo(1);
         assertThat(dailyNotificationPreferenceRepository.insertIfAbsent(subjectId.toString(),
@@ -117,8 +127,60 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
         // 재실행이 기존 값을 덮지 않는다 — 두 단계 rollout backfill을 몇 번 돌려도 안전하다.
         assertThat(subjectPreferenceRepository.findById(subjectId).orElseThrow().isPushEnabled()).isTrue();
+        assertThat(subjectPreferenceRepository.findById(subjectId).orElseThrow().isOnboardingCompleted())
+                .isFalse();
         assertThat(reload(subjectId).isEnabled()).isFalse();
         assertThat(reload(subjectId).getNextDueAt()).isEqualTo(LocalDateTime.of(2026, 7, 21, 21, 0));
+    }
+
+    // --- 온보딩 완료 컬럼(#382) ---
+
+    @Test
+    void completeOnboarding_transitionsFalseToTrue_andRepeatCallStaysIdempotent() {
+        UUID subjectId = SUBJECTS.get(0);
+        UUID other = SUBJECTS.get(1);
+        givenSubject(subjectId);
+        givenSubject(other);
+
+        assertThat(reloadPreference(subjectId).isOnboardingCompleted()).isFalse();
+
+        subjectPreferenceService.completeOnboarding(subjectId);
+        assertThat(reloadPreference(subjectId).isOnboardingCompleted()).isTrue();
+
+        // 이미 true인 행도 matched row 1이라 재호출이 멱등 성공한다 — 0행 판정이 matched가 아니라
+        // changed 기준으로 바뀌면 여기서 깨진다.
+        assertThatCode(() -> subjectPreferenceService.completeOnboarding(subjectId))
+                .doesNotThrowAnyException();
+        assertThat(reloadPreference(subjectId).isOnboardingCompleted()).isTrue();
+
+        // 다른 subject 행은 건드리지 않는다(subject PK 조건 UPDATE).
+        assertThat(reloadPreference(other).isOnboardingCompleted()).isFalse();
+    }
+
+    @Test
+    void completeOnboarding_preservesPushMaster_andPushWritesPreserveOnboarding() {
+        UUID subjectId = SUBJECTS.get(0);
+        givenSubject(subjectId);
+
+        // 온보딩 완료는 마스터를 건드리지 않는다.
+        subjectPreferenceService.completeOnboarding(subjectId);
+        assertThat(reloadPreference(subjectId).isPushEnabled()).isTrue();
+
+        // 반대 방향도 성립한다 — 탈퇴의 마스터 OFF가 온보딩 값을 되돌리면 재가입 없이 온보딩이 되살아난다.
+        subjectPreferenceService.updatePushEnabled(subjectId, false);
+        assertThat(reloadPreference(subjectId).isPushEnabled()).isFalse();
+        assertThat(reloadPreference(subjectId).isOnboardingCompleted()).isTrue();
+    }
+
+    @Test
+    void completeOnboarding_withoutRow_throwsAndCreatesNothing() {
+        UUID subjectId = SUBJECTS.get(0);
+        SubjectMappingFixtures.ensureExists(jdbcTemplate, subjectId);
+
+        // 쓰기 경로는 행을 만들지 않는다 — 0행은 가입 transaction·backfill 보장이 깨졌다는 운영 신호다.
+        assertThatThrownBy(() -> subjectPreferenceService.completeOnboarding(subjectId))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(subjectPreferenceRepository.findById(subjectId)).isEmpty();
     }
 
     // --- claim 전진 규칙 ---
