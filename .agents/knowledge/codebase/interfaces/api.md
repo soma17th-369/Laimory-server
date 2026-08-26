@@ -55,7 +55,7 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`다.
 `{recordDate}`를 path로 받는 다섯 API(일별 GET·DELETE, `/save`, `/emotion`, `/events`)는 ISO parse에
-성공해도 MySQL `DATE` 범위 `1000-01-01`~`9999-12-31`(양끝 포함) 밖이면 service 호출 전에 400 `-400`으로
+성공해도 MySQL `DATE` 지원 범위 `1000-01-01`~`9999-12-31`(양끝 포함) 밖이면 service 호출 전에 400 `-400`으로
 거절한다(#366 — 신규 error code 없이 기존 `-400`으로 수렴). 미래 날짜 제한은 하루 기록을 실제로 만드는
 경로에만 있다: draft 생성 POST는 요청 `recordTimeZone` 기준, `/save`는 저장된 record timezone 기준으로
 오늘보다 미래면 400이다. 조회·삭제·감정 수정·Event 생성은 미래 날짜를 막지 않으며, `recordDate`와

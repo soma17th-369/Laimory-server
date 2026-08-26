@@ -106,7 +106,8 @@ class TimelineDraftTaskServiceTest {
     // 클라가 계산해 보낸 AI 이벤트 생성 범위(선택 날짜의 달력 하루) — 서버는 pass-through한다.
     private static final TimelineWindowDto WINDOW = new TimelineWindowDto(
             LocalDateTime.of(2026, 6, 17, 0, 0), LocalDateTime.of(2026, 6, 18, 0, 0));
-    // PROCESSING 저장 직전 캡처되는 시각(폴링 elapsedSeconds 기준) — mock Clock이 반환한다.
+    // mock Clock의 기본 반환값. 입력 날짜 검증과 PROCESSING 저장 직전 캡처(폴링 elapsedSeconds 기준)
+    // 두 용도에서 읽힌다.
     private static final Instant PROCESSING_STARTED_AT = Instant.parse("2026-06-17T03:05:00Z");
     // 선생성 트랜잭션이 반환하는 record ID — Redis task·AI dispatch body에 실린다.
     private static final long RECORD_ID = 42L;
@@ -996,5 +997,24 @@ class TimelineDraftTaskServiceTest {
 
         assertThatCode(() -> service.createDraftTask(
                 VERSION, SUBJECT_ID, today, RECORD_AT, ZONE, WINDOW, oneSource())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void createDraftTask_todayIsResolvedInRequestZone_notServerZone() {
+        // 이 테스트가 없으면 "요청 timezone으로 오늘을 판정한다"는 계약이 고정되지 않는다 —
+        // 기본 fixture(ZONE=Asia/Seoul)는 서버 zone과 같은 날짜라 둘을 구분하지 못하기 때문이다.
+        // 같은 instant가 UTC+14에서는 이미 06-18, UTC-11에서는 아직 06-17인 시각을 골라 갈라 본다.
+        Instant atSeoulLateNight = Instant.parse("2026-06-17T14:00:00Z"); // 2026-06-17 23:00 KST
+        when(clock.instant()).thenReturn(atSeoulLateNight);
+        LocalDate date = LocalDate.of(2026, 6, 18);
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, date)).thenReturn(Optional.empty());
+
+        assertThatCode(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, date, RECORD_AT, "Pacific/Kiritimati", WINDOW, oneSource()))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, date, RECORD_AT, "Pacific/Midway", WINDOW, oneSource()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

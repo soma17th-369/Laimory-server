@@ -277,7 +277,7 @@ class TimelineRecordControllerTest {
 
     @Test
     void recordDatePaths_outsideMysqlDateRange_return400WithoutCallingService() throws Exception {
-        // ISO parse는 통과하지만 MySQL DATE가 담지 못하는 값 — 다섯 path 모두 service 호출 전에 끊는다.
+        // ISO parse는 통과하지만 MySQL DATE 지원 범위 밖 — 다섯 path 모두 service 호출 전에 끊는다.
         // "파싱 실패"(위 테스트)와 "파싱은 되지만 범위 밖"은 다른 경계라 함께 고정한다.
         for (String date : new String[] {"0999-12-31", "+10000-01-01"}) {
             String base = DAILY_RECORDS_PATH + "/" + date;

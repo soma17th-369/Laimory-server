@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
@@ -39,8 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class DailyTimelineService {
 
     /** MySQL {@code DATE}가 지원하는 연도 범위 — API 경계도 같은 값으로 제한한다. */
-    private static final int MIN_YEAR = 1000;
-    private static final int MAX_YEAR = 9999;
+    // 월별 조회의 연도 경계는 recordDate 범위와 같은 불변식이다 — 값을 복제하지 않고 한 곳에서 읽는다.
+    private static final int MIN_YEAR = RecordDates.MIN_RECORD_DATE.getYear();
+    private static final int MAX_YEAR = RecordDates.MAX_RECORD_DATE.getYear();
 
     private final DailyRecordService dailyRecordService;
     private final TimelineEventService timelineEventService;
@@ -111,7 +113,8 @@ public class DailyTimelineService {
                                                               int year, int month) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         if (year < MIN_YEAR || year > MAX_YEAR) {
-            throw new IllegalArgumentException("year must be between 1000 and 9999: " + year);
+            throw new IllegalArgumentException(
+                    "year must be between " + MIN_YEAR + " and " + MAX_YEAR + ": " + year);
         }
         if (month < 1 || month > 12) {
             throw new IllegalArgumentException("month must be between 1 and 12: " + month);

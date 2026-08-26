@@ -42,7 +42,7 @@ class RecordDatesTest {
 
     @Test
     void requireValidRecordDate_outsideMysqlDateRange_throws() {
-        // ISO parse는 통과하지만 MySQL DATE가 담지 못하는 값이다.
+        // ISO parse는 통과하지만 MySQL DATE 지원 범위 밖이다(상한 초과는 INSERT 실패, 하한은 계약상 좁히기).
         assertThatThrownBy(() -> RecordDates.requireValidRecordDate(LocalDate.of(999, 12, 31)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> RecordDates.requireValidRecordDate(LocalDate.of(10000, 1, 1)))

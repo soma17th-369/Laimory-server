@@ -49,15 +49,17 @@ class TimelineApiDocumentationContractTest {
     @Test
     void draftAndSaveOperations_documentFutureRecordDateRejection() {
         // 하루 기록을 실제로 만들거나 확정하는 두 경로만 미래 날짜를 거절한다 — 조회·삭제는 대상이 아니다.
-        String draftDescription = Arrays.stream(TimelineApi.class.getDeclaredMethods())
+        // getDeclaredMethods()는 순서를 보장하지 않는다 — findFirst 대신 개수를 고정해야 두 번째 설명이
+        // 생겼을 때 비결정적으로 통과하지 않고 실패한다.
+        List<String> draftDescriptions = Arrays.stream(TimelineApi.class.getDeclaredMethods())
                 .filter(method -> method.getAnnotation(ApiResponses.class) != null)
                 .flatMap(method -> Arrays.stream(method.getAnnotation(ApiResponses.class).value()))
                 .filter(response -> "400".equals(response.responseCode()))
                 .map(ApiResponse::description)
                 .filter(description -> description.contains("recordDate"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(draftDescription).contains("미래");
+                .toList();
+        assertThat(draftDescriptions).hasSize(1);
+        assertThat(draftDescriptions.getFirst()).contains("미래");
 
         List<String> saveDescriptions = Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
                 .filter(method -> method.getAnnotation(ApiResponses.class) != null)
