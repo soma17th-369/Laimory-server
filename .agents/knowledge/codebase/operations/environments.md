@@ -61,8 +61,9 @@ host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redi
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
-열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 dev WAS nginx/SSM을 통해서만
-접근하며, monitoring 장애는 application 배포·health gate 의존성이 아니다.
+열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 `grafana.laimory.app`
+(prod ALB·자체 Google OAuth, #368)과 SSM port forwarding으로 접근하며, monitoring 장애는
+application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
 
