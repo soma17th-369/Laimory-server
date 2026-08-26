@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
 /**
  * AgentCore mode({@code app.ai.mode=agentcore})에서만 소비하는 검증된 설정 스냅샷.

@@ -1,5 +1,6 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
+import com.laimory.server.timeline.service.TimelineTaskService;
 import java.time.Duration;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,7 +31,7 @@ import software.amazon.awssdk.services.bedrockagentcore.BedrockAgentCoreClient;
  */
 @Configuration
 @ConditionalOnProperty(name = "app.ai.mode", havingValue = "agentcore")
-class AgentCoreClientConfig {
+public class AgentCoreClientConfig {
 
     /** 전체 호출(SDK 재시도 없음이므로 사실상 단일 시도)의 상한. */
     static final Duration CALL_TIMEOUT = Duration.ofSeconds(7);

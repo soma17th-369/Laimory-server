@@ -1,8 +1,9 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchResponse;
+import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
@@ -51,7 +52,7 @@ import software.amazon.awssdk.services.bedrockagentcore.model.ServiceException;
 @Component
 @ConditionalOnProperty(name = "app.ai.mode", havingValue = "agentcore")
 @RequiredArgsConstructor
-class AgentCoreDispatchClient {
+public class AgentCoreDispatchClient {
 
     static final String CONTENT_TYPE = "application/json";
     static final int MAX_ACK_BYTES = 8 * 1024;

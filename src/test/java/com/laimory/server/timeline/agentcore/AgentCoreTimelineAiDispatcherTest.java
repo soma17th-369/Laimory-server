@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -14,6 +14,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;

@@ -1,7 +1,8 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
 import com.laimory.server.timeline.dto.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.service.TimelineAiDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

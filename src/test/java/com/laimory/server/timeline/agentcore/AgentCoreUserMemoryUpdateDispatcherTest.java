@@ -1,4 +1,4 @@
-package com.laimory.server.timeline.service;
+package com.laimory.server.timeline.agentcore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
+import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
