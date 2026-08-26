@@ -29,8 +29,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 2. MVC 경계에서 인증 principal을 해석한 request subjectId 하나가 record 조회·enrich photo key·staging
    row·Redis task owner에 동일하게 흐른다. task는 subject owner를 세 상태 모두 보존한다.
 3. 요청의 `recordDate`(클라 선택 날짜)와 `timelineWindow`(필수, `startTime < endTime`)를 side effect 전에
-   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). source item도
-   같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
+   검증한다 — 서버는 recordDate를 파생하지 않고 window를 계산·보정하지 않는다(pass-through). recordDate는
+   `1000-01-01`~`9999-12-31`(MySQL `DATE` 범위) 안이어야 하고 요청 `recordTimeZone` 기준 오늘보다 미래면
+   400 `-400`이다(#366) — 이 검증이 record 조회·enrich·staging·Redis·dispatch 전에 놓여 아무것도
+   만들어지지 않는다. 오늘 판정에 쓰는 instant는 `Clock`에서 읽으며, polling 기준인
+   `processingStartedAt`은 preparation commit 뒤 다시 읽는 별개 값이다(입력 검증 시각을 재사용하지 않는다).
+   source item도 같은 경계에서 전 타입 공통 `startAt` 필수로 검증한다(누락 → 400 `-400`, `endAt`은 nullable).
    `rawId`는 canonical lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용하고 위반은 400 `-400`이다.
    임의 문자열에 개인정보가 실리는 것을 막는 경계라 오류 메시지에 rawId 원문을 싣지 않으며, 허용값은
    서버 정규화 없이 그대로 저장한다.
@@ -225,7 +229,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - `POST /a/api/{version}/timeline/daily-records/{recordDate}/save`(필수 body `emotionType` — 5단계
   enum, 누락·null·미지원 값·zero-byte body는 400, body 있는 비JSON Content-Type은 415). `(request
   subjectId, recordDate)`로 record를 찾아 없음·비소유는 404(`-404`), SAVED는 409(`-1003`)로
-  <b>부수효과 전에</b> 거절하고, 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
+  <b>부수효과 전에</b> 거절한다. 그 뒤 저장된 `recordTimezone` 기준 오늘보다 미래인 recordDate를 400
+  `-400`으로 거절해 `DRAFT→SAVED` 확정을 막는다(#366 — timezone을 알아야 판정할 수 있어 조회 뒤이고,
+  조회는 부수효과가 아니다). 이 검사는 SAVED 판정보다 <b>뒤</b>라 이미 확정된 record는 미래 날짜여도
+  기존 409를 그대로 받는다. 이어서 별도 transaction service가 조건부 UPDATE(`WHERE status='DRAFT'`)로
   감정과 상태를 함께 <b>최초 확정</b>한다(상태의 유일한 write 지점). 영향 행 수 0은
   재조회로 404/409를 분류한다 — 이 UPDATE가 저장 흐름의 유일한 직렬화 지점이다.
 - 확정 후 감정 수정은 `PUT .../daily-records/{recordDate}/emotion`(#325)이 담당한다 — 같은 2계층

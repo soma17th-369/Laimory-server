@@ -1,11 +1,13 @@
 package com.laimory.server.timeline.service;
 
+import com.laimory.server.common.RecordDates;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
@@ -29,14 +31,17 @@ public class TimelineSaveService {
     private final DailyRecordService dailyRecordService;
     private final TimelineSaveTransactionService timelineSaveTransactionService;
     private final UserMemoryUpdateWorker userMemoryUpdateWorker;
+    private final Clock clock;
 
     public TimelineSaveService(
             DailyRecordService dailyRecordService,
             TimelineSaveTransactionService timelineSaveTransactionService,
-            UserMemoryUpdateWorker userMemoryUpdateWorker) {
+            UserMemoryUpdateWorker userMemoryUpdateWorker,
+            Clock clock) {
         this.dailyRecordService = dailyRecordService;
         this.timelineSaveTransactionService = timelineSaveTransactionService;
         this.userMemoryUpdateWorker = userMemoryUpdateWorker;
+        this.clock = clock;
     }
 
     /**
@@ -52,6 +57,10 @@ public class TimelineSaveService {
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
+        // 저장된 record의 timezone을 알아야 미래 여부를 판정할 수 있으므로 조회 뒤에 검사한다(조회는 부수효과가
+        // 아니다). draft 생성 경계가 이미 막지만, 날짜를 넘겨 DRAFT→SAVED로 확정되는 것을 한 번 더 끊는다.
+        // SAVED 판정보다 뒤에 둬서 이미 확정된 record의 기존 409 계약은 그대로 둔다 — 여기서 막을 전이가 없다.
+        RecordDates.requireNotFutureRecordDate(recordDate, record.getRecordTimezone(), clock.instant());
 
         Long dailyRecordId = record.getDailyRecordId();
         timelineSaveTransactionService.save(subjectId, dailyRecordId, emotionType);

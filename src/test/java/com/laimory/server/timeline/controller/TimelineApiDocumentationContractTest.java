@@ -32,6 +32,45 @@ class TimelineApiDocumentationContractTest {
     }
 
     @Test
+    void recordDatePathOperations_documentMysqlDateRange() {
+        // 다섯 {recordDate} path의 400 설명이 범위 계약을 광고하는지만 좁게 고정한다(#366).
+        List<String> badRequestDescriptions = Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
+                .filter(method -> method.getAnnotation(ApiResponses.class) != null)
+                .flatMap(method -> Arrays.stream(method.getAnnotation(ApiResponses.class).value()))
+                .filter(response -> "400".equals(response.responseCode()))
+                .map(ApiResponse::description)
+                .filter(description -> description.contains("recordDate"))
+                .toList();
+
+        assertThat(badRequestDescriptions).hasSize(5);
+        assertThat(badRequestDescriptions).allMatch(description -> description.contains("1000-01-01~9999-12-31"));
+    }
+
+    @Test
+    void draftAndSaveOperations_documentFutureRecordDateRejection() {
+        // 하루 기록을 실제로 만들거나 확정하는 두 경로만 미래 날짜를 거절한다 — 조회·삭제는 대상이 아니다.
+        String draftDescription = Arrays.stream(TimelineApi.class.getDeclaredMethods())
+                .filter(method -> method.getAnnotation(ApiResponses.class) != null)
+                .flatMap(method -> Arrays.stream(method.getAnnotation(ApiResponses.class).value()))
+                .filter(response -> "400".equals(response.responseCode()))
+                .map(ApiResponse::description)
+                .filter(description -> description.contains("recordDate"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(draftDescription).contains("미래");
+
+        List<String> saveDescriptions = Arrays.stream(TimelineRecordApi.class.getDeclaredMethods())
+                .filter(method -> method.getAnnotation(ApiResponses.class) != null)
+                .flatMap(method -> Arrays.stream(method.getAnnotation(ApiResponses.class).value()))
+                .filter(response -> "400".equals(response.responseCode()))
+                .map(ApiResponse::description)
+                .filter(description -> description.contains("미래"))
+                .toList();
+        assertThat(saveDescriptions).hasSize(1);
+        assertThat(saveDescriptions.getFirst()).contains("timezone");
+    }
+
+    @Test
     void dailyRecordIdOperations_areDeprecatedAndPointToDateReplacement() throws NoSuchMethodException {
         Method getById = TimelineRecordApi.class.getDeclaredMethod(
                 "getDailyTimeline", String.class, UUID.class, Long.class);

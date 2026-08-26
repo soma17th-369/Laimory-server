@@ -275,6 +275,37 @@ class TimelineRecordControllerTest {
         verifyNoInteractions(dailyTimelineService);
     }
 
+    @Test
+    void recordDatePaths_outsideMysqlDateRange_return400WithoutCallingService() throws Exception {
+        // ISO parse는 통과하지만 MySQL DATE가 담지 못하는 값 — 다섯 path 모두 service 호출 전에 끊는다.
+        // "파싱 실패"(위 테스트)와 "파싱은 되지만 범위 밖"은 다른 경계라 함께 고정한다.
+        for (String date : new String[] {"0999-12-31", "+10000-01-01"}) {
+            String base = DAILY_RECORDS_PATH + "/" + date;
+
+            mockMvc.perform(get(base).with(authenticatedUser(USER_ID)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.header.code").value(-400));
+            mockMvc.perform(delete(base).with(authenticatedUser(USER_ID)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.header.code").value(-400));
+            mockMvc.perform(post(base + "/save").with(authenticatedUser(USER_ID))
+                            .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.header.code").value(-400));
+            mockMvc.perform(put(base + "/emotion").with(authenticatedUser(USER_ID))
+                            .contentType(MediaType.APPLICATION_JSON).content(SAVE_BODY))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.header.code").value(-400));
+            mockMvc.perform(post(base + "/events").with(authenticatedUser(USER_ID))
+                            .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.header.code").value(-400));
+        }
+
+        verifyNoInteractions(dailyTimelineService, timelineDeletionService, timelineSaveService,
+                dailyRecordEmotionUpdateService, timelineEventCreateService);
+    }
+
     // --- getMonthlyDailyRecords (캘린더 월별 경량 조회) ---
 
     @Test

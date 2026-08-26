@@ -17,8 +17,11 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +47,8 @@ class TimelineSaveServiceTest {
     private static final Long RECORD_ID = 42L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 5);
     private static final EmotionType EMOTION = EmotionType.HAPPY;
+    /** 2026-08-05 23:00 KST = 2026-08-06 04:00 Pacific/Kiritimati(UTC+14) — 같은 instant가 zone별로 다른 날짜다. */
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-05T14:00:00Z"), ZoneOffset.UTC);
 
     @Mock
     private DailyRecordService dailyRecordService;
@@ -58,7 +63,7 @@ class TimelineSaveServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService, worker);
+        service = new TimelineSaveService(dailyRecordService, timelineSaveTransactionService, worker, CLOCK);
     }
 
     @Test
@@ -134,6 +139,43 @@ class TimelineSaveServiceTest {
     }
 
     @Test
+    void 저장된_timezone_기준_미래_날짜는_전이_없이_400으로_거절한다() {
+        LocalDate future = LocalDate.of(2026, 8, 6); // Asia/Seoul 기준 오늘(08-05)보다 뒤
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, future))
+                .thenReturn(Optional.of(draftRecord(future, "Asia/Seoul")));
+
+        assertThatThrownBy(() -> service.save(VERSION, SUBJECT_ID, future, EMOTION))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(timelineSaveTransactionService, worker);
+    }
+
+    @Test
+    void 미래_판정은_서버_zone이_아니라_저장된_record_timezone을_따른다() {
+        // 같은 instant라도 UTC+14에서는 이미 08-06이라 같은 날짜가 미래가 아니다.
+        LocalDate date = LocalDate.of(2026, 8, 6);
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, date))
+                .thenReturn(Optional.of(draftRecord(date, "Pacific/Kiritimati")));
+
+        assertThatCode(() -> service.save(VERSION, SUBJECT_ID, date, EMOTION)).doesNotThrowAnyException();
+
+        verify(timelineSaveTransactionService).save(SUBJECT_ID, RECORD_ID, EMOTION);
+    }
+
+    @Test
+    void 이미_SAVED면_미래_날짜여도_기존대로_409다() {
+        // 미래 검증은 DRAFT→SAVED 전이를 막는 장치라, 이미 확정된 record의 기존 409 계약을 바꾸지 않는다.
+        LocalDate future = LocalDate.of(2026, 8, 6);
+        DailyRecord record = draftRecord(future, "Asia/Seoul");
+        ReflectionTestUtils.setField(record, "status", DailyRecordStatus.SAVED);
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, future)).thenReturn(Optional.of(record));
+
+        assertThatThrownBy(() -> service.save(VERSION, SUBJECT_ID, future, EMOTION))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(-1003));
+        verifyNoInteractions(timelineSaveTransactionService, worker);
+    }
+
+    @Test
     void 전이가_실패하면_큐에_넣지_않는다() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecord()));
@@ -146,8 +188,12 @@ class TimelineSaveServiceTest {
     }
 
     private DailyRecord draftRecord() {
+        return draftRecord(RECORD_DATE, "Asia/Seoul");
+    }
+
+    private DailyRecord draftRecord(LocalDate recordDate, String recordTimezone) {
         DailyRecord record = DailyRecord.createDraft(
-                SUBJECT_ID, RECORD_DATE, LocalDateTime.of(2026, 8, 5, 21, 0), "Asia/Seoul");
+                SUBJECT_ID, recordDate, LocalDateTime.of(2026, 8, 5, 21, 0), recordTimezone);
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);
         return record;
     }
