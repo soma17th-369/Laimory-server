@@ -61,8 +61,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
-- `subject_preferences → daily_notification_preferences` (#314·#318·#321 — subject 축 설정 버킷이
-  담은 예정 알림 마스터와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
+- `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
+  담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -187,6 +187,20 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 
 `subject_preferences`·`daily_notification_preferences`(#314·#321)는 푸시 수신 설정을 두 축으로 나눈다.
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 일일 알림 설정도 subject PK 한 행이다.
+
+`subject_preferences`는 알림 전용 테이블이 아니라 **subject 축 설정 버킷**이다 — worker·배치나 앱 시작
+경로가 subject만 들고 읽는 값을 한 행에 모은다. "알림이 늘어도 컬럼을 추가하지 않는다"는 규칙은 알림별
+값에만 걸리며(그 값은 그 알림의 테이블이 소유), `onboarding_completed`(#382, 기본 FALSE)처럼 알림이 아닌
+subject 축 설정은 이 버킷의 원래 용도다. 온보딩 값은 약관 동의 이력에서 계산·동기화하지 않고 완료
+command만 단방향으로 `true`로 바꾸며 되돌리는 writer가 없다. 논리 탈퇴는 이 값을 건드리지 않는다 —
+접근은 `ACTIVE` 검사가 막고, 재가입은 새 subject의 기본값 `false`를 쓴다(#367로 행이 보존되므로 값을
+초기화하면 남의 재가입 없이 옛 subject의 온보딩이 되살아난다). 쓰기는 컬럼 단위 조건 UPDATE라 마스터
+ON/OFF와 온보딩 완료가 서로의 값을 덮지 않는다. 두 쓰기 모두 영향 0행은 값이 같아서가 아니라 행이
+없다는 뜻이라(Connector/J 기본 matched-rows 계약) 예외로 드러내고 행을 만들지 않는다.
+
+`onboarding_completed` 추가는 additive + `DEFAULT FALSE`라 구 서버와 호환된다 — `ddl-auto=validate`는
+매핑되지 않은 여분 컬럼을 문제 삼지 않고, 컬럼을 나열하지 않는 구 native INSERT는 DB default를 받는다.
+따라서 이 DDL은 서버 배포 **전에** 적용하고 rollback 시에도 컬럼을 DROP하지 않는다.
 **두 번째 일일 알림은 이 테이블에 담을 수 없다** — #321이 값이 하나뿐이던 `notification_type` 판별자를
 걷어내면서 PK를 `subject_id` 단독으로 줄였고, 새 알림은 컬럼도 판별자도 아니라 새 테이블이 된다.
 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유한다(`NOTIFICATION_TIME=21:00`, #318 이후 사용자

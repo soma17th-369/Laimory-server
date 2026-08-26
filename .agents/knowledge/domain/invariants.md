@@ -253,6 +253,16 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 일일 알림 설정은 **subject당 한 행**이다(#321 — 판별자 없음). 두 번째 일일 알림이 생기면 이 테이블에
   행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
   운영 SQL로도 바뀌지 않는다.
+- 앱 온보딩 완료 여부의 단일 권위는 `subject_preferences.onboarding_completed`다(#382, 기본 false).
+  약관 동의 이력·`TermStage`·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
+  완료 상태를 되돌리지 않는다(재동의 강제는 terms gate의 별도 책임) — 두 상태를 엮으면 약관 개정이
+  온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
+- 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
+  이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
+  부재를 뜻한다 — 이 판정이 changed 기준으로 바뀌면 정상 재시도가 500이 된다).
+- 온보딩 값과 알림 마스터는 서로를 덮지 않는다 — 두 쓰기 모두 컬럼 단위 조건 UPDATE다. 특히 논리
+  탈퇴의 마스터 OFF는 온보딩 값을 초기화하지 않는다(#367로 행이 보존되므로 초기화하면 접근이 막힌
+  옛 subject의 온보딩만 되살아나고, 재가입은 어차피 새 subject의 기본값 false를 쓴다).
 - 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 일일 알림
   OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
@@ -319,7 +329,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
   등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
-  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
+  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)·push 수신 설정 3종·앱 초기화 GET /initializer와
+  온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은 약관 동의와 독립된 절차)만 면제하고
+  bearer 인증(401)은 그대로 요구한다.
 - 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
   전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라

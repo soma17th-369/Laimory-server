@@ -166,7 +166,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서 행이 불변이라 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
-| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
+| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push 등록 PUT/DELETE·push 수신 설정 3종·앱 초기화 GET /initializer·온보딩 완료 POST /onboarding/complete)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | seed 존재·`term_type` literal 유효성·현재 필수 문서 커버리지 판정(`TermCatalogReadiness`)이다. 기동 검사와 요청별 판정이 bounded 전이 로그·metric(`laimory.terms.catalog.ready`·`laimory.terms.gate.fail_open`)으로 알리되 기동·공개 조회를 막지 않는다. 로그 수위는 상태 성격으로 가른다 — 테이블이 완전히 빈 pre-activation(법무 원문 대기, 예정된 fail-open)은 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·오타 literal) ready에서 퇴행한 경우는 ERROR(경보 대상)다. gauge/counter는 수위와 무관하게 동일 기록한다. |
 
 ## 푸시 알림
@@ -177,8 +177,11 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
-| subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터 하나뿐이다. |
+| subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치나 앱 시작 경로가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터와 온보딩 완료 여부다. |
 | 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |
+| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 지금 담긴 값은 온보딩 완료 여부 하나이며, 상태를 계산하지 않고 저장값을 그대로 옮긴다(조회가 값을 바꾸지 않는다). "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
+| 온보딩 완료 상태 | Onboarding Completed | 현재 구현 | 사용자가 앱 온보딩을 마쳤는지의 단일 권위(`subject_preferences.onboarding_completed`, 기본 false)다. 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 동기화하지 않으며 약관 개정도 이 값을 되돌리지 않는다. 논리 탈퇴는 값을 보존하고, 재가입은 새 subject의 기본값을 쓴다. |
+| 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공하며, `false`로 되돌리는 짝은 두지 않는다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송하는 예정 알림이다(#318). 기본 ON/21:00이고 사용자는 끄기만 할 수 있으며 시각은 서버 고정이라 사용자가 고르지 않는다(별도 법정 동의 절차 없음 — 정보성 통지, 수신거부 수단은 일일 알림 OFF). |
 | occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |

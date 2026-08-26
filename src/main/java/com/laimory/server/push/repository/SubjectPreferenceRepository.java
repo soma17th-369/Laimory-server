@@ -22,22 +22,33 @@ public interface SubjectPreferenceRepository extends JpaRepository<SubjectPrefer
     @Modifying
     @Transactional
     @Query(value = "insert ignore into subject_preferences "
-            + "(subject_id, push_enabled, created_at, updated_at) "
-            + "values (:subjectId, :pushEnabled, :now, :now)",
+            + "(subject_id, push_enabled, onboarding_completed, created_at, updated_at) "
+            + "values (:subjectId, :pushEnabled, :onboardingCompleted, :now, :now)",
             nativeQuery = true)
     int insertIfAbsent(@Param("subjectId") String subjectId,
                        @Param("pushEnabled") boolean pushEnabled,
+                       @Param("onboardingCompleted") boolean onboardingCompleted,
                        @Param("now") LocalDateTime now);
 
     /** worker가 claim한 subject들의 마스터 상태 batch 조회 — 행이 없는 subject는 결과에서 빠진다. */
     @Query("select p from SubjectPreference p where p.subjectId in :subjectIds")
     List<SubjectPreference> findAllBySubjectIdIn(@Param("subjectIds") Collection<UUID> subjectIds);
 
-    /** 마스터 ON/OFF만 바꾼다 — 일일 알림 설정값은 건드리지 않는다. 같은 값 재요청은 멱등이다. */
+    /** 마스터 ON/OFF만 바꾼다 — 일일 알림 설정값·온보딩 값은 건드리지 않는다. 같은 값 재요청은 멱등이다. */
     @Modifying
     @Transactional
     @Query("update SubjectPreference p set p.pushEnabled = :pushEnabled where p.subjectId = :subjectId")
     int updatePushEnabled(@Param("subjectId") UUID subjectId, @Param("pushEnabled") boolean pushEnabled);
+
+    /**
+     * 온보딩 완료 표시(#382) — 알림 설정값은 건드리지 않는 단방향 전이다. 되돌리는 writer는 두지 않는다.
+     * 이미 true인 행도 matched row 1이므로 반복 호출이 멱등 성공한다({@code updatePushEnabled}와 같은
+     * 계약 — 0행은 값이 같아서가 아니라 행이 없다는 뜻이다).
+     */
+    @Modifying
+    @Transactional
+    @Query("update SubjectPreference p set p.onboardingCompleted = true where p.subjectId = :subjectId")
+    int markOnboardingCompleted(@Param("subjectId") UUID subjectId);
 
     /**
      * 마스터 행 삭제 — 일일 알림 행을 먼저 지운 뒤 호출한다(FK RESTRICT). 0행 허용(멱등).
