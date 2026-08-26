@@ -637,6 +637,69 @@ execute_script
 [ "$RC" = "0" ] || fail "T5b(http/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
 ok "T5b(http): APP_AI_HTTP_BASE_URL exact-one non-empty enforced only for http mode"
 
+# --- 10b. T5b(agentcore): Runtime ARN·endpoint 필수 계약(#338) ---
+# 앱은 agentcore mode에서만 이 두 key를 소비하고 누락·blank·형식 오류에 기동 실패한다. 그 실패를
+# 구 컨테이너를 내린 뒤에 알게 되지 않도록 preflight가 같은 계약을 먼저 강제한다.
+# ARN 리전은 배포 리전(harness 확장값 ap-test-1)과 같아야 한다 — client는 배포 리전으로 만들어진다.
+AGENTCORE_ARN="arn:aws:bedrock-agentcore:ap-test-1:123456789012:runtime/laimory_ai-AbCdEf"
+switch_to_agentcore() {
+  PATH=/usr/bin:/bin sed -i.bak 's/^APP_AI_MODE=fake$/APP_AI_MODE=agentcore/' "$CASE_DIR/.env"
+  rm -f "$CASE_DIR/.env.bak"
+}
+for key in APP_AI_AGENTCORE_RUNTIME_ARN APP_AI_AGENTCORE_ENDPOINT ; do
+  for mutation in missing empty dup ; do
+    new_case; base_env_fixture
+    switch_to_agentcore
+    # 대상 key만 변형하고 나머지 필수 key는 정상값으로 채운다(진단이 다른 key로 미끄러지지 않게).
+    [ "$key" = "APP_AI_AGENTCORE_RUNTIME_ARN" ] || echo "APP_AI_AGENTCORE_RUNTIME_ARN=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+    [ "$key" = "APP_AI_AGENTCORE_ENDPOINT" ] || echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+    case "$mutation" in
+      missing) : ;;
+      empty) echo "$key=" >> "$CASE_DIR/.env" ;;
+      dup) if [ "$key" = "APP_AI_AGENTCORE_RUNTIME_ARN" ]; then
+             echo "$key=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+             echo "$key=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+           else
+             echo "$key=DEFAULT" >> "$CASE_DIR/.env"
+             echo "$key=OTHER" >> "$CASE_DIR/.env"
+           fi ;;
+    esac
+    chmod 600 "$CASE_DIR/.env"
+    cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+    execute_script
+    [ "$RC" != "0" ] || fail "T5b(agentcore/$key/$mutation): preflight failure expected"
+    grep -q "PREFLIGHT FAILED: .env $key" "$CASE_DIR/out.log" || fail "T5b(agentcore/$key/$mutation): key-only diagnostic expected"
+    assert_env_untouched "T5b(agentcore/$key/$mutation)"
+    assert_no_stop_no_run "T5b(agentcore/$key/$mutation)"
+    assert_prune_once "T5b(agentcore/$key/$mutation)"
+    assert_no_sentinel "T5b(agentcore/$key/$mutation)"
+  done
+done
+for bad_arn in "laimory_ai-AbCdEf" "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/laimory_ai-AbCdEf" ; do
+  new_case; base_env_fixture
+  switch_to_agentcore
+  echo "APP_AI_AGENTCORE_RUNTIME_ARN=$bad_arn" >> "$CASE_DIR/.env"
+  echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+  chmod 600 "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T5b(agentcore/arn): preflight failure expected for a non-deployment-region or partial ARN"
+  grep -q "PREFLIGHT FAILED: .env APP_AI_AGENTCORE_RUNTIME_ARN" "$CASE_DIR/out.log" || fail "T5b(agentcore/arn): diagnostic expected"
+  assert_env_untouched "T5b(agentcore/arn)"
+  assert_no_stop_no_run "T5b(agentcore/arn)"
+  assert_prune_once "T5b(agentcore/arn)"
+  assert_no_sentinel "T5b(agentcore/arn)"
+done
+new_case; base_env_fixture
+switch_to_agentcore
+echo "APP_AI_AGENTCORE_RUNTIME_ARN=$AGENTCORE_ARN" >> "$CASE_DIR/.env"
+echo "APP_AI_AGENTCORE_ENDPOINT=DEFAULT" >> "$CASE_DIR/.env"
+chmod 600 "$CASE_DIR/.env"
+cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+execute_script
+[ "$RC" = "0" ] || fail "T5b(agentcore/valid): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+ok "T5b(agentcore): Runtime ARN·endpoint exact-one non-empty and ARN shape/region enforced only for agentcore mode"
+
 # --- 10a. T5c: tracing 계약 — otlp 필수 세트 fail-closed + noop 잔존 금지 ---
 TRACING_REQUIRED_KEYS="JAVA_TOOL_OPTIONS OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_ENDPOINT \
 OTEL_EXPORTER_OTLP_PROTOCOL OTEL_TRACES_SAMPLER OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER \

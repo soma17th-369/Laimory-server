@@ -96,7 +96,9 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`).
   값이 리터럴에서 변수로 내려갔을 뿐 exact-one·byte 일치 성질은 같다. 다만 prod의
   `REDIS_KEY_PREFIX`는 빈 값이 정상이라, 이 키만은 Resolve step의 환경 판정이 유일한 방어선이다
-- `APP_AI_MODE` exact-one(`noop|fake|http`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도 정확히 한 줄
+- `APP_AI_MODE` exact-one(`noop|fake|http|agentcore`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도
+  정확히 한 줄, `agentcore`면 `APP_AI_AGENTCORE_RUNTIME_ARN`·`APP_AI_AGENTCORE_ENDPOINT`가 각각
+  정확히 한 줄 non-empty이고 ARN은 배포 region의 full Runtime ARN이어야 한다(#338)
 - `APP_PUSH_MODE` exact-one(`noop|firebase`). `firebase`일 때만:
   `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/firebase-service-account.json` exact-one과
   `/home/ubuntu/app/secrets/firebase-service-account.json` 존재·non-empty 검사 후, pull한 image의
@@ -183,7 +185,12 @@ container를 재생성한다. pending job row는 수동 삭제하지 않는다. 
 - AWS 작업은 먼저 `sandbox` SSO를 확인하고 조회와 SSM 비변경 진단으로 제한한다. AWS·host 수정은
   대상·영향·rollback을 설명한 뒤 별도 승인받는다.
 - monitoring bootstrap에는 비밀 없는 자산만 두고 credential은 host의 보호 파일에만 주입한다.
-- DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
+- nginx, DNS, TLS와 host runtime 변경은 현재 상태를 확인한 뒤 수동으로 적용하고 검증한다.
+- AI dispatcher mode 전환(`APP_AI_MODE`)은 host `.env` 변경 + **container 재생성**으로만 반영된다.
+  `agentcore` 활성화 순서는 ① AI Server가 wrapper `requestType` 라우팅을 배포 ② App runtime IAM role에
+  대상 Runtime 한정 `bedrock-agentcore:InvokeAgentRuntime` 부여(대상·영향·rollback 설명 후 별도 승인)
+  ③ `.env`에 `APP_AI_MODE=agentcore`와 Runtime ARN·endpoint를 넣고 재배포다. rollback은 `.env`를 이전
+  mode로 되돌리고 다시 재생성하는 것뿐이며, 이미 접수된 task는 AI 결과 또는 TTL이 종결한다.
 - prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
   prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과, deploy role의 `ssm:SendCommand` Resource에 prod host를
   추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.

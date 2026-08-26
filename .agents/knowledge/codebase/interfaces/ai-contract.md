@@ -14,6 +14,9 @@ callback body를 바꿀 때 읽는다.
 ## Authoritative Sources
 
 - `TimelineAiDispatcher` implementations와 dispatch DTO
+- `AgentCoreDispatchClient`, `AgentCoreTimelineAiDispatcher`, `AgentCoreUserMemoryUpdateDispatcher`,
+  `AgentCoreProperties` (transport 구현은 `com.laimory.server.agentcore`, Spring 배선은 `config.AgentCoreClientConfig`
+  패키지에 모여 있다 — AWS SDK 의존은 이 패키지 밖으로 나가지 않는다), `AgentCoreDispatchRequest`/`AiRequestType`
 - `TimelineAiTaskApi`, 입력·결과 DTO와 service
 - `TimelineCallbackApi`, callback DTO와 service
 - `TaskTokens`, `ProcessStage`, `TimelineDraftTask`, `TimelineTaskStore`
@@ -51,6 +54,33 @@ Content-Type: application/json
 - dispatcher는 4xx만 미접수 확정으로 분류한다. 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명이라
   PROCESSING을 유지하고 draft POST는 502 `-1009`로 끝난다.
 - AI endpoint 자체 service authentication은 아직 없다(private network 전제).
+
+### 1a. AgentCore transport (`app.ai.mode=agentcore`)
+
+**transport만 다르고 접수 계약은 §1과 같다** — 같은 body가 HTTP POST 대신 Bedrock AgentCore Runtime의
+`InvokeAgentRuntime` payload로 나간다.
+
+```json
+{"requestType": "TIMELINE", "payload": {"taskId": "...", "taskToken": "...", "dailyRecordId": 42,
+  "window": {"startAt": "2026-07-22T00:00:00+09:00", "endAt": "2026-07-23T00:00:00+09:00"}}}
+```
+
+- `requestType`은 `TIMELINE` 또는 `USER_MEMORY_UPDATE`다. AgentCore Runtime은 endpoint 하나로 두 작업을
+  받으므로 HTTP mode의 경로 분기(`/v1/timeline`·`/v1/user-memory`)를 이 값이 대신하고, AI Server가 이
+  값으로 payload를 기존 접수 DTO로 역직렬화·라우팅한다.
+- wrapper는 봉투일 뿐이다 — payload의 필드명·시각 포맷·`taskToken` 계약은 HTTP mode와 같다.
+- 요청은 `contentType`·`accept`가 `application/json`이고, `runtimeSessionId`는 `timeline-`/`user-memory-`
+  prefix + taskId(난수 UUID)라 AgentCore 계약(33~256자)을 항상 만족한다. 대상은 full Runtime ARN이고
+  endpoint 이름은 qualifier로 보낸다.
+- 접수 성공은 AgentCore 응답 `statusCode` 2xx + `{"taskId":<동일>,"status":"PROCESSING"}`다. 응답 body는
+  8KiB까지만 읽고 초과분은 abort한다(ack는 수십 byte).
+- 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
+  pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
+  runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
+- 접수 대기 상한은 SDK `apiCallTimeout`(7s)·`apiCallAttemptTimeout`(5s)이 소유하며 PROCESSING TTL의
+  절반보다 짧다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
+- 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
+  §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
 
 ### 2. 회전 Task Token과 Redis Process Stage
 
@@ -257,6 +287,8 @@ POST {base-url}/v1/user-memory
   순서가 의미를 가지므로, 큐 진입 순서가 아니라 기록 날짜 순으로 싣고 초과분(=더 나중 날짜)이 다음
   실행 몫이 된다.
 - 접수 성공은 draft와 같은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
+- `agentcore` mode에서는 이 body가 `{"requestType":"USER_MEMORY_UPDATE","payload":{...}}` wrapper로
+  나간다(§1a). body·ack·실패 분류 계약은 그대로다.
 - `emotionType`은 저장 API가 확정한 하루 감정이다 — non-null 값 도메인은 `VERY_HAPPY`·`HAPPY`·
   `NEUTRAL`·`UNHAPPY`·`VERY_UNHAPPY` 5종이고, 저장 전 DRAFT·legacy SAVED 행은 null일 수 있으나
   저장 후 User Memory 갱신 접수에는 확정값이 실린다(키 이름·nullable 계약은 불변). 저장 후 SAVED 감정
@@ -309,15 +341,23 @@ Task-Token: <접수 body로 준 token>
 - `noop`: dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
+- `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
+  `InvokeAgentRuntime`으로 접수시킨다(§1a).
 
-User Memory 갱신도 같은 `app.ai.mode` 스위치로 세 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
+User Memory 갱신도 같은 `app.ai.mode` 스위치로 네 구현을 고른다 — `noop`은 로그만, `fake`는 스키마
 필수 필드만 채운 결정적 stub 문서로 자기 서버의 결과 endpoint를 실제 호출, `http`는 실 AI 연동이다.
 `http` dispatch의 read timeout은 반드시 유한해야 한다 — 이 호출은 요청 스레드가 아니라 async 실행기
-또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다.
+또는 재시도 배치 스레드에서 일어나므로 무한 대기는 다른 작업까지 정지시킨다. `agentcore`는 두 흐름을
+같은 Runtime endpoint로 보내고 wrapper의 `requestType`이 AI 쪽 라우팅 키다 — 대기 상한은 SDK
+timeout이 소유한다.
 
 ## Invariants
 
 - dispatch body 필드명은 AI 규격이 권위다.
+- AgentCore wrapper는 봉투일 뿐이다 — `requestType`만 더하고 payload 계약(필드명·시각 포맷·token)은
+  바꾸지 않는다.
+- 우리 → AI 접수는 어떤 transport에서도 재시도하지 않는다 — `agentcore`는 SDK 자동 재시도까지 꺼서
+  같은 taskId 이중 접수를 막는다.
 - 서버간 단계마다 token을 교체하고 Redis에는 hash만 저장한다 — 현재 token hash와, 재시도 인지를 위한
   직전 단계 token hash(retry receipt)다. 원문은 어느 쪽도 저장하지 않는다.
 - 재시도 창 동안에는 유효 자격이 둘이다: 현재 token(다음 단계 호출)과 receipt의 직전 token(같은 요청을
