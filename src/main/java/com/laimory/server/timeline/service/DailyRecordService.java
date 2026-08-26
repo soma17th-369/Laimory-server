@@ -79,6 +79,15 @@ public class DailyRecordService {
     }
 
     /**
+     * 소유 SAVED record의 확정 감정만 교체하고 실제로 바꾼 행 수를 반환한다(0 = DRAFT·삭제됨·비소유).
+     * status는 건드리지 않는다 — 최초 감정 확정은 {@link #markSaved}가 소유한다.
+     */
+    public int updateSavedEmotion(Long dailyRecordId, UUID subjectId, EmotionType emotionType) {
+        return dailyRecordRepository.updateSavedEmotion(
+                dailyRecordId, subjectId, emotionType, LocalDateTime.now(clock));
+    }
+
+    /**
      * (subjectId, recordDate)로 DRAFT를 찾거나 없으면 생성한다. draft POST의 선생성 트랜잭션
      * ({@link TimelineDraftPreparationService})에 합류({@code REQUIRED})하므로 record 생성이 source 저장과
      * all-or-nothing으로 묶인다 — 후속 단계가 실패하면 신규 record도 롤백된다.

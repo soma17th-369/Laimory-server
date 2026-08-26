@@ -24,6 +24,25 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 애플리케이션은 schema를 생성·변경하지 않는다.
 
+이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
+계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
+기동 시 `Asia/Seoul`로 고정한다(#371 — `TimeZoneConfig` `@PostConstruct`가 권위, `main()`은 이중
+안전장치, 스케줄러 `Clock` bean도 존 명시).
+
+MySQL 세션 timezone은 여전히 UTC(SYSTEM)다 — URL의 `serverTimezone`은 세션을 바꾸지 않는다
+(Connector/J `connectionTimeZone` alias, `forceConnectionTimeZoneToSession` 기본 false). 그래서
+**서버가 생성하는 시각은 계약의 알려진 예외로 UTC 벽시계다**: ① `timeline_draft_source_items.
+cleanup_available_at`은 DB `DEFAULT CURRENT_TIMESTAMP(6)`가 채운다(#371 범위 제외 — 비교 조건이
+9시간 이르게 참이 되는 문제는 별도 판단). ② `users`·`refresh_tokens`의 일부 JPQL bulk update가
+`updated_at = CURRENT_TIMESTAMP`(서버 평가)를 쓴다. 둘 다 표시·감사값이라 판정에는 쓰이지 않는다.
+`timeline_events`/`timeline_items` 감사 컬럼과 `timeline_photo_delete_jobs.available_at`의
+DEFAULT/ON UPDATE는 앱 경로가 항상 컬럼을 명시해 발동하지 않는 fallback이다(운영 raw SQL에서만 의미).
+JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거치는 바인딩(Hibernate
+엔티티·JPQL·native query)은 "JVM 기본 존으로 해석 → 선언 존으로 렌더링"을 타므로, 두 존이 다르면
+(JVM=UTC일 때 +9h) 저장 리터럴이 밀리고 읽기가 대칭으로 상쇄해 왕복 테스트로는 드러나지 않는다 —
+비대칭은 `JdbcTimeFrameIntegrationTest`가 서버측 `DATE_FORMAT` 리터럴로 감지한다(UTC CI가 회귀를
+잡는다). `JdbcTemplate`의 `setObject(LocalDateTime)`와 raw SQL 리터럴은 변환 없이 벽시계 그대로다.
+
 주요 저장 영역:
 
 - `app_config`
@@ -91,7 +110,8 @@ DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나뿐이다 — AI 결과도 서버 결과 저장
-transaction이 쓰고, Event PATCH의 Event/memo 수정과 수동 PHOTO Item/junction 추가도 같은 계층이 commit한다.
+transaction이 쓰고, Event PATCH의 Event/memo 수정·수동 PHOTO Item/junction 추가와 수동 Event 생성
+(#326/#361 — Event + optional PHOTO Item/junction)도 같은 계층이 각각 한 transaction으로 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
 `timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
 FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
@@ -200,6 +220,15 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 `ON DELETE RESTRICT`로 참조한다 — mapping 삭제가 콘텐츠를 암묵 cascade하지 않게 하며, 탈퇴는 콘텐츠
 명시 삭제 후 mapping을 마지막에 지우는 계약이다. 이 owner 테이블들에는 raw `user_id` 컬럼이 없고
 runtime repository/entity도 subject만 읽고 쓴다.
+
+`daily_records.emotion_type`(`VARCHAR(32) NULL`)의 writer는 JPA bulk UPDATE 둘뿐이다 — save의
+`markSaved`(감정과 `status=SAVED`를 함께 최초 확정, `WHERE status='DRAFT'`)와 SAVED 전용 감정 수정
+`updateSavedEmotion`(감정만 교체, `WHERE status='SAVED'` — #325). 둘 다 영향 행 수가 판정 기준이고
+bulk UPDATE라 JPA auditing을 우회하므로 `updated_at`을 app Clock 파라미터로 직접 채운다(`modified_by`
+NULL). 감정 수정은 비트랜잭션 사전 조회 → update-first 트랜잭션 writer 경계를 쓴다 — MySQL 기본
+`REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에 묶으면 첫 조회가 고정한 snapshot이 동시
+삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
+`daily_records`·`timeline_events` 컬럼만 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
@@ -325,9 +354,9 @@ application-owned access는 `RedisGateway`를 거친다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt`, 재시도 인지용 nullable `retryReceipt{previousTokenHash,claimedAt,retryableUntil}` 포함 — 소비된 직전 token의 hash와 결과 저장 선점 시각·재시도 절대 마감이며 원문 token도 요청 본문도 저장하지 않는다. terminal 전이가 버리고, key가 없는 배포 이전 JSON은 null로 역직렬화된다). CAS가 task JSON 전체를 문자열 비교하므로 이 shape를 바꾸는 변경은 다중 인스턴스로 확장하면 2단계 배포가 필요하다. FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 3m(입력 조회·결과 저장 성공마다 재확보), terminal 24h |
-| `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). task JSON 저장 뒤 native ZADD, terminal 저장 뒤 native ZREM하며 실패·응답 유실은 최신 task JSON 기준 멱등 보정한다. gauge read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
-| `timeline:draft-task:user:{canonicalUuid(subjectId)}:processing` | subject별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). PROCESSING task 저장 뒤 native ZADD+PEXPIRE, terminal 저장 뒤 native ZREM하며 명령 실패·응답 유실과 PEXPIRE=false는 최신 task JSON 기준 멱등 보정한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 PROCESSING 저장마다 갱신(마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt`, 재시도 인지용 nullable `retryReceipt{previousTokenHash,claimedAt,retryableUntil}` 포함 — 소비된 직전 token의 hash와 결과 저장 선점 시각·재시도 절대 마감이며 원문 token도 요청 본문도 저장하지 않는다. terminal 전이가 버리고, key가 없는 배포 이전 JSON은 null로 역직렬화된다). stage·terminal 전이는 native `SET XX`(존재 확인만, 값 비교 없음)라 shape 변경이 배포 중 CAS 불일치를 만들지는 않지만, 구독자가 구/신 shape를 모두 읽을 수 있어야 하는 관대 수용 원칙은 그대로다. FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 최초 저장 기준 절대 3m(stage write는 `KEEPTTL`이라 연장 없음), terminal 24h |
+| `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). 최초 PROCESSING 저장 뒤 native ZADD, terminal 저장 뒤 native ZREM하며(중간 stage write는 index 무명령) 실패는 같은 의도의 명령을 한 번 재시도한다. gauge read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
+| `timeline:draft-task:user:{canonicalUuid(subjectId)}:processing` | subject별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). 최초 PROCESSING 저장 뒤 native ZADD+PEXPIRE, terminal 저장 뒤 native ZREM하며(중간 stage write는 index 무명령) 명령 실패·PEXPIRE=false는 같은 의도의 명령을 한 번 재시도한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 task 생성마다 갱신(stage write는 갱신 안 함; 마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님 — task 수명도 생성 기준 3m이라 index가 유효 member보다 먼저 소멸하지 않는다); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
 | `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`canonicalUuid(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
@@ -335,10 +364,11 @@ application-owned access는 `RedisGateway`를 거친다.
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
-Timeline task 최초 저장은 native SET PX, 서버간 처리 stage·terminal 전이는 현재 task JSON 전체를
-기대값으로 비교하는 단일-key Lua CAS로 수행한다. 이 CAS는 missing key에서 실패해 만료 task를
-부활시키지 않는다. task write가 성공한 뒤 전역·사용자별 index ZADD/ZREM(+사용자 index PEXPIRE)을
-native 명령으로 각각 실행하고, 실패·응답 유실은 최신 task JSON을 읽어 해당 index만 멱등 보정한다.
+Timeline task 최초 저장은 native `SET PX`, 서버간 처리 stage 전이는 native `SET XX KEEPTTL`, terminal
+전이는 native `SET XX PX`로 수행한다 — timeline task에 Lua script는 0개다. `XX`는 missing key에서
+실패해 만료 task를 부활시키지 않고, `KEEPTTL`은 최초 PROCESSING 만료 시각을 보존한다. 전역·사용자별
+index ZADD(+사용자 index PEXPIRE)는 최초 PROCESSING 저장 뒤에만, ZREM은 terminal write 성공 뒤에만
+native 명령으로 실행하고, 실패는 task 재조회 없이 같은 의도의 명령을 한 번 재시도한다.
 목록 조회용 ZREVRANGE·후보 순서 정렬 MGET·batch ZREM primitive도 gateway가 제공한다.
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
@@ -355,7 +385,8 @@ Spring Session은 framework-managed 영역이며 namespace 설정으로 격리�
 사진 object body를 저장하고 DB JSON payload에는 `filename`, client URI와 materialized CDN URL을 둔다.
 full key는 DB column으로 저장하지 않는다. live 경로와 저장된 `photoUrl`은 subject 기반
 `{hex(SHA-256(subjectId 16 bytes))}/photos/{filename}` 단일 규칙을 사용한다.
-Event PATCH의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를 조회하지 않는다.
+Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 뒤 보내므로 서버가 object 존재를
+조회하지 않는다.
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
@@ -380,12 +411,16 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
-  연결하고, Event PATCH는 같은 record의 기존 PHOTO Item을 대상 Event에 재사용할 수 있다.
+  연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 같은 record의 기존 PHOTO Item을 대상
+  Event에 재사용할 수 있다.
 - `timeline_items.raw_id`는 DB UNIQUE가 없다 — draft는 API 사전 제외 + AI write 직전 재검사로 방어하고,
-  Event PATCH는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
-  Event에 이미 연결된 PHOTO는 no-op이고 같은 rawId의 non-PHOTO는 400이다. legacy로 같은 rawId의 PHOTO가
-  여러 행이면 대상 Event에 연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복
-  행은 허용하며 조회·삭제는 `timeline_item_id` 기준이다.
+  수동 PHOTO 추가는 request rawId를 첫 항목 우선으로 dedupe한 뒤 같은 record의 PHOTO를 재사용한다. 대상
+  Event에 이미 연결된 PHOTO는 no-op이고, 재사용 저장본의 startAt/endAt과 클라이언트 입력 payload가 요청과
+  다르거나 같은 rawId의 non-PHOTO면 400이다. legacy로 같은 rawId의 PHOTO가 여러 행이면 대상 Event에
+  연결된 행을 우선하고, 없으면 가장 작은 Item ID를 선택한다. race/legacy 중복 행은 허용하며 조회·삭제는
+  `timeline_item_id` 기준이다.
+- 수동 PHOTO의 nullable startAt/endAt은 `timeline_items.start_at/end_at`의 `DATETIME` 초 단위 정밀도와
+  재사용 비교를 맞추기 위해 소수 초를 입력 경계에서 거절한다.
 - `raw_id`(source·final 둘 다)는 대소문자 구분 opaque 식별자라 **컬럼 단위 `utf8mb4_bin` collation**을 쓴다
   (FID 선례와 동일; 테이블 기본 `_unicode_ci`와 다름). 서버 dedupe(Java String)·기존 rawId 제외(HashSet/IN)와
   DB 비교 규칙을 일치시켜, `(task_id, raw_id)` UNIQUE가 `abc`/`ABC`를 다른 값으로 취급하게 한다(불일치 시 앱

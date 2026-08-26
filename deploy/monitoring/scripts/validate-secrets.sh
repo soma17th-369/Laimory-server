@@ -25,5 +25,6 @@ check_secret grafana_admin_password 472:0:400
 check_secret grafana_secret_key 472:0:400
 check_secret elasticsearch_api_key 472:0:400
 check_secret discord_webhook_url 472:0:400
+check_secret google_oauth_client_secret 472:0:400
 check_secret mysql_exporter_my.cnf 65534:0:400
 check_secret redis_exporter_password.json 59000:59000:400

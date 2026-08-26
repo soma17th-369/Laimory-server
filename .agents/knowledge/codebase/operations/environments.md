@@ -63,8 +63,9 @@ host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redi
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
-열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 dev WAS nginx/SSM을 통해서만
-접근하며, monitoring 장애는 application 배포·health gate 의존성이 아니다.
+열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 `grafana.laimory.app`
+(prod ALB·자체 Google OAuth, #368)과 SSM port forwarding으로 접근하며, monitoring 장애는
+application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
 
@@ -74,7 +75,7 @@ OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
   넣으면 그 peer의 `X-Forwarded-For` 최우측만 client IP로 신뢰한다. checked-in 기본값은 비어 있어
-  loopback nginx 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
+  loopback 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
 - tracing(#277 — 앱 미소비, deploy pre-flight·JVM/agent가 소비): `APP_TRACING_MODE`,
   `JAVA_TOOL_OPTIONS`(-javaagent 주입), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_METRICS_EXPORTER`,

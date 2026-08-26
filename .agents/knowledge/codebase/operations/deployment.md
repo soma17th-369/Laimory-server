@@ -26,7 +26,7 @@ step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 ins
 환경 혼선을 막는 지점이다.
 
 환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
-Swagger·geo mode), OTel service name, 그리고 nginx 블록 실행 여부뿐이다. 그 외 절차는 동일하다.
+Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
 
 1. `dev`/`main` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
    `deploy.yml` 자체가 바뀐 경우에만 workflow를 시작한다. test·문서·monitoring-only 변경은
@@ -42,20 +42,17 @@ Swagger·geo mode), OTel service name, 그리고 nginx 블록 실행 여부뿐�
    판정할 때까지 트래픽을 계속 받으므로 **무중단 배포가 아니다**.
 6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + 환경 고정값·mode
    exact-one, 값 비출력 — 아래 Preflight).
-7. nginx가 있는 환경에서만 no-query access log 설정을 idempotent하게 보정한다. `nginx -t` 실패는
-   배포를 중단한다. nginx가 없는 환경(ALB가 앱 포트에 직결)은 블록 전체를 건너뛴다 — 그대로
-   실행하면 `nginx` 부재로 배포가 이 지점에서 실패한다.
-8. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
+7. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
    이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read + secret 내용 계약 검증,
    `user_subject_links` schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight →
    upsert 순서를 강제한다.
-9. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
+8. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
    원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
-10. 기존 `laimory` container를 stop/remove한다.
-11. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
+9. 기존 `laimory` container를 stop/remove한다.
+10. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
     rotated `json-file` logging; firebase면 read-only credential mount만 추가).
-12. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
-13. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
+11. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
+12. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
     어떤 container도 참조하지 않는 tagged/dangling image가 제거되고, prune 실패는 고정 경고만 남기며
     원래 배포 status를 바꾸지 않는다.
 
@@ -158,7 +155,7 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 
 - Java 21 multi-stage image, runtime non-root UID 1001
 - application port 8080, host network
-- management port 9090도 host network에 bind된다. nginx는 Actuator를 proxy하지 않으며, live 접근은
+- management port 9090도 host network에 bind된다. live 접근은
   monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
 - 현재 image SHA는 모든 meter의 공통 tag가 아니라 `laimory.build.info` 한 meter에만 노출한다.

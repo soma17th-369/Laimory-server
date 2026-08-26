@@ -57,4 +57,20 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
             + "and r.status = com.laimory.server.timeline.DailyRecordStatus.DRAFT")
     int markSaved(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
                   @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now);
+
+    /**
+     * 소유 <b>SAVED</b> record의 확정 감정만 교체하는 조건부 UPDATE. status는 바꾸지 않는다 —
+     * DRAFT의 최초 감정 확정은 {@link #markSaved}가 계속 소유하고, 이 UPDATE는 저장 완료 후 수정 전용이다.
+     * 조건 불일치(DRAFT·삭제됨·비소유)는 예외 대신 0으로 알려지고 호출부가 원인을 분류한다.
+     *
+     * <p>{@code markSaved}와 같은 이유로 bulk UPDATE가 JPA auditing을 우회하므로 {@code updated_at}을
+     * 직접 채운다({@code modified_by}는 NULL 유지).
+     */
+    @Modifying
+    @Query("update DailyRecord r "
+            + "set r.emotionType = :emotionType, r.updatedAt = :now "
+            + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
+            + "and r.status = com.laimory.server.timeline.DailyRecordStatus.SAVED")
+    int updateSavedEmotion(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
+                           @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now);
 }

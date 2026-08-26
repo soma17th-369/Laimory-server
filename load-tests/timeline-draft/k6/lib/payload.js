@@ -64,7 +64,7 @@ export function calendarCoreBody(config, vu) {
 /**
  * geo — STAY `count`개, 각각 서로 다른 합성 좌표. 좌표 1개당 정상 2콜(coord2address 1 + keyword 1)이다.
  *
- * 서버 상한은 `app.geo.max-unique-coordinates`(기본 30)이며 초과하면 외부 호출 전에 400으로 거절된다 —
+ * 서버 상한은 `app.geo.max-unique-coordinates`(기본 100)이며 초과하면 외부 호출 전에 400으로 거절된다 —
  * count는 그 아래여야 한다. startAt은 필수이고 지오코딩 품질 판정이 시간순을 쓰므로 항목마다 한 시간씩 민다.
  */
 export function geoStayBody(config, vu, count) {
@@ -142,9 +142,8 @@ export function mixedDayBody(config, vu) {
 /**
  * geo-day — mixed-day와 같은 실측 하루 분포에서 체류·이동을 **실제 STAY/MOVEMENT(좌표 포함)**로 보낸다.
  *
- * 요청당 고유 좌표 37개(STAY 13 + MOVEMENT 양끝 24) → 정상 시 Kakao 74콜. 현재 공개 상한
- * `app.geo.max-unique-coordinates`(기본 30)를 넘으므로, 실행 전 dev `.env`에
- * `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상을 설정해야 400으로 거절되지 않는다.
+ * 요청당 고유 좌표 37개(STAY 13 + MOVEMENT 양끝 24) → 정상 시 Kakao 74콜. 공개 상한
+ * `app.geo.max-unique-coordinates`(기본 100) 아래라 override 없이 실행된다.
  *
  * ⚠️ 반드시 #257 simulator로 전환된 상태에서만 실행한다 — 실제 Kakao면 요청 하나가 74콜이다.
  */

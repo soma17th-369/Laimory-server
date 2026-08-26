@@ -85,11 +85,15 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 13개 endpoint의 body는 **allowlist skeleton**으로
-  마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303) — request 6개(draft 생성
-  POST, Event PATCH, memo PUT, AI timeline result POST, AI callback POST, User Memory result POST),
-  response 7개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, 공개 약관 GET
-  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`).
+  사용자 사생활 원문을 담는 지정 15개 endpoint body는 **allowlist skeleton**으로
+  마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
+  #326/#361) — request 7개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
+  User Memory result POST),
+  response 8개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
+  POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
+  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). 감정 수정 PUT
+  `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
   status·`ApiResponse` envelope의 header/code/body·약관 termType/version/required/effectiveAt/
   acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —
@@ -197,7 +201,8 @@ Spring JSON stdout
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
   환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
-- Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 nginx `/kibana`로 proxy한다.
+- Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 prod ALB의
+  `kibana.laimory.app` host 규칙으로 노출한다(ACM TLS 종단, Kibana 자체 로그인 유지).
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
@@ -219,8 +224,8 @@ Spring JSON stdout
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
-    task write 뒤 processing index 명령 실패·응답 유실 또는 사용자 index PEXPIRE=false를 최신 task
-    기준으로 보정한 시도 수. 식별자와 Redis key는 tag에 넣지 않는다
+    최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
+    없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다
   - `laimory.push.delivery{type=TIMELINE_COMPLETION|DAILY_REMINDER, result=success|failed}`:
     FCM batch response가 확인한 발송 결과 수. 차원은 고정 알림 종류와 결과뿐이다(#314).
   - `laimory.subject.secret.load`: 기동 시 Secrets Manager HMAC snapshot load timer — 성공
@@ -276,14 +281,14 @@ GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
 
 Grafana는 `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs` 네 dashboard를 file
 provisioning한다. Prometheus datasource UID는 `prometheus`, Elasticsearch UID는 `elasticsearch-dev`다.
-Elasticsearch API key는 `laimory-dev-*`의 read/view metadata와 cluster monitor만 갖고, Discord native
+Elasticsearch API key는 `laimory-*`의 read/view metadata와 cluster monitor만 갖고, Discord native
 contact point는 firing/resolved를 모두 보낸다. alert message에는 raw log/body, transactionId,
 user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrape 성공과 backend 연결·인증
 성공은 별도로 판단해 `mysql_up`/`redis_up` 실패도 alert한다.
 
-Elasticsearch의 `service=laimory AND environment=dev AND level=ERROR` count를 1분 histogram으로
-평가해 최근 5분 합계가 1 이상이면 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
-않으며, notification의 runbook URL은 현재 dev Kibana data view에서 최근 15분 ERROR 문서와
+Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로 나눠 1분 histogram으로
+평가해 최근 5분 합계가 1 이상인 환경마다 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
+않으며, notification의 runbook URL은 `kibana.laimory.app`의 Kibana data view에서 전 환경 최근 15분 ERROR 문서와
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
@@ -291,17 +296,19 @@ Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
 
-Grafana `/grafana/` reverse proxy는 별도 allowlist가 non-empty일 때만 dev WAS에서 활성화된다.
-빈 목록은 SSM port forwarding 전용이다. Prometheus target file의 실제 IP와 적용 상태는 live host가
+Grafana는 prod ALB의 `grafana.laimory.app` host 규칙으로 노출한다(#368). 브라우저 로그인은
+Grafana 자체 Google OAuth이며 `[auth.google] allow_sign_up=false`라 미리 등록된 Grafana 사용자
+이메일만 로그인된다. admin Basic 인증은 alert 배포기 등 localhost 자동화용이다 — 외부(ALB) 경로의
+`POST /login`·`Authorization: Basic` 차단(#368 A13)은 아직 적용 전이라, 그전까지는 공유 admin
+비밀번호로도 외부 로그인이 가능하다.
+Prometheus target file의 실제 IP와 적용 상태는 live host가
 소유하며 현재 repository 상태만으로 rollout 완료를 의미하지 않는다.
 
 Grafana admin username의 repository 기본값은 `laimory`이며 compose 최초 생성과 alert provisioning
 reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
-MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 여섯 UID별 `0400` secret
+Google OAuth client secret, MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 일곱 UID별 `0400` secret
 file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
-Prometheus/blackbox만 먼저 기동할 수 있다. live proxy는 Grafana 전용 nginx include로 관리해 기존
-Kibana location을 보존하며, allowlist 밖에서는 slash
-유무와 관계없이 `/grafana` 경로를 차단한다.
+Prometheus/blackbox만 먼저 기동할 수 있다.
 alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지
 않는다. commit SHA별 immutable S3 release는 conditional create로만 쓰고 checksum manifest를 마지막에
 publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한다. host deployer는 root-only backup,
@@ -315,8 +322,16 @@ OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않�
 `on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
 선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
-자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, dev WAS에만 설치된 Filebeat stats 수집기,
-dev로 고정된 Elasticsearch index)을 읽으므로 `environment="dev"`를 유지한다.
+자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, 환경 공유 자산인 Elasticsearch의
+monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으므로 `environment="dev"`를
+유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
+`laimory_application_error_log`는 wildcard index(`laimory-*`)를 environment terms(마지막 date
+histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
+`((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
+staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이라 threshold(>0)를 넘지 못한다.
+`backup-rules.yml`의 백업 신선도 rule 2종(prod MySQL mysqldump·EBS snapshot의 26h staleness)은 각각
+prod MySQL host와 monitoring host의 backup timer가 쓰는 textfile 시계열 하나씩만 읽는 환경 고정
+rule이다 — 백업 체계 자체의 계약은 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
@@ -375,10 +390,10 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
   왼쪽으로 되돌아가지 않고 socket address로 fallback한다. header line이 여러 개면 마지막 line의
   마지막 element만 본다. ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서
   `Laimory-Client-IP`는 신뢰하지 않는다.
-- **loopback nginx 엣지**(전환기 한정 — nginx 제거 시 삭제 예정) — 현재 최외곽 ingress인 WAS nginx는
-  client-supplied `Laimory-Client-IP`를 전달/append하지 않고 자신이 관찰한 `$remote_addr` 한 값으로
-  덮어쓴다. peer가 정확히 `127.0.0.1`이고 header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를
-  normalize해 downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
+- **loopback 엣지**(#327 nginx 전환기의 잔재 코드 경로 — dev가 ALB 직결로 전환(#369)돼 배포 환경
+  트래픽은 더 이상 타지 않는다. 코드 경로 제거는 후속 정리 후보) — peer가 정확히 `127.0.0.1`이고
+  `Laimory-Client-IP` header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를 normalize해
+  downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
   header는 socket address로 fallback하며 이 엣지에서는 XFF와 User-Agent를 IP 결정에 쓰지 않는다.
 
 rejected 원문은 어느 엣지에서도 기록하지 않는다. checked-in 기본 신뢰 대역은 비어 있어(=ALB 엣지 없음)
@@ -414,17 +429,11 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
-- **prod 지표 경보는 있고 로그 경보는 없다.** 지표 기반 rule 9개는 환경 중립이라 prod에서도
-  평가된다(5xx 비율·p95 지연·JVM heap·Hikari·target down·host memory·filesystem·OOM kill·
-  PROCESSING stuck). 반면 로그 기반 rule은 전부 dev 고정이라 prod ERROR 로그와 prod 로그
-  파이프라인 장애는 아무 알림을 내지 않는다.
-- **prod 로그는 Elasticsearch에 쌓이지만 Grafana에서 보이지 않는다.** prod WAS 2대의 Filebeat가
-  `laimory-prod-*`로 정상 적재하는데(2026-08-23 실측: acked == total, failed·dropped 0), Grafana
-  Elasticsearch datasource는 index가 `[laimory-dev-]YYYY.MM.DD`로 고정이고 API key도 `laimory-dev-*`
-  한정이라 Logs dashboard와 ERROR 경보가 prod를 읽지 못한다. 지금 prod 로그를 보는 경로는 Kibana와
-  SSM뿐이다.
-- **prod Filebeat self-metric이 없다.** `collect-filebeat-metrics.sh`와 timer가 dev WAS에만 있어
-  `laimory_filebeat_up`이 dev 1개뿐이다. prod 로그 파이프라인이 끊겨도 경보가 없다.
+- **로그 경보도 환경 중립이다(#348).** 지표 기반 rule 9개에 더해 log pipeline 계열과 ERROR 로그
+  경보가 prod를 평가한다. Grafana ES datasource는 `laimory-*` wildcard이고 API key도 `laimory-*`
+  범위다. 단, datasource·dashboard json은 자동 배포 대상이 아니라 host 수동 적용이 필요하고,
+  Filebeat self-metric 수집기는 prod WAS 2대 설치가 전제다(설치 전에 rule이 먼저 배포되면
+  수집기-부재 분기가 오발화한다).
 - **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
   요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
   개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.

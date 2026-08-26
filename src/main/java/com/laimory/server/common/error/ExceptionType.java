@@ -65,8 +65,10 @@ public enum ExceptionType {
     TIMELINE_ITEM_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     /** Event-Item 연결 해제가 PHOTO 전용인 현재 정책의 non-PHOTO 거절. */
     TIMELINE_ITEM_NOT_PHOTO(-1018, HttpStatus.BAD_REQUEST, Level.INFO),
-    /** Event PATCH가 S3 삭제 진행 중인 동일 PHOTO object를 다시 연결하려는 요청. */
+    /** 수동 PHOTO 추가가 S3 삭제 진행 중인 동일 PHOTO object를 다시 연결하려는 요청. */
     PHOTO_DELETE_IN_PROGRESS(-1019, HttpStatus.CONFLICT, Level.INFO),
+    /** 감정 수정 대상 record가 아직 DRAFT — 최초 감정 확정은 save API가 담당하므로 수정할 확정 감정이 없다. */
+    DAILY_RECORD_NOT_SAVED(-1020, HttpStatus.CONFLICT, Level.INFO),
 
     // ── terms ──
     /**

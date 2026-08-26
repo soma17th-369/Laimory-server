@@ -25,7 +25,7 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
 - 인증 principal은 `Long` userId다. timeline/push controller의 콘텐츠 owner parameter는
   `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로 변환해 주입한다.
-  회원 account controller(`GET/DELETE /a/api/{version}/users/me`)는 subject 변환 없이 hidden
+  회원 account controller(`GET/DELETE /a/api/{version}/user`)는 subject 변환 없이 hidden
   `@AuthenticationPrincipal Long userId`를 직접 받는다.
 
 ## Current Implementation
@@ -60,8 +60,8 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 인증을 통과한 `/a/api` HandlerMethod에는 약관 gate(#303)가 이어진다 — `TermsEnforcementInterceptor`가
 controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` 필수 약관 동의를 검사하고
 미동의는 403 `-3001`이다(401 인증 계약과 독립 — bearer 실패가 항상 먼저다). exemption은 raw path
-allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·users GET /me·
-회원 탈퇴 DELETE /me(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE). draft 생성·사진 presign은
+allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·회원 조회 GET
+/user·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE). draft 생성·사진 presign은
 `@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
 필수 문서의 ID·종류·버전 summary + 동의 existence 1회)이고 TTL cache가 없으며, catalog 미준비
 stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal 때문에
@@ -118,7 +118,7 @@ handoff를 그대로 사용한다.
   조회·귀속되지 않는다(자동 이전·삭제 없음 — staging은 기존 retention cleanup 대상).
 - 콘텐츠 subject는 JWT principal이 아니다. 인증 filter와 access/refresh 도메인은 raw `Long` userId를
   유지하고, 콘텐츠 API의 MVC 경계 뒤에서만 UUID subjectId를 사용한다.
-- 회원 account API(`GET/DELETE /a/api/{version}/users/me`)는 principal userId를 직접 받는다. GET은
+- 회원 account API(`GET/DELETE /a/api/{version}/user`)는 principal userId를 직접 받는다. GET은
   users 행을 endpoint 안에서 조회하며, 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로
   수렴한다(존재 비노출). DELETE(#305 탈퇴)는 단일 DB transaction으로 조건부
   `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + 기존 refresh 전량

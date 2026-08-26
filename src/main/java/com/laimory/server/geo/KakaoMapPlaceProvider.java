@@ -53,8 +53,11 @@ import reactor.netty.internal.shaded.reactor.pool.PoolAcquireTimeoutException;
  * <b>단일 HTTP 콜 단위</b>로 건다 — lookup 전체에 걸면 늦은 콜(keyword)의 실패가 성공한 앞 콜
  * (coord2address)까지 재실행하므로.
  *
- * <p><b>실패 처리</b>: 콜이 최종 실패하면 {@link MapPlaceLookupException}을 error 신호로 전달한다(조용한
- * null degrade 없음). 부분 실패 허용·거절은 상위 정책(D1/D2)이 materialize된 좌표별 outcome으로 판정한다.
+ * <p><b>실패 처리</b>: <b>coord2address 최종 실패만 좌표 실패</b>라 {@link MapPlaceLookupException}을
+ * error 신호로 전달한다(조용한 null degrade 없음). <b>keyword 최종 실패는 분류를 가리지 않고 빈 장소
+ * 목록으로 강등해 이미 확보한 주소·건물명을 보존한다</b>(#259) — 좌표 자체는 성공이다. 강등해도 콜 단위
+ * 관측(logical metric·warn 로그·circuit 통계)은 그대로 남는다. 부분 실패 허용·거절은 상위 정책(D1/D2)이
+ * materialize된 좌표별 outcome으로 판정한다.
  *
  * <p>{@code app.geo.mode=kakao}일 때만 빈으로 등록된다({@code @ConditionalOnProperty}). {@code noop}이거나
  * 미설정이면 {@link NoOpMapPlaceProvider}가 대신 선택되고, 그 외 값(오타)이면 어느 provider도 매칭되지 않아
@@ -102,6 +105,11 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
     /**
      * coord2address의 건물명은 별도 필드 없이 places 맨 앞에 합류한다(규격에 건물명 필드 없음) —
      * keyword 검색에 등록 장소가 없는 건물(오피스 등)의 이름을 잃지 않기 위함.
+     *
+     * <p>keyword 실패는 <b>분류를 가리지 않고</b> 빈 장소 목록으로 강등한다(#259) — 주소는 이미 확보했고
+     * keyword가 왜 실패했는지는 그 주소의 유효성과 무관하다. 범주별로 갈라 일부만 강등하면 "어떤 실패는
+     * 주소를 버린다"는 규칙이 생기는데 그걸 정당화할 근거가 없다. 분류되지 않은 예외는 강등 대상이
+     * 아니라 그대로 전파된다(D4).
      */
     @Override
     public Mono<GeoPlace> lookup(double latitude, double longitude) {
@@ -110,6 +118,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
             AtomicInteger calls = new AtomicInteger();
             return fetchAddress(latitude, longitude, calls)
                     .flatMap(address -> fetchPlaces(address, latitude, longitude, calls)
+                            .onErrorResume(MapPlaceLookupException.class, failure -> Mono.just(List.of()))
                             .map(places -> new GeoPlace(
                                     address.address(), mergeBuildingName(address.buildingName(), places))))
                     .doOnEach(signal -> logLookupSuccess(signal, calls, startNanos));

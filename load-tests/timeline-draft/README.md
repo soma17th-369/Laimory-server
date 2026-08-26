@@ -65,10 +65,10 @@ load-tests/timeline-draft/
 크기의 NOTIFICATION 대역으로 대체한다 — DB 쓰기 비용은 행 수·payload 크기가 결정하고 item_type
 문자열은 무관하다. 지오코딩 포함 실측은 simulator 단계에서 한다.
 
-CALENDAR·NOTIFICATION이 Kakao를 호출하지 않는 근거는 서버 구현이다. 지오코딩 대상 좌표는 STAY 좌표와 MOVEMENT
-start/end에서만 수집하고, 수집 결과가 비면 조회 자체를 생략한다.
+CALENDAR·NOTIFICATION이 Kakao를 호출하지 않는 근거는 서버 구현이다. 지오코딩 대상 좌표는 STAY 좌표,
+MOVEMENT start/end와 **좌표를 가진 PHOTO**에서 수집하고, 수집 결과가 비면 조회 자체를 생략한다.
 
-좌표 18개는 서버 공개 상한(`app.geo.max-unique-coordinates`, 기본 30) 아래이면서 요청 하나로 전용
+좌표 18개는 서버 공개 상한(`app.geo.max-unique-coordinates`, 기본 100) 아래이면서 요청 하나로 전용
 connection pool(기본 20)을 거의 채우는 값이다.
 
 ## 측정 설계
@@ -116,9 +116,8 @@ geo 단계는 다음 두 값을 함께 확인해야 유효하다.
 닿고, 3 VU부터 `LOCAL_REJECTED`가 예상된다. 초기 개발 중 합성 시나리오 실측(좌표 18개 요청, 로컬)에서도
 같은 경계에서 2 VU 경계 실패·3 VU 502를 확인했다 — "요청당 병렬도가 버스트 크기를 정한다"는 관계다.
 
-또한 실측 분포의 고유 좌표 37개는 공개 상한 `app.geo.max-unique-coordinates`(기본 30)를 넘는다.
-geo-day 실행 전 dev `.env`에 `APP_GEO_MAX_UNIQUE_COORDINATES=40` 이상을 설정해야 하며(안 하면 외부
-호출 전 400/-400 거절), 상한 자체의 제품 계약 변경은 별도 이슈로 다룬다.
+실측 분포의 고유 좌표 37개는 공개 상한 `app.geo.max-unique-coordinates`(기본 100) 아래라 override 없이
+실행된다. 상한을 좌표 수만으로 400을 내지 않는 계약으로 바꾸는 것은 별도 이슈로 다룬다.
 
 사다리가 여기서 멈추는 것은 스크립트 실패가 아니라 **측정 결과**다. 멈춘 지점과 그때의 pool active/pending,
 `laimory.geo.http.logical` 분류를 함께 기록한다.

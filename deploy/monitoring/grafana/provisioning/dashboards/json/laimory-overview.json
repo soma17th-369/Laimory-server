@@ -45,7 +45,7 @@
       "title": "Overview",
       "tooltip": "Overview 대시보드로 이동합니다.",
       "type": "link",
-      "url": "/grafana/d/laimory-overview/laimory-overview"
+      "url": "/d/laimory-overview/laimory-overview"
     },
     {
       "asDropdown": false,
@@ -57,7 +57,7 @@
       "title": "JVM & Spring",
       "tooltip": "JVM & Spring 대시보드로 이동합니다.",
       "type": "link",
-      "url": "/grafana/d/laimory-jvm-spring/laimory-jvm-spring"
+      "url": "/d/laimory-jvm-spring/laimory-jvm-spring"
     },
     {
       "asDropdown": false,
@@ -69,7 +69,7 @@
       "title": "Infrastructure",
       "tooltip": "Infrastructure 대시보드로 이동합니다.",
       "type": "link",
-      "url": "/grafana/d/laimory-infrastructure/laimory-infrastructure"
+      "url": "/d/laimory-infrastructure/laimory-infrastructure"
     },
     {
       "asDropdown": false,
@@ -81,7 +81,7 @@
       "title": "Logs",
       "tooltip": "Logs 대시보드로 이동합니다.",
       "type": "link",
-      "url": "/grafana/d/laimory-logs/laimory-logs"
+      "url": "/d/laimory-logs/laimory-logs"
     },
     {
       "asDropdown": false,

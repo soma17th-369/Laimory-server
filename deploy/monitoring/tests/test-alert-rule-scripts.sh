@@ -35,14 +35,22 @@ ruby -ryaml -e '
   abort "application ERROR alert missing" unless rule
   abort "application ERROR alert must fire without a pending period" unless rule["for"] == "0s"
   abort "application ERROR alert must be warning severity" unless rule.dig("labels", "severity") == "warning"
+  abort "application ERROR alert must not pin an environment label" if rule.dig("labels", "environment")
   abort "application ERROR alert must treat empty search results as OK" unless rule["noDataState"] == "OK"
 
   query = rule.fetch("data").find { |item| item["refId"] == "A" }
   abort "Elasticsearch query missing" unless query["datasourceUid"] == "elasticsearch-dev"
-  abort "ERROR query contract changed" unless query.dig("model", "query") == "service:laimory AND environment:dev AND level:ERROR"
+  abort "ERROR query contract changed" unless query.dig("model", "query") == "service:laimory AND level:ERROR"
   abort "ERROR alert must count documents" unless query.dig("model", "metrics") == [{ "id" => "1", "type" => "count" }]
-  histogram = query.dig("model", "bucketAggs", 0)
-  abort "ERROR alert must use a one-minute date histogram" unless histogram == {
+  terms = query.dig("model", "bucketAggs", 0)
+  abort "ERROR alert must group by environment first" unless terms == {
+    "field" => "environment",
+    "id" => "3",
+    "settings" => { "min_doc_count" => "1", "order" => "desc", "orderBy" => "_term", "size" => "10" },
+    "type" => "terms",
+  }
+  histogram = query.dig("model", "bucketAggs", 1)
+  abort "ERROR alert must use a one-minute date histogram as the last bucket aggregation" unless histogram == {
     "field" => "@timestamp",
     "id" => "2",
     "settings" => { "interval" => "1m", "min_doc_count" => 0 },
@@ -59,7 +67,7 @@ ruby -ryaml -e '
   description = rule.dig("annotations", "description").to_s
   abort "notification must not interpolate raw query values" if (summary + description).include?("{{")
   url = rule.dig("annotations", "runbook_url").to_s
-  abort "Kibana ERROR investigation link missing" unless url.start_with?("https://dev.laimory.app/kibana/app/discover#/")
+  abort "Kibana ERROR investigation link missing" unless url.start_with?("https://kibana.laimory.app/app/discover#/")
   abort "Kibana data view contract missing" unless url.include?("8e3c574e-45cc-430f-ae74-b91c277b8249")
   abort "Kibana ERROR filter missing" unless url.include?("level%3A%22ERROR%22")
 ' "$MONITORING_DIR/grafana/provisioning/alerting/application-rules.yml"
@@ -301,9 +309,10 @@ PATH="$PUBLISH_BIN:$PATH" PUBLISH_ROOT="$PUBLISH_ROOT" PUBLISH_RELEASE_ID="$PUBL
   PUBLISH_AWS_LOG="$PUBLISH_AWS_LOG" \
   "$MONITORING_DIR/scripts/publish-alert-rules.sh" test-bucket >/dev/null
 PUBLISHED_PREFIX="$PUBLISH_ROOT/bootstrap/monitoring/releases/alert-rules/$PUBLISH_RELEASE"
-test "$(wc -l < "$PUBLISHED_PREFIX/SHA256SUMS" | tr -d ' ')" = "8"
+test "$(wc -l < "$PUBLISHED_PREFIX/SHA256SUMS" | tr -d ' ')" = "9"
 test "$(wc -l < "$PUBLISHED_PREFIX/tools/SHA256SUMS" | tr -d ' ')" = "2"
 test -f "$PUBLISHED_PREFIX/infrastructure-rules.yml"
+test -f "$PUBLISHED_PREFIX/backup-rules.yml"
 test -f "$PUBLISHED_PREFIX/tools/deploy-alert-rules.sh"
 ! grep -q -- '--profile' "$PUBLISH_AWS_LOG"
 grep -q -- 's3api put-object' "$PUBLISH_AWS_LOG"

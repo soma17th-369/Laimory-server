@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS daily_records (
     record_date DATE NOT NULL,
     record_at DATETIME NOT NULL,                     -- 클라가 보낸 기록 벽시계 시각(같은 날 여러 task면 마지막에 finalize된 값). record_timezone과 짝지어 절대시각 복원
     record_timezone VARCHAR(64) NOT NULL,           -- record_at·이벤트/아이템 wall-clock을 절대시각으로 해석할 zone
-    emotion_type VARCHAR(32) NULL,                  -- 별도 save(DRAFT->SAVED)에서 설정
+    emotion_type VARCHAR(32) NULL,                  -- save(DRAFT->SAVED)가 최초 확정, SAVED 전용 감정 PUT이 후속 수정
     status VARCHAR(32) NOT NULL,                     -- DRAFT|SAVED
     -- 감사 컬럼 (BaseEntity)
     created_at DATETIME(6) NOT NULL,
