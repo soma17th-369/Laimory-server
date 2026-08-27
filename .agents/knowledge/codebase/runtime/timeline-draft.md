@@ -204,6 +204,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 
 ### Delete
 
+- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): junction·delete job이 모두 없는 final Item을
+  PK 커서로 훑어 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
+  0-junction Item의 수렴을 담당하며 S3는 호출하지 않는다.
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.

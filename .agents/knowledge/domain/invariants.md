@@ -154,8 +154,27 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
   수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
   동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
-  스냅샷 orphan 판정 경합과 같은 계열이며, 원인 불문 orphan을 수렴시키는 스위퍼는 후속 과제다).
+  스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
+- **junction이 0인 final Item은 항상 쓰레기다.** Item과 junction은 언제나 한 transaction에서 insert되므로
+  (AI 결과 store·수동 PHOTO link) 커밋된 0-junction Item을 되살리는 요청 경로가 없다. 일일 스위퍼가
+  이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
+  PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
+- **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
+  스위퍼는 enqueue 전에, worker는 S3 호출 직전에 같은 key를 참조하는 junction 있는 Item을 확인하고,
+  있으면 job을 만들지 않거나(스위퍼) 이미 만든 job을 취소한다(worker). 판정은 filename을 coarse filter로
+  쓰되 full object key 일치로 확정한다. 살아 있는 쪽의 key는 저장된 `photoUrl`이 아니라 소유 subject에서
+  계산해(`SHA2(UNHEX(REPLACE(subject_id,'-','')),256)` = `PhotoObjectKeys.subjectNamespace`) 저장본이
+  손상돼 있어도 보호가 유지된다. 같은 key의 orphan만 여럿이면 최소 `timeline_item_id`가 job 소유자이고
+  나머지 행은 삭제된다(삭제 순서에 의존하지 않는 규칙).
+- 스위퍼는 후보를 PK 지정 `FOR UPDATE SKIP LOCKED`로 claim해 process 간에 나눈다. 탐색 statement에는
+  잠금을 걸지 않는다(전량 anti-join이라 `REPEATABLE READ`에서 테이블이 잠긴다). run 종료 조건은 탐색이
+  비는 것뿐이고, claim·재검증이 비어도 커서만 올려 계속한다. 잠금 하 job 재검증은 반드시 current read다
+  — 무잠금 탐색이 고정한 snapshot으로는 동시 생성된 job을 못 봐 FK 위반으로 batch가 깨진다.
+  삭제 요청이 스위퍼가 잠근 행의 FK 부모 잠금을 기다리거나 드물게 deadlock으로 한쪽이 롤백되는 것은
+  되돌릴 수 있는 실패로 수용한다.
+- `filename` 자체가 손상된 살아 있는 Item은 coarse filter에 잡히지 않아 두 방어를 모두 통과한다.
+  #387 배포 이전 저장분에만 존재하는 상태이며 복구하지 않고 수용한다.
 
 ### AI 서버간 계약
 
