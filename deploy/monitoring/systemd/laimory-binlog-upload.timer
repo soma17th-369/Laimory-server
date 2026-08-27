@@ -1,0 +1,13 @@
+[Unit]
+Description=Upload Laimory prod MySQL binlog spool to S3 every minute
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=1m
+# 이 주기가 곧 "prod MySQL과 monitoring을 동시에 잃는 이중 장애"의 손실 창이다.
+# 활성 binlog는 rotation 전까지 완결되지 않으므로 uploader가 매 실행 tail을 따로 올린다 —
+# 주기를 늘리면 그만큼 창이 넓어진다.
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
