@@ -24,8 +24,16 @@ public final class PhotoFilenames {
      * filename이 {@code {uuidv7}.{jpg|png|webp}} 형식이 아니면 {@link IllegalArgumentException}(→400)을 던진다.
      */
     public static void requireValid(String filename) {
-        if (filename == null || !PATTERN.matcher(filename).matches()) {
+        if (!isValid(filename)) {
             throw new IllegalArgumentException("invalid photo filename: " + filename);
         }
+    }
+
+    /**
+     * 예외 없이 형식만 판정한다. 요청 경계가 아니라 <b>저장된 값</b>을 검사하는 곳(orphan 스위퍼의 object
+     * key 복원)이 쓴다 — 손상된 저장본은 거절이 아니라 "복원 불가"로 흘려보내야 하기 때문이다.
+     */
+    public static boolean isValid(String filename) {
+        return filename != null && PATTERN.matcher(filename).matches();
     }
 }
