@@ -58,7 +58,7 @@ public class DailyReminderWorker {
     }
 
     @Scheduled(
-            cron = "${app.push.daily-reminder.cron:0 * * * * *}",
+            cron = "${app.push.daily-reminder.cron:0 0 21 * * *}",
             zone = "${app.push.daily-reminder.zone:Asia/Seoul}")
     public void sendDueReminders() {
         if (!properties.isWorkerEnabled()) {

@@ -63,8 +63,9 @@ public class DailyNotificationPreferenceService {
 
     /**
      * ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾸는 UPDATE 한 문장이다. 꺼져 있는 동안
-     * 과거가 된 {@code nextDueAt}을 그대로 켜면 그 값이 허용 지연 안쪽일 때 21:00 run이 곧바로 발송하므로
-     * 다음 미래 occurrence로 재장전한다. 시각이 서버 고정이라 그 값을 알아내려고 행을 읽을 필요가 없다.
+     * 과거가 된 {@code nextDueAt}을 그대로 켜면 허용 지연을 넘긴 값이라 21:00 run이 발송 없이 건너뛰므로
+     * 다음 미래 occurrence로 재장전한다(막는 것은 오발송이 아니라 누락이다 — 자세한 근거는 repository).
+     * 시각이 서버 고정이라 그 값을 알아내려고 행을 읽을 필요가 없다.
      *
      * <p>행은 만들지 않는다 — 행 존재는 가입 transaction과 rollout backfill이 보장하고, 0행은 그
      * 보장이 깨졌다는 운영 신호다.
