@@ -126,20 +126,28 @@ public class AccountErasureService {
      *   <li>회원 행을 지운다(완전 소거 — tombstone 없음).</li>
      * </ol>
      *
-     * @return {@code false} = 어느 단계든 영향 0행. 다른 worker가 이미 완료했거나 기대 상태가 아니다
+     * <p><b>예상 밖 0행은 예외로 보고한다.</b> Spring 선언적 transaction은 예외 전파로만 rollback하므로,
+     * 0행을 boolean으로 되돌려주면 그때까지의 DELETE가 그대로 commit돼 "mapping은 지워졌는데 회원 행은
+     * 남는" 반쪽 상태가 만들어진다. 특히 마지막 회원 행 삭제가 0행이면 job까지 사라진 뒤라 아무도 그
+     * 행을 다시 건드리지 않는다 — 개인정보가 영구히 남는다.
+     *
+     * @throws AccountErasureConflictException 어느 단계든 영향 0행 — transaction 전체가 rollback되고
+     *                                         durable job이 남아 다음 실행이 재시도한다
      */
     @Transactional
-    public boolean finalizeErasure(long jobId, long userId, UUID subjectId) {
+    public void finalizeErasure(long jobId, long userId, UUID subjectId) {
         refreshTokenService.deleteAllByUserId(userId);
         pushRegistrationService.deleteAll(subjectId);
         termAgreementService.deleteAllByUserId(userId);
 
         if (!subjectMappingService.deleteMapping(userId, subjectId)) {
-            return false;
+            throw new AccountErasureConflictException("mapping");
         }
         if (!accountErasureJobService.deleteCompleted(jobId, AccountErasureJobStatus.QUIESCED)) {
-            return false;
+            throw new AccountErasureConflictException("job");
         }
-        return userAccountService.deleteWithdrawn(userId);
+        if (!userAccountService.deleteWithdrawn(userId)) {
+            throw new AccountErasureConflictException("user");
+        }
     }
 }

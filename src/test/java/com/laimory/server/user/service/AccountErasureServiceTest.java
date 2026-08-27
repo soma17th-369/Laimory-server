@@ -129,7 +129,7 @@ class AccountErasureServiceTest {
                 .thenReturn(true);
         when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(true);
 
-        assertThat(accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID)).isTrue();
+        accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID);
 
         InOrder order = inOrder(refreshTokenService, pushRegistrationService, termAgreementService,
                 subjectMappingService, accountErasureJobService, userAccountService);
@@ -141,24 +141,42 @@ class AccountErasureServiceTest {
         order.verify(userAccountService).deleteWithdrawn(USER_ID);
     }
 
+    /**
+     * 예상 밖 0행은 <b>예외로</b> 보고해야 한다. boolean으로 되돌려주면 Spring이 rollback하지 않아
+     * 그때까지의 DELETE가 commit되고 반쪽 상태가 남는다.
+     */
     @Test
-    void mapping이_기대_subject와_다르면_회원_행을_지우지_않는다() {
+    void mapping이_기대_subject와_다르면_예외로_rollback시킨다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(false);
 
-        assertThat(accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID)).isFalse();
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
+                .isInstanceOf(AccountErasureConflictException.class);
 
         verify(accountErasureJobService, never()).deleteCompleted(anyLong(), any());
         verify(userAccountService, never()).deleteWithdrawn(anyLong());
     }
 
     @Test
-    void job이_이미_사라졌으면_회원_행을_지우지_않는다() {
+    void job이_이미_사라졌으면_예외로_rollback시킨다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(true);
         when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED))
                 .thenReturn(false);
 
-        assertThat(accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID)).isFalse();
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
+                .isInstanceOf(AccountErasureConflictException.class);
 
         verify(userAccountService, never()).deleteWithdrawn(anyLong());
+    }
+
+    /** 마지막 단계라 특히 중요하다 — 여기서 조용히 넘어가면 job이 사라진 뒤 회원 행만 영구히 남는다. */
+    @Test
+    void 회원_행이_지워지지_않으면_예외로_rollback시킨다() {
+        when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(true);
+        when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED))
+                .thenReturn(true);
+        when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
+                .isInstanceOf(AccountErasureConflictException.class);
     }
 }

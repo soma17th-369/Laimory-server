@@ -196,14 +196,13 @@ public class AccountErasureWorker {
         }
         try {
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
-            if (erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId)) {
-                summary.recordProcessed();
-            } else {
-                summary.recordAlreadyHandled();
-            }
+            erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
+            summary.recordProcessed();
         } catch (RuntimeException exception) {
-            // 콘텐츠가 남아 있으면 mapping 삭제가 subject FK RESTRICT에 막혀 여기로 온다(PR1의 정상 경로).
-            // job은 그대로 남아 다음 날 재시도하고, 처리 창을 넘기면 만료 경보가 대신 알린다.
+            // 두 가지가 여기로 온다. ① 콘텐츠가 남아 있어 mapping 삭제가 subject FK RESTRICT에 막힌 경우
+            // (PR1의 정상 경로) ② finalization 중 예상 밖 0행(AccountErasureConflictException — 다른
+            // worker가 이미 완료). 둘 다 finalization transaction 전체가 rollback돼 반쪽 상태가 없고,
+            // job이 그대로 남아 다음 날 재시도한다. 처리 창을 넘기면 만료 경보가 대신 알린다.
             summary.recordDeferred();
             log.warn("계정 삭제 실패(job 보존, 다음 실행에서 재시도): exceptionType={}",
                     exception.getClass().getSimpleName());

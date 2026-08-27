@@ -229,7 +229,7 @@ class AccountErasureIntegrationTest {
                 jobId, AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED)).isTrue();
 
         accountErasureService.deleteOwnerRows(userId, resolved);
-        assertThat(accountErasureService.finalizeErasure(jobId, userId, resolved)).isTrue();
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
 
         assertThat(userRepository.findById(userId)).isEmpty();
         assertThat(accountErasureJobRepository.findById(jobId)).isEmpty();
@@ -245,7 +245,7 @@ class AccountErasureIntegrationTest {
     }
 
     @Test
-    void 경쟁에서_진_worker의_finalization은_회원_행을_지우지_않는다() {
+    void 경쟁에서_진_worker의_finalization은_아무것도_바꾸지_않는다() {
         long userId = withdrawnUser();
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
         long jobId = jobIdOf(userId);
@@ -253,12 +253,75 @@ class AccountErasureIntegrationTest {
                 AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
         accountErasureService.deleteOwnerRows(userId, subjectId);
 
-        assertThat(accountErasureService.finalizeErasure(jobId, userId, subjectId)).isTrue();
-        // 두 번째 호출은 mapping이 이미 없어 0행 — 회원 행을 건드리지 않고 false로 수렴한다.
-        assertThat(accountErasureService.finalizeErasure(jobId, userId, subjectId)).isFalse();
+        accountErasureService.finalizeErasure(jobId, userId, subjectId);
+        // 두 번째 호출은 mapping이 이미 없어 0행 — 예외로 rollback되고 남은 행을 건드리지 않는다.
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+                .isInstanceOf(AccountErasureConflictException.class);
 
         createdUserIds.clear();
         createdSubjectIds.clear();
+    }
+
+    /**
+     * finalization 중 어느 단계가 0행이어도 mapping·job·user가 <b>모두</b> 남아야 한다.
+     * boolean 반환으로 조용히 끝내면 Spring이 rollback하지 않아 앞 단계 DELETE가 commit된다 —
+     * 특히 마지막 회원 행 단계가 0행이면 job이 사라진 뒤라 아무도 그 행을 다시 건드리지 않는다.
+     */
+    @Test
+    void job_단계가_0행이면_mapping도_함께_되돌아온다() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        // mapping 삭제가 subject FK에 막히지 않도록 owner 행을 먼저 정리한다(운영 순서와 동일).
+        accountErasureService.deleteOwnerRows(userId, subjectId);
+        // status가 QUIESCED가 아니라 job 삭제가 0행이 된다(mapping 삭제는 성공한 뒤다).
+        accountErasureJobService.markManualReview(jobId, AccountErasureJobStatus.PENDING);
+
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+                .isInstanceOf(AccountErasureConflictException.class);
+
+        assertThat(mappingCount(subjectId)).isOne();
+        assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
+        assertThat(userRepository.findById(userId)).isPresent();
+    }
+
+    @Test
+    void 회원_단계가_0행이면_mapping과_job이_모두_되돌아온다() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        accountErasureJobService.transition(jobId,
+                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+        accountErasureService.deleteOwnerRows(userId, subjectId);
+        // 회원 상태를 되돌려 마지막 단계만 0행으로 만든다.
+        jdbcTemplate.update("UPDATE users SET status = 'ACTIVE' WHERE user_id = ?", userId);
+
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+                .isInstanceOf(AccountErasureConflictException.class);
+
+        assertThat(mappingCount(subjectId)).isOne();
+        assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
+        assertThat(userRepository.findById(userId)).isPresent();
+    }
+
+    @Test
+    void mapping_단계가_0행이면_job과_회원_행이_남는다() {
+        long userId = withdrawnUser();
+        long jobId = jobIdOf(userId);
+        accountErasureJobService.transition(jobId,
+                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, UUID.randomUUID()))
+                .isInstanceOf(AccountErasureConflictException.class);
+
+        assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
+        assertThat(userRepository.findById(userId)).isPresent();
+    }
+
+    private int mappingCount(UUID subjectId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM user_subject_links WHERE subject_id = ?", Integer.class,
+                subjectId.toString());
     }
 
     private long jobIdOf(long userId) {
