@@ -62,10 +62,18 @@ import org.springframework.stereotype.Service;
 public class TimelineDraftTaskService {
 
     /**
-     * staging 저장 redaction에서 원문을 보존하는 필드. PHOTO {@code clientPhotoUri}는 클라 로컬 캐싱용
-     * echo 값이라 DB·앱 응답에서 원문을 유지하고, AI 전달에서만 치환한다(계획 §2.2).
+     * staging 저장 redaction에서 원문을 보존하는 필드. 사용자 자유 텍스트만 치환하고 서버가 만든 식별자는
+     * 원문을 유지한다.
+     *
+     * <p>{@code clientPhotoUri}는 클라 로컬 캐싱용 echo 값이라 DB·앱 응답에서 원문을 유지하고 AI 전달에서만
+     * 치환한다(계획 §2.2). {@code filename}·{@code photoUrl}은 <b>서버 파생 식별자</b>라 PII가 들어올 수
+     * 없다 — filename은 저장 전에 {@link PhotoFilenames#requireValid}(UUIDv7 + 허용 확장자 전체 일치)가
+     * 강제하고, photoUrl은 요청 값을 무시하고 서버가 조립한다(enrich의 {@code PhotoUrlService}).
+     * 두 값은 hex 문자열이라 치환 대상에 두면 CARD(Luhn 통과)·PHONE 탐지기에 우연히 걸려 값 일부가 token
+     * 으로 바뀌고, 그 저장본을 final Item이 그대로 복사해 이미지 URL과 S3 object key가 영구 손상된다.
      */
-    private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS = Set.of("clientPhotoUri");
+    private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS =
+            Set.of("clientPhotoUri", "filename", "photoUrl");
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
@@ -152,7 +160,8 @@ public class TimelineDraftTaskService {
 
         // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
         //    먼저 커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 전체 롤백 후 전파(500).
-        //    payload는 enrich본의 textual leaf를 치환한 결과만 staging에 저장한다(clientPhotoUri만 원문 보존).
+        //    payload는 enrich본의 textual leaf를 치환한 결과만 staging에 저장한다
+        //    (clientPhotoUri·filename·photoUrl은 원문 보존 — STORAGE_REDACTION_EXCLUDED_FIELDS).
         //    redaction은 prepareDraft보다 먼저 완료되며 실패는 그대로 전파한다 — 원문 fallback 없이
         //    DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed).
         List<TimelineDraftSourceItem> rows = enrichedItems.stream()
