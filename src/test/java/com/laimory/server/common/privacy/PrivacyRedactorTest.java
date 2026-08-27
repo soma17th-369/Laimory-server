@@ -327,6 +327,41 @@ class PrivacyRedactorTest {
     }
 
     @Test
+    void multipleExcludedFieldNamesArePreservedIndependently() throws Exception {
+        // storage 경계는 서버 파생 식별자 두 개를 추가로 제외한다(#387). hex 식별자는 CARD/PHONE 탐지기에
+        // 우연히 걸리므로, 제외가 필드마다 독립으로 동작하고 자유 텍스트 치환은 그대로여야 한다.
+        String filename = "84935824-2848-7d19-9b83-75934decdb01.jpg";
+        String photoUrl = "https://cdn.example.net/"
+                + "4c27e0a06776520543e57e1051b36b78c8396b06477d25030d8b8bd064055be4/photos/" + filename;
+        JsonNode source = objectMapper.readTree(objectMapper.writeValueAsString(objectMapper.createObjectNode()
+                .put("filename", filename)
+                .put("photoUrl", photoUrl)
+                .put("clientPhotoUri", "content://media/external/images/42")
+                .put("description", "연락처 010-1234-5678")));
+
+        JsonRedactionResult result =
+                redactor.redactTree(source, Set.of("clientPhotoUri", "filename", "photoUrl"));
+
+        assertThat(result.node().get("filename").textValue()).isEqualTo(filename);
+        assertThat(result.node().get("photoUrl").textValue()).isEqualTo(photoUrl);
+        assertThat(result.node().get("clientPhotoUri").textValue())
+                .isEqualTo("content://media/external/images/42");
+        assertThat(result.node().get("description").textValue())
+                .isEqualTo("연락처 " + RedactionType.PHONE.token());
+    }
+
+    @Test
+    void unexcludedServerIdentifiersAreCorruptedByDetectors() throws Exception {
+        // 제외하지 않으면 실제로 깨진다는 것을 고정한다 — #387 수정의 회귀 방지 기준선.
+        JsonNode source = objectMapper.readTree(objectMapper.writeValueAsString(
+                objectMapper.createObjectNode().put("filename", "84935824-2848-7d19-9b83-75934decdb01.jpg")));
+
+        JsonRedactionResult result = redactor.redactTree(source);
+
+        assertThat(result.node().get("filename").textValue()).contains(RedactionType.CARD.token());
+    }
+
+    @Test
     void treeRedactionIsIdempotent() throws Exception {
         JsonNode source = objectMapper.readTree(
                 "{\"memo\":\"주민 940101-1234567 카드 4111-1111-1111-1111\"}");

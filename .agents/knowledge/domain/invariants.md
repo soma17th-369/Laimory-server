@@ -34,12 +34,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고
   오류 메시지에 rawId 원문을 싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
 - 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(enrich본 `redactTree`,
-  `clientPhotoUri`만 storage 원문), AI 결과 Event `title`/`subtitle`/`question`/`place`/`address`(255자
+  storage 원문 보존 필드는 `clientPhotoUri`·`filename`·`photoUrl`), AI 결과 Event
+  `title`/`subtitle`/`question`/`place`/`address`(255자
   token-aware bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를
   중단한다(fail-closed — draft는 부수효과 전무, AI 결과는 callback token 미선점, User Memory는
   task/dispatch 미생성 또는 기존 문서 유지).
-- 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
-  유지하고 AI 전달 DTO 조립에서만 치환한다. User Memory base 지문은 접수 body의 치환본이 아니라
+- storage redaction 예외는 두 부류다. (a) 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo,
+  `clientPhotoUri`)은 DB·앱 응답에서 유지하고 AI 전달 DTO 조립에서만 치환한다. (b) 서버 파생 식별자
+  (`filename`·`photoUrl`)는 치환하지 않고 AI에도 원문 그대로 전달한다 — AI가 `photoUrl`을 HTTP GET으로
+  소비하기 때문이다. (b)에 PII가 들어올 수 없는 근거는 입력 경계의 `PhotoFilenames.requireValid`
+  전체 일치 검증과 서버 조립 URL이다. 두 값은 hex 문자열이라 치환 대상에 두면 CARD·PHONE 탐지기에
+  우연히 걸려 이미지 URL·S3 object key가 영구 손상된다(#387). User Memory base 지문은 접수 body의 치환본이 아니라
   DB 원본 문서로 계산한다.
 - 지오코딩 부분 실패 품질 판정은 materialize된 unique coordinate 최종 outcome 기준이다 — `U>0`에서
   `5F > U`(실패 20% 초과, 정수 교차곱·정확히 20%는 허용) 또는 시간순 coordinate observation
