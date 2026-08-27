@@ -76,10 +76,16 @@ unset MYSQL_PWD
 gzip -t "$dump_file" || fail "gzip integrity check failed"
 # mysqldump는 정상 종료 시 마지막 줄에 완료 마커를 남긴다 — 잘린 덤프를 업로드 전에 걸러낸다.
 zcat "$dump_file" | tail -1 | grep -q "Dump completed" || fail "dump completion marker missing"
-# 좌표 주석이 없으면 binlog를 아무리 반출해도 재생 시작점이 없다 — 업로드 전에 막는다.
-# MySQL 8.0.46 실측 출력은 여전히 구문법(CHANGE MASTER TO ... MASTER_LOG_FILE/POS)이다.
-zcat "$dump_file" | head -50 | grep -q "^-- CHANGE MASTER TO " ||
-  fail "binlog coordinate comment missing (is --source-data supported by the account?)"
+# 좌표와 source uuid가 없으면 binlog를 아무리 반출해도 PITR 시작점을 특정할 수 없다 —
+# 업로드 전에 막는다. MySQL 8.0.46 실측 출력은 여전히 구문법(CHANGE MASTER TO ... MASTER_LOG_FILE/POS)이다.
+#
+# head/grep -q로 앞부분만 읽으면 downstream이 일찍 닫혀 zcat이 SIGPIPE(141)로 끝나고,
+# pipefail이 그것을 pipeline 실패로 만들어 정상 덤프가 실패한다. awk는 입력을 끝까지 소비한다.
+zcat "$dump_file" | awk '
+  NR <= 50 && /^-- CHANGE MASTER TO /    { coord = 1 }
+  NR <= 50 && /^-- laimory_source_uuid=/ { uuid = 1 }
+  END { exit !(coord && uuid) }
+' || fail "binlog coordinate or source uuid comment missing (is --source-data allowed for the account?)"
 
 object_key="${S3_PREFIX}/${stamp:0:4}/${stamp:4:2}/laimory-${stamp}.sql.gz"
 aws s3 cp "$dump_file" "$object_key" --only-show-errors || fail "s3 upload failed"

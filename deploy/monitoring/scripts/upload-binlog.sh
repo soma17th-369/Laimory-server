@@ -79,6 +79,13 @@ read -r source_uuid current_file < "$STATE_FILE"
 [[ $current_file =~ ^[A-Za-z0-9_-]+\.[0-9]{6}$ ]] || fail "malformed state file"
 prefix=${current_file%.*}
 
+# 업로드 표식도 S3 key와 같이 source 세대로 묶는다. 파일명만 쓰면 source 교체 후 새 세대가 같은
+# 이름을 다시 쓸 때 이전 세대의 표식 때문에 정규 업로드가 조용히 건너뛰어진다.
+# 게다가 재초기화에서 스트림이 스풀을 비우면 아래 보존 스윕(스풀 순회)이 표식에 닿지 못해
+# 고아 표식이 영구히 남는다 — 세대별 디렉터리로 나누면 그 표식을 애초에 참조하지 않는다.
+marker_dir="$UPLOADED_DIR/$source_uuid"
+install -d -m 0700 -o root -g root "$marker_dir"
+
 # 스풀의 최신 파일이 지금 수신 중인 파일이다. 나머지는 rotation으로 닫힌 완결본이다.
 newest=""
 for path in "$SPOOL_DIR/$prefix".[0-9]*; do
@@ -97,10 +104,10 @@ for path in "$SPOOL_DIR/$prefix".[0-9]*; do
   [[ -f $path ]] || continue
   name=${path##*/}
   [[ $name != "$newest" ]] || continue
-  [[ ! -f "$UPLOADED_DIR/$name" ]] || continue
+  [[ ! -f "$marker_dir/$name" ]] || continue
   aws s3 cp "$path" "$S3_PREFIX/$source_uuid/$name" --only-show-errors ||
     fail "s3 upload failed for $name"
-  : > "$UPLOADED_DIR/$name"
+  : > "$marker_dir/$name"
   echo "uploaded completed binlog: $name"
 done
 
@@ -115,9 +122,9 @@ for path in "$SPOOL_DIR/$prefix".[0-9]*; do
   [[ -f $path ]] || continue
   name=${path##*/}
   [[ $name != "$newest" ]] || continue
-  [[ -f "$UPLOADED_DIR/$name" ]] || continue
+  [[ -f "$marker_dir/$name" ]] || continue
   if [[ -n $(find "$path" -maxdepth 0 -mtime +"$RETENTION_DAYS") ]]; then
-    rm -f "$path" "$UPLOADED_DIR/$name"
+    rm -f "$path" "$marker_dir/$name"
   fi
 done
 
