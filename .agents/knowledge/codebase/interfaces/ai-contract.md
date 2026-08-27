@@ -129,7 +129,9 @@ Task-Token: <taskToken>
   `startAt` 필수는 draft 입력 경계(400)가 보장하며 AI 입력 계약(`CollectedSourceItem`)과 정렬된다.
   payload는 staging 시점에 v1 privacy 치환을 거친 저장본이라 텍스트 값에 `[REDACTED_*]` token literal이
   섞일 수 있고, PHOTO `clientPhotoUri`는 응답 조립 시 값 전체가 `[REDACTED_DEVICE_URI]` 고정 token으로
-  바뀐다(DB·앱 응답은 원문 유지 — 필드 집합·구조는 불변).
+  바뀐다(DB·앱 응답은 원문 유지 — 필드 집합·구조는 불변). PHOTO `filename`·`photoUrl`은 서버 파생
+  식별자라 staging 치환과 응답 조립 모두에서 제외돼 **원문 그대로 전달된다** — AI가 `photoUrl`을 HTTP
+  GET으로 소비하므로 원문이어야 한다.
   PHOTO payload도 좌표를 가지면 STAY/MOVEMENT와 같은 `address`·`places`를 갖는다(서버 지오코딩 enrich).
   좌표가 없는 PHOTO와 Event PATCH·Event 생성 POST로 수동 추가된 PHOTO에는 두 필드가 없다 — 수동
   추가는 enrich 경로를 타지 않는다.

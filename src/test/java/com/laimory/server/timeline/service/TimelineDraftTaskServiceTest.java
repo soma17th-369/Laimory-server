@@ -20,6 +20,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
@@ -625,6 +626,34 @@ class TimelineDraftTaskServiceTest {
         TimelineDraftSourceItem photo = rowsCaptor.getValue().get(1);
         assertThat(photo.getPayload().get("clientPhotoUri").asText())
                 .isEqualTo("content://media/external/images/42");
+    }
+
+    @Test
+    void createDraftTask_preservesServerDerivedPhotoIdentifiers_whenDetectorsWouldMatchThem() {
+        // filename·photoUrl은 서버 파생 식별자라 storage redaction 예외다(#387). 둘 다 hex 문자열이라
+        // CARD(Luhn 통과)·PHONE 탐지기에 우연히 걸리는 값이 실제로 존재하며, 치환되면 이미지 URL과
+        // S3 object key가 영구 손상된다. 아래 두 값은 실 detector가 매치하는 표본이다.
+        String cardLikeFilename = "84935824-2848-7d19-9b83-75934decdb01.jpg";
+        String phoneLikeNamespace =
+                "4c27e0a06776520543e57e1051b36b78c8396b06477d25030d8b8bd064055be4";
+        String photoUrl = "https://cdn.example.net/" + phoneLikeNamespace + "/photos/" + cardLikeFilename;
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                        new PhotoPayload(cardLikeFilename, "content://x", 1.0, 2.0,
+                                "연락처 010-1234-5678", null, null, photoUrl)));
+
+        service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftPreparationService).prepareDraft(eq(SUBJECT_ID), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                rowsCaptor.capture());
+        JsonNode payload = rowsCaptor.getValue().get(0).getPayload();
+        assertThat(payload.get("filename").asText()).isEqualTo(cardLikeFilename);
+        assertThat(payload.get("photoUrl").asText()).isEqualTo(photoUrl);
+        // 제외가 자유 텍스트까지 번지지 않는다 — description은 여전히 치환된다.
+        assertThat(payload.get("description").asText()).isEqualTo("연락처 " + RedactionType.PHONE.token());
     }
 
     @Test

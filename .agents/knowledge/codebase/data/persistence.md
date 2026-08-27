@@ -439,6 +439,18 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
 
+세 번째 경로는 orphan 스위퍼(03:30 KST)다. junction·delete job이 모두 없는 `timeline_items` 행을 PK
+커서로 훑어(무잠금 anti-join) 후보를 고르고, 그 PK만 `FOR UPDATE SKIP LOCKED`로 claim한 뒤 잠금 하에서
+junction·job을 재검증한다(job 재검증은 `FOR SHARE` current read — 무잠금 탐색이 고정한 snapshot으로는
+동시 생성 job을 못 본다). 유효 PHOTO는 `insertIfAbsent`로 delete job에 넘기고, non-PHOTO와 object key를
+복원할 수 없는 손상 PHOTO만 즉시 hard delete한다. 스위퍼는 S3를 직접 호출하지 않는다.
+
+object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는 행은 subject를 잃었으므로 저장된
+`photoUrl`의 path가 유일한 경로이고, junction이 살아 있는 행은 `SHA2(UNHEX(REPLACE(subject_id,'-','')),
+256)`로 SQL이 직접 계산한다(= `PhotoObjectKeys.subjectNamespace`). 후자 덕에 살아 있는 Item의
+`photoUrl`이 손상돼 있어도 같은 key의 S3 객체가 보호된다. 같은 key의 orphan이 여럿이면 최소
+`timeline_item_id`가 job 소유자이고 나머지 행은 삭제된다.
+
 ## Invariants
 
 - entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.

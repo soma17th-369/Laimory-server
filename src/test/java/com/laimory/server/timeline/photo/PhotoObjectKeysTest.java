@@ -92,4 +92,46 @@ class PhotoObjectKeysTest {
         assertThat(key).doesNotContain(SUBJECT_UUID);
         assertThat(key).doesNotContain(SUBJECT_UUID.replace("-", ""));
     }
+
+    @Test
+    void objectKeyFromServingUrl_restoresKeyFromPathWithoutCdnDomain() {
+        String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
+        String key = SUBJECT_NAMESPACE_VECTOR + "/photos/" + filename;
+
+        // 도메인이 달라도 path가 같으면 같은 key다 — 설정된 CDN 도메인과 대조하지 않는다.
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl("https://cdn.laimory.app/" + key)).contains(key);
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl("https://d123abc.cloudfront.net/" + key))
+                .contains(key);
+    }
+
+    @Test
+    void objectKeyFromServingUrl_rejectsRestorationWhenStoredValueIsDamaged() {
+        String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
+
+        // redaction이 namespace 중간을 토큰으로 바꾼 저장본(#387 이전 행)
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl(
+                "https://cdn.laimory.app/" + SUBJECT_NAMESPACE_VECTOR.substring(0, 40)
+                        + "[REDACTED_CARD]/photos/" + filename)).isEmpty();
+        // filename이 형식을 벗어난 경우
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl(
+                "https://cdn.laimory.app/" + SUBJECT_NAMESPACE_VECTOR + "/photos/not-a-uuid.jpg")).isEmpty();
+        // namespace 길이가 다른 경우
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl(
+                "https://cdn.laimory.app/abc/photos/" + filename)).isEmpty();
+        // 경로 깊이가 다른 경우
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl(
+                "https://cdn.laimory.app/" + SUBJECT_NAMESPACE_VECTOR + "/photos/sub/" + filename)).isEmpty();
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl(null)).isEmpty();
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl("")).isEmpty();
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl("not a url")).isEmpty();
+    }
+
+    @Test
+    void objectKeyFromServingUrl_roundTripsSubjectFullKey() {
+        String filename = "0190f8b2-3c4d-7e5f-8a9b-0c1d2e3f4a5b.jpg";
+        UUID subject = subjectIdOf(SUBJECT_UUID);
+        String key = PhotoObjectKeys.subjectFullKey(filename, subject);
+
+        assertThat(PhotoObjectKeys.objectKeyFromServingUrl("https://cdn.laimory.app/" + key)).contains(key);
+    }
 }

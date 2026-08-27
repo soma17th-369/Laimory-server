@@ -57,9 +57,18 @@ non-empty로 함께 검증한다.
 `environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev는 `.env`의
 `APP_ENV=dev`가 된다. management endpoint의 실제 네트워크 접근 허용은 환경별 SG가 소유한다.
 
-dev monitoring 자산은 별도 private host에서 실행되고 prod는 수집하지 않는다. monitoring
-host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK
-9200으로 나가는 source-limited 경로만 갖는다. 유일한 인바운드 예외는 trace 수집이다 — Tempo의
+monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
+dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
+경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).
+
+그 prod 경로는 성격이 다르므로 따로 다룬다 — monitoring host는 지표만 긁어오는 것이 아니라
+**prod DB의 모든 row 변경을 스풀에 상시 보관**하게 된다. 계정은 전역 `REPLICATION SLAVE`·
+`REPLICATION CLIENT`(DB 범위로 좁힐 수 없는 권한)이고 접속 host 고정 + 계정 단위 `REQUIRE SSL`로
+제한하지만, 결과적으로 **이 host의 접근 통제 등급은 prod DB와 같아진다.** 루트 볼륨 EBS 암호화와
+스풀 0700이 전제이며, 관측 host 접근 통제(#368)와 함께 평가한다. rollback은 prod MySQL SG의
+3306 규칙 1건 삭제다.
+
+유일한 인바운드 예외는 trace 수집이다 — Tempo의
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이

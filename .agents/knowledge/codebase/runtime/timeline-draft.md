@@ -60,7 +60,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
    staging payload는 enrich 결과의 textual leaf를 `PrivacyRedactor.redactTree`로 v1 치환한 것만 저장한다
-   (`clientPhotoUri`만 storage 원문 보존). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
+   (storage 원문 보존 필드는 `clientPhotoUri`·`filename`·`photoUrl` — 뒤 둘은 서버 파생 식별자라
+   치환하면 이미지 URL·S3 key가 깨진다). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
    전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
    payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
 7. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
@@ -101,7 +102,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
    `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
-   entity·DB·앱 응답은 원문 유지). 성공하면 새 token hash와
+   entity·DB·앱 응답은 원문 유지). storage 예외 중 이 필드만 치환한다 — `filename`·`photoUrl`은 서버 파생
+   식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). 성공하면 새 token hash와
    `RESULT_PENDING`을 native `SET XX KEEPTTL`로 저장하고 새 token 원문을 응답 body의 `taskToken`으로
    반환한다(최초 만료 시각 보존 — write 시점 만료면 부활 없이 404). 같은 write가
    소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
@@ -202,6 +204,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 
 ### Delete
 
+- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): junction·delete job이 모두 없는 final Item을
+  PK 커서로 훑어 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
+  0-junction Item의 수렴을 담당하며 S3는 호출하지 않는다.
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
@@ -325,11 +330,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 ## Invariants
 
 - AI dispatch는 application DB transaction 안에서 기다리지 않는다(선생성 commit 후 dispatch).
-- 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(`redactTree`, `clientPhotoUri`만
-  원문), AI 결과 Event text(255자 bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback
-  없이 그 단계 전체를 중단한다(fail-closed).
+- 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(`redactTree`, 원문 보존 필드는
+  `clientPhotoUri`·`filename`·`photoUrl`), AI 결과 Event text(255자 bounded), User Memory 문서
+  (`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를 중단한다(fail-closed).
 - 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
-  유지하고 AI 전달 DTO 조립에서만 치환한다.
+  유지하고 AI 전달 DTO 조립에서만 치환한다. 서버 파생 식별자 `filename`·`photoUrl`은 AI 전달에서도
+  치환하지 않는다.
 - `rawId`는 draft source와 수동 PHOTO 입력(Event PATCH·Event 생성 POST)에서 canonical lowercase
   UUID(version 무관)만
   허용한다(위반 400, 허용값 무정규화 저장).
