@@ -258,9 +258,13 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void itemThatGainedJobAfterScanIsDroppedWithoutForeignKeyViolation() {
-        // 무잠금 탐색이 snapshot을 고정한 뒤 다른 transaction이 같은 Item의 job을 commit하는 순서.
-        // 재검증이 current read가 아니면 여기서 행을 지워 FK 위반으로 batch 전체가 rollback된다.
+    void itemWithExistingJobIsExcludedFromCandidates() {
+        // job이 있는 Item은 후보 조회 단계에서 빠진다(worker 소유라 스위퍼가 건드리면 FK 위반).
+        //
+        // NOTE: "탐색 이후 다른 transaction이 job을 commit"하는 순서(잠금 하 current read 재검증이
+        // 막는 경로)는 이 테스트가 아니라 TimelineOrphanItemSweepServiceTest의
+        // concurrentlyCreatedJobPreservesRowInsteadOfDeleting이 mock으로만 덮는다. 실 MySQL에서
+        // 그 순서를 재현하려면 서비스 내부에 개입 지점이 필요해 통합 커버리지는 비어 있다.
         String filename = filename(7);
         Long orphan = savePhotoWithKey("raw-g7", filename,
                 PhotoObjectKeys.subjectFullKey(filename, subjectId));

@@ -145,8 +145,10 @@ public class TimelineOrphanItemSweepService {
                 immediateDeleteIds.add(itemId);
                 continue;
             }
+            // equals로 비교한다 — Long vs long은 unboxing이라 지금도 값 비교지만, 한쪽 타입이 바뀌면
+            // 조용히 참조 비교가 되어 소유자 판정이 뒤집힌다(같은 key의 orphan이 전부 job 없이 삭제).
             Long ownerId = ownerIdByObjectKey.get(photo.objectKey());
-            if (ownerId != null && ownerId != itemId) {
+            if (ownerId != null && !ownerId.equals(itemId)) {
                 counters.keyShared++;
                 immediateDeleteIds.add(itemId);
                 continue;
