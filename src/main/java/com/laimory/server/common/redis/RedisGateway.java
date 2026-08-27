@@ -1,9 +1,13 @@
 package com.laimory.server.common.redis;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -192,5 +196,30 @@ public class RedisGateway {
             throw new IllegalStateException("Redis zrem이 null을 반환했습니다: " + logicalSortedSetKey);
         }
         return removed;
+    }
+
+    /**
+     * sorted set을 pattern으로 유계 순회해 일치하는 member를 모은다(ZSCAN).
+     *
+     * <p><b>keyspace 전역 SCAN이 아니라 알려진 key 하나 안을 훑는다.</b> 계정 삭제(#302)가 쓰는데,
+     * member가 {@code {subject}:{recordId}} 형식이라 record가 이미 지워진 항목은 id로 특정할 수 없고
+     * prefix로만 찾을 수 있기 때문이다.
+     *
+     * @param matchPattern glob pattern(예: {@code "uuid:*"})
+     * @param limit        모을 member 수 상한 — 넘으면 거기서 멈춘다(다음 호출이 이어서 가져간다)
+     */
+    public List<String> scanSortedSetMembers(String logicalSortedSetKey, String matchPattern, int limit) {
+        ScanOptions options = ScanOptions.scanOptions().match(matchPattern).count(limit).build();
+        List<String> members = new ArrayList<>();
+        try (Cursor<ZSetOperations.TypedTuple<String>> cursor =
+                     template.opsForZSet().scan(prefix + logicalSortedSetKey, options)) {
+            while (cursor.hasNext() && members.size() < limit) {
+                String member = cursor.next().getValue();
+                if (member != null) {
+                    members.add(member);
+                }
+            }
+        }
+        return members;
     }
 }

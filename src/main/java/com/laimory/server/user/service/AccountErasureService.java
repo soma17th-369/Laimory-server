@@ -136,12 +136,18 @@ public class AccountErasureService {
      * 콘텐츠 graph를 제외한 owner 행을 지운다. 순서가 강제되는 곳은 하나뿐이다 —
      * 일일 알림 행이 subject 축 설정 행을 FK {@code RESTRICT}로 참조하므로 그 둘은 이 순서여야 한다.
      *
-     * <p>미반영 큐 비우기를 한 번 더 한다(멱등) — 정지 이후 삭제까지의 유예 동안 남은 잔여를 흡수하는
-     * 이중 방어이며 record 행이 아직 살아 있는 지금이 마지막 기회다.
+     * <p>미반영 큐를 <b>prefix로</b> 한 번 더 비운다. 정지 단계의 id 기반 제거는 DB에 살아 있는 record의
+     * member만 지우므로, 사용자가 직접 지운 하루의 member는 그때 잡히지 않는다 — 여기서 걸러야 완료
+     * 시점에 이 subject의 큐 잔여가 0이 된다.
      */
     @Transactional
     public void deleteOwnerRows(long userId, UUID subjectId) {
         userMemoryService.delete(subjectId);
+        // record가 이미 지워졌으므로 id로는 남은 member를 찾을 수 없다 — prefix로 마지막 확인을 한다.
+        // 사용자가 직접 지운 하루의 member가 여기서 걸린다(기록 삭제 경로는 큐를 건드리지 않는다).
+        while (userMemoryUpdatePendingStore.removeAllBySubject(subjectId, RECORD_ID_PAGE_SIZE) > 0) {
+            // 남은 것이 없을 때까지.
+        }
         dailyNotificationPreferenceService.delete(subjectId);
         subjectPreferenceService.delete(subjectId);
         pushRegistrationService.deleteAll(subjectId);

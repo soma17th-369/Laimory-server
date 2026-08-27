@@ -68,6 +68,8 @@ class AccountErasureIntegrationTest {
     private SubjectLookupKeyDeriver subjectLookupKeyDeriver;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
 
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<UUID> createdSubjectIds = new ArrayList<>();
@@ -396,6 +398,27 @@ class AccountErasureIntegrationTest {
         assertThat(userRepository.findById(userId)).isPresent();
 
         jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", subjectId.toString());
+    }
+
+    /**
+     * 사용자가 직접 지운 하루의 pending member는 record id로 특정할 수 없다 — 큐에서 빼는 지점이
+     * 반영 확인과 재료 소멸 판정뿐이라 기록 삭제 경로가 큐를 건드리지 않기 때문이다.
+     * 그래서 마지막 확인은 id가 아니라 prefix로 해야 완료 시점 잔여가 0이 된다.
+     */
+    @Test
+    void 지워진_record의_pending_member도_prefix로_정리된다() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        // DB에 없는 record id의 member — 정지 단계의 id 기반 제거로는 잡히지 않는다.
+        userMemoryUpdatePendingStore.enqueue(
+                new com.laimory.server.timeline.entity.UserMemoryUpdatePending(subjectId, 999_999_999L),
+                java.time.Instant.now());
+
+        accountErasureService.quiesce(subjectId);
+        assertThat(userMemoryUpdatePendingStore.removeAllBySubject(subjectId, 100)).isPositive();
+
+        accountErasureService.deleteOwnerRows(userId, subjectId);
+        assertThat(userMemoryUpdatePendingStore.removeAllBySubject(subjectId, 100)).isZero();
     }
 
     private long jobIdOf(long userId) {

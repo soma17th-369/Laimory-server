@@ -97,6 +97,26 @@ public class UserMemoryUpdatePendingStore {
                 enqueue(new UserMemoryUpdatePending(subjectId, dailyRecordId), waitingSince));
     }
 
+    /**
+     * subject의 남은 member를 prefix로 훑어 제거한다(#302 계정 삭제).
+     *
+     * <p>{@link #removeAll}은 record id를 알아야 하는데, <b>사용자가 이미 지운 하루</b>의 member는
+     * 그 id를 어디서도 얻을 수 없다 — 큐에서 빼는 지점이 반영 확인과 재료 소멸 판정뿐이라 기록 삭제
+     * 경로는 큐를 건드리지 않기 때문이다. 그래서 계정 삭제의 마지막 확인은 id가 아니라 prefix로 한다.
+     *
+     * <p>application keyspace 전역 {@code SCAN}이 아니라 <b>이 sorted set 하나</b>를 훑는다.
+     *
+     * @return 제거한 member 수
+     */
+    public long removeAllBySubject(UUID subjectId, int limit) {
+        List<String> members = redis.scanSortedSetMembers(
+                PENDING_KEY, subjectId + MEMBER_DELIMITER + "*", limit);
+        if (members.isEmpty()) {
+            return 0;
+        }
+        return redis.removeFromSortedSet(PENDING_KEY, members);
+    }
+
     public void removeAll(UUID subjectId, List<Long> dailyRecordIds) {
         redis.removeFromSortedSet(PENDING_KEY, dailyRecordIds.stream()
                 .map(dailyRecordId -> member(new UserMemoryUpdatePending(subjectId, dailyRecordId)))
