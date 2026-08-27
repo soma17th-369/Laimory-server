@@ -1,6 +1,6 @@
 ---
 name: merge-pr
-description: Finish and squash-merge the current GitHub pull request after publishing a durable PR digest comment and verifying the repository's merge gates. Use when the user explicitly commands an actual merge with phrases such as "머지해줘", "이 PR 머지하자", "리뷰 반영 끝났으니 머지해", "merge this PR", or invokes `/merge-pr`, optionally with a PR number or URL. Do not use when the user only asks whether a PR is mergeable, asks for PR status, requests a code review, asks to resolve review comments, or discusses merging hypothetically; those requests do not authorize a merge.
+description: Finish and squash-merge the current GitHub pull request after publishing a durable PR digest comment and verifying the repository's merge gates, then close the issues the PR links through closing keywords. Use when the user explicitly commands an actual merge with phrases such as "머지해줘", "이 PR 머지하자", "리뷰 반영 끝났으니 머지해", "merge this PR", or invokes `/merge-pr`, optionally with a PR number or URL. Do not use when the user only asks whether a PR is mergeable, asks for PR status, requests a code review, asks to resolve review comments, or discusses merging hypothetically; those requests do not authorize a merge.
 ---
 
 # Merge PR
@@ -30,6 +30,8 @@ merges require a separate workflow.
 - Keep the digest in a restrictive repository-outside temporary directory and remove it on every success or stop
   path. Never fall back to a repository path.
 - Use squash merge only. Never use `--admin`, `--auto`, merge commit, rebase merge, or force-push.
+- After the merge is verified, close only the issues GitHub reports in `closingIssuesReferences`. An issue
+  mentioned in prose, in the branch name, or in a review comment is a candidate to report, never a target to close.
 
 ## Workflow
 
@@ -76,6 +78,15 @@ Interpret exit codes exactly:
 - `2`: a gate is still waiting or timed out; report the waiting reasons and stop.
 - `3`: a gate is blocked; report every blocker and stop.
 
+Read the issues this PR closes on merge, and keep the numbers as `linked_issues`:
+
+```bash
+gh pr view [<number-or-url>] --json closingIssuesReferences
+```
+
+An empty list is a valid state, not a blocker: it only means the PR body carries no closing keyword. Never
+substitute a number guessed from the branch name or from prose in the PR body for this list.
+
 Keep the inspector's `head_sha` as `implementation_head_sha`. Use its PR metadata, commits, changed files, checks,
 and review threads as objective evidence. Read the PR diff and relevant changed files when needed to understand
 behavior; do not summarize from filenames alone.
@@ -106,7 +117,8 @@ path; do not weaken or change the merge result. The comment helper independently
 inside `REPO_ROOT`.
 
 Copy the template to `DIGEST_PATH`, keep its exact first-line marker
-`<!-- laimory-pr-digest:v1 -->` exactly once, set `status: merge-candidate`, and record exactly one line:
+`<!-- laimory-pr-digest:v1 -->` exactly once, set `status: merge-candidate`, fill `linked_issues` with the
+`closingIssuesReferences` numbers from Step 1 (leave `[]` when there are none), and record exactly one line:
 
 ```text
 implementation_head_sha: <implementation_head_sha>
@@ -222,9 +234,38 @@ absent. Other failures are verification errors. Report:
 - verified implementation head SHA and `build` result;
 - whether the remote work branch was deleted.
 
-If the PR merged but branch cleanup failed, report cleanup as incomplete without attempting a second merge. Finally
-remove `DIGEST_PATH` and `DIGEST_TMP_DIR`. A cleanup failure is reported separately and does not change an already
-observed merge result.
+If the PR merged but branch cleanup failed, report cleanup as incomplete without attempting a second merge.
+
+### 7. Close the linked issues
+
+`dev` is this repository's default branch, so GitHub auto-closes every issue linked through a closing keyword
+(`Closes #N`) the moment the squash merge lands. Auto-close is the expected path, not a guarantee: verify each one
+and close only what is still open. Do not skip this step because the PR body had `Closes #N`.
+
+For every `linked_issues` entry from Step 1:
+
+```bash
+gh issue view <issue-number> --json number,state,url
+```
+
+- `state=CLOSED`: record it as auto-closed. Do not comment on it and do not re-close it.
+- `state=OPEN`: close it explicitly, citing the merge as evidence:
+
+```bash
+gh issue close <issue-number> \
+  --comment "PR #<pr-number> (squash merge <merge-commit-sha>) 머지 완료로 종료합니다."
+```
+
+When `linked_issues` is empty, close nothing. Report that the PR linked no issue, and list any candidate numbers
+observed in the branch name or PR body so the user can close them; only an explicit user instruction authorizes
+closing one of those, because an issue can cover work this PR only partly delivers.
+
+A `gh issue close` failure is reported as incomplete follow-up with the issue number and the exact error. Never
+re-run the merge, and never retry with a different issue number.
+
+Add to the final report, per linked issue: number, URL, and whether it was auto-closed, closed by this step, or
+left open with the reason. Finally remove `DIGEST_PATH` and `DIGEST_TMP_DIR`. A cleanup failure is reported
+separately and does not change an already observed merge or issue result.
 
 ## Resources
 
@@ -249,6 +290,11 @@ observed merge result.
 - `gh pr merge --delete-branch` can switch or fast-forward the current worktree while deleting the PR branch. When
   the shared checkout is on another branch or contains unrelated work, use a clean isolated worktree for this
   workflow and remove only that worktree afterward.
+- Issue auto-close on merge depends on the base branch being the repository default branch. `dev` is the default
+  branch here, so a work-branch PR closes its linked issues on merge; the same PR retargeted at a non-default base
+  would leave them open. Verify state instead of assuming either outcome.
+- `closingIssuesReferences` is populated only by closing keywords in the PR body (or a manually linked issue). A
+  branch named `fix/366-...` links nothing by itself, and GitHub will not infer the issue from it.
 - The digest comment does not change the PR head or start CI. Step 4 deliberately rechecks the same
   `implementation_head_sha`, existing build, and exact comment immediately before merging.
 - GitHub documents Markdown attachment through the Web UI. It is optional and manual, not an automated merge gate;
