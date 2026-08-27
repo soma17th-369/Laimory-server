@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -16,11 +17,16 @@ import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.terms.service.TermAgreementService;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
+import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.timeline.service.DailyRecordService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -51,6 +57,10 @@ class AccountErasureServiceTest {
     private AccountErasureJobService accountErasureJobService;
     @Mock
     private DailyRecordService dailyRecordService;
+    @Mock
+    private TimelineContentErasureService timelineContentErasureService;
+    @Mock
+    private S3PhotoStorageService s3PhotoStorageService;
     @Mock
     private UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
     @Mock
@@ -166,6 +176,56 @@ class AccountErasureServiceTest {
                 .isInstanceOf(AccountErasureConflictException.class);
 
         verify(userAccountService, never()).deleteWithdrawn(anyLong());
+    }
+
+    @Test
+    void S3는_prefix가_빌_때까지_반복해_지운다() {
+        String prefix = PhotoObjectKeys.subjectNamespace(SUBJECT_ID) + "/photos/";
+        when(s3PhotoStorageService.listObjectKeys(eq(prefix), anyInt()))
+                .thenReturn(List.of("a", "b"))
+                .thenReturn(List.of("c"))
+                .thenReturn(List.of());
+        when(s3PhotoStorageService.deleteAll(List.of("a", "b")))
+                .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
+                        Set.of("a", "b"), Map.of(), Set.of()));
+        when(s3PhotoStorageService.deleteAll(List.of("c")))
+                .thenReturn(new S3PhotoStorageService.BatchDeleteResult(Set.of("c"), Map.of(), Set.of()));
+
+        accountErasureService.deletePhotoObjects(SUBJECT_ID);
+
+        // 마지막 재조회가 비었을 때만 끝난다 — 3회 조회.
+        verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectKeys(eq(prefix), anyInt());
+    }
+
+    @Test
+    void 삭제가_확인되지_않은_S3_객체가_있으면_멈춘다() {
+        when(s3PhotoStorageService.listObjectKeys(anyString(), anyInt())).thenReturn(List.of("a", "b"));
+        when(s3PhotoStorageService.deleteAll(List.of("a", "b")))
+                .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
+                        Set.of("a"), Map.of("b", "AccessDenied"), Set.of()));
+
+        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void 콘텐츠_graph는_job_record_draft_순서로_비운다() {
+        when(timelineContentErasureService.deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt()))
+                .thenReturn(2).thenReturn(0);
+        when(timelineContentErasureService.deleteRecordBatch(eq(SUBJECT_ID), anyInt()))
+                .thenReturn(1).thenReturn(0);
+        when(timelineContentErasureService.deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt()))
+                .thenReturn(0);
+
+        accountErasureService.deleteContentGraph(SUBJECT_ID);
+
+        InOrder order = inOrder(timelineContentErasureService);
+        order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
+                .deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt());
+        order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
+                .deleteRecordBatch(eq(SUBJECT_ID), anyInt());
+        order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
+                .deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt());
     }
 
     /** 마지막 단계라 특히 중요하다 — 여기서 조용히 넘어가면 job이 사라진 뒤 회원 행만 영구히 남는다. */

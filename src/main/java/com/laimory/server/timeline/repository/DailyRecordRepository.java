@@ -29,6 +29,14 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
      * <p>{@code (subject_id, record_date)} UNIQUE의 leftmost prefix를 타며, PK 오름차순 + 커서로
      * 페이지를 넘긴다 — 기록이 많은 회원에서도 한 번에 다 읽지 않는다.
      */
+    /**
+     * 계정 삭제(#302)의 record 일괄 제거 — Event와 junction은 FK CASCADE로 함께 사라진다.
+     * 같은 batch의 Item 삭제와 <b>한 transaction</b>이어야 한다(Item을 특정할 경로가 사라지기 때문).
+     */
+    @Modifying
+    @Query("delete from DailyRecord r where r.dailyRecordId in :dailyRecordIds")
+    int deleteAllByIdIn(@Param("dailyRecordIds") Collection<Long> dailyRecordIds);
+
     @Query("select r.dailyRecordId from DailyRecord r "
             + "where r.subjectId = :subjectId and r.dailyRecordId > :afterId "
             + "order by r.dailyRecordId")

@@ -6,7 +6,10 @@ import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.service.DailyRecordService;
+import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
@@ -45,10 +48,18 @@ public class AccountErasureService {
     /** record id를 한 번에 다 읽지 않기 위한 페이지 크기 — 큐 비우기의 ZREM 단위이기도 하다. */
     private static final int RECORD_ID_PAGE_SIZE = 500;
 
+    /** 콘텐츠 graph 삭제의 batch 크기 — 이 값이 곧 한 transaction이 잡는 lock·undo log 상한이다. */
+    private static final int CONTENT_BATCH_SIZE = 200;
+
+    /** S3 한 페이지 크기 — 목록과 삭제를 같은 단위로 돌려 전체 key를 메모리에 모으지 않는다. */
+    private static final int S3_PAGE_SIZE = 1_000;
+
     private final UserAccountService userAccountService;
     private final SubjectMappingService subjectMappingService;
     private final AccountErasureJobService accountErasureJobService;
     private final DailyRecordService dailyRecordService;
+    private final TimelineContentErasureService timelineContentErasureService;
+    private final S3PhotoStorageService s3PhotoStorageService;
     // 미반영 큐를 소유한 leaf service가 없어 store를 직접 합성한다(Redis 접근은 RedisGateway 경유라
     // arch rule을 어기지 않는다). 큐에 넣는 쪽은 UserMemoryUpdateWorker, 빼는 쪽은 결과 endpoint와 여기다.
     private final UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
@@ -95,6 +106,33 @@ public class AccountErasureService {
     }
 
     /**
+     * 타임라인 콘텐츠 graph를 유계 batch로 지운다 — 목록이 빌 때까지 반복한다.
+     *
+     * <p>순서에 이유가 있다.
+     * <ol>
+     *   <li><b>PHOTO delete job과 그 Item</b> — Item FK가 {@code RESTRICT}라 job이 남아 있으면 아래
+     *       record graph의 Item 삭제가 거절된다. 또 이 Item들은 junction 0이라 record graph
+     *       snapshot에 잡히지 않으므로 여기서 지우지 않으면 아무도 정리하지 않는다.</li>
+     *   <li><b>record graph</b> — batch마다 Item과 record를 한 transaction에서 지운다.</li>
+     *   <li><b>draft source</b> — subject FK {@code RESTRICT}라 mapping 삭제 전에 0이어야 한다.</li>
+     * </ol>
+     *
+     * <p>각 batch가 독립 transaction이라 중간 crash는 남은 것만 다음 실행이 이어서 지운다(멱등).
+     */
+    public void deleteContentGraph(UUID subjectId) {
+        drain(batchSize -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, batchSize));
+        drain(batchSize -> timelineContentErasureService.deleteRecordBatch(subjectId, batchSize));
+        drain(batchSize -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, batchSize));
+    }
+
+    /** 한 batch가 0을 반환할 때까지 반복한다. 삭제는 단조적이라 같은 조회가 남은 것만 돌려준다. */
+    private void drain(java.util.function.IntUnaryOperator batch) {
+        while (batch.applyAsInt(CONTENT_BATCH_SIZE) > 0) {
+            // 계속 지운다 — 상한은 worker의 run budget이 건다.
+        }
+    }
+
+    /**
      * 콘텐츠 graph를 제외한 owner 행을 지운다. 순서가 강제되는 곳은 하나뿐이다 —
      * 일일 알림 행이 subject 축 설정 행을 FK {@code RESTRICT}로 참조하므로 그 둘은 이 순서여야 한다.
      *
@@ -109,6 +147,37 @@ public class AccountErasureService {
         pushRegistrationService.deleteAll(subjectId);
         refreshTokenService.deleteAllByUserId(userId);
         termAgreementService.deleteAllByUserId(userId);
+    }
+
+    /**
+     * subject 전용 S3 namespace를 통째로 비운다 — {@code {sha256(subject)}/photos/} prefix가 권위 범위다.
+     *
+     * <p>DB payload의 filename만 모아 지우면 <b>presign 후 DB 행이 생기지 않은 orphan</b>과 손상 payload를
+     * 놓친다. prefix 삭제는 그것들까지 포함하고 다른 subject namespace는 건드리지 않는다.
+     *
+     * <p>목록이 빌 때까지 "한 페이지 조회 → 그 페이지 삭제"를 반복하고, <b>마지막 재조회가 비었을 때만</b>
+     * 끝낸다. 유예(7일)가 presign 수명을 압도하므로 첫 empty 확인 뒤 늦게 도착하는 PUT은 없다.
+     *
+     * <p>객체별 Error·응답 누락·SDK 예외는 그대로 전파해 job을 남긴다 — 다음 실행이 재시도한다.
+     * 로그에 object key나 subject를 남기지 않는다.
+     *
+     * @throws IllegalStateException 삭제가 확인되지 않은 key가 남아 있을 때
+     */
+    public void deletePhotoObjects(UUID subjectId) {
+        String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
+        while (true) {
+            List<String> objectKeys = s3PhotoStorageService.listObjectKeys(prefix, S3_PAGE_SIZE);
+            if (objectKeys.isEmpty()) {
+                return;
+            }
+            S3PhotoStorageService.BatchDeleteResult result = s3PhotoStorageService.deleteAll(objectKeys);
+            int unconfirmed = objectKeys.size() - result.deletedObjectKeys().size();
+            if (unconfirmed > 0) {
+                // 지우지 못한 key가 있는데 계속 돌면 같은 페이지를 무한 반복한다. job을 남기고 끝낸다.
+                throw new IllegalStateException(
+                        "S3 photo objects not confirmed deleted: count=" + unconfirmed);
+            }
+        }
     }
 
     /**

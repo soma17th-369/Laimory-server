@@ -14,6 +14,8 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -132,6 +134,31 @@ public class S3PhotoStorageService {
         }
 
         return new BatchDeleteResult(deletedObjectKeys, errorCodeByObjectKey, unreportedObjectKeys);
+    }
+
+    /**
+     * prefix 아래 객체 key를 한 페이지 읽는다(#302 계정 삭제).
+     *
+     * <p><b>DB payload의 filename만 모아 지우면 부족하다</b> — presign을 받아 업로드했는데 DB 행이
+     * 생기지 않은 orphan과 손상 payload를 놓친다. subject마다 이미 독립 namespace가 있으므로 prefix
+     * 자체를 권위 삭제 범위로 쓴다.
+     *
+     * <p>전체 key를 process memory에 모으지 않으려고 페이지 단위로 돌려준다. 호출자는 목록이 빌 때까지
+     * "한 페이지 조회 → 그 페이지 삭제"를 반복한다 — 지우면서 읽으므로 continuation token을 들고 다닐
+     * 필요가 없다.
+     *
+     * @return 이 페이지의 object key(빈 목록 = prefix가 비었다)
+     */
+    public List<String> listObjectKeys(String prefix, int maxKeys) throws SdkException {
+        ListObjectsV2Response response = s3Client.listObjectsV2(ListObjectsV2Request.builder()
+                .bucket(bucket)
+                .prefix(prefix)
+                .maxKeys(maxKeys)
+                .overrideConfiguration(override -> override
+                        .apiCallTimeout(BATCH_DELETE_CALL_TIMEOUT)
+                        .apiCallAttemptTimeout(BATCH_DELETE_ATTEMPT_TIMEOUT))
+                .build());
+        return response.contents().stream().map(object -> object.key()).toList();
     }
 
     private static String normalizedErrorCode(String errorCode) {

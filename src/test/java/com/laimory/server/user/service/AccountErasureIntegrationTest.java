@@ -324,6 +324,80 @@ class AccountErasureIntegrationTest {
                 subjectId.toString());
     }
 
+    /**
+     * 콘텐츠가 있는 회원도 graph 삭제 뒤 mapping까지 내려간다 — subject FK {@code RESTRICT}가 걸리면
+     * finalization이 통째로 rollback되므로, 이 테스트가 통과한다는 것은 콘텐츠가 실제로 0이 됐다는 뜻이다.
+     */
+    @Test
+    void 콘텐츠가_있는_회원도_graph_삭제_뒤_소거된다() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+
+        jdbcTemplate.update("INSERT INTO daily_records (subject_id, record_date, record_at, "
+                        + "record_timezone, status, created_at, updated_at) "
+                        + "VALUES (?, '2026-01-02', '2026-01-02 10:00:00', 'Asia/Seoul', 'SAVED', now(6), now(6))",
+                subjectId.toString());
+        Long recordId = jdbcTemplate.queryForObject(
+                "SELECT daily_record_id FROM daily_records WHERE subject_id = ?", Long.class,
+                subjectId.toString());
+        jdbcTemplate.update("INSERT INTO timeline_events (daily_record_id, start_at, title, "
+                + "created_at, updated_at) VALUES (?, '2026-01-02 10:00:00', '탈퇴 대상', now(6), now(6))",
+                recordId);
+        Long eventId = jdbcTemplate.queryForObject(
+                "SELECT timeline_event_id FROM timeline_events WHERE daily_record_id = ?", Long.class, recordId);
+        jdbcTemplate.update("INSERT INTO timeline_items (item_type, raw_id, payload, created_at, updated_at) "
+                + "VALUES ('LOCATION', ?, '{}', now(6), now(6))", UUID.randomUUID().toString());
+        Long itemId = jdbcTemplate.queryForObject("SELECT max(timeline_item_id) FROM timeline_items", Long.class);
+        jdbcTemplate.update("INSERT INTO timeline_event_items (timeline_event_id, timeline_item_id) "
+                + "VALUES (?, ?)", eventId, itemId);
+
+        UUID resolved = accountErasureService.resolveTarget(userId);
+        accountErasureService.quiesce(resolved);
+        accountErasureJobService.transition(jobId,
+                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+
+        accountErasureService.deleteContentGraph(resolved);
+        accountErasureService.deleteOwnerRows(userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM daily_records WHERE subject_id = ?", Integer.class,
+                subjectId.toString())).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isZero();
+        assertThat(userRepository.findById(userId)).isEmpty();
+        assertThat(mappingCount(subjectId)).isZero();
+
+        createdUserIds.clear();
+        createdSubjectIds.clear();
+    }
+
+    /** 콘텐츠가 남아 있으면 mapping 삭제가 FK에 막혀 finalization 전체가 rollback된다(fail-closed). */
+    @Test
+    void 콘텐츠를_지우지_않고_finalization하면_전부_되돌아온다() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        jdbcTemplate.update("INSERT INTO daily_records (subject_id, record_date, record_at, "
+                        + "record_timezone, status, created_at, updated_at) "
+                        + "VALUES (?, '2026-01-03', '2026-01-03 10:00:00', 'Asia/Seoul', 'SAVED', now(6), now(6))",
+                subjectId.toString());
+        accountErasureJobService.transition(jobId,
+                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+        accountErasureService.deleteOwnerRows(userId, subjectId);
+
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        assertThat(mappingCount(subjectId)).isOne();
+        assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
+        assertThat(userRepository.findById(userId)).isPresent();
+
+        jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", subjectId.toString());
+    }
+
     private long jobIdOf(long userId) {
         return accountErasureJobRepository.findAll().stream()
                 .filter(job -> job.getUserId() == userId)

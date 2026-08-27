@@ -4,6 +4,7 @@ import com.laimory.server.timeline.entity.TimelineItem;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -16,6 +17,15 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
                                                         @Param("rawIds") Collection<String> rawIds);
 
     /** 수동 PHOTO 추가(Event PATCH·Event 생성 POST)의 rawId type/reuse/no-op 분류용 full entity 조회. */
+    /**
+     * 계정 삭제(#302)의 Item 일괄 제거 — junction은 FK CASCADE로 함께 사라진다.
+     * record 삭제와 <b>같은 transaction</b>에서 호출해야 한다: record가 먼저 사라지면 junction도 함께
+     * 사라져 이 Item들을 다시 특정할 경로가 없다({@code timeline_items}에는 owner 컬럼이 없다).
+     */
+    @Modifying
+    @Query("delete from TimelineItem ti where ti.timelineItemId in :itemIds")
+    int deleteAllByIdIn(@Param("itemIds") Collection<Long> itemIds);
+
     @Query("select ti from TimelineItem ti where ti.timelineItemId in :itemIds and ti.rawId in :rawIds")
     List<TimelineItem> findByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);

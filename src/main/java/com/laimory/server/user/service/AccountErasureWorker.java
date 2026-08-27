@@ -1,6 +1,7 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.common.ScheduledWorkerRunBudget;
+import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.entity.AccountErasureJob;
 import java.time.Clock;
@@ -195,9 +196,15 @@ public class AccountErasureWorker {
             return;
         }
         try {
+            erasureService.deleteContentGraph(subjectId);
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
+            erasureService.deletePhotoObjects(subjectId);
             erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
             summary.recordProcessed();
+        } catch (TimelineContentErasureService.CrossSubjectItemException exception) {
+            // 다른 subject가 소유한 Item이 섞여 있다 — 손상 상태이므로 재시도로 풀리지 않는다.
+            // 남의 데이터를 지우는 것보다 멈추는 편이 낫다.
+            recordUnresolvable(job, AccountErasureJobStatus.QUIESCED, summary, exception);
         } catch (RuntimeException exception) {
             // 두 가지가 여기로 온다. ① 콘텐츠가 남아 있어 mapping 삭제가 subject FK RESTRICT에 막힌 경우
             // (PR1의 정상 경로) ② finalization 중 예상 밖 0행(AccountErasureConflictException — 다른

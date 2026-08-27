@@ -357,6 +357,12 @@ finalization 소유). status는 `PENDING → QUIESCED → (행 삭제)`와 격�
 단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
 NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
+삭제 pass의 순서는 FK가 강제한다: PHOTO delete job과 그 원문 Item(job이 남으면 Item FK `RESTRICT`가
+걸린다. 그 Item은 junction 0이라 record graph snapshot에 안 잡히므로 job과 같은 transaction에서 함께
+지운다) → record graph(batch마다 Item과 record를 **한 transaction**에서 — record가 먼저 사라지면 junction도
+CASCADE로 사라져 Item을 다시 특정할 경로가 없다) → draft source → owner 행 → S3 prefix → finalization.
+snapshot한 Item이 다른 subject의 Event에도 걸려 있으면 조용히 지우지 않고 수동 확인으로 보낸다.
+
 worker는 두 pass로 돈다. **정지**(짧은 cron)는 접수 후 `quiesce-delay`가 지나면 User Memory 미반영
 큐만 비우고 `QUIESCED`로 전이한다 — 아무것도 지우지 않으며, 이게 없으면 일일 User Memory 배치가 탈퇴
 subject의 기록을 계속 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다). **삭제**(일일 cron)는
