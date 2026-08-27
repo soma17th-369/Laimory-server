@@ -264,6 +264,10 @@ Spring JSON stdout
   각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
   DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
 - draft retention cleanup도 custom meter를 등록하지 않는다. 각 process가 run 시작 설정과 batch/run 종료의
+- **계정 삭제 worker(#302)**: 삭제 pass는 run 시작에 두 건수를 ERROR로 남겨 같은 경보에 태운다 —
+  처리 창(접수일 D 기준 D+8~D+10)을 벗어나 재시도에서 제외된 `expiredCount`와 수동 확인 대기
+  `manualReviewCount`다. 데이터와 job은 보존되며 로그에 userId·subjectId·jobId를 싣지 않는다.
+  이 둘이 #302의 유일한 적체 감지 수단이다(별도 지표 없음 — 경보 미부착 지표 금지 원칙).
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
 

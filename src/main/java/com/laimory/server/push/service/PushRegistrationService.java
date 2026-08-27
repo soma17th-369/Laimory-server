@@ -37,6 +37,11 @@ public class PushRegistrationService {
     }
 
     /** 사용자의 활성 설치 전체 FID(발송 대상). */
+    /** 계정 삭제(#302)의 owner FID 등록 전량 제거 — 미존재는 0행(멱등). */
+    public void deleteAll(UUID subjectId) {
+        pushRegistrationRepository.deleteAllBySubjectId(subjectId);
+    }
+
     public List<String> findFirebaseInstallationIds(UUID subjectId) {
         return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
     }

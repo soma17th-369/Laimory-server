@@ -39,4 +39,15 @@ public class UserAccountService implements UserAccountAccessService {
     public Optional<UserStatus> findStatus(long userId) {
         return userRepository.findById(userId).map(User::getStatus);
     }
+
+    /**
+     * 계정 삭제 finalization의 회원 행 제거(#302 — 완전 소거 확정, tombstone 없음).
+     * {@code WITHDRAWAL_PENDING} 행만 지우므로 재가입한 신규 {@code ACTIVE} generation은 영향받지 않는다.
+     * 같은 transaction에서 {@code account_erasure_jobs} 행을 먼저 지워야 FK RESTRICT가 풀린다.
+     *
+     * @return {@code false} = 영향 0행(이미 삭제됐거나 상태 불일치)
+     */
+    public boolean deleteWithdrawn(long userId) {
+        return userRepository.deleteByUserIdAndStatus(userId, UserStatus.WITHDRAWAL_PENDING) == 1;
+    }
 }

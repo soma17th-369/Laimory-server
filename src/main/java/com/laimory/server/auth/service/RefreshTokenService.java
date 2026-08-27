@@ -103,6 +103,14 @@ public class RefreshTokenService {
     }
 
     /** 로그아웃: 해당 refresh만 폐기한다. 멱등 — 미존재/이미 폐기여도 조용히 성공(유효성 오라클 차단). */
+    /**
+     * 계정 삭제(#302)의 owner refresh 전량 제거. 탈퇴는 refresh를 폐기하지 않고 보존하므로(#367)
+     * 전량이 삭제 대상이다. 미존재는 0행(멱등)이며 호출자 transaction에 합류한다.
+     */
+    public void deleteAllByUserId(long userId) {
+        refreshTokenRepository.deleteAllByUserId(userId);
+    }
+
     public void revoke(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new IllegalArgumentException("refreshToken must not be blank");

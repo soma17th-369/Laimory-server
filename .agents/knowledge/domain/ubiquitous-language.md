@@ -135,9 +135,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
-| 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
+| 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302는 **완전 소거**로 확정돼 물리 삭제가 끝나면 회원 행 자체를 지운다 — `WITHDRAWN` tombstone 상태는 두지 않는다. |
 | 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·전체 push 마스터 OFF·일일 알림 OFF·삭제 작업 접수를 commit하고 202를 반환한다. **행은 지우지 않는다**(#367 — refresh·FID·설정 2행 모두 보존, 물리 삭제는 #302 소유). 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
-| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
+| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. 상태는 `PENDING → QUIESCED → (행 삭제)`와 `MANUAL_REVIEW`이고 완료 상태는 없다(완료 = 행 삭제). |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 `status=ACTIVE` 조건부 nickname-only UPDATE로 갱신한다(#305 — 탈퇴 행 부활 방지, 영향 0행은 갱신 폐기). Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
