@@ -117,10 +117,12 @@ application 배포·health gate 의존성이 아니다.
   `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
   `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
   worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체 사용자 21:00 발송이라
-  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — 매분 background claim이 통합
-  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매분 `Asia/Seoul`, 허용 지연 30분, process당
-  concurrency 1, batch 250, 최대 4 batch/30초 — 전원이 같은 21:00을 공유하므로 process당 한 tick
-  처리량은 1,000행이고 초과분은 다음 분으로 넘어간다)
+  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background claim이 통합
+  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385), 허용 지연 30분,
+  process당 concurrency 1, batch 250, 최대 40 batch/5분 — 전원이 같은 21:00을 공유하고 초과분을
+  받아갈 다음 tick이 없으므로, 그날 due를 한 run에서 모두 소화하도록 예산을 process당 10,000행으로
+  잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
+  로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,
   `DRAFT_CLEANUP_MAX_BATCHES_PER_RUN`, `DRAFT_CLEANUP_MAX_RUN_DURATION` (checked-in default는 worker on,

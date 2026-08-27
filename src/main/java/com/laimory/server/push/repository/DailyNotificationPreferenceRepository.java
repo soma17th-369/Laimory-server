@@ -33,7 +33,7 @@ public interface DailyNotificationPreferenceRepository
 
     /**
      * due occurrence를 row lock으로 분리한다. 허용 지연을 넘긴 행도 함께 claim한다 — 발송은 하지 않지만
-     * 다음 미래 occurrence로 옮겨야 오래된 행이 매분 다시 선택되지 않는다(판정은 worker가 소유).
+     * 다음 미래 occurrence로 옮겨야 오래된 행이 다음 run에서 다시 선택되지 않는다(판정은 worker가 소유).
      */
     @Query(value = "select * from daily_notification_preferences "
             + "where enabled = true and next_due_at <= :nowKst "
@@ -61,9 +61,10 @@ public interface DailyNotificationPreferenceRepository
     /**
      * ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾼다.
      *
-     * <p>재장전이 없으면 켜는 순간 예정에 없던 알림이 나간다. 꺼져 있는 동안 worker가 그 행을 claim하지
-     * 않아 {@code next_due_at}이 과거에 굳는데, 그 값이 허용 지연(기본 30분) 안쪽이면 다시 켠 직후의
-     * tick이 곧바로 due로 잡아 발송한다(21:00 알림을 21:05에 켜면 21:06에 도착).
+     * <p>재장전이 없으면 예정에 없던 알림이 나간다. 꺼져 있는 동안 worker가 그 행을 claim하지 않아
+     * {@code next_due_at}이 과거에 굳는데, 그 값이 21:00 run 기준 허용 지연(기본 30분) 안쪽이면 그 run이
+     * 곧바로 due로 잡아 발송한다(20:40에 굳은 행을 20:50에 켜면 21:00 발송분에 섞인다). 하루 1회 cron이
+     * 된 뒤로(#385) 창은 좁아졌지만 없어지지 않았다 — 재장전을 걷어내면 안 된다.
      *
      * @param nextDueAt 고정 시각의 다음 미래 occurrence(호출자가 KST로 계산)
      */
