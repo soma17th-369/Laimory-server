@@ -1,0 +1,24 @@
+[Unit]
+Description=Laimory prod MySQL binlog stream (off-host PITR copy)
+Wants=network-online.target
+After=network-online.target node_exporter.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/laimory-monitoring/scripts/stream-binlog.sh
+Restart=always
+RestartSec=10
+# 78 = PITR 사슬 끊김(재개 파일이 원본에서 사라졌거나 source server_uuid가 바뀐 상태).
+# 재시작해도 상황이 그대로라 크래시 루프만 되고, 필요한 조치는 새 전체 덤프 + 스트림 재초기화다.
+# 이 코드만 자동 재시작에서 제외해 경보가 붙은 채로 멈춰 있게 한다.
+RestartPreventExitStatus=78
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+StateDirectory=laimory
+
+[Install]
+WantedBy=multi-user.target

@@ -28,16 +28,25 @@ ALTER USER '${BACKUP_USERNAME}'@'localhost'
 REVOKE ALL PRIVILEGES, GRANT OPTION
   FROM '${BACKUP_USERNAME}'@'localhost';
 GRANT SELECT, LOCK TABLES ON laimory.* TO '${BACKUP_USERNAME}'@'localhost';
+-- mysqldump --source-data=2가 요구하는 최소 전역 권한.
+-- RELOAD는 옵션 자체가 요구하고, REPLICATION CLIENT는 그 옵션이 보내는 SHOW MASTER STATUS가 요구한다.
+-- 둘 다 전역 전용 권한이라 DB 범위로 좁힐 수 없다.
+GRANT RELOAD, REPLICATION CLIENT ON *.* TO '${BACKUP_USERNAME}'@'localhost';
 SQL
 unset BACKUP_PASSWORD
 
 GRANTS="$(mysql --batch --skip-column-names \
   -e "SHOW GRANTS FOR '${BACKUP_USERNAME}'@'localhost'")"
-if [[ "$GRANTS" != *"GRANT USAGE ON *.*"* ]] ||
+# 전역 권한이 붙으면 SHOW GRANTS의 첫 줄이 USAGE에서 실제 권한 목록으로 바뀐다.
+# 권한 나열 순서는 서버가 정하므로 결합된 문자열이 아니라 이름별로 확인한다.
+if [[ "$GRANTS" != *"RELOAD"* ]] ||
+  [[ "$GRANTS" != *"REPLICATION CLIENT"* ]] ||
   [[ "$GRANTS" != *"GRANT SELECT, LOCK TABLES ON \`laimory\`.*"* ]] ||
-  [[ "$GRANTS" == *"INSERT"* || "$GRANTS" == *"UPDATE"* || "$GRANTS" == *"SUPER"* ]]; then
+  [[ "$GRANTS" == *"INSERT"* || "$GRANTS" == *"UPDATE"* || "$GRANTS" == *"SUPER"* ]] ||
+  [[ "$GRANTS" == *"REPLICATION SLAVE"* ]]; then
   echo "unexpected MySQL backup grants" >&2
   exit 1
 fi
 
-echo "MySQL backup account is ready with SELECT, LOCK TABLES on laimory.* only."
+echo "MySQL backup account is ready: SELECT, LOCK TABLES on laimory.* plus global RELOAD," \
+  "REPLICATION CLIENT for --source-data."

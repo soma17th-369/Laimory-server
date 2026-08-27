@@ -58,13 +58,28 @@ trap 'rm -f "$dump_file"' EXIT
 
 # MYSQL_PWD는 env로만 전달되어 argv에 노출되지 않는다.
 export MYSQL_PWD="$MYSQL_PASSWORD"
-mysqldump --user="$MYSQL_USER" --single-transaction --databases laimory \
-  | gzip -9 > "$dump_file" || fail "mysqldump or gzip failed"
+
+# PITR은 "이 덤프가 어느 source의 어느 좌표인가"를 둘 다 알아야 성립한다.
+# 좌표는 --source-data=2가 주석으로 남기고, source 식별자는 여기서 직접 남긴다 —
+# binlog 파일명은 source가 재생성되면 1번부터 재사용되므로 좌표만으로는 세대를 특정할 수 없다.
+source_uuid=$(mysql --user="$MYSQL_USER" --batch --skip-column-names \
+  -e "SELECT @@server_uuid") || fail "failed to read server_uuid"
+[[ $source_uuid =~ ^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$ ]] ||
+  fail "unexpected server_uuid format"
+
+{
+  printf -- '-- laimory_source_uuid=%s\n' "$source_uuid"
+  mysqldump --user="$MYSQL_USER" --single-transaction --source-data=2 --databases laimory
+} | gzip -9 > "$dump_file" || fail "mysqldump or gzip failed"
 unset MYSQL_PWD
 
 gzip -t "$dump_file" || fail "gzip integrity check failed"
 # mysqldump는 정상 종료 시 마지막 줄에 완료 마커를 남긴다 — 잘린 덤프를 업로드 전에 걸러낸다.
 zcat "$dump_file" | tail -1 | grep -q "Dump completed" || fail "dump completion marker missing"
+# 좌표 주석이 없으면 binlog를 아무리 반출해도 재생 시작점이 없다 — 업로드 전에 막는다.
+# MySQL 8.0.46 실측 출력은 여전히 구문법(CHANGE MASTER TO ... MASTER_LOG_FILE/POS)이다.
+zcat "$dump_file" | head -50 | grep -q "^-- CHANGE MASTER TO " ||
+  fail "binlog coordinate comment missing (is --source-data supported by the account?)"
 
 object_key="${S3_PREFIX}/${stamp:0:4}/${stamp:4:2}/laimory-${stamp}.sql.gz"
 aws s3 cp "$dump_file" "$object_key" --only-show-errors || fail "s3 upload failed"
