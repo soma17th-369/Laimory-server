@@ -149,9 +149,15 @@ public class AccountErasureService {
      * 콘텐츠 graph를 제외한 owner 행을 지운다. 순서가 강제되는 곳은 하나뿐이다 —
      * 일일 알림 행이 subject 축 설정 행을 FK {@code RESTRICT}로 참조하므로 그 둘은 이 순서여야 한다.
      *
-     * <p>미반영 큐를 <b>prefix로</b> 한 번 더 비운다. 정지 단계의 id 기반 제거는 DB에 살아 있는 record의
-     * member만 지우므로, 사용자가 직접 지운 하루의 member는 그때 잡히지 않는다 — 여기서 걸러야 완료
-     * 시점에 이 subject의 큐 잔여가 0이 된다.
+     * <p><b>미반영 큐는 여기서 건드리지 않는다.</b> 비우는 지점은 정지 단계({@link #quiesce})뿐이고,
+     * 그때는 record가 살아 있어 id로 member를 특정할 수 있다. 하루 기록 삭제도 자기 member를 함께
+     * 지우므로(commit 이후, {@code TimelineDeletionService}) id로 못 찾는 잔여는 평시에 생기지 않는다.
+     *
+     * <p>다만 그 ZREM이 실패하면(예: 그 순간 Redis 장애) record는 이미 사라진 뒤라 그 member는 id로
+     * 복원할 수 없다. 그런 잔여는 {@code {익명 subject}:{recordId}} 한 줄이고 mapping 삭제 뒤에는
+     * 사람과 연결되지 않으며, 일일 배치가 재료 없음 판정으로 걷어낸다. 이 경로를 위해 전역 큐를
+     * prefix로 훑지는 않는다 — {@code ZSCAN}의 {@code MATCH}는 서버측 필터라 클라이언트가 검사량을
+     * 제한할 수 없어, 일치 0인 정상 상태에서 전역 sorted set을 끝까지 읽게 된다.
      */
     @Transactional
     public void deleteOwnerRows(long userId, UUID subjectId) {

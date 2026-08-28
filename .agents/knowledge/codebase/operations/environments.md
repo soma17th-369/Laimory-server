@@ -124,10 +124,11 @@ application 배포·health gate 의존성이 아니다.
   `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
 - `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_QUIESCE_CRON`, `ACCOUNT_ERASURE_DELETE_CRON`,
   `ACCOUNT_ERASURE_ZONE`, `ACCOUNT_ERASURE_QUIESCE_DELAY`, `ACCOUNT_ERASURE_STALE_AFTER`,
-  `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_BATCH_SIZE`,
-  `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,
+  `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,
   `ACCOUNT_ERASURE_MAX_RUN_DURATION` (checked-in default는 worker on — 정지 15분마다, 삭제 매일
-  `02:30` `Asia/Seoul`, 유예 7일 + 처리 창 3일. 이 스위치는 활성화 게이트가 아니라 장애 시 즉시
+  `02:30` `Asia/Seoul`, 유예 7일 + 처리 창 3일. claim 크기는 설정으로 열지 않는다(항상 1건 —
+  여러 건을 잡아 놓고 실행 예산이 끝나면 시작도 못 한 행이 3일 창 중 하루를 날린다). run당 처리량은
+  `MAX_BATCHES_PER_RUN`이 정한다. 이 스위치는 활성화 게이트가 아니라 장애 시 즉시
   정지용이고 "언제부터 지우는가"는 `GRACE_PERIOD_DAYS`가 정한다. 단 `docker` 프로필은 off —
   15분마다 도는 정지 pass가 통합 테스트 job을 가로채지 않게 한다. `QUIESCE_DELAY`는 살아 있는
   draft/User Memory task TTL과 presign TTL을 넘겨야 하고 `STALE_AFTER`는 그 이하여야 하며, 둘 다

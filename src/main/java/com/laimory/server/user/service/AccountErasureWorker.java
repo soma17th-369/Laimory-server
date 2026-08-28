@@ -40,6 +40,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class AccountErasureWorker {
 
+    /**
+     * 한 claim이 잠그는 job 수 — <b>설정으로 열지 않는다</b>. claim은 선택 행의 {@code updated_at}을
+     * 오늘로 찍어 그날 재선택을 막으므로, 여러 건을 잡아 놓고 실행 예산이 끝나면 시작도 못 한 행이
+     * 3일 처리 창 중 하루를 통째로 날린다. 한 건씩 잡으면 그 상태 자체가 생기지 않는다.
+     * run당 처리량은 {@code max-batches-per-run}(= run당 최대 job 수)이 정한다.
+     */
+    private static final int CLAIM_SIZE = 1;
+
     private final AccountErasureJobService jobService;
     private final AccountErasureService erasureService;
     private final AccountErasureWorkerProperties properties;
@@ -127,15 +135,11 @@ public class AccountErasureWorker {
                 if (jobs.isEmpty()) {
                     return;
                 }
-                for (AccountErasureJob job : jobs) {
-                    if (!budget.hasTimeRemaining()) {
-                        // claim은 했지만 시작도 못 한 행이다. claim이 updated_at을 오늘로 찍어 두므로
-                        // 그날 다시 잡히지 않는다 — 그래서 claim 크기를 작게 두는 것이 기본값이다.
-                        summary.recordDeferred();
-                        continue;
-                    }
-                    handler.handle(job, summary, budget);
-                }
+                // claim한 job은 반드시 시작한다. claim이 updated_at을 오늘로 찍으므로 여기서 건너뛰면
+                // 그 job은 아무 일도 못 한 채 그날을 날린다(처리 창이 3일뿐이다). deadline은 claim
+                // 직전의 tryAcquireBatch()가 보고, 시작한 job 안에서는 drain·S3 루프가 본다 —
+                // 예산이 이미 0이면 그 루프들이 즉시 물러나므로 초과 실행은 DB 쿼리 두어 번 수준이다.
+                jobs.forEach(job -> handler.handle(job, summary, budget));
             }
         } finally {
             slotFinished(remainingSlots, summary, runActive);
@@ -153,7 +157,7 @@ public class AccountErasureWorker {
         LocalDateTime now = LocalDateTime.now(clock);
         return jobService.claimForQuiesce(
                 now.minus(properties.getQuiesceDelay()), now.minus(properties.getStaleAfter()),
-                now, properties.getBatchSize());
+                now, CLAIM_SIZE);
     }
 
     private List<AccountErasureJob> claimForDelete() {
@@ -163,7 +167,7 @@ public class AccountErasureWorker {
                 todayStart.minusDays(properties.getGracePeriodDays()),
                 todayStart,
                 LocalDateTime.now(clock),
-                properties.getBatchSize());
+                CLAIM_SIZE);
     }
 
     private LocalDateTime windowStart(LocalDateTime todayStart) {

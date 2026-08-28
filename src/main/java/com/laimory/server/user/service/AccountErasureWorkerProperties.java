@@ -30,12 +30,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class AccountErasureWorkerProperties {
 
-    /**
-     * 한 claim이 잠그는 job 수의 상한. 기본값이 1인 이유: claim은 선택한 행의 {@code updated_at}을
-     * 오늘로 찍어 그날 재선택을 막는데, 여러 건을 한 번에 잡아 놓고 실행 예산이 끝나면 시작도 못 한
-     * 행이 하루를 통째로 날린다(처리 창이 3일뿐이다). 탈퇴 건수는 원래 적어서 한 건씩 잡아도 충분하다.
-     */
-    private static final int MAX_BATCH_SIZE = 500;
     private static final int MAX_CONCURRENCY = 2;
     private static final int MAX_BATCHES_PER_RUN = 1_000;
     private static final Duration MAX_RUN_DURATION = Duration.ofMinutes(10);
@@ -50,7 +44,6 @@ public class AccountErasureWorkerProperties {
     private final Duration staleAfter;
     private final int gracePeriodDays;
     private final int windowDays;
-    private final int batchSize;
     private final int concurrency;
     private final int maxBatchesPerRun;
     private final Duration maxRunDuration;
@@ -61,7 +54,6 @@ public class AccountErasureWorkerProperties {
             @Value("${app.account-erasure.stale-after:15m}") Duration staleAfter,
             @Value("${app.account-erasure.grace-period-days:7}") int gracePeriodDays,
             @Value("${app.account-erasure.window-days:3}") int windowDays,
-            @Value("${app.account-erasure.batch-size:1}") int batchSize,
             @Value("${app.account-erasure.concurrency:1}") int concurrency,
             @Value("${app.account-erasure.max-batches-per-run:100}") int maxBatchesPerRun,
             @Value("${app.account-erasure.max-run-duration:120s}") Duration maxRunDuration,
@@ -87,10 +79,6 @@ public class AccountErasureWorkerProperties {
             throw new IllegalStateException(
                     "app.account-erasure.window-days must be between 1 and " + MAX_WINDOW_DAYS);
         }
-        if (batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
-            throw new IllegalStateException(
-                    "app.account-erasure.batch-size must be between 1 and " + MAX_BATCH_SIZE);
-        }
         if (concurrency < 1 || concurrency > MAX_CONCURRENCY) {
             throw new IllegalStateException(
                     "app.account-erasure.concurrency must be between 1 and " + MAX_CONCURRENCY);
@@ -109,7 +97,6 @@ public class AccountErasureWorkerProperties {
         this.staleAfter = staleAfter;
         this.gracePeriodDays = gracePeriodDays;
         this.windowDays = windowDays;
-        this.batchSize = batchSize;
         this.concurrency = concurrency;
         this.maxBatchesPerRun = maxBatchesPerRun;
         this.maxRunDuration = maxRunDuration;
@@ -138,10 +125,6 @@ public class AccountErasureWorkerProperties {
 
     public int getWindowDays() {
         return windowDays;
-    }
-
-    public int getBatchSize() {
-        return batchSize;
     }
 
     public int getConcurrency() {

@@ -24,14 +24,8 @@ class AccountErasureWorkerPropertyDefaultsTest {
     private AccountErasureWorkerProperties properties;
 
     @Test
-    void claim은_한_건씩_잡는다() {
-        // 여러 건을 잡아 놓고 예산이 끝나면 시작도 못 한 행이 3일 창 중 하루를 날린다.
-        assertThat(properties.getBatchSize()).isEqualTo(1);
-    }
-
-    @Test
     void run당_처리량은_batch_수가_정한다() {
-        // claim이 한 건씩이므로 이 값이 곧 run당 최대 job 수다.
+        // claim 크기는 설정이 아니라 상수 1이므로 이 값이 곧 run당 최대 job 수다.
         assertThat(properties.getMaxBatchesPerRun()).isEqualTo(100);
     }
 
