@@ -1,7 +1,8 @@
 -- 정리 후 잔여 0 검증. 모든 residue_rows가 0이어야 완료다.
 --
 -- ⚠️ 반드시 subject-set.sql과 같은 세션에서 실행한다(임시 테이블은 세션 범위):
---   cat .artifacts/subject-set.sql sql/07-verify-residue.sql | mysql --defaults-extra-file=... <db>
+--   cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+--       load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=... <db>
 --
 -- 06이 users와 subject mapping을 이미 지웠으므로 "남아 있는 사용자"로는 확인할 수 없다.
 -- 대신 정리와 무관하게 유지되는 두 좌표로 본다.

@@ -350,16 +350,18 @@ sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/gd1
 
 # 05~07은 subject 집합(임시 테이블)이 필요하다 — 3단계가 만든 subject-set.sql을 같은 세션에서 먼저
 # 흘려 넣는다. 임시 테이블은 세션 범위라 파일을 따로 실행하면 "Table doesn't exist"가 난다.
-cd load-tests/timeline-draft
 
 # 삭제 예정 행 수 → manifest에 기록
-cat .artifacts/subject-set.sql sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=<config> <db>
+cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=<config> <db>
 
 # 실제 삭제
-cat .artifacts/subject-set.sql sql/06-cleanup.sql | mysql --defaults-extra-file=<config> <db>
+cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/06-cleanup.sql | mysql --defaults-extra-file=<config> <db>
 
 # 잔여 0 확인(모든 residue_rows가 0)
-cat .artifacts/subject-set.sql sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
+cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
 
 # Redis 잔여 확인
 REDIS_HOST=<host> REDIS_PREFIX=dev_ \

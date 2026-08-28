@@ -1,7 +1,8 @@
 -- 테스트 데이터 정리. 05-cleanup-dry-run.sql 결과를 확인하고 manifest에 남긴 뒤에만 실행한다.
 --
 -- ⚠️ 반드시 subject-set.sql과 같은 세션에서 실행한다(임시 테이블은 세션 범위):
---   cat .artifacts/subject-set.sql sql/06-cleanup.sql | mysql --defaults-extra-file=... <db>
+--   cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+--       load-tests/timeline-draft/sql/06-cleanup.sql | mysql --defaults-extra-file=... <db>
 --
 -- 삭제 순서가 중요하다:
 --   1) timeline_items — 소유자 컬럼이 없어 junction으로만 사용자에 닿는다. daily_records를 먼저 지우면
@@ -51,6 +52,9 @@ HAVING COUNT(*) = SUM(r.daily_record_id IS NOT NULL);
 START TRANSACTION;
 
 -- 1) 합성 사용자에게만 연결된 timeline_items. AI 격리가 지켜졌다면 0행이다.
+--    PHOTO 삭제 대기 job이 이 item을 참조하고 있으면 FK(ON DELETE 미지정 = RESTRICT)가 삭제를 거절해
+--    transaction 전체가 실패한다. 부하 테스트 경로는 job을 만들지 않으므로 정상적으로는 생기지 않는다
+--    — 만나면 05의 orphan-to-be 값부터 다시 본다(0이어야 한다).
 DELETE i FROM timeline_items i
 JOIN k6_251_items k ON k.timeline_item_id = i.timeline_item_id;
 

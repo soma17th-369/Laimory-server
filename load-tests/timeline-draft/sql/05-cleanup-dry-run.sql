@@ -7,7 +7,8 @@
 -- 콘텐츠 테이블은 raw user_id를 저장하지 않으므로 (a)로는 닿을 수 없다 — 그래서 (b)를 밖에서 넣는다.
 --
 -- ⚠️ 반드시 subject-set.sql과 같은 세션에서 실행한다(임시 테이블은 세션 범위):
---   cat .artifacts/subject-set.sql sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=... <db>
+--   cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+--       load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=... <db>
 --
 -- ⚠️ 한 문장이 임시 테이블을 두 번 참조하면 MySQL이 ERROR 1137로 거절한다. 그래서 UNION ALL 한 덩어리가
 --    아니라 문장을 나눠 두었다 — 결과가 여러 그리드로 나온다.
