@@ -125,6 +125,6 @@ grep -q 'result-file="\$SPOOL_DIR/"' "$STREAM_SCRIPT" ||
 grep -q 'systemctl is-active' "$UPLOAD_SCRIPT" ||
   { echo "stream_up must be written by the upload timer, not by the stream itself" >&2; exit 1; }
 grep -q 'force-if-open' "$MONITORING_DIR/README.md" ||
-  { echo "the recovery procedure must pass --force-if-open for the tail object" >&2; exit 1; }
+  { echo "the recovery procedure must tolerate a truncated tail with --force-if-open" >&2; exit 1; }
 
 echo "binlog script tests passed"
