@@ -870,7 +870,10 @@ mysqlbinlog가 보고하는 기본 server ID가 `1`인데 prod MySQL의 `server_
 
 ```bash
 BACKUP_BUCKET='<backup bucket>'
-sudo apt-get install -y mysql-client-core-8.0
+# mysqlbinlog은 client 패키지가 아니라 mysql-server-core-8.0이 소유한다(Ubuntu 24.04 실측).
+# client만 설치하면 mysql은 있고 스트림의 실행 주체인 mysqlbinlog이 없다.
+# server-core는 바이너리만 제공하고 systemd unit·datadir·데몬을 만들지 않는다.
+sudo apt-get install -y mysql-client-core-8.0 mysql-server-core-8.0
 sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/stream-binlog.sh" \
   /opt/laimory-monitoring/scripts/stream-binlog.sh --region ap-northeast-2 --only-show-errors
 sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/upload-binlog.sh" \
@@ -896,6 +899,10 @@ sudo systemctl enable --now laimory-binlog-upload.timer
 **갱신되는지**도 본다(자기보고 방식이었다면 1로 굳는다).
 
 ### PITR 복구 절차
+
+⚠️ 복구는 **운영자 권한에서** 진행한다. prod MySQL host의 role은 dump prefix에 `s3:PutObject`만
+갖고 `GetObject`가 없어 **자기 백업을 읽지 못한다**(최소 권한 의도대로다). DB host에서 복구를
+시도하면 `403 Forbidden`을 만난다.
 
 1. 최신 덤프를 받아 좌표와 source uuid를 함께 읽는다. uuid가 곧 내려받을 binlog prefix다 —
    세대가 여럿일 때 이것 없이 고르면 잘못된 세대를 재생한다.
