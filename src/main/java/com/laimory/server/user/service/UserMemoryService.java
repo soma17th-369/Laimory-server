@@ -35,6 +35,11 @@ public class UserMemoryService {
      * <p>사용자 존재 여부는 확인하지 않는다. {@code subject_id}는
      * {@code user_subject_links.subject_id}를 참조하며 호출자가 인증 경계에서 해석한 subject만 넘긴다.
      */
+    /** 계정 삭제(#302)의 owner 문서 제거 — 미존재는 0행(멱등). */
+    public void delete(UUID subjectId) {
+        userMemoryRepository.deleteBySubjectId(subjectId.toString());
+    }
+
     public void replace(UUID subjectId, JsonNode memory) {
         if (memory == null || memory.isNull()) {
             userMemoryRepository.deleteBySubjectId(subjectId.toString());

@@ -49,4 +49,17 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     default int revokeByTokenHash(String tokenHash) {
         return revokeByTokenHash(tokenHash, RefreshTokenStatus.REVOKED);
     }
+
+    /**
+     * 계정 삭제(#302)의 owner 전량 제거 — 상태와 무관하게 지운다. 탈퇴는 refresh를 폐기하지 않고
+     * 보존하므로(#367) 전량이 여기 삭제 대상이다.
+     *
+     * <p>이 테이블은 {@code users} FK가 없어(기존 방침) mapping 삭제의 FK fence가 적용되지 않는다 —
+     * 그래서 finalization transaction이 같은 삭제를 한 번 더 수행해 그 사이 완료된 지연 발급을
+     * 흡수한다(멱등, 평시 0행).
+     */
+    @Modifying
+    @Transactional
+    @Query("delete from RefreshToken t where t.userId = :userId")
+    int deleteAllByUserId(@Param("userId") Long userId);
 }

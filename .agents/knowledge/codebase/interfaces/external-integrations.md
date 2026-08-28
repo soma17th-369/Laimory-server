@@ -96,6 +96,20 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
   삭제하고 Error·응답 누락·SDK 예외면 둘 다 남겨 재시도한다.
 
 관련 이름은 `AWS_REGION`, `PHOTO_S3_BUCKET`, `PHOTO_CDN_DOMAIN`과 upload limit property들이다.
+
+**사진 bucket 운영 계약(2026-08-28 조회 확인)**: `laimory-photos-…`는 **versioning 미설정·Object
+Lock 없음·lifecycle 없음**이다. versioning을 켤 계획이 없다 — 업로드마다 UUIDv7 파일명이라 덮어쓰기가
+없어 복구 이점이 없고, delete marker가 계정 삭제(#302)의 삭제 요구와 충돌한다.
+
+계정 삭제는 그럼에도 `ListObjectsV2`가 아니라 **`ListObjectVersions`로 version과 delete marker까지 읽고
+versionId를 지정해 지운다**. `ListObjectsV2`는 versioning이 켜진 상태에서 delete marker만 남은 prefix를
+**빈 목록**으로 보고해 "다 지웠다"는 오판을 만들기 때문이다 — bucket 설정을 문서 계약에만 맡기지 않고
+코드가 확인하게 한 것이다. unversioned bucket에서는 versionId가 `"null"`이라 동작·호출 횟수가 같다.
+
+런타임 role `laimory-ec2-role`의 인라인 정책 `laimory-ec2-s3`가 갖는 사진 bucket 권한은
+`s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·`s3:DeleteObjectVersion`(객체)다.
+**`s3:ListBucket`은 없다**(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2`
+경로를 되살리려면 그 권한을 먼저 추가해야 한다.
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)

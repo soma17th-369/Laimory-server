@@ -81,6 +81,21 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     int deleteAllByJobIdIn(@Param("jobIds") Collection<Long> jobIds);
 
     /**
+     * subject namespace 안의 delete job을 유계로 읽는다(#302 계정 삭제).
+     *
+     * <p><b>{@code object_key}가 이 job들의 유일한 owner 단서다.</b> job이 존재한다는 것은 마지막 Event
+     * 참조가 사라졌다는 뜻이라 junction graph로는 subject를 해석할 수 없는데, key가
+     * {@code {sha256(subject)}/photos/…}라 prefix로 귀속할 수 있다. 컬럼이 {@code ascii_bin}이고
+     * prefix가 64자 hex라 UNIQUE index의 leftmost prefix range scan을 탄다.
+     */
+    @Query(value = "select * from timeline_photo_delete_jobs "
+            + "where object_key like concat(:namespacePrefix, '%') "
+            + "order by timeline_photo_delete_job_id limit :limit",
+            nativeQuery = true)
+    List<TimelinePhotoDeleteJob> findByObjectKeyNamespace(
+            @Param("namespacePrefix") String namespacePrefix, @Param("limit") int limit);
+
+    /**
      * 주어진 Item 중 job을 가진 Item ID를 <b>current read</b>로 조회한다(orphan 스위퍼 전용).
      *
      * <p>일반 SELECT는 {@code REPEATABLE READ}에서 transaction의 첫 consistent read가 고정한 snapshot을

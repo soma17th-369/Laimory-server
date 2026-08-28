@@ -351,10 +351,26 @@ nickname 갱신은 모두 `status` 조건부 UPDATE(영향 행 수 판정)이고
 content subject를 평문 join할 수 없다는 `user_subject_links` 보안 속성 유지(#302는 착수 시
 `SubjectMappingService#getRequired`로 해석). `user_id` UNIQUE가 회원당 활성 job 하나를 강제하고 user
 FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE 금지, 삭제 순서는 #302
-finalization 소유). status는 #305에서 `PENDING` 단일 값이며 worker claim/stage/retry column은 #302의
-additive migration으로 확장한다. 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
+finalization 소유). status는 `PENDING → QUIESCED → (행 삭제)`와 격리용 `MANUAL_REVIEW` 셋이며 완료
+상태는 두지 않는다 — 완료가 곧 행 삭제이고 그것이 user FK RESTRICT를 푸는 유일한 신호다. **#302는
+컬럼을 하나도 추가하지 않았다**: 처리 자격은 `created_at`, claim 표식·재시도 간격은 `updated_at`,
+단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
 NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
+삭제 pass의 순서는 FK가 강제한다: PHOTO delete job과 그 원문 Item(job이 남으면 Item FK `RESTRICT`가
+걸린다. 그 Item은 junction 0이라 record graph snapshot에 안 잡히므로 job과 같은 transaction에서 함께
+지운다) → record graph(batch마다 Item과 record를 **한 transaction**에서 — record가 먼저 사라지면 junction도
+CASCADE로 사라져 Item을 다시 특정할 경로가 없다) → draft source → owner 행 → S3 prefix → finalization.
+snapshot한 Item이 다른 subject의 Event에도 걸려 있으면 조용히 지우지 않고 수동 확인으로 보낸다.
+
+worker는 두 pass로 돈다. **정지**(짧은 cron)는 접수 후 `quiesce-delay`가 지나면 User Memory 미반영
+큐만 비우고 `QUIESCED`로 전이한다 — 아무것도 지우지 않으며, 이게 없으면 일일 User Memory 배치가 탈퇴
+subject의 기록을 계속 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다). **삭제**(일일 cron)는
+접수일 D 기준 D+8~D+10 세 번만 시도하고, 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로
+경보한다(PHOTO 삭제 job과 같은 규칙). 접수 native insert가 `created_at`/`updated_at`에 같은 값을 넣으므로
+정지 claim의 실효 gate가 `max(quiesce-delay, stale-after)`가 된다 — properties가 `stale-after <=
+quiesce-delay`를 기동 검증으로 강제해 정지가 조용히 늦어지는 것을 막는다.
+
 **운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
 수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
 runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은

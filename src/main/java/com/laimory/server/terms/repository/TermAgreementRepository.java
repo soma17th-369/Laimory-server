@@ -35,6 +35,19 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
     long countByUserIdAndTermDocumentIdIn(Long userId, Collection<Long> termDocumentIds);
 
     /**
+     * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정이라 탈퇴 회원의 동의 증적은
+     * 보존하지 않는다(계획 §3.2).
+     *
+     * <p>이 테이블은 {@code users} FK가 없어(#303이 보존 정책 확정 전까지 유보) mapping 삭제의 FK
+     * fence가 적용되지 않는다 — finalization transaction이 같은 삭제를 한 번 더 수행해 그 사이 완료된
+     * 지연 동의를 흡수한다(멱등, 평시 0행). 문서 행({@code term_documents})은 건드리지 않는다.
+     */
+    @Modifying
+    @Transactional
+    @Query("delete from TermAgreement a where a.userId = :userId")
+    int deleteAllByUserId(@Param("userId") Long userId);
+
+    /**
      * 회원에게 남아 있는 전체 동의 이력 + 불변 문서 행({@code acceptedAt DESC}, PK DESC 안정
      * tie-breaker). 연관 매핑 없이 FK 값으로 join한다(저장소 방침 — JPA 연관 매핑 금지).
      */

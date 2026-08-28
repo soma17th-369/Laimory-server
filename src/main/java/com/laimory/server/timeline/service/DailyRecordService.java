@@ -35,6 +35,18 @@ public class DailyRecordService {
     }
 
     /** 일일 기록 ID와 subject가 모두 일치하는 소유 record만 반환한다. */
+    /**
+     * subject의 record id를 PK 커서로 유계 조회한다(#302 정지 단계). User Memory 미반영 큐의 member가
+     * {@code {subject}:{recordId}}라 큐를 비우려면 id가 필요하고, 기록이 많은 회원도 한 번에 다 읽지
+     * 않으려고 페이지로 넘긴다. 빈 결과 = 더 없음.
+     *
+     * @param afterId 직전 페이지의 마지막 id(첫 페이지는 0)
+     */
+    public List<Long> findIdsBySubjectIdAfterId(UUID subjectId, long afterId, int limit) {
+        return dailyRecordRepository.findIdsBySubjectIdAfterId(
+                subjectId, afterId, org.springframework.data.domain.PageRequest.of(0, limit));
+    }
+
     public Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId) {
         return dailyRecordRepository.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId);
     }

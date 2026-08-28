@@ -38,6 +38,8 @@ class TimelineDeletionServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
+    @Mock
+    private com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
 
     private static final String VERSION = "v1";
     private static final UUID SUBJECT_ID = id(7L);
@@ -53,7 +55,42 @@ class TimelineDeletionServiceTest {
         service = new TimelineDeletionService(
                 timelineEventService,
                 dailyRecordService,
+                userMemoryUpdatePendingStore,
                 timelineDeletionTransactionService);
+    }
+
+    /**
+     * Redis는 DB transaction에 참여하지 않는다. 그래서 큐 정리는 <b>commit 이후</b>여야 한다 —
+     * transaction 안에서 지우면 commit이 실패했을 때 record는 되살아나는데 member만 사라져 그 하루가
+     * User Memory에 영영 반영되지 않는다. 이 두 테스트가 그 순서를 고정한다.
+     */
+    @Test
+    void deleteDailyRecord_removesPendingOnlyAfterTransactionReturns() {
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
+                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(0, 0, 0));
+
+        service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
+
+        org.mockito.InOrder order =
+                org.mockito.Mockito.inOrder(timelineDeletionTransactionService, userMemoryUpdatePendingStore);
+        order.verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
+        order.verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, java.util.List.of(RECORD_ID));
+    }
+
+    @Test
+    void deleteDailyRecord_transactionFails_keepsPendingMember() {
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+        org.mockito.Mockito.doThrow(new IllegalStateException("commit failed"))
+                .when(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
+
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
+                .isInstanceOf(IllegalStateException.class);
+
+        // 기록이 되살아났으므로 갱신 재시도 근거인 큐 member도 남아 있어야 한다.
+        org.mockito.Mockito.verify(userMemoryUpdatePendingStore, org.mockito.Mockito.never())
+                .removeAll(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

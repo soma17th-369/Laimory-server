@@ -42,6 +42,14 @@ public class SubjectPreferenceService {
     }
 
     /** 설정 화면이 보여줄 현재 값 — <b>순수 읽기</b>다. 행이 없으면 쓰기와 같은 이유로 던진다. */
+    /**
+     * 계정 삭제(#302)의 subject 축 설정 행 제거 — 일일 알림 행을 <b>먼저</b> 지운 뒤 호출해야 한다
+     * (그 행이 이 행을 FK {@code RESTRICT}로 참조한다). 미존재는 0행(멱등).
+     */
+    public void delete(UUID subjectId) {
+        subjectPreferenceRepository.deleteBySubjectId(subjectId);
+    }
+
     public boolean findPushEnabled(UUID subjectId) {
         return subjectPreferenceRepository.findById(subjectId)
                 .map(SubjectPreference::isPushEnabled)

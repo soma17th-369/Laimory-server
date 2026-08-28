@@ -4,7 +4,8 @@ package com.laimory.server.user;
  * 회원 상태(#305). {@code ACTIVE → WITHDRAWAL_PENDING} 단방향 전이만 있다 —
  * {@code WITHDRAWAL_PENDING} 행을 {@code ACTIVE}로 되돌리는 경로는 만들지 않는다(재가입은 새 행).
  *
- * <p>#302 물리 삭제 완료 뒤의 {@code WITHDRAWN} 보존 또는 행 삭제는 그 계획에서 확정한다.
+ * <p>#302는 <b>완전 소거</b>로 확정됐다 — 물리 삭제가 끝나면 회원 행 자체를 지우므로
+ * {@code WITHDRAWN} tombstone 상태를 두지 않는다. 보존 의무가 확인되면 그때 별도 이슈로 도입한다.
  */
 public enum UserStatus {
 

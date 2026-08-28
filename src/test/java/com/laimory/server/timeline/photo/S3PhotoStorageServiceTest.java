@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
+import java.util.Map;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -24,7 +25,11 @@ import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.DeleteMarkerEntry;
 import software.amazon.awssdk.services.s3.model.DeletedObject;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
+import software.amazon.awssdk.services.s3.model.ObjectVersion;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.S3Error;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -126,6 +131,128 @@ class S3PhotoStorageServiceTest {
 
     private static List<String> requestedKeys(DeleteObjectsRequest request) {
         return request.delete().objects().stream().map(ObjectIdentifier::key).toList();
+    }
+
+    // ── 계정 삭제(#302)의 version 인식 경로 ──────────────────────────────
+    //
+    // 이 경로가 ListObjectsV2가 아닌 이유는 versioning bucket에서 delete marker만 남은 prefix가
+    // "빈 목록"으로 보여 "다 지웠다"는 오판을 만들기 때문이다. 그 방어가 실제로 서 있는지 —
+    // delete marker를 목록에 합치는지, 삭제 요청에 versionId를 싣는지 — 를 여기서 고정한다.
+
+    @Test
+    void listObjectVersions_mergesVersionsAndDeleteMarkers() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        when(s3Client.listObjectVersions(any(ListObjectVersionsRequest.class))).thenReturn(
+                ListObjectVersionsResponse.builder()
+                        .versions(ObjectVersion.builder().key("ns/photos/a.jpg").versionId("v1").build(),
+                                ObjectVersion.builder().key("ns/photos/a.jpg").versionId("v2").build())
+                        .deleteMarkers(DeleteMarkerEntry.builder()
+                                .key("ns/photos/b.jpg").versionId("m1").build())
+                        .build());
+
+        List<S3PhotoStorageService.ObjectVersion> result = service.listObjectVersions("ns/photos/", 1000);
+
+        // 같은 key의 여러 version과 delete marker가 모두 나와야 한다 — 하나라도 빠지면 삭제 완료를
+        // 오판한다.
+        assertThat(result).containsExactlyInAnyOrder(
+                new S3PhotoStorageService.ObjectVersion("ns/photos/a.jpg", "v1"),
+                new S3PhotoStorageService.ObjectVersion("ns/photos/a.jpg", "v2"),
+                new S3PhotoStorageService.ObjectVersion("ns/photos/b.jpg", "m1"));
+    }
+
+    @Test
+    void listObjectVersions_bindsBucketPrefixAndMaxKeys() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        when(s3Client.listObjectVersions(any(ListObjectVersionsRequest.class)))
+                .thenReturn(ListObjectVersionsResponse.builder().build());
+
+        assertThat(service.listObjectVersions("ns/photos/", 250)).isEmpty();
+
+        ArgumentCaptor<ListObjectVersionsRequest> captor =
+                ArgumentCaptor.forClass(ListObjectVersionsRequest.class);
+        verify(s3Client).listObjectVersions(captor.capture());
+        assertThat(captor.getValue().bucket()).isEqualTo(BUCKET);
+        assertThat(captor.getValue().prefix()).isEqualTo("ns/photos/");
+        assertThat(captor.getValue().maxKeys()).isEqualTo(250);
+    }
+
+    @Test
+    void deleteVersions_bindsVersionIdOnEveryObjectIdentifier() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class))).thenReturn(
+                DeleteObjectsResponse.builder()
+                        .deleted(DeletedObject.builder().key("k1").versionId("v1").build(),
+                                DeletedObject.builder().key("k1").versionId("v2").build())
+                        .build());
+
+        BatchDeleteResult result = service.deleteVersions(List.of(
+                new S3PhotoStorageService.ObjectVersion("k1", "v1"),
+                new S3PhotoStorageService.ObjectVersion("k1", "v2")));
+
+        ArgumentCaptor<DeleteObjectsRequest> captor = ArgumentCaptor.forClass(DeleteObjectsRequest.class);
+        verify(s3Client).deleteObjects(captor.capture());
+        // versionId가 빠지면 versioning bucket에서 delete marker만 만들고 원본이 남는다 — 이 단언이
+        // 그 회귀를 잡는다.
+        assertThat(captor.getValue().delete().objects())
+                .extracting(ObjectIdentifier::key, ObjectIdentifier::versionId)
+                .containsExactly(org.assertj.core.api.Assertions.tuple("k1", "v1"),
+                        org.assertj.core.api.Assertions.tuple("k1", "v2"));
+        assertThat(result.deletedObjectKeys()).hasSize(2);
+    }
+
+    @Test
+    void deleteVersions_partialErrorIsNotCountedAsDeleted() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class))).thenReturn(
+                DeleteObjectsResponse.builder()
+                        .deleted(DeletedObject.builder().key("k1").versionId("v1").build())
+                        .errors(S3Error.builder().key("k2").code("AccessDenied").build())
+                        .build());
+
+        BatchDeleteResult result = service.deleteVersions(List.of(
+                new S3PhotoStorageService.ObjectVersion("k1", "v1"),
+                new S3PhotoStorageService.ObjectVersion("k2", "v1")));
+
+        // 호출자는 요청 수와 확인된 삭제 수를 비교해 완료를 판정한다 — 실패분이 섞여 들어가면 안 된다.
+        assertThat(result.deletedObjectKeys()).hasSize(1);
+        assertThat(result.errorCodeByObjectKey()).containsEntry("k2", "AccessDenied");
+    }
+
+    @Test
+    void deleteVersions_unreportedIsNotCountedAsDeleted() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        // 요청한 둘 중 하나만 응답에 나온다(Deleted에도 Error에도 없는 key).
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class))).thenReturn(
+                DeleteObjectsResponse.builder()
+                        .deleted(DeletedObject.builder().key("k1").versionId("v1").build())
+                        .build());
+
+        BatchDeleteResult result = service.deleteVersions(List.of(
+                new S3PhotoStorageService.ObjectVersion("k1", "v1"),
+                new S3PhotoStorageService.ObjectVersion("k2", "v1")));
+
+        assertThat(result.deletedObjectKeys()).hasSize(1);
+        assertThat(Map.copyOf(result.errorCodeByObjectKey())).isEmpty();
+    }
+
+    @Test
+    void deleteVersions_1001Versions_splitsIntoTwoSequentialBatches() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        when(s3Client.deleteObjects(any(DeleteObjectsRequest.class)))
+                .thenReturn(DeleteObjectsResponse.builder().build());
+
+        service.deleteVersions(IntStream.range(0, 1001)
+                .mapToObj(i -> new S3PhotoStorageService.ObjectVersion("k" + i, "v" + i))
+                .toList());
+
+        verify(s3Client, times(2)).deleteObjects(any(DeleteObjectsRequest.class));
+    }
+
+    @Test
+    void deleteVersions_emptyInput_doesNotCallS3() {
+        S3PhotoStorageService service = new S3PhotoStorageService(s3Presigner, s3Client, BUCKET, TTL);
+        assertThat(service.deleteVersions(List.of()).deletedObjectKeys()).isEmpty();
+        verify(s3Client, never()).deleteObjects(any(DeleteObjectsRequest.class));
     }
 
     @Test

@@ -2,11 +2,13 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.function.Supplier;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +37,7 @@ public class TimelineDeletionService {
 
     private final TimelineEventService timelineEventService;
     private final DailyRecordService dailyRecordService;
+    private final UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
     private final TimelineDeletionTransactionService timelineDeletionTransactionService;
 
     /** Event/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
@@ -70,6 +73,7 @@ public class TimelineDeletionService {
         requireOwnedRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
         executeDelete("dailyRecord", dailyRecordId,
                 () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
+        removePendingForDeletedRecord(subjectId, dailyRecordId);
     }
 
     /** 날짜로 찾은 Record·Events/non-PHOTO orphan을 삭제하고 PHOTO orphan Item과 삭제 job을 남긴다. */
@@ -80,6 +84,21 @@ public class TimelineDeletionService {
         Long dailyRecordId = record.getDailyRecordId();
         executeDelete("dailyRecord", dailyRecordId,
                 () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
+        removePendingForDeletedRecord(subjectId, dailyRecordId);
+    }
+
+    /**
+     * 삭제된 하루를 User Memory 미반영 큐에서도 뺀다 — 갱신할 재료가 사라졌기 때문이다.
+     *
+     * <p><b>반드시 commit 이후에 부른다.</b> Redis는 DB transaction에 참여하지 않으므로 transaction
+     * 안에서 지우면, commit이 실패했을 때 record는 되살아나는데 큐 member만 사라져 그 하루가 영영
+     * 반영되지 않는다. 삭제가 성공적으로 반환된 뒤에만 실행되도록 호출 순서로 보장한다.
+     *
+     * <p>이걸 하지 않으면 그 member는 record id를 어디서도 얻을 수 없어 id 기반 정리로는 안 잡히고,
+     * 일일 배치가 재료 없음으로 걷어낼 때까지 큐에 남는다.
+     */
+    private void removePendingForDeletedRecord(UUID subjectId, Long dailyRecordId) {
+        userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
     }
 
     /** PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */

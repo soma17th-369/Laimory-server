@@ -22,6 +22,29 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId);
 
     /**
+     * subject의 record id만 유계로 읽는다(#302 정지 단계) — User Memory 미반영 큐의 member가
+     * {@code {subject}:{recordId}} 형식이라 큐를 비우려면 id가 필요하다. 엔티티를 통째로 싣지 않으려고
+     * projection으로 뽑는다.
+     *
+     * <p>{@code (subject_id, record_date)} UNIQUE의 leftmost prefix를 타며, PK 오름차순 + 커서로
+     * 페이지를 넘긴다 — 기록이 많은 회원에서도 한 번에 다 읽지 않는다.
+     */
+    /**
+     * 계정 삭제(#302)의 record 일괄 제거 — Event와 junction은 FK CASCADE로 함께 사라진다.
+     * 같은 batch의 Item 삭제와 <b>한 transaction</b>이어야 한다(Item을 특정할 경로가 사라지기 때문).
+     */
+    @Modifying
+    @Query("delete from DailyRecord r where r.dailyRecordId in :dailyRecordIds")
+    int deleteAllByIdIn(@Param("dailyRecordIds") Collection<Long> dailyRecordIds);
+
+    @Query("select r.dailyRecordId from DailyRecord r "
+            + "where r.subjectId = :subjectId and r.dailyRecordId > :afterId "
+            + "order by r.dailyRecordId")
+    List<Long> findIdsBySubjectIdAfterId(@Param("subjectId") UUID subjectId,
+                                         @Param("afterId") Long afterId,
+                                         org.springframework.data.domain.Pageable pageable);
+
+    /**
      * 소유 record만 골라 {@code record_date} 오름차순으로 반환한다. 없는 id는 결과에서 빠지므로,
      * 요청 목록과의 차집합이 곧 "그 사이 삭제된 하루"다.
      *

@@ -51,6 +51,14 @@ public class DailyNotificationPreferenceService {
      * 던진다. 행 존재는 가입 transaction과 rollout backfill이 보장하며 부재는 그 보장이 깨졌다는
      * 운영 신호다 — 읽기도 같은 신호를 내야 조회·발송·쓰기가 한 방향을 가리킨다.
      */
+    /**
+     * 계정 삭제(#302)의 일일 알림 설정 행 제거 — master({@code subject_preferences})보다 <b>먼저</b>
+     * 호출해야 한다(FK {@code RESTRICT}). 미존재는 0행(멱등).
+     */
+    public void delete(UUID subjectId) {
+        dailyNotificationPreferenceRepository.deleteBySubjectId(subjectId);
+    }
+
     public Settings findSettings(UUID subjectId) {
         return find(subjectId)
                 .map(preference -> new Settings(preference.isEnabled(), NOTIFICATION_TIME))
