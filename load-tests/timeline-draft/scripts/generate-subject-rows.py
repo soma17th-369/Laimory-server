@@ -14,9 +14,14 @@
 매일 21:00 발송 worker가 그만큼을 claim 대상으로 스캔한다 — 부하 테스트가 상시 배치에 영향을
 남기지 않도록 OFF로 심는다. 행 자체는 만든다(부재는 서버가 깨진 불변식으로 취급한다).
 
-subject UUID는 secret에서 결정적으로 파생한다(같은 사용자 + 같은 secret → 같은 subject).
-그래서 이 스크립트는 몇 번을 다시 돌려도 같은 결과를 내고, 정리 단계에서 DB를 읽지 않고도
-"이번 run이 만든 subject 집합"을 다시 만들어 낼 수 있다.
+**subject의 권위는 DB다.** 이미 mapping이 있는 사용자(과거 seed + 이후 backfill로 생긴 행)의 subject는
+이 스크립트가 정하지 않는다 — lookup key로 `user_subject_links`를 조회해 실제 값을 쓴다. 파생 UUID는
+mapping이 아예 없는 신규 행에만 제안값으로 들어간다(`INSERT IGNORE`라 기존 행은 그대로 남는다).
+파생값을 그대로 정리 대상 집합으로 믿으면, backfill이 만든 subject를 가진 사용자에서 집합이 통째로
+어긋난다(설정 INSERT는 FK 위반으로 조용히 건너뛰고 정리는 아무것도 지우지 않는다).
+
+파생은 결정적이다(같은 사용자 + 같은 secret → 같은 값). 신규 행 제안값이 재실행에도 흔들리지 않게 하는
+용도이며, 그 이상의 권위는 없다.
 
 secret은 인자가 아니라 환경변수 `SUBJECT_HMAC_SECRET`으로만 받는다(프로세스 목록·shell history
 노출 방지). 값은 애플리케이션이 Secrets Manager에서 읽는 JSON 문자열 그대로다:
@@ -29,11 +34,12 @@ secret은 인자가 아니라 환경변수 `SUBJECT_HMAC_SECRET`으로만 받는
       python3 load-tests/timeline-draft/scripts/generate-subject-rows.py \
         --user-ids load-tests/timeline-draft/.artifacts/user-ids.txt
 
-출력(둘 다 `.artifacts/`):
+출력(둘 다 `.artifacts/`, 각각 자기 lookup key 임시 테이블을 들고 있어 단독 실행된다):
 
-  subject-seed.sql — 위 세 테이블 INSERT(멱등). 사용자가 직접 mysql로 적용한다.
-  subject-set.sql  — 정리·검증 SQL이 읽는 TEMPORARY TABLE `k6_251_subjects`. 같은 세션에서
-                     05/06/07보다 먼저 실행해야 한다(임시 테이블은 세션 범위).
+  subject-seed.sql — 위 세 테이블 INSERT(멱등). mapping이 이미 있으면 links는 건너뛰고 설정 행만 채운다.
+  subject-set.sql  — 정리·검증 SQL이 읽는 TEMPORARY TABLE `k6_251_subjects`를 **DB에서** 만든다.
+                     같은 세션에서 05/06/07보다 먼저 실행해야 한다(임시 테이블은 세션 범위).
+                     06이 mapping을 지운 뒤에는 다시 만들 수 없으므로 07까지 같은 세션에서 이어 쓴다.
 """
 
 from __future__ import annotations
@@ -156,61 +162,101 @@ def render_insert(table: str, columns: str, rows: list[str]) -> str:
     return "\n\n".join(statements)
 
 
+LOOKUP_KEY_TABLE = "k6_251_lookup_keys"
+
+
+def render_lookup_keys_block(pairs: list[tuple[int, str, str]]) -> str:
+    """lookup key 임시 테이블. 두 출력 파일이 각자 들고 있어 단독 실행된다.
+
+    이 테이블이 있어야 "합성 사용자의 subject"를 DB에서 정확히 집을 수 있다 — 콘텐츠 소유자는
+    subject_id뿐이고 `users`와 평문 join이 불가능하므로(가명화 설계), 사용자 쪽 좌표는 lookup key가 유일하다.
+    """
+    statements = [f"""DROP TEMPORARY TABLE IF EXISTS {LOOKUP_KEY_TABLE};
+
+CREATE TEMPORARY TABLE {LOOKUP_KEY_TABLE} (
+    user_lookup_key BINARY(32) NOT NULL,
+    PRIMARY KEY (user_lookup_key)
+) ENGINE=InnoDB;"""]
+    rows = [f"(UNHEX('{hex_key}'))" for _, hex_key, _ in pairs]
+    for chunk in chunks(rows):
+        values = ",\n    ".join(chunk)
+        statements.append(f"INSERT INTO {LOOKUP_KEY_TABLE} (user_lookup_key) VALUES\n    {values};")
+    return "\n\n".join(statements)
+
+
 def build_seed_sql(pairs: list[tuple[int, str, str]], version: int) -> str:
     links = [f"(UNHEX('{hex_key}'), '{subject}', {version})" for _, hex_key, subject in pairs]
-    preferences = [f"('{subject}', TRUE, FALSE, @now, @now, '{MODIFIED_BY}')" for _, _, subject in pairs]
-    reminders = [f"('{subject}', FALSE, @next_due_at, @now, @now, '{MODIFIED_BY}')"
-                 for _, _, subject in pairs]
     return f"""-- #251 합성 사용자의 subject 행. generate-subject-rows.py가 만든 파일이다(직접 수정하지 않는다).
 --
 -- 01-seed-users.sql → 02-export-user-ids.sql 다음에 적용한다. 재실행해도 안전하다(INSERT IGNORE).
+--
+-- mapping이 이미 있는 사용자는 links INSERT가 건너뛰어지고, 설정 행은 **DB에 있는 실제 subject**로
+-- 채워진다(아래 INSERT ... SELECT). 파생 UUID를 설정 행에 그대로 쓰면 backfill로 생긴 subject를 가진
+-- 사용자에서 FK 위반이 나고, INSERT IGNORE가 그것을 경고로 삼켜 조용히 아무것도 안 심는다.
 --
 -- 감사 컬럼은 JPA auditing을 거치지 않으므로 직접 채운다. dev-mysql 호스트는 UTC이고 애플리케이션은
 -- Asia/Seoul 벽시계로 DATETIME을 저장하므로 NOW()를 그대로 쓰면 앱 기준 9시간 과거가 된다.
 --
 -- daily_notification_preferences는 가입 기본값(ON)과 달리 **OFF**로 심는다 — 합성 사용자가 매일 21:00
 -- 발송 worker의 스캔 대상이 되지 않게 한다. next_due_at은 NOT NULL이라 값을 채우되 enabled=FALSE라
--- worker가 claim하지 않는다.
+-- worker가 claim하지 않는다. ⚠️ 이미 ON으로 존재하는 행은 IGNORE가 건너뛴다(끄지 않는다).
 --
--- 사용:
---   mysql --defaults-extra-file=... <db> < .artifacts/subject-seed.sql
+-- 사용(한 세션에서 통째로):
+--   mysql --defaults-extra-file=... <db> < load-tests/timeline-draft/.artifacts/subject-seed.sql
+
+{render_lookup_keys_block(pairs)}
 
 SET @now = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00');
 SET @next_due_at = TIMESTAMP(DATE(@now) + INTERVAL 1 DAY, '21:00:00');
 
+-- 1) mapping. 파생 subject는 **행이 없을 때만** 쓰이는 제안값이다.
 {render_insert('user_subject_links', 'user_lookup_key, subject_id, lookup_key_version', links)}
 
-{render_insert('subject_preferences',
-               'subject_id, push_enabled, onboarding_completed, created_at, updated_at, modified_by',
-               preferences)}
-
-{render_insert('daily_notification_preferences',
-               'subject_id, enabled, next_due_at, created_at, updated_at, modified_by',
-               reminders)}
-
--- 확인: 세 값이 모두 합성 사용자 수와 같아야 한다. `user_subject_links`는 감사 컬럼이 없으므로
--- (설계상 최소 정보) 합성 표식이 있는 subject_preferences로 join해 센다.
-SELECT 'user_subject_links' AS target_table, COUNT(*) AS seeded_rows
+-- 2~3) subject 축 설정. 실제 subject를 mapping에서 읽어 채운다.
+INSERT IGNORE INTO subject_preferences
+    (subject_id, push_enabled, onboarding_completed, created_at, updated_at, modified_by)
+SELECT l.subject_id, TRUE, FALSE, @now, @now, '{MODIFIED_BY}'
 FROM user_subject_links l
-JOIN subject_preferences p ON p.subject_id = l.subject_id
-WHERE p.modified_by = '{MODIFIED_BY}' AND l.lookup_key_version = {version}
-UNION ALL
-SELECT 'subject_preferences', COUNT(*) FROM subject_preferences WHERE modified_by = '{MODIFIED_BY}'
-UNION ALL
-SELECT 'daily_notification_preferences', COUNT(*)
-FROM daily_notification_preferences WHERE modified_by = '{MODIFIED_BY}';
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
+
+INSERT IGNORE INTO daily_notification_preferences
+    (subject_id, enabled, next_due_at, created_at, updated_at, modified_by)
+SELECT l.subject_id, FALSE, @next_due_at, @now, @now, '{MODIFIED_BY}'
+FROM user_subject_links l
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
+
+-- 확인: 세 값이 모두 합성 사용자 수와 같아야 한다.
+-- (한 문장이 임시 테이블을 두 번 참조하면 ERROR 1137이라 문장을 나눈다.)
+SELECT 'user_subject_links' AS target_table, COUNT(*) AS rows_present
+FROM user_subject_links l
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
+
+SELECT 'subject_preferences' AS target_table, COUNT(*) AS rows_present
+FROM subject_preferences p
+JOIN user_subject_links l ON l.subject_id = p.subject_id
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
+
+SELECT 'daily_notification_preferences' AS target_table, COUNT(*) AS rows_present
+FROM daily_notification_preferences d
+JOIN user_subject_links l ON l.subject_id = d.subject_id
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
 """
 
 
 def build_set_sql(pairs: list[tuple[int, str, str]]) -> str:
-    values = ",\n    ".join(f"('{subject}')" for _, _, subject in pairs)
     return f"""-- #251 합성 subject 집합. generate-subject-rows.py가 만든 파일이다(직접 수정하지 않는다).
 --
 -- 05/06/07 SQL의 삭제·검증 경계다. subject_id는 `users`와 평문으로 join할 수 없으므로(그게 설계다)
--- 정리 대상 집합을 이렇게 밖에서 넣어 준다.
+-- lookup key로 mapping을 조회해 **DB에 있는 실제 subject**를 담는다 — 파생값을 그대로 쓰지 않는다.
 --
 -- ⚠️ 임시 테이블은 세션 범위다 — 이 파일과 대상 SQL을 **한 세션에서** 실행해야 한다:
---   cat .artifacts/subject-set.sql sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=... <db>
+--   cat load-tests/timeline-draft/.artifacts/subject-set.sql \\
+--       load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=... <db>
+--
+-- ⚠️ 06이 mapping을 지운 뒤에는 이 파일로 집합을 다시 만들 수 없다(조회할 행이 사라진다).
+--    06 → 07은 반드시 같은 세션에서 이어서 실행한다.
+
+{render_lookup_keys_block(pairs)}
 
 DROP TEMPORARY TABLE IF EXISTS {SUBJECT_SET_TABLE};
 
@@ -219,8 +265,13 @@ CREATE TEMPORARY TABLE {SUBJECT_SET_TABLE} (
     PRIMARY KEY (subject_id)
 ) ENGINE=InnoDB;
 
-INSERT INTO {SUBJECT_SET_TABLE} (subject_id) VALUES
-    {values};
+INSERT INTO {SUBJECT_SET_TABLE} (subject_id)
+SELECT l.subject_id
+FROM user_subject_links l
+JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
+
+-- 확인: 합성 사용자 수와 같아야 한다. 적으면 mapping이 없는 사용자가 있다는 뜻이다(seed 미적용).
+SELECT COUNT(*) AS synthetic_subjects FROM {SUBJECT_SET_TABLE};
 """
 
 
