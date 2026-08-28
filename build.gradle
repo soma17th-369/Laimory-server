@@ -86,6 +86,11 @@ tasks.named('test') {
 	useJUnitPlatform {
 		excludeTags 'integration'
 	}
+	// Gradle은 fork한 테스트 JVM의 file.encoding을 빌드 머신 기본값으로 넘긴다(Windows는 cp949).
+	// 콘솔 출력을 캡처해 한글 로그를 단언하는 테스트(OutputCaptureExtension)는 JSON appender가 쓴
+	// UTF-8 바이트를 그 기본 charset으로 디코딩하므로 한글이 깨진다. 어떤 appender가 활성이냐는 앞선
+	// 테스트가 띄운 Spring 컨텍스트에 좌우돼 클래스 순서만 바뀌어도 결과가 달라지므로 여기서 고정한다.
+	defaultCharacterEncoding = 'UTF-8'
 }
 
 tasks.named('jacocoTestReport') {
@@ -104,6 +109,8 @@ def integrationTest = tasks.register('integrationTest', Test) {
 	useJUnitPlatform {
 		includeTags 'integration'
 	}
+	// test 태스크와 같은 이유로 고정한다(빌드 머신 기본 charset에 결과가 좌우되지 않게).
+	defaultCharacterEncoding = 'UTF-8'
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 	shouldRunAfter('test')
