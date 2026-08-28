@@ -105,7 +105,7 @@ class AccountErasureServiceTest {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), eq(9L), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID);
+        accountErasureService.quiesce(SUBJECT_ID, () -> true);
 
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(1L, 2L, 3L));
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(9L));
@@ -116,7 +116,7 @@ class AccountErasureServiceTest {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), anyLong(), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID);
+        accountErasureService.quiesce(SUBJECT_ID, () -> true);
 
         verify(userMemoryService, never()).delete(any());
         verify(subjectPreferenceService, never()).delete(any());
@@ -233,15 +233,34 @@ class AccountErasureServiceTest {
                 .deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt());
     }
 
+    /** 예산은 batch를 돌리기 <b>전에</b> 본다 — 확인이 뒤에 있으면 예산이 0이어도 한 batch는 돈다. */
     @Test
-    void 실행_예산이_끝나면_남은_일을_다음_실행에_넘긴다() {
+    void 실행_예산이_없으면_batch를_시작조차_하지_않는다() {
+        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> false)).isFalse();
+
+        verify(timelineContentErasureService, never()).deletePhotoDeleteJobBatch(any(), anyInt());
+        verify(timelineContentErasureService, never()).deleteRecordBatch(any(), anyInt());
+        verify(timelineContentErasureService, never()).deleteDraftSourceBatch(any(), anyInt());
+    }
+
+    @Test
+    void 예산이_중간에_끝나면_남은_일을_다음_실행에_넘긴다() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
         when(timelineContentErasureService.deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt()))
                 .thenReturn(1);
 
-        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> false)).isFalse();
+        // 첫 batch 뒤 예산이 끊긴다.
+        assertThat(accountErasureService.deleteContentGraph(
+                SUBJECT_ID, () -> calls.getAndIncrement() == 0)).isFalse();
 
-        // 예산이 없으니 다음 단계로 넘어가지 않는다.
         verify(timelineContentErasureService, never()).deleteRecordBatch(any(), anyInt());
+    }
+
+    @Test
+    void 정지도_예산이_없으면_아무것도_읽지_않는다() {
+        assertThat(accountErasureService.quiesce(SUBJECT_ID, () -> false)).isFalse();
+
+        verify(dailyRecordService, never()).findIdsBySubjectIdAfterId(any(), anyLong(), anyInt());
     }
 
     /** 마지막 단계라 특히 중요하다 — 여기서 조용히 넘어가면 job이 사라진 뒤 회원 행만 영구히 남는다. */

@@ -93,17 +93,18 @@ public class AccountErasureService {
      * <p>Redis 전용이라 DB transaction 밖에서 실행한다. 중간에 실패하면 단계 전이를 하지 않으므로
      * 다음 실행이 같은 일을 다시 한다(멱등).
      */
-    public void quiesce(UUID subjectId) {
+    public boolean quiesce(UUID subjectId, BooleanSupplier hasBudget) {
         long afterId = 0L;
-        while (true) {
+        while (hasBudget.getAsBoolean()) {
             List<Long> recordIds =
                     dailyRecordService.findIdsBySubjectIdAfterId(subjectId, afterId, RECORD_ID_PAGE_SIZE);
             if (recordIds.isEmpty()) {
-                return;
+                return true;
             }
             userMemoryUpdatePendingStore.removeAll(subjectId, recordIds);
             afterId = recordIds.get(recordIds.size() - 1);
         }
+        return false;
     }
 
     /**
@@ -136,23 +137,12 @@ public class AccountErasureService {
      * @return {@code false} = 예산이 끝나 아직 남았다(job을 그대로 두고 다음 실행이 이어간다)
      */
     private boolean drain(BooleanSupplier hasBudget, java.util.function.IntUnaryOperator batch) {
-        while (batch.applyAsInt(CONTENT_BATCH_SIZE) > 0) {
-            if (!hasBudget.getAsBoolean()) {
-                return false;
+        while (hasBudget.getAsBoolean()) {
+            if (batch.applyAsInt(CONTENT_BATCH_SIZE) == 0) {
+                return true;
             }
         }
-        return true;
-    }
-
-    /**
-     * 정지 이후 남았을 수 있는 미반영 큐 잔여를 record id로 한 번 더 비운다(멱등).
-     * <b>DB transaction 밖</b>에서 호출한다 — Redis I/O 동안 row lock을 잡고 있지 않기 위해서다.
-     *
-     * <p>기록 삭제 경로가 자기 member를 함께 지우므로(#302) id로 찾을 수 없는 잔여는 더 생기지 않는다.
-     * 이 변경 이전에 쌓인 잔여는 일일 배치가 재료 없음으로 걷어낸다.
-     */
-    public void drainPendingQueue(UUID subjectId) {
-        quiesce(subjectId);
+        return false;
     }
 
     /**
@@ -189,7 +179,7 @@ public class AccountErasureService {
      */
     public boolean deletePhotoObjects(UUID subjectId, BooleanSupplier hasBudget) {
         String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
-        while (true) {
+        while (hasBudget.getAsBoolean()) {
             List<S3PhotoStorageService.ObjectVersion> versions =
                     s3PhotoStorageService.listObjectVersions(prefix, S3_PAGE_SIZE);
             if (versions.isEmpty()) {
@@ -202,10 +192,8 @@ public class AccountErasureService {
                 throw new IllegalStateException(
                         "S3 photo objects not confirmed deleted: count=" + unconfirmed);
             }
-            if (!hasBudget.getAsBoolean()) {
-                return false;
-            }
         }
+        return false;
     }
 
     /**

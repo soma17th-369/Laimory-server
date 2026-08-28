@@ -127,7 +127,15 @@ public class AccountErasureWorker {
                 if (jobs.isEmpty()) {
                     return;
                 }
-                jobs.forEach(job -> handler.handle(job, summary, budget));
+                for (AccountErasureJob job : jobs) {
+                    if (!budget.hasTimeRemaining()) {
+                        // claim은 했지만 시작도 못 한 행이다. claim이 updated_at을 오늘로 찍어 두므로
+                        // 그날 다시 잡히지 않는다 — 그래서 claim 크기를 작게 두는 것이 기본값이다.
+                        summary.recordDeferred();
+                        continue;
+                    }
+                    handler.handle(job, summary, budget);
+                }
             }
         } finally {
             slotFinished(remainingSlots, summary, runActive);
@@ -172,7 +180,12 @@ public class AccountErasureWorker {
             return;
         }
         try {
-            erasureService.quiesce(subjectId);
+            if (!erasureService.quiesce(subjectId, budget::hasTimeRemaining)) {
+                // 큐를 다 비우지 못했으면 전이하지 않는다 — QUIESCED는 "새 AI 작업이 더 발급되지
+                // 않는다"는 뜻이라, 절반만 비운 상태로 넘기면 그 보장이 거짓이 된다.
+                summary.recordDeferred();
+                return;
+            }
             if (jobService.transition(job.getAccountErasureJobId(),
                     AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED)) {
                 summary.recordProcessed();
@@ -204,7 +217,6 @@ public class AccountErasureWorker {
                 return;
             }
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
-            erasureService.drainPendingQueue(subjectId);
             if (!erasureService.deletePhotoObjects(subjectId, budget::hasTimeRemaining)) {
                 summary.recordDeferred();
                 return;

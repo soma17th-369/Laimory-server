@@ -43,7 +43,6 @@ public class TimelineDeletionTransactionService {
     private final TimelineItemService timelineItemService;
     private final DailyRecordService dailyRecordService;
     private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    private final UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
     private final ObjectMapper objectMapper;
 
     /** 소유권 재확인 후 PHOTO Item/job 보존과 Event/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
@@ -73,10 +72,9 @@ public class TimelineDeletionTransactionService {
         OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
         dailyRecordService.deleteById(dailyRecordId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
-        // 갱신할 재료가 사라졌으므로 미반영 큐에서도 뺀다. 남겨 두면 그 member는 record id를 어디서도
-        // 얻을 수 없어 id 기반 정리로는 영영 안 잡히고, 다음 일일 배치가 재료 없음으로 걷어낼 때까지
-        // 큐에 남는다(계정 삭제의 완료 시점 zero-check를 흐리는 유일한 잔여였다).
-        userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
+        // 미반영 큐 정리는 여기서 하지 않는다 — Redis는 이 transaction에 참여하지 않으므로, 여기서
+        // 지우고 commit이 실패하면 record는 되살아나는데 큐 member만 사라져 그 하루가 User Memory에
+        // 반영될 재시도 근거를 잃는다. 정리는 commit 이후 TimelineDeletionService가 한다.
         return new DeletionResult(
                 preparation.scheduled(), deletionItems.sharedPhotoCount(), preparation.invalidSkipped());
     }
