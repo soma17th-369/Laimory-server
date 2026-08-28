@@ -6,7 +6,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineEvent;
-import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
