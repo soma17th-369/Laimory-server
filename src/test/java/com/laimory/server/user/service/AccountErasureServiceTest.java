@@ -181,30 +181,35 @@ class AccountErasureServiceTest {
     @Test
     void S3는_prefix가_빌_때까지_반복해_지운다() {
         String prefix = PhotoObjectKeys.subjectNamespace(SUBJECT_ID) + "/photos/";
-        when(s3PhotoStorageService.listObjectKeys(eq(prefix), anyInt()))
-                .thenReturn(List.of("a", "b"))
-                .thenReturn(List.of("c"))
-                .thenReturn(List.of());
-        when(s3PhotoStorageService.deleteAll(List.of("a", "b")))
-                .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
-                        Set.of("a", "b"), Map.of(), Set.of()));
-        when(s3PhotoStorageService.deleteAll(List.of("c")))
-                .thenReturn(new S3PhotoStorageService.BatchDeleteResult(Set.of("c"), Map.of(), Set.of()));
+        List<S3PhotoStorageService.ObjectVersion> page1 = List.of(
+                new S3PhotoStorageService.ObjectVersion("a", "null"),
+                new S3PhotoStorageService.ObjectVersion("b", "null"));
+        List<S3PhotoStorageService.ObjectVersion> page2 =
+                List.of(new S3PhotoStorageService.ObjectVersion("c", "null"));
+        when(s3PhotoStorageService.listObjectVersions(eq(prefix), anyInt()))
+                .thenReturn(page1).thenReturn(page2).thenReturn(List.of());
+        when(s3PhotoStorageService.deleteVersions(page1)).thenReturn(
+                new S3PhotoStorageService.BatchDeleteResult(Set.of("a@null", "b@null"), Map.of(), Set.of()));
+        when(s3PhotoStorageService.deleteVersions(page2)).thenReturn(
+                new S3PhotoStorageService.BatchDeleteResult(Set.of("c@null"), Map.of(), Set.of()));
 
-        accountErasureService.deletePhotoObjects(SUBJECT_ID);
+        assertThat(accountErasureService.deletePhotoObjects(SUBJECT_ID, () -> true)).isTrue();
 
         // 마지막 재조회가 비었을 때만 끝난다 — 3회 조회.
-        verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectKeys(eq(prefix), anyInt());
+        verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectVersions(eq(prefix), anyInt());
     }
 
     @Test
     void 삭제가_확인되지_않은_S3_객체가_있으면_멈춘다() {
-        when(s3PhotoStorageService.listObjectKeys(anyString(), anyInt())).thenReturn(List.of("a", "b"));
-        when(s3PhotoStorageService.deleteAll(List.of("a", "b")))
+        List<S3PhotoStorageService.ObjectVersion> page = List.of(
+                new S3PhotoStorageService.ObjectVersion("a", "null"),
+                new S3PhotoStorageService.ObjectVersion("b", "null"));
+        when(s3PhotoStorageService.listObjectVersions(anyString(), anyInt())).thenReturn(page);
+        when(s3PhotoStorageService.deleteVersions(page))
                 .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
-                        Set.of("a"), Map.of("b", "AccessDenied"), Set.of()));
+                        Set.of("a@null"), Map.of("b", "AccessDenied"), Set.of()));
 
-        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID, () -> true))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -217,7 +222,7 @@ class AccountErasureServiceTest {
         when(timelineContentErasureService.deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt()))
                 .thenReturn(0);
 
-        accountErasureService.deleteContentGraph(SUBJECT_ID);
+        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> true)).isTrue();
 
         InOrder order = inOrder(timelineContentErasureService);
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
@@ -226,6 +231,17 @@ class AccountErasureServiceTest {
                 .deleteRecordBatch(eq(SUBJECT_ID), anyInt());
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
                 .deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt());
+    }
+
+    @Test
+    void 실행_예산이_끝나면_남은_일을_다음_실행에_넘긴다() {
+        when(timelineContentErasureService.deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt()))
+                .thenReturn(1);
+
+        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> false)).isFalse();
+
+        // 예산이 없으니 다음 단계로 넘어가지 않는다.
+        verify(timelineContentErasureService, never()).deleteRecordBatch(any(), anyInt());
     }
 
     /** 마지막 단계라 특히 중요하다 — 여기서 조용히 넘어가면 job이 사라진 뒤 회원 행만 영구히 남는다. */

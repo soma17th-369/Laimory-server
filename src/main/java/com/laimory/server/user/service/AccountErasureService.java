@@ -13,6 +13,7 @@ import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -119,17 +120,39 @@ public class AccountErasureService {
      *
      * <p>각 batch가 독립 transaction이라 중간 crash는 남은 것만 다음 실행이 이어서 지운다(멱등).
      */
-    public void deleteContentGraph(UUID subjectId) {
-        drain(batchSize -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, batchSize));
-        drain(batchSize -> timelineContentErasureService.deleteRecordBatch(subjectId, batchSize));
-        drain(batchSize -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, batchSize));
+    public boolean deleteContentGraph(UUID subjectId, BooleanSupplier hasBudget) {
+        return drain(hasBudget, b -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, b))
+                && drain(hasBudget, b -> timelineContentErasureService.deleteRecordBatch(subjectId, b))
+                && drain(hasBudget, b -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, b));
     }
 
-    /** 한 batch가 0을 반환할 때까지 반복한다. 삭제는 단조적이라 같은 조회가 남은 것만 돌려준다. */
-    private void drain(java.util.function.IntUnaryOperator batch) {
+    /**
+     * 한 batch가 0을 반환하거나 실행 예산이 끝날 때까지 반복한다. 삭제는 단조적이라 같은 조회가 남은
+     * 것만 돌려준다.
+     *
+     * <p><b>예산을 매 batch마다 확인한다.</b> worker의 budget은 작업을 가져오기 직전에만 확인되므로,
+     * 여기서 다시 보지 않으면 데이터가 큰 계정 하나가 executor slot을 실행 시간 상한 너머로 점유한다.
+     *
+     * @return {@code false} = 예산이 끝나 아직 남았다(job을 그대로 두고 다음 실행이 이어간다)
+     */
+    private boolean drain(BooleanSupplier hasBudget, java.util.function.IntUnaryOperator batch) {
         while (batch.applyAsInt(CONTENT_BATCH_SIZE) > 0) {
-            // 계속 지운다 — 상한은 worker의 run budget이 건다.
+            if (!hasBudget.getAsBoolean()) {
+                return false;
+            }
         }
+        return true;
+    }
+
+    /**
+     * 정지 이후 남았을 수 있는 미반영 큐 잔여를 record id로 한 번 더 비운다(멱등).
+     * <b>DB transaction 밖</b>에서 호출한다 — Redis I/O 동안 row lock을 잡고 있지 않기 위해서다.
+     *
+     * <p>기록 삭제 경로가 자기 member를 함께 지우므로(#302) id로 찾을 수 없는 잔여는 더 생기지 않는다.
+     * 이 변경 이전에 쌓인 잔여는 일일 배치가 재료 없음으로 걷어낸다.
+     */
+    public void drainPendingQueue(UUID subjectId) {
+        quiesce(subjectId);
     }
 
     /**
@@ -143,11 +166,6 @@ public class AccountErasureService {
     @Transactional
     public void deleteOwnerRows(long userId, UUID subjectId) {
         userMemoryService.delete(subjectId);
-        // record가 이미 지워졌으므로 id로는 남은 member를 찾을 수 없다 — prefix로 마지막 확인을 한다.
-        // 사용자가 직접 지운 하루의 member가 여기서 걸린다(기록 삭제 경로는 큐를 건드리지 않는다).
-        while (userMemoryUpdatePendingStore.removeAllBySubject(subjectId, RECORD_ID_PAGE_SIZE) > 0) {
-            // 남은 것이 없을 때까지.
-        }
         dailyNotificationPreferenceService.delete(subjectId);
         subjectPreferenceService.delete(subjectId);
         pushRegistrationService.deleteAll(subjectId);
@@ -169,19 +187,23 @@ public class AccountErasureService {
      *
      * @throws IllegalStateException 삭제가 확인되지 않은 key가 남아 있을 때
      */
-    public void deletePhotoObjects(UUID subjectId) {
+    public boolean deletePhotoObjects(UUID subjectId, BooleanSupplier hasBudget) {
         String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
         while (true) {
-            List<String> objectKeys = s3PhotoStorageService.listObjectKeys(prefix, S3_PAGE_SIZE);
-            if (objectKeys.isEmpty()) {
-                return;
+            List<S3PhotoStorageService.ObjectVersion> versions =
+                    s3PhotoStorageService.listObjectVersions(prefix, S3_PAGE_SIZE);
+            if (versions.isEmpty()) {
+                return true;
             }
-            S3PhotoStorageService.BatchDeleteResult result = s3PhotoStorageService.deleteAll(objectKeys);
-            int unconfirmed = objectKeys.size() - result.deletedObjectKeys().size();
+            S3PhotoStorageService.BatchDeleteResult result = s3PhotoStorageService.deleteVersions(versions);
+            int unconfirmed = versions.size() - result.deletedObjectKeys().size();
             if (unconfirmed > 0) {
-                // 지우지 못한 key가 있는데 계속 돌면 같은 페이지를 무한 반복한다. job을 남기고 끝낸다.
+                // 지우지 못한 것이 있는데 계속 돌면 같은 페이지를 무한 반복한다. job을 남기고 끝낸다.
                 throw new IllegalStateException(
                         "S3 photo objects not confirmed deleted: count=" + unconfirmed);
+            }
+            if (!hasBudget.getAsBoolean()) {
+                return false;
             }
         }
     }

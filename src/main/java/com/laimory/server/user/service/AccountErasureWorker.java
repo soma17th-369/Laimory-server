@@ -127,7 +127,7 @@ public class AccountErasureWorker {
                 if (jobs.isEmpty()) {
                     return;
                 }
-                jobs.forEach(job -> handler.handle(job, summary));
+                jobs.forEach(job -> handler.handle(job, summary, budget));
             }
         } finally {
             slotFinished(remainingSlots, summary, runActive);
@@ -163,7 +163,7 @@ public class AccountErasureWorker {
     }
 
     /** 정지 — 큐만 비우고 전이한다. 데이터는 지우지 않으므로 실패해도 되돌릴 것이 없다. */
-    private void quiesceOne(AccountErasureJob job, RunSummary summary) {
+    private void quiesceOne(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget) {
         UUID subjectId;
         try {
             subjectId = erasureService.resolveTarget(job.getUserId());
@@ -187,7 +187,7 @@ public class AccountErasureWorker {
     }
 
     /** 삭제 — owner 행을 지우고 finalization으로 마무리한다. 실패는 job을 남겨 다음 날 재시도한다. */
-    private void deleteOne(AccountErasureJob job, RunSummary summary) {
+    private void deleteOne(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget) {
         UUID subjectId;
         try {
             subjectId = erasureService.resolveTarget(job.getUserId());
@@ -196,9 +196,19 @@ public class AccountErasureWorker {
             return;
         }
         try {
-            erasureService.deleteContentGraph(subjectId);
+            // 실행 예산이 끝나면 남은 일을 다음 실행에 넘긴다 — 데이터가 큰 계정 하나가 slot을
+            // 실행 시간 상한 너머로 점유하지 않게 한다. 지운 것은 이미 commit돼 있고 모든 단계가
+            // 멱등이라 다음 실행은 남은 것만 처리한다.
+            if (!erasureService.deleteContentGraph(subjectId, budget::hasTimeRemaining)) {
+                summary.recordDeferred();
+                return;
+            }
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
-            erasureService.deletePhotoObjects(subjectId);
+            erasureService.drainPendingQueue(subjectId);
+            if (!erasureService.deletePhotoObjects(subjectId, budget::hasTimeRemaining)) {
+                summary.recordDeferred();
+                return;
+            }
             erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
             summary.recordProcessed();
         } catch (TimelineContentErasureService.CrossSubjectItemException exception) {
@@ -258,7 +268,7 @@ public class AccountErasureWorker {
 
     @FunctionalInterface
     private interface JobHandler {
-        void handle(AccountErasureJob job, RunSummary summary);
+        void handle(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget);
     }
 
     private static final class RunSummary {

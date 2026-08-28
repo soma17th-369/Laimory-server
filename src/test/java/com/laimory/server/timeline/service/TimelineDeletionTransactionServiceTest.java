@@ -58,6 +58,8 @@ class TimelineDeletionTransactionServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @Mock
+    private com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final java.util.UUID SUBJECT_ID = com.laimory.server.testsupport.TestSubjects.id(7L);
@@ -77,6 +79,7 @@ class TimelineDeletionTransactionServiceTest {
                 timelineItemService,
                 dailyRecordService,
                 timelinePhotoDeleteJobService,
+                userMemoryUpdatePendingStore,
                 MAPPER);
     }
 

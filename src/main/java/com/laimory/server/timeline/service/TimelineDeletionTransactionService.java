@@ -6,6 +6,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineEvent;
+import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -42,6 +43,7 @@ public class TimelineDeletionTransactionService {
     private final TimelineItemService timelineItemService;
     private final DailyRecordService dailyRecordService;
     private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    private final UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
     private final ObjectMapper objectMapper;
 
     /** 소유권 재확인 후 PHOTO Item/job 보존과 Event/non-PHOTO orphan hard delete를 한 commit으로 묶는다. */
@@ -71,6 +73,10 @@ public class TimelineDeletionTransactionService {
         OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
         dailyRecordService.deleteById(dailyRecordId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
+        // 갱신할 재료가 사라졌으므로 미반영 큐에서도 뺀다. 남겨 두면 그 member는 record id를 어디서도
+        // 얻을 수 없어 id 기반 정리로는 영영 안 잡히고, 다음 일일 배치가 재료 없음으로 걷어낼 때까지
+        // 큐에 남는다(계정 삭제의 완료 시점 zero-check를 흐리는 유일한 잔여였다).
+        userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
         return new DeletionResult(
                 preparation.scheduled(), deletionItems.sharedPhotoCount(), preparation.invalidSkipped());
     }
