@@ -1,8 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.RawIds;
@@ -27,9 +25,10 @@ import org.springframework.stereotype.Service;
  * 공용 privacy redactor 셋뿐이며(redactor는 상태 없는 component라 저장소 의존을 끌고 오지 않는다),
  * 그래서 회원·Daily Record·Draft Task 없이도 AI 품질과 계약을 확인할 수 있다.
  *
- * <p>인증은 <b>설정 주입된 고정 opaque bearer token 하나와의 상수 시간 대조</b>뿐이다. draft의 회전
- * task token 기계(Redis {@code tokenHash}·{@code ProcessStage}·retry receipt)와 아무 연결이 없다 —
- * 동기 1회 요청이라 단계별 회전·재발급이라는 개념 자체가 성립하지 않는다. 회원 식별도 하지 않는다.
+ * <p><b>인증은 이 서비스의 책임이 아니다.</b> {@code /t/api} 경로의 Bearer token 검증은 security 계층이
+ * 소유하며, 여기까지 온 요청은 이미 통과한 것으로 취급한다. draft의 회전 task token 기계(Redis
+ * {@code tokenHash}·{@code ProcessStage}·retry receipt)와도 아무 연결이 없다 — 동기 1회 요청이라
+ * 단계별 회전·재발급이라는 개념 자체가 성립하지 않는다. 회원 식별도 하지 않는다.
  *
  * <p>{@code taskId}는 서버가 발행해 AI 요청과 응답 양쪽에 싣는다. AI가 조회·저장에 쓰지는 않지만 같은
  * {@code taskId}로 돌린 비동기 실행과 AI 로그·Langfuse에서 이어 볼 수 있는 상관키다.
@@ -44,8 +43,6 @@ import org.springframework.stereotype.Service;
 @ConditionalOnProperty(name = "app.ai.timeline-test.enabled", havingValue = "true")
 public class TimelineAiTestService {
 
-    private static final String BEARER_PREFIX = "Bearer ";
-
     /**
      * 운영 staging 치환({@code TimelineDraftTaskService}의 {@code STORAGE_REDACTION_EXCLUDED_FIELDS})과
      * 같은 제외 집합이다. {@code clientPhotoUri}는 여기서 제외한 뒤 아래에서 고정 token으로 덮고,
@@ -55,13 +52,10 @@ public class TimelineAiTestService {
             Set.of("clientPhotoUri", "filename", "photoUrl");
 
     private final TimelineAiTestClient timelineAiTestClient;
-    private final TimelineAiTestProperties properties;
     private final PrivacyRedactor privacyRedactor;
 
-    public TimelineAiTestOutcome generate(String applicationVersion, String authorization,
-                                          TimelineAiTestRequest request) {
+    public TimelineAiTestOutcome generate(String applicationVersion, TimelineAiTestRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        requireAuthorized(authorization);
         requireValidRequest(request);
 
         String taskId = UuidV7.randomUuidV7().toString();
@@ -79,23 +73,6 @@ public class TimelineAiTestService {
             log.warn("timeline ai test failed: taskId={} aiStatus={} aiErrorCode={} reason={} elapsedMs={}",
                     taskId, e.getAiStatus(), e.getAiErrorCode(), e.getReason(), elapsedMs(startedAt));
             throw e;
-        }
-    }
-
-    /**
-     * 고정 token 대조. 값은 어떤 분기에서도 로그·예외에 남기지 않는다.
-     *
-     * <p>비교는 항상 SHA-256 digest끼리라 원문 길이 차이로도 타이밍이 새지 않는다.
-     */
-    private void requireAuthorized(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            log.warn("timeline ai test rejected: bearer 헤더 없음 또는 형식 불량");
-            throw new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED);
-        }
-        if (!TimelineAiTestTokens.matches(
-                authorization.substring(BEARER_PREFIX.length()), properties.callerTokenDigest())) {
-            log.warn("timeline ai test rejected: token 불일치");
-            throw new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED);
         }
     }
 

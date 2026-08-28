@@ -27,7 +27,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 | `/api/{version}` | 인증 없는 app-facing public API | public |
 | `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | 단계별 task token을 endpoint가 강제 |
 | `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `-2001` |
-| `/t/api/{version}` | dev 전용 테스트 API, endpoint별 자체 인증 | 활성화 property가 없으면 controller 빈 자체가 없어 mapping 부재(404). 켠 환경에서는 endpoint가 전용 opaque Bearer token을 강제 |
+| `/t/api/{version}` | dev 전용 테스트 API | 활성화 property가 없으면 controller 빈 자체가 없어 mapping 부재(404). **인증 enforcement는 아직 없다** — `/a/api` 외 permitAll 계약이 그대로 적용된다 |
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
@@ -191,10 +191,11 @@ callback·polling 어느 것도 거치지 않고 결과를 저장하지도 않�
 `X-Timeline-Timed-Out: true`가 붙는다 — 실패가 아니다. AI가 오류를 반환하면 502 `-1009`와 함께 응답 헤더
 `X-Ai-Error-Code`로 AI numeric 코드를 전달한다(envelope `body=null` 계약을 지키면서 AI 실패 원인을
 구분하기 위한 것이며, AI 자유 text `error`는 어디에도 싣지 않는다). 입력 검증 실패는 400 `-400`,
-token 누락·불일치는 401 `-2001`, 비활성 환경은 경로 부재로 404다 — **새 error code는 추가하지 않았다.**
+비활성 환경은 경로 부재로 404다 — **새 error code는 추가하지 않았다.**
 노출은 `app.ai.timeline-test.enabled` 하나가 소유하며 기본이 off라 미설정·prod에서는 OpenAPI 문서에도
-라우팅에도 존재하지 않는다. 인증은 회원 access JWT가 아닌 설정 주입 opaque Bearer token 하나와의 상수
-시간 대조이고 draft의 회전 task token 계약과 무관하다. 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
+라우팅에도 존재하지 않는다. **호출자 인증은 이 endpoint가 소유하지 않는다** — `/t/api` Bearer token
+검증은 security 계층 몫이며 현재 미구현이라 켠 환경에서는 무인증 접근이 가능하다(known gap).
+draft의 회전 task token 계약과는 무관하다. 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지

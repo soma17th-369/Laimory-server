@@ -12,8 +12,6 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
@@ -21,7 +19,6 @@ import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -33,10 +30,11 @@ import org.mockito.ArgumentCaptor;
 /**
  * AI 동기 테스트 오케스트레이터 단위 테스트 — 인프라 0.
  *
- * <p>고정하는 것: ① 인증은 고정 token 대조뿐이고 실패 시 AI를 부르지 않는다, ② AI가 5xx로 낼 입력 오류를
- * 앞에서 400으로 거른다, ③ {@code taskId}는 서버가 매번 새로 발행해 AI 요청과 응답에 <b>같은 값</b>으로
- * 실린다, ④ AI로 나가는 텍스트는 운영과 같은 v1 치환을 거치되 {@code photoUrl}·{@code filename}은
- * 원문이다, ⑤ 실패해도 재시도하지 않는다.
+ * <p>고정하는 것: ① AI가 5xx로 낼 입력 오류를 앞에서 400으로 거른다, ② {@code taskId}는 서버가 매번 새로
+ * 발행해 AI 요청과 응답에 <b>같은 값</b>으로 실린다, ③ AI로 나가는 텍스트는 운영과 같은 v1 치환을 거치되
+ * {@code photoUrl}·{@code filename}은 원문이다, ④ 실패해도 재시도하지 않는다.
+ *
+ * <p>호출자 인증은 이 서비스의 책임이 아니라 security 계층이 소유하므로 여기서 다루지 않는다.
  *
  * <p>협력자가 client·설정·redactor뿐이라는 사실 자체가 "이 경로는 MySQL·Redis를 건드리지 않는다"는
  * 계약이다(배선 수준 증명은 {@code TimelineAiTestWiringTest}).
@@ -44,30 +42,13 @@ import org.mockito.ArgumentCaptor;
 class TimelineAiTestServiceTest {
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
-    private static final String TOKEN = "test-only-opaque-token-0123456789abcdef";
     private static final String RAW_ID = "6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34";
     private static final String OTHER_RAW_ID = "6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a35";
     private static final String PHONE = "010-1234-5678";
 
     private final TimelineAiTestClient client = mock(TimelineAiTestClient.class);
-    private final TimelineAiTestService service = new TimelineAiTestService(
-            client,
-            new TimelineAiTestProperties("https://ai.example/v1/timeline/test",
-                    TimelineAiTestTokens.digest(TOKEN), null,
-                    Duration.ofSeconds(3), Duration.ofSeconds(150), 1024 * 1024, 1024 * 1024),
-            new PrivacyRedactor());
-
-    // --- 인증 ---
-
-    @Test
-    void rejectsMissingMalformedAndMismatchedTokenWithoutCallingAi() {
-        for (String authorization : new String[] {null, "", "Basic abc", "Bearer ", "Bearer wrong-token"}) {
-            assertThatThrownBy(() -> service.generate("v1", authorization, request()))
-                    .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getExceptionType())
-                            .isEqualTo(ExceptionType.API_AUTHENTICATION_REQUIRED));
-        }
-        verifyNoInteractions(client);
-    }
+    private final TimelineAiTestService service =
+            new TimelineAiTestService(client, new PrivacyRedactor());
 
     // --- 입력 검증(AI 5xx 전에 400으로 거른다) ---
 
@@ -102,8 +83,8 @@ class TimelineAiTestServiceTest {
     void issuesTaskIdOnceAndEchoesTheSameValueSentToAi() {
         when(client.generate(any())).thenReturn(aiResult(false));
 
-        TimelineAiTestOutcome first = service.generate("v1", bearer(), request());
-        TimelineAiTestOutcome second = service.generate("v1", bearer(), request());
+        TimelineAiTestOutcome first = service.generate("v1", request());
+        TimelineAiTestOutcome second = service.generate("v1", request());
 
         ArgumentCaptor<TimelineAiTestAiRequest> captor =
                 ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
@@ -120,7 +101,7 @@ class TimelineAiTestServiceTest {
     void passesTimedOutSignalThrough() {
         when(client.generate(any())).thenReturn(aiResult(true));
 
-        assertThat(service.generate("v1", bearer(), request()).timedOut()).isTrue();
+        assertThat(service.generate("v1", request()).timedOut()).isTrue();
     }
 
     // --- privacy 치환 ---
@@ -136,7 +117,7 @@ class TimelineAiTestServiceTest {
         ObjectNode userMemory = JsonNodeFactory.instance.objectNode();
         userMemory.put("summary", "비상 연락처는 " + PHONE);
 
-        service.generate("v1", bearer(), new TimelineAiTestRequest(
+        service.generate("v1", new TimelineAiTestRequest(
                 LocalDate.of(2026, 6, 20), "Asia/Seoul", window(), userMemory,
                 List.of(sourceItem(RAW_ID, photoPayload))));
 
@@ -162,7 +143,7 @@ class TimelineAiTestServiceTest {
     void keepsRequestUntouchedWhenPayloadIsAbsent() {
         when(client.generate(any())).thenReturn(aiResult(false));
 
-        service.generate("v1", bearer(), new TimelineAiTestRequest(
+        service.generate("v1", new TimelineAiTestRequest(
                 LocalDate.of(2026, 6, 20), null, window(), null,
                 List.of(sourceItem(RAW_ID, null))));
 
@@ -182,7 +163,7 @@ class TimelineAiTestServiceTest {
                 new TimelineAiTestCallException("AI가 오류를 반환했습니다.", 500, 1202);
         when(client.generate(any())).thenThrow(failure);
 
-        assertThatThrownBy(() -> service.generate("v1", bearer(), request()))
+        assertThatThrownBy(() -> service.generate("v1", request()))
                 .isSameAs(failure);
         verify(client, times(1)).generate(any());
     }
@@ -190,12 +171,8 @@ class TimelineAiTestServiceTest {
     // --- fixtures ---
 
     private void assertBadRequest(TimelineAiTestRequest request) {
-        assertThatThrownBy(() -> service.generate("v1", bearer(), request))
+        assertThatThrownBy(() -> service.generate("v1", request))
                 .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    private static String bearer() {
-        return "Bearer " + TOKEN;
     }
 
     private static TimelineAiTestRequest request() {

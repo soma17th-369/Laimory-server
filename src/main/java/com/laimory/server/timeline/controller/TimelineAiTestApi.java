@@ -8,12 +8,10 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
@@ -26,15 +24,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * staging·{@code ProcessStage}·결과 저장 transaction·callback·polling 어느 것도 거치지 않는다. 성공
  * 응답은 DB에 저장된 Daily Timeline이 아니라 <b>AI가 방금 만든 추론 결과</b>이며 어디에도 저장되지 않는다.
  *
- * <p>인증은 회원 access JWT가 아니라 <b>테스트 전용 opaque Bearer token</b>이다. 배포 환경 설정으로
- * 주입하며 시간 기반 만료가 없고, 운영자가 값을 교체하고 container를 재생성할 때만 폐기된다.
+ * <p>호출자 인증은 이 endpoint의 책임이 아니다 — {@code /t/api} 경로의 Bearer token 검증은 security
+ * 계층이 소유한다(회원 access JWT가 아닌 별도 계약).
  *
  * <p>AI 추론이 끝날 때까지 <b>동기로 대기</b>하므로 응답에 수십 초~수 분이 걸리고 실제 LLM 토큰 비용이
  * 발생한다. 실패해도 자동 재시도하지 않는다(중복 추론 방지).
  */
 @Tag(name = "Timeline AI Test (dev 전용)",
         description = "AI Timeline Input을 AI 동기 endpoint로 전달하고 추론 결과를 그대로 반환한다 — "
-                + "DB 미저장·동기 대기·전용 Bearer token. dev에서만 활성화된다")
+                + "DB 미저장·동기 대기. dev에서만 활성화된다")
 @RequestMapping(ApiUrls.TEST_API_URL + "/timeline")
 public interface TimelineAiTestApi {
 
@@ -57,8 +55,6 @@ public interface TimelineAiTestApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — `window` 누락·역전, `sourceItems` 0건, `rawId` 형식 오류·중복, "
                             + "요청 body 상한 초과"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                    description = "`-2001` — 테스트 전용 Bearer token 누락·형식 불량·불일치"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 이 환경에서 endpoint가 비활성(경로 자체가 존재하지 않음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
@@ -69,8 +65,6 @@ public interface TimelineAiTestApi {
     ResponseEntity<TimelineAiTestResponse> generate(
             @Parameter(description = "API 버전", example = "v1")
             @PathVariable String applicationVersion,
-            @Parameter(description = "테스트 전용 opaque token(`Bearer <token>`). 회원 access JWT가 아니다")
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @RequestBody TimelineAiTestRequest request,
             @Parameter(hidden = true) HttpServletResponse response);
 }

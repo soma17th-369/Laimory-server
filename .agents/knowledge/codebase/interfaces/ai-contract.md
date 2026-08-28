@@ -335,7 +335,6 @@ Task-Token: <접수 body로 준 token>
 
 ```http
 POST /t/api/{version}/timeline/ai-results     (호출자 → App Server)
-Authorization: Bearer <테스트 전용 opaque token>
 
 POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}/v1/timeline/test)
 ```
@@ -373,6 +372,8 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
   꺼져 있으면 controller 빈이 없어 경로 자체가 부재), AI는 `APP_ENV`가 local/dev이고
   `TIMELINE_TEST_ENABLED`가 이긴다. **`app.ai.mode`와 무관하다** — 비동기 경로가 `noop`이어도 이
   endpoint는 동작한다.
+- **호출자 인증은 이 계약에 없다.** `/t/api` Bearer token 검증은 security 계층 몫이고 현재 미구현이라,
+  켠 환경에서는 무인증으로 호출된다(아래 Known Gaps). §2의 회전 task token과는 별개 축이다.
 
 ## Failure Semantics
 
@@ -433,6 +434,8 @@ timeout이 소유한다.
   만료). commit 이후 구간은 재시도 창 안에서 재시도 안전하다. 어느 쪽도 자동 reconciliation·redispatch는
   없다.
 - 프로세스 즉사로 선점 receipt가 남으면 그 task의 재요청이 409로 막힌 채 TTL까지 간다(takeover 규칙 없음).
+- dev 동기 테스트(§7) 경로의 호출자 인증 미구현 — 켠 환경에서 무인증 호출이 가능하다. 노출 통제는
+  기본 off 스위치 하나뿐이라 **prod에서 켜면 안 된다**.
 
 ## Update When
 

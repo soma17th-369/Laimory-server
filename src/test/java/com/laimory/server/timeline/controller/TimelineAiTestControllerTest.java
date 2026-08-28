@@ -3,7 +3,6 @@ package com.laimory.server.timeline.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,8 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.TimelineEventType;
@@ -31,7 +28,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -44,7 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * code는 502와 함께 {@code X-Ai-Error-Code} 헤더로 나가되 자유 text는 나가지 않는다, 그리고 오류는
  * 기존 envelope·code로 매핑된다(새 error code 없음).
  *
- * <p>token 검증·입력 검증 자체는 service 단위 테스트가 소유한다 — 여기서는 전달과 매핑만 본다.
+ * <p>입력 검증은 service 단위 테스트가, 호출자 인증은 security 계층이 소유한다 — 여기서는 전달과 매핑만 본다.
  */
 @WebMvcTest(value = TimelineAiTestController.class,
         properties = "app.ai.timeline-test.enabled=true")
@@ -72,11 +68,10 @@ class TimelineAiTestControllerTest {
 
     @Test
     void returnsTypedJsonWithoutEnvelopeAndWithoutTimedOutHeader() throws Exception {
-        when(timelineAiTestService.generate(eq("v1"), eq("Bearer test-token"), any()))
+        when(timelineAiTestService.generate(eq("v1"), any()))
                 .thenReturn(outcome(false));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isOk())
                 // app envelope을 쓰지 않는다 — header/body 래핑이 없어야 한다.
@@ -91,16 +86,14 @@ class TimelineAiTestControllerTest {
 
     @Test
     void passesRequestBodyThroughUnchanged() throws Exception {
-        when(timelineAiTestService.generate(any(), any(), any())).thenReturn(outcome(false));
+        when(timelineAiTestService.generate(any(), any())).thenReturn(outcome(false));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isOk());
 
         ArgumentCaptor<TimelineAiTestRequest> captor = ArgumentCaptor.forClass(TimelineAiTestRequest.class);
-        org.mockito.Mockito.verify(timelineAiTestService).generate(eq("v1"), eq("Bearer test-token"),
-                captor.capture());
+        org.mockito.Mockito.verify(timelineAiTestService).generate(eq("v1"), captor.capture());
         TimelineAiTestRequest request = captor.getValue();
         assertThat(request.recordDate().toString()).isEqualTo("2026-06-20");
         assertThat(request.recordTimeZone()).isEqualTo("Asia/Seoul");
@@ -112,10 +105,9 @@ class TimelineAiTestControllerTest {
 
     @Test
     void addsTimedOutHeaderWhenAiReturnedItsLastConfirmedResult() throws Exception {
-        when(timelineAiTestService.generate(any(), any(), any())).thenReturn(outcome(true));
+        when(timelineAiTestService.generate(any(), any())).thenReturn(outcome(true));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 // 실패가 아니다 — 200 + 헤더다.
                 .andExpect(status().isOk())
@@ -124,23 +116,11 @@ class TimelineAiTestControllerTest {
     }
 
     @Test
-    void mapsMissingTokenToUnauthorizedEnvelope() throws Exception {
-        when(timelineAiTestService.generate(eq("v1"), isNull(), any()))
-                .thenThrow(new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED));
-
-        mockMvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.header.code").value(-2001))
-                .andExpect(jsonPath("$.body").doesNotExist());
-    }
-
-    @Test
     void mapsInputViolationToValidationEnvelope() throws Exception {
-        when(timelineAiTestService.generate(any(), any(), any()))
+        when(timelineAiTestService.generate(any(), any()))
                 .thenThrow(new IllegalArgumentException("window.startAt과 window.endAt은 필수입니다."));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
@@ -148,11 +128,10 @@ class TimelineAiTestControllerTest {
 
     @Test
     void exposesAiErrorCodeAsHeaderWithoutLeakingFreeText() throws Exception {
-        when(timelineAiTestService.generate(any(), any(), any()))
+        when(timelineAiTestService.generate(any(), any()))
                 .thenThrow(new TimelineAiTestCallException("AI가 오류를 반환했습니다.", 500, 1301));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isBadGateway())
                 // 새 error code를 만들지 않는다 — 기존 AI_DISPATCH_FAILED로 수렴한다.
@@ -167,11 +146,10 @@ class TimelineAiTestControllerTest {
     @Test
     void omitsAiErrorCodeHeaderWhenAiNeverAnswered() throws Exception {
         // timeout·connect 실패는 AI 응답 자체가 없다 — 헤더 유무가 그 구분 신호다.
-        when(timelineAiTestService.generate(any(), any(), any()))
+        when(timelineAiTestService.generate(any(), any()))
                 .thenThrow(new TimelineAiTestCallException("AI 동기 테스트 호출 실패", null, null));
 
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value(-1009))
@@ -181,7 +159,6 @@ class TimelineAiTestControllerTest {
     @Test
     void rejectsBrokenJsonBeforeReachingService() throws Exception {
         mockMvc.perform(post(PATH)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer test-token")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"recordDate\":"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));

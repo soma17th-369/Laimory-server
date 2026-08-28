@@ -224,7 +224,7 @@ class TimelineAiTestClientTest {
         server.enqueue(json(200, RESULT_BODY).setBodyDelay(2, TimeUnit.SECONDS));
 
         TimelineAiTestProperties impatient = new TimelineAiTestProperties(
-                server.url("/v1/timeline/test").toString(), "digest", null,
+                server.url("/v1/timeline/test").toString(), null,
                 Duration.ofSeconds(2), Duration.ofMillis(300), 1024 * 1024, 1024 * 1024);
 
         assertThatThrownBy(() -> client(impatient).generate(request()))
@@ -243,18 +243,18 @@ class TimelineAiTestClientTest {
     }
 
     private TimelineAiTestProperties properties() {
-        return new TimelineAiTestProperties(server.url("/v1/timeline/test").toString(), "digest", null,
+        return new TimelineAiTestProperties(server.url("/v1/timeline/test").toString(), null,
                 Duration.ofSeconds(2), Duration.ofSeconds(5), 1024 * 1024, 1024 * 1024);
     }
 
     private TimelineAiTestProperties propertiesWithAiToken(String aiAuthToken) {
         TimelineAiTestProperties base = properties();
-        return new TimelineAiTestProperties(base.url(), base.callerTokenDigest(), aiAuthToken,
+        return new TimelineAiTestProperties(base.url(), aiAuthToken,
                 base.connectTimeout(), base.readTimeout(), base.maxRequestBytes(), base.maxResponseBytes());
     }
 
     private static TimelineAiTestProperties withCaps(TimelineAiTestProperties base, int request, int response) {
-        return new TimelineAiTestProperties(base.url(), base.callerTokenDigest(), base.aiAuthToken(),
+        return new TimelineAiTestProperties(base.url(), base.aiAuthToken(),
                 base.connectTimeout(), base.readTimeout(), request, response);
     }
 

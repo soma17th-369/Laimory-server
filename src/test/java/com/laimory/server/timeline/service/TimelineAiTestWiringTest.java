@@ -29,7 +29,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 class TimelineAiTestWiringTest {
 
     private static final String VALID_URL = "https://ai.internal.example/v1/timeline/test";
-    private static final String VALID_TOKEN = "test-only-opaque-token-0123456789abcdef";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
@@ -68,15 +67,12 @@ class TimelineAiTestWiringTest {
     }
 
     @Test
-    void keepsOnlyTokenDigestNotTheRawValue() {
-        enabled().run(context -> {
+    void doesNotLeakAiCredentialThroughToString() {
+        enabled().withPropertyValues("app.ai.timeline-test.ai-auth-token=ai-secret-token").run(context -> {
             TimelineAiTestProperties properties = context.getBean(TimelineAiTestProperties.class);
-            assertThat(properties.callerTokenDigest())
-                    .isEqualTo(TimelineAiTestTokens.digest(VALID_TOKEN))
-                    .isNotEqualTo(VALID_TOKEN);
+            assertThat(properties.aiAuthToken()).isEqualTo("ai-secret-token");
             // toString이 비밀을 흘리면 로그·예외로 새어 나간다.
-            assertThat(properties.toString()).doesNotContain(VALID_TOKEN);
-            assertThat(properties.aiAuthToken()).isNull();
+            assertThat(properties.toString()).doesNotContain("ai-secret-token");
         });
     }
 
@@ -85,8 +81,6 @@ class TimelineAiTestWiringTest {
         assertStartupFails("app.ai.timeline-test.url=");
         assertStartupFails("app.ai.timeline-test.url=/relative/path");
         assertStartupFails("app.ai.timeline-test.url=ftp://ai.internal.example/v1");
-        assertStartupFails("app.ai.timeline-test.token=");
-        assertStartupFails("app.ai.timeline-test.token=too-short");
         assertStartupFails("app.ai.timeline-test.connect-timeout=0s");
         assertStartupFails("app.ai.timeline-test.max-response-bytes=0B");
     }
@@ -111,7 +105,6 @@ class TimelineAiTestWiringTest {
     private ApplicationContextRunner enabled() {
         return runner.withPropertyValues(
                 "app.ai.timeline-test.enabled=true",
-                "app.ai.timeline-test.url=" + VALID_URL,
-                "app.ai.timeline-test.token=" + VALID_TOKEN);
+                "app.ai.timeline-test.url=" + VALID_URL);
     }
 }
