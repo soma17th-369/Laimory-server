@@ -80,8 +80,12 @@ class TimelineAiTestServiceTest {
     // --- taskId 발행 ---
 
     @Test
-    void issuesTaskIdOnceAndEchoesTheSameValueSentToAi() {
-        when(client.generate(any())).thenReturn(aiResult(false));
+    void issuesFreshTaskIdOnEveryCallAndSendsItToAi() {
+        // client는 받은 taskId를 그대로 되싣는다(그 계약은 client 테스트가 소유한다).
+        when(client.generate(any())).thenAnswer(invocation -> {
+            TimelineAiTestAiRequest sent = invocation.getArgument(0);
+            return new TimelineAiTestOutcome(sent.taskId(), aiResult(false).events(), false);
+        });
 
         TimelineAiTestOutcome first = service.generate("v1", request());
         TimelineAiTestOutcome second = service.generate("v1", request());
@@ -90,11 +94,11 @@ class TimelineAiTestServiceTest {
                 ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
         verify(client, times(2)).generate(captor.capture());
 
-        assertThat(first.response().taskId()).isEqualTo(captor.getAllValues().get(0).taskId());
-        assertThat(second.response().taskId()).isEqualTo(captor.getAllValues().get(1).taskId());
-        assertThat(first.response().taskId()).isNotEqualTo(second.response().taskId());
-        // 호출자가 지정할 수 없는 서버 발행 UUID다.
-        assertThat(UUID.fromString(first.response().taskId())).isNotNull();
+        assertThat(first.taskId()).isEqualTo(captor.getAllValues().get(0).taskId());
+        assertThat(second.taskId()).isEqualTo(captor.getAllValues().get(1).taskId());
+        // 호출자가 지정할 수 없는, 호출마다 새로 발행되는 서버 UUID다.
+        assertThat(first.taskId()).isNotEqualTo(second.taskId());
+        assertThat(UUID.fromString(first.taskId())).isNotNull();
     }
 
     @Test
@@ -200,8 +204,8 @@ class TimelineAiTestServiceTest {
         return OffsetDateTime.of(2026, 6, 20, hour, minute, 0, 0, KST);
     }
 
-    private static TimelineAiTestAiResult aiResult(boolean timedOut) {
-        return new TimelineAiTestAiResult(List.of(new AiTimelineResultRequest.Event(
+    private static TimelineAiTestOutcome aiResult(boolean timedOut) {
+        return new TimelineAiTestOutcome("stub-task-id", List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, "점심", null, null, null, null,
                 offset(12, 0), offset(13, 0), List.of(RAW_ID))), timedOut);
     }

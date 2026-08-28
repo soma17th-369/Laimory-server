@@ -15,9 +15,8 @@ import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
-import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import com.laimory.server.timeline.service.TimelineAiTestCallException;
-import com.laimory.server.timeline.service.TimelineAiTestHeaders;
+import com.laimory.server.timeline.service.TimelineAiTestClient;
 import com.laimory.server.timeline.service.TimelineAiTestOutcome;
 import com.laimory.server.timeline.service.TimelineAiTestService;
 import java.time.OffsetDateTime;
@@ -80,8 +79,8 @@ class TimelineAiTestControllerTest {
                 .andExpect(jsonPath("$.events[0].eventType").value("MEAL"))
                 .andExpect(jsonPath("$.events[0].startAt").value("2026-06-20T12:00:00+09:00"))
                 .andExpect(jsonPath("$.events[0].sourceRawIds[0]").value(RAW_ID))
-                .andExpect(header().doesNotExist(TimelineAiTestHeaders.TIMED_OUT))
-                .andExpect(header().doesNotExist(TimelineAiTestHeaders.AI_ERROR_CODE));
+                .andExpect(header().doesNotExist(TimelineAiTestClient.TIMED_OUT_HEADER))
+                .andExpect(header().doesNotExist(TimelineAiTestController.AI_ERROR_CODE_HEADER));
     }
 
     @Test
@@ -111,7 +110,7 @@ class TimelineAiTestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 // 실패가 아니다 — 200 + 헤더다.
                 .andExpect(status().isOk())
-                .andExpect(header().string(TimelineAiTestHeaders.TIMED_OUT, "true"))
+                .andExpect(header().string(TimelineAiTestClient.TIMED_OUT_HEADER, "true"))
                 .andExpect(jsonPath("$.taskId").value(TASK_ID));
     }
 
@@ -138,7 +137,7 @@ class TimelineAiTestControllerTest {
                 .andExpect(jsonPath("$.header.code").value(-1009))
                 .andExpect(jsonPath("$.body").doesNotExist())
                 // envelope은 body=null이라 AI 코드를 담을 자리가 없다 — 헤더로 내보낸다.
-                .andExpect(header().string(TimelineAiTestHeaders.AI_ERROR_CODE, "1301"))
+                .andExpect(header().string(TimelineAiTestController.AI_ERROR_CODE_HEADER, "1301"))
                 .andExpect(result -> assertThat(result.getResponse().getContentAsString())
                         .doesNotContain(AI_ERROR_TEXT));
     }
@@ -153,7 +152,7 @@ class TimelineAiTestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value(-1009))
-                .andExpect(header().doesNotExist(TimelineAiTestHeaders.AI_ERROR_CODE));
+                .andExpect(header().doesNotExist(TimelineAiTestController.AI_ERROR_CODE_HEADER));
     }
 
     @Test
@@ -167,12 +166,11 @@ class TimelineAiTestControllerTest {
     }
 
     private static TimelineAiTestOutcome outcome(boolean timedOut) {
-        return new TimelineAiTestOutcome(
-                new TimelineAiTestResponse(TASK_ID, List.of(new AiTimelineResultRequest.Event(
+        return new TimelineAiTestOutcome(TASK_ID, List.of(new AiTimelineResultRequest.Event(
                         TimelineEventType.MEAL, "점심", null, null, null, null,
                         OffsetDateTime.of(2026, 6, 20, 12, 0, 0, 0, KST),
                         OffsetDateTime.of(2026, 6, 20, 13, 0, 0, 0, KST),
-                        List.of(RAW_ID)))),
+                        List.of(RAW_ID))),
                 timedOut);
     }
 }

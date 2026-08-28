@@ -7,7 +7,6 @@ import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
-import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -62,12 +61,11 @@ public class TimelineAiTestService {
         TimelineAiTestAiRequest aiRequest = toAiRequest(taskId, request);
         long startedAt = System.nanoTime();
         try {
-            TimelineAiTestAiResult result = timelineAiTestClient.generate(aiRequest);
+            TimelineAiTestOutcome outcome = timelineAiTestClient.generate(aiRequest);
             log.info("timeline ai test completed: taskId={} sourceItems={} events={} timedOut={} elapsedMs={}",
-                    taskId, aiRequest.sourceItems().size(), result.events().size(), result.timedOut(),
+                    taskId, aiRequest.sourceItems().size(), outcome.events().size(), outcome.timedOut(),
                     elapsedMs(startedAt));
-            return new TimelineAiTestOutcome(
-                    new TimelineAiTestResponse(taskId, result.events()), result.timedOut());
+            return outcome;
         } catch (TimelineAiTestCallException e) {
             // 자유 text error는 담지도 로그하지도 않는다 — numeric code와 status만 남긴다.
             log.warn("timeline ai test failed: taskId={} aiStatus={} aiErrorCode={} reason={} elapsedMs={}",

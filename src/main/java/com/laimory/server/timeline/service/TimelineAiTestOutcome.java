@@ -1,10 +1,17 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.timeline.dto.TimelineAiTestResponse;
+import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import java.util.List;
 
 /**
- * service → controller 전달값. 응답 body와, 헤더로만 나가는 {@code X-Timeline-Timed-Out} 여부를 함께 담는다
- * (헤더는 body 계약을 건드리지 않으려는 선택이라 DTO 안에 넣지 않는다).
+ * AI 동기 테스트 결과 — client가 만들어 controller까지 그대로 올라간다.
+ *
+ * <p>{@code timedOut}은 응답 body가 아니라 {@code X-Timeline-Timed-Out} 헤더로만 나가므로 wire DTO
+ * ({@code TimelineAiTestResponse})에 넣지 않고 여기 둔다. {@code taskId}는 요청에 실어 보낸 값 그대로라
+ * 호출자 응답과 AI 로그가 같은 상관키를 갖는다.
  */
-public record TimelineAiTestOutcome(TimelineAiTestResponse response, boolean timedOut) {
+public record TimelineAiTestOutcome(
+        String taskId,
+        List<AiTimelineResultRequest.Event> events,
+        boolean timedOut) {
 }
