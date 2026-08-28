@@ -38,7 +38,7 @@ export function floatEnv(name, fallback) {
  * 시나리오 공통 설정을 만든다. `scenario`·`scenarioCode`·`dateOffsetDays`는 스크립트가 소유하는 상수다.
  *
  * `dateOffsetDays`는 시나리오마다 다른 recordDate 대역을 준다 — `daily_records`가
- * `(user_id, record_date)` UNIQUE라 같은 날짜를 재사용하면 두 번째 run이 기존 DRAFT row를 UPDATE하게 되어
+ * `(subject_id, record_date)` UNIQUE라 같은 날짜를 재사용하면 두 번째 run이 기존 DRAFT row를 UPDATE하게 되어
  * 단계 사이 작업 성격이 달라진다. STEP_INDEX가 사다리 단계마다 하루씩 더 민다.
  *
  * `scenarioCode`는 rawId에 들어가 정리·검증 쿼리가 한 RUN_ID 안에서 시나리오와 단계를 구분하게 한다.
@@ -56,9 +56,25 @@ export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
   }
 
   // 실제 사용자 기록과 겹치지 않는 합성 날짜 대역이다. 실 데이터 날짜를 쓰지 않는다.
-  const recordDateBase = __ENV.RECORD_DATE_BASE || '2031-01-01';
+  // 반드시 과거여야 한다 — 서버가 draft 생성에서 recordTimeZone 기준 오늘보다 미래인 recordDate를
+  // 거절하기 때문이다(RecordDates.requireNotFutureRecordDate). 기본값은 가장 큰 오프셋(mixed-day +300일)에
+  // 사다리 단계를 더해도 과거로 남을 만큼 뒤로 잡았다.
+  const recordDateBase = __ENV.RECORD_DATE_BASE || '2025-01-01';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(recordDateBase)) {
     throw new Error(`RECORD_DATE_BASE는 YYYY-MM-DD여야 합니다: ${recordDateBase}`);
+  }
+
+  // 미래 날짜는 서버가 요청마다 400으로 거절하므로 한 발도 쏘기 전에 init에서 끊는다.
+  // 서버 판정은 요청 recordTimeZone(=Asia/Seoul) 기준 오늘이고 KST는 UTC보다 앞서므로,
+  // "UTC 오늘 이하"를 요구하면 KST 기준으로도 미래가 아님이 보장된다(보수적 판정).
+  const recordDate = addDays(recordDateBase, dateOffsetDays + stepIndex);
+  const utcToday = new Date().toISOString().slice(0, 10);
+  if (recordDate > utcToday) {
+    throw new Error(
+      `recordDate가 미래입니다: ${recordDate} (오늘 ${utcToday} 초과). 서버가 400으로 거절합니다. `
+      + `RECORD_DATE_BASE(${recordDateBase})를 과거로 옮기세요 `
+      + `— 이 시나리오는 base + ${dateOffsetDays}일(시나리오) + ${stepIndex}일(단계)을 씁니다.`
+    );
   }
 
   const startDelayMs = intEnv('START_DELAY_MS', 5000);
@@ -88,7 +104,7 @@ export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
     baseUrl,
     vus,
     stepIndex,
-    recordDate: addDays(recordDateBase, dateOffsetDays + stepIndex),
+    recordDate,
     startDelayMs,
     requestBudgetMs,
     artifactDir: (__ENV.ARTIFACT_DIR || 'load-tests/timeline-draft/.artifacts').replace(/\/+$/, ''),

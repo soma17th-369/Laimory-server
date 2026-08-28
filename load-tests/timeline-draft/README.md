@@ -31,6 +31,7 @@ load-tests/timeline-draft/
 │   └── lib/{config,payload,tokens,spike}.js
 ├── scripts/
 │   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
+│   ├── generate-subject-rows.py    # user_id 목록 → subject 행 SQL(mapping·설정)과 정리용 subject 집합
 │   ├── run-ladder.sh               # 단계 사다리 + 중단 gate
 │   ├── dev-recreate.sh             # .env 수정분 반영(컨테이너 재생성, dev host에서 실행)
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
@@ -50,6 +51,7 @@ load-tests/timeline-draft/
 - k6 (검증 시점 `v2.1.0`), Python 3, `mysql` client, `redis-cli`, `git`
 - dev MySQL과 shared Redis 접근 경로(WAS SSH 터널 또는 SSM)
 - dev `JWT_SECRET` 값(토큰 발급용, 파일이나 환경변수로만 다룬다)
+- dev subject HMAC secret(Secrets Manager JSON 원문 — subject 행 생성용, 환경변수로만 다룬다)
 - geo 시나리오에만: #257 simulator가 기동돼 있고 contract/preflight를 통과한 상태
 
 ## 시나리오
@@ -187,7 +189,9 @@ DB 규모 기준선(03-db-size-baseline.sql 출력)
 mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/01-seed-users.sql
 ```
 
-재실행해도 안전하다(이미 있는 행은 건너뛴다). 마지막 SELECT의 `min_created_at`이 `seoul_now`와 같은
+재실행해도 안전하다(이미 있는 행은 건너뛴다). **이것만으로는 요청이 성공하지 않는다** — `users` 행만으로는
+subject mapping이 없어 draft 생성이 500이다(서버는 mapping을 자동 생성하지 않고 fail-closed한다).
+3단계까지 마쳐야 사용자 준비가 끝난다. 마지막 SELECT의 `min_created_at`이 `seoul_now`와 같은
 대역인지 확인한다 — dev MySQL 호스트는 UTC이고 앱은 Asia/Seoul 벽시계로 저장하므로 시각을 그대로
 `NOW()`로 심으면 앱 기준 9시간 과거가 된다.
 
@@ -199,7 +203,32 @@ mysql --defaults-extra-file=<config> -N -B <db> \
   > load-tests/timeline-draft/.artifacts/user-ids.txt
 ```
 
-### 3. access token 발급
+### 3. subject 행 생성·적용
+
+가입 transaction이 만드는 세 행(`user_subject_links`·`subject_preferences`·
+`daily_notification_preferences`)을 합성 사용자에게도 만든다. lookup key는 애플리케이션과 같은
+HMAC-SHA-256 파생이라 SQL로는 만들 수 없다.
+
+```bash
+SUBJECT_HMAC_SECRET="$(cat ~/laimory-dev-subject-secret.json)" \
+  python3 load-tests/timeline-draft/scripts/generate-subject-rows.py \
+    --user-ids load-tests/timeline-draft/.artifacts/user-ids.txt
+
+mysql --defaults-extra-file=<config> <db> \
+  < load-tests/timeline-draft/.artifacts/subject-seed.sql
+```
+
+secret은 환경변수로만 전달한다(인자로 넘기면 프로세스 목록에 남는다). 출력 SQL에는 secret도 key
+바이트도 들어가지 않는다. subject UUID는 secret에서 결정적으로 파생하므로 같은 사용자 목록이면
+몇 번을 다시 돌려도 같은 값이 나온다 — 정리 단계가 이 성질에 의존한다.
+
+`subject-seed.sql`의 마지막 SELECT 세 줄이 모두 사용자 수와 같아야 한다. 함께 나온
+`subject-set.sql`은 9단계 정리·검증이 쓰는 subject 집합이니 지우지 않는다.
+
+일일 리마인더만 가입 기본값(ON)과 달리 **OFF**로 심는다 — 합성 사용자 1,000명이 매일 21:00 발송
+worker의 스캔 대상이 되지 않게 한다.
+
+### 4. access token 발급
 
 ```bash
 JWT_SECRET="$(cat ~/laimory-dev-jwt-secret)" \
@@ -214,7 +243,7 @@ JWT_SECRET="$(cat ~/laimory-dev-jwt-secret)" \
 
 secret은 환경변수로만 전달한다(인자로 넘기면 프로세스 목록에 남는다).
 
-### 4. VU 1 calibration
+### 5. VU 1 calibration
 
 **배포·컨테이너 재기동 직후라면 워밍업부터 한다.** 새 JVM은 JIT가 덜 컴파일된 상태라 앱 연산 구간이
 2~4배 부풀며(실측: 68행 요청의 비-geo 구간 438ms → 웜 99ms), 요청 40~80건이 지나야 풀린다. 배포
@@ -239,7 +268,7 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
 제공된 dev median 기준값은 `/status` 34ms, 1좌표 POST 163ms, 18좌표 POST 287ms다. geo 값이 이 범위를
 크게 벗어나면 #251에서 임의 지연을 만들지 않고 #257의 latency profile을 보정한다.
 
-### 5. calendar-core 사다리
+### 6. calendar-core 사다리
 
 ```bash
 RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
@@ -252,7 +281,7 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
 
 단계 사이에는 PROCESSING TTL 3분이 지나도록 기본 190초 쉰다(`COOLDOWN_SECONDS`로 조정).
 
-### 6. geo 사다리
+### 7. geo 사다리
 
 **전환(사용자 직접 수행)** — dev host에서 `.env`의 다음 두 값을 고치고 반영한다.
 
@@ -292,7 +321,7 @@ sudo ./dev-recreate.sh --show   # AI/geo 값이 원래대로인지 눈으로 확
 이후 integration smoke를 확인한 다음 simulator를 중지한다. WAS 원복 확인 전에 simulator를 먼저
 내리지 않는다.
 
-### 7. 지표 대조
+### 8. 지표 대조
 
 k6 결과(`.artifacts/*-summary.json`)와 같은 시간대의 서버 지표를 나란히 본다.
 
@@ -310,23 +339,27 @@ geo run은 추가로:
 - `reactor.netty.connection.provider.*`(pool 이름 `kakao-local`) — active/pending
 - simulator 측: WireMock endpoint count, unmatched, container CPU/memory/restart/OOM
 
-### 8. 검증과 정리
+### 9. 검증과 정리
 
 ```bash
 # run 결과 검증 — 단계별로 확인한다.
 # @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|m|gd) + 단계 번호다(예: geo-day 2단계 → gd1).
-sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/g13/" \
+sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/gd1/" \
   load-tests/timeline-draft/sql/04-verify-run.sql \
   | mysql --defaults-extra-file=<config> <db>
 
+# 05~07은 subject 집합(임시 테이블)이 필요하다 — 3단계가 만든 subject-set.sql을 같은 세션에서 먼저
+# 흘려 넣는다. 임시 테이블은 세션 범위라 파일을 따로 실행하면 "Table doesn't exist"가 난다.
+cd load-tests/timeline-draft
+
 # 삭제 예정 행 수 → manifest에 기록
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/05-cleanup-dry-run.sql
+cat .artifacts/subject-set.sql sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=<config> <db>
 
 # 실제 삭제
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/06-cleanup.sql
+cat .artifacts/subject-set.sql sql/06-cleanup.sql | mysql --defaults-extra-file=<config> <db>
 
 # 잔여 0 확인(모든 residue_rows가 0)
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/07-verify-residue.sql
+cat .artifacts/subject-set.sql sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
 
 # Redis 잔여 확인
 REDIS_HOST=<host> REDIS_PREFIX=dev_ \
@@ -338,14 +371,21 @@ noop 격리 전제가 깨진 것이므로 삭제를 진행하지 말고 원인�
 
 정리 범위에 대해 알아둘 것:
 
-- 삭제 기준은 **합성 사용자 집합 하나뿐**이다(`provider='KAKAO' AND provider_user_id LIKE 'k6-251-%'`).
+- 삭제 기준은 **합성 사용자 집합과 그 subject 집합**이다(`provider='KAKAO' AND provider_user_id LIKE
+  'k6-251-%'`, 그리고 3단계가 만든 `subject-set.sql`의 subject 목록). 콘텐츠 테이블은 raw user_id를
+  저장하지 않으므로 사용자 접두사만으로는 콘텐츠에 닿을 수 없다 — 그래서 subject 집합을 밖에서 넣는다.
   날짜·rawId·user_id 범위는 기준이 아니므로, 실제 사용자가 같은 날짜에 기록을 갖고 있거나 `k6-`로 시작하는
   rawId를 손으로 넣어 뒀어도 지워지지 않는다. 합성 event와 실제 event에 함께 연결된 item도 남는다
   (모든 연결이 합성일 때만 삭제 대상이다).
-- run 단위 선택 삭제는 없다. 한 번 실행하면 `k6-251-` 사용자 전체와 그들의 데이터가 함께 사라진다.
-  여러 회차를 비교 중이라면 마지막에 한 번만 돌린다.
-- `refresh_tokens`·`push_registrations`는 dry-run이 세기만 하고 cleanup이 지우지 않는다. 합성 사용자는
-  로그인·푸시 등록을 하지 않으므로 0이어야 하며, 0이 아니면 전제가 깨진 것이라 사람이 직접 확인한다.
+- run 단위 선택 삭제는 없다. 한 번 실행하면 `k6-251-` 사용자 전체와 그들의 데이터(콘텐츠 + subject 축
+  설정 3종 + user memory)가 함께 사라진다. 여러 회차를 비교 중이라면 마지막에 한 번만 돌린다.
+- 삭제 순서는 FK가 정한다 — 콘텐츠(item→source→record) → user_memories →
+  daily_notification_preferences → subject_preferences → user_subject_links → users. subject FK가 전부
+  RESTRICT라 순서를 어기면 삭제가 거절된다(조용히 지나가지 않는다).
+- `refresh_tokens`·`push_registrations`·`term_agreements`·`account_erasure_jobs`는 dry-run이 세기만 하고
+  cleanup이 지우지 않는다. 합성 사용자는 로그인·푸시 등록·약관 동의·탈퇴를 하지 않으므로 0이어야 하며,
+  0이 아니면 전제가 깨진 것이라 사람이 직접 확인한다(뒤 둘은 users FK가 RESTRICT라 남아 있으면
+  cleanup의 users 삭제가 실패한다).
 
 Redis는 수동 삭제가 필요 없다. task 키와 사용자 index 키는 TTL 3분으로 사라지고, 전역 PROCESSING index는
 stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
@@ -354,7 +394,9 @@ stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
 
 ```bash
 rm -f load-tests/timeline-draft/.artifacts/tokens.json \
-      load-tests/timeline-draft/.artifacts/user-ids.txt
+      load-tests/timeline-draft/.artifacts/user-ids.txt \
+      load-tests/timeline-draft/.artifacts/subject-seed.sql \
+      load-tests/timeline-draft/.artifacts/subject-set.sql
 load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 ```
 
@@ -368,7 +410,7 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 | `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
 | `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
 | `STEP_INDEX` | | `0` | 사다리 단계 번호. recordDate를 하루씩 민다 |
-| `RECORD_DATE_BASE` | | `2031-01-01` | 합성 날짜 대역의 시작 |
+| `RECORD_DATE_BASE` | | `2025-01-01` | 합성 날짜 대역의 시작. **과거여야 한다** — 서버가 미래 recordDate를 400으로 거절하므로(#366) init에서 먼저 끊는다 |
 | `TOKENS_FILE` | | `.artifacts/tokens.json` | token 파일 경로 |
 | `ARTIFACT_DIR` | | `load-tests/timeline-draft/.artifacts` | 결과 출력 경로 |
 | `START_DELAY_MS` | | `5000` | barrier까지의 대기(모든 VU가 도달할 시간) |
