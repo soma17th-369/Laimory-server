@@ -1,0 +1,181 @@
+package com.laimory.server.timeline.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.timeline.dto.AiTimelineResultRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import java.io.IOException;
+import java.net.URI;
+import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * AI 동기 테스트 endpoint({@code POST {ai-base}/v1/timeline/test}) 호출자. dev 전용이라
+ * {@code app.ai.timeline-test.enabled=true}에서만 빈으로 등록된다.
+ *
+ * <p>운영 dispatcher와 성격이 다르다 — 접수(202) 확인이 아니라 <b>추론이 끝날 때까지 동기로 기다린다</b>.
+ * 그래서 read timeout이 AI {@code PIPELINE_TIMEOUT_SEC}보다 길고(설정에서 강제), 한 번 호출하면
+ * <b>재시도하지 않는다</b>(같은 추론을 두 번 돌리면 토큰 비용이 두 배다).
+ *
+ * <p>요청·응답 모두 크기 상한을 갖는다. 요청은 직렬화 결과가 상한을 넘으면 전송 전에 400으로 끝내고,
+ * 응답은 상한까지만 읽고 초과를 계약 위반으로 처리한다.
+ *
+ * <p>⚠️ AI 오류 body의 자유 text {@code error}는 읽지 않는다 — 사용자 원문이 섞일 수 있어 numeric
+ * {@code errorCode}만 꺼낸다. AI 인증 token도 어떤 로그·예외에도 남기지 않는다.
+ */
+@Component
+@ConditionalOnProperty(name = "app.ai.timeline-test.enabled", havingValue = "true")
+public class TimelineAiTestClient {
+
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+    private final TimelineAiTestProperties properties;
+    private final URI endpoint;
+
+    // 요청마다 timeout이 다르지 않아 request factory를 생성자에서 한 번 구성한다(HttpTimelineAiDispatcher 선례).
+    // ObjectMapper는 Boot가 구성한 것을 주입받아야 한다 — 직접 만든 mapper는 JavaTimeModule이 없어
+    // OffsetDateTime 포맷이 AI 계약과 달라진다.
+    TimelineAiTestClient(RestClient.Builder restClientBuilder, ObjectMapper objectMapper,
+                         TimelineAiTestProperties properties) {
+        this.objectMapper = objectMapper;
+        this.properties = properties;
+        this.endpoint = URI.create(properties.url());
+        this.restClient = restClientBuilder
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(
+                        ClientHttpRequestFactorySettings.defaults()
+                                .withConnectTimeout(properties.connectTimeout())
+                                .withReadTimeout(properties.readTimeout())))
+                .build();
+    }
+
+    /**
+     * AI에 추론을 요청하고 결과를 그대로 돌려준다.
+     *
+     * @throws IllegalArgumentException 직렬화 결과가 요청 상한을 넘음(호출자 입력 문제 → 400)
+     * @throws TimelineAiTestCallException AI 4xx/5xx·timeout·전송 실패·비 JSON·계약 불일치·응답 상한 초과
+     */
+    TimelineAiTestAiResult generate(TimelineAiTestAiRequest request) {
+        byte[] payload = serialize(request);
+        try {
+            return restClient.post()
+                    .uri(endpoint)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .headers(this::applyAiAuth)
+                    .body(payload)
+                    .exchange((clientRequest, clientResponse) -> readResult(clientResponse));
+        } catch (RestClientException e) {
+            // read timeout·connect 실패·전송 오류 — AI 응답 자체가 없어 status·errorCode를 알 수 없다.
+            throw new TimelineAiTestCallException(
+                    "AI 동기 테스트 호출 실패: " + e.getClass().getSimpleName(), null, null);
+        }
+    }
+
+    private void applyAiAuth(HttpHeaders headers) {
+        String aiAuthToken = properties.aiAuthToken();
+        if (aiAuthToken != null) {
+            headers.setBearerAuth(aiAuthToken);
+        }
+    }
+
+    /**
+     * 전송 body를 만들고 상한을 넘는지 본다. 상한 초과는 호출자가 보낸 입력이 그만큼 컸다는 뜻이라
+     * 400으로 끝낸다 — AI를 부르지 않으므로 토큰 비용도 발생하지 않는다.
+     */
+    private byte[] serialize(TimelineAiTestAiRequest request) {
+        byte[] payload;
+        try {
+            payload = objectMapper.writeValueAsBytes(request);
+        } catch (IOException e) {
+            // Jackson 예외 메시지는 payload 원문을 포함할 수 있어 cause로도 연결하지 않는다.
+            throw new IllegalArgumentException("AI 동기 테스트 요청을 직렬화하지 못했습니다.");
+        }
+        if (payload.length > properties.maxRequestBytes()) {
+            throw new IllegalArgumentException(
+                    "AI 동기 테스트 요청이 상한(" + properties.maxRequestBytes() + " byte)을 초과했습니다.");
+        }
+        return payload;
+    }
+
+    /** 응답을 상한까지만 읽고 status·계약을 검증한다. 초과분은 읽지 않고 계약 위반으로 끝낸다. */
+    private TimelineAiTestAiResult readResult(ClientHttpResponse response) throws IOException {
+        HttpStatusCode status = response.getStatusCode();
+        int cap = properties.maxResponseBytes();
+        byte[] body = response.getBody().readNBytes(cap + 1);
+        boolean truncated = body.length > cap;
+
+        if (!status.is2xxSuccessful()) {
+            throw new TimelineAiTestCallException("AI가 오류를 반환했습니다.",
+                    status.value(), truncated ? null : aiErrorCode(body));
+        }
+        if (truncated) {
+            throw new TimelineAiTestCallException(
+                    "AI 응답이 상한(" + cap + " byte)을 초과했습니다.", status.value(), null);
+        }
+        AiTimelineResultRequest result = parse(body, status);
+        requireResultContract(result, status);
+        boolean timedOut = "true".equalsIgnoreCase(
+                response.getHeaders().getFirst(TimelineAiTestHeaders.TIMED_OUT));
+        return new TimelineAiTestAiResult(result.events(), timedOut);
+    }
+
+    private AiTimelineResultRequest parse(byte[] body, HttpStatusCode status) {
+        try {
+            AiTimelineResultRequest result = objectMapper.readValue(body, AiTimelineResultRequest.class);
+            if (result == null) {
+                throw new TimelineAiTestCallException("AI 응답 body가 비어 있습니다.", status.value(), null);
+            }
+            return result;
+        } catch (IOException e) {
+            // 파싱 실패 메시지에는 body 조각이 실릴 수 있어 문구를 고정한다.
+            throw new TimelineAiTestCallException("AI 응답이 JSON 계약과 맞지 않습니다.", status.value(), null);
+        }
+    }
+
+    /**
+     * 운영 결과 저장이 요구하는 최소 계약만 확인한다 — 여기서 저장하지는 않지만, 계약을 어긴 결과를
+     * 200으로 돌려주면 이 endpoint의 존재 이유(contract 검증)가 사라진다. 위반 문구에 Event 텍스트를
+     * 넣지 않고 index만 남긴다.
+     */
+    private static void requireResultContract(AiTimelineResultRequest result, HttpStatusCode status) {
+        List<AiTimelineResultRequest.Event> events = result.events();
+        if (events == null || events.isEmpty()) {
+            throw new TimelineAiTestCallException("AI 응답에 event가 없습니다.", status.value(), null);
+        }
+        for (int index = 0; index < events.size(); index++) {
+            AiTimelineResultRequest.Event event = events.get(index);
+            boolean valid = event != null
+                    && event.eventType() != null
+                    && event.title() != null && !event.title().isBlank()
+                    && event.startAt() != null
+                    && event.sourceRawIds() != null && !event.sourceRawIds().isEmpty();
+            if (!valid) {
+                throw new TimelineAiTestCallException(
+                        "AI 응답 event 계약 위반: index=" + index, status.value(), null);
+            }
+        }
+    }
+
+    /** 오류 body에서 numeric {@code errorCode}만 꺼낸다. 자유 text {@code error}는 읽지 않는다. */
+    private Integer aiErrorCode(byte[] body) {
+        if (body.length == 0) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode code = root == null ? null : root.get("errorCode");
+            return code != null && code.isIntegralNumber() && code.canConvertToInt() ? code.intValue() : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+}

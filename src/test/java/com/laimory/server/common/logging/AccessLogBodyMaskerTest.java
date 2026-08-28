@@ -115,7 +115,51 @@ class AccessLogBodyMaskerTest {
                 Arguments.of("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),
-                Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"));
+                Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"),
+                Arguments.of("POST", "/t/api/v1/timeline/ai-results"));
+    }
+
+    @Test
+    void aiTestPathMasksInputAndResultOnBothDirections() throws Exception {
+        // #394 dev 테스트 경로는 staging을 거치지 않아 request에 사용자 원문이 그대로 실린다 —
+        // 구조 필드(window·taskId·recordDate 등)만 남고 payload·userMemory·Event 텍스트는 마스크여야 한다.
+        String rawInput = "RAW_AI_TEST_394_NEVER_LOG";
+        String requestBody = "{\"recordDate\":\"2026-06-20\",\"recordTimeZone\":\"Asia/Seoul\","
+                + "\"window\":{\"startAt\":\"2026-06-20T00:00:00+09:00\",\"endAt\":\"2026-06-21T00:00:00+09:00\"},"
+                + "\"userMemory\":{\"summary\":\"" + rawInput + "\"},"
+                + "\"sourceItems\":[{\"rawId\":\"6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34\",\"itemType\":\"STAY\","
+                + "\"startAt\":\"2026-06-20T12:00:00+09:00\",\"endAt\":null,"
+                + "\"payload\":{\"places\":[\"" + rawInput + "\"]}}]}";
+
+        JsonNode maskedRequest = objectMapper.readTree(
+                maskRequest("POST", "/t/api/v1/timeline/ai-results", requestBody));
+
+        assertThat(maskedRequest.get("recordDate").asText()).isEqualTo("2026-06-20");
+        assertThat(maskedRequest.at("/window/startAt").asText()).isEqualTo("2026-06-20T00:00:00+09:00");
+        assertThat(maskedRequest.at("/sourceItems/0/rawId").asText())
+                .isEqualTo("6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34");
+        assertThat(maskedRequest.at("/sourceItems/0/itemType").asText()).isEqualTo("STAY");
+        assertThat(maskedRequest.get("userMemory").asText()).isEqualTo("***");
+        assertThat(maskedRequest.at("/sourceItems/0/payload").asText()).isEqualTo("***");
+        assertThat(maskedRequest.toString()).doesNotContain(rawInput);
+
+        String rawEventText = "RAW_AI_EVENT_394_NEVER_LOG";
+        String responseBody = "{\"taskId\":\"0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7\",\"events\":[{"
+                + "\"eventType\":\"MEAL\",\"title\":\"" + rawEventText + "\",\"subtitle\":null,"
+                + "\"question\":\"" + rawEventText + "\",\"place\":\"" + rawEventText + "\","
+                + "\"sourceRawIds\":[\"6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34\"]}]}";
+
+        JsonNode maskedResponse = objectMapper.readTree(masker.maskResponse(
+                new MockHttpServletRequest("POST", "/t/api/v1/timeline/ai-results"),
+                jsonResponse(), bytes(responseBody), false));
+
+        // 상관키 taskId는 로그에 남아야 AI 로그·Langfuse와 이어진다.
+        assertThat(maskedResponse.get("taskId").asText()).isEqualTo("0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7");
+        assertThat(maskedResponse.at("/events/0/eventType").asText()).isEqualTo("MEAL");
+        assertThat(maskedResponse.at("/events/0/title").asText()).isEqualTo("***");
+        assertThat(maskedResponse.at("/events/0/question").asText()).isEqualTo("***");
+        assertThat(maskedResponse.at("/events/0/place").asText()).isEqualTo("***");
+        assertThat(maskedResponse.toString()).doesNotContain(rawEventText);
     }
 
     @ParameterizedTest
