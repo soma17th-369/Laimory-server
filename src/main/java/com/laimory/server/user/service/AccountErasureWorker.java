@@ -1,6 +1,5 @@
 package com.laimory.server.user.service;
 
-import com.laimory.server.common.ScheduledWorkerRunBudget;
 import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.entity.AccountErasureJob;
@@ -103,13 +102,16 @@ public class AccountErasureWorker {
 
     private void runPass(String passName, TaskExecutor executor, AtomicBoolean runActive,
                          Claimer claimer, JobHandler handler) {
-        ScheduledWorkerRunBudget budget =
-                new ScheduledWorkerRunBudget(properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
+        // run 크기는 job 수로만 제한한다. 시간 상한은 두지 않는다 — 이 worker는 하루 1회(정지는 15분)라
+        // run이 길어져도 밀리는 것이 없고, 시간으로 끊으면 claim해 둔 job이 아무 일도 못 한 채 그날을
+        // 날린다(처리 창이 3일뿐이다). 삭제는 단조적이라 각 job은 반드시 끝난다.
+        AtomicInteger remainingJobs = new AtomicInteger(properties.getMaxJobsPerRun());
         AtomicInteger remainingSlots = new AtomicInteger(properties.getConcurrency());
         RunSummary summary = new RunSummary(passName);
         for (int slot = 0; slot < properties.getConcurrency(); slot++) {
             try {
-                executor.execute(() -> runSlot(budget, remainingSlots, summary, runActive, claimer, handler));
+                executor.execute(() ->
+                        runSlot(remainingJobs, remainingSlots, summary, runActive, claimer, handler));
             } catch (RuntimeException exception) {
                 summary.recordWorkerError();
                 log.warn("계정 삭제 {} worker task 제출 실패: exceptionType={}",
@@ -119,10 +121,10 @@ public class AccountErasureWorker {
         }
     }
 
-    private void runSlot(ScheduledWorkerRunBudget budget, AtomicInteger remainingSlots, RunSummary summary,
+    private void runSlot(AtomicInteger remainingJobs, AtomicInteger remainingSlots, RunSummary summary,
                          AtomicBoolean runActive, Claimer claimer, JobHandler handler) {
         try {
-            while (budget.tryAcquireBatch()) {
+            while (remainingJobs.getAndDecrement() > 0) {
                 List<AccountErasureJob> jobs;
                 try {
                     jobs = claimer.claim();
@@ -135,11 +137,7 @@ public class AccountErasureWorker {
                 if (jobs.isEmpty()) {
                     return;
                 }
-                // claim한 job은 반드시 시작한다. claim이 updated_at을 오늘로 찍으므로 여기서 건너뛰면
-                // 그 job은 아무 일도 못 한 채 그날을 날린다(처리 창이 3일뿐이다). deadline은 claim
-                // 직전의 tryAcquireBatch()가 보고, 시작한 job 안에서는 drain·S3 루프가 본다 —
-                // 예산이 이미 0이면 그 루프들이 즉시 물러나므로 초과 실행은 DB 쿼리 두어 번 수준이다.
-                jobs.forEach(job -> handler.handle(job, summary, budget));
+                jobs.forEach(job -> handler.handle(job, summary));
             }
         } finally {
             slotFinished(remainingSlots, summary, runActive);
@@ -175,7 +173,7 @@ public class AccountErasureWorker {
     }
 
     /** 정지 — 큐만 비우고 전이한다. 데이터는 지우지 않으므로 실패해도 되돌릴 것이 없다. */
-    private void quiesceOne(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget) {
+    private void quiesceOne(AccountErasureJob job, RunSummary summary) {
         UUID subjectId;
         try {
             subjectId = erasureService.resolveTarget(job.getUserId());
@@ -184,12 +182,7 @@ public class AccountErasureWorker {
             return;
         }
         try {
-            if (!erasureService.quiesce(subjectId, budget::hasTimeRemaining)) {
-                // 큐를 다 비우지 못했으면 전이하지 않는다 — QUIESCED는 "새 AI 작업이 더 발급되지
-                // 않는다"는 뜻이라, 절반만 비운 상태로 넘기면 그 보장이 거짓이 된다.
-                summary.recordDeferred();
-                return;
-            }
+            erasureService.quiesce(subjectId);
             if (jobService.transition(job.getAccountErasureJobId(),
                     AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED)) {
                 summary.recordProcessed();
@@ -204,7 +197,7 @@ public class AccountErasureWorker {
     }
 
     /** 삭제 — owner 행을 지우고 finalization으로 마무리한다. 실패는 job을 남겨 다음 날 재시도한다. */
-    private void deleteOne(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget) {
+    private void deleteOne(AccountErasureJob job, RunSummary summary) {
         UUID subjectId;
         try {
             subjectId = erasureService.resolveTarget(job.getUserId());
@@ -213,18 +206,9 @@ public class AccountErasureWorker {
             return;
         }
         try {
-            // 실행 예산이 끝나면 남은 일을 다음 실행에 넘긴다 — 데이터가 큰 계정 하나가 slot을
-            // 실행 시간 상한 너머로 점유하지 않게 한다. 지운 것은 이미 commit돼 있고 모든 단계가
-            // 멱등이라 다음 실행은 남은 것만 처리한다.
-            if (!erasureService.deleteContentGraph(subjectId, budget::hasTimeRemaining)) {
-                summary.recordDeferred();
-                return;
-            }
+            erasureService.deleteContentGraph(subjectId);
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
-            if (!erasureService.deletePhotoObjects(subjectId, budget::hasTimeRemaining)) {
-                summary.recordDeferred();
-                return;
-            }
+            erasureService.deletePhotoObjects(subjectId);
             erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
             summary.recordProcessed();
         } catch (TimelineContentErasureService.CrossSubjectItemException exception) {
@@ -284,7 +268,7 @@ public class AccountErasureWorker {
 
     @FunctionalInterface
     private interface JobHandler {
-        void handle(AccountErasureJob job, RunSummary summary, ScheduledWorkerRunBudget budget);
+        void handle(AccountErasureJob job, RunSummary summary);
     }
 
     private static final class RunSummary {

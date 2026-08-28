@@ -31,8 +31,7 @@ import org.springframework.stereotype.Component;
 public class AccountErasureWorkerProperties {
 
     private static final int MAX_CONCURRENCY = 2;
-    private static final int MAX_BATCHES_PER_RUN = 1_000;
-    private static final Duration MAX_RUN_DURATION = Duration.ofMinutes(10);
+    private static final int MAX_JOBS_PER_RUN = 1_000;
     private static final int MAX_GRACE_PERIOD_DAYS = 365;
     private static final int MAX_WINDOW_DAYS = 30;
 
@@ -45,8 +44,7 @@ public class AccountErasureWorkerProperties {
     private final int gracePeriodDays;
     private final int windowDays;
     private final int concurrency;
-    private final int maxBatchesPerRun;
-    private final Duration maxRunDuration;
+    private final int maxJobsPerRun;
 
     public AccountErasureWorkerProperties(
             @Value("${app.account-erasure.worker-enabled:true}") boolean workerEnabled,
@@ -55,8 +53,7 @@ public class AccountErasureWorkerProperties {
             @Value("${app.account-erasure.grace-period-days:7}") int gracePeriodDays,
             @Value("${app.account-erasure.window-days:3}") int windowDays,
             @Value("${app.account-erasure.concurrency:1}") int concurrency,
-            @Value("${app.account-erasure.max-batches-per-run:100}") int maxBatchesPerRun,
-            @Value("${app.account-erasure.max-run-duration:120s}") Duration maxRunDuration,
+            @Value("${app.account-erasure.max-jobs-per-run:100}") int maxJobsPerRun,
             @Value("${photo.upload.presign-ttl}") Duration presignTtl) {
         Duration quiesceFloor = maxOf(
                 TimelineTaskService.PROCESSING_TTL, UserMemoryUpdateWorker.TASK_TTL, presignTtl)
@@ -83,14 +80,9 @@ public class AccountErasureWorkerProperties {
             throw new IllegalStateException(
                     "app.account-erasure.concurrency must be between 1 and " + MAX_CONCURRENCY);
         }
-        if (maxBatchesPerRun < 1 || maxBatchesPerRun > MAX_BATCHES_PER_RUN) {
-            throw new IllegalStateException("app.account-erasure.max-batches-per-run must be between 1 and "
-                    + MAX_BATCHES_PER_RUN);
-        }
-        if (maxRunDuration.isZero() || maxRunDuration.isNegative()
-                || maxRunDuration.compareTo(MAX_RUN_DURATION) > 0) {
-            throw new IllegalStateException("app.account-erasure.max-run-duration must be positive and at most "
-                    + MAX_RUN_DURATION);
+        if (maxJobsPerRun < 1 || maxJobsPerRun > MAX_JOBS_PER_RUN) {
+            throw new IllegalStateException(
+                    "app.account-erasure.max-jobs-per-run must be between 1 and " + MAX_JOBS_PER_RUN);
         }
         this.workerEnabled = workerEnabled;
         this.quiesceDelay = quiesceDelay;
@@ -98,8 +90,7 @@ public class AccountErasureWorkerProperties {
         this.gracePeriodDays = gracePeriodDays;
         this.windowDays = windowDays;
         this.concurrency = concurrency;
-        this.maxBatchesPerRun = maxBatchesPerRun;
-        this.maxRunDuration = maxRunDuration;
+        this.maxJobsPerRun = maxJobsPerRun;
     }
 
     private static Duration maxOf(Duration first, Duration second, Duration third) {
@@ -131,11 +122,7 @@ public class AccountErasureWorkerProperties {
         return concurrency;
     }
 
-    public int getMaxBatchesPerRun() {
-        return maxBatchesPerRun;
-    }
-
-    public Duration getMaxRunDuration() {
-        return maxRunDuration;
+    public int getMaxJobsPerRun() {
+        return maxJobsPerRun;
     }
 }

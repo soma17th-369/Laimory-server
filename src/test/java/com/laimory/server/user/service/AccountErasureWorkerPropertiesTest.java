@@ -34,7 +34,7 @@ class AccountErasureWorkerPropertiesTest {
     private static AccountErasureWorkerProperties properties(
             Duration quiesceDelay, Duration staleAfter, Duration presignTtl) {
         return new AccountErasureWorkerProperties(
-                true, quiesceDelay, staleAfter, 7, 3, 1, 10, Duration.ofSeconds(120), presignTtl);
+                true, quiesceDelay, staleAfter, 7, 3, 1, 100, presignTtl);
     }
 
     @Test
@@ -88,14 +88,12 @@ class AccountErasureWorkerPropertiesTest {
     @Test
     void 유예와_처리_창은_최소_하루씩이어야_한다() {
         assertThatThrownBy(() -> new AccountErasureWorkerProperties(
-                true, DEFAULT_QUIESCE_DELAY, DEFAULT_STALE_AFTER, 0, 3, 1, 10,
-                Duration.ofSeconds(120), PRESIGN_TTL))
+                true, DEFAULT_QUIESCE_DELAY, DEFAULT_STALE_AFTER, 0, 3, 1, 100, PRESIGN_TTL))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("grace-period-days");
 
         assertThatThrownBy(() -> new AccountErasureWorkerProperties(
-                true, DEFAULT_QUIESCE_DELAY, DEFAULT_STALE_AFTER, 7, 0, 1, 10,
-                Duration.ofSeconds(120), PRESIGN_TTL))
+                true, DEFAULT_QUIESCE_DELAY, DEFAULT_STALE_AFTER, 7, 0, 1, 100, PRESIGN_TTL))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("window-days");
     }

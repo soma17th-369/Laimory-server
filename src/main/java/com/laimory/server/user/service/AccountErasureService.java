@@ -13,7 +13,6 @@ import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
-import java.util.function.BooleanSupplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -93,18 +92,17 @@ public class AccountErasureService {
      * <p>Redis 전용이라 DB transaction 밖에서 실행한다. 중간에 실패하면 단계 전이를 하지 않으므로
      * 다음 실행이 같은 일을 다시 한다(멱등).
      */
-    public boolean quiesce(UUID subjectId, BooleanSupplier hasBudget) {
+    public void quiesce(UUID subjectId) {
         long afterId = 0L;
-        while (hasBudget.getAsBoolean()) {
+        while (true) {
             List<Long> recordIds =
                     dailyRecordService.findIdsBySubjectIdAfterId(subjectId, afterId, RECORD_ID_PAGE_SIZE);
             if (recordIds.isEmpty()) {
-                return true;
+                return;
             }
             userMemoryUpdatePendingStore.removeAll(subjectId, recordIds);
             afterId = recordIds.get(recordIds.size() - 1);
         }
-        return false;
     }
 
     /**
@@ -121,28 +119,20 @@ public class AccountErasureService {
      *
      * <p>각 batch가 독립 transaction이라 중간 crash는 남은 것만 다음 실행이 이어서 지운다(멱등).
      */
-    public boolean deleteContentGraph(UUID subjectId, BooleanSupplier hasBudget) {
-        return drain(hasBudget, b -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, b))
-                && drain(hasBudget, b -> timelineContentErasureService.deleteRecordBatch(subjectId, b))
-                && drain(hasBudget, b -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, b));
+    public void deleteContentGraph(UUID subjectId) {
+        drain(b -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, b));
+        drain(b -> timelineContentErasureService.deleteRecordBatch(subjectId, b));
+        drain(b -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, b));
     }
 
     /**
-     * 한 batch가 0을 반환하거나 실행 예산이 끝날 때까지 반복한다. 삭제는 단조적이라 같은 조회가 남은
-     * 것만 돌려준다.
-     *
-     * <p><b>예산을 매 batch마다 확인한다.</b> worker의 budget은 작업을 가져오기 직전에만 확인되므로,
-     * 여기서 다시 보지 않으면 데이터가 큰 계정 하나가 executor slot을 실행 시간 상한 너머로 점유한다.
-     *
-     * @return {@code false} = 예산이 끝나 아직 남았다(job을 그대로 두고 다음 실행이 이어간다)
+     * 한 batch가 0을 반환할 때까지 반복한다. 삭제는 단조적이라 같은 조회가 남은 것만 돌려주므로
+     * 반드시 끝난다 — 지운 만큼 대상이 줄어든다.
      */
-    private boolean drain(BooleanSupplier hasBudget, java.util.function.IntUnaryOperator batch) {
-        while (hasBudget.getAsBoolean()) {
-            if (batch.applyAsInt(CONTENT_BATCH_SIZE) == 0) {
-                return true;
-            }
+    private void drain(java.util.function.IntUnaryOperator batch) {
+        while (batch.applyAsInt(CONTENT_BATCH_SIZE) > 0) {
+            // 남은 것이 없을 때까지.
         }
-        return false;
     }
 
     /**
@@ -183,13 +173,13 @@ public class AccountErasureService {
      *
      * @throws IllegalStateException 삭제가 확인되지 않은 key가 남아 있을 때
      */
-    public boolean deletePhotoObjects(UUID subjectId, BooleanSupplier hasBudget) {
+    public void deletePhotoObjects(UUID subjectId) {
         String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
-        while (hasBudget.getAsBoolean()) {
+        while (true) {
             List<S3PhotoStorageService.ObjectVersion> versions =
                     s3PhotoStorageService.listObjectVersions(prefix, S3_PAGE_SIZE);
             if (versions.isEmpty()) {
-                return true;
+                return;
             }
             S3PhotoStorageService.BatchDeleteResult result = s3PhotoStorageService.deleteVersions(versions);
             int unconfirmed = versions.size() - result.deletedObjectKeys().size();
@@ -199,7 +189,6 @@ public class AccountErasureService {
                         "S3 photo objects not confirmed deleted: count=" + unconfirmed);
             }
         }
-        return false;
     }
 
     /**

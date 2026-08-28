@@ -24,9 +24,9 @@ class AccountErasureWorkerPropertyDefaultsTest {
     private AccountErasureWorkerProperties properties;
 
     @Test
-    void run당_처리량은_batch_수가_정한다() {
+    void run당_처리량은_job_수가_정한다() {
         // claim 크기는 설정이 아니라 상수 1이므로 이 값이 곧 run당 최대 job 수다.
-        assertThat(properties.getMaxBatchesPerRun()).isEqualTo(100);
+        assertThat(properties.getMaxJobsPerRun()).isEqualTo(100);
     }
 
     @Test

@@ -226,7 +226,7 @@ class AccountErasureIntegrationTest {
         UUID resolved = accountErasureService.resolveTarget(userId);
         assertThat(resolved).isEqualTo(subjectId);
 
-        accountErasureService.quiesce(resolved, () -> true);
+        accountErasureService.quiesce(resolved);
         assertThat(accountErasureJobService.transition(
                 jobId, AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED)).isTrue();
 
@@ -355,11 +355,11 @@ class AccountErasureIntegrationTest {
                 + "VALUES (?, ?)", eventId, itemId);
 
         UUID resolved = accountErasureService.resolveTarget(userId);
-        accountErasureService.quiesce(resolved, () -> true);
+        accountErasureService.quiesce(resolved);
         accountErasureJobService.transition(jobId,
                 AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
 
-        accountErasureService.deleteContentGraph(resolved, () -> true);
+        accountErasureService.deleteContentGraph(resolved);
         accountErasureService.deleteOwnerRows(userId, resolved);
         accountErasureService.finalizeErasure(jobId, userId, resolved);
 

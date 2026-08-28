@@ -105,7 +105,7 @@ class AccountErasureServiceTest {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), eq(9L), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID, () -> true);
+        accountErasureService.quiesce(SUBJECT_ID);
 
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(1L, 2L, 3L));
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(9L));
@@ -116,7 +116,7 @@ class AccountErasureServiceTest {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), anyLong(), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID, () -> true);
+        accountErasureService.quiesce(SUBJECT_ID);
 
         verify(userMemoryService, never()).delete(any());
         verify(subjectPreferenceService, never()).delete(any());
@@ -193,7 +193,7 @@ class AccountErasureServiceTest {
         when(s3PhotoStorageService.deleteVersions(page2)).thenReturn(
                 new S3PhotoStorageService.BatchDeleteResult(Set.of("c@null"), Map.of(), Set.of()));
 
-        assertThat(accountErasureService.deletePhotoObjects(SUBJECT_ID, () -> true)).isTrue();
+        accountErasureService.deletePhotoObjects(SUBJECT_ID);
 
         // 마지막 재조회가 비었을 때만 끝난다 — 3회 조회.
         verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectVersions(eq(prefix), anyInt());
@@ -209,7 +209,7 @@ class AccountErasureServiceTest {
                 .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
                         Set.of("a@null"), Map.of("b", "AccessDenied"), Set.of()));
 
-        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID, () -> true))
+        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -222,7 +222,7 @@ class AccountErasureServiceTest {
         when(timelineContentErasureService.deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt()))
                 .thenReturn(0);
 
-        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> true)).isTrue();
+        accountErasureService.deleteContentGraph(SUBJECT_ID);
 
         InOrder order = inOrder(timelineContentErasureService);
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
@@ -231,36 +231,6 @@ class AccountErasureServiceTest {
                 .deleteRecordBatch(eq(SUBJECT_ID), anyInt());
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
                 .deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt());
-    }
-
-    /** 예산은 batch를 돌리기 <b>전에</b> 본다 — 확인이 뒤에 있으면 예산이 0이어도 한 batch는 돈다. */
-    @Test
-    void 실행_예산이_없으면_batch를_시작조차_하지_않는다() {
-        assertThat(accountErasureService.deleteContentGraph(SUBJECT_ID, () -> false)).isFalse();
-
-        verify(timelineContentErasureService, never()).deletePhotoDeleteJobBatch(any(), anyInt());
-        verify(timelineContentErasureService, never()).deleteRecordBatch(any(), anyInt());
-        verify(timelineContentErasureService, never()).deleteDraftSourceBatch(any(), anyInt());
-    }
-
-    @Test
-    void 예산이_중간에_끝나면_남은_일을_다음_실행에_넘긴다() {
-        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
-        when(timelineContentErasureService.deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt()))
-                .thenReturn(1);
-
-        // 첫 batch 뒤 예산이 끊긴다.
-        assertThat(accountErasureService.deleteContentGraph(
-                SUBJECT_ID, () -> calls.getAndIncrement() == 0)).isFalse();
-
-        verify(timelineContentErasureService, never()).deleteRecordBatch(any(), anyInt());
-    }
-
-    @Test
-    void 정지도_예산이_없으면_아무것도_읽지_않는다() {
-        assertThat(accountErasureService.quiesce(SUBJECT_ID, () -> false)).isFalse();
-
-        verify(dailyRecordService, never()).findIdsBySubjectIdAfterId(any(), anyLong(), anyInt());
     }
 
     /** 마지막 단계라 특히 중요하다 — 여기서 조용히 넘어가면 job이 사라진 뒤 회원 행만 영구히 남는다. */
