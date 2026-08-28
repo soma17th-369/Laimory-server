@@ -924,10 +924,16 @@ sudo systemctl enable --now laimory-binlog-upload.timer
      --start-position=<pos> <첫 파일> <나머지…> | mysql
    ```
 
-   - `--force-if-open`은 `tail/` object를 입력에 넣을 때 **필수**다. 서버가 쓰고 있는 binlog에는
-     `IN_USE` 플래그가 서 있고 이 옵션 없이는 mysqlbinlog가 처리를 거부한다. 잘린 마지막 이벤트
-     허용도 이 옵션이 준다.
+   - `--force-if-open`은 **`IN_USE` 때문이 아니라 잘린 꼬리 때문에** 붙인다(2026-08-28 리허설로 정정).
+     매뉴얼의 "`IN_USE` 파일은 이 옵션 없이 거부된다"는 **서버가 직접 쓰는 파일**에 해당하고,
+     우리 `tail/` object는 `mysqlbinlog --raw`가 만든 클라이언트 사본이라 그 플래그가 없다 —
+     실제로 옵션 없이도 동일하게 디코드된다(실측: 옵션 유무 모두 exit 0, 출력 바이트 동일).
+     다만 tail은 쓰는 도중 복사라 마지막 이벤트가 잘릴 수 있고, 그때 실패하지 않게 해주는 것이
+     이 옵션의 나머지 절반이다. 그래서 계속 붙인다.
    - `pipefail`이 없으면 mysqlbinlog 실패가 `mysql`의 종료 코드에 가려 **조용히 부분 복원**된다.
+   - ⚠️ **공식 `mysql:8.0` 컨테이너 이미지에는 `mysqlbinlog`이 없다**(`mysql`·`mysqldump`·
+     `mysqladmin`만 있다). 격리 mysqld를 컨테이너로 띄우면 재생 도구는 따로 마련해야 한다 —
+     monitoring host의 `mysql-server-core-8.0`에 들어 있는 것을 쓰거나, 디코드와 적재를 나눈다.
    - `--start-position`은 **명령줄의 첫 파일에만** 적용된다. 파일 순서를 틀리면 조용히 잘못 복원된다.
    - 논리 사고를 되감는 경우 `--stop-datetime`/`--stop-position`으로 사고 직전에서 끊는다.
 
