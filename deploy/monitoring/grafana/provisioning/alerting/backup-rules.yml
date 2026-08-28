@@ -115,3 +115,168 @@ groups:
           service: laimory
           severity: critical
         isPaused: false
+
+      - uid: laimory_binlog_stream_down
+        title: MySQL binlog stream down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_binlog_stream_up{job="node",environment="dev",host="monitoring"}) > 0) or (absent(laimory_binlog_stream_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'prod MySQL binlog stream on the monitoring host is not running.'
+          description: 'The off-host PITR copy has stopped advancing. Inspect laimory-binlog-stream.service logs, the prod MySQL 3306 path, and the streaming account. A single restart is normal and does not reach this alert.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prod-mysql-binlog-off-host-stream
+        labels:
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_binlog_upload_stale
+        title: MySQL binlog upload stale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_binlog_upload_up{job="node",environment="dev",host="monitoring"}) > 0) or (time() - laimory_binlog_upload_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 1800) or (absent(laimory_binlog_upload_last_success_unixtime_seconds{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'prod MySQL binlog upload to S3 has not succeeded in over 30 minutes, or the latest run failed.'
+          description: 'The active binlog tail is no longer reaching S3, so the double-failure window is widening. Inspect laimory-binlog-upload.service logs, the monitoring role S3 permissions, and the spool directory.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prod-mysql-binlog-off-host-stream
+        labels:
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_binlog_chain_broken
+        title: MySQL binlog PITR chain broken
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '(laimory_binlog_stream_chain_broken{job="node",environment="dev",host="monitoring"} > 0)'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: 'prod MySQL binlog PITR chain is broken and will not recover on its own.'
+          description: 'The resume file is gone from the source or the source server_uuid changed. Automatic restart is deliberately suppressed. Recovery requires a fresh full dump and stream re-initialisation, not a service restart.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#prod-mysql-binlog-off-host-stream
+        labels:
+          service: laimory
+          severity: critical
+        isPaused: false
