@@ -11,6 +11,8 @@ const STATIC_RESOURCE_ROOT = resolve(REPOSITORY_ROOT, "src/main/resources/terms-
 const SITE_ORIGIN = "https://laimory.app";
 const VERSION = "1.0";
 const EFFECTIVE_AT_KST = "2026-08-31 00:00:00";
+// 운영 catalog는 클라이언트 연동을 위해 먼저 활성화하되, 공개 원문의 시행일은 위 값을 유지한다.
+const CATALOG_EFFECTIVE_AT_KST = "2026-08-28 00:00:00";
 const CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export const DOCUMENTS = Object.freeze([
@@ -42,7 +44,7 @@ export const DOCUMENTS = Object.freeze([
         source: "docs/terms/drafts/06-location-based-service-terms.md",
         slug: "location-based-service-terms",
         title: "라이모리 위치기반서비스 이용약관",
-        catalog: null,
+        catalog: { termType: "LOCATION_BASED_SERVICE_TERMS", stage: "TIMELINE_FIRST_CREATE", displayOrder: 6 },
     },
     {
         source: "docs/terms/drafts/08-privacy-policy.md",
@@ -304,13 +306,13 @@ function renderSeedSql(documents) {
         sqlLiteral(VERSION), ", ",
         sqlLiteral(document.title), ",\n     ",
         sqlLiteral(`${SITE_ORIGIN}/terms/${document.slug}/${VERSION}`), ", ",
-        sqlLiteral(EFFECTIVE_AT_KST), ",\n     ",
+        sqlLiteral(CATALOG_EFFECTIVE_AT_KST), ",\n     ",
         nowKst, ", ", nowKst, ")",
     ].join(""));
 
     return `-- Generated from docs/terms/drafts by docs/terms/scripts/build-site.mjs.
--- Run only after these four immutable HTTPS pages return 200 without authentication.
--- #6 location terms are activated by #401 later; #8 privacy policy is public and is not a consent catalog row.
+-- Run only after these five immutable HTTPS pages return 200 without authentication.
+-- #8 privacy policy is public and is not a consent catalog row.
 INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES

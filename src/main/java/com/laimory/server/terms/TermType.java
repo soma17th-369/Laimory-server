@@ -12,8 +12,8 @@ import java.util.stream.Stream;
  * 운영자가 문서별로 단계·필수 여부·순서를 임의 변경하는 모델이 아니다.
 
  *
- * <p>{@code required} 값은 계획(#303, #383)의 현재 동의 대상에만 존재한다 — 제품·법무가 문서의 법적
- * 성격(단순 고지 vs 명시적 동의)을 확정하면 이 mapping과 운영 seed를 함께 갱신한다.
+ * <p>{@code required=true}는 해당 stage 진입에 항상 필요한 문서다. {@code required=false}인 위치약관은
+ * 공개 stage 목록에는 포함하되 위치정보를 실제 처리하는 요청에서만 별도 조건부 gate가 강제한다.
  */
 public enum TermType {
 
@@ -24,7 +24,9 @@ public enum TermType {
     /** 제3자 정보 제공 동의. */
     THIRD_PARTY_PROVISION_CONSENT(TermStage.TIMELINE_FIRST_CREATE, true, 4),
     /** 국외 이전 고지·동의. */
-    CROSS_BORDER_TRANSFER_CONSENT(TermStage.TIMELINE_FIRST_CREATE, true, 5);
+    CROSS_BORDER_TRANSFER_CONSENT(TermStage.TIMELINE_FIRST_CREATE, true, 5),
+    /** 위치정보가 포함된 타임라인 생성에만 조건부로 요구하는 위치기반서비스 이용약관. */
+    LOCATION_BASED_SERVICE_TERMS(TermStage.TIMELINE_FIRST_CREATE, false, 6);
 
     private final TermStage stage;
     private final boolean required;

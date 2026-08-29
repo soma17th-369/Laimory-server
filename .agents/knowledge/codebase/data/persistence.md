@@ -316,7 +316,7 @@ ALTER TABLE term_documents
 2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
 3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
 
-약관 활성화(운영 seed)는 **페이지 게시 -> 현재 `TermType` 4종 URL 200 확인 -> INSERT** 순서를 지킨다.
+약관 활성화(운영 seed)는 **페이지 게시 -> 현재 `TermType` 5종 URL 200 확인 -> INSERT** 순서를 지킨다.
 개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 이 catalog에 넣지 않는다. 서버는 이 순서에
 의존한다: 종류별 current 행의 존재가 곧 그 stage gate의 활성화 조건인데, 서버는 `content_url`이 실제로
 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을 외부 호스트에 묶지 않는
@@ -335,7 +335,7 @@ INSERT INTO term_documents
 VALUES
     ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
      'https://laimory.app/terms/terms-of-service/1.0',
-     '2026-08-31 00:00:00',                                        -- 시행일(KST 벽시계)
+     '2026-08-28 00:00:00',                                        -- catalog 효력(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));
 ```
@@ -343,6 +343,8 @@ VALUES
 `effective_at`이 미래면 그 시각까지 이 행은 current가 아니다 — 사전 고지 기간 동안 문서를 미리 넣어두고
 배포 없이 자동 전환시키는 방식이다. 개정은 기존 행 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 행을
 가리키는 `term_agreements` 이력이 소급 변조된다).
+최초 `1.0` 공개 원문의 시행일은 2026-08-31이지만 클라이언트 연동을 위해 catalog 행만 2026-08-28
+00:00:00(KST)부터 current로 두는 운영 결정을 적용했다. 원문 HTML과 불변 URL은 수정하지 않는다.
 
 `users`(#305)는 회원 상태 컬럼을 가진다 — `status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'`
 (`ACTIVE`|`WITHDRAWAL_PENDING`)와 `withdrawal_requested_at DATETIME(6) NULL`. `provider_user_id`는

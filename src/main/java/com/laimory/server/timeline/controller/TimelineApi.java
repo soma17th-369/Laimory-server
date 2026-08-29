@@ -21,6 +21,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -142,6 +143,8 @@ public interface TimelineApi {
                     + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
                     + "각 sourceItem의 startAt은 필수이고 endAt은 nullable이다. "
                     + "HEALTH payload의 metric은 STEPS만 허용하며 다른 값은 저장·AI dispatch 전에 400으로 거절한다. "
+                    + "STAY·MOVEMENT·좌표가 있는 PHOTO를 신규 처리하면 현재 위치약관 동의가 필요하며, "
+                    + "미동의 시 위치 항목을 제외해 재시도할 수 있다. 서버가 위치를 자동 제거하지 않는다. "
                     + "지오코딩 대상 고유 좌표(rawId 중복 제거·이미 저장된 item 제외 뒤 STAY 좌표와 MOVEMENT "
                     + "start/end를 dedupe한 수)는 최대 30개다 — sourceItems 배열 길이 제한이 아니라 파생 계산이며, "
                     + "초과하면 외부 지도 API 호출 없이 400(-400)으로 거절한다. "
@@ -161,8 +164,9 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계). "
-                            + "해당 단계의 현재 약관을 조회해 동의 후 재시도한다"),
+                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계), "
+                            + "또는 위치정보를 포함한 요청의 현재 위치약관 미동의. 현재 약관에 동의하거나 "
+                            + "STAY·MOVEMENT·좌표가 있는 PHOTO를 제외한 뒤 재시도한다"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
@@ -177,6 +181,7 @@ public interface TimelineApi {
     @RequiredTermsStage(TermStage.TIMELINE_FIRST_CREATE)
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @AuthenticationPrincipal Long userId,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),

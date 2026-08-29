@@ -97,6 +97,7 @@ class TimelineAiTaskFlowIntegrationTest {
     private TimelineAiDispatcher dispatcher;
 
     private static final String VERSION = "v1";
+    private static final long USER_ID = 7L;
     private static final UUID SUBJECT_ID = id(7L);
     private static final String ZONE = "Asia/Seoul";
     private static final String QUESTION = "그날 아침 기분은 어땠나요?";
@@ -483,7 +484,7 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     private String createDraft(List<SourceItemDto> sources) {
-        String taskId = draftTaskService.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+        String taskId = draftTaskService.createDraftTask(VERSION, USER_ID, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
         createdTaskIds.add(taskId);
         return taskId;
     }

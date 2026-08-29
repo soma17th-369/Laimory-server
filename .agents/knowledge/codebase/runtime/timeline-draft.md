@@ -42,7 +42,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    Redis용), SAVED record를 거부하며 기존 final `rawId`(record의
    Event→junction→Item 경로 조회)와 request 안
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
-5. geo/photo enrich를 DB transaction 밖에서 수행한다. 지오코딩 대상은 STAY 좌표, MOVEMENT start/end와
+5. 신규 item에 STAY·MOVEMENT·좌표가 모두 있는 PHOTO가 하나라도 있으면 현재 위치약관 동의를 검사한다.
+   미동의는 403 `-3001`이며 geo/photo enrich·DB/Redis write·AI dispatch 전에 끝난다. 위치문서 seed가
+   누락되면 이 조건부 gate만 별도 metric·bounded log를 남기고 fail-open하며 #3~#5 stage gate는 유지한다.
+6. geo/photo enrich를 DB transaction 밖에서 수행한다. 지오코딩 대상은 STAY 좌표, MOVEMENT start/end와
    **좌표를 가진 PHOTO**의 합집합이다(PHOTO 좌표는 선택 — 둘 다 없으면 비대상이고, 한쪽만 있거나
    범위 밖이면 입력 경계가 400 `-400`으로 거절한다). 필터 뒤 unique coordinate가 100개
    (`app.geo.max-unique-coordinates`)를 넘으면 외부 호출 전에 400 `-400`으로 거절한다. 지오코딩은 좌표별
@@ -56,7 +59,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    사진은 시간축에 조밀하게 뭉쳐, 같은 자리에서 찍은 사진 3장이 공유하는 좌표가 한 번 실패하는 것만으로
    하루 draft 전체가 502가 되기 때문이다(임계값 3은 하루 25개 안팎이 흩어진 STAY/MOVEMENT 기준이다).
    성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다.
-6. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
+7. **DailyRecord 선생성 + source 저장을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장. 반환된 `dailyRecordId`가 task·dispatch에 실린다.
    staging payload는 enrich 결과의 textual leaf를 `PrivacyRedactor.redactTree`로 v1 치환한 것만 저장한다
@@ -64,7 +67,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    치환하면 이미지 URL·S3 key가 깨진다). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
    전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
    payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
-7. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
+8. Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 저장 실패하면 이번 task의 source rows만
    보상 삭제하고 DailyRecord는 유지한다(이번 task가 처음 만든 record인지 durable하게 알 수 없고 empty
    DRAFT 재사용이 안전 — 실패 task의 empty DRAFT는 같은 날짜 재시도가 재사용하며 자동 cleanup하지 않는다).
@@ -75,7 +78,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    명령도 보내지 않는다. 각 index 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고 같은 의도의 명령을
    한 번 재시도한다(두 번째 실패는 metric·warn 관측만). 전역 index는 90초 초과 stuck gauge에만,
    사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·callback 계약의 권위는 JSON이다.
-8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
+9. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
    기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
    (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
    접수가 확인된 경우에만 POST가 202와 `taskId`를 반환한다.

@@ -125,7 +125,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -138,12 +138,12 @@ class TimelineControllerTest {
     void createDraftTask_passesParsedRecordDateAndWindowToService() throws Exception {
         // HTTP 파싱 계약 고정: recordDate는 ISO LocalDate, window는 offset 없는 ISO local datetime으로 파싱돼
         // 값 그대로 서비스에 전달된다(recordAt과 recordDate의 날짜가 달라도 그대로 — 정합성 미검증).
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted());
 
-        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(SUBJECT_ID), eq(LocalDate.parse("2026-06-17")),
+        verify(timelineDraftTaskService).createDraftTask(eq("v1"), eq(USER_ID), eq(SUBJECT_ID), eq(LocalDate.parse("2026-06-17")),
                 eq(LocalDateTime.parse("2026-06-18T09:30:00")), eq("Asia/Seoul"),
                 eq(new TimelineWindowDto(LocalDateTime.parse("2026-06-17T00:00"),
                         LocalDateTime.parse("2026-06-18T00:00"))), any());
@@ -151,7 +151,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsIllegalArgumentTo400() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("recordDate is required"));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -188,7 +188,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -198,7 +198,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_mapsAllItemsAlreadySavedConflictTo409() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -210,7 +210,7 @@ class TimelineControllerTest {
     @CsvSource({"GEOCODING_TRANSIENT_FAILURE, -1014", "GEOCODING_PERMANENT_FAILURE, -1015"})
     void createDraftTask_mapsGeocodingFailureTo502(String type, int code) throws Exception {
         // 지오코딩 loud fail 계약 회귀 가드(degrade→502 정책 변경 고정): 전이(1014)·영구(1015) 둘 다 502 + 해당 코드 envelope, body=null.
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.valueOf(type)));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
@@ -222,7 +222,7 @@ class TimelineControllerTest {
     @Test
     void createDraftTask_mapsAiDispatchFailureTo502WithoutTaskId() throws Exception {
         // AI dispatch 실패 계약: 502 + -1009 envelope, body=null — 실패 응답에는 내부 taskId가 없다.
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.AI_DISPATCH_FAILED));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
