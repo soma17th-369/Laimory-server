@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- 테이블 기본 _unicode_ci면 소문자 오타 seed가 JPQL IN(enum literal)에 case-insensitive 매칭돼
     -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
     -- readiness가 not-ready(fail-open)로 경보한다.
-    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 4종
+    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 5종
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,

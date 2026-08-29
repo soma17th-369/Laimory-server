@@ -262,7 +262,7 @@ class TermsEnforcementInterceptorMvcTest {
 
         verify(termsEnforcementService).requireAgreements(TermStage.LOGIN, USER_ID);
         verify(termsEnforcementService).requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID);
-        verify(timelineDraftTaskService).createDraftTask(Mockito.eq("v1"), Mockito.eq(SUBJECT_ID),
+        verify(timelineDraftTaskService).createDraftTask(Mockito.eq("v1"), Mockito.eq(USER_ID), Mockito.eq(SUBJECT_ID),
                 Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
     }
 

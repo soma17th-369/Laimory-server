@@ -32,8 +32,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
- * <p>principal은 operation마다 정확히 하나이며, 형태는 API 종류가 결정한다 — 콘텐츠·push API는
+ * <p>principal은 operation마다 원칙적으로 정확히 하나이며, 형태는 API 종류가 결정한다 — 콘텐츠·push API는
  * {@code @CurrentSubject UUID}, 회원 account API는 {@code @AuthenticationPrincipal Long}이다.
+ * 타임라인 draft 생성만 콘텐츠 owner와 계정 소유 약관 동의를 함께 판정하므로 두 principal을 명시한다.
  * 새 보호 API는 {@link #EXPECTED_PRINCIPALS}에 기대 principal 형태와 함께 등록한다(either-or 허용이
  * 아니라 API별 고정 — 콘텐츠 API가 실수로 raw userId를 받는 회귀를 빌드에서 차단).
  * (timeline 전용이던 {@code TimelineApiAuthenticationContractTest}를 공용 계약으로 일반화해 옮겼다 —
@@ -90,7 +91,7 @@ class ApiAuthenticationContractTest {
 
     @ParameterizedTest
     @MethodSource("protectedOperations")
-    void everyProtectedOperation_hasExactlyOneHiddenPrincipalOfDeclaredKind(Method method) {
+    void everyProtectedOperation_hasOnlyExpectedHiddenPrincipals(Method method) {
         PrincipalKind expected = EXPECTED_PRINCIPALS.get(method.getDeclaringClass());
 
         List<java.lang.reflect.Parameter> principals = Arrays.stream(method.getParameters())
@@ -98,8 +99,16 @@ class ApiAuthenticationContractTest {
                         || parameter.isAnnotationPresent(AuthenticationPrincipal.class))
                 .toList();
 
-        assertThat(principals).hasSize(1);
-        java.lang.reflect.Parameter principal = principals.get(0);
+        boolean draftCreate = method.getDeclaringClass() == TimelineApi.class
+                && method.getName().equals("createDraftTask");
+        assertThat(principals).hasSize(draftCreate ? 2 : 1);
+        List<java.lang.reflect.Parameter> expectedPrincipals = principals.stream()
+                .filter(principal -> expected == PrincipalKind.CONTENT_SUBJECT
+                        ? principal.isAnnotationPresent(CurrentSubject.class)
+                        : principal.isAnnotationPresent(AuthenticationPrincipal.class))
+                .toList();
+        assertThat(expectedPrincipals).hasSize(1);
+        java.lang.reflect.Parameter principal = expectedPrincipals.get(0);
         // API 종류가 principal 형태를 결정한다 — either-or가 아니라 선언된 기대 형태만 허용한다.
         switch (expected) {
             case CONTENT_SUBJECT -> {
@@ -117,6 +126,15 @@ class ApiAuthenticationContractTest {
         Parameter openApiParameter = principal.getAnnotation(Parameter.class);
         assertThat(openApiParameter).isNotNull();
         assertThat(openApiParameter.hidden()).isTrue();
+
+        if (draftCreate) {
+            java.lang.reflect.Parameter agreementOwner = principals.stream()
+                    .filter(candidate -> candidate.isAnnotationPresent(AuthenticationPrincipal.class))
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(agreementOwner.getType()).isEqualTo(Long.class);
+            assertThat(agreementOwner.getAnnotation(Parameter.class).hidden()).isTrue();
+        }
     }
 
     @Test

@@ -73,6 +73,49 @@ class TermCatalogReadinessTest {
     }
 
     @Test
+    void timelineStageWithoutConditionalLocationDocument_keepsRequiredStageReady() {
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+                .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT),
+                        document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
+
+        TermCatalogReadiness.StageCatalog catalog =
+                readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
+
+        assertThat(catalog.ready()).isTrue();
+        assertThat(catalog.currentRequiredDocuments()).hasSize(3);
+        assertThat(readyGauge(TermStage.TIMELINE_FIRST_CREATE)).isEqualTo(1.0);
+    }
+
+    @Test
+    void conditionalDocumentReadinessAndFailOpen_haveSeparateMetrics() {
+        when(termDocumentService.findCurrentSummaries(
+                org.mockito.ArgumentMatchers.eq(List.of(TermType.LOCATION_BASED_SERVICE_TERMS)), any()))
+                .thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(4L);
+
+        TermCatalogReadiness.ConditionalTermCatalog missing = readiness.checkConditionalTerm(
+                TermType.LOCATION_BASED_SERVICE_TERMS, NOW_KST);
+        readiness.recordConditionalFailOpen(TermType.LOCATION_BASED_SERVICE_TERMS);
+
+        assertThat(missing.ready()).isFalse();
+        assertThat(conditionalReadyGauge(TermType.LOCATION_BASED_SERVICE_TERMS)).isEqualTo(0.0);
+        assertThat(meterRegistry.get(TermCatalogReadiness.CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
+                .tag("term_type", TermType.LOCATION_BASED_SERVICE_TERMS.name())
+                .counter().count()).isEqualTo(1.0);
+
+        when(termDocumentService.findCurrentSummaries(
+                org.mockito.ArgumentMatchers.eq(List.of(TermType.LOCATION_BASED_SERVICE_TERMS)), any()))
+                .thenReturn(List.of(document(TermType.LOCATION_BASED_SERVICE_TERMS)));
+        TermCatalogReadiness.ConditionalTermCatalog recovered = readiness.checkConditionalTerm(
+                TermType.LOCATION_BASED_SERVICE_TERMS, NOW_KST);
+
+        assertThat(recovered.ready()).isTrue();
+        assertThat(recovered.currentDocument()).contains(document(TermType.LOCATION_BASED_SERVICE_TERMS));
+        assertThat(conditionalReadyGauge(TermType.LOCATION_BASED_SERVICE_TERMS)).isEqualTo(1.0);
+    }
+
+    @Test
     void missingRequiredCurrentDocument_marksStageNotReady() {
         // TERMS_OF_SERVICE의 current 문서 없음(활성화 전) — stage 전체 미준비.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
@@ -220,13 +263,17 @@ class TermCatalogReadinessTest {
                 catalogRow("TERMS_OF_SERVICE"),
                 catalogRow("SENSITIVE_INFORMATION_CONSENT"),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT"),
-                catalogRow("CROSS_BORDER_TRANSFER_CONSENT")));
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT"),
+                catalogRow("LOCATION_BASED_SERVICE_TERMS")));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
+        when(termDocumentService.findCurrentSummaries(
+                org.mockito.ArgumentMatchers.eq(List.of(TermType.LOCATION_BASED_SERVICE_TERMS)), any()))
+                .thenReturn(List.of(document(TermType.LOCATION_BASED_SERVICE_TERMS)));
 
         readiness.verifyCatalogOnStartup();
 
@@ -242,6 +289,11 @@ class TermCatalogReadinessTest {
     private double readyGauge(TermStage stage) {
         return meterRegistry.get(TermCatalogReadiness.CATALOG_READY_GAUGE)
                 .tag("stage", stage.name()).gauge().value();
+    }
+
+    private double conditionalReadyGauge(TermType termType) {
+        return meterRegistry.get(TermCatalogReadiness.CONDITIONAL_CATALOG_READY_GAUGE)
+                .tag("term_type", termType.name()).gauge().value();
     }
 
     private static TermDocumentSummary document(TermType type) {

@@ -354,6 +354,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `/a/api` LOGIN gate와 draft 생성·사진 presign의 `TIMELINE_FIRST_CREATE` gate는 controller 진입 전
   interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
+- 위치약관은 `TIMELINE_FIRST_CREATE` 공개 목록의 `required=false` 조건부 문서다. draft 생성에서 기본
+  검증과 기존 final rawId 제외가 끝난 신규 item 중 STAY·MOVEMENT·좌표가 모두 있는 PHOTO가 하나라도
+  있으면 현재 위치약관 동의를 요구하고, 미동의는 지오코딩·DB/Redis write·AI dispatch 전에 403
+  `-3001`로 끝난다. 위치 없는 항목만 보내 재시도할 수 있으며 서버가 위치를 조용히 제거하지 않는다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
   등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
   PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)·push 수신 설정 3종·앱 초기화 GET /initializer와
@@ -363,6 +367,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
   전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
   WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은 ERROR(경보 대상)다.
+- 조건부 위치문서의 current 행이 없으면 위치 gate만 별도 metric·bounded log를 남기고 fail-open한다.
+  이 누락은 #3~#5의 stage 준비 판정과 강제를 약화하지 않는다.
 - 두 약관 GET response(`/api/{v}/terms`, `/a/api/{v}/terms/agreements`)는 응답에 법률 원문이 없어진
   뒤에도 privacy skeleton 대상으로 남는다 — 제목과 `contentUrl` 값은 allowlist 밖이라 마스크되고
   종류·버전만 구조 필드로 남는다.

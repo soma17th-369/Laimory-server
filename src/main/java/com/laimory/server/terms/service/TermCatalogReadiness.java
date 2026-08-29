@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,10 +39,11 @@ import org.springframework.stereotype.Component;
  * <p>runtime enforcement는 요청마다 {@link #checkStage(TermStage, LocalDateTime)}로 DB 권위를 직접
  * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). 기대 필수 종류 중 하나라도 current 문서가
  * 없는 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage 전체를 fail-open하고,
- * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다.
+ * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다. {@code required=false} 조건부 문서는
+ * 종류별로 따로 판정해 누락 시 그 gate만 fail-open한다.
  *
  * <p>로그는 상태 전이에서만 남기고(bounded — 요청마다 반복하지 않음) 발생 빈도는
- * {@code laimory.terms.gate.fail_open} counter와 {@code laimory.terms.catalog.ready} gauge가 담당한다.
+ * stage와 조건부 문서에 분리된 fail-open counter와 ready gauge가 담당한다.
  */
 @Slf4j
 @Component
@@ -49,6 +51,8 @@ public class TermCatalogReadiness {
 
     static final String CATALOG_READY_GAUGE = "laimory.terms.catalog.ready";
     static final String GATE_FAIL_OPEN_COUNTER = "laimory.terms.gate.fail_open";
+    static final String CONDITIONAL_CATALOG_READY_GAUGE = "laimory.terms.conditional.catalog.ready";
+    static final String CONDITIONAL_GATE_FAIL_OPEN_COUNTER = "laimory.terms.conditional.gate.fail_open";
 
     private final TermDocumentRepository termDocumentRepository;
     private final TermDocumentService termDocumentService;
@@ -57,6 +61,9 @@ public class TermCatalogReadiness {
     private final Map<TermStage, AtomicInteger> stageReadyGauges = new EnumMap<>(TermStage.class);
     private final Map<TermStage, Counter> failOpenCounters = new EnumMap<>(TermStage.class);
     private final Map<TermStage, AtomicBoolean> notReadyLogged = new EnumMap<>(TermStage.class);
+    private final Map<TermType, AtomicInteger> conditionalReadyGauges = new EnumMap<>(TermType.class);
+    private final Map<TermType, Counter> conditionalFailOpenCounters = new EnumMap<>(TermType.class);
+    private final Map<TermType, AtomicBoolean> conditionalNotReadyLogged = new EnumMap<>(TermType.class);
 
     public TermCatalogReadiness(TermDocumentRepository termDocumentRepository,
                                 TermDocumentService termDocumentService,
@@ -75,10 +82,28 @@ public class TermCatalogReadiness {
                     .register(meterRegistry));
             notReadyLogged.put(stage, new AtomicBoolean(false));
         }
+        for (TermType termType : TermType.values()) {
+            if (termType.required()) {
+                continue;
+            }
+            AtomicInteger readyState = new AtomicInteger(0);
+            conditionalReadyGauges.put(termType, readyState);
+            meterRegistry.gauge(CONDITIONAL_CATALOG_READY_GAUGE,
+                    Tags.of("term_type", termType.name()), readyState);
+            conditionalFailOpenCounters.put(termType, Counter.builder(CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
+                    .description("Conditional terms gate skipped because its current document is unavailable")
+                    .tag("term_type", termType.name())
+                    .register(meterRegistry));
+            conditionalNotReadyLogged.put(termType, new AtomicBoolean(false));
+        }
     }
 
     /** stage catalog 판정 결과 — 준비되지 않았으면 enforcement가 stage 전체를 fail-open한다. */
     public record StageCatalog(boolean ready, List<TermDocumentSummary> currentRequiredDocuments) {
+    }
+
+    /** 조건부 약관 하나의 catalog 판정 결과 — 누락 시 해당 조건부 gate만 fail-open한다. */
+    public record ConditionalTermCatalog(boolean ready, Optional<TermDocumentSummary> currentDocument) {
     }
 
     /** 판정 시각은 지금 캡처한 instant의 KST 벽시계다. */
@@ -112,6 +137,28 @@ public class TermCatalogReadiness {
         failOpenCounters.get(stage).increment();
     }
 
+    /** 조건부 약관의 현재 문서를 요청 시점 DB 권위로 조회한다. */
+    public ConditionalTermCatalog checkConditionalTerm(TermType termType) {
+        return checkConditionalTerm(termType, TermTimes.kstWallClock(clock.instant()));
+    }
+
+    ConditionalTermCatalog checkConditionalTerm(TermType termType, LocalDateTime nowKst) {
+        requireConditional(termType);
+        Optional<TermDocumentSummary> currentDocument = termDocumentService
+                .findCurrentSummaries(List.of(termType), nowKst)
+                .stream()
+                .findFirst();
+        boolean ready = currentDocument.isPresent();
+        publishConditionalState(termType, ready);
+        return new ConditionalTermCatalog(ready, currentDocument);
+    }
+
+    /** 조건부 gate가 문서 누락 때문에 통과할 때 호출한다. */
+    public void recordConditionalFailOpen(TermType termType) {
+        requireConditional(termType);
+        conditionalFailOpenCounters.get(termType).increment();
+    }
+
     /** 기동 정합성 검사 — seed 누락·미지 literal·잘못된 URL·stage 미준비를 경보하되 기동은 막지 않는다. */
     @EventListener(ApplicationReadyEvent.class)
     public void verifyCatalogOnStartup() {
@@ -135,6 +182,11 @@ public class TermCatalogReadiness {
             for (TermStage stage : TermStage.values()) {
                 if (!checkStage(stage, nowKst).ready()) {
                     problems.add("stage not ready (incomplete current required set): " + stage.name());
+                }
+            }
+            for (TermType termType : TermType.values()) {
+                if (!termType.required() && !checkConditionalTerm(termType, nowKst).ready()) {
+                    problems.add("conditional term not ready: " + termType.name());
                 }
             }
         } catch (RuntimeException e) {
@@ -199,6 +251,28 @@ public class TermCatalogReadiness {
             }
         } else if (ready && logged.compareAndSet(true, false)) {
             log.info("term catalog recovered for stage {}", stage.name());
+        }
+    }
+
+    private void publishConditionalState(TermType termType, boolean ready) {
+        conditionalReadyGauges.get(termType).set(ready ? 1 : 0);
+        AtomicBoolean logged = conditionalNotReadyLogged.get(termType);
+        if (!ready && logged.compareAndSet(false, true)) {
+            if (termDocumentRepository.count() == 0) {
+                log.warn("conditional term catalog not seeded yet for {} — only its gate fails open until activation",
+                        termType.name());
+            } else {
+                log.error("conditional term catalog not ready for {} — only its gate fails open until "
+                        + "seed/activation is fixed", termType.name());
+            }
+        } else if (ready && logged.compareAndSet(true, false)) {
+            log.info("conditional term catalog recovered for {}", termType.name());
+        }
+    }
+
+    private static void requireConditional(TermType termType) {
+        if (termType.required()) {
+            throw new IllegalArgumentException("termType is not conditional: " + termType.name());
         }
     }
 }

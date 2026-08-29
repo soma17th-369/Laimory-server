@@ -19,11 +19,17 @@ class TermTypeTest {
     }
 
     @Test
-    void timelineFirstCreateStage_hasThreeConsentsInDisplayOrder() {
+    void timelineFirstCreateStage_hasThreeRequiredConsentsThenConditionalLocationTerms() {
         assertThat(TermType.typesOf(TermStage.TIMELINE_FIRST_CREATE))
                 .containsExactly(TermType.SENSITIVE_INFORMATION_CONSENT,
                         TermType.THIRD_PARTY_PROVISION_CONSENT,
+                        TermType.CROSS_BORDER_TRANSFER_CONSENT,
+                        TermType.LOCATION_BASED_SERVICE_TERMS);
+        assertThat(TermType.requiredTypesOf(TermStage.TIMELINE_FIRST_CREATE))
+                .containsExactly(TermType.SENSITIVE_INFORMATION_CONSENT,
+                        TermType.THIRD_PARTY_PROVISION_CONSENT,
                         TermType.CROSS_BORDER_TRANSFER_CONSENT);
+        assertThat(TermType.LOCATION_BASED_SERVICE_TERMS.required()).isFalse();
     }
 
     @Test
@@ -39,8 +45,8 @@ class TermTypeTest {
 
     @Test
     void requiredTypes_filterByEnumRequiredFlag() {
-        // 필수 판정은 enum required flag를 거친다 — flag가 false인 종류는 gate 판정에서 자동 제외되는
-        // 메커니즘이다(현재 enum에 남은 동의 종류는 모두 필수 — 제품·법무 확정 시 flag만 바꾼다).
+        // 필수 판정은 enum required flag를 거친다 — 위치약관은 stage 일괄 gate에서 제외되고
+        // 위치정보가 포함된 요청에만 별도 조건부 gate가 적용된다.
         for (TermStage stage : TermStage.values()) {
             assertThat(TermType.requiredTypesOf(stage))
                     .containsExactlyElementsOf(TermType.typesOf(stage).stream()

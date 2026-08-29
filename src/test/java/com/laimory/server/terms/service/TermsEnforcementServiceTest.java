@@ -11,6 +11,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -78,5 +79,46 @@ class TermsEnforcementServiceTest {
 
         assertThatCode(() -> service.requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void conditionalCatalogMissing_failsOpenWithoutWeakeningStageGate() {
+        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
+                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(false, Optional.empty()));
+
+        assertThatCode(() -> service.requireConditionalAgreement(
+                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID)).doesNotThrowAnyException();
+
+        verify(termCatalogReadiness).recordConditionalFailOpen(TermType.LOCATION_BASED_SERVICE_TERMS);
+        verifyNoInteractions(termAgreementService);
+    }
+
+    @Test
+    void missingCurrentConditionalAgreement_throws403() {
+        TermDocumentSummary location =
+                new TermDocumentSummary(15L, TermType.LOCATION_BASED_SERVICE_TERMS, "1.0");
+        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
+                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(true, Optional.of(location)));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(15L))).thenReturn(false);
+
+        assertThatThrownBy(() -> service.requireConditionalAgreement(
+                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getExceptionType())
+                .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED);
+    }
+
+    @Test
+    void currentConditionalAgreement_passesAndUsesCurrentDocumentId() {
+        TermDocumentSummary location =
+                new TermDocumentSummary(25L, TermType.LOCATION_BASED_SERVICE_TERMS, "1.1");
+        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
+                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(true, Optional.of(location)));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(25L))).thenReturn(true);
+
+        assertThatCode(() -> service.requireConditionalAgreement(
+                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID)).doesNotThrowAnyException();
+
+        verify(termAgreementService).hasAgreedToAll(USER_ID, List.of(25L));
     }
 }

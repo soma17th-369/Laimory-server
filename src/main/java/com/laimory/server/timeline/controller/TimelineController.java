@@ -30,9 +30,9 @@ public class TimelineController implements TimelineApi {
 
     @Override
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
-            String applicationVersion, UUID subjectId, CreateDraftTaskRequest request) {
+            String applicationVersion, Long userId, UUID subjectId, CreateDraftTaskRequest request) {
         String taskId = timelineDraftTaskService.createDraftTask(
-                applicationVersion, subjectId, request.recordDate(), request.recordAt(), request.recordTimeZone(),
+                applicationVersion, userId, subjectId, request.recordDate(), request.recordAt(), request.recordTimeZone(),
                 request.timelineWindow(), request.sourceItems());
         return ResponseEntity.accepted().body(ApiResponse.success(new CreateDraftTaskResponse(taskId)));
     }
