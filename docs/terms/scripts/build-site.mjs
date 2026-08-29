@@ -313,6 +313,8 @@ function renderSeedSql(documents) {
     return `-- Generated from docs/terms/drafts by docs/terms/scripts/build-site.mjs.
 -- Run only after these five immutable HTTPS pages return 200 without authentication.
 -- #8 privacy policy is public and is not a consent catalog row.
+SET NAMES utf8mb4;
+
 INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES

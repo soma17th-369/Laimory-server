@@ -53,6 +53,7 @@ test("builds six mobile legal pages and five catalog seed rows", async () => {
     assert.match(thirdPartyConsent, /<br><br><strong>기록 요약 갱신 시:<\/strong>/u);
 
     const seedSql = await readFile(resolve(outputRoot, "term-documents-1.0.sql"), "utf8");
+    assert.match(seedSql, /SET NAMES utf8mb4;\n\nINSERT INTO term_documents/u);
     assert.match(seedSql, /'2026-08-28 00:00:00'/u);
     assert.match(seedSql, /'TERMS_OF_SERVICE'/u);
     assert.match(seedSql, /'THIRD_PARTY_PROVISION_CONSENT'/u);
