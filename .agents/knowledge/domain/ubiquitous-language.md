@@ -76,8 +76,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
 | 주변 장소 목록 | places | 현재 구현 | 거리순 장소명 배열이다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
 | 머문 시간 텍스트 | durationText | 현재 구현 | 서버가 `startAt/endAt`으로 계산한 텍스트다. client 값은 받지 않는다. |
-| 건강 페이로드 | Health Payload | 현재 구현 | 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
-| 건강 지표 | Health Metric | 현재 구현 | `STEPS`, `DISTANCE`, `SLEEP` 중 하나다. |
+| 건강 페이로드 | Health Payload | 현재 구현 | 걸음 수 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
+| 건강 지표 | Health Metric | 현재 구현 | 신규 입력은 걸음 수 `STEPS` 하나만 허용한다. 기존 staging/final payload는 `JsonNode`로 읽으므로 과거 JSON 조회에는 enum 역직렬화를 요구하지 않는다. |
 | 알림 페이로드 | Notification Payload | 현재 구현 | `appName`, `title`, `text`를 담으며 title/text 중 하나 이상이 필요하다. |
 
 ## 사진 업로드와 서빙
@@ -159,10 +159,10 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 약관 문서 | Term Document | 현재 구현 | 약관 한 버전의 불변 행(`term_documents`)이다. 종류·버전·제목·**게시 URL**·효력일을 담고 원문 본문은 담지 않는다 — 본문은 약관 원문 page(Term Content Page)가 소유한다. 개정은 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 버전에 동의한 이력이 소급 변조된다). 게시된 버전·URL·효력일을 수정·삭제하는 API는 없다. 운영 seed는 원문 page 게시 후 수동 INSERT다. |
-| 약관 종류 | Term Type | 현재 구현 | `TermType` enum 5종 — `TERMS_OF_SERVICE`(이용약관)·`PRIVACY_POLICY`(개인정보 처리방침)는 `LOGIN`, `SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)는 `TIMELINE_FIRST_CREATE` 단계다. enum이 각 종류의 `(stage, required, displayOrder)`를 단독 소유하며 DB는 이 값을 복제하지 않는다. 게시 URL은 정책이 아니라 게시 사실이라 enum이 아니라 문서 행이 소유한다. required 값은 현재 다섯 종류 모두 true(계획 기본값)이고 제품·법무 확정 시 enum과 seed를 함께 바꾼다. |
+| 약관 종류 | Term Type | 현재 구현 | `TermType` enum 4종 — `TERMS_OF_SERVICE`(이용약관)는 `LOGIN`, `SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)는 `TIMELINE_FIRST_CREATE` 단계다. 개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 catalog 밖에서 게시한다. enum이 각 동의 문서의 `(stage, required, displayOrder)`를 단독 소유하며 DB는 이 값을 복제하지 않는다. 게시 URL은 정책이 아니라 게시 사실이라 enum이 아니라 문서 행이 소유한다. required 값은 현재 네 종류 모두 true이고, 위치기반서비스 이용약관은 enum 추가 전 계획 상태다. 제품·법무 확정 시 enum과 seed를 함께 바꾼다. |
 | 약관 단계 | Term Stage | 현재 구현 | `TermStage` enum — 노출·동의·enforcement의 공통 축(`LOGIN`, `TIMELINE_FIRST_CREATE`)이다. 공개 조회의 필수 query이며 소속 판정은 `TermType` mapping만 쓴다(DB에 stage 컬럼이 없다). |
 | 약관 버전 | Term Version | 현재 구현 | 종류 안에서 유일한 exact-match 문자열이다(컬럼 binary collation — Java equals와 동일 비교). 운영 표기는 `MAJOR.MINOR`(`1.0`·`1.1`)이고 서버는 숫자로 파싱·정렬하지 않는다 — `1.10`은 `1.1`과 다른 문자열이다. 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. |
-| 약관 원문 page | Term Content Page | 현재 구현 | 버전마다 따로 게시된 원문 HTML이다. 약관 원문의 단일 소유자이며 Server는 저장·렌더링·proxy하지 않고 문서 행의 `content_url`을 그대로 내려줄 뿐 게시 위치 정책을 알지 않는다(요청·기동 중 HTTP 조회도 하지 않는다 — 게시 여부는 게시 게이트가 확인). 게시된 버전 URL의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 과거 URL이 동의 이력의 재현 근거다. 현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 서버가 강제하는 형식이 아니다(서버는 https 절대 URI인지만 검사). |
+| 약관 원문 page | Term Content Page | 현재 구현 | `docs/terms/drafts` Markdown에서 미리 생성해 `src/main/resources/terms-content`에 둔 버전별 불변 HTML이다. `TermContentController`는 `/terms/{slug}/{version}`에서 정적 byte와 1년 `immutable` cache header만 로그인 없이 전달한다. 약관 DB·API는 원문을 저장·동적 렌더링·proxy하지 않고 문서 행의 `content_url`만 다루며 요청·기동 중 HTTP 조회도 하지 않는다(게시 여부는 게시 게이트가 확인). 게시된 버전 URL의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 과거 URL이 동의 이력의 재현 근거다. 현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 catalog가 역산하거나 강제하는 형식이 아니다(catalog readiness는 https 절대 URI인지만 검사). |
 | 현재 문서 | Current Term Document | 현재 구현 | `effective_at <= now(KST)`인 종류별 최신 행이다. 별도 active flag 없이 효력 시각 한 축으로 future 등록·cutover를 관리하며, `(term_type, effective_at)` UNIQUE가 동시 최신 모호성을 차단한다. |
 | 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서 행이 불변이라 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. |

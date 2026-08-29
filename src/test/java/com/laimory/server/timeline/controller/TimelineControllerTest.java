@@ -162,6 +162,31 @@ class TimelineControllerTest {
     }
 
     @Test
+    void createDraftTask_rejectsHealthMetricOtherThanStepsBeforeService() throws Exception {
+        String body = """
+                {
+                  "recordDate": "2026-06-17",
+                  "recordAt": "2026-06-18T09:30:00",
+                  "recordTimeZone": "Asia/Seoul",
+                  "timelineWindow": {"startTime": "2026-06-17T00:00", "endTime": "2026-06-18T00:00"},
+                  "sourceItems": [
+                    {"itemType": "HEALTH", "rawId": "0197b1c2-0000-7000-8000-000000000031",
+                     "startAt": "2026-06-17T00:00:00", "endAt": null,
+                     "payload": {"metric": "SLEEP", "value": "420분"}}
+                  ]
+                }
+                """;
+
+        mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+
+        org.mockito.Mockito.verifyNoInteractions(timelineDraftTaskService);
+    }
+
+    @Test
     void createDraftTask_mapsSavedConflictTo409() throws Exception {
         when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED));

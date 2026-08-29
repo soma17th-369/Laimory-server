@@ -335,7 +335,7 @@ public class TimelineDraftTaskService {
                     }
                     requireValidCoordinate(movement.start().latitude(), movement.start().longitude(), "MOVEMENT start", i);
                     requireValidCoordinate(movement.end().latitude(), movement.end().longitude(), "MOVEMENT end", i);
-                    // 이동 거리는 음수가 무의미(HEALTH value와 같은 이유로 입력 경계에서 차단).
+                    // 이동 거리는 음수가 무의미하므로 입력 경계에서 차단한다.
                     if (movement.distanceMeters() != null
                             && (!Double.isFinite(movement.distanceMeters()) || movement.distanceMeters() < 0)) {
                         throw new IllegalArgumentException(

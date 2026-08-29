@@ -95,7 +95,7 @@ class OAuth2LoginSuccessHandlerTest {
         session.setAttribute(AppChallengeFilter.APP_CHALLENGE_SESSION_ATTRIBUTE, "challenge-43");
         request.setSession(session);
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(socialLoginService.completeLogin(Provider.GOOGLE, "google-sub", "e@x.com", "이름", "challenge-43"))
+        when(socialLoginService.completeLogin(Provider.GOOGLE, "google-sub", null, "이름", "challenge-43"))
                 .thenReturn("raw-app-code");
 
         new OAuth2LoginSuccessHandler(socialLoginService)

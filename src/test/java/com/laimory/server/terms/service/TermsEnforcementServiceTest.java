@@ -39,9 +39,7 @@ class TermsEnforcementServiceTest {
 
     @BeforeEach
     void setUp() {
-        requiredDocuments = List.of(
-                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0"),
-                new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "1.0"));
+        requiredDocuments = List.of(new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0"));
     }
 
     @Test
@@ -60,7 +58,7 @@ class TermsEnforcementServiceTest {
     void missingRequiredAgreement_throws403TermsAgreementRequired() {
         when(termCatalogReadiness.checkStage(TermStage.LOGIN))
                 .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L))).thenReturn(false);
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L))).thenReturn(false);
 
         assertThatThrownBy(() -> service.requireAgreements(TermStage.LOGIN, USER_ID))
                 .isInstanceOf(BusinessException.class)
@@ -70,9 +68,13 @@ class TermsEnforcementServiceTest {
 
     @Test
     void allCurrentRequiredAgreed_passes() {
+        List<TermDocumentSummary> timelineDocuments = List.of(
+                new TermDocumentSummary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"),
+                new TermDocumentSummary(13L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
+                new TermDocumentSummary(14L, TermType.CROSS_BORDER_TRANSFER_CONSENT, "1.0"));
         when(termCatalogReadiness.checkStage(TermStage.TIMELINE_FIRST_CREATE))
-                .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L))).thenReturn(true);
+                .thenReturn(new TermCatalogReadiness.StageCatalog(true, timelineDocuments));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(12L, 13L, 14L))).thenReturn(true);
 
         assertThatCode(() -> service.requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID))
                 .doesNotThrowAnyException();

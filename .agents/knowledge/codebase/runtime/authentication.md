@@ -75,6 +75,7 @@ token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니�
 구현된 로그인·token 기능:
 
 1. Google/Kakao OIDC login에서 provider `sub`로 user를 찾거나 만든다.
+   - Google scope는 `openid,profile`이며, 예상 밖 email claim이 와도 저장하지 않는다.
    - Kakao scope는 `openid,profile_nickname`이다. 닉네임은 검증된 id_token의 `nickname` claim에서
      읽고(blank·비문자열은 null) UserInfo endpoint는 호출하지 않는다. email은 수집하지 않는다(콘솔 권한 없음).
    - 기존 Kakao 사용자는 재로그인 시 non-null 닉네임으로 갱신하고 누락 claim은 기존 값을 보존한다.

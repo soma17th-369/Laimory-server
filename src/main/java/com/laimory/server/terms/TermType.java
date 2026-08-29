@@ -12,15 +12,13 @@ import java.util.stream.Stream;
  * 운영자가 문서별로 단계·필수 여부·순서를 임의 변경하는 모델이 아니다.
 
  *
- * <p>{@code required} 값은 계획(#303)의 기본값(다섯 종류 모두 필수)이다 — 제품·법무가 문서의 법적
+ * <p>{@code required} 값은 계획(#303, #383)의 현재 동의 대상에만 존재한다 — 제품·법무가 문서의 법적
  * 성격(단순 고지 vs 명시적 동의)을 확정하면 이 mapping과 운영 seed를 함께 갱신한다.
  */
 public enum TermType {
 
     /** 이용약관. */
     TERMS_OF_SERVICE(TermStage.LOGIN, true, 1),
-    /** 개인정보 처리방침. */
-    PRIVACY_POLICY(TermStage.LOGIN, true, 2),
     /** 민감정보 처리방침/동의. */
     SENSITIVE_INFORMATION_CONSENT(TermStage.TIMELINE_FIRST_CREATE, true, 3),
     /** 제3자 정보 제공 동의. */

@@ -63,20 +63,19 @@ class TermCatalogReadinessTest {
     @Test
     void stageWithAllRequiredCurrentDocuments_isReady() {
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
+                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
 
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
 
         assertThat(catalog.ready()).isTrue();
-        assertThat(catalog.currentRequiredDocuments()).hasSize(2);
+        assertThat(catalog.currentRequiredDocuments()).hasSize(1);
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(1.0);
     }
 
     @Test
     void missingRequiredCurrentDocument_marksStageNotReady() {
-        // PRIVACY_POLICY의 current 문서 없음(활성화 전) — 부분 강제 없이 stage 전체 미준비.
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
+        // TERMS_OF_SERVICE의 current 문서 없음(활성화 전) — stage 전체 미준비.
+        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
 
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
 
@@ -106,7 +105,7 @@ class TermCatalogReadinessTest {
     void emptyCurrentWithSeededRows_logsErrorOnTransition() {
         // 행이 존재하는데(예: 전부 소문자 오타·다른 stage) current 후보가 0건 — seed 실수라 ERROR다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
-        when(termDocumentRepository.count()).thenReturn(5L);
+        when(termDocumentRepository.count()).thenReturn(4L);
 
         readiness.checkStage(TermStage.LOGIN, NOW_KST);
 
@@ -117,10 +116,11 @@ class TermCatalogReadinessTest {
     void seededButBrokenTransition_logsErrorOnceUntilRecovery() {
         // 필수 종류 하나가 빠진 seed(행은 존재) — 예정 상태가 아니라 ERROR 경보 대상이다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
+                .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
 
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
         long errorCount = logAppender.list.stream()
                 .filter(event -> event.getLevel() == Level.ERROR)
                 .count();
@@ -128,11 +128,14 @@ class TermCatalogReadinessTest {
 
         // 회복 → INFO 1줄, 이후 다시 퇴행하면 새 ERROR 1줄.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+                .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT),
+                        document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+                .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(2);
     }
 
@@ -150,10 +153,9 @@ class TermCatalogReadinessTest {
         // raw row 검사라 미지 literal도 예외 없이 관측된다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
                 catalogRow("TERMS_OF_SERVICE"),
-                catalogRow("PRIVACY_POLICY"),
                 catalogRow("BOGUS_TYPE"))); // 미지 literal
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
-        when(termDocumentRepository.count()).thenReturn(3L); // 행이 존재하는 seed 실수 — ERROR 경로
+        when(termDocumentRepository.count()).thenReturn(2L); // 행이 존재하는 seed 실수 — ERROR 경로
 
         readiness.verifyCatalogOnStartup();
 
@@ -174,12 +176,11 @@ class TermCatalogReadinessTest {
         // 않는다 — 게시 위치는 정책이 아니라 운영 선택이다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
                 catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"), // https 아님
-                catalogRow("PRIVACY_POLICY", "/terms/privacy-policy/1.0"),                       // 절대 URI 아님
                 catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),                                // blank
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),    // 형식 OK
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://laimory.app/terms/x/1.0")));
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
-        when(termDocumentRepository.count()).thenReturn(5L);
+        when(termDocumentRepository.count()).thenReturn(4L);
 
         readiness.verifyCatalogOnStartup();
 
@@ -189,7 +190,6 @@ class TermCatalogReadinessTest {
                 .reduce("", String::concat);
         assertThat(problems)
                 .contains("invalid contentUrl for termType=TERMS_OF_SERVICE")
-                .contains("invalid contentUrl for termType=PRIVACY_POLICY")
                 .contains("invalid contentUrl for termType=SENSITIVE_INFORMATION_CONSENT")
                 // host는 검사하지 않는다 — 형식만 맞으면 통과한다.
                 .doesNotContain("invalid contentUrl for termType=THIRD_PARTY_PROVISION_CONSENT")
@@ -218,12 +218,11 @@ class TermCatalogReadinessTest {
     void startupCheck_fullySeededCatalog_logsNoError() {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
                 catalogRow("TERMS_OF_SERVICE"),
-                catalogRow("PRIVACY_POLICY"),
                 catalogRow("SENSITIVE_INFORMATION_CONSENT"),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT"),
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT")));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE), document(TermType.PRIVACY_POLICY)));
+                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
         when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),

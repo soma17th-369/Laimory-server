@@ -54,13 +54,13 @@ class TermAgreementServiceTest {
     @Test
     void agree_recordsAllCurrentDocuments_withSingleKstAcceptedAt() {
         TermDocumentSummary terms = summary(11L, TermType.TERMS_OF_SERVICE, "1.0");
-        TermDocumentSummary privacy = summary(12L, TermType.PRIVACY_POLICY, "1.0");
+        TermDocumentSummary sensitive = summary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0");
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(terms, privacy));
+                .thenReturn(List.of(terms, sensitive));
 
         service.agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0")));
+                new TermAgreementCommand(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0")));
 
         // 검증(current selection)과 수락 시각이 같은 캡처 instant의 KST 벽시계를 공유한다.
         ArgumentCaptor<LocalDateTime> nowKst = ArgumentCaptor.forClass(LocalDateTime.class);
@@ -71,14 +71,14 @@ class TermAgreementServiceTest {
 
     @Test
     void agree_staleVersion_rejects409WithoutRecordingAnything() {
-        // PRIVACY_POLICY만 개정됨 — 하나라도 stale이면 전부 기록하지 않는다(all-or-nothing).
+        // 민감정보 동의만 개정됨 — 하나라도 stale이면 전부 기록하지 않는다(all-or-nothing).
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(summary(11L, TermType.TERMS_OF_SERVICE, "1.0"),
-                        summary(13L, TermType.PRIVACY_POLICY, "1.1")));
+                        summary(13L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.1")));
 
         assertThatThrownBy(() -> service.agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0"))))
+                new TermAgreementCommand(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"))))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
                 .isEqualTo(ExceptionType.STALE_TERM_VERSION);

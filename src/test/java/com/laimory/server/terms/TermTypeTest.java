@@ -13,9 +13,9 @@ import org.junit.jupiter.api.Test;
 class TermTypeTest {
 
     @Test
-    void loginStage_hasServiceAndPrivacyTermsInDisplayOrder() {
+    void loginStage_hasOnlyTermsOfService() {
         assertThat(TermType.typesOf(TermStage.LOGIN))
-                .containsExactly(TermType.TERMS_OF_SERVICE, TermType.PRIVACY_POLICY);
+                .containsExactly(TermType.TERMS_OF_SERVICE);
     }
 
     @Test
@@ -40,7 +40,7 @@ class TermTypeTest {
     @Test
     void requiredTypes_filterByEnumRequiredFlag() {
         // 필수 판정은 enum required flag를 거친다 — flag가 false인 종류는 gate 판정에서 자동 제외되는
-        // 메커니즘이다(현재 기본 mapping은 다섯 종류 모두 필수 — 제품·법무 확정 시 flag만 바꾼다).
+        // 메커니즘이다(현재 enum에 남은 동의 종류는 모두 필수 — 제품·법무 확정 시 flag만 바꾼다).
         for (TermStage stage : TermStage.values()) {
             assertThat(TermType.requiredTypesOf(stage))
                     .containsExactlyElementsOf(TermType.typesOf(stage).stream()

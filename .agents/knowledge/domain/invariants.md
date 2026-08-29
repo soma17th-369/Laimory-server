@@ -30,6 +30,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
 - draft source item의 `startAt`은 전 타입 필수이고 `endAt`은 nullable이다(누락 `startAt`은 저장·외부
   호출 전 400).
+- draft `HEALTH` source item의 metric은 걸음 수 `STEPS`만 허용한다. `DISTANCE`·`SLEEP` 등 다른
+  literal은 HTTP 역직렬화에서 400으로 거절되어 DB/Redis 저장과 AI dispatch에 도달하지 않는다.
 - `rawId`는 draft source와 수동 PHOTO `photosToAdd`(Event PATCH·Event 생성 POST)에서 canonical
   lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고
   오류 메시지에 rawId 원문을 싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
@@ -321,9 +323,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
   버전·효력일을 바꾸는 API는 없다.
-- 약관 원문은 Server가 소유하지 않는다 — DB·응답 어디에도 Markdown/HTML을 담지 않고 버전별로 게시된
-  page가 단일 소유자다. Server는 문서 행의 `content_url`을 내려줄 뿐이고, 요청·기동 중 그 page를 HTTP로
-  조회하지 않는다.
+- 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
+  `src/main/resources/terms-content`에 생성한다. `TermContentController`는 `/terms/{slug}/{version}`에서
+  그 정적 byte와 1년 `immutable` cache header만 전달한다. 약관 DB·API 응답에는 Markdown/HTML을 담지
+  않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP 조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.

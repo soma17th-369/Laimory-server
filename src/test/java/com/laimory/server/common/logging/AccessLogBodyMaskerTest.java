@@ -268,13 +268,13 @@ class AccessLogBodyMaskerTest {
     @Test
     void agreementHistoryResponseMasksContentUrl() {
         String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"agreements\":[{"
-                + "\"termType\":\"PRIVACY_POLICY\",\"version\":\"1.0\",\"title\":\"개인정보 처리방침\","
-                + "\"contentUrl\":\"https://laimory.app/terms/privacy-policy/1.0\",\"required\":true,"
+                + "\"termType\":\"SENSITIVE_INFORMATION_CONSENT\",\"version\":\"1.0\",\"title\":\"민감정보 처리 동의\","
+                + "\"contentUrl\":\"https://laimory.app/terms/sensitive-information-consent/1.0\",\"required\":true,"
                 + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}";
 
         assertThat(maskGetResponse("/a/api/v1/terms/agreements", raw))
                 .isEqualTo("{\"header\":{\"code\":0,\"message\":\"***\"},\"body\":{\"agreements\":[{"
-                        + "\"termType\":\"PRIVACY_POLICY\",\"version\":\"1.0\",\"title\":\"***\","
+                        + "\"termType\":\"SENSITIVE_INFORMATION_CONSENT\",\"version\":\"1.0\",\"title\":\"***\","
                         + "\"contentUrl\":\"***\",\"required\":true,"
                         + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}")
                 .doesNotContain("laimory.app");

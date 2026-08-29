@@ -127,6 +127,8 @@ Task-Token: <taskToken>
 - `window.startAt`/`endAt`
 - `sourceItems[]`: `rawId`, `itemType`, 필수 `startAt`·nullable `endAt`, `payload` —
   `startAt` 필수는 draft 입력 경계(400)가 보장하며 AI 입력 계약(`CollectedSourceItem`)과 정렬된다.
+  `itemType=HEALTH`의 `payload.metric`은 걸음 수 `STEPS`만 들어오며 다른 literal은 draft HTTP 입력
+  경계에서 400으로 거절되어 staging·AI 입력에 도달하지 않는다.
   payload는 staging 시점에 v1 privacy 치환을 거친 저장본이라 텍스트 값에 `[REDACTED_*]` token literal이
   섞일 수 있고, PHOTO `clientPhotoUri`는 응답 조립 시 값 전체가 `[REDACTED_DEVICE_URI]` 고정 token으로
   바뀐다(DB·앱 응답은 원문 유지 — 필드 집합·구조는 불변). PHOTO `filename`·`photoUrl`은 서버 파생
