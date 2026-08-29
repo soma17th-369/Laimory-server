@@ -13,7 +13,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -82,6 +84,17 @@ public class TimelinePhotoDeleteJobService {
         return List.copyOf(jobs);
     }
 
+    /**
+     * 주어진 Item 중 job을 가진 Item ID를 current read로 조회한다(orphan 스위퍼 전용 — 자세한 근거는
+     * repository javadoc). 호출자의 transaction 안에서 실행돼야 의미가 있다.
+     */
+    public Set<Long> findItemIdsWithJob(Collection<Long> timelineItemIds) {
+        if (timelineItemIds == null || timelineItemIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(timelinePhotoDeleteJobRepository.findItemIdsWithJobForShare(timelineItemIds));
+    }
+
     /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
     public long countExpired() {
         LocalDateTime windowStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)
@@ -147,8 +160,21 @@ public class TimelinePhotoDeleteJobService {
     }
 
     /**
-     * claimed job이 S3 삭제 직전에도 orphan인지 재검증한다. 다른 Event에 다시 연결된 Item의 job은 같은
-     * transaction에서 취소하고 S3 대상에서 제외한다.
+     * claimed job이 S3 삭제 직전에도 orphan인지 재검증한다. 취소 사유는 두 가지이고 둘 다 같은
+     * transaction에서 job을 지워 S3 대상에서 뺀다.
+     *
+     * <ol>
+     *   <li><b>자기 Item 재연결</b> — job이 가리키는 Item이 다시 Event에 연결됐다.</li>
+     *   <li><b>같은 object key의 다른 Item 생존</b> — 같은 S3 객체를 가리키는 <i>다른</i> PHOTO Item이
+     *       junction을 갖고 있다. 이 경우 job 대상 Item만 보면 여전히 orphan이라 (1)로는 걸러지지 않는데,
+     *       그대로 지우면 살아 있는 Item의 사진이 사라진다. orphan 스위퍼가 enqueue 시점에 같은 가드를
+     *       두지만 그 조회와 commit 사이의 창은 닫히지 않으므로, job 생성 다음 날 실행되는 이 지점이
+     *       최종 권위다.</li>
+     * </ol>
+     *
+     * <p>(2)의 판정은 filename을 coarse filter로 쓰되 최종 비교는 full object key로 한다 — filename만
+     * 같고 namespace가 다른 남의 Item이 취소를 유발하지 않게 한다. 정상 경로에서는 발화하지 않는다
+     * (filename은 presign이 발급한 UUIDv7이라 서로 다른 업로드가 같은 key를 갖지 않는다).
      */
     @Transactional
     public ValidationResult retainOrphanJobs(List<TimelinePhotoDeleteJob> claimedJobs) {
@@ -163,20 +189,47 @@ public class TimelinePhotoDeleteJobService {
         Set<Long> linkedItemIds = timelineEventItemService.findByTimelineItemIds(itemIds).stream()
                 .map(TimelineEventItem::getTimelineItemId)
                 .collect(Collectors.toSet());
-        if (linkedItemIds.isEmpty()) {
+        Set<String> liveObjectKeys = liveObjectKeysOf(claimedJobs);
+
+        List<TimelinePhotoDeleteJob> cancelTargets = claimedJobs.stream()
+                .filter(job -> linkedItemIds.contains(job.getTimelineItemId())
+                        || liveObjectKeys.contains(job.getObjectKey()))
+                .toList();
+        if (cancelTargets.isEmpty()) {
             return new ValidationResult(List.copyOf(claimedJobs), 0);
         }
 
-        List<Long> relinkedJobIds = claimedJobs.stream()
-                .filter(job -> linkedItemIds.contains(job.getTimelineItemId()))
+        Set<Long> cancelJobIds = cancelTargets.stream()
                 .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .distinct()
-                .toList();
-        int cancelled = deleteByIds(relinkedJobIds);
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        int cancelled = deleteByIds(List.copyOf(cancelJobIds));
         List<TimelinePhotoDeleteJob> orphanJobs = claimedJobs.stream()
-                .filter(job -> !linkedItemIds.contains(job.getTimelineItemId()))
+                .filter(job -> !cancelJobIds.contains(job.getTimelinePhotoDeleteJobId()))
                 .toList();
         return new ValidationResult(List.copyOf(orphanJobs), cancelled);
+    }
+
+    /**
+     * claim한 job의 object key 중 <b>junction이 살아 있는 다른 PHOTO Item</b>이 참조하는 key 집합.
+     * 살아 있는 Item의 key는 저장된 URL이 아니라 소유 subject에서 계산하므로, 그 Item의 {@code photoUrl}이
+     * 손상돼 있어도 보호 대상에서 빠지지 않는다.
+     */
+    private Set<String> liveObjectKeysOf(List<TimelinePhotoDeleteJob> claimedJobs) {
+        Set<String> filenames = claimedJobs.stream()
+                .map(job -> filenameOf(job.getObjectKey()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return timelineItemService.findLiveObjectKeysByFilenames(filenames);
+    }
+
+    private static String filenameOf(String objectKey) {
+        if (objectKey == null) {
+            return null;
+        }
+        int separator = objectKey.lastIndexOf('/');
+        return separator < 0 || separator == objectKey.length() - 1
+                ? null
+                : objectKey.substring(separator + 1);
     }
 
     /**

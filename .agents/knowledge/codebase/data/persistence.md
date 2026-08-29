@@ -53,12 +53,16 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, `cleanup_available_at`=retention cleanup
   eligibility)
-- `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업)
+- `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업).
+  탈퇴 transaction은 `refresh_tokens`·`push_registrations`·`subject_preferences`·
+  `daily_notification_preferences` 행을 **지우지 않는다**(#367) — 알림 두 행은 `false`로 UPDATE하고
+  나머지는 그대로 둔다. 이 행들의 물리 삭제는 #302 삭제 worker가 소유하므로, 탈퇴 회원의 잔존 행은
+  누락이 아니라 설계다.
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
-- `subject_preferences → daily_notification_preferences` (#314·#318·#321 — subject 축 설정 버킷이
-  담은 예정 알림 마스터와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
+- `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
+  담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
 `schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
@@ -183,6 +187,20 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 
 `subject_preferences`·`daily_notification_preferences`(#314·#321)는 푸시 수신 설정을 두 축으로 나눈다.
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 일일 알림 설정도 subject PK 한 행이다.
+
+`subject_preferences`는 알림 전용 테이블이 아니라 **subject 축 설정 버킷**이다 — worker·배치나 앱 시작
+경로가 subject만 들고 읽는 값을 한 행에 모은다. "알림이 늘어도 컬럼을 추가하지 않는다"는 규칙은 알림별
+값에만 걸리며(그 값은 그 알림의 테이블이 소유), `onboarding_completed`(#382, 기본 FALSE)처럼 알림이 아닌
+subject 축 설정은 이 버킷의 원래 용도다. 온보딩 값은 약관 동의 이력에서 계산·동기화하지 않고 완료
+command만 단방향으로 `true`로 바꾸며 되돌리는 writer가 없다. 논리 탈퇴는 이 값을 건드리지 않는다 —
+접근은 `ACTIVE` 검사가 막고, 재가입은 새 subject의 기본값 `false`를 쓴다(#367로 행이 보존되므로 값을
+초기화하면 남의 재가입 없이 옛 subject의 온보딩이 되살아난다). 쓰기는 컬럼 단위 조건 UPDATE라 마스터
+ON/OFF와 온보딩 완료가 서로의 값을 덮지 않는다. 두 쓰기 모두 영향 0행은 값이 같아서가 아니라 행이
+없다는 뜻이라(Connector/J 기본 matched-rows 계약) 예외로 드러내고 행을 만들지 않는다.
+
+`onboarding_completed` 추가는 additive + `DEFAULT FALSE`라 구 서버와 호환된다 — `ddl-auto=validate`는
+매핑되지 않은 여분 컬럼을 문제 삼지 않고, 컬럼을 나열하지 않는 구 native INSERT는 DB default를 받는다.
+따라서 이 DDL은 서버 배포 **전에** 적용하고 rollback 시에도 컬럼을 DROP하지 않는다.
 **두 번째 일일 알림은 이 테이블에 담을 수 없다** — #321이 값이 하나뿐이던 `notification_type` 판별자를
 걷어내면서 PK를 `subject_id` 단독으로 줄였고, 새 알림은 컬럼도 판별자도 아니라 새 테이블이 된다.
 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유한다(`NOTIFICATION_TIME=21:00`, #318 이후 사용자
@@ -270,6 +288,11 @@ enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summa
 모든 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
+현재 `laimory.app`은 운영 ALB를 거쳐 Server로 연결된다. 공개 page는 Markdown을 build-time에 변환한
+classpath 정적 resource이며 `TermContentController`가 `/terms/{slug}/{version}`에서 전달한다. 이 전달
+경로는 catalog 조회와 분리되어 있어 `content_url`을 코드에서 역산하지 않고, page 요청도 DB를 읽지 않는다.
+원문을 바꾸는 개정은 기존 resource 덮어쓰기가 아니라 새 version resource와 새 catalog 행을 함께 추가한다.
+
 기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
 매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
 `content_url`은 새 Server가 뜨기 전에 존재해야 한다(제거만 있던 변경과 순서가 다르다).
@@ -293,7 +316,8 @@ ALTER TABLE term_documents
 2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
 3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
 
-약관 활성화(운영 seed)는 **페이지 게시 -> 5종 URL 200 확인 -> INSERT** 순서를 지킨다. 서버는 이 순서에
+약관 활성화(운영 seed)는 **페이지 게시 -> 현재 `TermType` 4종 URL 200 확인 -> INSERT** 순서를 지킨다.
+개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 이 catalog에 넣지 않는다. 서버는 이 순서에
 의존한다: 종류별 current 행의 존재가 곧 그 stage gate의 활성화 조건인데, 서버는 `content_url`이 실제로
 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을 외부 호스트에 묶지 않는
 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
@@ -309,9 +333,9 @@ INSERT는 다음 shape를 쓴다. 감사 컬럼에 `NOW()`를 쓰지 않는 것�
 INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES
-    ('PRIVACY_POLICY', '1.0', '개인정보 처리방침',
-     'https://laimory.app/terms/privacy-policy/1.0',
-     '2026-09-01 00:00:00',                                        -- 시행일(KST 벽시계)
+    ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
+     'https://laimory.app/terms/terms-of-service/1.0',
+     '2026-08-31 00:00:00',                                        -- 시행일(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));
 ```
@@ -333,10 +357,26 @@ nickname 갱신은 모두 `status` 조건부 UPDATE(영향 행 수 판정)이고
 content subject를 평문 join할 수 없다는 `user_subject_links` 보안 속성 유지(#302는 착수 시
 `SubjectMappingService#getRequired`로 해석). `user_id` UNIQUE가 회원당 활성 job 하나를 강제하고 user
 FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE 금지, 삭제 순서는 #302
-finalization 소유). status는 #305에서 `PENDING` 단일 값이며 worker claim/stage/retry column은 #302의
-additive migration으로 확장한다. 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
+finalization 소유). status는 `PENDING → QUIESCED → (행 삭제)`와 격리용 `MANUAL_REVIEW` 셋이며 완료
+상태는 두지 않는다 — 완료가 곧 행 삭제이고 그것이 user FK RESTRICT를 푸는 유일한 신호다. **#302는
+컬럼을 하나도 추가하지 않았다**: 처리 자격은 `created_at`, claim 표식·재시도 간격은 `updated_at`,
+단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
 NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
+삭제 pass의 순서는 FK가 강제한다: PHOTO delete job과 그 원문 Item(job이 남으면 Item FK `RESTRICT`가
+걸린다. 그 Item은 junction 0이라 record graph snapshot에 안 잡히므로 job과 같은 transaction에서 함께
+지운다) → record graph(batch마다 Item과 record를 **한 transaction**에서 — record가 먼저 사라지면 junction도
+CASCADE로 사라져 Item을 다시 특정할 경로가 없다) → draft source → owner 행 → S3 prefix → finalization.
+snapshot한 Item이 다른 subject의 Event에도 걸려 있으면 조용히 지우지 않고 수동 확인으로 보낸다.
+
+worker는 두 pass로 돈다. **정지**(짧은 cron)는 접수 후 `quiesce-delay`가 지나면 User Memory 미반영
+큐만 비우고 `QUIESCED`로 전이한다 — 아무것도 지우지 않으며, 이게 없으면 일일 User Memory 배치가 탈퇴
+subject의 기록을 계속 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다). **삭제**(일일 cron)는
+접수일 D 기준 D+8~D+10 세 번만 시도하고, 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로
+경보한다(PHOTO 삭제 job과 같은 규칙). 접수 native insert가 `created_at`/`updated_at`에 같은 값을 넣으므로
+정지 claim의 실효 gate가 `max(quiesce-delay, stale-after)`가 된다 — properties가 `stale-after <=
+quiesce-delay`를 기동 검증으로 강제해 정지가 조용히 늦어지는 것을 막는다.
+
 **운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
 수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
 runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은
@@ -410,6 +450,18 @@ process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
 여러 process가 같은 claim protocol에 참여한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
+
+세 번째 경로는 orphan 스위퍼(03:30 KST)다. junction·delete job이 모두 없는 `timeline_items` 행을 PK
+커서로 훑어(무잠금 anti-join) 후보를 고르고, 그 PK만 `FOR UPDATE SKIP LOCKED`로 claim한 뒤 잠금 하에서
+junction·job을 재검증한다(job 재검증은 `FOR SHARE` current read — 무잠금 탐색이 고정한 snapshot으로는
+동시 생성 job을 못 본다). 유효 PHOTO는 `insertIfAbsent`로 delete job에 넘기고, non-PHOTO와 object key를
+복원할 수 없는 손상 PHOTO만 즉시 hard delete한다. 스위퍼는 S3를 직접 호출하지 않는다.
+
+object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는 행은 subject를 잃었으므로 저장된
+`photoUrl`의 path가 유일한 경로이고, junction이 살아 있는 행은 `SHA2(UNHEX(REPLACE(subject_id,'-','')),
+256)`로 SQL이 직접 계산한다(= `PhotoObjectKeys.subjectNamespace`). 후자 덕에 살아 있는 Item의
+`photoUrl`이 손상돼 있어도 같은 key의 S3 객체가 보호된다. 같은 key의 orphan이 여럿이면 최소
+`timeline_item_id`가 job 소유자이고 나머지 행은 삭제된다.
 
 ## Invariants
 

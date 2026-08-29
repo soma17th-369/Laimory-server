@@ -37,6 +37,11 @@ public class PushRegistrationService {
     }
 
     /** 사용자의 활성 설치 전체 FID(발송 대상). */
+    /** 계정 삭제(#302)의 owner FID 등록 전량 제거 — 미존재는 0행(멱등). */
+    public void deleteAll(UUID subjectId) {
+        pushRegistrationRepository.deleteAllBySubjectId(subjectId);
+    }
+
     public List<String> findFirebaseInstallationIds(UUID subjectId) {
         return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectId(subjectId);
     }
@@ -47,14 +52,6 @@ public class PushRegistrationService {
             return List.of();
         }
         return pushRegistrationRepository.findAllFirebaseInstallationIdsBySubjectIdIn(subjectIds);
-    }
-
-    /**
-     * 탈퇴 transaction 합류용(#305) — subject의 push 등록 전부 삭제(멱등, 0행 허용).
-     * repository delete가 REQUIRED 전파로 호출자 transaction에 합류한다.
-     */
-    public void unregisterAllForSubject(UUID subjectId) {
-        pushRegistrationRepository.deleteAllBySubjectId(subjectId);
     }
 
     /**

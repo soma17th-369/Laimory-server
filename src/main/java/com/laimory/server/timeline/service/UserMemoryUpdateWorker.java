@@ -72,8 +72,13 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class UserMemoryUpdateWorker {
 
-    /** AI 내부 예산 120초에 여유를 둔 값(draft task와 동일). */
-    static final Duration TASK_TTL = Duration.ofMinutes(3);
+    /**
+     * AI 내부 예산 120초에 여유를 둔 값(draft task와 동일).
+     *
+     * <p>public인 이유: 계정 삭제(#302)의 정지 지연 하한이 "살아 있는 AI 작업이 모두 만료됐는가"로
+     * 정의돼 이 상수를 직접 읽는다. 이 값을 늘리면 그 하한도 함께 올라간다.
+     */
+    public static final Duration TASK_TTL = Duration.ofMinutes(3);
 
     /** 한 요청에 실을 수 있는 하루 수(AI 계약 상한). 초과분은 다음 배치가 가져간다. */
     static final int MAX_DAILY_TIMELINES = 5;

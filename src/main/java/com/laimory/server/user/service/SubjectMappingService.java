@@ -94,6 +94,22 @@ public class SubjectMappingService {
         }
     }
 
+    /**
+     * 계정 삭제 finalization의 mapping 제거(#302) — lookup key와 subject가 <b>둘 다</b> 일치할 때만
+     * 지운다. {@code MANDATORY} 전파로 finalization transaction에 합류하므로, 콘텐츠 owner 행이
+     * 남아 있어 subject FK({@code RESTRICT})가 이 삭제를 거절하면 job·user 삭제까지 함께 rollback된다.
+     *
+     * <p>rotation 중이어도 current key로 지운다 — 이 시점 직전에 {@link #getRequired(long)}이
+     * previous hit를 current로 rekey해 두기 때문이다.
+     *
+     * @return {@code false} = 영향 0행(이미 지워졌거나 기대 subject와 다름). 호출자는 fail-closed 처리한다
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean deleteMapping(long userId, UUID expectedSubjectId) {
+        return userSubjectLinkRepository.deleteByLookupKeyAndSubjectId(
+                subjectLookupKeyDeriver.deriveCurrent(userId), expectedSubjectId.toString()) == 1;
+    }
+
     private static UUID requireUuidV4(UUID subjectId) {
         if (subjectId == null || subjectId.version() != 4 || subjectId.variant() != 2) {
             throw new IllegalStateException("subject mapping contains an invalid UUIDv4");

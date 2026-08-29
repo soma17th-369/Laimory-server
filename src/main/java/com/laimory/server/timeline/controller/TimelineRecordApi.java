@@ -92,7 +92,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "날짜 조회 성공 — Event별 연결 Item 포함", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -277,7 +277,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님"),
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -302,7 +302,8 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "저장 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음(zero-byte, "
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖 · "
+                            + "body 없음(zero-byte, "
                             + "Content-Type 유무 무관) · emotionType 누락/null/미지원 값 · 깨진 JSON"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
@@ -335,7 +336,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음(zero-byte, "
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖 · body 없음(zero-byte, "
                             + "Content-Type 유무 무관) · emotionType 누락/null/미지원 값/숫자 등 비문자열 · "
                             + "깨진 JSON"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -381,7 +382,7 @@ public interface TimelineRecordApi {
                             + "(question/place/address=null, 연결 PHOTO Item 포함 items) 반환",
                     useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아님 · body 없음·깨진 JSON · "
+                    description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖 · body 없음·깨진 JSON · "
                             + "5개 키 중 누락 · eventType null/미지원 literal/숫자 등 비문자열 · "
                             + "title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null/시간 포맷 오류 · endAt이 startAt보다 이전 · memo 500자 초과 · "

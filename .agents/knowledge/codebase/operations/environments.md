@@ -57,9 +57,18 @@ non-empty로 함께 검증한다.
 `environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev는 `.env`의
 `APP_ENV=dev`가 된다. management endpoint의 실제 네트워크 접근 허용은 환경별 SG가 소유한다.
 
-dev monitoring 자산은 별도 private host에서 실행되고 prod는 수집하지 않는다. monitoring
-host가 dev WAS management 9090, dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK
-9200으로 나가는 source-limited 경로만 갖는다. 유일한 인바운드 예외는 trace 수집이다 — Tempo의
+monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
+dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
+경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).
+
+그 prod 경로는 성격이 다르므로 따로 다룬다 — monitoring host는 지표만 긁어오는 것이 아니라
+**prod DB의 모든 row 변경을 스풀에 상시 보관**하게 된다. 계정은 전역 `REPLICATION SLAVE`·
+`REPLICATION CLIENT`(DB 범위로 좁힐 수 없는 권한)이고 접속 host 고정 + 계정 단위 `REQUIRE SSL`로
+제한하지만, 결과적으로 **이 host의 접근 통제 등급은 prod DB와 같아진다.** 루트 볼륨 EBS 암호화와
+스풀 0700이 전제이며, 관측 host 접근 통제(#368)와 함께 평가한다. rollback은 prod MySQL SG의
+3306 규칙 1건 삭제다.
+
+유일한 인바운드 예외는 trace 수집이다 — Tempo의
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
@@ -113,14 +122,27 @@ application 배포·health gate 의존성이 아니다.
   `TIMELINE_PHOTO_DELETE_CONCURRENCY`, `TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN`,
   `TIMELINE_PHOTO_DELETE_MAX_RUN_DURATION` (checked-in default는 worker on, 매일 `03:00`
   `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
+- `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_QUIESCE_CRON`, `ACCOUNT_ERASURE_DELETE_CRON`,
+  `ACCOUNT_ERASURE_ZONE`, `ACCOUNT_ERASURE_QUIESCE_DELAY`, `ACCOUNT_ERASURE_STALE_AFTER`,
+  `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,
+  `ACCOUNT_ERASURE_MAX_RUN_DURATION` (checked-in default는 worker on — 정지 15분마다, 삭제 매일
+  `02:30` `Asia/Seoul`, 유예 7일 + 처리 창 3일. claim 크기는 설정으로 열지 않는다(항상 1건 —
+  여러 건을 잡아 놓고 실행 예산이 끝나면 시작도 못 한 행이 3일 창 중 하루를 날린다). run당 처리량은
+  `MAX_BATCHES_PER_RUN`이 정한다. 이 스위치는 활성화 게이트가 아니라 장애 시 즉시
+  정지용이고 "언제부터 지우는가"는 `GRACE_PERIOD_DAYS`가 정한다. 단 `docker` 프로필은 off —
+  15분마다 도는 정지 pass가 통합 테스트 job을 가로채지 않게 한다. `QUIESCE_DELAY`는 살아 있는
+  draft/User Memory task TTL과 presign TTL을 넘겨야 하고 `STALE_AFTER`는 그 이하여야 하며, 둘 다
+  기동 시 검증해 fail-fast한다 — `PHOTO_UPLOAD_PRESIGN_TTL`을 올리면 `QUIESCE_DELAY`도 함께 올려야 한다)
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
   `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
   `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
   worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체 사용자 21:00 발송이라
-  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — 매분 background claim이 통합
-  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매분 `Asia/Seoul`, 허용 지연 30분, process당
-  concurrency 1, batch 250, 최대 4 batch/30초 — 전원이 같은 21:00을 공유하므로 process당 한 tick
-  처리량은 1,000행이고 초과분은 다음 분으로 넘어간다)
+  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background claim이 통합
+  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385), 허용 지연 30분,
+  process당 concurrency 1, batch 250, 최대 40 batch/5분 — 전원이 같은 21:00을 공유하고 초과분을
+  받아갈 다음 tick이 없으므로, 그날 due를 한 run에서 모두 소화하도록 예산을 process당 10,000행으로
+  잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
+  로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,
   `DRAFT_CLEANUP_MAX_BATCHES_PER_RUN`, `DRAFT_CLEANUP_MAX_RUN_DURATION` (checked-in default는 worker on,

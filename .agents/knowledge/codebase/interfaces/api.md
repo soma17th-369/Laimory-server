@@ -31,8 +31,9 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 27개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-user GET/DELETE + terms agreements GET/POST)는 `bearerAuth` security requirement와
+보호 operation 29개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST)는
+`bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
@@ -54,6 +55,13 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`다.
+`{recordDate}`를 path로 받는 다섯 API(일별 GET·DELETE, `/save`, `/emotion`, `/events`)는 ISO parse에
+성공해도 MySQL `DATE` 지원 범위 `1000-01-01`~`9999-12-31`(양끝 포함) 밖이면 service 호출 전에 400 `-400`으로
+거절한다(#366 — 신규 error code 없이 기존 `-400`으로 수렴). 미래 날짜 제한은 **draft 생성 POST 하나에만**
+있다(요청 `recordTimeZone` 기준 오늘보다 미래면 400). `DailyRecord`를 만드는 경로가 draft 하나뿐이라
+이 경계만으로 미래 날짜 record가 생기지 않으므로 `/save`를 포함한 나머지 API는 미래 날짜를 막지 않는다.
+`recordDate`와 `recordAt`의 날짜가 다른 것도 계속 정상 계약이다.
+
 하루 단건의 날짜 기반 공개 계약은
 `GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(request subjectId, recordDate)`가
 일치하는 DRAFT/SAVED record를 반환한다. 기존
@@ -189,6 +197,19 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 광고성 알림을 추가하려면 정보통신망법 제50조가 요구하는 동의·야간 제한·표기·수신거부 수단을 함께
 도입해야 한다.
 
+`GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
+조회·기록 계약이다. GET은 인증 subject의 저장된 `onboardingCompleted` boolean 하나를 반환하고, POST는
+그 값을 `true`로 전이한다. 값의 단일 권위는 저장된 subject 설정(`subject_preferences.onboarding_completed`)
+이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 자동 동기화하지 않는다 — 약관 개정도 저장된
+완료 상태를 되돌리지 않는다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
+subject의 반복 POST도 같은 `200 + body=null`로 멱등 성공한다(matched row 기준 — 값이 같아도 0행이
+아니다). POST는 request body가 없다: 대상은 언제나 인증 subject 자신이고 바꿀 값도 하나뿐이다. 두
+operation 모두 `@LoginTermsExempt`라 약관 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마칠 수 있으며
+bearer 인증과 `ACTIVE` 회원 검사는 그대로 요구한다. 설정 행이 없으면 push 설정과 같은 정책으로 조회·기록
+모두 기본값 추정이나 조용한 no-op 없이 500이다 — `false`로 가리면 앱이 온보딩을 다시 태우고 그 완료
+요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지한다(응답에
+다른 상태를 미리 넣거나 provider 병렬 aggregation framework를 만들지 않는다).
+
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
@@ -196,15 +217,22 @@ parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 �
 
 `DELETE /a/api/{version}/user`(#305)는 인증 회원 본인의 탈퇴 접수다. request body는 없고(유효한
 bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`이다 — 202는 논리 탈퇴(이후 이
-회원의 모든 `/a/api` 접근·token/refresh 발급 차단), 이 transaction이 관측한 기존 refresh 전량 폐기,
-push 등록 삭제, 개인정보 삭제 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
-콘텐츠·Redis·S3의 물리 삭제 완료(#302 worker 책임)를 뜻하지 않는다. 이미 인증을 통과한 동시 요청은
+회원의 모든 `/a/api` 접근·token/refresh 발급 차단), 전체 push 마스터와 일일 알림 OFF, 개인정보 삭제
+작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
+콘텐츠·Redis·S3의 물리 삭제 완료(#302 worker 책임)를 뜻하지 않는다. **이 transaction은 행을 지우지
+않는다**(#367) — refresh 행·push 등록(FID)·두 알림 설정 행은 모두 보존되고, 발송 차단은 삭제가 아니라
+OFF로 표현하며, credential 사용·연장 차단은 매 요청·발급 전 `ACTIVE` 검사가 담당한다. 보존 행의 물리
+삭제 책임은 #302에 있다. 이미 인증을 통과한 동시 요청은
 같은 202로 멱등 수렴하고, commit 뒤 같은 access token의 새 요청은 401 `-2001`이다(응답을 잃은 앱은
 401을 이미 탈퇴된 terminal 결과로 취급). 미인증/무효/만료/이미 최종 삭제된 회원도 401 `-2001`로
 존재를 노출하지 않는다. `@LoginTermsExempt`라 약관 미동의 상태에서도 탈퇴할 수 있다. 내부
 userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소셜 계정의 다음 로그인은 과거
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
+
+`GET /terms/{slug}/{version}`은 build-time에 생성한 약관 원문 HTML을 로그인 없이 반환한다. DB나
+controller에서 원문을 렌더링하지 않고 classpath의 exact version resource만 전달하며, 응답은
+`text/html;charset=UTF-8`과 1년 `public, immutable` cache를 사용한다. 미게시 slug/version은 404다.
 
 `GET /api/{version}/terms?stage=LOGIN|TIMELINE_FIRST_CREATE`(#303)는 로그인 전 화면에서도 쓰는 public
 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음). `stage`는 필수 enum query이고

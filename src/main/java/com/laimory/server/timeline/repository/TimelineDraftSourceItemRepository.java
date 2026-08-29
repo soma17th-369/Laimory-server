@@ -51,4 +51,13 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
     @Query("delete from TimelineDraftSourceItem source where source.timelineDraftSourceItemId in :ids")
     int deleteAllByIdIn(@Param("ids") Collection<Long> ids);
 
+    /**
+     * 계정 삭제(#302)의 owner staging 제거 — subject FK가 {@code RESTRICT}라 mapping 삭제 전에 반드시
+     * 0이 되어야 한다. 한 번에 다 지우지 않고 유계로 반복한다(대량 회원의 lock·undo log 점유 방지).
+     */
+    @Modifying
+    @Query(value = "delete from timeline_draft_source_items where subject_id = :subjectId limit :limit",
+            nativeQuery = true)
+    int deleteBySubjectId(@Param("subjectId") String subjectId, @Param("limit") int limit);
+
 }

@@ -23,7 +23,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. `subject_id + record_date`는 유일하다. |
-| 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). |
+| 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). 허용 범위는 MySQL `DATE`와 같은 `1000-01-01`~`9999-12-31`(양끝 포함)이고 범위 밖은 400 `-400`이다(#366). 미래 날짜는 하루 기록을 실제로 만드는 draft 생성에서만 거절하며(요청 record timezone 기준 — 서버 zone이 아니다), `DailyRecord` 생성 경로가 그 하나뿐이라 이 경계만으로 미래 record가 생기지 않는다. save·조회·삭제·감정 수정·Event 생성에는 미래 제한이 없다. `recordAt`과 날짜가 달라도 되는 계약은 유지된다. |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 최초 확정한다. 확정 후에는 `PUT .../daily-records/{recordDate}/emotion`이 SAVED record의 감정만 교체한다(status 불변·멱등, DRAFT는 409 `-1020`, User Memory 재enqueue 없음). 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
 | 작성중 | Draft | 현재 구현 | draft 요청 시 선생성되거나 사용자가 아직 편집 중인 일일 기록 상태 `DRAFT`다. AI 실패 시 empty DRAFT가 남을 수 있으며 같은 날짜 재시도가 재사용한다. |
@@ -76,8 +76,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
 | 주변 장소 목록 | places | 현재 구현 | 거리순 장소명 배열이다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
 | 머문 시간 텍스트 | durationText | 현재 구현 | 서버가 `startAt/endAt`으로 계산한 텍스트다. client 값은 받지 않는다. |
-| 건강 페이로드 | Health Payload | 현재 구현 | 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
-| 건강 지표 | Health Metric | 현재 구현 | `STEPS`, `DISTANCE`, `SLEEP` 중 하나다. |
+| 건강 페이로드 | Health Payload | 현재 구현 | 걸음 수 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
+| 건강 지표 | Health Metric | 현재 구현 | 신규 입력은 걸음 수 `STEPS` 하나만 허용한다. 기존 staging/final payload는 `JsonNode`로 읽으므로 과거 JSON 조회에는 enum 역직렬화를 요구하지 않는다. |
 | 알림 페이로드 | Notification Payload | 현재 구현 | `appName`, `title`, `text`를 담으며 title/text 중 하나 이상이 필요하다. |
 
 ## 사진 업로드와 서빙
@@ -121,7 +121,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Daily Record 유일성 | 현재 구현 | `UNIQUE(subject_id, record_date)`다. |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
 | Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
-| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(orphan 스위퍼 후속 과제), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
+| orphan 스위퍼 | 현재 구현 | junction이 0인 final Item을 하루 1회(03:30 KST) 수렴시키는 스케줄 작업. 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 object key를 복원할 수 없는 손상 PHOTO만 즉시 hard delete한다. job이 이미 있는 Item은 worker 소유라 손대지 않는다. "스위퍼가 S3를 지운다"고 쓰지 않는다 — S3 삭제는 언제나 delete job worker 몫이다. |
+| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(일일 orphan 스위퍼가 수렴시킨다), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | retry receipt에 선점 표식(`claimedAt`)을 남긴 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit하고, commit 뒤 한 번의 native write로 callback token hash와 Redis `CALLBACK_PENDING`으로 회전한다. 저장 실패는 가능한 경우 최초 `RESULT_PENDING` snapshot으로 복구한다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
@@ -135,9 +136,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
-| 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302 완료 뒤 `WITHDRAWN` 보존/행 삭제는 그 계획에서 확정한다. |
-| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·refresh 전량 폐기·push 등록 삭제·삭제 작업 접수를 commit하고 202를 반환한다. 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
-| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. worker claim/stage는 #302가 확장한다. |
+| 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302는 **완전 소거**로 확정돼 물리 삭제가 끝나면 회원 행 자체를 지운다 — `WITHDRAWN` tombstone 상태는 두지 않는다. |
+| 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·전체 push 마스터 OFF·일일 알림 OFF·삭제 작업 접수를 commit하고 202를 반환한다. **행은 지우지 않는다**(#367 — refresh·FID·설정 2행 모두 보존, 물리 삭제는 #302 소유). 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 모든 `/a/api` 접근·token/refresh 발급은 매 요청 ACTIVE 검사로 401에 수렴한다. |
+| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. 상태는 `PENDING → QUIESCED → (행 삭제)`와 `MANUAL_REVIEW`이고 완료 상태는 없다(완료 = 행 삭제). |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 `status=ACTIVE` 조건부 nickname-only UPDATE로 갱신한다(#305 — 탈퇴 행 부활 방지, 영향 0행은 갱신 폐기). Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
@@ -158,15 +159,15 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 약관 문서 | Term Document | 현재 구현 | 약관 한 버전의 불변 행(`term_documents`)이다. 종류·버전·제목·**게시 URL**·효력일을 담고 원문 본문은 담지 않는다 — 본문은 약관 원문 page(Term Content Page)가 소유한다. 개정은 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 버전에 동의한 이력이 소급 변조된다). 게시된 버전·URL·효력일을 수정·삭제하는 API는 없다. 운영 seed는 원문 page 게시 후 수동 INSERT다. |
-| 약관 종류 | Term Type | 현재 구현 | `TermType` enum 5종 — `TERMS_OF_SERVICE`(이용약관)·`PRIVACY_POLICY`(개인정보 처리방침)는 `LOGIN`, `SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)는 `TIMELINE_FIRST_CREATE` 단계다. enum이 각 종류의 `(stage, required, displayOrder)`를 단독 소유하며 DB는 이 값을 복제하지 않는다. 게시 URL은 정책이 아니라 게시 사실이라 enum이 아니라 문서 행이 소유한다. required 값은 현재 다섯 종류 모두 true(계획 기본값)이고 제품·법무 확정 시 enum과 seed를 함께 바꾼다. |
+| 약관 종류 | Term Type | 현재 구현 | `TermType` enum 4종 — `TERMS_OF_SERVICE`(이용약관)는 `LOGIN`, `SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)는 `TIMELINE_FIRST_CREATE` 단계다. 개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 catalog 밖에서 게시한다. enum이 각 동의 문서의 `(stage, required, displayOrder)`를 단독 소유하며 DB는 이 값을 복제하지 않는다. 게시 URL은 정책이 아니라 게시 사실이라 enum이 아니라 문서 행이 소유한다. required 값은 현재 네 종류 모두 true이고, 위치기반서비스 이용약관은 enum 추가 전 계획 상태다. 제품·법무 확정 시 enum과 seed를 함께 바꾼다. |
 | 약관 단계 | Term Stage | 현재 구현 | `TermStage` enum — 노출·동의·enforcement의 공통 축(`LOGIN`, `TIMELINE_FIRST_CREATE`)이다. 공개 조회의 필수 query이며 소속 판정은 `TermType` mapping만 쓴다(DB에 stage 컬럼이 없다). |
 | 약관 버전 | Term Version | 현재 구현 | 종류 안에서 유일한 exact-match 문자열이다(컬럼 binary collation — Java equals와 동일 비교). 운영 표기는 `MAJOR.MINOR`(`1.0`·`1.1`)이고 서버는 숫자로 파싱·정렬하지 않는다 — `1.10`은 `1.1`과 다른 문자열이다. 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. |
-| 약관 원문 page | Term Content Page | 현재 구현 | 버전마다 따로 게시된 원문 HTML이다. 약관 원문의 단일 소유자이며 Server는 저장·렌더링·proxy하지 않고 문서 행의 `content_url`을 그대로 내려줄 뿐 게시 위치 정책을 알지 않는다(요청·기동 중 HTTP 조회도 하지 않는다 — 게시 여부는 게시 게이트가 확인). 게시된 버전 URL의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 과거 URL이 동의 이력의 재현 근거다. 현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 서버가 강제하는 형식이 아니다(서버는 https 절대 URI인지만 검사). |
+| 약관 원문 page | Term Content Page | 현재 구현 | `docs/terms/drafts` Markdown에서 미리 생성해 `src/main/resources/terms-content`에 둔 버전별 불변 HTML이다. `TermContentController`는 `/terms/{slug}/{version}`에서 정적 byte와 1년 `immutable` cache header만 로그인 없이 전달한다. 약관 DB·API는 원문을 저장·동적 렌더링·proxy하지 않고 문서 행의 `content_url`만 다루며 요청·기동 중 HTTP 조회도 하지 않는다(게시 여부는 게시 게이트가 확인). 게시된 버전 URL의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 과거 URL이 동의 이력의 재현 근거다. 현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 catalog가 역산하거나 강제하는 형식이 아니다(catalog readiness는 https 절대 URI인지만 검사). |
 | 현재 문서 | Current Term Document | 현재 구현 | `effective_at <= now(KST)`인 종류별 최신 행이다. 별도 active flag 없이 효력 시각 한 축으로 future 등록·cutover를 관리하며, `(term_type, effective_at)` UNIQUE가 동시 최신 모호성을 차단한다. |
 | 효력 시작 시각 | Effective At | 현재 구현 | `Asia/Seoul` 벽시계 `LocalDateTime`(`DATETIME(6)`, offset 없음)이다. `Instant` 매핑 금지 — current selection과 수락 시각이 같은 명시적 KST 변환(`TermTimes`)을 쓴다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, `(user_id, term_document_id)`당 1행)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). 문서 행이 불변이라 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이고, 그 버전의 원문은 불변 URL의 게시 page가 재현한다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
-| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push PUT/DELETE)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
+| 필수 약관 gate | Terms Enforcement | 현재 구현 | `/a/api` HandlerMethod interceptor가 controller 진입 전에 현재 필수 문서 동의를 검사한다(미동의 403 `-3001`). 기본은 `LOGIN` 단계이고 `@LoginTermsExempt`(동의 등록/이력·내 회원 조회·회원 탈퇴 DELETE /user·push 등록 PUT/DELETE·push 수신 설정 3종·앱 초기화 GET /initializer·온보딩 완료 POST /onboarding/complete)만 면제하며, `@RequiredTermsStage`(draft 생성·사진 presign)는 단계를 추가 검사한다. catalog 미준비 stage는 부분 강제 없이 전체 fail-open한다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | seed 존재·`term_type` literal 유효성·현재 필수 문서 커버리지 판정(`TermCatalogReadiness`)이다. 기동 검사와 요청별 판정이 bounded 전이 로그·metric(`laimory.terms.catalog.ready`·`laimory.terms.gate.fail_open`)으로 알리되 기동·공개 조회를 막지 않는다. 로그 수위는 상태 성격으로 가른다 — 테이블이 완전히 빈 pre-activation(법무 원문 대기, 예정된 fail-open)은 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·오타 literal) ready에서 퇴행한 경우는 ERROR(경보 대상)다. gauge/counter는 수위와 무관하게 동일 기록한다. |
 
 ## 푸시 알림
@@ -177,8 +178,11 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
 | 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
-| subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터 하나뿐이다. |
-| 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. |
+| subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치나 앱 시작 경로가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터와 온보딩 완료 여부다. |
+| 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |
+| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 지금 담긴 값은 온보딩 완료 여부 하나이며, 상태를 계산하지 않고 저장값을 그대로 옮긴다(조회가 값을 바꾸지 않는다). "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
+| 온보딩 완료 상태 | Onboarding Completed | 현재 구현 | 사용자가 앱 온보딩을 마쳤는지의 단일 권위(`subject_preferences.onboarding_completed`, 기본 false)다. 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 동기화하지 않으며 약관 개정도 이 값을 되돌리지 않는다. 논리 탈퇴는 값을 보존하고, 재가입은 새 subject의 기본값을 쓴다. |
+| 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공하며, `false`로 되돌리는 짝은 두지 않는다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송하는 예정 알림이다(#318). 기본 ON/21:00이고 사용자는 끄기만 할 수 있으며 시각은 서버 고정이라 사용자가 고르지 않는다(별도 법정 동의 절차 없음 — 정보성 통지, 수신거부 수단은 일일 알림 OFF). |
 | occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |

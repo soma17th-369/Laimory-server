@@ -4,17 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
-import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.UserStatus;
 import java.time.Clock;
@@ -30,9 +30,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 탈퇴 transaction orchestration 계약(#305 §5.1): CAS 승자만 subject 해석→refresh 전량 폐기→push
- * 삭제→job enqueue를 순서대로 수행, 영향 0행은 fresh 조회로 멱등 202(WITHDRAWAL_PENDING) / 401(없음)
- * 분류, 중간 실패는 전파(rollback은 @Transactional 소유 — 실 DB 검증은 integration). 인프라 0.
+ * 탈퇴 transaction orchestration 계약(#305 §5.1, #367): CAS 승자만 subject 해석→마스터 OFF→일일 알림
+ * OFF→job enqueue를 순서대로 수행하고 <b>어떤 행도 삭제하지 않는다</b>. 영향 0행은 fresh 조회로 멱등
+ * 202(WITHDRAWAL_PENDING) / 401(없음) 분류, 중간 실패는 전파(rollback은 @Transactional 소유 — 실 DB
+ * 검증은 integration). 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class UserWithdrawalTransactionServiceTest {
@@ -48,10 +49,6 @@ class UserWithdrawalTransactionServiceTest {
     @Mock
     private SubjectMappingService subjectMappingService;
     @Mock
-    private RefreshTokenService refreshTokenService;
-    @Mock
-    private PushRegistrationService pushRegistrationService;
-    @Mock
     private DailyNotificationPreferenceService dailyNotificationPreferenceService;
     @Mock
     private SubjectPreferenceService subjectPreferenceService;
@@ -60,8 +57,7 @@ class UserWithdrawalTransactionServiceTest {
 
     private UserWithdrawalTransactionService newService() {
         return new UserWithdrawalTransactionService(userAccountService, subjectMappingService,
-                refreshTokenService, pushRegistrationService, dailyNotificationPreferenceService,
-                subjectPreferenceService, accountErasureJobService, CLOCK);
+                dailyNotificationPreferenceService, subjectPreferenceService, accountErasureJobService, CLOCK);
     }
 
     @Test
@@ -71,16 +67,13 @@ class UserWithdrawalTransactionServiceTest {
 
         newService().withdraw(USER_ID);
 
-        InOrder order = inOrder(userAccountService, subjectMappingService, refreshTokenService,
-                pushRegistrationService, dailyNotificationPreferenceService, subjectPreferenceService,
-                accountErasureJobService);
+        InOrder order = inOrder(userAccountService, subjectMappingService,
+                subjectPreferenceService, dailyNotificationPreferenceService, accountErasureJobService);
         order.verify(userAccountService).transitionToWithdrawalPending(USER_ID, LOCAL_NOW);
         order.verify(subjectMappingService).getRequired(USER_ID);
-        order.verify(refreshTokenService).revokeAllForUser(USER_ID);
-        order.verify(pushRegistrationService).unregisterAllForSubject(SUBJECT_ID);
-        // 종류별 설정 → 마스터 순서가 FK RESTRICT 계약이다.
-        order.verify(dailyNotificationPreferenceService).deleteForSubject(SUBJECT_ID);
-        order.verify(subjectPreferenceService).deleteForSubject(SUBJECT_ID);
+        // 마스터를 먼저 끈다 — 하나로 예정 알림과 완료 push가 모두 막히므로 중간 실패의 잔여 상태가 안전하다.
+        order.verify(subjectPreferenceService).updatePushEnabled(SUBJECT_ID, false);
+        order.verify(dailyNotificationPreferenceService).updateEnabled(SUBJECT_ID, false);
         order.verify(accountErasureJobService).enqueue(USER_ID);
         // 승자 경로에서 findStatus 재조회는 없다 — CAS 영향 행 수가 유일한 판정이다.
         verify(userAccountService, never()).findStatus(anyLong());
@@ -94,7 +87,7 @@ class UserWithdrawalTransactionServiceTest {
 
         assertThatCode(() -> newService().withdraw(USER_ID)).doesNotThrowAnyException();
 
-        verifyNoInteractions(subjectMappingService, refreshTokenService, pushRegistrationService,
+        verifyNoInteractions(subjectMappingService,
                 dailyNotificationPreferenceService, subjectPreferenceService, accountErasureJobService);
     }
 
@@ -110,8 +103,47 @@ class UserWithdrawalTransactionServiceTest {
                     assertThat(e.getMessage()).doesNotContain(String.valueOf(USER_ID));
                 });
 
-        verifyNoInteractions(subjectMappingService, refreshTokenService, pushRegistrationService,
+        verifyNoInteractions(subjectMappingService,
                 dailyNotificationPreferenceService, subjectPreferenceService, accountErasureJobService);
+    }
+
+    @Test
+    void withdraw_doesNotDeleteAnyRow() {
+        // #367 계약의 핵심: refresh·FID·설정 행은 모두 보존하고 알림만 OFF로 바꾼다. 물리 삭제는 #302 소유.
+        when(userAccountService.transitionToWithdrawalPending(USER_ID, LOCAL_NOW)).thenReturn(true);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+
+        newService().withdraw(USER_ID);
+
+        verify(subjectPreferenceService).updatePushEnabled(SUBJECT_ID, false);
+        verify(dailyNotificationPreferenceService).updateEnabled(SUBJECT_ID, false);
+        verifyNoMoreInteractions(subjectPreferenceService, dailyNotificationPreferenceService);
+    }
+
+    @Test
+    void withdraw_dailyNotificationOffFailure_propagatesSoOuterTransactionRollsBack() {
+        // 마스터는 이미 껐지만 일일 설정 UPDATE가 0행이면 전파해야 한다 — 삼키면 회원 전이·identity
+        // release·job enqueue만 commit되고 알림이 켜진 채 남는다. 실제 rollback은 integration이 검증한다.
+        when(userAccountService.transitionToWithdrawalPending(USER_ID, LOCAL_NOW)).thenReturn(true);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        IllegalStateException missingRow = new IllegalStateException("daily notification preference row is missing");
+        doThrow(missingRow).when(dailyNotificationPreferenceService).updateEnabled(SUBJECT_ID, false);
+
+        assertThatThrownBy(() -> newService().withdraw(USER_ID)).isSameAs(missingRow);
+
+        verifyNoInteractions(accountErasureJobService);
+    }
+
+    @Test
+    void withdraw_masterOffFailure_propagatesBeforeLaterSteps() {
+        when(userAccountService.transitionToWithdrawalPending(USER_ID, LOCAL_NOW)).thenReturn(true);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        IllegalStateException missingRow = new IllegalStateException("subject preference row is missing");
+        doThrow(missingRow).when(subjectPreferenceService).updatePushEnabled(SUBJECT_ID, false);
+
+        assertThatThrownBy(() -> newService().withdraw(USER_ID)).isSameAs(missingRow);
+
+        verifyNoInteractions(dailyNotificationPreferenceService, accountErasureJobService);
     }
 
     @Test
@@ -125,7 +157,7 @@ class UserWithdrawalTransactionServiceTest {
 
         // 실패 지점 이후 단계는 실행되지 않는다. rollback 자체는 @Transactional 프레임워크 계약 —
         // UserWithdrawalIntegrationTest가 실 DB에서 ACTIVE 잔존(부수효과 0)을 검증한다.
-        verifyNoInteractions(refreshTokenService, pushRegistrationService,
+        verifyNoInteractions(
                 dailyNotificationPreferenceService, subjectPreferenceService, accountErasureJobService);
         verify(subjectMappingService).getRequired(USER_ID);
         verify(subjectMappingService, never()).createFor(anyLong());

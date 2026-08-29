@@ -497,8 +497,14 @@ scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh
 scripts/collect-filebeat-metrics.sh
 scripts/configure-mysql-backup-user.sh
+scripts/configure-mysql-binlog-user.sh
+scripts/stream-binlog.sh
+scripts/upload-binlog.sh
 systemd/laimory-aws-metrics.service
 systemd/laimory-aws-metrics.timer
+systemd/laimory-binlog-stream.service
+systemd/laimory-binlog-upload.service
+systemd/laimory-binlog-upload.timer
 systemd/laimory-ebs-snapshot.service
 systemd/laimory-ebs-snapshot.timer
 systemd/laimory-elasticsearch-metrics.service
@@ -802,6 +808,138 @@ service를 의도적으로 1회 실패시켜(예: env 파일 임시 이동) 두 
 
 정리(uninstall)는 각 host에서 timer disable → unit/script/`.prom`/설정 파일 제거, 로컬 운영자
 권한에서 위 inline policy 2건과 bucket lifecycle rule(`expire-prod-mysqldump-30d`) 제거다.
+
+## prod MySQL binlog off-host stream
+
+덤프는 하루 1회라 최악 손실 창이 24시간이다. binlog를 상시 오프호스트로 흘려 두면 마지막 덤프
+복원 + binlog 재생으로 장애 직전까지 복구(PITR)할 수 있다.
+
+**수집은 DB host가 아니라 monitoring host가 한다.** DB host의 timer가 파일을 올리는 방식은
+완결된 binlog만 올릴 수 있어 **지금 쓰이고 있는 파일을 원리적으로 반출하지 못하고**, 사고 직전
+트랜잭션이 늘 원본 디스크에만 남는다. 백업 주체와 대상이 같은 디스크를 공유하면 오프호스트
+사본이 아니다.
+
+두 개의 창을 구분한다 — 흐리면 "업로드 주기 = 손실 창"으로 오독된다.
+
+- **RPO는 monitoring host 디스크가 담보한다.** 이벤트는 커밋 즉시 스트림으로 넘어온다.
+- **S3는 3차 사본**이고, 그 창은 "prod MySQL과 monitoring을 동시에 잃는 이중 장애"의 창이다.
+  완결본만 올리면 이 창이 업로드 주기가 아니라 **binlog rotation 주기(현재 일 1회)** 가 되므로,
+  uploader가 활성 파일도 매 실행 `tail/` key로 올려 창을 timer 주기(1분)까지 좁힌다.
+
+구성 요소는 monitoring host의 두 unit이다.
+
+- `laimory-binlog-stream.service` — timer가 아니라 **상주 데몬**.
+  `mysqlbinlog --read-from-remote-server --raw --stop-never`로 스풀(`/var/lib/laimory/binlog/`)에 받는다.
+- `laimory-binlog-upload.timer`(1분) — 완결본은 정규 key로 한 번, 활성 파일은 매번 `tail/` key로
+  올린다. `laimory_binlog_stream_up`의 writer도 이쪽이다 — textfile collector는 파일이 다시 쓰일
+  때까지 마지막 값을 노출하므로, 스트림이 자기 생존을 자기가 기록하면 죽는 순간 1로 굳는다.
+
+S3 key는 `<binlog prefix>/<server_uuid>/<file>`로 **source 세대를 분리**한다. binlog 파일명은
+source가 재생성되면 1번부터 재사용되고 bucket은 versioning을 전제하지 않으므로, uuid가 없으면
+새 세대가 옛 세대의 PITR 사본을 조용히 덮어쓴다. 같은 이유로 스트림 상태 파일도 uuid를 함께 들고,
+uuid가 달라지면 연속으로 이어붙이지 않고 사슬 끊김으로 멈춘다.
+
+IAM은 monitoring role에 binlog prefix 한정 `s3:PutObject`를 더한다(dump prefix 한정 policy와 같은
+형태). lifecycle은 binlog prefix 35일 만료다 — **dump 보존(30일)보다 짧으면 안 된다.** 살아 있는
+덤프 뒤의 binlog가 먼저 만료되면 그 덤프로는 PITR을 못 한다. `put-bucket-lifecycle-configuration`은
+규칙 추가가 아니라 **버킷 설정 전체 교체**이므로, 기존 문서를 `get`으로 받아 두 규칙을 병합해
+PUT하고 재조회로 2건을 확인한다. rollback도 이전 **전체 문서** 복원이다.
+
+```bash
+# prod MySQL host: 스트리밍 계정 (대화형 비밀번호). 접속 host는 monitoring host로 고정한다.
+sudo bash /tmp/configure-mysql-binlog-user.sh '<monitoring host private IPv4>'
+
+# monitoring host: /etc/laimory/binlog-stream.env (root 0600)
+MYSQL_HOST='<prod MySQL private IPv4>'
+MYSQL_USER='laimory_binlog'
+MYSQL_PASSWORD='<binlog stream password>'
+S3_PREFIX='s3://<backup bucket>/prod-mysql/binlog'
+CONNECTION_SERVER_ID='1358'
+RETENTION_DAYS=7
+# 최초 설치에서만 쓴다 — 첫 덤프 직전 binlog 파일. 상태 파일이 생긴 뒤에는 무시된다.
+BINLOG_START_FILE='<binlog file active before the first dump>'
+```
+
+`CONNECTION_SERVER_ID`는 반드시 source의 `server_id`와 달라야 한다. `--stop-never`를 쓰면
+mysqlbinlog가 보고하는 기본 server ID가 `1`인데 prod MySQL의 `server_id`도 `1`이고, 매뉴얼은 이
+값이 복제 토폴로지 안에서 유일할 것을 요구한다.
+
+설치 순서가 중요하다 — **스트림을 먼저 띄우고 수신을 확인한 뒤에 첫 덤프를 뜬다.** 덤프를 먼저
+돌리면 그 사이 rotation이 일어났을 때 좌표가 가리키는 파일의 앞부분을 영영 못 받아 첫 덤프부터
+사슬이 끊긴다. 덤프 좌표(`CHANGE MASTER TO ... MASTER_LOG_FILE`)가 스풀 커버 범위 안인지 확인한다.
+
+```bash
+BACKUP_BUCKET='<backup bucket>'
+# mysqlbinlog은 client 패키지가 아니라 mysql-server-core-8.0이 소유한다(Ubuntu 24.04 실측).
+# client만 설치하면 mysql은 있고 스트림의 실행 주체인 mysqlbinlog이 없다.
+# server-core는 바이너리만 제공하고 systemd unit·datadir·데몬을 만들지 않는다.
+sudo apt-get install -y mysql-client-core-8.0 mysql-server-core-8.0
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/stream-binlog.sh" \
+  /opt/laimory-monitoring/scripts/stream-binlog.sh --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/upload-binlog.sh" \
+  /opt/laimory-monitoring/scripts/upload-binlog.sh --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-binlog-stream.service" \
+  /etc/systemd/system/laimory-binlog-stream.service --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-binlog-upload.service" \
+  /etc/systemd/system/laimory-binlog-upload.service --region ap-northeast-2 --only-show-errors
+sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-binlog-upload.timer" \
+  /etc/systemd/system/laimory-binlog-upload.timer --region ap-northeast-2 --only-show-errors
+sudo chmod 0750 /opt/laimory-monitoring/scripts/{stream,upload}-binlog.sh
+sudo chmod 0644 /etc/systemd/system/laimory-binlog-*.{service,timer}
+sudo install -d -m 0700 /etc/laimory
+sudo vi /etc/laimory/binlog-stream.env   # 위 포맷, 저장 후 chmod 0600
+sudo chmod 0600 /etc/laimory/binlog-stream.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now laimory-binlog-stream.service
+sudo systemctl enable --now laimory-binlog-upload.timer
+```
+
+확인은 산출물로 한다 — 스풀에 활성 파일이 실제로 늘어나는지, S3에 정규 object와 `tail/` object가
+생기는지, `laimory_binlog_stream_up`이 1인지. 스트림을 stop한 채 1분 이상 두고 그 지표가 0으로
+**갱신되는지**도 본다(자기보고 방식이었다면 1로 굳는다).
+
+### PITR 복구 절차
+
+⚠️ 복구는 **운영자 권한에서** 진행한다. prod MySQL host의 role은 dump prefix에 `s3:PutObject`만
+갖고 `GetObject`가 없어 **자기 백업을 읽지 못한다**(최소 권한 의도대로다). DB host에서 복구를
+시도하면 `403 Forbidden`을 만난다.
+
+1. 최신 덤프를 받아 좌표와 source uuid를 함께 읽는다. uuid가 곧 내려받을 binlog prefix다 —
+   세대가 여럿일 때 이것 없이 고르면 잘못된 세대를 재생한다.
+
+   ```bash
+   zcat laimory-<stamp>.sql.gz | head -50 | grep -E 'laimory_source_uuid|CHANGE MASTER TO'
+   ```
+
+2. 그 좌표의 binlog 파일부터 이후 전부를 `<binlog prefix>/<uuid>/`에서 받는다.
+   `tail/`의 object는 **정규 key에 같은 이름이 없을 때만, 항상 마지막 파일로만** 쓴다(미완결
+   사본이므로 뒤에 다른 파일을 이어붙이면 안 된다).
+3. **격리된 임시 mysqld**(전용 datadir)에 덤프를 적재하고 재생한다. 덤프가 `--databases laimory`라
+   `CREATE DATABASE`와 `USE laimory`를 포함하므로 접속 DB를 바꿔도 격리되지 않는다 —
+   운영 중인 다른 서버(dev 포함)에 그대로 적재하면 그쪽 `laimory`를 덮어쓴다.
+
+   ```bash
+   set -o pipefail
+   mysqlbinlog --force-if-open --database=laimory \
+     --start-position=<pos> <첫 파일> <나머지…> | mysql
+   ```
+
+   - `--force-if-open`은 **`IN_USE` 때문이 아니라 잘린 꼬리 때문에** 붙인다(2026-08-28 리허설로 정정).
+     매뉴얼의 "`IN_USE` 파일은 이 옵션 없이 거부된다"는 **서버가 직접 쓰는 파일**에 해당하고,
+     우리 `tail/` object는 `mysqlbinlog --raw`가 만든 클라이언트 사본이라 그 플래그가 없다 —
+     실제로 옵션 없이도 동일하게 디코드된다(실측: 옵션 유무 모두 exit 0, 출력 바이트 동일).
+     다만 tail은 쓰는 도중 복사라 마지막 이벤트가 잘릴 수 있고, 그때 실패하지 않게 해주는 것이
+     이 옵션의 나머지 절반이다. 그래서 계속 붙인다.
+   - `pipefail`이 없으면 mysqlbinlog 실패가 `mysql`의 종료 코드에 가려 **조용히 부분 복원**된다.
+   - ⚠️ **공식 `mysql:8.0` 컨테이너 이미지에는 `mysqlbinlog`이 없다**(`mysql`·`mysqldump`·
+     `mysqladmin`만 있다). 격리 mysqld를 컨테이너로 띄우면 재생 도구는 따로 마련해야 한다 —
+     monitoring host의 `mysql-server-core-8.0`에 들어 있는 것을 쓰거나, 디코드와 적재를 나눈다.
+   - `--start-position`은 **명령줄의 첫 파일에만** 적용된다. 파일 순서를 틀리면 조용히 잘못 복원된다.
+   - 논리 사고를 되감는 경우 `--stop-datetime`/`--stop-position`으로 사고 직전에서 끊는다.
+
+정리(uninstall)는 monitoring host에서 두 unit disable → unit/script/스풀/상태/`.prom`/설정 파일
+제거, 로컬 운영자 권한에서 binlog prefix `s3:PutObject` policy와 lifecycle rule 제거,
+prod MySQL host에서 스트리밍 계정 DROP과 3306 SG 규칙 1건 삭제다.
 
 ## Discord smoke test
 

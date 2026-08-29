@@ -54,4 +54,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
     int updateNicknameIfActive(@Param("provider") Provider provider,
                                @Param("providerUserId") String providerUserId,
                                @Param("nickname") String nickname);
+
+    /**
+     * 계정 삭제 finalization의 회원 행 제거(#302 — 완전 소거 확정, tombstone 없음).
+     * {@code WITHDRAWAL_PENDING} 행만 지운다 — 재가입한 신규 {@code ACTIVE} generation은 별도 행이라
+     * 이 조건에 걸리지 않는다. {@code account_erasure_jobs}가 {@code ON DELETE RESTRICT}로 참조하므로
+     * 같은 transaction에서 job 행을 <b>먼저</b> 지워야 이 삭제가 성공한다.
+     *
+     * @return 영향 행 수(0 = 이미 삭제됐거나 상태 불일치)
+     */
+    @Modifying
+    @Query("delete from User u where u.userId = :userId and u.status = :expected")
+    int deleteByUserIdAndStatus(@Param("userId") Long userId, @Param("expected") UserStatus expected);
 }

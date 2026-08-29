@@ -79,4 +79,33 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     @Transactional
     @Query("delete from TimelinePhotoDeleteJob j where j.timelinePhotoDeleteJobId in :jobIds")
     int deleteAllByJobIdIn(@Param("jobIds") Collection<Long> jobIds);
+
+    /**
+     * subject namespace 안의 delete job을 유계로 읽는다(#302 계정 삭제).
+     *
+     * <p><b>{@code object_key}가 이 job들의 유일한 owner 단서다.</b> job이 존재한다는 것은 마지막 Event
+     * 참조가 사라졌다는 뜻이라 junction graph로는 subject를 해석할 수 없는데, key가
+     * {@code {sha256(subject)}/photos/…}라 prefix로 귀속할 수 있다. 컬럼이 {@code ascii_bin}이고
+     * prefix가 64자 hex라 UNIQUE index의 leftmost prefix range scan을 탄다.
+     */
+    @Query(value = "select * from timeline_photo_delete_jobs "
+            + "where object_key like concat(:namespacePrefix, '%') "
+            + "order by timeline_photo_delete_job_id limit :limit",
+            nativeQuery = true)
+    List<TimelinePhotoDeleteJob> findByObjectKeyNamespace(
+            @Param("namespacePrefix") String namespacePrefix, @Param("limit") int limit);
+
+    /**
+     * 주어진 Item 중 job을 가진 Item ID를 <b>current read</b>로 조회한다(orphan 스위퍼 전용).
+     *
+     * <p>일반 SELECT는 {@code REPEATABLE READ}에서 transaction의 첫 consistent read가 고정한 snapshot을
+     * 계속 읽는다. 스위퍼는 무잠금 탐색으로 transaction을 시작하므로, 그 뒤 다른 transaction이 commit한
+     * job이 일반 SELECT에는 보이지 않는다. 반면 {@code insert ignore}는 write라 최신 상태를 보고 UNIQUE
+     * 충돌로 0을 돌려준다 — 두 결과가 어긋나면 job 있는 Item을 지워 FK 위반으로 batch가 rollback된다.
+     * {@code FOR SHARE}가 그 어긋남을 없앤다.
+     */
+    @Query(value = "select timeline_item_id from timeline_photo_delete_jobs "
+            + "where timeline_item_id in (:itemIds) for share",
+            nativeQuery = true)
+    List<Long> findItemIdsWithJobForShare(@Param("itemIds") Collection<Long> itemIds);
 }

@@ -44,9 +44,8 @@ class PublicTermControllerTest {
     @Test
     void getCurrentTerms_withoutBearer_returns200InFixedDisplayOrder() throws Exception {
         // 로그인 전 화면에서 쓰는 public API — bearer 없이 200이어야 한다.
-        when(termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN)).thenReturn(List.of(
-                document(TermType.TERMS_OF_SERVICE, "이용약관"),
-                document(TermType.PRIVACY_POLICY, "개인정보 처리방침")));
+        when(termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN))
+                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE, "이용약관")));
 
         mockMvc.perform(get(PATH).param("stage", "LOGIN"))
                 .andExpect(status().isOk())
@@ -59,12 +58,11 @@ class PublicTermControllerTest {
                 .andExpect(jsonPath("$.body.terms[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.terms[0].contentUrl")
                         .value("https://laimory.app/terms/terms-of-service/1.0"))
-                .andExpect(jsonPath("$.body.terms[1].contentUrl")
-                        .value("https://laimory.app/terms/privacy-policy/1.0"))
                 .andExpect(jsonPath("$.body.terms[0].required").value(true))
                 // KST 벽시계 LocalDateTime — offset 없는 ISO 문자열로 직렬화된다.
                 .andExpect(jsonPath("$.body.terms[0].effectiveAt").value("2026-08-01T09:30:15"))
-                .andExpect(jsonPath("$.body.terms[1].termType").value("PRIVACY_POLICY"));
+                .andExpect(jsonPath("$.body.terms").isArray())
+                .andExpect(jsonPath("$.body.terms.length()").value(1));
 
         verify(termDocumentService).findCurrentDocuments("v1", TermStage.LOGIN);
     }

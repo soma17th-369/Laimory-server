@@ -19,6 +19,7 @@ import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.testsupport.AuthTestSupport;
+import com.laimory.server.terms.controller.TermContentController;
 import com.laimory.server.user.service.UserAccountAccessService;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
@@ -44,7 +45,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * #305 매 요청 active 검사), 공개 경로 무인증 유지, 핸드오프 안내 페이지의 code 비표시, App Link
  * 검증 파일(assetlinks.json)의 무인증 JSON 제공.
  */
-@WebMvcTest(controllers = AuthHandoffPageController.class)
+@WebMvcTest(controllers = {AuthHandoffPageController.class, TermContentController.class})
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
 class SecurityConfigTest {
 
@@ -90,7 +91,7 @@ class SecurityConfigTest {
                     .clientSecret("test-secret")
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                     .redirectUri("{baseUrl}/login/oauth2/code/google")
-                    .scope("openid", "profile", "email")
+                    .scope("openid", "profile")
                     .authorizationUri("https://accounts.google.com/o/oauth2/v2/auth")
                     .tokenUri("https://oauth2.googleapis.com/token")
                     .jwkSetUri("https://www.googleapis.com/oauth2/v3/certs")
@@ -151,6 +152,16 @@ class SecurityConfigTest {
                 .andExpect(jsonPath("$[0].target.sha256_cert_fingerprints[0]").value(
                         "95:7C:55:EE:29:A5:D4:71:73:47:FB:6A:D3:60:06:9A:4D:06:82:9F:"
                                 + "B5:48:D3:E7:4C:23:35:38:90:53:95:8B"));
+    }
+
+    @Test
+    void immutableTermsContent_isPublicWithoutBearerToken() throws Exception {
+        mockMvc.perform(get("/terms/privacy-policy/1.0"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "text/html;charset=UTF-8"))
+                .andExpect(header().string("Cache-Control", containsString("max-age=31536000")))
+                .andExpect(header().string("Cache-Control", containsString("immutable")))
+                .andExpect(content().string(containsString("라이모리 개인정보 처리방침")));
     }
 
     @Test

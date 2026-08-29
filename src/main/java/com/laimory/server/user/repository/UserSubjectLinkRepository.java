@@ -26,4 +26,18 @@ public interface UserSubjectLinkRepository extends JpaRepository<UserSubjectLink
     int rekey(@Param("oldLookupKey") byte[] oldLookupKey,
               @Param("newLookupKey") byte[] newLookupKey,
               @Param("version") short version);
+
+    /**
+     * 계정 삭제 finalization의 mapping 제거(#302) — lookup key와 subject가 <b>둘 다</b> 일치할 때만
+     * 지운다. 콘텐츠 owner 행이 하나라도 남아 있으면 subject FK({@code ON DELETE RESTRICT})가 이
+     * 삭제를 거절해 finalization transaction 전체가 rollback된다 — 그게 "콘텐츠를 먼저 지웠다"의
+     * DB 차원 증명이자, 지연 도착한 writer와 직렬화되는 지점이다.
+     *
+     * @return 영향 행 수(0 = mapping이 이미 없거나 기대 subject와 다름 — 호출자는 fail-closed 처리)
+     */
+    @Modifying
+    @Query(value = "DELETE FROM user_subject_links "
+            + "WHERE user_lookup_key = :lookupKey AND subject_id = :subjectId", nativeQuery = true)
+    int deleteByLookupKeyAndSubjectId(@Param("lookupKey") byte[] lookupKey,
+                                      @Param("subjectId") String subjectId);
 }

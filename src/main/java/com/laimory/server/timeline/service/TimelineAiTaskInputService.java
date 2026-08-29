@@ -152,7 +152,12 @@ public class TimelineAiTaskInputService {
 
     /**
      * AI 전달 직전 PHOTO {@code clientPhotoUri} 값 전체를 고정 token으로 바꾼다. storage payload는 이미
-     * v1 치환 저장본이라 전체 redaction을 다시 돌리지 않고 storage 예외였던 이 필드만 치환한다(계획 §2.2).
+     * v1 치환 저장본이라 전체 redaction을 다시 돌리지 않고 이 필드만 치환한다(계획 §2.2).
+     *
+     * <p>storage redaction 예외 필드는 두 부류이고 AI 경계 처리도 다르다 —
+     * (a) 개인정보라 여기서 token으로 치환하는 {@code clientPhotoUri},
+     * (b) 서버 파생 식별자라 그대로 전달하는 {@code filename}·{@code photoUrl}(AI가 {@code photoUrl}을
+     * HTTP GET으로 소비하므로 원문이어야 한다). 그래서 치환 대상은 (a) 하나뿐이다.
      *
      * <p>{@code source.getPayload()}는 Hibernate 관리 엔티티 필드라 변형하지 않는다 — 해당 필드가 있을 때만
      * deep copy 뒤 치환하고, 없으면 read-only 직렬화 용도이므로 기존 인스턴스를 그대로 반환한다.

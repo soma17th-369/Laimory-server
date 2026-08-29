@@ -2,12 +2,16 @@ package com.laimory.server.timeline.photo;
 
 import com.laimory.server.common.id.UuidV7;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * 사진 객체의 파일명/전체 S3 key 생성 유틸.
@@ -16,6 +20,9 @@ import java.util.UUID;
  * 파생한다. 날짜 폴더는 두지 않는다.
  */
 public final class PhotoObjectKeys {
+
+    /** 저장된 서빙 URL path가 가져야 할 형태 — {@code {sha256 64자}/photos/{filename}}. */
+    private static final Pattern SERVING_KEY_PATTERN = Pattern.compile("^[0-9a-f]{64}/photos/([^/]+)$");
 
     /** 허용 사진 content-type → 파일 확장자(단일 기준 — isSupported/extOf가 함께 참조). */
     private static final Map<String, String> EXT_BY_CONTENT_TYPE = Map.of(
@@ -51,6 +58,37 @@ public final class PhotoObjectKeys {
      */
     public static String subjectFullKey(String filename, UUID subjectId) {
         return subjectNamespace(subjectId) + "/photos/" + filename;
+    }
+
+    /**
+     * 저장된 서빙 URL에서 full object key를 복원한다. subject를 잃은 행(junction 0)의 유일한 복원 경로다.
+     *
+     * <p>설정된 CDN 도메인과 대조하지 않고 <b>path만</b> 쓴다 — 도메인이 바뀌어도 저장본의 path는 그대로다.
+     * 형태와 filename 형식을 모두 통과한 값만 인정하고, 그 외에는 빈 값을 돌려준다(예외로 흐름을 만들지
+     * 않는다). PII redaction이 값을 훼손했던 기간의 행이 여기서 걸러진다(#387 이전 저장분).
+     *
+     * @param photoUrl 저장된 {@code photoUrl}
+     * @return {@code {subjectNamespace}/photos/{filename}} 또는 복원 불가 시 빈 값
+     */
+    public static Optional<String> objectKeyFromServingUrl(String photoUrl) {
+        if (photoUrl == null || photoUrl.isBlank()) {
+            return Optional.empty();
+        }
+        String path;
+        try {
+            path = new URI(photoUrl).getPath();
+        } catch (URISyntaxException | IllegalArgumentException exception) {
+            return Optional.empty();
+        }
+        if (path == null || path.length() < 2 || path.charAt(0) != '/') {
+            return Optional.empty();
+        }
+        String objectKey = path.substring(1);
+        var matcher = SERVING_KEY_PATTERN.matcher(objectKey);
+        if (!matcher.matches() || !PhotoFilenames.isValid(matcher.group(1))) {
+            return Optional.empty();
+        }
+        return Optional.of(objectKey);
     }
 
     /**

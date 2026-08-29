@@ -25,12 +25,16 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 ```
 
 - `*Api` interface가 OpenAPI annotation과 HTTP signature를 소유하고 controller가 구현한다.
-- timeline/push의 인증 사용자 API는 `@CurrentSubject UUID subjectId` parameter를 쓰고 MVC argument resolver가
-  SecurityContext의 raw `Long` principal을 `SubjectMappingService.getRequired`로 변환한다.
+- timeline/push/initializer/onboarding의 인증 사용자 API는 `@CurrentSubject UUID subjectId` parameter를
+  쓰고 MVC argument resolver가 SecurityContext의 raw `Long` principal을
+  `SubjectMappingService.getRequired`로 변환한다.
 - component dependency는 field injection 대신 constructor injection을 사용한다
   (일반적으로 `@RequiredArgsConstructor`와 `private final` field).
 - leaf service는 대체로 하나의 repository/store/adapter 책임을 감싼다.
 - 여러 domain 작업은 orchestrator가 leaf service를 합성한다.
+- 다른 feature의 상태를 읽거나 쓰는 orchestrator는 그 feature의 repository가 아니라 leaf service를
+  통한다 — 예: `initializer`/`onboarding`은 `subject_preferences`를 소유한 `SubjectPreferenceService`만
+  의존하고, 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다(#382).
 - 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 application code의
   Redis 직접 접근 금지(`RedisAccessArchTest`)와, subject mapping 내부(repository·lookup key
   deriver)를 `SubjectMappingService` 외에는 의존 금지(`SubjectMappingAccessArchTest`, #282)다.
@@ -79,12 +83,18 @@ Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan P
 PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. Event-Item
 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 직접 DELETE로 지운다 —
 영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴하고, 마지막 참조 판정은 best-effort 일반
-읽기라 경합 시 job 없는 orphan Item이 남을 수 있다(orphan 스위퍼 후속 과제가 수렴 담당). 마지막 참조
+읽기라 경합 시 job 없는 orphan Item이 남을 수 있다(일일 orphan 스위퍼가 수렴 담당). 마지막 참조
 PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
 request transaction에 포함하지 않는다. 모든 REST 프로세스의 bounded worker가 eligible MySQL job을
 `FOR UPDATE SKIP LOCKED`로 나눠 `PROCESSING` claim하고, 성공 job과 원문 PHOTO Item을 별도 transaction에서
 함께 제거한다. Event PATCH는 같은 object key의 `PENDING` job을 취소해 보존 Item을 재연결하고,
 `PROCESSING`이면 409로 거절한다.
+
+orphan 스위퍼도 같은 2계층이다 — `TimelineOrphanItemSweeper`(스케줄 trigger, run 예산·요약 로그)와
+`TimelineOrphanItemSweepService`(batch 하나의 `@Transactional` 경계)로 나뉜다. batch에 외부 I/O가 없어
+별도 worker executor를 두지 않고, process 간 분배는 후보 PK를 좁게 잠그는
+`FOR UPDATE SKIP LOCKED` claim이 담당한다. S3 삭제는 이 경로에 없다 — 스위퍼는 delete job을 만들 뿐이고
+객체 삭제는 기존 worker가 그대로 수행한다.
 
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.

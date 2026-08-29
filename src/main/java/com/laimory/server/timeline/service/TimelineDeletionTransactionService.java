@@ -71,6 +71,9 @@ public class TimelineDeletionTransactionService {
         OrphanPreparation preparation = prepareOrphanItems(deletionItems.orphanItems(), subjectId);
         dailyRecordService.deleteById(dailyRecordId);
         timelineItemService.deleteByIds(preparation.immediateDeleteItemIds());
+        // 미반영 큐 정리는 여기서 하지 않는다 — Redis는 이 transaction에 참여하지 않으므로, 여기서
+        // 지우고 commit이 실패하면 record는 되살아나는데 큐 member만 사라져 그 하루가 User Memory에
+        // 반영될 재시도 근거를 잃는다. 정리는 commit 이후 TimelineDeletionService가 한다.
         return new DeletionResult(
                 preparation.scheduled(), deletionItems.sharedPhotoCount(), preparation.invalidSkipped());
     }

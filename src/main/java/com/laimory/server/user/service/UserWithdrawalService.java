@@ -15,7 +15,8 @@ public class UserWithdrawalService {
     private final UserWithdrawalTransactionService userWithdrawalTransactionService;
 
     /**
-     * 탈퇴를 접수한다. 정상 반환 = 논리 탈퇴·credential 폐기·삭제 작업 접수가 commit됐다는 뜻이며
+     * 탈퇴를 접수한다. 정상 반환 = 논리 탈퇴·모든 push 차단(알림 OFF)·삭제 작업 접수가 commit됐다는 뜻이며
+     * (credential은 폐기하지 않고 보존한다 — 차단은 매 요청·발급 전 ACTIVE 검사가 담당, #367)
      * 컨트롤러는 202를 반환한다. 회원 없음(이미 최종 삭제)은 기존 401 {@code -2001}로 수렴한다.
      */
     public void withdraw(String applicationVersion, Long userId) {

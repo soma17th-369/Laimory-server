@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).
+-- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지.
 -- 탈퇴(#305)는 한 조건부 UPDATE로 status=WITHDRAWAL_PENDING·탈퇴 시각·provider_user_id=NULL을 함께 적용한다.
 -- provider_user_id는 nullable이지만 ACTIVE 행은 application invariant로 non-null이다 — NULL은 탈퇴 행의
 -- identity release뿐이고, MySQL nullable UNIQUE는 여러 NULL을 허용해 탈퇴 generation을 여럿 보존하면서
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT NOT NULL AUTO_INCREMENT,
     provider VARCHAR(32) NOT NULL,                   -- GOOGLE|KAKAO
     provider_user_id VARCHAR(255) NULL,              -- OIDC id_token의 sub. 탈퇴 identity release 시 NULL
-    email VARCHAR(255) NULL,                         -- Kakao는 미동의 시 NULL
+    email VARCHAR(255) NULL,                         -- legacy nullable 컬럼. 현재 OAuth 로그인은 email 미수집·미저장
     nickname VARCHAR(100) NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',    -- ACTIVE|WITHDRAWAL_PENDING(#305). default는 기존 행 backfill 호환
     withdrawal_requested_at DATETIME(6) NULL,        -- 탈퇴 접수 서버 시각(#305). ACTIVE 행은 NULL
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- 테이블 기본 _unicode_ci면 소문자 오타 seed가 JPQL IN(enum literal)에 case-insensitive 매칭돼
     -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
     -- readiness가 not-ready(fail-open)로 경보한다.
-    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- TermType literal(TERMS_OF_SERVICE 등 5종)
+    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 4종
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
@@ -306,16 +306,22 @@ CREATE TABLE IF NOT EXISTS term_agreements (
         FOREIGN KEY (term_document_id) REFERENCES term_documents (term_document_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ── 푸시 수신 설정(#314) ──
+-- ── subject 축 설정(#314·#382) ──
 
--- subject 축 설정 버킷(subject당 한 행). worker·배치가 subject만 들고 읽는 설정이 늘어도 컬럼 2개짜리
--- 테이블을 새로 만들지 않으려고 이 한 행에 모은다. 지금 담긴 것은 예정 알림 마스터 하나뿐이다.
+-- subject 축 설정 버킷(subject당 한 행). worker·배치나 앱 시작 경로가 subject만 들고 읽는 설정이 늘어도
+-- 컬럼 2개짜리 테이블을 새로 만들지 않으려고 이 한 행에 모은다.
 -- push_enabled는 예정 알림 전체 ON/OFF이며 기본은 ON이다(타임라인 완료 통지는 이 스위치를 읽지 않는다).
--- 알림이 늘어도 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유).
--- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 탈퇴가 명시 삭제 소유).
+-- 탈퇴는 이 행을 지우지 않고 false로만 바꾼다(#367 — 삭제는 운영 요청 경로에서 하지 않는다).
+-- 알림이 늘어도 컬럼을 추가하지 않는다(알림별 값은 그 알림의 테이블이 소유) — 이 규칙은 알림별 값에만
+-- 걸린다. onboarding_completed처럼 알림이 아닌 subject 축 설정은 이 버킷의 원래 용도다.
+-- onboarding_completed는 앱 온보딩 완료 여부의 단일 권위이며 기본은 false다(#382). 약관 동의 이력이나
+-- 기록 존재 여부로 계산·동기화하지 않고, 완료 command만 단방향으로 true로 바꾼다(되돌리는 writer 없음).
+-- 논리 탈퇴는 이 값을 바꾸지 않는다 — 접근은 ACTIVE 검사가 막고, 재가입은 새 subject의 기본값을 쓴다.
+-- mapping 삭제가 설정을 암묵 cascade하지 않게 RESTRICT(user_memories 선례 — 물리 삭제는 #302 소유).
 CREATE TABLE IF NOT EXISTS subject_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
     -- 감사 컬럼 (BaseEntity; native insert-if-absent가 timestamp를 직접 채움)
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
@@ -331,7 +337,8 @@ CREATE TABLE IF NOT EXISTS subject_preferences (
 -- PK가 subject_id 단독이라 두 번째 일일 알림은 이 테이블에 담을 수 없다. 그때는 컬럼도 판별자도 아니라
 -- 새 테이블을 만든다(#321 — 값이 하나뿐인 판별자를 걷어낸 결과로 수용한 제약).
 -- next_due_at은 Asia/Seoul 벽시계 계약(offset 없음 — 이 저장소 공통).
--- master FK는 RESTRICT라 이 행 정리를 빠뜨린 탈퇴가 master 삭제를 조용히 통과하지 못한다.
+-- master FK는 RESTRICT라 이 행을 남긴 채 master를 지우지 못한다 — 탈퇴는 두 행을 지우지 않고
+-- enabled=false로만 바꾸므로(#367) 이 제약은 #302 물리 삭제의 순서 방어로 남는다.
 CREATE TABLE IF NOT EXISTS daily_notification_preferences (
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,

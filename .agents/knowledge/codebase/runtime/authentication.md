@@ -23,8 +23,9 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
   `WITHDRAWAL_PENDING`(탈퇴 접수)은 token 상세와 구분 없이 같은 401 `-2001`로 수렴하고, 상태 조회
   DB 장애만 fail-closed 500 `-500`이다(장애를 credential 오류로 숨기지 않음).
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
-- 인증 principal은 `Long` userId다. timeline/push controller의 콘텐츠 owner parameter는
-  `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로 변환해 주입한다.
+- 인증 principal은 `Long` userId다. timeline/push/initializer/onboarding controller의 콘텐츠 owner
+  parameter는 `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로
+  변환해 주입한다.
   회원 account controller(`GET/DELETE /a/api/{version}/user`)는 subject 변환 없이 hidden
   `@AuthenticationPrincipal Long userId`를 직접 받는다.
 
@@ -61,7 +62,9 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` 필수 약관 동의를 검사하고
 미동의는 403 `-3001`이다(401 인증 계약과 독립 — bearer 실패가 항상 먼저다). exemption은 raw path
 allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·회원 조회 GET
-/user·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE). draft 생성·사진 presign은
+/user·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE·
+push-settings 3종·앱 초기화 GET /initializer와 온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은
+약관 동의와 독립된 절차라 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마쳐야 한다)). draft 생성·사진 presign은
 `@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
 필수 문서의 ID·종류·버전 summary + 동의 existence 1회)이고 TTL cache가 없으며, catalog 미준비
 stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal 때문에
@@ -72,6 +75,7 @@ token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니�
 구현된 로그인·token 기능:
 
 1. Google/Kakao OIDC login에서 provider `sub`로 user를 찾거나 만든다.
+   - Google scope는 `openid,profile`이며, 예상 밖 email claim이 와도 저장하지 않는다.
    - Kakao scope는 `openid,profile_nickname`이다. 닉네임은 검증된 id_token의 `nickname` claim에서
      읽고(blank·비문자열은 null) UserInfo endpoint는 호출하지 않는다. email은 수집하지 않는다(콘솔 권한 없음).
    - 기존 Kakao 사용자는 재로그인 시 non-null 닉네임으로 갱신하고 누락 claim은 기존 값을 보존한다.
@@ -121,9 +125,11 @@ handoff를 그대로 사용한다.
 - 회원 account API(`GET/DELETE /a/api/{version}/user`)는 principal userId를 직접 받는다. GET은
   users 행을 endpoint 안에서 조회하며, 유효 토큰이라도 행이 없으면 무토큰과 같은 401 `-2001`로
   수렴한다(존재 비노출). DELETE(#305 탈퇴)는 단일 DB transaction으로 조건부
-  `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + 기존 refresh 전량
-  REVOKED + subject push 등록 삭제 + userId-only PENDING 삭제 작업(insert-if-absent)을 commit하고
-  202를 반환한다. 영향 0행은 fresh 조회로 분류한다 — `WITHDRAWAL_PENDING`이면 멱등 202, 회원 없음은
+  `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 + `provider_user_id` NULL release + push 마스터 OFF +
+  일일 알림 OFF + userId-only PENDING 삭제 작업(insert-if-absent)을 commit하고
+  202를 반환한다. **이 transaction은 행을 지우지 않는다**(#367) — refresh 행과 push 등록(FID)은
+  보존되고, old credential의 사용·연장 차단은 매 요청 `/a/api` 검사와 발급·회전 전 `ACTIVE` 조회가
+  이미 담당한다(전량 REVOKED는 즉시 차단의 필수 조건이 아니었다). 보존 행의 물리 삭제는 #302 소유다. 영향 0행은 fresh 조회로 분류한다 — `WITHDRAWAL_PENDING`이면 멱등 202, 회원 없음은
   401 `-2001`. 탈퇴 회원 행은 절대 `ACTIVE`로 되돌리지 않으며 같은 provider의 다음 로그인은 released
   identity로 `findOrCreate` 신규 생성 경로(새 userId·새 subject)를 탄다 — 과거 콘텐츠·약관 동의와
   연결되지 않는다.
@@ -141,7 +147,7 @@ handoff를 그대로 사용한다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
 - SecurityContext principal은 별도 래퍼 없는 `Long` userId다. 보호 operation의 principal parameter는
-  정확히 하나다 — 콘텐츠·push controller는 `@CurrentSubject UUID subjectId`를, 회원 account controller는
+  정확히 하나다 — 콘텐츠·push·앱 초기화/온보딩 controller는 `@CurrentSubject UUID subjectId`를, 회원 account controller는
   hidden `@AuthenticationPrincipal Long userId`를 받는다(String principal을 만드는 테스트 헬퍼 `user()`
   사용 금지, `AuthTestSupport` 사용).
 - access JWT의 `sub` claim은 raw userId다 — 콘텐츠 subject를 token·principal에 넣지 않으며,

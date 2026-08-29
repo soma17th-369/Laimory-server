@@ -18,10 +18,15 @@ import org.springframework.stereotype.Component;
 /**
  * 일일 리마인더 occurrence를 여러 process/thread에서 batch claim해 발송하는 worker.
  *
- * <p>모든 process가 매분 trigger를 돌린다. 짧은 claim transaction이 {@code SKIP LOCKED}로 서로 다른
- * subject 행을 나눠 잡고 다음 예정 시각을 먼저 commit한 뒤, FID 조회와 FCM 호출은 transaction 밖에서
- * 한다 — 같은 occurrence가 두 번 발송되지 않는 것이 우선이고, 그 대가로 claim commit 뒤 process가
- * 죽으면 그 날 알림은 누락된다(자동 재발송 없음, at-most-once best-effort).
+ * <p>발송 시각이 전원 21:00 고정이라 모든 process가 하루 한 번 그 시각에만 trigger를 돌린다(#385).
+ * 짧은 claim transaction이 {@code SKIP LOCKED}로 서로 다른 subject 행을 나눠 잡고 다음 예정 시각을 먼저
+ * commit한 뒤, FID 조회와 FCM 호출은 transaction 밖에서 한다 — 같은 occurrence가 두 번 발송되지 않는
+ * 것이 우선이고, 그 대가로 claim commit 뒤 process가 죽으면 그 날 알림은 누락된다(자동 재발송 없음,
+ * at-most-once best-effort).
+ *
+ * <p>하루 1회 trigger는 그날 due를 한 run에서 모두 소화해야 한다 — 남긴 초과분을 받아갈 다음 tick이
+ * 없어, 다음 날 run에서 허용 지연을 넘긴 채 발송 없이 skip되며 예산만 먹는다. run 예산
+ * ({@code max-batches-per-run}·{@code max-run-duration})은 그래서 전체 due를 덮을 만큼 크게 잡는다.
  *
  * <p>허용 지연을 넘긴 occurrence는 발송 없이 건너뛴다. 오래 내려가 있던 서버가 복구되면서 새벽에
  * 밀린 알림을 쏟아내지 않게 하는 장치이며, 그래도 claim은 해서 다음 미래 occurrence로 옮긴다.
@@ -53,7 +58,7 @@ public class DailyReminderWorker {
     }
 
     @Scheduled(
-            cron = "${app.push.daily-reminder.cron:0 * * * * *}",
+            cron = "${app.push.daily-reminder.cron:0 0 21 * * *}",
             zone = "${app.push.daily-reminder.zone:Asia/Seoul}")
     public void sendDueReminders() {
         if (!properties.isWorkerEnabled()) {
@@ -166,10 +171,7 @@ public class DailyReminderWorker {
         }
 
         private synchronized void logCompleted() {
-            if (batches == 0 && claimErrors == 0 && workerErrors == 0) {
-                // 매분 도는 trigger라 due가 없는 대다수 run은 로그를 남기지 않는다.
-                return;
-            }
+            // 하루 1회 trigger라 발송 0건이어도 남긴다 — 그날 run이 실제로 돌았는지 확인할 다른 수단이 없다.
             log.info("일일 리마인더 worker run 완료: batches={} claimed={} lateSkipped={} targets={} "
                             + "accepted={} sendErrors={} claimErrors={} workerErrors={} durationMs={}",
                     batches, claimed, lateSkipped, targets, accepted, sendErrors, claimErrors,

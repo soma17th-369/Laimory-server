@@ -41,7 +41,10 @@ public class AccountErasureJob extends BaseEntity {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    /** #305에서는 항상 {@code PENDING}이다(DB default). claim/stage 확장은 #302 몫. */
+    /**
+     * 접수 시 {@code PENDING}(DB default)이고, 이후 전이는 전부 조건부 bulk UPDATE다(#302).
+     * {@code insertable = false}는 native 접수 문장이 값을 직접 쓰기 때문이며 UPDATE에는 영향이 없다.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 32, insertable = false)
     private AccountErasureJobStatus status;

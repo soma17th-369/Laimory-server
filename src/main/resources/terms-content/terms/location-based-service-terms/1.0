@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>라이모리 위치기반서비스 이용약관 | 라이모리</title>
+  <link rel="canonical" href="https://laimory.app/terms/location-based-service-terms/1.0">
+  <style>
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  font-size: 16px;
+  color: #172033;
+  background: #f5f7fb;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #f5f7fb; line-height: 1.75; word-break: keep-all; overflow-wrap: anywhere; }
+.skip-link { position: absolute; left: 1rem; top: -4rem; z-index: 10; padding: .65rem .9rem; color: #fff; background: #111827; border-radius: .5rem; }
+.skip-link:focus { top: 1rem; }
+.legal-document { width: min(100%, 960px); min-height: 100vh; margin: 0 auto; padding: 3rem 2.5rem 5rem; background: #fff; box-shadow: 0 0 0 1px rgba(15, 23, 42, .04); }
+h1, h2, h3 { color: #111827; line-height: 1.35; letter-spacing: -.025em; scroll-margin-top: 1rem; }
+h1 { margin: 0 0 2.5rem; font-size: 2rem; }
+h2 { margin: 3rem 0 1rem; padding-bottom: .55rem; border-bottom: 1px solid #dbe2ea; font-size: 1.4rem; }
+h3 { margin: 2rem 0 .75rem; font-size: 1.16rem; }
+p { margin: .85rem 0; }
+ol, ul { margin: .9rem 0; padding-left: 1.55rem; }
+li + li { margin-top: .45rem; }
+a { color: #075bb5; text-decoration-thickness: .08em; text-underline-offset: .18em; }
+a:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; border-radius: .15rem; }
+hr { margin: 3rem 0; border: 0; border-top: 1px solid #cbd5e1; }
+.table-scroll { width: 100%; margin: 1.25rem 0 1.75rem; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: .65rem; background: #fff; -webkit-overflow-scrolling: touch; }
+.table-scroll:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: .9375rem; line-height: 1.6; }
+th, td { padding: .85rem .9rem; border-right: 1px solid #dbe2ea; border-bottom: 1px solid #dbe2ea; text-align: left; vertical-align: top; }
+th:last-child, td:last-child { border-right: 0; }
+tbody tr:last-child td { border-bottom: 0; }
+th { color: #111827; background: #eef3f8; font-weight: 700; }
+p strong, li strong, td strong, th strong { color: #172554; font-size: 1.2em; font-weight: 750; text-decoration-line: underline; text-decoration-color: #93c5fd; text-decoration-thickness: .12em; text-underline-offset: .2em; }
+@media (max-width: 640px) {
+  .legal-document { padding: 1.6rem 1.1rem 3rem; box-shadow: none; }
+  h1 { margin-bottom: 2rem; font-size: 1.65rem; }
+  h2 { margin-top: 2.5rem; font-size: 1.28rem; }
+  h3 { font-size: 1.1rem; }
+  table { min-width: 680px; }
+}
+@media print {
+  :root, body { background: #fff; }
+  .legal-document { width: auto; padding: 0; box-shadow: none; }
+  .table-scroll { overflow: visible; border-radius: 0; }
+  table { min-width: 0; font-size: 9pt; }
+  a { color: inherit; }
+}
+</style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 바로가기</a>
+  <main id="main-content" class="legal-document" aria-labelledby="document-title">
+<h1 id="document-title">라이모리 위치기반서비스 이용약관</h1>
+<h2 id="section-2">제1조 (목적)</h2>
+<p>이 약관은 이동건(위치기반서비스사업 신고 명칭: 라이모리, 이하 &quot;회사&quot;)이 제공하는 위치기반서비스(이하 &quot;서비스&quot;)와 관련하여 회사와 개인위치정보주체(이하 &quot;이용자&quot;) 사이의 권리·의무 및 책임사항, 기타 필요한 사항을 정함을 목적으로 합니다.</p>
+<h2 id="section-3">제2조 (용어의 정의)</h2>
+<p>① 이 약관에서 사용하는 용어의 뜻은 다음과 같습니다.</p>
+<ol><li>&quot;서비스&quot;란 이용자의 통신단말장치에서 수집된 위치정보와 이용자가 선택한 사진의 촬영 위치를 이용하여 하루의 타임라인을 구성하고 표시하는 서비스를 말합니다.</li><li>&quot;이용자&quot;란 이 약관에 동의하고 서비스를 이용하는 개인위치정보주체를 말합니다.</li><li>&quot;통신단말장치&quot;란 「전기통신기본법」 제2조 제2호에 따른 전기통신설비로서 이용자가 서비스를 이용하는 스마트폰 등을 말합니다.</li></ol>
+<p>② 이 약관에서 별도로 정하지 아니한 용어는 「위치정보의 보호 및 이용 등에 관한 법률」과 관계 법령에서 정하는 바에 따릅니다.</p>
+<h2 id="section-4">제3조 (약관 외 준칙)</h2>
+<p>이 약관에 명시되지 아니한 사항은 「위치정보의 보호 및 이용 등에 관한 법률」, 「개인정보 보호법」 등 관계 법령과 회사의 이용약관 및 개인정보 처리방침에 따릅니다.</p>
+<h2 id="section-5">제4조 (서비스의 내용)</h2>
+<p>① 회사가 제공하는 서비스는 다음과 같습니다.</p>
+<ol><li>이용자가 머문 장소와 이동 경로를 하루의 타임라인에 표시하는 서비스</li><li>위치 좌표를 도로명주소와 주변 장소명으로 변환하여 표시하는 서비스</li><li>이용자가 선택한 사진의 촬영 위치를 타임라인에 표시하는 서비스</li><li>위 정보를 인공지능이 해석하여 하루의 타임라인을 구성하는 서비스</li></ol>
+<p>② 회사는 위치정보가 사용되는 기능, 처리되는 위치정보의 범위 및 이용 방법을 앱의 위치정보 선택 화면에서 확인할 수 있도록 안내합니다.</p>
+<h2 id="section-6">제5조 (서비스 이용방법)</h2>
+<p>회사는 이용자가 위치정보를 처음 전송하기 전에 이 약관의 전문과 중요한 내용을 확인할 수 있도록 제공하고, 기본적으로 선택되어 있지 않은 별도 동의 항목을 이용자가 직접 선택한 경우에만 동의를 받은 것으로 처리합니다.</p>
+<h2 id="section-7">제6조 (이용시간)</h2>
+<p>① 서비스는 연중무휴 1일 24시간 제공함을 원칙으로 합니다.</p>
+<p>② 점검이나 서비스 운영상의 합리적인 사유로 이용시간을 변경하는 경우 회사는 앱을 통하여 미리 알립니다. 다만 장애 복구, 보안 사고 대응 등 긴급한 사유로 사전 안내가 어려운 경우에는 사유와 조치 내용을 확인되는 즉시 알립니다.</p>
+<h2 id="section-8">제7조 (서비스 이용요금)</h2>
+<p>회사가 제공하는 위치기반서비스는 무료입니다. 다만 무선 데이터 통신료는 이용자가 가입한 이동통신사업자의 정책에 따릅니다.</p>
+<h2 id="section-9">제8조 (개인위치정보의 이용 및 제공)</h2>
+<p>① 회사는 개인위치정보를 이용하여 서비스를 제공하고자 하는 경우 미리 이 약관의 내용에 대하여 이용자의 동의를 받습니다.</p>
+<p>② 회사가 이용하는 개인위치정보는 이용자의 통신단말장치에서 수집된 위치 좌표, 이동수단·이동 거리, 위치 좌표에서 변환한 도로명주소·주변 장소명 및 이용자가 선택한 사진에 포함된 촬영 위치입니다. 회사는 이용자가 위치 또는 사진을 전송 대상으로 선택한 경우에만 해당 정보를 이용합니다.</p>
+<p>③ 회사는 이용자가 동의한 목적과 범위를 넘어 개인위치정보 또는 이용·제공사실 확인자료를 이용하거나 제3자에게 제공하지 않습니다. 다만 관계 법령에 별도의 근거가 있는 경우에는 해당 법령이 허용하는 범위에서 처리할 수 있습니다.</p>
+<p>④ 타임라인 생성을 위하여 개인위치정보를 인공지능 서비스 사업자에게 제공하는 경우에는 별도의 「개인정보 제3자 제공 동의」와 「개인정보 국외 이전 동의」를 먼저 받으며, 제공받는 자·목적·항목· 보유기간과 국외 이전에 관한 사항은 각 동의서에서 정합니다.</p>
+<p>⑤ 회사는 개인위치정보를 이용자가 지정하는 제3자에게 제공하는 서비스를 제공하지 않습니다. 향후 해당 서비스를 제공하는 경우에는 매회 이용자에게 제공받는 자, 제공일시 및 제공목적을 즉시 통지합니다.</p>
+<h2 id="section-10">제9조 (개인위치정보의 보유목적 및 보유기간)</h2>
+<p>회사는 제4조의 서비스를 제공하기 위하여 개인위치정보를 이용합니다. 자동 저장된 초안과 이용자가 저장한 기록에 포함된 개인위치정보는 이용자가 해당 기록을 삭제하거나 회원 탈퇴를 접수한 날부터 5일 이내에 파기합니다. 타임라인 생성에 사용되는 AI 처리용 임시 원문에 포함된 개인위치정보는 타임라인에 반영되면 즉시 삭제하고, 반영되지 않았거나 처리가 실패한 원문은 생성일로부터 7일 이내에 파기합니다. 이용자가 위치정보 이용 동의의 전부 또는 일부를 철회하면 철회한 범위의 개인위치정보는 지체 없이 파기합니다.</p>
+<h2 id="section-11">제10조 (개인위치정보 이용·제공사실 확인자료의 보유)</h2>
+<p>회사는 「위치정보의 보호 및 이용 등에 관한 법률」 제16조 제2항에 따라 개인위치정보의 이용·제공사실 확인자료를 위치정보시스템에 자동으로 기록하며, 기록한 때부터 6개월간 보관합니다.</p>
+<h2 id="section-12">제11조 (개인위치정보주체의 권리와 행사방법)</h2>
+<p>① 이용자는 개인위치정보의 이용·제공에 대한 동의의 전부 또는 일부를 유보할 수 있습니다.</p>
+<p>② 이용자는 언제든지 제1항에 따른 동의의 전부 또는 일부를 철회할 수 있습니다.</p>
+<p>③ 이용자는 언제든지 개인위치정보의 이용 또는 제공의 일시적인 중지를 요구할 수 있으며, 회사는 이를 거절하지 않고 이를 위한 기술적 수단을 갖춥니다. 이용자는 타임라인을 만들기 전에 표시되는 선택 화면에서 위치 항목을 건별로 해제하는 방법으로도 이용의 중지를 요구할 수 있습니다.</p>
+<p>④ 이용자는 회사에 대하여 다음 각 호의 자료에 대한 열람 또는 고지를 요구할 수 있고, 그 자료에 오류가 있는 경우 정정을 요구할 수 있습니다. 회사는 정당한 이유 없이 이를 거절하지 않습니다.</p>
+<ol><li>본인에 대한 개인위치정보 이용·제공사실 확인자료</li><li>본인의 개인위치정보가 관계 법령에 따라 제3자에게 제공된 이유와 내용</li></ol>
+<p>⑤ 이용자가 동의의 전부를 철회한 경우 회사는 지체 없이 개인위치정보와 이용·제공사실 확인자료를 파기합니다. 동의의 일부를 철회한 경우에는 철회한 부분의 자료를 파기합니다.</p>
+<p>⑥ 이용자는 앱 내 기능 또는 <a href="mailto:laimory369@gmail.com">laimory369@gmail.com</a>을 통하여 제1항부터 제4항까지의 권리를 행사할 수 있습니다.</p>
+<h2 id="section-13">제12조 (만 14세 미만 아동의 이용 제한)</h2>
+<p>회사는 만 14세 미만 아동의 회원가입을 허용하지 않습니다. 가입을 신청하는 자는 가입 화면에서 기본적으로 선택되어 있지 않은 `만 14세 이상입니다` 항목을 직접 확인하여야 하며, 회사는 이를 위하여 생년월일이나 휴대전화 본인인증 정보를 수집하지 않습니다. 만 14세 미만인 사실을 회사가 알게 된 경우에는 위치기반서비스 이용을 중지하고 관계 법령과 이 약관에 따라 개인위치정보를 파기합니다.</p>
+<h2 id="section-14">제13조 (8세 이하 아동 등을 위한 보호 특례의 비적용)</h2>
+<p>회사는 8세 이하의 아동, 피성년후견인, 「장애인복지법」에 따른 정신적 장애를 가진 사람으로서 보호의무자의 동의를 요하는 자의 생명 또는 신체 보호를 목적으로 하는 위치정보 서비스를 제공하지 않습니다.</p>
+<h2 id="section-15">제14조 (위치정보관리책임자의 지정)</h2>
+<p>① 회사는 위치정보를 적절히 관리·보호하고 이용자의 불만을 원활히 처리할 수 있도록 실질적인 책임을 질 수 있는 지위에 있는 자를 위치정보관리책임자로 지정하여 운영합니다.</p>
+<p>② 위치정보관리책임자의 구체적인 사항은 이 약관의 부칙에서 정합니다.</p>
+<h2 id="section-16">제15조 (손해배상 및 면책)</h2>
+<p>① 이용자는 회사가 「위치정보의 보호 및 이용 등에 관한 법률」 제15조부터 제26조까지의 규정을 위반한 행위로 손해를 입은 경우 회사에 대하여 손해배상을 청구할 수 있습니다. 이 경우 회사는 고의 또는 과실이 없음을 입증하지 아니하면 책임을 면할 수 없습니다.</p>
+<p>② 이용자의 통신단말장치 또는 이동통신 환경으로 인하여 위치정보에 오차가 발생할 수 있습니다. 다만 해당 오차로 인한 손해에 회사의 고의 또는 과실이 있는 경우에는 관계 법령에 따른 책임을 부담합니다.</p>
+<h2 id="section-17">제16조 (약관의 변경)</h2>
+<p>① 회사가 이 약관을 변경하는 경우 적용일자로부터 7일 전까지 서비스 내에 공지합니다. 다만 이용자에게 불리하거나 중대한 사항을 변경하는 경우에는 적용일자로부터 30일 전까지 공지하고 서비스 내 알림 등으로 함께 알립니다.</p>
+<p>② 이용자는 변경되는 약관에 동의하지 않는 경우 위치기반서비스 이용을 중단하고 위치정보 이용 동의를 철회할 수 있습니다. 관계 법령상 별도의 동의가 필요한 변경은 이용자가 직접 동의한 이후에만 적용합니다.</p>
+<h2 id="section-18">제17조 (분쟁의 조정)</h2>
+<p>① 회사와 이용자는 위치정보와 관련한 분쟁에 대하여 당사자 간 협의가 이루어지지 아니하거나 협의를 할 수 없는 경우, 「위치정보의 보호 및 이용 등에 관한 법률」 제28조 제1항에 따라 방송미디어통신위원회에 재정을 신청할 수 있습니다.</p>
+<p>② 회사와 이용자는 위치정보와 관련한 분쟁에 대하여 「개인정보 보호법」 제40조에 따라 개인정보 분쟁조정위원회에 조정을 신청할 수 있습니다.</p>
+<h2 id="section-19">제18조 (준거법)</h2>
+<p>이 약관의 해석과 적용에 관하여는 대한민국 법을 적용합니다.</p>
+<h2 id="section-20">제19조 (사업자 정보)</h2>
+<ul><li>사업자명: 이동건</li><li>서비스명 및 위치기반서비스사업 신고 명칭: 라이모리</li><li>대표자: 이동건</li><li>사업자등록번호: 536-14-02770</li><li>사업 종류: 정보통신업</li><li>주소: 대구광역시 수성구 지범로17길 85, 101동 1406호(지산동, 지산화성파크드림)</li><li>전화번호: 010-9495-5937</li><li>이메일: <a href="mailto:laimory369@gmail.com">laimory369@gmail.com</a></li><li>위치기반서비스사업 신고번호: 1464</li><li>신고일: 2026년 8월 28일</li><li>신고 관청: 방송미디어통신위원회</li></ul>
+<h2 id="section-21">부칙</h2>
+<h3 id="section-22">제1조 (시행일)</h3>
+<p>이 약관은 2026년 8월 31일부터 시행합니다.</p>
+<p>문서 버전: 1.0</p>
+<h3 id="section-23">제2조 (위치정보관리책임자의 지정)</h3>
+<p>위치정보관리책임자는 다음과 같이 지정합니다.</p>
+<ol><li>위치정보관리책임자: 이동건</li><li>연락처: 010-9495-5937 · <a href="mailto:laimory369@gmail.com">laimory369@gmail.com</a></li></ol>
+  </main>
+</body>
+</html>

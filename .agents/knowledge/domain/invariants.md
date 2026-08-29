@@ -20,21 +20,33 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ### Timeline
 
 - `recordDate`는 클라이언트 요청값을 서버 계산·보정 없이 그대로 쓰고 `(subject_id, record_date)`는 유일하다.
+  값 범위는 MySQL `DATE`와 같은 `1000-01-01`~`9999-12-31`(양끝 포함)이며, `{recordDate}` path 다섯 API는
+  범위 밖 값을 service 호출 전에 400 `-400`으로 거절한다. 미래 날짜는 **하루 기록을 만드는 draft 생성
+  하나만** 요청 `recordTimeZone` 기준으로 거절한다 — 오늘 판정은 서버 zone이 아니라 그 기록의 timezone이
+  결정한다. `DailyRecord` 생성 경로가 draft 하나뿐이라 이 경계 하나로 미래 날짜 record 자체가 생기지
+  않으므로, save를 포함한 나머지 API에는 미래 검사를 두지 않는다.
 - draft 요청의 `timelineWindow`는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을
   보존하며 AI transport에는 record timezone 기반 offset ISO로 변환해 전달한다. `recordDate`·`recordAt`·
   window 상호 간 날짜 정합성은 검증하지 않는다(독립 계약).
 - draft source item의 `startAt`은 전 타입 필수이고 `endAt`은 nullable이다(누락 `startAt`은 저장·외부
   호출 전 400).
+- draft `HEALTH` source item의 metric은 걸음 수 `STEPS`만 허용한다. `DISTANCE`·`SLEEP` 등 다른
+  literal은 HTTP 역직렬화에서 400으로 거절되어 DB/Redis 저장과 AI dispatch에 도달하지 않는다.
 - `rawId`는 draft source와 수동 PHOTO `photosToAdd`(Event PATCH·Event 생성 POST)에서 canonical
   lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용한다. 위반은 저장·AI dispatch 전 400이고
   오류 메시지에 rawId 원문을 싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
 - 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(enrich본 `redactTree`,
-  `clientPhotoUri`만 storage 원문), AI 결과 Event `title`/`subtitle`/`question`/`place`/`address`(255자
+  storage 원문 보존 필드는 `clientPhotoUri`·`filename`·`photoUrl`), AI 결과 Event
+  `title`/`subtitle`/`question`/`place`/`address`(255자
   token-aware bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를
   중단한다(fail-closed — draft는 부수효과 전무, AI 결과는 callback token 미선점, User Memory는
   task/dispatch 미생성 또는 기존 문서 유지).
-- 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo, `clientPhotoUri`)은 DB·앱 응답에서
-  유지하고 AI 전달 DTO 조립에서만 치환한다. User Memory base 지문은 접수 body의 치환본이 아니라
+- storage redaction 예외는 두 부류다. (a) 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo,
+  `clientPhotoUri`)은 DB·앱 응답에서 유지하고 AI 전달 DTO 조립에서만 치환한다. (b) 서버 파생 식별자
+  (`filename`·`photoUrl`)는 치환하지 않고 AI에도 원문 그대로 전달한다 — AI가 `photoUrl`을 HTTP GET으로
+  소비하기 때문이다. (b)에 PII가 들어올 수 없는 근거는 입력 경계의 `PhotoFilenames.requireValid`
+  전체 일치 검증과 서버 조립 URL이다. 두 값은 hex 문자열이라 치환 대상에 두면 CARD·PHONE 탐지기에
+  우연히 걸려 이미지 URL·S3 object key가 영구 손상된다(#387). User Memory base 지문은 접수 body의 치환본이 아니라
   DB 원본 문서로 계산한다.
 - 지오코딩 부분 실패 품질 판정은 materialize된 unique coordinate 최종 outcome 기준이다 — `U>0`에서
   `5F > U`(실패 20% 초과, 정수 교차곱·정확히 20%는 허용) 또는 시간순 coordinate observation
@@ -144,8 +156,27 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
   수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
   동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
-  스냅샷 orphan 판정 경합과 같은 계열이며, 원인 불문 orphan을 수렴시키는 스위퍼는 후속 과제다).
+  스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
+- **junction이 0인 final Item은 항상 쓰레기다.** Item과 junction은 언제나 한 transaction에서 insert되므로
+  (AI 결과 store·수동 PHOTO link) 커밋된 0-junction Item을 되살리는 요청 경로가 없다. 일일 스위퍼가
+  이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
+  PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
+- **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
+  스위퍼는 enqueue 전에, worker는 S3 호출 직전에 같은 key를 참조하는 junction 있는 Item을 확인하고,
+  있으면 job을 만들지 않거나(스위퍼) 이미 만든 job을 취소한다(worker). 판정은 filename을 coarse filter로
+  쓰되 full object key 일치로 확정한다. 살아 있는 쪽의 key는 저장된 `photoUrl`이 아니라 소유 subject에서
+  계산해(`SHA2(UNHEX(REPLACE(subject_id,'-','')),256)` = `PhotoObjectKeys.subjectNamespace`) 저장본이
+  손상돼 있어도 보호가 유지된다. 같은 key의 orphan만 여럿이면 최소 `timeline_item_id`가 job 소유자이고
+  나머지 행은 삭제된다(삭제 순서에 의존하지 않는 규칙).
+- 스위퍼는 후보를 PK 지정 `FOR UPDATE SKIP LOCKED`로 claim해 process 간에 나눈다. 탐색 statement에는
+  잠금을 걸지 않는다(전량 anti-join이라 `REPEATABLE READ`에서 테이블이 잠긴다). run 종료 조건은 탐색이
+  비는 것뿐이고, claim·재검증이 비어도 커서만 올려 계속한다. 잠금 하 job 재검증은 반드시 current read다
+  — 무잠금 탐색이 고정한 snapshot으로는 동시 생성된 job을 못 봐 FK 위반으로 batch가 깨진다.
+  삭제 요청이 스위퍼가 잠근 행의 FK 부모 잠금을 기다리거나 드물게 deadlock으로 한쪽이 롤백되는 것은
+  되돌릴 수 있는 실패로 수용한다.
+- `filename` 자체가 손상된 살아 있는 Item은 coarse filter에 잡히지 않아 두 방어를 모두 통과한다.
+  #387 배포 이전 저장분에만 존재하는 상태이며 복구하지 않고 수용한다.
 
 ### AI 서버간 계약
 
@@ -232,6 +263,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   추정하지 않고 발송 대상에서 제외한다.
 - 타임라인 완료 통지는 **마스터 스위치와 무관하게 발송한다** — 사용자가 직접 시작한 작업의 결과
   통지라 예정(리텐션) 알림과 성격이 다르다. 따라서 마스터가 실제로 막는 것은 예정 알림뿐이다.
+  탈퇴 회원의 FID는 #367부터 보존되므로, 탈퇴 직전 시작해 task TTL(3분) 안에 완료된 in-flight 작업
+  하나가 완료 push를 받을 수 있다 — 내용이 taskId·상태뿐인 일반 문구라 이 좁은 창을 수용한다
+  (설정을 끈 정상 사용자의 완료 통지를 함께 막는 대가가 더 크다).
 - 일일 리마인더는 기본 ON이고 발송 시각은 서버가 21:00(`Asia/Seoul`)으로 고정한다(#318). 사용자
   조작은 일일 알림 ON/OFF뿐이며 시각을 바꾸는 입력 경로는 없다 — 조회 응답의 시각은 읽기 전용 표시값이다.
 - 설정 조회는 쓰기를 하지 않으며 행이 없으면 쓰기와 같은 이유로 던진다 — 기본값으로 가리면 조회가
@@ -245,6 +279,16 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 일일 알림 설정은 **subject당 한 행**이다(#321 — 판별자 없음). 두 번째 일일 알림이 생기면 이 테이블에
   행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
   운영 SQL로도 바뀌지 않는다.
+- 앱 온보딩 완료 여부의 단일 권위는 `subject_preferences.onboarding_completed`다(#382, 기본 false).
+  약관 동의 이력·`TermStage`·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
+  완료 상태를 되돌리지 않는다(재동의 강제는 terms gate의 별도 책임) — 두 상태를 엮으면 약관 개정이
+  온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
+- 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
+  이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
+  부재를 뜻한다 — 이 판정이 changed 기준으로 바뀌면 정상 재시도가 500이 된다).
+- 온보딩 값과 알림 마스터는 서로를 덮지 않는다 — 두 쓰기 모두 컬럼 단위 조건 UPDATE다. 특히 논리
+  탈퇴의 마스터 OFF는 온보딩 값을 초기화하지 않는다(#367로 행이 보존되므로 초기화하면 접근이 막힌
+  옛 subject의 온보딩만 되살아나고, 재가입은 어차피 새 subject의 기본값 false를 쓴다).
 - 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 일일 알림
   OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
@@ -279,9 +323,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
   버전·효력일을 바꾸는 API는 없다.
-- 약관 원문은 Server가 소유하지 않는다 — DB·응답 어디에도 Markdown/HTML을 담지 않고 버전별로 게시된
-  page가 단일 소유자다. Server는 문서 행의 `content_url`을 내려줄 뿐이고, 요청·기동 중 그 page를 HTTP로
-  조회하지 않는다.
+- 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
+  `src/main/resources/terms-content`에 생성한다. `TermContentController`는 `/terms/{slug}/{version}`에서
+  그 정적 byte와 1년 `immutable` cache header만 전달한다. 약관 DB·API 응답에는 Markdown/HTML을 담지
+  않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP 조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
@@ -311,7 +356,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
 - exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
   등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
-  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)만 면제하고 bearer 인증(401)은 그대로 요구한다.
+  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)·push 수신 설정 3종·앱 초기화 GET /initializer와
+  온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은 약관 동의와 독립된 절차)만 면제하고
+  bearer 인증(401)은 그대로 요구한다.
 - 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
   fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
   전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
@@ -339,10 +386,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애만 fail-closed
   500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
   성립한 뒤에만 기록한다.
-- 탈퇴(#305)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
-  `provider_user_id` NULL release + 관측된 refresh 전량 REVOKED + subject push 등록·일일 알림 설정·마스터
-  삭제(FK RESTRICT 순서) + userId-only
-  PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). 동시성 판정은 조건부
+- 탈퇴(#305, #367)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
+  `provider_user_id` NULL release + `subject_preferences.push_enabled=false` +
+  `daily_notification_preferences.enabled=false` + userId-only
+  PENDING 삭제 작업 insert-if-absent가 함께 commit/rollback된다(부분 상태 금지). **삭제는 하지 않는다** —
+  refresh 행·push 등록(FID)·두 알림 설정 행은 모두 보존하고 발송 차단은 OFF로 표현하며, 물리 삭제는
+  #302가 소유한다. 두 UPDATE의 0행은 예외로 전파돼 회원 전이·identity release·선행 UPDATE·job enqueue를
+  함께 rollback한다(알림이 켜진 채 탈퇴만 접수되는 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
   수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 old
   credential의 사용·연장 불가를 뜻한다.

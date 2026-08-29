@@ -50,7 +50,7 @@ dev 배포는 `dev` push에서 GitHub Actions가 ECR image를 만들고 SSM으�
 - code/config/schema/workflow가 문서보다 우선한다.
 - 환경 설정 문서에는 변수 이름과 역할만 기록하고 값·credential은 복제하지 않는다.
 - `/a/api`는 JWT Bearer 인증이 강제되는 사용자 영역이다(무토큰/무효 토큰 401 `-2001`,
-  raw principal userId는 MVC 경계에서 콘텐츠 UUID subjectId로 해석돼 timeline/push 흐름에 전파).
+  raw principal userId는 MVC 경계에서 콘텐츠 UUID subjectId로 해석돼 timeline/push/앱 초기화 흐름에 전파).
 
 ## Known Gaps
 

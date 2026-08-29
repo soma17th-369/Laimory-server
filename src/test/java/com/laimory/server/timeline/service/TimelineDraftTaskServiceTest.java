@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -15,9 +16,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
@@ -48,6 +51,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
@@ -103,7 +107,8 @@ class TimelineDraftTaskServiceTest {
     // 클라가 계산해 보낸 AI 이벤트 생성 범위(선택 날짜의 달력 하루) — 서버는 pass-through한다.
     private static final TimelineWindowDto WINDOW = new TimelineWindowDto(
             LocalDateTime.of(2026, 6, 17, 0, 0), LocalDateTime.of(2026, 6, 18, 0, 0));
-    // PROCESSING 저장 직전 캡처되는 시각(폴링 elapsedSeconds 기준) — mock Clock이 반환한다.
+    // mock Clock의 기본 반환값. 입력 날짜 검증과 PROCESSING 저장 직전 캡처(폴링 elapsedSeconds 기준)
+    // 두 용도에서 읽힌다.
     private static final Instant PROCESSING_STARTED_AT = Instant.parse("2026-06-17T03:05:00Z");
     // 선생성 트랜잭션이 반환하는 record ID — Redis task·AI dispatch body에 실린다.
     private static final long RECORD_ID = 42L;
@@ -624,6 +629,34 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_preservesServerDerivedPhotoIdentifiers_whenDetectorsWouldMatchThem() {
+        // filename·photoUrl은 서버 파생 식별자라 storage redaction 예외다(#387). 둘 다 hex 문자열이라
+        // CARD(Luhn 통과)·PHONE 탐지기에 우연히 걸리는 값이 실제로 존재하며, 치환되면 이미지 URL과
+        // S3 object key가 영구 손상된다. 아래 두 값은 실 detector가 매치하는 표본이다.
+        String cardLikeFilename = "84935824-2848-7d19-9b83-75934decdb01.jpg";
+        String phoneLikeNamespace =
+                "4c27e0a06776520543e57e1051b36b78c8396b06477d25030d8b8bd064055be4";
+        String photoUrl = "https://cdn.example.net/" + phoneLikeNamespace + "/photos/" + cardLikeFilename;
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
+        List<SourceItemDto> sources = List.of(
+                new SourceItemDto(ItemType.PHOTO, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
+                        new PhotoPayload(cardLikeFilename, "content://x", 1.0, 2.0,
+                                "연락처 010-1234-5678", null, null, photoUrl)));
+
+        service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(timelineDraftPreparationService).prepareDraft(eq(SUBJECT_ID), eq(DATE), eq(RECORD_AT), eq(ZONE),
+                rowsCaptor.capture());
+        JsonNode payload = rowsCaptor.getValue().get(0).getPayload();
+        assertThat(payload.get("filename").asText()).isEqualTo(cardLikeFilename);
+        assertThat(payload.get("photoUrl").asText()).isEqualTo(photoUrl);
+        // 제외가 자유 텍스트까지 번지지 않는다 — description은 여전히 치환된다.
+        assertThat(payload.get("description").asText()).isEqualTo("연락처 " + RedactionType.PHONE.token());
+    }
+
+    @Test
     void createDraftTask_whenRedactionFails_nothingIsCreated() {
         // redaction 실패는 원문 fallback 없이 그대로 전파된다 — prepareDraft 前이라 DailyRecord/source
         // row/Redis task/dispatch 전부 미생성으로 끝난다(fail-closed 계약).
@@ -685,7 +718,7 @@ class TimelineDraftTaskServiceTest {
 
         List<SourceItemDto> missingValue = List.of(new SourceItemDto(
                 ItemType.HEALTH, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(HealthMetric.SLEEP, null)));
+                new HealthPayload(HealthMetric.STEPS, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, missingValue))
                 .isInstanceOf(IllegalArgumentException.class);
 
@@ -747,7 +780,7 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_rejectsNegativeDistanceMeters() {
-        // 이동 거리는 음수가 무의미(HEALTH value 음수 거절과 같은 입력 경계 정책).
+        // 이동 거리는 음수가 무의미하므로 입력 경계에서 거절한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.MOVEMENT, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
@@ -919,24 +952,27 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_capturesProcessingStartedAtOnce_afterPreparationBeforeProcessing() {
-        // Clock은 PROCESSING 도달 경로에서 딱 한 번, 선생성 커밋 후 PROCESSING 저장 전에 읽힌다 —
-        // 전처리(검증·enrich·선생성) 시간을 제외한 "AI 작업 대기 시작" 경계.
+    void createDraftTask_capturesProcessingStartedAt_afterPreparationBeforeProcessing() {
+        // Clock은 두 용도로 각각 한 번씩 읽힌다: ① 입력 경계의 recordDate 미래 검증(부수효과 전)
+        // ② 선생성 커밋 후 PROCESSING 저장 전의 "AI 작업 대기 시작" 경계. ②의 위치가 계약이다 —
+        // 전처리(검증·enrich·선생성) 시간이 polling elapsedSeconds에 포함되면 안 된다.
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
         String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
-        verify(clock, times(1)).instant();
-        InOrder order = inOrder(timelineDraftPreparationService, clock, timelineTaskService);
+        verify(clock, times(2)).instant();
+        InOrder order = inOrder(clock, timelineDraftPreparationService, timelineTaskService);
+        order.verify(clock).instant(); // ① 입력 검증
         order.verify(timelineDraftPreparationService).prepareDraft(any(), any(), any(), anyString(), anyList());
-        order.verify(clock).instant();
+        order.verify(clock).instant(); // ② processingStartedAt
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(SUBJECT_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
     }
 
     @Test
-    void createDraftTask_savedRecordRejection_doesNotReadClock() {
-        // PROCESSING에 도달하지 않는 SAVED 거절에서는 시각을 캡처하지 않는다.
+    void createDraftTask_savedRecordRejection_readsClockOnlyForInputValidation() {
+        // PROCESSING에 도달하지 않는 SAVED 거절에서는 processingStartedAt을 캡처하지 않는다 —
+        // 입력 날짜 검증에 필요한 첫 instant 하나만 읽는다.
         DailyRecord saved = DailyRecord.createDraft(SUBJECT_ID, DATE, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.of(saved));
@@ -944,18 +980,70 @@ class TimelineDraftTaskServiceTest {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1003));
-        verify(clock, never()).instant();
+        verify(clock, times(1)).instant();
     }
 
     @Test
-    void createDraftTask_preparationFailure_doesNotReadClock() {
-        // 캡처는 선생성 커밋 성공 직후다 — prepareDraft가 던지면 시각을 읽지 않는다(경계 고정).
+    void createDraftTask_preparationFailure_readsClockOnlyForInputValidation() {
+        // 캡처는 선생성 커밋 성공 직후다 — prepareDraft가 던지면 두 번째 instant를 읽지 않는다(경계 고정).
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         when(timelineDraftPreparationService.prepareDraft(any(), any(), any(), anyString(), anyList()))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .isInstanceOf(RuntimeException.class);
-        verify(clock, never()).instant();
+        verify(clock, times(1)).instant();
+    }
+
+    @Test
+    void createDraftTask_futureRecordDate_rejectedBeforeAnySideEffect() {
+        // 요청 timezone 기준 오늘보다 뒤인 날짜는 record 조회·enrich·선생성·Redis·dispatch 전에 끊는다.
+        LocalDate future = PROCESSING_STARTED_AT.atZone(ZoneId.of(ZONE)).toLocalDate().plusDays(1);
+
+        assertThatThrownBy(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, future, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(dailyRecordService, sourceItemEnrichmentService, timelineDraftPreparationService,
+                timelineTaskService, timelineAiDispatcher);
+    }
+
+    @Test
+    void createDraftTask_recordDateOutsideMysqlRange_rejectedBeforeAnySideEffect() {
+        assertThatThrownBy(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, LocalDate.of(999, 12, 31), RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(dailyRecordService, sourceItemEnrichmentService, timelineDraftPreparationService,
+                timelineTaskService, timelineAiDispatcher);
+    }
+
+    @Test
+    void createDraftTask_todayInRequestZone_isAllowed() {
+        // 서버 zone이 아니라 요청 timezone 기준 오늘이면 통과한다(경계 포함).
+        LocalDate today = PROCESSING_STARTED_AT.atZone(ZoneId.of(ZONE)).toLocalDate();
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, today)).thenReturn(Optional.empty());
+
+        assertThatCode(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, today, RECORD_AT, ZONE, WINDOW, oneSource())).doesNotThrowAnyException();
+    }
+
+    @Test
+    void createDraftTask_todayIsResolvedInRequestZone_notServerZone() {
+        // 이 테스트가 없으면 "요청 timezone으로 오늘을 판정한다"는 계약이 고정되지 않는다 —
+        // 기본 fixture(ZONE=Asia/Seoul)는 서버 zone과 같은 날짜라 둘을 구분하지 못하기 때문이다.
+        // 같은 instant가 UTC+14에서는 이미 06-18, UTC-11에서는 아직 06-17인 시각을 골라 갈라 본다.
+        Instant atSeoulLateNight = Instant.parse("2026-06-17T14:00:00Z"); // 2026-06-17 23:00 KST
+        when(clock.instant()).thenReturn(atSeoulLateNight);
+        LocalDate date = LocalDate.of(2026, 6, 18);
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, date)).thenReturn(Optional.empty());
+
+        assertThatCode(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, date, RECORD_AT, "Pacific/Kiritimati", WINDOW, oneSource()))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, date, RECORD_AT, "Pacific/Midway", WINDOW, oneSource()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

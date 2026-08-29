@@ -52,16 +52,18 @@ class TermDocumentServiceTest {
     void results_areSortedByEnumDisplayOrder_notDbOrder() {
         Clock clock = Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC);
         TermDocumentService service = new TermDocumentService(termDocumentRepository, clock);
-        TermDocument privacy = TermDocument.of(TermType.PRIVACY_POLICY, "1.0", "개인정보 처리방침",
-                "https://laimory.app/terms/privacy-policy/1.0", LocalDateTime.parse("2026-08-01T00:00:00"));
-        TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관",
-                "https://laimory.app/terms/terms-of-service/1.0", LocalDateTime.parse("2026-08-01T00:00:00"));
+        TermDocument thirdParty = TermDocument.of(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0", "제3자 제공 동의",
+                "https://laimory.app/terms/third-party-provision-consent/1.0",
+                LocalDateTime.parse("2026-08-01T00:00:00"));
+        TermDocument sensitive = TermDocument.of(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0", "민감정보 처리 동의",
+                "https://laimory.app/terms/sensitive-information-consent/1.0",
+                LocalDateTime.parse("2026-08-01T00:00:00"));
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
-                .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도
+                .thenReturn(List.of(thirdParty, sensitive)); // DB가 역순으로 줘도
 
-        List<TermDocument> result = service.findCurrentDocuments("v1", TermStage.LOGIN);
+        List<TermDocument> result = service.findCurrentDocuments("v1", TermStage.TIMELINE_FIRST_CREATE);
 
-        assertThat(result).containsExactly(terms, privacy);
+        assertThat(result).containsExactly(sensitive, thirdParty);
     }
 
     @Test
@@ -69,14 +71,15 @@ class TermDocumentServiceTest {
         // enforcement/readiness 경로 — 판정에 쓰는 식별 요약 쿼리에 위임하고 화면 순서로 정렬한다.
         TermDocumentService service = new TermDocumentService(termDocumentRepository,
                 Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
-        TermDocumentSummary privacy = new TermDocumentSummary(12L, TermType.PRIVACY_POLICY, "1.0");
-        TermDocumentSummary terms = new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0");
+        TermDocumentSummary thirdParty = new TermDocumentSummary(12L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0");
+        TermDocumentSummary sensitive = new TermDocumentSummary(11L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0");
         LocalDateTime nowKst = LocalDateTime.parse("2026-08-15T09:00:00");
-        when(termDocumentRepository.findCurrentDocumentSummaries(TermType.typesOf(TermStage.LOGIN), nowKst))
-                .thenReturn(List.of(privacy, terms)); // DB가 역순으로 줘도
+        when(termDocumentRepository.findCurrentDocumentSummaries(
+                TermType.typesOf(TermStage.TIMELINE_FIRST_CREATE), nowKst))
+                .thenReturn(List.of(thirdParty, sensitive)); // DB가 역순으로 줘도
 
-        assertThat(service.findCurrentSummaries(TermType.typesOf(TermStage.LOGIN), nowKst))
-                .containsExactly(terms, privacy);
+        assertThat(service.findCurrentSummaries(TermType.typesOf(TermStage.TIMELINE_FIRST_CREATE), nowKst))
+                .containsExactly(sensitive, thirdParty);
     }
 
     @Test

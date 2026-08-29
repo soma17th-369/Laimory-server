@@ -52,7 +52,6 @@ public class TimelineSaveService {
         if (record.getStatus() == DailyRecordStatus.SAVED) {
             throw new BusinessException(ExceptionType.DAILY_RECORD_ALREADY_SAVED);
         }
-
         Long dailyRecordId = record.getDailyRecordId();
         timelineSaveTransactionService.save(subjectId, dailyRecordId, emotionType);
         requestUserMemoryUpdate(subjectId, dailyRecordId);
