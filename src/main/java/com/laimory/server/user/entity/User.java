@@ -16,7 +16,7 @@ import lombok.Getter;
 
 /**
  * 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 판별한다 —
- * email 기반 계정 병합 금지(Kakao는 email null 허용, email 병합은 계정 탈취 통로).
+ * email 기반 계정 병합 금지(현재 OAuth 로그인은 email을 수집·저장하지 않으며, email 병합은 계정 탈취 통로).
  * 같은 사람이 두 provider로 로그인하면 행이 2개 생기는 것이 의도된 동작이다(계정 연동은 후속).
  *
  * <p>탈퇴(#305)는 조건부 bulk UPDATE({@code UserRepository#transitionToWithdrawalPending})가
@@ -45,6 +45,7 @@ public class User extends BaseEntity {
     @Column
     private String providerUserId;
 
+    /** 과거 schema 호환용 nullable 필드. 현재 OAuth 로그인 경로는 항상 null만 전달한다. */
     @Column
     private String email;
 

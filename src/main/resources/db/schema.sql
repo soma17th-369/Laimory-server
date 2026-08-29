@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS timeline_draft_source_items (
         FOREIGN KEY (subject_id) REFERENCES user_subject_links (subject_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지(Kakao email null 허용).
+-- 소셜 로그인 사용자. 유일성은 (provider, provider_user_id)로만 — email 병합 금지.
 -- 탈퇴(#305)는 한 조건부 UPDATE로 status=WITHDRAWAL_PENDING·탈퇴 시각·provider_user_id=NULL을 함께 적용한다.
 -- provider_user_id는 nullable이지만 ACTIVE 행은 application invariant로 non-null이다 — NULL은 탈퇴 행의
 -- identity release뿐이고, MySQL nullable UNIQUE는 여러 NULL을 허용해 탈퇴 generation을 여럿 보존하면서
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT NOT NULL AUTO_INCREMENT,
     provider VARCHAR(32) NOT NULL,                   -- GOOGLE|KAKAO
     provider_user_id VARCHAR(255) NULL,              -- OIDC id_token의 sub. 탈퇴 identity release 시 NULL
-    email VARCHAR(255) NULL,                         -- Kakao는 미동의 시 NULL
+    email VARCHAR(255) NULL,                         -- legacy nullable 컬럼. 현재 OAuth 로그인은 email 미수집·미저장
     nickname VARCHAR(100) NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',    -- ACTIVE|WITHDRAWAL_PENDING(#305). default는 기존 행 backfill 호환
     withdrawal_requested_at DATETIME(6) NULL,        -- 탈퇴 접수 서버 시각(#305). ACTIVE 행은 NULL
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- 테이블 기본 _unicode_ci면 소문자 오타 seed가 JPQL IN(enum literal)에 case-insensitive 매칭돼
     -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
     -- readiness가 not-ready(fail-open)로 경보한다.
-    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- TermType literal(TERMS_OF_SERVICE 등 5종)
+    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 4종
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,

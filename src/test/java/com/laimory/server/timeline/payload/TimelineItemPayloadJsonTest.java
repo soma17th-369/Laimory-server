@@ -156,17 +156,8 @@ class TimelineItemPayloadJsonTest {
     }
 
     @Test
-    void sourceItemDto_externalProperty_roundTrip_healthSleep() throws Exception {
-        // SLEEP도 value 하나로 — value는 단위 포함 텍스트다.
-        String json = """
-                {"itemType":"HEALTH","startAt":"2026-06-30T04:00:00","endAt":"2026-06-30T07:30:00",\
-                 "payload":{"metric":"SLEEP","value":"210분"}}
-                """;
-
-        SourceItemDto dto = objectMapper.readValue(json, SourceItemDto.class);
-
-        assertThat(dto.payload()).isInstanceOf(HealthPayload.class)
-                .isEqualTo(new HealthPayload(HealthMetric.SLEEP, "210분"));
+    void healthMetric_containsOnlySteps() {
+        assertThat(HealthMetric.values()).containsExactly(HealthMetric.STEPS);
     }
 
     @Test

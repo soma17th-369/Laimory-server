@@ -718,7 +718,7 @@ class TimelineDraftTaskServiceTest {
 
         List<SourceItemDto> missingValue = List.of(new SourceItemDto(
                 ItemType.HEALTH, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 0, 0), null,
-                new HealthPayload(HealthMetric.SLEEP, null)));
+                new HealthPayload(HealthMetric.STEPS, null)));
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, missingValue))
                 .isInstanceOf(IllegalArgumentException.class);
 
@@ -780,7 +780,7 @@ class TimelineDraftTaskServiceTest {
 
     @Test
     void createDraftTask_rejectsNegativeDistanceMeters() {
-        // 이동 거리는 음수가 무의미(HEALTH value 음수 거절과 같은 입력 경계 정책).
+        // 이동 거리는 음수가 무의미하므로 입력 경계에서 거절한다.
         List<SourceItemDto> sources = List.of(new SourceItemDto(
                 ItemType.MOVEMENT, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 8, 30), null,
                 new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),

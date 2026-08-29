@@ -27,7 +27,8 @@ import org.springframework.stereotype.Component;
 /**
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 종류 커버리지의 단일 판정 지점.
  *
- * <p>기동 시 다섯 종류 seed 존재(미래 효력 포함)와 모든 행의 {@code term_type} literal·{@code content_url}
+ * <p>기동 시 {@link TermType}에 선언된 모든 종류의 seed 존재(미래 효력 포함)와 모든 행의
+ * {@code term_type} literal·{@code content_url}
  * 형식을 검사하고, 누락·잘못된 값·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
  * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
  * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·미지

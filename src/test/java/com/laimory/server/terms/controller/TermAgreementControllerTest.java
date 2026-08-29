@@ -56,7 +56,7 @@ class TermAgreementControllerTest {
     private static final String BODY = """
             {"agreements": [
               {"termType": "TERMS_OF_SERVICE", "version": "1.0"},
-              {"termType": "PRIVACY_POLICY", "version": "1.0"}
+              {"termType": "SENSITIVE_INFORMATION_CONSENT", "version": "1.0"}
             ]}
             """;
 
@@ -97,7 +97,7 @@ class TermAgreementControllerTest {
 
         verify(termAgreementService).agreeToTerms("v1", USER_ID, List.of(
                 new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
-                new TermAgreementCommand(TermType.PRIVACY_POLICY, "1.0")));
+                new TermAgreementCommand(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0")));
     }
 
     @Test
@@ -140,19 +140,19 @@ class TermAgreementControllerTest {
     @Test
     void history_returns200WithAgreedVersionContentUrl_inServiceOrder() throws Exception {
         when(termAgreementService.getHistory("v1", USER_ID)).thenReturn(List.of(
-                entry(TermType.PRIVACY_POLICY, "1.1", "개인정보 처리방침", "2026-08-16T09:30:05"),
+                entry(TermType.SENSITIVE_INFORMATION_CONSENT, "1.1", "민감정보 처리 동의", "2026-08-16T09:30:05"),
                 entry(TermType.TERMS_OF_SERVICE, "1.0", "이용약관", "2026-07-02T10:00:05")));
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
-                .andExpect(jsonPath("$.body.agreements[0].termType").value("PRIVACY_POLICY"))
+                .andExpect(jsonPath("$.body.agreements[0].termType").value("SENSITIVE_INFORMATION_CONSENT"))
                 .andExpect(jsonPath("$.body.agreements[0].version").value("1.1"))
-                .andExpect(jsonPath("$.body.agreements[0].title").value("개인정보 처리방침"))
+                .andExpect(jsonPath("$.body.agreements[0].title").value("민감정보 처리 동의"))
                 // 이력은 현재 버전이 아니라 동의한 버전의 page를 가리킨다(원문 key는 없다).
                 .andExpect(jsonPath("$.body.agreements[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.agreements[0].contentUrl")
-                        .value("https://laimory.app/terms/privacy-policy/1.1"))
+                        .value("https://laimory.app/terms/sensitive-information-consent/1.1"))
                 .andExpect(jsonPath("$.body.agreements[0].required").value(true))
                 .andExpect(jsonPath("$.body.agreements[0].effectiveAt").value("2026-08-01T09:30:15"))
                 // 수락 시각도 offset 없는 KST 벽시계 문자열이다.

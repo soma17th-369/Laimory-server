@@ -13,7 +13,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: gradle/actions/setup-gradle@v4
+      - run: node --test docs/terms/scripts/build-site.test.mjs
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
       - run: .github/scripts/test-monitoring-deploy-contract.sh
       # deploy 계약 harness는 지금까지 수동 실행에만 의존했다. 환경 분기가 들어가면서 이 harness가

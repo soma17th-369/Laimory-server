@@ -288,6 +288,11 @@ enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summa
 모든 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
+현재 `laimory.app`은 운영 ALB를 거쳐 Server로 연결된다. 공개 page는 Markdown을 build-time에 변환한
+classpath 정적 resource이며 `TermContentController`가 `/terms/{slug}/{version}`에서 전달한다. 이 전달
+경로는 catalog 조회와 분리되어 있어 `content_url`을 코드에서 역산하지 않고, page 요청도 DB를 읽지 않는다.
+원문을 바꾸는 개정은 기존 resource 덮어쓰기가 아니라 새 version resource와 새 catalog 행을 함께 추가한다.
+
 기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
 매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
 `content_url`은 새 Server가 뜨기 전에 존재해야 한다(제거만 있던 변경과 순서가 다르다).
@@ -311,7 +316,8 @@ ALTER TABLE term_documents
 2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
 3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
 
-약관 활성화(운영 seed)는 **페이지 게시 -> 5종 URL 200 확인 -> INSERT** 순서를 지킨다. 서버는 이 순서에
+약관 활성화(운영 seed)는 **페이지 게시 -> 현재 `TermType` 4종 URL 200 확인 -> INSERT** 순서를 지킨다.
+개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 이 catalog에 넣지 않는다. 서버는 이 순서에
 의존한다: 종류별 current 행의 존재가 곧 그 stage gate의 활성화 조건인데, 서버는 `content_url`이 실제로
 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을 외부 호스트에 묶지 않는
 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
@@ -327,9 +333,9 @@ INSERT는 다음 shape를 쓴다. 감사 컬럼에 `NOW()`를 쓰지 않는 것�
 INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES
-    ('PRIVACY_POLICY', '1.0', '개인정보 처리방침',
-     'https://laimory.app/terms/privacy-policy/1.0',
-     '2026-09-01 00:00:00',                                        -- 시행일(KST 벽시계)
+    ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
+     'https://laimory.app/terms/terms-of-service/1.0',
+     '2026-08-31 00:00:00',                                        -- 시행일(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));
 ```

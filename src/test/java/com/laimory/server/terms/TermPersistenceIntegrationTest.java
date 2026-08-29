@@ -97,8 +97,8 @@ class TermPersistenceIntegrationTest {
     }
 
     @Test
-    void allFiveTypes_insertAtVersion1_0_withFinalColumnSet() {
-        // 활성화 시 넣을 seed와 같은 shape — 제거된 네 컬럼 없이 5종이 저장·조회된다.
+    void allDeclaredTypes_insertAtVersion1_0_withFinalColumnSet() {
+        // 활성화 시 넣을 seed와 같은 shape — 제거된 네 컬럼 없이 현재 enum 종류가 저장·조회된다.
         for (TermType type : TermType.values()) {
             saveDocument(type, "1.0", "2026-09-0" + type.displayOrder() + "T00:00:00");
         }
@@ -120,7 +120,7 @@ class TermPersistenceIntegrationTest {
         assertThatThrownBy(() -> saveDocument(TermType.TERMS_OF_SERVICE, "it-1.1", "2026-01-01T00:00:00"))
                 .isInstanceOf(DataIntegrityViolationException.class);
         // 다른 종류는 같은 버전 문자열·효력일을 쓸 수 있다.
-        saveDocument(TermType.PRIVACY_POLICY, "it-1.0", "2026-01-01T00:00:00");
+        saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, "it-1.0", "2026-01-01T00:00:00");
     }
 
     @Test
@@ -139,7 +139,8 @@ class TermPersistenceIntegrationTest {
 
     @Test
     void insertIfAbsent_isIdempotent_andPreservesFirstAcceptedAt() {
-        TermDocument document = saveDocument(TermType.PRIVACY_POLICY, "it-2.0", "2026-01-02T00:00:00");
+        TermDocument document = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT,
+                "it-2.0", "2026-01-02T00:00:00");
         Long userId = newUserId();
         LocalDateTime firstAcceptedAt = LocalDateTime.parse("2026-08-16T09:00:00");
         LocalDateTime retryAcceptedAt = LocalDateTime.parse("2026-08-16T10:00:00");
@@ -160,9 +161,10 @@ class TermPersistenceIntegrationTest {
     @Test
     void concurrentSameBatch_convergesToSingleHistoryWithoutErrors() throws Exception {
         TermDocument terms = saveDocument(TermType.TERMS_OF_SERVICE, "it-3.0", "2026-01-03T00:00:00");
-        TermDocument privacy = saveDocument(TermType.PRIVACY_POLICY, "it-3.0", "2026-01-03T00:00:00");
+        TermDocument sensitive = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT,
+                "it-3.0", "2026-01-03T00:00:00");
         Long userId = newUserId();
-        List<Long> documentIds = List.of(terms.getTermDocumentId(), privacy.getTermDocumentId());
+        List<Long> documentIds = List.of(terms.getTermDocumentId(), sensitive.getTermDocumentId());
         LocalDateTime acceptedAtKst = LocalDateTime.parse("2026-08-16T09:30:00");
 
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -215,19 +217,12 @@ class TermPersistenceIntegrationTest {
                 + " VALUES ('terms_of_service', 'it-lc-1', '이용약관',"
                 + "  'https://laimory.app/terms/terms-of-service/it-lc-1',"
                 + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
-        // 나머지 LOGIN 필수 종류는 정상 seed — 오타 행 하나만으로 stage가 미준비여야 한다.
-        saveDocument(TermType.PRIVACY_POLICY, "it-lc-ok", "2026-01-02T00:00:00");
-
         // 1) binary collation — 소문자 행은 enum literal 조회에 매칭되지 않아 hydration 예외가 없다.
         List<TermDocument> current = termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN);
-        assertThat(current)
-                .extracting(TermDocument::getTermType)
-                .containsExactly(TermType.PRIVACY_POLICY); // 공개 조회는 정상 문서만 — 500 아님
+        assertThat(current).isEmpty(); // 공개 조회는 빈 배열 — 500 아님
         List<TermDocumentSummary> summaries = termDocumentService.findCurrentSummaries(
                 TermType.typesOf(TermStage.LOGIN), LocalDateTime.parse("2026-08-16T00:00:00"));
-        assertThat(summaries)
-                .extracting(TermDocumentSummary::termType)
-                .containsExactly(TermType.PRIVACY_POLICY);
+        assertThat(summaries).isEmpty();
 
         // 2) readiness — TERMS_OF_SERVICE의 current 문서가 없으므로 stage는 not-ready로 수렴한다.
         assertThat(termCatalogReadiness.checkStage(TermStage.LOGIN).ready()).isFalse();

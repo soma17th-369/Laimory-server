@@ -230,6 +230,10 @@ userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소�
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
 
+`GET /terms/{slug}/{version}`은 build-time에 생성한 약관 원문 HTML을 로그인 없이 반환한다. DB나
+controller에서 원문을 렌더링하지 않고 classpath의 exact version resource만 전달하며, 응답은
+`text/html;charset=UTF-8`과 1년 `public, immutable` cache를 사용한다. 미게시 slug/version은 404다.
+
 `GET /api/{version}/terms?stage=LOGIN|TIMELINE_FIRST_CREATE`(#303)는 로그인 전 화면에서도 쓰는 public
 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음). `stage`는 필수 enum query이고
 누락·미지원 값은 400 `-400`이다. 응답 `terms[]`는 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
