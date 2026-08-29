@@ -34,10 +34,11 @@ version별 동작은 service가 결정한다.
 보호 operation 29개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST)는
 `bearerAuth` security requirement와
-401 응답을 문서화한다. principal parameter는 operation마다 정확히 하나다 —
+401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
-입력이 아님). 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
+입력이 아님). draft 생성만 콘텐츠 owner와 계정 소유 약관 동의를 함께 판정하므로 두 hidden principal을
+받는다. 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 `POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
 timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). `rawId`는 canonical lowercase
@@ -245,6 +246,9 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
 파싱·정렬하지 않는다. `required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
 (activation 전 rollout) 404/500이 아니라 200과 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다.
+현재 `TIMELINE_FIRST_CREATE`는 #3~#5 `required=true` 세 문서 다음에 위치약관
+`LOCATION_BASED_SERVICE_TERMS(required=false)`을 반환한다. false는 불필요가 아니라 위치정보가 있는 draft
+생성에서만 조건부로 강제된다는 뜻이다.
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
 도메인이라 hidden `@AuthenticationPrincipal Long userId`). body `agreements[]`의 각
@@ -260,8 +264,11 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
 미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE`를 추가 요구한다. exemption(회원 탈퇴 DELETE /user 포함)과 fail-open
-계약은 [authentication runtime](../runtime/authentication.md)이 소유한다.
+403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE` 필수 3종을 추가 요구한다. draft 생성은
+신규 처리 항목에 STAY·MOVEMENT·좌표가 있는 PHOTO가 있으면 현재 위치약관도 요구한다. 클라이언트는
+위치약관에 동의하거나 해당 위치 항목을 제외해 재시도하며 서버는 위치를 자동 제거하지 않는다.
+exemption(회원 탈퇴 DELETE /user 포함)과 fail-open 계약은
+[authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions
 

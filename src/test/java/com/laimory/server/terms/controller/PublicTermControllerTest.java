@@ -81,6 +81,25 @@ class PublicTermControllerTest {
     }
 
     @Test
+    void getTimelineTerms_returnsLocationLastAndConditional() throws Exception {
+        when(termDocumentService.findCurrentDocuments("v1", TermStage.TIMELINE_FIRST_CREATE))
+                .thenReturn(List.of(
+                        document(TermType.SENSITIVE_INFORMATION_CONSENT, "민감정보 처리 동의"),
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT, "개인정보 제3자 제공 동의"),
+                        document(TermType.CROSS_BORDER_TRANSFER_CONSENT, "개인정보 국외 이전 동의"),
+                        document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관")));
+
+        mockMvc.perform(get(PATH).param("stage", "TIMELINE_FIRST_CREATE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.terms.length()").value(4))
+                .andExpect(jsonPath("$.body.terms[0].termType").value("SENSITIVE_INFORMATION_CONSENT"))
+                .andExpect(jsonPath("$.body.terms[1].termType").value("THIRD_PARTY_PROVISION_CONSENT"))
+                .andExpect(jsonPath("$.body.terms[2].termType").value("CROSS_BORDER_TRANSFER_CONSENT"))
+                .andExpect(jsonPath("$.body.terms[3].termType").value("LOCATION_BASED_SERVICE_TERMS"))
+                .andExpect(jsonPath("$.body.terms[3].required").value(false));
+    }
+
+    @Test
     void getCurrentTerms_missingStage_returns400() throws Exception {
         mockMvc.perform(get(PATH))
                 .andExpect(status().isBadRequest())

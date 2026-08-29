@@ -10,7 +10,7 @@ import { buildTermsSite, DOCUMENTS } from "./build-site.mjs";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "../../..");
 
-test("builds six mobile legal pages and only four catalog seed rows", async () => {
+test("builds six mobile legal pages and five catalog seed rows", async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "laimory-terms-test-"));
     const outputRoot = resolve(temporaryRoot, "terms-site");
     const { manifest } = await buildTermsSite({ outputRoot });
@@ -22,6 +22,7 @@ test("builds six mobile legal pages and only four catalog seed rows", async () =
             .sort(),
         [
             "CROSS_BORDER_TRANSFER_CONSENT",
+            "LOCATION_BASED_SERVICE_TERMS",
             "SENSITIVE_INFORMATION_CONSENT",
             "TERMS_OF_SERVICE",
             "THIRD_PARTY_PROVISION_CONSENT",
@@ -52,11 +53,11 @@ test("builds six mobile legal pages and only four catalog seed rows", async () =
     assert.match(thirdPartyConsent, /<br><br><strong>기록 요약 갱신 시:<\/strong>/u);
 
     const seedSql = await readFile(resolve(outputRoot, "term-documents-1.0.sql"), "utf8");
-    assert.match(seedSql, /'2026-08-31 00:00:00'/u);
+    assert.match(seedSql, /'2026-08-28 00:00:00'/u);
     assert.match(seedSql, /'TERMS_OF_SERVICE'/u);
     assert.match(seedSql, /'THIRD_PARTY_PROVISION_CONSENT'/u);
     assert.match(seedSql, /'SENSITIVE_INFORMATION_CONSENT'/u);
     assert.match(seedSql, /'CROSS_BORDER_TRANSFER_CONSENT'/u);
-    assert.doesNotMatch(seedSql, /LOCATION_BASED/u);
+    assert.match(seedSql, /'LOCATION_BASED_SERVICE_TERMS'/u);
     assert.doesNotMatch(seedSql, /PRIVACY_POLICY/u);
 });
