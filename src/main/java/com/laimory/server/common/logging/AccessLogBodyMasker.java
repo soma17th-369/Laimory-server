@@ -83,7 +83,7 @@ final class AccessLogBodyMasker {
             "header", "code", "body", "result", "timelines", "dailyrecordid", "emotiontype",
             "timelineeventid", "items", "timelineitemid",
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
-            "terms", "agreements", "termtype", "version", "required", "effectiveat", "acceptedat");
+            "terms", "agreements", "termtype", "version", "effectiveat", "acceptedat");
 
     // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는
     // 자유 텍스트다(수신 후 폐기 계약) — 같은 이름의 이중 의미라 숫자·null만 남긴다. errorCode는

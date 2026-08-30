@@ -153,7 +153,7 @@ class TermAgreementControllerTest {
                 .andExpect(jsonPath("$.body.agreements[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.agreements[0].contentUrl")
                         .value("https://laimory.app/terms/sensitive-information-consent/1.1"))
-                .andExpect(jsonPath("$.body.agreements[0].required").value(true))
+                .andExpect(jsonPath("$.body.agreements[0].required").doesNotExist())
                 .andExpect(jsonPath("$.body.agreements[0].effectiveAt").value("2026-08-01T09:30:15"))
                 // 수락 시각도 offset 없는 KST 벽시계 문자열이다.
                 .andExpect(jsonPath("$.body.agreements[0].acceptedAt").value("2026-08-16T09:30:05"))

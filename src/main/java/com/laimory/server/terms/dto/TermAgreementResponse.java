@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
  * 원문은 그 버전 행에 저장된 {@code contentUrl}이 가리키는 page가 재현한다(게시된 버전 URL은 불변이고,
  * 행에 박혀 있으므로 이후 게시 규칙이 바뀌어도 과거 이력이 다른 주소로 흘러가지 않는다).
  * {@code acceptedAt}은 서버가 기록한 {@code Asia/Seoul} 벽시계다(offset 없음).
- * 일곱 field 모두 always-present non-null이므로 전부 required로 문서화한다.
+ * 여섯 field 모두 always-present non-null이므로 전부 required로 문서화한다.
  */
 @Schema(description = "약관 동의 이력 항목")
 public record TermAgreementResponse(
@@ -24,8 +24,6 @@ public record TermAgreementResponse(
                 example = "https://laimory.app/terms/privacy-policy/1.0",
                 format = "uri",
                 requiredMode = Schema.RequiredMode.REQUIRED) String contentUrl,
-        @Schema(description = "필수 동의 여부",
-                requiredMode = Schema.RequiredMode.REQUIRED) boolean required,
         @Schema(description = "효력 시작 시각(Asia/Seoul 벽시계, offset 없음)",
                 example = "2026-09-01T00:00:00",
                 requiredMode = Schema.RequiredMode.REQUIRED) LocalDateTime effectiveAt,
@@ -40,7 +38,6 @@ public record TermAgreementResponse(
                 entry.document().getVersion(),
                 entry.document().getTitle(),
                 entry.document().getContentUrl(),
-                entry.document().getTermType().required(),
                 entry.document().getEffectiveAt(),
                 entry.agreement().getAcceptedAt());
     }

@@ -95,7 +95,7 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). 감정 수정 PUT
   `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
-  status·`ApiResponse` envelope의 header/code/body·약관 termType/version/required/effectiveAt/
+  status·`ApiResponse` envelope의 header/code/body·약관 termType/version/effectiveAt/
   acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —
   새 DTO 필드는 자동 마스크, title/payload/memo/userMemory·약관 `contentUrl`·envelope `message`가 대표
   대상). 약관 `contentUrl`을 allowlist에 넣지 않는 것은 값 자체를 로그에 남기지 않기 위해서다 —

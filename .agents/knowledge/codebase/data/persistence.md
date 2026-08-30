@@ -283,7 +283,8 @@ not-ready(fail-open)로 경보한다. `content_url`을 `URI`가 아닌 `String`�
 아닌 URL을 hydration 없이 관측해 기동 경보로 올린다(host는 검사하지 않는다 — 게시 위치는 운영 선택이지
 서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
-단계·필수 여부·화면 순서·원문 slug는 코드 `TermType` mapping이 단독 권위라 컬럼으로 복제하지 않는다.
+단계·화면 순서·원문 slug는 코드 `TermType` mapping이 단독 권위라 컬럼으로 복제하지 않는다.
+필수·조건부 동의 대상은 enum 메타데이터가 아니라 enforcement/readiness 지점에 명시한다.
 enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summary projection을 조회한다 — LOGIN gate가
 모든 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
@@ -316,11 +317,15 @@ ALTER TABLE term_documents
 2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
 3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
 
-약관 활성화(운영 seed)는 **페이지 게시 -> 현재 `TermType` 5종 URL 200 확인 -> INSERT** 순서를 지킨다.
-개인정보 처리방침은 동의 대상이 아닌 상시 공개 문서라 이 catalog에 넣지 않는다. 서버는 이 순서에
-의존한다: 종류별 current 행의 존재가 곧 그 stage gate의 활성화 조건인데, 서버는 `content_url`이 실제로
-열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을 외부 호스트에 묶지 않는
-결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
+약관 활성화(운영 seed)는 **페이지 게시 -> 삽입 대상 URL 200 확인 -> INSERT** 순서를 지킨다. 빈 catalog는
+`term-documents-1.0.sql`로 현재 `TermType` 6종을 넣고, 기존 5종 catalog는
+`term-documents-add-privacy-policy-1.0.sql`로 개인정보 처리방침 한 건만 추가한다. 전체 seed를 기존
+catalog에 재실행하지 않으며, delta도 중복이나 데이터 불일치를 숨기는 `INSERT IGNORE`를 쓰지 않는다.
+
+개인정보 처리방침도 상시 공개와 같은 `termTypes` 조회를 위해 catalog에 넣는다. 서버는 이 순서에
+의존한다: enforcement 대상 종류의 current 행 존재가 해당 stage gate의 활성화 조건인데, 서버는
+`content_url`이 실제로 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을
+외부 호스트에 묶지 않는 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
 `privacy-poilcy` 같은 **형식이 멀쩡한 오타는 통과한다**. 순서를 뒤집어 확인 전에 INSERT하면 gate는
 미동의 사용자를 403으로 막기 시작하는데 정작 약관 page는 열리지 않는 상태가 되고, 기동 후 INSERT라
 형식 검사조차 다음 재기동까지 돌지 않는다. 즉 이 창을 닫는 것은 코드가 아니라 순서다.

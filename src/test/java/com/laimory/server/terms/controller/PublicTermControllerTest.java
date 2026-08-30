@@ -41,17 +41,19 @@ class PublicTermControllerTest {
     private TermDocumentService termDocumentService;
 
     @Test
-    void getCurrentTerms_withoutBearer_returns200InFixedDisplayOrder() throws Exception {
+    void getCurrentTerms_withoutBearer_returns200InFixedDisplayOrderWithoutRequiredMetadata() throws Exception {
         // 로그인 전 화면에서 쓰는 public API — bearer 없이 200이어야 한다.
         when(termDocumentService.findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
+                TermType.PRIVACY_POLICY,
                 TermType.TERMS_OF_SERVICE)))
                 .thenReturn(List.of(
                         document(TermType.TERMS_OF_SERVICE, "이용약관"),
+                        document(TermType.PRIVACY_POLICY, "개인정보 처리방침"),
                         document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관")));
 
         mockMvc.perform(get(PATH).param("termTypes",
-                        "LOCATION_BASED_SERVICE_TERMS", "TERMS_OF_SERVICE"))
+                        "LOCATION_BASED_SERVICE_TERMS", "PRIVACY_POLICY", "TERMS_OF_SERVICE"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
@@ -62,16 +64,18 @@ class PublicTermControllerTest {
                 .andExpect(jsonPath("$.body.terms[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.terms[0].contentUrl")
                         .value("https://laimory.app/terms/terms-of-service/1.0"))
-                .andExpect(jsonPath("$.body.terms[0].required").value(true))
+                .andExpect(jsonPath("$.body.terms[0].required").doesNotExist())
                 // KST 벽시계 LocalDateTime — offset 없는 ISO 문자열로 직렬화된다.
                 .andExpect(jsonPath("$.body.terms[0].effectiveAt").value("2026-08-01T09:30:15"))
-                .andExpect(jsonPath("$.body.terms[1].termType").value("LOCATION_BASED_SERVICE_TERMS"))
-                .andExpect(jsonPath("$.body.terms[1].required").value(false))
+                .andExpect(jsonPath("$.body.terms[1].termType").value("PRIVACY_POLICY"))
+                .andExpect(jsonPath("$.body.terms[1].title").value("개인정보 처리방침"))
+                .andExpect(jsonPath("$.body.terms[2].termType").value("LOCATION_BASED_SERVICE_TERMS"))
                 .andExpect(jsonPath("$.body.terms").isArray())
-                .andExpect(jsonPath("$.body.terms.length()").value(2));
+                .andExpect(jsonPath("$.body.terms.length()").value(3));
 
         verify(termDocumentService).findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
+                TermType.PRIVACY_POLICY,
                 TermType.TERMS_OF_SERVICE));
     }
 
@@ -89,7 +93,7 @@ class PublicTermControllerTest {
     }
 
     @Test
-    void getTimelineTerms_returnsLocationLastAndConditional() throws Exception {
+    void getTimelineTerms_returnsLocationLast() throws Exception {
         when(termDocumentService.findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.CROSS_BORDER_TRANSFER_CONSENT,
@@ -112,7 +116,7 @@ class PublicTermControllerTest {
                 .andExpect(jsonPath("$.body.terms[1].termType").value("THIRD_PARTY_PROVISION_CONSENT"))
                 .andExpect(jsonPath("$.body.terms[2].termType").value("CROSS_BORDER_TRANSFER_CONSENT"))
                 .andExpect(jsonPath("$.body.terms[3].termType").value("LOCATION_BASED_SERVICE_TERMS"))
-                .andExpect(jsonPath("$.body.terms[3].required").value(false));
+                .andExpect(jsonPath("$.body.terms[3].required").doesNotExist());
     }
 
     @Test
