@@ -12,8 +12,8 @@ import java.util.stream.Stream;
  * 운영자가 문서별로 단계·필수 여부·순서를 임의 변경하는 모델이 아니다.
 
  *
- * <p>{@code required=true}는 해당 stage 진입에 항상 필요한 문서다. {@code required=false}인 위치약관은
- * 공개 stage 목록에는 포함하되 위치정보를 실제 처리하는 요청에서만 별도 조건부 gate가 강제한다.
+ * <p>{@code required=true}는 해당 stage 진입에 항상 필요한 문서다. {@code required=false}인 위치약관도
+ * 공개 조회에서 요청할 수 있지만 위치정보를 실제 처리하는 요청에서만 별도 조건부 gate가 강제한다.
  */
 public enum TermType {
 
