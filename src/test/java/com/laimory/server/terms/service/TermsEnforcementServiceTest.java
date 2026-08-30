@@ -8,21 +8,15 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import java.util.List;
-import java.util.Optional;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/**
- * 필수 약관 gate의 세 갈래 고정 — 미준비 catalog fail-open(부분 강제·5xx 없음), 미동의 403,
- * 전부 동의 통과.
- */
+/** 단일 필수 약관 gate의 fail-open, 미동의 거절, 전체 동의 통과를 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class TermsEnforcementServiceTest {
 
@@ -36,32 +30,25 @@ class TermsEnforcementServiceTest {
     @InjectMocks
     private TermsEnforcementService service;
 
-    private List<TermDocumentSummary> requiredDocuments;
-
-    @BeforeEach
-    void setUp() {
-        requiredDocuments = List.of(new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0"));
-    }
-
     @Test
     void catalogNotReady_failsOpenWithoutAgreementQuery() {
-        // seed/activation이 덜 된 stage는 사용자 흐름을 막지 않고 metric으로 경보한다.
-        when(termCatalogReadiness.checkStage(TermStage.LOGIN))
-                .thenReturn(new TermCatalogReadiness.StageCatalog(false, List.of()));
+        when(termCatalogReadiness.check())
+                .thenReturn(new TermCatalogReadiness.Catalog(false, List.of()));
 
-        assertThatCode(() -> service.requireAgreements(TermStage.LOGIN, USER_ID)).doesNotThrowAnyException();
+        assertThatCode(() -> service.requireAgreements(USER_ID)).doesNotThrowAnyException();
 
-        verify(termCatalogReadiness).recordFailOpen(TermStage.LOGIN);
+        verify(termCatalogReadiness).recordFailOpen();
         verifyNoInteractions(termAgreementService);
     }
 
     @Test
-    void missingRequiredAgreement_throws403TermsAgreementRequired() {
-        when(termCatalogReadiness.checkStage(TermStage.LOGIN))
-                .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L))).thenReturn(false);
+    void missingAnyRequiredAgreement_throws403TermsAgreementRequired() {
+        List<TermDocumentSummary> documents = enforcedDocuments();
+        when(termCatalogReadiness.check()).thenReturn(new TermCatalogReadiness.Catalog(true, documents));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L, 13L, 14L, 15L)))
+                .thenReturn(false);
 
-        assertThatThrownBy(() -> service.requireAgreements(TermStage.LOGIN, USER_ID))
+        assertThatThrownBy(() -> service.requireAgreements(USER_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
                 .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED);
@@ -69,56 +56,20 @@ class TermsEnforcementServiceTest {
 
     @Test
     void allCurrentRequiredAgreed_passes() {
-        List<TermDocumentSummary> timelineDocuments = List.of(
+        List<TermDocumentSummary> documents = enforcedDocuments();
+        when(termCatalogReadiness.check()).thenReturn(new TermCatalogReadiness.Catalog(true, documents));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L, 13L, 14L, 15L)))
+                .thenReturn(true);
+
+        assertThatCode(() -> service.requireAgreements(USER_ID)).doesNotThrowAnyException();
+    }
+
+    private static List<TermDocumentSummary> enforcedDocuments() {
+        return List.of(
+                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.0"),
                 new TermDocumentSummary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"),
                 new TermDocumentSummary(13L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
-                new TermDocumentSummary(14L, TermType.CROSS_BORDER_TRANSFER_CONSENT, "1.0"));
-        when(termCatalogReadiness.checkStage(TermStage.TIMELINE_FIRST_CREATE))
-                .thenReturn(new TermCatalogReadiness.StageCatalog(true, timelineDocuments));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(12L, 13L, 14L))).thenReturn(true);
-
-        assertThatCode(() -> service.requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID))
-                .doesNotThrowAnyException();
-    }
-
-    @Test
-    void conditionalCatalogMissing_failsOpenWithoutWeakeningStageGate() {
-        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
-                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(false, Optional.empty()));
-
-        assertThatCode(() -> service.requireConditionalAgreement(
-                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID)).doesNotThrowAnyException();
-
-        verify(termCatalogReadiness).recordConditionalFailOpen(TermType.LOCATION_BASED_SERVICE_TERMS);
-        verifyNoInteractions(termAgreementService);
-    }
-
-    @Test
-    void missingCurrentConditionalAgreement_throws403() {
-        TermDocumentSummary location =
-                new TermDocumentSummary(15L, TermType.LOCATION_BASED_SERVICE_TERMS, "1.0");
-        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
-                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(true, Optional.of(location)));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(15L))).thenReturn(false);
-
-        assertThatThrownBy(() -> service.requireConditionalAgreement(
-                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getExceptionType())
-                .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED);
-    }
-
-    @Test
-    void currentConditionalAgreement_passesAndUsesCurrentDocumentId() {
-        TermDocumentSummary location =
-                new TermDocumentSummary(25L, TermType.LOCATION_BASED_SERVICE_TERMS, "1.1");
-        when(termCatalogReadiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS))
-                .thenReturn(new TermCatalogReadiness.ConditionalTermCatalog(true, Optional.of(location)));
-        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(25L))).thenReturn(true);
-
-        assertThatCode(() -> service.requireConditionalAgreement(
-                TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID)).doesNotThrowAnyException();
-
-        verify(termAgreementService).hasAgreedToAll(USER_ID, List.of(25L));
+                new TermDocumentSummary(14L, TermType.CROSS_BORDER_TRANSFER_CONSENT, "1.0"),
+                new TermDocumentSummary(15L, TermType.LOCATION_BASED_SERVICE_TERMS, "1.0"));
     }
 }

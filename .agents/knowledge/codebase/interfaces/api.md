@@ -201,7 +201,7 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
 조회·기록 계약이다. GET은 인증 subject의 저장된 `onboardingCompleted` boolean 하나를 반환하고, POST는
 그 값을 `true`로 전이한다. 값의 단일 권위는 저장된 subject 설정(`subject_preferences.onboarding_completed`)
-이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 자동 동기화하지 않는다 — 약관 개정도 저장된
+이며 약관 동의 이력·기록 존재 여부로 계산하거나 자동 동기화하지 않는다 — 약관 개정도 저장된
 완료 상태를 되돌리지 않는다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
 subject의 반복 POST도 같은 `200 + body=null`로 멱등 성공한다(matched row 기준 — 값이 같아도 0행이
 아니다). POST는 request body가 없다: 대상은 언제나 인증 subject 자신이고 바꿀 값도 하나뿐이다. 두
@@ -237,10 +237,10 @@ controller에서 원문을 렌더링하지 않고 classpath의 exact version res
 
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
-`termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·미지원 값은
+`termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은
 400 `-400`이다. 응답
 `terms[]`는 요청 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
-버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
+버전)를 클라이언트가 반복 query에 보낸 순서로 담으며 각 원소는
 `termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
@@ -248,7 +248,7 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
 파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
-조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수·조건부 동의 판정은 API 메타데이터가
+조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수 동의 판정은 API 메타데이터가
 아니라 실제 enforcement 지점의 정책이다.
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
@@ -264,11 +264,9 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `agreements=[]`다. 두 약관 GET response는 access log에서 privacy skeleton으로 마스킹되어 제목과
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
-미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE` 필수 3종을 추가 요구한다. draft 생성은
-신규 처리 항목에 STAY·MOVEMENT·좌표가 있는 PHOTO가 있으면 현재 위치약관도 요구한다. 클라이언트는
-위치약관에 동의하거나 해당 위치 항목을 제외해 재시도하며 서버는 위치를 자동 제거하지 않는다.
-exemption(회원 탈퇴 DELETE /user 포함)과 fail-open 계약은
+미동의 약관 gate: `/a/api` HandlerMethod는 이용약관·민감정보·제3자 제공·국외 이전·위치약관의 현재
+문서 동의를 한 번에 요구한다(미동의 403 `-3001`). 개인정보 처리방침은 상시 공개 문서로 gate에서 제외한다.
+exemption(회원 탈퇴 DELETE /user 포함)과 catalog fail-open 계약은
 [authentication runtime](../runtime/authentication.md)이 소유한다.
 
 ### Boundary conventions

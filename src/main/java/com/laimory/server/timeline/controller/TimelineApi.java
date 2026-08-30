@@ -2,8 +2,6 @@ package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.terms.RequiredTermsStage;
-import com.laimory.server.terms.TermStage;
 import com.laimory.server.user.CurrentSubject;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
@@ -143,8 +141,6 @@ public interface TimelineApi {
                     + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
                     + "각 sourceItem의 startAt은 필수이고 endAt은 nullable이다. "
                     + "HEALTH payload의 metric은 STEPS만 허용하며 다른 값은 저장·AI dispatch 전에 400으로 거절한다. "
-                    + "STAY·MOVEMENT·좌표가 있는 PHOTO를 신규 처리하면 현재 위치약관 동의가 필요하며, "
-                    + "미동의 시 위치 항목을 제외해 재시도할 수 있다. 서버가 위치를 자동 제거하지 않는다. "
                     + "지오코딩 대상 고유 좌표(rawId 중복 제거·이미 저장된 item 제외 뒤 STAY 좌표와 MOVEMENT "
                     + "start/end를 dedupe한 수)는 최대 30개다 — sourceItems 배열 길이 제한이 아니라 파생 계산이며, "
                     + "초과하면 외부 지도 API 호출 없이 400(-400)으로 거절한다. "
@@ -164,9 +160,7 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계), "
-                            + "또는 위치정보를 포함한 요청의 현재 위치약관 미동의. 현재 약관에 동의하거나 "
-                            + "STAY·MOVEMENT·좌표가 있는 PHOTO를 제외한 뒤 재시도한다"),
+                    description = "`-3001` — 현재 필수 약관 미동의. 현재 약관에 동의한 뒤 재시도한다"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
@@ -178,7 +172,6 @@ public interface TimelineApi {
                             + "`-1015`(영구 실패 포함 — 쿼터·키·응답 오류, 즉시 재시도는 무의미)")
     })
     @PostMapping
-    @RequiredTermsStage(TermStage.TIMELINE_FIRST_CREATE)
     ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal Long userId,
@@ -200,11 +193,10 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-                    description = "`-3001` — 현재 필수 약관 미동의(LOGIN 또는 TIMELINE_FIRST_CREATE 단계). "
+                    description = "`-3001` — 현재 필수 약관 미동의. "
                             + "presign은 S3 객체 수집의 시작점이라 동의 전에 발급하지 않는다")
     })
     @PostMapping("/photo-uploads")
-    @RequiredTermsStage(TermStage.TIMELINE_FIRST_CREATE)
     ResponseEntity<ApiResponse<PhotoUploadCreateResponse>> createPhotoUploads(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,

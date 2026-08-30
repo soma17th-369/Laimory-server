@@ -100,7 +100,7 @@ class TermPersistenceIntegrationTest {
     void allDeclaredTypes_insertAtVersion1_0_withFinalColumnSet() {
         // 활성화 시 넣을 seed와 같은 shape — 제거된 네 컬럼 없이 현재 enum 종류가 저장·조회된다.
         for (TermType type : TermType.values()) {
-            saveDocument(type, "1.0", "2026-09-0" + type.displayOrder() + "T00:00:00");
+            saveDocument(type, "1.0", "2026-09-01T00:00:00");
         }
 
         assertThat(termDocumentRepository.findCurrentDocuments(List.of(TermType.values()),
@@ -222,14 +222,14 @@ class TermPersistenceIntegrationTest {
                 "v1", List.of(TermType.TERMS_OF_SERVICE));
         assertThat(current).isEmpty(); // 공개 조회는 빈 배열 — 500 아님
         List<TermDocumentSummary> summaries = termDocumentService.findCurrentSummaries(
-                TermType.typesOf(TermStage.LOGIN), LocalDateTime.parse("2026-08-16T00:00:00"));
+                List.of(TermType.TERMS_OF_SERVICE), LocalDateTime.parse("2026-08-16T00:00:00"));
         assertThat(summaries).isEmpty();
 
-        // 2) readiness — TERMS_OF_SERVICE의 current 문서가 없으므로 stage는 not-ready로 수렴한다.
-        assertThat(termCatalogReadiness.checkStage(TermStage.LOGIN).ready()).isFalse();
+        // 2) readiness — 현재 동의 대상 문서 집합이 불완전하므로 not-ready로 수렴한다.
+        assertThat(termCatalogReadiness.check().ready()).isFalse();
 
-        // 3) gate — 미준비 stage는 fail-open이라 예외 없이 통과한다(5xx가 아니라 경보 metric).
-        termsEnforcementService.requireAgreements(TermStage.LOGIN, newUserId());
+        // 3) gate — 미준비 catalog는 fail-open이라 예외 없이 통과한다(5xx가 아니라 경보 metric).
+        termsEnforcementService.requireAgreements(newUserId());
     }
 
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {

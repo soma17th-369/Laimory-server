@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
@@ -23,10 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/**
- * 현재 문서 조회의 시각 축(UTC Clock → KST 벽시계)과 화면 순서 정렬(enum displayOrder — DB 순서 무시)
- * 검증.
- */
+/** 현재 문서 조회의 KST 시각 축과 공개 응답의 요청 순서 보존을 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class TermDocumentServiceTest {
 
@@ -35,7 +31,6 @@ class TermDocumentServiceTest {
 
     @Test
     void currentSelection_usesKstWallClock_evenWithUtcClock() {
-        // UTC 2026-08-15T20:00 = KST 2026-08-16T05:00 — 판정 기준은 KST 벽시계다.
         Clock utcClock = Clock.fixed(Instant.parse("2026-08-15T20:00:00Z"), ZoneOffset.UTC);
         TermDocumentService service = new TermDocumentService(termDocumentRepository, utcClock);
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any())).thenReturn(List.of());
@@ -49,50 +44,70 @@ class TermDocumentServiceTest {
     }
 
     @Test
-    void results_areSortedByEnumDisplayOrder_notDbOrder() {
-        Clock clock = Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC);
-        TermDocumentService service = new TermDocumentService(termDocumentRepository, clock);
-        TermDocument location = TermDocument.of(TermType.LOCATION_BASED_SERVICE_TERMS, "1.0", "위치약관",
-                "https://laimory.app/terms/location-based-service-terms/1.0",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
-        TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관",
-                "https://laimory.app/terms/terms-of-service/1.0",
-                LocalDateTime.parse("2026-08-01T00:00:00"));
+    void results_followRequestedOrder_notDbInQueryOrder() {
+        TermDocumentService service = service();
+        TermDocument location = document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치약관");
+        TermDocument terms = document(TermType.TERMS_OF_SERVICE, "이용약관");
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
-                .thenReturn(List.of(location, terms)); // DB가 역순으로 줘도
+                .thenReturn(List.of(terms, location));
 
         List<TermDocument> result = service.findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.TERMS_OF_SERVICE));
 
-        assertThat(result).containsExactly(terms, location);
+        assertThat(result).containsExactly(location, terms);
     }
 
     @Test
-    void summaries_useIdentityProjection_sortedByEnumDisplayOrder() {
-        // enforcement/readiness 경로 — 판정에 쓰는 식별 요약 쿼리에 위임하고 화면 순서로 정렬한다.
-        TermDocumentService service = new TermDocumentService(termDocumentRepository,
-                Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
-        TermDocumentSummary thirdParty = new TermDocumentSummary(12L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0");
-        TermDocumentSummary sensitive = new TermDocumentSummary(11L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0");
+    void missingCurrentDocument_isSkippedWithoutChangingRelativeRequestOrder() {
+        TermDocumentService service = service();
+        TermDocument terms = document(TermType.TERMS_OF_SERVICE, "이용약관");
+        TermDocument privacy = document(TermType.PRIVACY_POLICY, "개인정보 처리방침");
+        when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
+                .thenReturn(List.of(terms, privacy));
+
+        List<TermDocument> result = service.findCurrentDocuments("v1", List.of(
+                TermType.PRIVACY_POLICY,
+                TermType.LOCATION_BASED_SERVICE_TERMS,
+                TermType.TERMS_OF_SERVICE));
+
+        assertThat(result).containsExactly(privacy, terms);
+    }
+
+    @Test
+    void summaries_delegateRepositoryResultWithoutDisplayOrder() {
+        TermDocumentService service = service();
+        List<TermType> requested = List.of(
+                TermType.THIRD_PARTY_PROVISION_CONSENT,
+                TermType.SENSITIVE_INFORMATION_CONSENT);
+        List<TermDocumentSummary> repositoryResult = List.of(
+                new TermDocumentSummary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"),
+                new TermDocumentSummary(13L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"));
         LocalDateTime nowKst = LocalDateTime.parse("2026-08-15T09:00:00");
-        when(termDocumentRepository.findCurrentDocumentSummaries(
-                TermType.typesOf(TermStage.TIMELINE_FIRST_CREATE), nowKst))
-                .thenReturn(List.of(thirdParty, sensitive)); // DB가 역순으로 줘도
+        when(termDocumentRepository.findCurrentDocumentSummaries(requested, nowKst))
+                .thenReturn(repositoryResult);
 
-        assertThat(service.findCurrentSummaries(TermType.typesOf(TermStage.TIMELINE_FIRST_CREATE), nowKst))
-                .containsExactly(sensitive, thirdParty);
+        assertThat(service.findCurrentSummaries(requested, nowKst)).isSameAs(repositoryResult);
     }
 
     @Test
-    void emptyTypeSet_shortCircuitsWithoutQuery() {
-        TermDocumentService service = new TermDocumentService(termDocumentRepository,
-                Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
+    void emptyTypeList_shortCircuitsWithoutQuery() {
+        TermDocumentService service = service();
 
         assertThat(service.findCurrentDocuments(List.of(), LocalDateTime.parse("2026-08-15T00:00:00")))
                 .isEmpty();
         assertThat(service.findCurrentSummaries(List.of(), LocalDateTime.parse("2026-08-15T00:00:00")))
                 .isEmpty();
         verifyNoInteractions(termDocumentRepository);
+    }
+
+    private TermDocumentService service() {
+        return new TermDocumentService(termDocumentRepository,
+                Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private static TermDocument document(TermType type, String title) {
+        return TermDocument.of(type, "1.0", title, "https://laimory.app/terms/page/1.0",
+                LocalDateTime.parse("2026-08-01T00:00:00"));
     }
 }

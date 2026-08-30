@@ -7,7 +7,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * {@code LOGIN} 필수 약관 gate의 명시적 exemption — 동의를 완료하거나 계정을 확인·정리하는 operation만
+ * 필수 약관 gate의 명시적 exemption — 동의를 완료하거나 계정을 확인·정리하는 operation만
  * 붙인다(동의 등록/이력, 내 회원 조회, push 등록 PUT/DELETE, 후속 #305의 회원 탈퇴).
  *
  * <p>{@code *Api} interface method에 선언한다({@code HandlerMethod} annotation 탐색이 interface method를

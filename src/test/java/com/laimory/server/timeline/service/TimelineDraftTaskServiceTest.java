@@ -26,8 +26,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionType;
-import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.service.TermsEnforcementService;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.HealthMetric;
@@ -90,8 +88,6 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineItemService timelineItemService;
     @Mock
-    private TermsEnforcementService termsEnforcementService;
-    @Mock
     private SourceItemEnrichmentService sourceItemEnrichmentService;
     @Mock
     private TimelineAiDispatcher timelineAiDispatcher;
@@ -131,7 +127,7 @@ class TimelineDraftTaskServiceTest {
         service = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
-                termsEnforcementService, sourceItemEnrichmentService, timelineAiDispatcher,
+                sourceItemEnrichmentService, timelineAiDispatcher,
                 privacyRedactor, new ObjectMapper(), clock);
         // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
@@ -161,10 +157,8 @@ class TimelineDraftTaskServiceTest {
                 eq(PROCESSING_STARTED_AT));
 
         // 순서 불변식: enrich(저장 전 — AI 입력 조회가 저장본을 반환) → 선생성+source 저장 커밋 → Redis PROCESSING → dispatch.
-        InOrder order = inOrder(termsEnforcementService, sourceItemEnrichmentService, timelineDraftPreparationService,
+        InOrder order = inOrder(sourceItemEnrichmentService, timelineDraftPreparationService,
                 timelineTaskService, timelineAiDispatcher);
-        order.verify(termsEnforcementService)
-                .requireConditionalAgreement(TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID);
         order.verify(sourceItemEnrichmentService).enrich(anyList(), any());
         order.verify(timelineDraftPreparationService).prepareDraft(eq(SUBJECT_ID), eq(DATE), eq(RECORD_AT), eq(ZONE),
                 anyList());
@@ -436,42 +430,6 @@ class TimelineDraftTaskServiceTest {
                 List.of(photoSource(null, null)));
 
         assertThat(taskId).isNotBlank();
-        verify(termsEnforcementService, never()).requireConditionalAgreement(any(), anyLong());
-    }
-
-    @Test
-    void createDraftTask_locationAgreementFailure_stopsBeforeExternalCallsAndWrites() {
-        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
-        doThrow(new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED))
-                .when(termsEnforcementService)
-                .requireConditionalAgreement(TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID);
-
-        assertThatThrownBy(() -> service.createDraftTask(
-                VERSION, USER_ID, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.getExceptionType())
-                                .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED));
-
-        verifyNoInteractions(sourceItemEnrichmentService, timelineDraftPreparationService,
-                timelineTaskService, timelineAiDispatcher);
-    }
-
-    @Test
-    void createDraftTask_stayAndMovement_eachRequireLocationAgreement() {
-        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
-        List<SourceItemDto> stay = List.of(new SourceItemDto(
-                ItemType.STAY, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
-                new StayPayload(37.5340, 126.9668, null, null, null)));
-        List<SourceItemDto> movement = List.of(new SourceItemDto(
-                ItemType.MOVEMENT, RAW_ID_2, LocalDateTime.of(2026, 6, 17, 10, 0), null,
-                new MovementPayload(endpoint(37.4979, 127.0276), endpoint(37.5445, 127.0557),
-                        "WALKING", 1200.0)));
-
-        service.createDraftTask(VERSION, USER_ID, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, stay);
-        service.createDraftTask(VERSION, USER_ID, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, movement);
-
-        verify(termsEnforcementService, times(2))
-                .requireConditionalAgreement(TermType.LOCATION_BASED_SERVICE_TERMS, USER_ID);
     }
 
     @Test
@@ -710,7 +668,7 @@ class TimelineDraftTaskServiceTest {
         TimelineDraftTaskService failingService = new TimelineDraftTaskService(
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
-                termsEnforcementService, sourceItemEnrichmentService, timelineAiDispatcher,
+                sourceItemEnrichmentService, timelineAiDispatcher,
                 failingRedactor, new ObjectMapper(), clock);
 
         assertThatThrownBy(() -> failingService.createDraftTask(
