@@ -330,7 +330,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
-- 종류별 current 행의 **존재가 곧 그 stage gate의 활성화 조건**이다. 서버는 `content_url`이 실제로 열리는지
+- enforcement 대상 종류의 current 행 **존재가 해당 stage gate의 활성화 조건**이다. 개인정보 처리방침처럼
+  조회만 하는 종류는 gate를 활성화하지 않는다. 서버는 `content_url`이 실제로 열리는지
   검증할 수 없으므로(요청·기동 중 HTTP 조회 금지, 기동 형식 검사는 멀쩡한 오타를 통과시킨다) 게시 page가
   200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 gate가 미동의 사용자를 막는 동안 약관 page는
   열리지 않는 창이 생긴다 — 이 창을 닫는 것은 코드가 아니라 순서다.

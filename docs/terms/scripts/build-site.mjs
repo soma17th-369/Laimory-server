@@ -295,7 +295,7 @@ function sqlLiteral(value) {
     return `'${value.replaceAll("'", "''")}'`;
 }
 
-function renderSeedSql(documents) {
+function renderSeedSql(documents, instruction) {
     const catalogDocuments = documents
         .filter((document) => document.catalog !== null)
         .sort((left, right) => left.catalog.displayOrder - right.catalog.displayOrder);
@@ -311,7 +311,7 @@ function renderSeedSql(documents) {
     ].join(""));
 
     return `-- Generated from docs/terms/drafts by docs/terms/scripts/build-site.mjs.
--- Run only after these six immutable HTTPS pages return 200 without authentication.
+-- ${instruction}
 SET NAMES utf8mb4;
 
 INSERT INTO term_documents
@@ -369,7 +369,15 @@ export async function buildTermsSite({ outputRoot = DEFAULT_OUTPUT_ROOT } = {}) 
     await writeFile(resolve(resolvedOutputRoot, "publish-manifest.json"),
         `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     await writeFile(resolve(resolvedOutputRoot, "term-documents-1.0.sql"),
-        renderSeedSql(DOCUMENTS), "utf8");
+        renderSeedSql(DOCUMENTS,
+            "Empty-catalog bootstrap: run only after all six immutable HTTPS pages return 200 without authentication."),
+        "utf8");
+    await writeFile(resolve(resolvedOutputRoot, "term-documents-add-privacy-policy-1.0.sql"),
+        renderSeedSql(
+            DOCUMENTS.filter((document) => document.catalog?.termType === "PRIVACY_POLICY"),
+            "Existing five-row catalog upgrade: run once after the privacy policy page returns 200 without authentication.",
+        ),
+        "utf8");
 
     return { outputRoot: resolvedOutputRoot, manifest };
 }

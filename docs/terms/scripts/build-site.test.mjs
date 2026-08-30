@@ -62,4 +62,16 @@ test("builds six mobile legal pages and six catalog seed rows", async () => {
     assert.match(seedSql, /'CROSS_BORDER_TRANSFER_CONSENT'/u);
     assert.match(seedSql, /'LOCATION_BASED_SERVICE_TERMS'/u);
     assert.match(seedSql, /'PRIVACY_POLICY'/u);
+
+    const privacyPolicyDeltaSql = await readFile(
+        resolve(outputRoot, "term-documents-add-privacy-policy-1.0.sql"), "utf8");
+    assert.match(privacyPolicyDeltaSql, /Existing five-row catalog upgrade/u);
+    assert.match(privacyPolicyDeltaSql, /SET NAMES utf8mb4;\n\nINSERT INTO term_documents/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /INSERT IGNORE/u);
+    assert.match(privacyPolicyDeltaSql, /'PRIVACY_POLICY'/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /'TERMS_OF_SERVICE'/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /'THIRD_PARTY_PROVISION_CONSENT'/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /'SENSITIVE_INFORMATION_CONSENT'/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /'CROSS_BORDER_TRANSFER_CONSENT'/u);
+    assert.doesNotMatch(privacyPolicyDeltaSql, /'LOCATION_BASED_SERVICE_TERMS'/u);
 });

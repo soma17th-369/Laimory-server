@@ -37,8 +37,15 @@ node docs/terms/scripts/build-site.mjs --sync-resources
 
 - `build/terms-site/terms/{term-slug}/1.0`: canonical URL과 같은 S3 object key의 HTML
 - `build/terms-site/publish-manifest.json`: URL·content type·장기 cache 정책·source/HTML SHA-256
-- `build/terms-site/term-documents-1.0.sql`: URL 200 확인 뒤 실행할 현재 catalog 6종 seed
+- `build/terms-site/term-documents-1.0.sql`: 빈 catalog에서 URL 200 확인 뒤 실행할 6종 전체 seed
+- `build/terms-site/term-documents-add-privacy-policy-1.0.sql`: 기존 5종 catalog에 개인정보 처리방침만
+  추가하는 1회성 seed
 - `src/main/resources/terms-content/terms/{term-slug}/1.0`: Spring이 그대로 전달하는 동일 HTML
+
+이미 기존 5종 seed를 실행한 DB에는 전체 seed를 다시 실행하지 않는다. 개인정보 처리방침 URL의 200
+응답을 확인한 뒤 1회성 seed만 실행한다. 이 SQL은 중복이나 기존 데이터 불일치를 숨기지 않도록
+`INSERT IGNORE` 없이 단일 행을 추가하며, 이미 처리된 DB에서는 unique constraint 오류가 정상적인
+재실행 방지 신호다.
 
 각 HTML은 script·외부 asset·analytics 없이 self-contained이고, viewport와 가로 표 scroll을 제공한다.
 본문은 16px, 표 본문은 15px로 두며 Markdown에서 굵게 표시한 중요 내용은 주변 본문의 120% 크기와
