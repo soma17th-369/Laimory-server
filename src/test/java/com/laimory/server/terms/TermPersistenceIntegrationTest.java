@@ -218,7 +218,8 @@ class TermPersistenceIntegrationTest {
                 + "  'https://laimory.app/terms/terms-of-service/it-lc-1',"
                 + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
         // 1) binary collation — 소문자 행은 enum literal 조회에 매칭되지 않아 hydration 예외가 없다.
-        List<TermDocument> current = termDocumentService.findCurrentDocuments("v1", TermStage.LOGIN);
+        List<TermDocument> current = termDocumentService.findCurrentDocuments(
+                "v1", List.of(TermType.TERMS_OF_SERVICE));
         assertThat(current).isEmpty(); // 공개 조회는 빈 배열 — 500 아님
         List<TermDocumentSummary> summaries = termDocumentService.findCurrentSummaries(
                 TermType.typesOf(TermStage.LOGIN), LocalDateTime.parse("2026-08-16T00:00:00"));

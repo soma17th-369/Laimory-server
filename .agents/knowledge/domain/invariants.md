@@ -342,8 +342,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   차단한다.
 - 약관 시각(`effective_at`·`accepted_at`)은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 판정·기록은
   캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
-- 공개 응답과 필수 판정의 stage/required/화면 순서는 `TermType` enum mapping이 단독 권위다 — DB는 이
-  값을 복제하지 않는다. 미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌 `content_url`은
+- 공개 조회의 타입 필터와 화면 순서, 필수 판정의 stage/required는 `TermType` enum mapping이 단독
+  권위다 — DB는 이 값을 복제하지 않는다. 미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
+  `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
   판정을 바꾸지 않는다 — gate 판정은 현재 필수 문서 존재 여부만 본다.
 - 동의 등록은 all-or-nothing이다 — 제출 전부가 검증 시각의 현재 버전일 때만 한 DB transaction으로
