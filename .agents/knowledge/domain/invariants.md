@@ -342,8 +342,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   차단한다.
 - 약관 시각(`effective_at`·`accepted_at`)은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 판정·기록은
   캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
-- 공개 조회의 타입 필터와 화면 순서, 필수 판정의 stage/required는 `TermType` enum mapping이 단독
-  권위다 — DB는 이 값을 복제하지 않는다. 미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
+- 공개 조회의 타입 필터와 화면 순서는 `TermType` enum mapping이 권위다. 필수 동의는 enum 속성이 아니라
+  `TermCatalogReadiness`의 stage별 enforcement 대상과 위치약관 조건부 gate가 명시한다. DB는 이 값을 복제하지 않는다.
+  미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
   `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
   판정을 바꾸지 않는다 — gate 판정은 현재 필수 문서 존재 여부만 본다.
@@ -355,7 +356,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `/a/api` LOGIN gate와 draft 생성·사진 presign의 `TIMELINE_FIRST_CREATE` gate는 controller 진입 전
   interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
   기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
-- 위치약관은 `TIMELINE_FIRST_CREATE` 공개 목록의 `required=false` 조건부 문서다. draft 생성에서 기본
+- 위치약관은 다른 문서와 같이 `termTypes`로 조회하되 stage 일괄 gate에는 포함하지 않는다. draft 생성에서 기본
   검증과 기존 final rawId 제외가 끝난 신규 item 중 STAY·MOVEMENT·좌표가 모두 있는 PHOTO가 하나라도
   있으면 현재 위치약관 동의를 요구하고, 미동의는 지오코딩·DB/Redis write·AI dispatch 전에 403
   `-3001`로 끝난다. 위치 없는 항목만 보내 재시도할 수 있으며 서버가 위치를 조용히 제거하지 않는다.

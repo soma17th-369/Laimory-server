@@ -33,7 +33,7 @@ public class TermsEnforcementService {
             termCatalogReadiness.recordFailOpen(stage);
             return;
         }
-        List<Long> requiredDocumentIds = catalog.currentRequiredDocuments().stream()
+        List<Long> requiredDocumentIds = catalog.currentEnforcedDocuments().stream()
                 .map(TermDocumentSummary::termDocumentId)
                 .toList();
         if (!termAgreementService.hasAgreedToAll(userId, requiredDocumentIds)) {

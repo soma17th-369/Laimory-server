@@ -10,7 +10,7 @@ import { buildTermsSite, DOCUMENTS } from "./build-site.mjs";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "../../..");
 
-test("builds six mobile legal pages and five catalog seed rows", async () => {
+test("builds six mobile legal pages and six catalog seed rows", async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "laimory-terms-test-"));
     const outputRoot = resolve(temporaryRoot, "terms-site");
     const { manifest } = await buildTermsSite({ outputRoot });
@@ -23,6 +23,7 @@ test("builds six mobile legal pages and five catalog seed rows", async () => {
         [
             "CROSS_BORDER_TRANSFER_CONSENT",
             "LOCATION_BASED_SERVICE_TERMS",
+            "PRIVACY_POLICY",
             "SENSITIVE_INFORMATION_CONSENT",
             "TERMS_OF_SERVICE",
             "THIRD_PARTY_PROVISION_CONSENT",
@@ -60,5 +61,5 @@ test("builds six mobile legal pages and five catalog seed rows", async () => {
     assert.match(seedSql, /'SENSITIVE_INFORMATION_CONSENT'/u);
     assert.match(seedSql, /'CROSS_BORDER_TRANSFER_CONSENT'/u);
     assert.match(seedSql, /'LOCATION_BASED_SERVICE_TERMS'/u);
-    assert.doesNotMatch(seedSql, /PRIVACY_POLICY/u);
+    assert.match(seedSql, /'PRIVACY_POLICY'/u);
 });

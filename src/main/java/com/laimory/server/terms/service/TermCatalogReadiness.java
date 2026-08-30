@@ -37,10 +37,10 @@ import org.springframework.stereotype.Component;
  * 기록한다(대시보드 추적).
  *
  * <p>runtime enforcement는 요청마다 {@link #checkStage(TermStage, LocalDateTime)}로 DB 권위를 직접
- * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). 기대 필수 종류 중 하나라도 current 문서가
+ * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). stage별 enforcement 대상 중 하나라도 current 문서가
  * 없는 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage 전체를 fail-open하고,
- * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다. {@code required=false} 조건부 문서는
- * 종류별로 따로 판정해 누락 시 그 gate만 fail-open한다.
+ * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다. 위치약관은 따로 판정해 누락 시 그 gate만
+ * fail-open한다.
  *
  * <p>로그는 상태 전이에서만 남기고(bounded — 요청마다 반복하지 않음) 발생 빈도는
  * stage와 조건부 문서에 분리된 fail-open counter와 ready gauge가 담당한다.
@@ -82,24 +82,20 @@ public class TermCatalogReadiness {
                     .register(meterRegistry));
             notReadyLogged.put(stage, new AtomicBoolean(false));
         }
-        for (TermType termType : TermType.values()) {
-            if (termType.required()) {
-                continue;
-            }
-            AtomicInteger readyState = new AtomicInteger(0);
-            conditionalReadyGauges.put(termType, readyState);
-            meterRegistry.gauge(CONDITIONAL_CATALOG_READY_GAUGE,
-                    Tags.of("term_type", termType.name()), readyState);
-            conditionalFailOpenCounters.put(termType, Counter.builder(CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
-                    .description("Conditional terms gate skipped because its current document is unavailable")
-                    .tag("term_type", termType.name())
-                    .register(meterRegistry));
-            conditionalNotReadyLogged.put(termType, new AtomicBoolean(false));
-        }
+        TermType locationTerms = TermType.LOCATION_BASED_SERVICE_TERMS;
+        AtomicInteger locationReadyState = new AtomicInteger(0);
+        conditionalReadyGauges.put(locationTerms, locationReadyState);
+        meterRegistry.gauge(CONDITIONAL_CATALOG_READY_GAUGE,
+                Tags.of("term_type", locationTerms.name()), locationReadyState);
+        conditionalFailOpenCounters.put(locationTerms, Counter.builder(CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
+                .description("Conditional terms gate skipped because its current document is unavailable")
+                .tag("term_type", locationTerms.name())
+                .register(meterRegistry));
+        conditionalNotReadyLogged.put(locationTerms, new AtomicBoolean(false));
     }
 
     /** stage catalog 판정 결과 — 준비되지 않았으면 enforcement가 stage 전체를 fail-open한다. */
-    public record StageCatalog(boolean ready, List<TermDocumentSummary> currentRequiredDocuments) {
+    public record StageCatalog(boolean ready, List<TermDocumentSummary> currentEnforcedDocuments) {
     }
 
     /** 조건부 약관 하나의 catalog 판정 결과 — 누락 시 해당 조건부 gate만 fail-open한다. */
@@ -112,24 +108,22 @@ public class TermCatalogReadiness {
     }
 
     /**
-     * stage 준비 상태와 현재 필수 문서 집합을 함께 계산한다. 준비 조건:
-     * 기대 필수 종류 전부에 현재 문서가 있다.
+     * stage 준비 상태와 현재 enforcement 문서 집합을 함께 계산한다. 준비 조건:
+     * 강제 대상 종류 전부에 현재 문서가 있다.
      */
     public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
-        // 요청마다 도는 판정이라 판정에 쓰는 식별 요약만 조회한다.
+        // 요청마다 도는 판정이라 실제 강제할 문서의 식별 요약만 조회한다.
+        List<TermType> enforcedTypes = enforcedTypesOf(stage);
         List<TermDocumentSummary> currentDocuments = termDocumentService.findCurrentSummaries(
-                TermType.typesOf(stage), nowKst);
+                enforcedTypes, nowKst);
 
         Set<TermType> currentTypes = currentDocuments.stream()
                 .map(TermDocumentSummary::termType)
                 .collect(Collectors.toSet());
 
-        boolean ready = currentTypes.containsAll(TermType.requiredTypesOf(stage));
+        boolean ready = currentTypes.containsAll(enforcedTypes);
         publishStageState(stage, ready, currentDocuments.isEmpty());
-        List<TermDocumentSummary> currentRequired = currentDocuments.stream()
-                .filter(summary -> summary.termType().required())
-                .toList();
-        return new StageCatalog(ready, currentRequired);
+        return new StageCatalog(ready, currentDocuments);
     }
 
     /** gate가 미준비 stage를 통과시킬 때 호출한다 — 발생량은 counter, 상세는 전이 로그가 담당한다. */
@@ -184,10 +178,9 @@ public class TermCatalogReadiness {
                     problems.add("stage not ready (incomplete current required set): " + stage.name());
                 }
             }
-            for (TermType termType : TermType.values()) {
-                if (!termType.required() && !checkConditionalTerm(termType, nowKst).ready()) {
-                    problems.add("conditional term not ready: " + termType.name());
-                }
+            TermType locationTerms = TermType.LOCATION_BASED_SERVICE_TERMS;
+            if (!checkConditionalTerm(locationTerms, nowKst).ready()) {
+                problems.add("conditional term not ready: " + locationTerms.name());
             }
         } catch (RuntimeException e) {
             log.error("term catalog startup verification failed", e);
@@ -271,8 +264,18 @@ public class TermCatalogReadiness {
     }
 
     private static void requireConditional(TermType termType) {
-        if (termType.required()) {
+        if (termType != TermType.LOCATION_BASED_SERVICE_TERMS) {
             throw new IllegalArgumentException("termType is not conditional: " + termType.name());
         }
+    }
+
+    private static List<TermType> enforcedTypesOf(TermStage stage) {
+        return switch (stage) {
+            case LOGIN -> List.of(TermType.TERMS_OF_SERVICE);
+            case TIMELINE_FIRST_CREATE -> List.of(
+                    TermType.SENSITIVE_INFORMATION_CONSENT,
+                    TermType.THIRD_PARTY_PROVISION_CONSENT,
+                    TermType.CROSS_BORDER_TRANSFER_CONSENT);
+        };
     }
 }

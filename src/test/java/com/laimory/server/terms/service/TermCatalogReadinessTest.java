@@ -3,6 +3,8 @@ package com.laimory.server.terms.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -68,8 +70,9 @@ class TermCatalogReadinessTest {
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
 
         assertThat(catalog.ready()).isTrue();
-        assertThat(catalog.currentRequiredDocuments()).hasSize(1);
+        assertThat(catalog.currentEnforcedDocuments()).hasSize(1);
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(1.0);
+        verify(termDocumentService).findCurrentSummaries(List.of(TermType.TERMS_OF_SERVICE), NOW_KST);
     }
 
     @Test
@@ -83,7 +86,7 @@ class TermCatalogReadinessTest {
                 readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
 
         assertThat(catalog.ready()).isTrue();
-        assertThat(catalog.currentRequiredDocuments()).hasSize(3);
+        assertThat(catalog.currentEnforcedDocuments()).hasSize(3);
         assertThat(readyGauge(TermStage.TIMELINE_FIRST_CREATE)).isEqualTo(1.0);
     }
 
@@ -264,10 +267,11 @@ class TermCatalogReadinessTest {
                 catalogRow("SENSITIVE_INFORMATION_CONSENT"),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT"),
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT"),
-                catalogRow("LOCATION_BASED_SERVICE_TERMS")));
-        when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.LOGIN), any()))
+                catalogRow("LOCATION_BASED_SERVICE_TERMS"),
+                catalogRow("PRIVACY_POLICY")));
+        when(termDocumentService.findCurrentSummaries(eqEnforcedTypes(TermStage.LOGIN), any()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
-        when(termDocumentService.findCurrentSummaries(eqTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
+        when(termDocumentService.findCurrentSummaries(eqEnforcedTypes(TermStage.TIMELINE_FIRST_CREATE), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
@@ -282,8 +286,14 @@ class TermCatalogReadinessTest {
         assertThat(readyGauge(TermStage.TIMELINE_FIRST_CREATE)).isEqualTo(1.0);
     }
 
-    private static List<TermType> eqTypes(TermStage stage) {
-        return org.mockito.ArgumentMatchers.eq(TermType.typesOf(stage));
+    private static List<TermType> eqEnforcedTypes(TermStage stage) {
+        return eq(switch (stage) {
+            case LOGIN -> List.of(TermType.TERMS_OF_SERVICE);
+            case TIMELINE_FIRST_CREATE -> List.of(
+                    TermType.SENSITIVE_INFORMATION_CONSENT,
+                    TermType.THIRD_PARTY_PROVISION_CONSENT,
+                    TermType.CROSS_BORDER_TRANSFER_CONSENT);
+        });
     }
 
     private double readyGauge(TermStage stage) {

@@ -241,16 +241,15 @@ controller에서 원문을 렌더링하지 않고 classpath의 exact version res
 400 `-400`이다. 응답
 `terms[]`는 요청 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
 버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
-`termType`·`version`·`title`·`contentUrl`·`required`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
+`termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
 아니다(현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가 강제하는
 형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
-파싱·정렬하지 않는다. `required`와 stage 소속은 DB 사본이 아니라 `TermType` enum mapping 값이다. 현재 유효 문서가 없으면
-(activation 전 rollout) 404/500이 아니라 200과 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다.
-현재 `TIMELINE_FIRST_CREATE`는 #3~#5 `required=true` 세 문서 다음에 위치약관
-`LOCATION_BASED_SERVICE_TERMS(required=false)`을 반환한다. false는 불필요가 아니라 위치정보가 있는 draft
-생성에서만 조건부로 강제된다는 뜻이다.
+파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
+`terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
+조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수·조건부 동의 판정은 API 메타데이터가
+아니라 실제 enforcement 지점의 정책이다.
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
 도메인이라 hidden `@AuthenticationPrincipal Long userId`). body `agreements[]`의 각

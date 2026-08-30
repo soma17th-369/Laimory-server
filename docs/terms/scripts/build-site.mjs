@@ -50,7 +50,7 @@ export const DOCUMENTS = Object.freeze([
         source: "docs/terms/drafts/08-privacy-policy.md",
         slug: "privacy-policy",
         title: "라이모리 개인정보 처리방침",
-        catalog: null,
+        catalog: { termType: "PRIVACY_POLICY", stage: "LOGIN", displayOrder: 2 },
     },
 ]);
 
@@ -311,8 +311,7 @@ function renderSeedSql(documents) {
     ].join(""));
 
     return `-- Generated from docs/terms/drafts by docs/terms/scripts/build-site.mjs.
--- Run only after these five immutable HTTPS pages return 200 without authentication.
--- #8 privacy policy is public and is not a consent catalog row.
+-- Run only after these six immutable HTTPS pages return 200 without authentication.
 SET NAMES utf8mb4;
 
 INSERT INTO term_documents

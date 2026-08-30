@@ -37,7 +37,7 @@ node docs/terms/scripts/build-site.mjs --sync-resources
 
 - `build/terms-site/terms/{term-slug}/1.0`: canonical URL과 같은 S3 object key의 HTML
 - `build/terms-site/publish-manifest.json`: URL·content type·장기 cache 정책·source/HTML SHA-256
-- `build/terms-site/term-documents-1.0.sql`: URL 200 확인 뒤 실행할 현재 catalog 5종 seed
+- `build/terms-site/term-documents-1.0.sql`: URL 200 확인 뒤 실행할 현재 catalog 6종 seed
 - `src/main/resources/terms-content/terms/{term-slug}/1.0`: Spring이 그대로 전달하는 동일 HTML
 
 각 HTML은 script·외부 asset·analytics 없이 self-contained이고, viewport와 가로 표 scroll을 제공한다.
@@ -67,8 +67,9 @@ cache header를 붙인다. canonical URL이 공개된 뒤에는 같은 version r
 | 6 | 위치기반서비스 이용약관 | `drafts/06-...` | 위치정보를 포함한 첫 생성 | 확정 정책·신고정보 반영 |
 | 8 | 개인정보 처리방침 | `drafts/08-privacy-policy.md` | — | 일반 개인정보 수집·이용 및 개인위치정보 공개사항 통합 |
 
-**개인정보 처리방침은 `term_documents`에 넣지 않는다.** 동의 대상이 아니라 상시 공개 문서다.
-법정 공개 위치는 홈페이지이며, 앱에서는 설정·로그인 화면에서 접근할 수 있어야 한다.
+**개인정보 처리방침도 `term_documents`에 넣어 같은 `termTypes` API로 조회한다.** 다만 동의 대상이
+아닌 상시 공개 문서이며, API 응답에 필수/고지 여부를 나타내는 별도 속성은 두지 않는다. 법정 공개
+위치는 홈페이지이며, 앱에서는 설정·로그인 화면에서 접근할 수 있어야 한다.
 Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴다.
 
 만 14세 이상 확인은 약관 동의가 아니라 **가입 자격 자기확인**이다. 신규 가입 화면에서 기본 해제된
@@ -97,7 +98,7 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 | FCM 처리 국가 표기 | FCM은 전역 서비스이므로 미국 한 곳으로 한정하지 않는다. **2026-08-29 현재 Google Cloud 지역·운영 중인 Google 데이터센터·Firebase에 이용될 수 있는 Google 계열 재수탁자 처리국가를 합친 41개국**을 #8에 열거하고 공식 목록을 연결한다 | Firebase 공식 개인정보·보안 설명, Google Cloud 지역·데이터센터·재수탁자 목록 |
 | 항목 선택 | 사진·좌표·알림·일정을 회원이 **건별로** 보고 고른다. 선택 안 한 항목은 서버에 오지 않는다 | |
 | 건강 입력 | `HEALTH`는 **걸음 수(`STEPS`)만** 수집. 건강 이동 거리와 수면 시간은 받지 않는다 | 이동 거리는 `MOVEMENT.distanceMeters`와 중복 |
-| 위치 약관 | 위치정보법은 별개 법이라 별도 약관 추가. 위치정보를 전송 대상으로 고른 최초 시점에 조건부 동의 | 서버는 `required=false`로 공개하고 위치가 있는 타임라인 생성에만 별도 gate 적용 |
+| 위치 약관 | 위치정보법은 별개 법이라 별도 약관 추가. 위치정보를 전송 대상으로 고른 최초 시점에 조건부 동의 | 서버는 같은 API로 공개하고 위치가 있는 타임라인 생성에만 별도 gate 적용 |
 | 위치기반서비스사업 신고 | **2026-08-28 신고 완료, 신고번호 1464**. 신고 명칭은 라이모리, 대표자는 이동건 | 방송미디어통신위원회 신고확인증 |
 | 향후 항목 추가 | 계약 이행에 필요한 최소 일반 개인정보는 #8에 법적 근거와 함께 공개한다. 그 밖의 선택 수집이나 민감정보·제3자 제공·국외이전 등 별도 동의 대상만 동의 문서로 만든다 | |
 

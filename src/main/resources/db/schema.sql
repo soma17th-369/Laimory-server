@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS push_registrations (
 -- 원문은 이 테이블에 담지 않는다(#320) — 게시된 버전별 page가 소유하고 이 행은 그 주소만 들고 있다.
 -- content_url은 게시 시점에 확정된 사실이라 코드에서 역산하지 않고 저장한다: 게시 host·경로 규칙이
 -- 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않고, 버전마다 다른 호스팅을 쓸 수도 있다.
--- 단계·필수 여부·화면 순서는 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
+-- 단계·화면 순서는 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
 -- literal(오타 seed)과 https 절대 URI가 아닌 content_url은 기동 검사(TermCatalogReadiness)가 경보한다.
 -- 실제 효력일 seed는 원문 page 게시 후 운영 수동 INSERT로만 넣는다.
 CREATE TABLE IF NOT EXISTS term_documents (
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS term_documents (
     -- 테이블 기본 _unicode_ci면 소문자 오타 seed가 JPQL IN(enum literal)에 case-insensitive 매칭돼
     -- @Enumerated hydration을 500으로 깨뜨린다 — binary 비교면 불일치 행이 조회에서 빠지고
     -- readiness가 not-ready(fail-open)로 경보한다.
-    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 5종
+    term_type VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 현재 TermType literal 6종
     -- version은 exact-match 식별자다 → Java equals(대소문자 구분)와 비교 규칙을 일치시키는 컬럼 단위
     -- binary collation(raw_id·FID 선례; 테이블 기본 _unicode_ci와 달리).
     version VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
