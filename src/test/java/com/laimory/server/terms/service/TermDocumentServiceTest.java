@@ -40,11 +40,11 @@ class TermDocumentServiceTest {
         TermDocumentService service = new TermDocumentService(termDocumentRepository, utcClock);
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any())).thenReturn(List.of());
 
-        service.findCurrentDocuments("v1", TermStage.LOGIN);
+        service.findCurrentDocuments("v1", List.of(TermType.TERMS_OF_SERVICE));
 
         ArgumentCaptor<LocalDateTime> nowKst = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(termDocumentRepository).findCurrentDocuments(
-                eq(TermType.typesOf(TermStage.LOGIN)), nowKst.capture());
+                eq(List.of(TermType.TERMS_OF_SERVICE)), nowKst.capture());
         assertThat(nowKst.getValue()).isEqualTo(LocalDateTime.parse("2026-08-16T05:00:00"));
     }
 
@@ -52,18 +52,20 @@ class TermDocumentServiceTest {
     void results_areSortedByEnumDisplayOrder_notDbOrder() {
         Clock clock = Clock.fixed(Instant.parse("2026-08-15T00:00:00Z"), ZoneOffset.UTC);
         TermDocumentService service = new TermDocumentService(termDocumentRepository, clock);
-        TermDocument thirdParty = TermDocument.of(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0", "제3자 제공 동의",
-                "https://laimory.app/terms/third-party-provision-consent/1.0",
+        TermDocument location = TermDocument.of(TermType.LOCATION_BASED_SERVICE_TERMS, "1.0", "위치약관",
+                "https://laimory.app/terms/location-based-service-terms/1.0",
                 LocalDateTime.parse("2026-08-01T00:00:00"));
-        TermDocument sensitive = TermDocument.of(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0", "민감정보 처리 동의",
-                "https://laimory.app/terms/sensitive-information-consent/1.0",
+        TermDocument terms = TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관",
+                "https://laimory.app/terms/terms-of-service/1.0",
                 LocalDateTime.parse("2026-08-01T00:00:00"));
         when(termDocumentRepository.findCurrentDocuments(anyCollection(), any()))
-                .thenReturn(List.of(thirdParty, sensitive)); // DB가 역순으로 줘도
+                .thenReturn(List.of(location, terms)); // DB가 역순으로 줘도
 
-        List<TermDocument> result = service.findCurrentDocuments("v1", TermStage.TIMELINE_FIRST_CREATE);
+        List<TermDocument> result = service.findCurrentDocuments("v1", List.of(
+                TermType.LOCATION_BASED_SERVICE_TERMS,
+                TermType.TERMS_OF_SERVICE));
 
-        assertThat(result).containsExactly(sensitive, thirdParty);
+        assertThat(result).containsExactly(terms, location);
     }
 
     @Test

@@ -2,12 +2,13 @@ package com.laimory.server.terms.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.terms.TermStage;
+import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.dto.TermListResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,12 +24,13 @@ import org.springframework.web.bind.annotation.RequestParam;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Terms", description = "약관 — 단계별 현재 유효 약관 공개 조회")
+@Tag(name = "Terms", description = "약관 — 종류별 현재 유효 약관 공개 조회")
 @RequestMapping(ApiUrls.API_URL + "/terms")
 public interface PublicTermApi {
 
     @Operation(summary = "현재 유효 약관 조회",
-            description = "단계(stage)의 현재 유효 약관을 서버가 정의한 화면 순서로 반환한다. 각 종류의 "
+            description = "반복 query termTypes로 요청한 종류의 현재 유효 약관을 서버가 정의한 화면 순서로 "
+                    + "반환한다. 각 종류의 "
                     + "현재 문서는 효력 시작(effectiveAt, Asia/Seoul 벽시계)이 지난 최신 버전이다. "
                     + "아직 유효한 문서가 없는 종류는 목록에서 빠지며, 전부 없으면(활성화 전) 404가 아니라 "
                     + "빈 배열이다. 원문은 응답에 담기지 않는다 — contentUrl은 그 버전의 원문 page HTTPS "
@@ -39,11 +41,12 @@ public interface PublicTermApi {
                     description = "조회 성공 — `body.terms`는 화면 순서 고정(활성화 전이면 빈 배열)",
                     useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — stage 누락·미지원 값")
+                    description = "`-400` — termTypes 누락·빈 배열·미지원 값")
     })
     @GetMapping
     ResponseEntity<ApiResponse<TermListResponse>> getCurrentTerms(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
-            @Parameter(description = "약관 노출·동의 단계(필수)", example = "LOGIN")
-            @RequestParam("stage") TermStage stage);
+            @Parameter(description = "조회할 약관 종류(필수, 같은 query key를 반복)",
+                    example = "TERMS_OF_SERVICE")
+            @RequestParam("termTypes") List<TermType> termTypes);
 }
