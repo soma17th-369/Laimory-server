@@ -155,7 +155,7 @@ public class TimelineDraftTaskService {
             throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
         }
 
-        // 공개 stage에서는 required=false인 위치약관을 위치정보가 실제 처리되는 요청에만 강제한다.
+        // 위치약관은 stage 일괄 gate가 아니라 위치정보가 실제 처리되는 요청에만 강제한다.
         // 이미 저장돼 제외된 항목은 다시 처리하지 않으므로 newItems를 기준으로 판정한다. 이 검사는
         // 역지오코딩·DB/Redis write·AI dispatch보다 앞서며, 미동의 요청의 위치정보가 외부로 나가지 않는다.
         if (containsLocationData(newItems)) {

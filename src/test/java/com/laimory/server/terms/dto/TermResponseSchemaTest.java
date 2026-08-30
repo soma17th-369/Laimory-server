@@ -21,7 +21,7 @@ class TermResponseSchemaTest {
     void contentUrl_isRequiredUriString_andContentIsGone(Class<?> dtoType) {
         Schema<?> schema = resolve(dtoType);
 
-        assertThat(schema.getProperties()).doesNotContainKey("content");
+        assertThat(schema.getProperties()).doesNotContainKeys("content", "required");
         Schema<?> contentUrl = schema.getProperties().get("contentUrl");
         assertThat(contentUrl).isNotNull();
         assertThat(contentUrl.getType()).isEqualTo("string");
