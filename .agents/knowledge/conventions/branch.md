@@ -10,6 +10,10 @@
   dev를 거치지 않고 직접 작업·실험하며, 검증된 변경만 dev로 PR한다. squash 머지 뒤에는
   **test를 dev로 리셋**해 히스토리 divergence를 되돌린다(리셋하지 않으면 다음 PR의 diff가 엉킨다).
   기본 브랜치가 dev라 `Closes #N`은 test 머지로 발동하지 않는다.
+  ⚠️ **리셋(또는 생성) 직후의 push는 배포를 트리거하지 않는다** — 브랜치 생성 push는 비교할 diff가
+  없어(dev HEAD와 동일 커밋) `deploy.yml`의 `paths` 필터에 걸리는 변경 파일이 0개다. 첫 배포는
+  deploy-existing `workflow_dispatch`(test ref에서 `environment=test` + dev image의 SHA·digest)로
+  띄우고, 이후 실코드 변경 push부터 자동 배포된다.
 
 ## 작업 브랜치
 
