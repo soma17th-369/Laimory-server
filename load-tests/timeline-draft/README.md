@@ -289,7 +289,7 @@ health check(`/intro` 반복)는 draft 경로를 데우지 못한다. 측정 전
 고VU 단계(≥10)는 표본이 커서 단발로 충분하다.
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app VUS=1 CONFIRM_AI_SIMULATOR=yes \
   k6 run load-tests/timeline-draft/k6/calendar-core.js
 ```
 
@@ -299,7 +299,7 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
 ### 6. calendar-core 사다리
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes \
   load-tests/timeline-draft/scripts/run-ladder.sh calendar-core
 ```
 
@@ -330,7 +330,7 @@ unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"�
 어느 base URL을 보는지 알 수 없다.
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes CONFIRM_SIMULATOR=yes \
   load-tests/timeline-draft/scripts/run-ladder.sh geo-day
 ```
 
@@ -441,7 +441,7 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 | 이름 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `RUN_ID` | ✅ | — | run 식별자. 결과 파일명과 rawId에 들어간다 |
-| `BASE_URL` | ✅ | — | 대상(예: `https://dev.laimory.app`) |
+| `BASE_URL` | ✅ | — | 대상(기본 test 환경 — 예: `https://test.laimory.app`) |
 | `VUS` | ✅ | — | 이 단계의 VU 수(= 사용자 수). `run-ladder.sh`가 주입한다 |
 | `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
 | `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
