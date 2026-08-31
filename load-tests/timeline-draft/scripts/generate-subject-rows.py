@@ -73,7 +73,12 @@ SUBJECT_SET_TABLE = "k6_251_subjects"
 def load_secret() -> tuple[bytes, int]:
     """`SUBJECT_HMAC_SECRET`(애플리케이션과 같은 JSON 스키마)에서 현재 key와 version을 읽는다.
 
-    rotation 기간의 previous key는 쓰지 않는다 — 새 mapping insert는 서버도 항상 current key로 한다.
+    previous key가 있으면(= rotation 진행 중) **중단한다.** 서버 `SubjectMappingService.getRequired`는
+    current lookup key가 miss면 previous key로 다시 찾아 기존 mapping을 current로 rekey한다. 이 스크립트가
+    current key만 보면 그런 사용자를 "mapping 없음"으로 오판해 두 번째 mapping 행과 새 subject를 만들고,
+    실제 콘텐츠는 옛 subject에 남는다 — 정리가 그 데이터를 통째로 놓친다. rekey를 여기서 흉내내는 대신
+    rotation이 끝난 뒤 실행하게 한다(부하 테스트는 rotation 중에 돌릴 이유가 없다).
+
     실패 메시지에 secret 원문이나 key 바이트를 담지 않는다(애플리케이션 parser와 같은 규칙).
     """
     raw = os.environ.get("SUBJECT_HMAC_SECRET", "")
@@ -99,6 +104,15 @@ def load_secret() -> tuple[bytes, int]:
         raise SystemExit("SUBJECT_HMAC_SECRET currentKey가 올바른 base64가 아닙니다.")
     if len(key) != KEY_LENGTH_BYTES:
         raise SystemExit(f"SUBJECT_HMAC_SECRET currentKey는 {KEY_LENGTH_BYTES}바이트여야 합니다.")
+
+    # rotation 중이면 기존 mapping이 previous key 아래에 있을 수 있다 — current key만 보는 이 스크립트는
+    # 그것을 찾지 못하고 중복 mapping·새 subject를 만든다(docstring 참고). fail-closed한다.
+    if document.get("previousKey") is not None or document.get("previousVersion") is not None:
+        raise SystemExit(
+            "SUBJECT_HMAC_SECRET에 previous key가 있습니다(rotation 진행 중). "
+            "이 스크립트는 current key만 조회하므로 previous key 아래의 기존 mapping을 놓치고 "
+            "중복 mapping과 새 subject를 만듭니다 — rotation이 끝난 뒤 실행하세요."
+        )
     return key, version
 
 

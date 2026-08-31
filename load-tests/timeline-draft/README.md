@@ -37,6 +37,7 @@ load-tests/timeline-draft/
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
 │   └── verify-redis-residue.sh     # Redis 잔여 확인
 └── sql/
+    ├── 00-preflight-terms-gate.sql # 실행 전: 약관 catalog가 아직 fail-open인지 확인
     ├── 01-seed-users.sql           # 합성 사용자 1,000명
     ├── 02-export-user-ids.sql      # user_id 목록 추출
     ├── 03-db-size-baseline.sql     # DB 규모·buffer pool 기준선
@@ -184,6 +185,17 @@ DB 규모 기준선(03-db-size-baseline.sql 출력)
 ```
 
 ### 1. 합성 사용자 seed
+
+먼저 약관 gate를 확인한다. 합성 사용자는 `term_agreements`가 0인데, catalog가 활성화되면
+LOGIN·TIMELINE_FIRST_CREATE 필수 동의 검사가 걸려 **전량 403**이 된다. 지금은 catalog가 비어
+stage 전체가 fail-open이라 통과하지만, #383이 운영 원문을 seed하면 그 순간 조용히 깨진다.
+
+```bash
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/00-preflight-terms-gate.sql
+```
+
+`active_documents`가 0이 아니면 실행하지 않는다 — 합성 사용자에게 현재 문서 동의를 함께 seed하고,
+`term_agreements`는 users FK가 없으므로 정리(06)에도 직접 DELETE를 추가해야 한다.
 
 ```bash
 mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/01-seed-users.sql
@@ -347,7 +359,10 @@ geo run은 추가로:
 
 ```bash
 # run 결과 검증 — 단계별로 확인한다.
-# @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|m|gd) + 단계 번호다(예: geo-day 2단계 → gd1).
+# @run_id는 RUN_ID(사람이 쓰는 YYYYMMDD-NN 그대로), @scenario_step은 rawId 세 번째 그룹(4 hex)이다.
+# rawId가 canonical UUID여야 해서(서버가 그 외를 400으로 거절) 식별 정보를 자릿수에 인코딩했다.
+#   시나리오: calendar-core=1, mixed-day=2, geo-day=3   단계: STEP_INDEX를 hex 3자리
+#   예) geo-day 2단계(STEP_INDEX=1) → @scenario_step='3001', 시나리오 전체 → '3%'
 sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/gd1/" \
   load-tests/timeline-draft/sql/04-verify-run.sql \
   | mysql --defaults-extra-file=<config> <db>
@@ -418,6 +433,7 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 | `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
 | `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
 | `STEP_INDEX` | | `0` | 사다리 단계 번호. recordDate를 하루씩 민다 |
+| `RUN_ID` | ✅ | — | **`YYYYMMDD-NN` 형식 고정** — rawId(canonical UUID)의 앞 두 그룹으로 인코딩된다 |
 | `RECORD_DATE_BASE` | | `2025-01-01` | 합성 날짜 대역의 시작. **과거여야 한다** — 서버가 미래 recordDate를 400으로 거절하므로(#366) init에서 먼저 끊는다 |
 | `TOKENS_FILE` | | `.artifacts/tokens.json` | token 파일 경로 |
 | `ARTIFACT_DIR` | | `load-tests/timeline-draft/.artifacts` | 결과 출력 경로 |

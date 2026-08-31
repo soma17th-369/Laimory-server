@@ -44,6 +44,13 @@ export function floatEnv(name, fallback) {
  * `scenarioCode`는 rawId에 들어가 정리·검증 쿼리가 한 RUN_ID 안에서 시나리오와 단계를 구분하게 한다.
  * 없으면 `04-verify-run.sql`이 core와 geo의 행을 한 덩어리로 세어 "사용자당 task 1회"를 검증할 수 없다.
  */
+
+/**
+ * scenarioCode → rawId에 들어갈 hex 한 자리. rawId가 canonical UUID여야 해서 코드 문자를 그대로 못 쓴다.
+ * 값이 바뀌면 `04-verify-run.sql`의 `@scenario_step` 예시도 함께 고친다.
+ */
+const SCENARIO_DIGITS = { c: '1', m: '2', gd: '3' };
+
 export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
   const vus = intEnv('VUS', 0);
   if (vus <= 0) {
@@ -87,20 +94,39 @@ export function loadConfig(scenario, scenarioCode, dateOffsetDays) {
   requireAiTargetConfirmation(baseUrl);
 
   const runId = requiredEnv('RUN_ID');
-  // rawId는 최대 36자다(서버 컬럼 계약). 잘라내면 요청 안에서 rawId가 충돌해 dedupe로 item이 사라지므로
-  // 자르지 않고 init에서 실패시킨다.
-  const rawIdLength = `k6-${runId}-${scenarioCode}${stepIndex}-00000-00`.length;
-  if (rawIdLength > 36) {
+  // rawId는 canonical lowercase UUID여야 한다 — 서버가 `RawIds.isCanonicalUuid`가 아닌 값을 저장·dispatch
+  // 전에 400으로 거절한다(#287). 임의 문자열에 개인정보가 실리는 것을 막는 경계라 우회로가 없다.
+  // 그래서 run·시나리오·단계·VU를 UUID 자릿수 안에 hex로 인코딩해 정리·검증 쿼리의 prefix LIKE를 유지한다.
+  //
+  //   <YYYYMMDD>-<seq4>-<scenario+step>-<vu4>-<index12>
+  //
+  // 앞 세 그룹이 run·시나리오·단계를 고정하므로 `LIKE '<prefix>%'` 한 줄로 대상을 정확히 집는다.
+  // 전부 [0-9a-f]라 canonical UUID 정규식을 통과한다(서버는 version 비트를 보지 않는다).
+  if (!/^\d{8}-\d{2}$/.test(runId)) {
     throw new Error(
-      `RUN_ID가 너무 깁니다: rawId가 ${rawIdLength}자로 상한 36자를 넘습니다. `
-      + `RUN_ID를 ${runId.length - (rawIdLength - 36)}자 이하로 줄이세요.`
+      `RUN_ID는 YYYYMMDD-NN이어야 합니다(rawId가 UUID 자릿수에 인코딩된다): ${runId}`
     );
   }
+  const [runDate, runSeq] = runId.split('-');
+  // 시나리오는 hex 한 자리로 압축한다 — 'm'(mixed) 같은 코드는 hex가 아니라 그대로 못 쓴다.
+  const scenarioDigit = SCENARIO_DIGITS[scenarioCode];
+  if (!scenarioDigit) {
+    throw new Error(`알 수 없는 scenarioCode입니다: ${scenarioCode}`);
+  }
+  if (stepIndex > 0xfff) {
+    throw new Error(`STEP_INDEX는 ${0xfff} 이하여야 합니다(rawId 자릿수): ${stepIndex}`);
+  }
+  if (vus > 0xffff) {
+    throw new Error(`VUS는 ${0xffff} 이하여야 합니다(rawId 자릿수): ${vus}`);
+  }
+  const rawIdPrefix = `${runDate}-${runSeq.padStart(4, '0')}`
+    + `-${scenarioDigit}${stepIndex.toString(16).padStart(3, '0')}`;
 
   return {
     scenario,
     scenarioCode,
     runId,
+    rawIdPrefix,
     baseUrl,
     vus,
     stepIndex,

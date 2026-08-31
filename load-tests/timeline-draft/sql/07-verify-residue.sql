@@ -22,11 +22,9 @@ SELECT 'users' AS target_table, COUNT(*) AS residue_rows
 FROM users
 WHERE provider = 'KAKAO' AND provider_user_id LIKE 'k6-251-%';
 
--- 부하 테스트가 만든 rawId 모양(`k6-<runId>-<code><step>-<5자리>-<2자리>`)만 정확히 집는다.
--- `k6-%`로 느슨하게 잡으면 사람이 손으로 넣은 `k6-`로 시작하는 실제 데이터까지 잔여로 오탐한다.
-SELECT 'timeline_draft_source_items(load-test shape)' AS target_table, COUNT(*) AS residue_rows
-FROM timeline_draft_source_items
-WHERE raw_id LIKE 'k6-%-%-_____-__';
+-- rawId 모양으로는 잔여를 세지 않는다. rawId가 canonical UUID여야 해서(서버가 그 외를 400으로 거절)
+-- 부하 테스트 행과 실제 클라이언트 행이 같은 모양이 됐다 — 모양만으로 구분하면 실 데이터를 오탐한다.
+-- 대신 아래 subject 기준 검사가 권위다(06 이전에 채워진 k6_251_subjects가 경계를 정확히 들고 있다).
 
 SELECT 'timeline_draft_source_items (synthetic subject)' AS target_table, COUNT(*) AS residue_rows
 FROM timeline_draft_source_items s

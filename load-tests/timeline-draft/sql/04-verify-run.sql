@@ -7,13 +7,24 @@
 -- task_id는 서버가 만든 UUIDv7이라 run 식별은 rawId 접두사로 한다. scenarioCode는
 -- calendar-core=c, mixed-day=m, geo-day=gd이고 stepIndex는 사다리 단계 번호(0부터)다.
 --
+-- rawId는 canonical UUID다(서버가 그 외 값을 400으로 거절한다 — RawIds). 식별 정보는 자릿수 안에
+-- hex로 인코딩돼 있다: <YYYYMMDD>-<seq4>-<scenario+step>-<vu4>-<index12>
+--
+-- @scenario_step은 그 세 번째 그룹(4 hex)이다 — 시나리오 한 자리 + 단계 3자리.
+--   시나리오: calendar-core=1, mixed-day=2, geo-day=3   (k6/lib/config.js의 SCENARIO_DIGITS)
+--   단계: STEP_INDEX를 hex 3자리로 (0→000, 1→001, 10→00a)
+--
 -- 사용: @run_id / @scenario_step을 실행한 값으로 바꾼 뒤 실행한다.
---   예) RUN_ID=20260806-01의 geo-day 4번째 단계  →  @run_id='20260806-01', @scenario_step='gd3'
---   한 시나리오의 모든 단계를 한 번에 보려면 @scenario_step='gd%' 처럼 와일드카드를 쓴다.
+--   예) RUN_ID=20260806-01의 geo-day 4번째 단계(STEP_INDEX=3) → @run_id='20260806-01', @scenario_step='3003'
+--   한 시나리오의 모든 단계를 한 번에 보려면 @scenario_step='3%' 처럼 와일드카드를 쓴다.
 
 SET @run_id = 'REPLACE_WITH_RUN_ID';
 SET @scenario_step = 'REPLACE_WITH_SCENARIO_STEP';
-SET @prefix = CONCAT('k6-', @run_id, '-', @scenario_step, '-');
+-- @run_id는 사람이 쓰는 형태(YYYYMMDD-NN)를 그대로 받고 여기서 rawId 자릿수로 맞춘다(NN → 4자리).
+SET @prefix = CONCAT(
+    SUBSTRING_INDEX(@run_id, '-', 1), '-',
+    LPAD(SUBSTRING_INDEX(@run_id, '-', -1), 4, '0'), '-',
+    @scenario_step, '-');
 
 -- 1) 접수 총량. tasks = distinct_subjects = VUS여야 하고, source_rows는 시나리오의 요청당 item 수를
 --    곱한 값이다(calendar-core 1, mixed-day·geo-day 68).
