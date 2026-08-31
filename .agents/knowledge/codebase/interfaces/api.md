@@ -180,15 +180,15 @@ terminal callback은 409 `-1017`다. 이미 소비된 token의 재요청은 재�
 창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
-`POST /t/api/{version}/timeline/ai-results`(#394)는 **dev 전용 AI 동기 테스트** endpoint다. AI Timeline
+`POST /t/api/{version}/timeline/test`(#394)는 **dev 전용 AI 동기 테스트** endpoint다. AI Timeline
 Input JSON을 받아 AI 서버의 테스트 전용 동기 endpoint로 전달하고 추론 결과를 반환하며, **MySQL·Redis에
 읽지도 쓰지도 않는다** — 회원·DailyRecord·Draft Task·staging·`ProcessStage`·결과 저장 transaction·
 callback·polling 어느 것도 거치지 않고 결과를 저장하지도 않는다. 요청 shape는 서버간 입력 조회 응답과
 같고 `window`가 필수라는 점만 다르다(시간 창을 줄 다른 통로가 없다). `taskId`는 서버가 발행해 AI
 요청과 응답에 함께 싣는 상관키라 요청에 담지 않으며, `taskToken`은 계약에 없다(AI가 App Server를
-되부르지 않는다). 성공은 `ApiResponse` envelope 없이 `{taskId, events[]}` typed JSON이고 `events`는
-결과 저장 계약과 같은 shape다(에러만 envelope). AI가 제한 시간 안에 마지막 확정본을 돌려주면 응답 헤더
-`X-Timeline-Timed-Out: true`가 붙는다 — 실패가 아니다. AI가 오류를 반환하면 502 `-1009`와 함께 응답 헤더
+되부르지 않는다). 성공은 `ApiResponse` envelope 없이 `{taskId, timedOut, events[]}` typed JSON이고
+`events`는 결과 저장 계약과 같은 shape다(에러만 envelope). AI가 제한 시간이 끝나 마지막 확정본을
+돌려주면 `timedOut`이 true다 — 실패가 아니다. AI가 오류를 반환하면 502 `-1009`와 함께 응답 헤더
 `X-Ai-Error-Code`로 AI numeric 코드를 전달한다(envelope `body=null` 계약을 지키면서 AI 실패 원인을
 구분하기 위한 것이며, AI 자유 text `error`는 어디에도 싣지 않는다). 입력 검증 실패는 400 `-400`,
 비활성 환경은 경로 부재로 404다 — **새 error code는 추가하지 않았다.**

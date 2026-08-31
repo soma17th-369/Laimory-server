@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -32,7 +33,8 @@ import org.springframework.web.client.RestClient;
  * AI 동기 테스트 client 계약 검증 — MockWebServer 실 HTTP 루프백으로 request/response fixture를 고정한다.
  *
  * <p>고정하는 계약: 나가는 body에 {@code taskId}는 있고 {@code taskToken}은 <b>없다</b>,
- * {@code X-Timeline-Timed-Out}은 성공 신호로 전달된다, AI 오류의 <b>numeric errorCode만</b> 꺼내고
+ * {@code X-Timeline-Timed-Out}은 응답 body의 {@code timedOut}으로 옮겨 실린다,
+ * AI 오류의 <b>numeric errorCode만</b> 꺼내고
  * 자유 text {@code error}는 어디에도 남기지 않는다, 응답이 없거나 계약을 어기면 502 계열로 끝난다,
  * 그리고 어떤 실패에서도 <b>재시도하지 않는다</b>(호출 1회 = LLM 토큰 비용 1회).
  *
@@ -103,13 +105,13 @@ class TimelineAiTestClientTest {
     void sendsTaskIdWithoutTaskTokenAndReturnsAiResult() throws Exception {
         server.enqueue(json(200, RESULT_BODY));
 
-        TimelineAiTestOutcome outcome = client().generate(request());
+        TimelineAiTestResponse response = client().generate(request());
 
-        assertThat(outcome.taskId()).isEqualTo(TASK_ID);
-        assertThat(outcome.timedOut()).isFalse();
-        assertThat(outcome.events()).hasSize(1);
-        assertThat(outcome.events().getFirst().title()).isEqualTo("점심");
-        assertThat(outcome.events().getFirst().sourceRawIds()).containsExactly(RAW_ID);
+        assertThat(response.taskId()).isEqualTo(TASK_ID);
+        assertThat(response.timedOut()).isFalse();
+        assertThat(response.events()).hasSize(1);
+        assertThat(response.events().getFirst().title()).isEqualTo("점심");
+        assertThat(response.events().getFirst().sourceRawIds()).containsExactly(RAW_ID);
 
         RecordedRequest recorded = server.takeRequest();
         assertThat(recorded.getMethod()).isEqualTo("POST");
@@ -136,13 +138,13 @@ class TimelineAiTestClientTest {
     }
 
     @Test
-    void propagatesTimedOutHeaderAsSuccessSignal() {
+    void movesTimedOutHeaderIntoResponseBody() {
         server.enqueue(json(200, RESULT_BODY).setHeader(TimelineAiTestClient.TIMED_OUT_HEADER, "true"));
 
-        TimelineAiTestOutcome outcome = client().generate(request());
+        TimelineAiTestResponse response = client().generate(request());
 
-        assertThat(outcome.timedOut()).isTrue();
-        assertThat(outcome.events()).hasSize(1);
+        assertThat(response.timedOut()).isTrue();
+        assertThat(response.events()).hasSize(1);
     }
 
     // --- AI 오류 응답 ---

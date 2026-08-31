@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -40,11 +41,12 @@ import org.springframework.web.client.RestClientException;
 @ConditionalOnProperty(name = "app.ai.timeline-test.enabled", havingValue = "true")
 public class TimelineAiTestClient {
 
-    /**
-     * AI가 제한 시간 안에 <b>마지막 확정본</b>을 돌려줬다는 표시(실패가 아니다). controller가 같은 이름으로
-     * 호출자에게 그대로 전달하므로 문자열 정의는 여기 하나다.
+/**
+     * AI가 제한 시간 안에 <b>마지막 확정본</b>을 돌려줬다는 표시(실패가 아니다). AI와의 계약은 헤더지만
+     * 우리 응답에서는 {@code timedOut} body 필드로 나간다 — 결과와 그 결과의 성격은 같은 자리에 있어야
+     * 호출자가 헤더를 따로 보지 않고도 읽는다.
      */
-    public static final String TIMED_OUT_HEADER = "X-Timeline-Timed-Out";
+    static final String TIMED_OUT_HEADER = "X-Timeline-Timed-Out";
 
     /**
      * AI 응답 상한. AI 결과는 자기 계약(Event 목록)으로 이미 bounded라 설정 knob을 두지 않는다
@@ -88,7 +90,7 @@ public class TimelineAiTestClient {
      * @throws IllegalArgumentException 직렬화 결과가 요청 상한을 넘음(호출자 입력 문제 → 400)
      * @throws TimelineAiTestCallException AI 4xx/5xx·timeout·전송 실패·비 JSON·계약 불일치·응답 상한 초과
      */
-    public TimelineAiTestOutcome generate(TimelineAiTestAiRequest request) {
+    public TimelineAiTestResponse generate(TimelineAiTestAiRequest request) {
         byte[] payload = serialize(request);
         try {
             return restClient.post()
@@ -96,7 +98,7 @@ public class TimelineAiTestClient {
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(payload)
-                    .exchange((clientRequest, clientResponse) -> readOutcome(request.taskId(), clientResponse));
+                    .exchange((clientRequest, clientResponse) -> readResponse(request.taskId(), clientResponse));
         } catch (RestClientException e) {
             // read timeout·connect 실패·전송 오류 — AI 응답 자체가 없어 status·errorCode를 알 수 없다.
             throw new TimelineAiTestCallException(
@@ -124,7 +126,7 @@ public class TimelineAiTestClient {
     }
 
     /** 응답을 상한까지만 읽고 status·계약을 검증한다. 초과분은 읽지 않고 계약 위반으로 끝낸다. */
-    private TimelineAiTestOutcome readOutcome(String taskId, ClientHttpResponse response) throws IOException {
+    private TimelineAiTestResponse readResponse(String taskId, ClientHttpResponse response) throws IOException {
         HttpStatusCode status = response.getStatusCode();
         byte[] body = response.getBody().readNBytes(MAX_RESPONSE_BYTES + 1);
         boolean truncated = body.length > MAX_RESPONSE_BYTES;
@@ -140,7 +142,7 @@ public class TimelineAiTestClient {
         AiTimelineResultRequest result = parse(body, status);
         requireResultContract(result, status);
         boolean timedOut = "true".equalsIgnoreCase(response.getHeaders().getFirst(TIMED_OUT_HEADER));
-        return new TimelineAiTestOutcome(taskId, result.events(), timedOut);
+        return new TimelineAiTestResponse(taskId, timedOut, result.events());
     }
 
     private AiTimelineResultRequest parse(byte[] body, HttpStatusCode status) {

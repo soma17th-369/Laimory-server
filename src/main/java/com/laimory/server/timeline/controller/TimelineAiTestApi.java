@@ -46,12 +46,13 @@ public interface TimelineAiTestApi {
                     + "AI가 App Server를 되부르지 않는다.\n\n"
                     + "AI로 나가는 텍스트 값은 운영 경로와 같은 개인정보 치환을 거친다(`photoUrl`·"
                     + "`filename`은 AI가 이미지를 직접 받아야 해서 원문 유지).\n\n"
-                    + "AI가 제한 시간 안에 마지막 확정본을 돌려주면 응답 헤더 `X-Timeline-Timed-Out: true`가 "
-                    + "붙는다 — 실패가 아니라 비동기 경로가 저장하는 값과 같은 결과다. AI가 오류를 반환한 "
-                    + "경우에는 502와 함께 응답 헤더 `X-Ai-Error-Code`로 AI의 numeric 오류 코드를 전달한다.")
+                    + "AI가 제한 시간이 끝나 마지막 확정본을 돌려준 경우 응답 body의 `timedOut`이 true다 — "
+                    + "실패가 아니라 비동기 경로가 저장하는 값과 같은 결과다. AI가 오류를 반환한 경우에는 "
+                    + "502와 함께 응답 헤더 `X-Ai-Error-Code`로 AI의 numeric 오류 코드를 전달한다"
+                    + "(에러 envelope은 `body=null`이 계약이라 body에 담을 자리가 없다).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "AI 추론 결과. 제한 시간 내 마지막 확정본이면 `X-Timeline-Timed-Out: true` 동반"),
+                    description = "서버 발행 `taskId` + `timedOut` + AI 추론 결과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — `window` 누락·역전, `sourceItems` 0건, `rawId` 형식 오류·중복, "
                             + "요청 body 상한 초과"),
@@ -61,7 +62,7 @@ public interface TimelineAiTestApi {
                     description = "`-1009` — AI 오류 응답·타임아웃·전송 실패·비 JSON·결과 계약 불일치. "
                             + "AI가 응답한 경우 `X-Ai-Error-Code` 헤더 동반")
     })
-    @PostMapping("/ai-results")
+    @PostMapping("/test")
     ResponseEntity<TimelineAiTestResponse> generate(
             @Parameter(description = "API 버전", example = "v1")
             @PathVariable String applicationVersion,

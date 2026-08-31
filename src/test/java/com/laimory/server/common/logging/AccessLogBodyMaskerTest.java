@@ -116,7 +116,7 @@ class AccessLogBodyMaskerTest {
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),
                 Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"),
-                Arguments.of("POST", "/t/api/v1/timeline/ai-results"));
+                Arguments.of("POST", "/t/api/v1/timeline/test"));
     }
 
     @Test
@@ -132,7 +132,7 @@ class AccessLogBodyMaskerTest {
                 + "\"payload\":{\"places\":[\"" + rawInput + "\"]}}]}";
 
         JsonNode maskedRequest = objectMapper.readTree(
-                maskRequest("POST", "/t/api/v1/timeline/ai-results", requestBody));
+                maskRequest("POST", "/t/api/v1/timeline/test", requestBody));
 
         assertThat(maskedRequest.get("recordDate").asText()).isEqualTo("2026-06-20");
         assertThat(maskedRequest.at("/window/startAt").asText()).isEqualTo("2026-06-20T00:00:00+09:00");
@@ -144,17 +144,20 @@ class AccessLogBodyMaskerTest {
         assertThat(maskedRequest.toString()).doesNotContain(rawInput);
 
         String rawEventText = "RAW_AI_EVENT_394_NEVER_LOG";
-        String responseBody = "{\"taskId\":\"0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7\",\"events\":[{"
+        String responseBody = "{\"taskId\":\"0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7\",\"timedOut\":true,"
+                + "\"events\":[{"
                 + "\"eventType\":\"MEAL\",\"title\":\"" + rawEventText + "\",\"subtitle\":null,"
                 + "\"question\":\"" + rawEventText + "\",\"place\":\"" + rawEventText + "\","
                 + "\"sourceRawIds\":[\"6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34\"]}]}";
 
         JsonNode maskedResponse = objectMapper.readTree(masker.maskResponse(
-                new MockHttpServletRequest("POST", "/t/api/v1/timeline/ai-results"),
+                new MockHttpServletRequest("POST", "/t/api/v1/timeline/test"),
                 jsonResponse(), bytes(responseBody), false));
 
         // 상관키 taskId는 로그에 남아야 AI 로그·Langfuse와 이어진다.
         assertThat(maskedResponse.get("taskId").asText()).isEqualTo("0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7");
+        // timedOut은 사용자 값이 아닌 boolean 신호라 그대로 남는다(#394에서 헤더 대신 body로 옮겼다).
+        assertThat(maskedResponse.get("timedOut").booleanValue()).isTrue();
         assertThat(maskedResponse.at("/events/0/eventType").asText()).isEqualTo("MEAL");
         assertThat(maskedResponse.at("/events/0/title").asText()).isEqualTo("***");
         assertThat(maskedResponse.at("/events/0/question").asText()).isEqualTo("***");

@@ -334,7 +334,7 @@ Task-Token: <접수 body로 준 token>
 운영 경로(`POST /v1/timeline`, `POST /invocations`)는 이 기능으로 달라지지 않는다.
 
 ```http
-POST /t/api/{version}/timeline/ai-results     (호출자 → App Server)
+POST /t/api/{version}/timeline/test           (호출자 → App Server)
 
 POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}/v1/timeline/test)
 ```
@@ -349,8 +349,11 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
   저장에 쓰지 않되 같은 `taskId`로 돌린 비동기 실행과 로그·Langfuse에서 이어 볼 수 있게 한다.
   AI는 빈 문자열을 `1001`로 거절한다.
 - AI는 `PIPELINE_TIMEOUT_SEC`(기본 120s)이 끝나면 마지막 확정본을 **200 + `X-Timeline-Timed-Out: true`**
-  로 돌려준다(실패가 아니며 비동기 경로가 저장하는 값과 같다). App Server는 이 헤더를 그대로 전달하고,
-  **read timeout이 이 값보다 길어야 한다**(기동 시 강제 — 짧으면 성공 응답 직전에 끊어 502가 된다).
+  로 돌려준다(실패가 아니며 비동기 경로가 저장하는 값과 같다). App Server는 이 신호를 헤더로 되전달하지
+  않고 **응답 body의 `timedOut`** 으로 옮겨 싣는다 — 성공 응답은 envelope이 없어 body에 자리가 있고,
+  결과와 그 결과의 성격이 같은 자리에 있어야 호출자가 헤더를 따로 보지 않는다(오류 `X-Ai-Error-Code`가
+  헤더인 이유는 반대다 — 에러 envelope은 `body=null`이 계약이라 담을 자리가 없다).
+  **read timeout이 AI 제한 시간보다 길어야 한다**(기동 시 강제 — 짧으면 성공 응답 직전에 끊어 502가 된다).
 - AI 오류는 `{errorCode, error}` + HTTP status다: 422 `1001`(`taskId` 빈 값·`recordDate`·`window` 누락),
   404 `1003`(AI 쪽 비활성), 500 `1102`(원본 계약 위반 — sourceItems 0건·rawId 중복), 500 `1201`(제한
   시간 내 확정 결과 없음), 500 `1202`(구조화 출력 실패), 500 `1301`(입력에 없는 rawId 참조).

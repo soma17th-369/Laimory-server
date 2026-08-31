@@ -3,8 +3,6 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import com.laimory.server.timeline.service.TimelineAiTestCallException;
-import com.laimory.server.timeline.service.TimelineAiTestClient;
-import com.laimory.server.timeline.service.TimelineAiTestOutcome;
 import com.laimory.server.timeline.service.TimelineAiTestService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -37,9 +35,8 @@ public class TimelineAiTestController implements TimelineAiTestApi {
     public ResponseEntity<TimelineAiTestResponse> generate(String applicationVersion,
                                                            TimelineAiTestRequest request,
                                                            HttpServletResponse response) {
-        TimelineAiTestOutcome outcome;
         try {
-            outcome = timelineAiTestService.generate(applicationVersion, request);
+            return ResponseEntity.ok(timelineAiTestService.generate(applicationVersion, request));
         } catch (TimelineAiTestCallException e) {
             // 에러 envelope은 body=null이 계약이라 AI가 낸 코드를 담을 자리가 없다 — 헤더로만 내보낸다.
             // 예외 핸들러가 status·envelope을 쓰기 전에 세워두면 그대로 남는다.
@@ -48,11 +45,5 @@ public class TimelineAiTestController implements TimelineAiTestApi {
             }
             throw e;
         }
-        ResponseEntity.BodyBuilder builder = ResponseEntity.ok();
-        if (outcome.timedOut()) {
-            // 실패가 아니라 "제한 시간 내 마지막 확정본"이라는 AI 신호를 그대로 전달한다.
-            builder = builder.header(TimelineAiTestClient.TIMED_OUT_HEADER, "true");
-        }
-        return builder.body(new TimelineAiTestResponse(outcome.taskId(), outcome.events()));
     }
 }

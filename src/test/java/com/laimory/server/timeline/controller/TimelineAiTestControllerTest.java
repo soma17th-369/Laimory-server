@@ -15,9 +15,8 @@ import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import com.laimory.server.timeline.service.TimelineAiTestCallException;
-import com.laimory.server.timeline.service.TimelineAiTestClient;
-import com.laimory.server.timeline.service.TimelineAiTestOutcome;
 import com.laimory.server.timeline.service.TimelineAiTestService;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -35,7 +34,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * dev 전용 AI 동기 테스트 컨트롤러 슬라이스 테스트(MockMvc). 인프라 0.
  *
  * <p>고정하는 HTTP 계약: 성공 응답은 {@code ApiResponse} envelope <b>없이</b> typed JSON이고 서버 발행
- * {@code taskId}를 담는다, {@code X-Timeline-Timed-Out}은 AI 신호가 있을 때만 붙는다, AI 오류의 numeric
+ * {@code taskId}·{@code timedOut}을 담는다, AI 오류의 numeric
  * code는 502와 함께 {@code X-Ai-Error-Code} 헤더로 나가되 자유 text는 나가지 않는다, 그리고 오류는
  * 기존 envelope·code로 매핑된다(새 error code 없음).
  *
@@ -46,7 +45,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineAiTestControllerTest {
 
-    private static final String PATH = "/t/api/v1/timeline/ai-results";
+    private static final String PATH = "/t/api/v1/timeline/test";
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
     private static final String TASK_ID = "0198f2a1-7c3d-7000-8b2e-1f4a9c05d6e7";
     private static final String RAW_ID = "6b5f2d3e-9c1a-4f88-9a2b-2f0d5c7e1a34";
@@ -66,9 +65,9 @@ class TimelineAiTestControllerTest {
     private TimelineAiTestService timelineAiTestService;
 
     @Test
-    void returnsTypedJsonWithoutEnvelopeAndWithoutTimedOutHeader() throws Exception {
+    void returnsTypedJsonWithoutEnvelope() throws Exception {
         when(timelineAiTestService.generate(eq("v1"), any()))
-                .thenReturn(outcome(false));
+                .thenReturn(aiResponse(false));
 
         mockMvc.perform(post(PATH)
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
@@ -76,16 +75,16 @@ class TimelineAiTestControllerTest {
                 // app envelope을 쓰지 않는다 — header/body 래핑이 없어야 한다.
                 .andExpect(jsonPath("$.header").doesNotExist())
                 .andExpect(jsonPath("$.taskId").value(TASK_ID))
+                .andExpect(jsonPath("$.timedOut").value(false))
                 .andExpect(jsonPath("$.events[0].eventType").value("MEAL"))
                 .andExpect(jsonPath("$.events[0].startAt").value("2026-06-20T12:00:00+09:00"))
                 .andExpect(jsonPath("$.events[0].sourceRawIds[0]").value(RAW_ID))
-                .andExpect(header().doesNotExist(TimelineAiTestClient.TIMED_OUT_HEADER))
                 .andExpect(header().doesNotExist(TimelineAiTestController.AI_ERROR_CODE_HEADER));
     }
 
     @Test
     void passesRequestBodyThroughUnchanged() throws Exception {
-        when(timelineAiTestService.generate(any(), any())).thenReturn(outcome(false));
+        when(timelineAiTestService.generate(any(), any())).thenReturn(aiResponse(false));
 
         mockMvc.perform(post(PATH)
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
@@ -103,14 +102,15 @@ class TimelineAiTestControllerTest {
     }
 
     @Test
-    void addsTimedOutHeaderWhenAiReturnedItsLastConfirmedResult() throws Exception {
-        when(timelineAiTestService.generate(any(), any())).thenReturn(outcome(true));
+    void reportsTimedOutInBodyWhenAiReturnedItsLastConfirmedResult() throws Exception {
+        when(timelineAiTestService.generate(any(), any())).thenReturn(aiResponse(true));
 
         mockMvc.perform(post(PATH)
                         .contentType(MediaType.APPLICATION_JSON).content(REQUEST_BODY))
-                // 실패가 아니다 — 200 + 헤더다.
+                // 실패가 아니다 — 200이고 결과 옆에 신호가 실린다.
                 .andExpect(status().isOk())
-                .andExpect(header().string(TimelineAiTestClient.TIMED_OUT_HEADER, "true"))
+                .andExpect(jsonPath("$.timedOut").value(true))
+                .andExpect(jsonPath("$.events").isNotEmpty())
                 .andExpect(jsonPath("$.taskId").value(TASK_ID));
     }
 
@@ -165,12 +165,11 @@ class TimelineAiTestControllerTest {
         verifyNoInteractions(timelineAiTestService);
     }
 
-    private static TimelineAiTestOutcome outcome(boolean timedOut) {
-        return new TimelineAiTestOutcome(TASK_ID, List.of(new AiTimelineResultRequest.Event(
-                        TimelineEventType.MEAL, "점심", null, null, null, null,
-                        OffsetDateTime.of(2026, 6, 20, 12, 0, 0, 0, KST),
-                        OffsetDateTime.of(2026, 6, 20, 13, 0, 0, 0, KST),
-                        List.of(RAW_ID))),
-                timedOut);
+    private static TimelineAiTestResponse aiResponse(boolean timedOut) {
+        return new TimelineAiTestResponse(TASK_ID, timedOut, List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심", null, null, null, null,
+                OffsetDateTime.of(2026, 6, 20, 12, 0, 0, 0, KST),
+                OffsetDateTime.of(2026, 6, 20, 13, 0, 0, 0, KST),
+                List.of(RAW_ID))));
     }
 }

@@ -7,6 +7,7 @@ import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -53,7 +54,7 @@ public class TimelineAiTestService {
     private final TimelineAiTestClient timelineAiTestClient;
     private final PrivacyRedactor privacyRedactor;
 
-    public TimelineAiTestOutcome generate(String applicationVersion, TimelineAiTestRequest request) {
+    public TimelineAiTestResponse generate(String applicationVersion, TimelineAiTestRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         requireValidRequest(request);
 
@@ -61,11 +62,11 @@ public class TimelineAiTestService {
         TimelineAiTestAiRequest aiRequest = toAiRequest(taskId, request);
         long startedAt = System.nanoTime();
         try {
-            TimelineAiTestOutcome outcome = timelineAiTestClient.generate(aiRequest);
+            TimelineAiTestResponse response = timelineAiTestClient.generate(aiRequest);
             log.info("timeline ai test completed: taskId={} sourceItems={} events={} timedOut={} elapsedMs={}",
-                    taskId, aiRequest.sourceItems().size(), outcome.events().size(), outcome.timedOut(),
+                    taskId, aiRequest.sourceItems().size(), response.events().size(), response.timedOut(),
                     elapsedMs(startedAt));
-            return outcome;
+            return response;
         } catch (TimelineAiTestCallException e) {
             // 자유 text error는 담지도 로그하지도 않는다 — numeric code와 status만 남긴다.
             log.warn("timeline ai test failed: taskId={} aiStatus={} aiErrorCode={} reason={} elapsedMs={}",

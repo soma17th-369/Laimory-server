@@ -19,6 +19,7 @@ import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
+import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -84,11 +85,11 @@ class TimelineAiTestServiceTest {
         // client는 받은 taskId를 그대로 되싣는다(그 계약은 client 테스트가 소유한다).
         when(client.generate(any())).thenAnswer(invocation -> {
             TimelineAiTestAiRequest sent = invocation.getArgument(0);
-            return new TimelineAiTestOutcome(sent.taskId(), aiResult(false).events(), false);
+            return new TimelineAiTestResponse(sent.taskId(), false, aiResult(false).events());
         });
 
-        TimelineAiTestOutcome first = service.generate("v1", request());
-        TimelineAiTestOutcome second = service.generate("v1", request());
+        TimelineAiTestResponse first = service.generate("v1", request());
+        TimelineAiTestResponse second = service.generate("v1", request());
 
         ArgumentCaptor<TimelineAiTestAiRequest> captor =
                 ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
@@ -204,9 +205,9 @@ class TimelineAiTestServiceTest {
         return OffsetDateTime.of(2026, 6, 20, hour, minute, 0, 0, KST);
     }
 
-    private static TimelineAiTestOutcome aiResult(boolean timedOut) {
-        return new TimelineAiTestOutcome("stub-task-id", List.of(new AiTimelineResultRequest.Event(
+    private static TimelineAiTestResponse aiResult(boolean timedOut) {
+        return new TimelineAiTestResponse("stub-task-id", timedOut, List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, "점심", null, null, null, null,
-                offset(12, 0), offset(13, 0), List.of(RAW_ID))), timedOut);
+                offset(12, 0), offset(13, 0), List.of(RAW_ID))));
     }
 }
