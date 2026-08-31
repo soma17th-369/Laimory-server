@@ -1,14 +1,20 @@
 -- 정리 후 잔여 0 검증. 모든 residue_rows가 0이어야 완료다.
 --
--- ⚠️ 반드시 subject-set.sql과 같은 세션에서 실행한다(임시 테이블은 세션 범위):
+-- ⚠️ subject-set.sql·06과 **한 세션에서 이어서** 실행한다(임시 테이블은 세션 범위):
 --   cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+--       load-tests/timeline-draft/sql/06-cleanup.sql \
 --       load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=... <db>
+--
+--   06 뒤에 새 세션을 열어 subject-set.sql을 다시 흘려 넣으면 안 된다. 그 파일은 k6_251_subjects를
+--   user_subject_links를 조회해 채우는데 06이 그 mapping을 이미 지웠으므로 **빈 집합**이 만들어지고,
+--   아래 "(synthetic subject)" 검사 5개가 빈 집합과 JOIN 되어 무엇이 남았든 0을 돌려준다.
+--   검증이 통과하는 게 아니라 아무것도 보지 않는 상태다.
 --
 -- 06이 users와 subject mapping을 이미 지웠으므로 "남아 있는 사용자"로는 확인할 수 없다.
 -- 대신 정리와 무관하게 유지되는 두 좌표로 본다.
 --   (a) 합성 사용자 자체가 남았는지 — provider_user_id 접두사
---   (b) 합성 subject를 가리키는 행이 남았는지 — k6_251_subjects. 콘텐츠 FK가 RESTRICT라 이 값이 0이 아니면
---       06의 어느 단계가 실패했다는 뜻이다(부분 실행도 반드시 여기서 잡힌다).
+--   (b) 합성 subject를 가리키는 행이 남았는지 — k6_251_subjects(06 이전에 채워진 집합). 콘텐츠 FK가
+--       RESTRICT라 이 값이 0이 아니면 06의 어느 단계가 실패했다는 뜻이다.
 --
 -- ⚠️ 한 문장이 임시 테이블을 두 번 참조하면 ERROR 1137이라 문장을 나눠 두었다(결과가 여러 그리드).
 

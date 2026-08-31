@@ -359,12 +359,14 @@ sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/gd1
 cat load-tests/timeline-draft/.artifacts/subject-set.sql \
     load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=<config> <db>
 
-# 실제 삭제
+# 실제 삭제 + 잔여 0 확인(모든 residue_rows가 0)
+#
+# ⚠️ 06과 07은 반드시 **한 세션에서 이어서** 실행한다. subject-set.sql은 k6_251_subjects를
+#    user_subject_links를 조회해 채우는데, 06이 그 mapping을 지우고 커밋한 뒤 새 세션에서 다시
+#    흘려 넣으면 빈 집합이 만들어진다. 그러면 07의 "(synthetic subject)" 검사 5개가 빈 집합과
+#    JOIN 되어 무엇이 남았든 0을 돌려준다 — 검증이 통과하는 게 아니라 아무것도 보지 않는 것이다.
 cat load-tests/timeline-draft/.artifacts/subject-set.sql \
-    load-tests/timeline-draft/sql/06-cleanup.sql | mysql --defaults-extra-file=<config> <db>
-
-# 잔여 0 확인(모든 residue_rows가 0)
-cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/06-cleanup.sql \
     load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
 
 # Redis 잔여 확인

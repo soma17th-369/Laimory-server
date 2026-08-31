@@ -253,8 +253,13 @@ def build_set_sql(pairs: list[tuple[int, str, str]]) -> str:
 --   cat load-tests/timeline-draft/.artifacts/subject-set.sql \\
 --       load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=... <db>
 --
+--   cat load-tests/timeline-draft/.artifacts/subject-set.sql \\
+--       load-tests/timeline-draft/sql/06-cleanup.sql \\
+--       load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=... <db>
+--
 -- ⚠️ 06이 mapping을 지운 뒤에는 이 파일로 집합을 다시 만들 수 없다(조회할 행이 사라진다).
---    06 → 07은 반드시 같은 세션에서 이어서 실행한다.
+--    06 → 07을 다른 세션으로 나누고 이 파일을 다시 흘려 넣으면 **빈 집합**이 만들어져, 07의
+--    "(synthetic subject)" 검사가 무엇이 남았든 0을 돌려준다. 반드시 한 세션에서 이어서 실행한다.
 
 {render_lookup_keys_block(pairs)}
 
@@ -270,7 +275,9 @@ SELECT l.subject_id
 FROM user_subject_links l
 JOIN {LOOKUP_KEY_TABLE} k ON k.user_lookup_key = l.user_lookup_key;
 
--- 확인: 합성 사용자 수와 같아야 한다. 적으면 mapping이 없는 사용자가 있다는 뜻이다(seed 미적용).
+-- 확인: 정리 **전**에는 합성 사용자 수와 같아야 한다. 적으면 mapping이 없는 사용자가 있다는
+-- 뜻이다(seed 미적용). 06을 이미 실행한 뒤라면 0이 정상이지만, 그 상태로 07을 이어 붙이면
+-- 검증이 무의미해진다 — 위 ⚠️를 참고해 06과 같은 세션에서 실행한다.
 SELECT COUNT(*) AS synthetic_subjects FROM {SUBJECT_SET_TABLE};
 """
 
