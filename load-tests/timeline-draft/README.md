@@ -311,7 +311,20 @@ RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes \
 
 ### 7. geo 사다리
 
-**전환(사용자 직접 수행)** — dev host에서 `.env`의 다음 두 값을 고치고 반영한다.
+**test 기본 경로 — `.env` 전환이 없다.** test의 `.env`는 simulator base URL + dummy key
+(`APP_GEO_KAKAO_BASE_URL`·`KAKAO_REST_API_KEY=k6-257-dummy`)가 영구 구성이라(#400) 고칠 것도
+되돌릴 것도 없다. 필요한 준비는 둘뿐이다:
+
+1. simulator EC2 start(정지 운용이 기본, private IP는 유지된다) + 컨테이너 health 200 확인
+2. journal reset 후 1좌표 요청 하나로 **coord2address 1회 + keyword 1회, unmatched 0** 확인 —
+   이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다. k6는 애플리케이션이 어느 base URL을
+   보는지 알 수 없다
+
+<details>
+<summary><b>dev를 대상으로 할 때만</b> — .env 전환(사용자 직접 수행)</summary>
+
+dev host에서 `.env`의 다음 두 값을 고치고 반영한다. `APP_GEO_MODE=kakao`와 `APP_AI_MODE=noop`은
+이미 맞춰진 상태여야 한다.
 
 ```text
 APP_GEO_KAKAO_BASE_URL=http://<SIMULATOR_PRIVATE_IP>:8080
@@ -323,11 +336,7 @@ sudo vi /home/ubuntu/app/.env
 sudo ./dev-recreate.sh
 ```
 
-`APP_GEO_MODE=kakao`와 `APP_AI_MODE=noop`은 이미 맞춰진 상태여야 한다.
-
-전환 직후 simulator journal을 reset하고 1좌표 요청 하나를 보내 **coord2address 1회 + keyword 1회,
-unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다 — k6는 애플리케이션이
-어느 base URL을 보는지 알 수 없다.
+</details>
 
 ```bash
 RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes CONFIRM_SIMULATOR=yes \
@@ -338,7 +347,12 @@ geo-day 사다리는 `1 → 2 → 3 → 5 → 10 → 20`으로 짧다 — 2 VU�
 예상되어, 전이 구간 밖은 같은 실패의 반복이기 때문이다. 보고할 값은 최대 VU가 아니라
 **좌표 누락 없이 통과한 마지막 VU**다.
 
-**원복(사용자 직접 수행)** — 0단계에서 남긴 원본으로 되돌린다.
+**run 종료 후(test)** — 원복이 없다. simulator EC2만 다시 중지한다(정지 운용이 기본).
+
+<details>
+<summary><b>dev를 대상으로 했을 때만</b> — 원복(사용자 직접 수행)</summary>
+
+0단계에서 남긴 원본으로 되돌린다.
 
 ```bash
 sudo cp -p /home/ubuntu/app/.env.before-loadtest /home/ubuntu/app/.env
@@ -348,6 +362,8 @@ sudo ./dev-recreate.sh --show   # AI/geo 값이 원래대로인지 눈으로 확
 
 이후 integration smoke를 확인한 다음 simulator를 중지한다. WAS 원복 확인 전에 simulator를 먼저
 내리지 않는다.
+
+</details>
 
 ### 8. 지표 대조
 
@@ -440,13 +456,13 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 
 | 이름 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `RUN_ID` | ✅ | — | run 식별자. 결과 파일명과 rawId에 들어간다 |
+| `RUN_ID` | ✅ | — | run 식별자(**`YYYYMMDD-NN` 형식 고정** — rawId canonical UUID의 앞 두 그룹으로 인코딩). 결과 파일명에도 들어간다 |
 | `BASE_URL` | ✅ | — | 대상(기본 test 환경 — 예: `https://test.laimory.app`) |
 | `VUS` | ✅ | — | 이 단계의 VU 수(= 사용자 수). `run-ladder.sh`가 주입한다 |
-| `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
+| `CONFIRM_AI_SIMULATOR` | 원격 대상 ✅* | — | **test 전용** — `APP_AI_MODE=http` + base URL이 #257 simulator임을 눈으로 확인했다는 표식 |
+| `CONFIRM_AI_NOOP` | 원격 대상 ✅* | — | **dev 전용** — `APP_AI_MODE`가 `noop`/`fake`임을 눈으로 확인했다는 표식. *원격 대상은 두 표식 중 **대상 서버 설정에 맞는 하나**가 필수 — 다른 쪽을 붙이면 안전 확인의 의미가 없다 |
 | `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
 | `STEP_INDEX` | | `0` | 사다리 단계 번호. recordDate를 하루씩 민다 |
-| `RUN_ID` | ✅ | — | **`YYYYMMDD-NN` 형식 고정** — rawId(canonical UUID)의 앞 두 그룹으로 인코딩된다 |
 | `RECORD_DATE_BASE` | | `2025-01-01` | 합성 날짜 대역의 시작. **과거여야 한다** — 서버가 미래 recordDate를 400으로 거절하므로(#366) init에서 먼저 끊는다 |
 | `TOKENS_FILE` | | `.artifacts/tokens.json` | token 파일 경로 |
 | `ARTIFACT_DIR` | | `load-tests/timeline-draft/.artifacts` | 결과 출력 경로 |
