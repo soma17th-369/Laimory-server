@@ -10,8 +10,10 @@ Kakao WebClient pool인지"를 구분할 수 있다.
 ## 안전 경계
 
 - 실제 Kakao Local API를 호출하지 않는다. geo 부하는 [#257 simulator](../kakao-simulator/README.md)만 쓴다.
-- 실제 AI service로 dispatch가 전파되지 않게 `APP_AI_MODE=noop`을 확인하고 실행한다.
-  localhost 외 대상에는 `CONFIRM_AI_NOOP=yes` 없이 k6가 실행되지 않는다.
+- **기본 대상은 test 환경(`https://test.laimory.app`)이다(#400).** test는 `APP_AI_MODE=http` +
+  #257 simulator가 영구 구성이라 dispatch가 실 AI로 나가지 않으며, `CONFIRM_AI_SIMULATOR=yes`로
+  발사한다. dev를 대상으로 할 때만 `APP_AI_MODE=noop` 확인 + `CONFIRM_AI_NOOP=yes`가 필요하다.
+  localhost 외 대상에는 두 표식 중 하나 없이 k6가 실행되지 않는다.
 - 실제 사용자 데이터를 읽거나 쓰지 않는다. 사용자·좌표·주소·rawId는 전부 합성값이다.
 - access token, user manifest, k6 raw 결과는 `.artifacts/`에만 두고 커밋하지 않는다.
 - dev WAS `.env` 변경, container recreate, simulator EC2 조작과 원복은 **사용자가 직접 수행한다**.
@@ -131,7 +133,16 @@ geo 단계는 다음 두 값을 함께 확인해야 유효하다.
 
 ### 0. 실행 조건 확인·기록
 
-**대상의 `APP_AI_MODE`가 `noop`인지 먼저 확인한다.** draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를
+**test 환경이 기본 대상이다.** test는 `.env`가 `APP_AI_MODE=http` + simulator base URL로 고정돼 있고
+(worker 5종 off·trace always-on 포함) **원복 절차가 없다** — 이 절의 dev `.env` 전환·원복은 dev를
+대상으로 할 때만 해당한다. test 대상 실행 예:
+
+```bash
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app VUS=1 CONFIRM_AI_SIMULATOR=yes \
+  k6 run load-tests/timeline-draft/k6/calendar-core.js
+```
+
+**dev를 대상으로 한다면, 그 `APP_AI_MODE`가 `noop`인지 먼저 확인한다.** draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를
 부르므로, `noop`이 아니면 요청 수만큼 실제 AI로 그대로 전파된다. `http`면 실 AI service가 1,000건을 받고,
 `fake`는 dispatch마다 2초 대기 후 자기 서버로 HTTP 3콜과 타임라인 저장을 수행하는데 실행기가 기본
 `applicationTaskExecutor`(스레드 8, 무제한 큐)라 뒤 단계 관측 구간까지 self-callback 부하가 번지고 정리
@@ -181,6 +192,7 @@ run-id
 WAS EC2 instance type / T3 credit mode / 시작 credit balance
 BASE_URL(대상)과 k6 실행기 위치·리전
 APP_AI_MODE / APP_GEO_MODE
+Filebeat 유무(test는 미설치 — 실환경 대비 그만큼 유리한 편향)와 OTEL_TRACES_SAMPLER 값
 DB 규모 기준선(03-db-size-baseline.sql 출력)
 ```
 
@@ -384,8 +396,9 @@ cat load-tests/timeline-draft/.artifacts/subject-set.sql \
     load-tests/timeline-draft/sql/06-cleanup.sql \
     load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
 
-# Redis 잔여 확인
-REDIS_HOST=<host> REDIS_PREFIX=dev_ \
+# Redis 잔여 확인 — prefix는 대상 환경을 따른다(test는 test_, dev는 dev_).
+# 스크립트 기본값이 dev_라 test 대상 실행에서 빠뜨리면 없는 키를 조회해 "잔여 0"이 거짓 통과한다.
+REDIS_HOST=<host> REDIS_PREFIX=test_ \
   load-tests/timeline-draft/scripts/verify-redis-residue.sh
 ```
 
