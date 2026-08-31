@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS push_registrations (
 -- 원문은 이 테이블에 담지 않는다(#320) — 게시된 버전별 page가 소유하고 이 행은 그 주소만 들고 있다.
 -- content_url은 게시 시점에 확정된 사실이라 코드에서 역산하지 않고 저장한다: 게시 host·경로 규칙이
 -- 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않고, 버전마다 다른 호스팅을 쓸 수도 있다.
--- 단계·화면 순서는 코드 TermType mapping이 단일 권위라 컬럼으로 복제하지 않는다 — 미지 term_type
+-- 공개 응답 순서는 요청 termTypes가 정하므로 컬럼으로 복제하지 않는다 — 미지 term_type
 -- literal(오타 seed)과 https 절대 URI가 아닌 content_url은 기동 검사(TermCatalogReadiness)가 경보한다.
 -- 실제 효력일 seed는 원문 page 게시 후 운영 수동 INSERT로만 넣는다.
 CREATE TABLE IF NOT EXISTS term_documents (

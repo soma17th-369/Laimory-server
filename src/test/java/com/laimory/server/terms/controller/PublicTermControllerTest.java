@@ -24,7 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 공개 약관 조회 컨트롤러 슬라이스 테스트(MockMvc). 무인증 200(public 계약)·termTypes 필수/빈 값/미지원 400·
- * 고정 화면 순서·offset 없는 KST LocalDateTime 직렬화·빈 catalog 200/[]와, 원문 대신 버전별
+ * 요청 순서·offset 없는 KST LocalDateTime 직렬화·빈 catalog 200/[]와, 원문 대신 버전별
  * contentUrl만 나가는 wire 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(PublicTermController.class)
@@ -41,35 +41,35 @@ class PublicTermControllerTest {
     private TermDocumentService termDocumentService;
 
     @Test
-    void getCurrentTerms_withoutBearer_returns200InFixedDisplayOrderWithoutRequiredMetadata() throws Exception {
+    void getCurrentTerms_withoutBearer_returns200InRequestedOrderWithoutRequiredMetadata() throws Exception {
         // 로그인 전 화면에서 쓰는 public API — bearer 없이 200이어야 한다.
         when(termDocumentService.findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.PRIVACY_POLICY,
                 TermType.TERMS_OF_SERVICE)))
                 .thenReturn(List.of(
-                        document(TermType.TERMS_OF_SERVICE, "이용약관"),
+                        document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관"),
                         document(TermType.PRIVACY_POLICY, "개인정보 처리방침"),
-                        document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관")));
+                        document(TermType.TERMS_OF_SERVICE, "이용약관")));
 
         mockMvc.perform(get(PATH).param("termTypes",
                         "LOCATION_BASED_SERVICE_TERMS", "PRIVACY_POLICY", "TERMS_OF_SERVICE"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(header().exists("Transaction-Id"))
-                .andExpect(jsonPath("$.body.terms[0].termType").value("TERMS_OF_SERVICE"))
-                .andExpect(jsonPath("$.body.terms[0].title").value("이용약관"))
+                .andExpect(jsonPath("$.body.terms[0].termType").value("LOCATION_BASED_SERVICE_TERMS"))
+                .andExpect(jsonPath("$.body.terms[0].title").value("위치기반서비스 이용약관"))
                 .andExpect(jsonPath("$.body.terms[0].version").value("1.0"))
                 // 원문은 응답에서 사라지고 버전별 page URL만 남는다(#320).
                 .andExpect(jsonPath("$.body.terms[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.terms[0].contentUrl")
-                        .value("https://laimory.app/terms/terms-of-service/1.0"))
+                        .value("https://laimory.app/terms/location-based-service-terms/1.0"))
                 .andExpect(jsonPath("$.body.terms[0].required").doesNotExist())
                 // KST 벽시계 LocalDateTime — offset 없는 ISO 문자열로 직렬화된다.
                 .andExpect(jsonPath("$.body.terms[0].effectiveAt").value("2026-08-01T09:30:15"))
                 .andExpect(jsonPath("$.body.terms[1].termType").value("PRIVACY_POLICY"))
                 .andExpect(jsonPath("$.body.terms[1].title").value("개인정보 처리방침"))
-                .andExpect(jsonPath("$.body.terms[2].termType").value("LOCATION_BASED_SERVICE_TERMS"))
+                .andExpect(jsonPath("$.body.terms[2].termType").value("TERMS_OF_SERVICE"))
                 .andExpect(jsonPath("$.body.terms").isArray())
                 .andExpect(jsonPath("$.body.terms.length()").value(3));
 
@@ -93,17 +93,17 @@ class PublicTermControllerTest {
     }
 
     @Test
-    void getTimelineTerms_returnsLocationLast() throws Exception {
+    void getTimelineTerms_followsRepeatedQueryOrder() throws Exception {
         when(termDocumentService.findCurrentDocuments("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.CROSS_BORDER_TRANSFER_CONSENT,
                 TermType.THIRD_PARTY_PROVISION_CONSENT,
                 TermType.SENSITIVE_INFORMATION_CONSENT)))
                 .thenReturn(List.of(
-                        document(TermType.SENSITIVE_INFORMATION_CONSENT, "민감정보 처리 동의"),
-                        document(TermType.THIRD_PARTY_PROVISION_CONSENT, "개인정보 제3자 제공 동의"),
+                        document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관"),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT, "개인정보 국외 이전 동의"),
-                        document(TermType.LOCATION_BASED_SERVICE_TERMS, "위치기반서비스 이용약관")));
+                        document(TermType.THIRD_PARTY_PROVISION_CONSENT, "개인정보 제3자 제공 동의"),
+                        document(TermType.SENSITIVE_INFORMATION_CONSENT, "민감정보 처리 동의")));
 
         mockMvc.perform(get(PATH).param("termTypes",
                         "LOCATION_BASED_SERVICE_TERMS",
@@ -112,10 +112,10 @@ class PublicTermControllerTest {
                         "SENSITIVE_INFORMATION_CONSENT"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.body.terms.length()").value(4))
-                .andExpect(jsonPath("$.body.terms[0].termType").value("SENSITIVE_INFORMATION_CONSENT"))
-                .andExpect(jsonPath("$.body.terms[1].termType").value("THIRD_PARTY_PROVISION_CONSENT"))
-                .andExpect(jsonPath("$.body.terms[2].termType").value("CROSS_BORDER_TRANSFER_CONSENT"))
-                .andExpect(jsonPath("$.body.terms[3].termType").value("LOCATION_BASED_SERVICE_TERMS"))
+                .andExpect(jsonPath("$.body.terms[0].termType").value("LOCATION_BASED_SERVICE_TERMS"))
+                .andExpect(jsonPath("$.body.terms[1].termType").value("CROSS_BORDER_TRANSFER_CONSENT"))
+                .andExpect(jsonPath("$.body.terms[2].termType").value("THIRD_PARTY_PROVISION_CONSENT"))
+                .andExpect(jsonPath("$.body.terms[3].termType").value("SENSITIVE_INFORMATION_CONSENT"))
                 .andExpect(jsonPath("$.body.terms[3].required").doesNotExist());
     }
 
@@ -148,8 +148,8 @@ class PublicTermControllerTest {
     }
 
     @Test
-    void getCurrentTerms_legacyStageOnly_returns400() throws Exception {
-        mockMvc.perform(get(PATH).param("stage", "LOGIN"))
+    void getCurrentTerms_duplicateTermTypes_returns400() throws Exception {
+        mockMvc.perform(get(PATH).param("termTypes", "TERMS_OF_SERVICE", "TERMS_OF_SERVICE"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
 

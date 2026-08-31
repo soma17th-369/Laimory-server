@@ -49,7 +49,7 @@ public interface PushRegistrationApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @PutMapping
-    // LOGIN 약관 gate exemption(#303): 미동의 상태에서도 새 로그인 사용자의 PUT이 FID를 현재 subject로
+    // 필수 약관 gate exemption(#303): 미동의 상태에서도 새 로그인 사용자의 PUT이 FID를 현재 subject로
     // 즉시 재결합해야 이전 사용자의 결합이 남지 않는다(bearer 인증은 그대로 요구).
     @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> registerPushRegistration(
@@ -70,7 +70,7 @@ public interface PushRegistrationApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @DeleteMapping
-    // LOGIN 약관 gate exemption(#303): 로그아웃·계정 전환 정리는 미동의 상태에서도 수행돼야 한다.
+    // 필수 약관 gate exemption(#303): 로그아웃·계정 전환 정리는 미동의 상태에서도 수행돼야 한다.
     @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> unregisterPushRegistration(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,

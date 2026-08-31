@@ -22,7 +22,7 @@ public class PublicTermController implements PublicTermApi {
     @Override
     public ResponseEntity<ApiResponse<TermListResponse>> getCurrentTerms(String applicationVersion,
                                                                          List<TermType> termTypes) {
-        if (termTypes.isEmpty()) {
+        if (termTypes.isEmpty() || termTypes.stream().distinct().count() != termTypes.size()) {
             throw new BusinessException(ExceptionType.VALIDATION_FAILED);
         }
         return ResponseEntity.ok(ApiResponse.success(new TermListResponse(
