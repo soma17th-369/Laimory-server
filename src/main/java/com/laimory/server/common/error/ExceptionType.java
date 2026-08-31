@@ -72,8 +72,9 @@ public enum ExceptionType {
 
     // ── terms ──
     /**
-     * 현재 필수 약관 미동의 — 비면제 {@code /a/api}의 단일 gate가 반환하는 403. 앱은 초기 동의 대상의
-     * 현재 약관을 다시 조회해 동의 화면으로 분기한다(약관 개정 후 재동의 필요 상태 포함).
+     * 현재 필수 약관 미동의 — LOGIN gate(대부분의 {@code /a/api})와 TIMELINE_FIRST_CREATE gate
+     * (draft 생성·사진 presign)가 공유하는 403. 앱은 해당 단계의 현재 약관을 다시 조회해 동의 화면으로
+     * 분기한다(약관 개정 후 재동의 필요 상태 포함).
      */
     TERMS_AGREEMENT_REQUIRED(-3001, HttpStatus.FORBIDDEN, Level.INFO),
     /** 동의 요청의 (termType, version)이 존재하지 않거나 현재 유효 버전이 아님 — 전체 미기록·재조회 신호. */

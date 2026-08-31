@@ -14,8 +14,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * {@code /a/api} HandlerMethod의 필수 약관 gate — Security chain의 bearer 인증(401)을 통과한 요청만
  * 도달하며, controller 진입 전에 동의 상태를 검사해 미동의는 403({@code -3001})으로 거절한다.
  *
- * <p>현재 필수 문서 전부에 대한 동의를 검사한다. {@link LoginTermsExempt}가 붙은 operation만
- * gate를 면제한다.
+ * <p>기본은 {@code LOGIN} 단계 필수 문서 전부 동의다. {@link LoginTermsExempt}가 붙은 operation만
+ * 기본 gate를 면제하고, {@link RequiredTermsStage}가 붙은 operation은 해당 단계를 추가로 검사한다.
  * annotation은 {@code *Api} interface method에 선언한다 — {@link HandlerMethod}의 annotation 탐색
  * (find semantics)이 구현 method의 interface 선언까지 본다.
  *
@@ -41,18 +41,22 @@ public class TermsEnforcementInterceptor implements HandlerInterceptor {
             return true;
         }
         if (handlerMethod.getMethodAnnotation(LoginTermsExempt.class) == null) {
-            enforce(userId);
+            enforce(TermStage.LOGIN, userId);
+        }
+        RequiredTermsStage requiredStage = handlerMethod.getMethodAnnotation(RequiredTermsStage.class);
+        if (requiredStage != null) {
+            enforce(requiredStage.value(), userId);
         }
         return true;
     }
 
-    private void enforce(Long userId) {
+    private void enforce(TermStage stage, Long userId) {
         TermsEnforcementService termsEnforcementService = termsEnforcementServiceProvider.getIfAvailable();
         if (termsEnforcementService == null) {
             // 구성 오류는 gate를 조용히 여는 대신 실패시킨다(CurrentSubjectArgumentResolver 선례).
             throw new IllegalStateException("terms enforcement service is unavailable");
         }
-        termsEnforcementService.requireAgreements(userId);
+        termsEnforcementService.requireAgreements(stage, userId);
     }
 
     private static Long authenticatedUserId() {

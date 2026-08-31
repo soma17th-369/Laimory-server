@@ -6,6 +6,8 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.service.TermsEnforcementService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.RawIds;
@@ -82,6 +84,7 @@ public class TimelineDraftTaskService {
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
+    private final TermsEnforcementService termsEnforcementService;
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineAiDispatcher timelineAiDispatcher;
     private final PrivacyRedactor privacyRedactor;
@@ -150,6 +153,13 @@ public class TimelineDraftTaskService {
         List<SourceItemDto> newItems = excludeAlreadySaved(dedupeByRawId(sourceItems), existingRecord);
         if (newItems.isEmpty()) {
             throw new BusinessException(ExceptionType.APPEND_NO_NEW_ITEMS);
+        }
+
+        // 위치약관은 stage 일괄 gate가 아니라 위치정보가 실제 처리되는 요청에만 강제한다.
+        // 이미 저장돼 제외된 항목은 다시 처리하지 않으므로 newItems를 기준으로 판정한다. 이 검사는
+        // 역지오코딩·DB/Redis write·AI dispatch보다 앞서며, 미동의 요청의 위치정보가 외부로 나가지 않는다.
+        if (containsLocationData(newItems)) {
+            termsEnforcementService.requireConditionalAgreement(TermType.LOCATION_BASED_SERVICE_TERMS, userId);
         }
 
         // 지오코딩·photoUrl enrich + payload 재구성(DB 트랜잭션 밖 외부 호출 — 거절·필터 뒤에 둬서 낭비 방지).
@@ -271,6 +281,15 @@ public class TimelineDraftTaskService {
             return items;
         }
         return items.stream().filter(item -> !savedRawIds.contains(item.rawId())).toList();
+    }
+
+    private static boolean containsLocationData(List<SourceItemDto> sourceItems) {
+        return sourceItems.stream().anyMatch(sourceItem -> switch (sourceItem.payload()) {
+            case StayPayload ignored -> true;
+            case MovementPayload ignored -> true;
+            case PhotoPayload photo -> photo.latitude() != null && photo.longitude() != null;
+            default -> false;
+        });
     }
 
     /**

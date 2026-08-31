@@ -284,8 +284,8 @@ not-ready(fail-open)로 경보한다. `content_url`을 `URI`가 아닌 `String`�
 서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
 공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고 원문 slug는 게시 문서가 소유하므로 DB에
-복제하지 않는다. 필수 동의 대상 5종은 enum 메타데이터가 아니라 enforcement/readiness 지점에 명시한다.
-enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summary projection을 조회한다 — 약관 gate가
+복제하지 않는다. 필수·조건부 동의 대상은 enum 메타데이터가 아니라 enforcement/readiness 지점에 명시한다.
+enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summary projection을 조회한다 — LOGIN gate가
 모든 비면제 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
@@ -323,7 +323,7 @@ ALTER TABLE term_documents
 catalog에 재실행하지 않으며, delta도 중복이나 데이터 불일치를 숨기는 `INSERT IGNORE`를 쓰지 않는다.
 
 개인정보 처리방침도 상시 공개와 같은 `termTypes` 조회를 위해 catalog에 넣는다. 서버는 이 순서에
-의존한다: enforcement 대상 5종의 current 행 존재가 단일 gate의 활성화 조건인데, 서버는
+의존한다: enforcement 대상 종류의 current 행 존재가 해당 stage 또는 조건부 gate의 활성화 조건인데, 서버는
 `content_url`이 실제로 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을
 외부 호스트에 묶지 않는 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
 `privacy-poilcy` 같은 **형식이 멀쩡한 오타는 통과한다**. 순서를 뒤집어 확인 전에 INSERT하면 gate는
