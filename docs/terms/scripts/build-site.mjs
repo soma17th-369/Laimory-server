@@ -20,37 +20,37 @@ export const DOCUMENTS = Object.freeze([
         source: "docs/terms/drafts/01-terms-of-service.md",
         slug: "terms-of-service",
         title: "라이모리 이용약관",
-        catalog: { termType: "TERMS_OF_SERVICE", stage: "LOGIN", displayOrder: 1 },
+        catalog: { termType: "TERMS_OF_SERVICE" },
     },
     {
         source: "docs/terms/drafts/03-third-party-provision-consent.md",
         slug: "third-party-provision-consent",
         title: "개인정보 제3자 제공 동의",
-        catalog: { termType: "THIRD_PARTY_PROVISION_CONSENT", stage: "TIMELINE_FIRST_CREATE", displayOrder: 4 },
+        catalog: { termType: "THIRD_PARTY_PROVISION_CONSENT" },
     },
     {
         source: "docs/terms/drafts/04-sensitive-information-consent.md",
         slug: "sensitive-information-consent",
         title: "민감정보 처리 동의",
-        catalog: { termType: "SENSITIVE_INFORMATION_CONSENT", stage: "TIMELINE_FIRST_CREATE", displayOrder: 3 },
+        catalog: { termType: "SENSITIVE_INFORMATION_CONSENT" },
     },
     {
         source: "docs/terms/drafts/05-cross-border-transfer-consent.md",
         slug: "cross-border-transfer-consent",
         title: "개인정보 국외 이전 동의",
-        catalog: { termType: "CROSS_BORDER_TRANSFER_CONSENT", stage: "TIMELINE_FIRST_CREATE", displayOrder: 5 },
+        catalog: { termType: "CROSS_BORDER_TRANSFER_CONSENT" },
     },
     {
         source: "docs/terms/drafts/06-location-based-service-terms.md",
         slug: "location-based-service-terms",
         title: "라이모리 위치기반서비스 이용약관",
-        catalog: { termType: "LOCATION_BASED_SERVICE_TERMS", stage: "TIMELINE_FIRST_CREATE", displayOrder: 6 },
+        catalog: { termType: "LOCATION_BASED_SERVICE_TERMS" },
     },
     {
         source: "docs/terms/drafts/08-privacy-policy.md",
         slug: "privacy-policy",
         title: "라이모리 개인정보 처리방침",
-        catalog: { termType: "PRIVACY_POLICY", stage: "LOGIN", displayOrder: 2 },
+        catalog: { termType: "PRIVACY_POLICY" },
     },
 ]);
 
@@ -296,9 +296,7 @@ function sqlLiteral(value) {
 }
 
 function renderSeedSql(documents, instruction) {
-    const catalogDocuments = documents
-        .filter((document) => document.catalog !== null)
-        .sort((left, right) => left.catalog.displayOrder - right.catalog.displayOrder);
+    const catalogDocuments = documents.filter((document) => document.catalog !== null);
     const nowKst = "CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00')";
     const rows = catalogDocuments.map((document) => [
         "    (",

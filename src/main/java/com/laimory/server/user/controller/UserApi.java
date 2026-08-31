@@ -41,7 +41,7 @@ public interface UserApi {
                             + "없음도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
     @GetMapping
-    // LOGIN 약관 gate exemption(#303): 계정 확인은 동의 전에도 가능해야 한다(bearer 인증은 그대로 요구).
+    // 필수 약관 gate exemption(#303): 계정 확인은 동의 전에도 가능해야 한다(bearer 인증은 그대로 요구).
     @LoginTermsExempt
     ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
@@ -67,7 +67,7 @@ public interface UserApi {
                             + "삭제된 회원도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
     @DeleteMapping
-    // LOGIN 약관 gate exemption(#303): 미동의 사용자도 탈퇴할 수 있어야 한다(bearer 인증·ACTIVE 검사는 그대로).
+    // 필수 약관 gate exemption(#303): 미동의 사용자도 탈퇴할 수 있어야 한다(bearer 인증·ACTIVE 검사는 그대로).
     @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> withdraw(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,

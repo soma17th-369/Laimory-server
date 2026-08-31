@@ -23,8 +23,8 @@ import lombok.Getter;
  *
  * <p>이 행은 원문을 담지 않는다 — 약관 원문은 게시된 버전별 page가 소유하고 이 행은 그 주소
  * ({@code contentUrl})만 들고 있다(#320). URL은 게시 시점에 확정된 사실이라 코드에서 역산하지 않는다:
- * 게시 host·경로 규칙이 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않는다. 단계·화면 순서는
- * {@link TermType} mapping이 단일 권위라 컬럼으로 복제하지 않는다.
+ * 게시 host·경로 규칙이 바뀌어도 과거 버전 행이 조용히 다른 주소를 가리키지 않는다. 공개 조회 순서는
+ * 요청의 {@code termTypes}가 정하므로 DB에 복제하지 않는다.
  *
  * <p>{@code contentUrl}을 {@code URI}가 아닌 {@code String}으로 매핑하는 이유: 이 값은 운영 seed가 넣는
  * 문자열이고, 타입 변환을 걸면 오타 seed 행 하나가 공개 조회 hydration 자체를 500으로 깨뜨린다. 형식

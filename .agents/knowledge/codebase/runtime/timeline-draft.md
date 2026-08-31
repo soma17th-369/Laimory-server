@@ -44,7 +44,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    중복을 제외한다. 제외 결과 신규 item이 0이면 409 `-1013`.
 5. 신규 item에 STAY·MOVEMENT·좌표가 모두 있는 PHOTO가 하나라도 있으면 현재 위치약관 동의를 검사한다.
    미동의는 403 `-3001`이며 geo/photo enrich·DB/Redis write·AI dispatch 전에 끝난다. 위치문서 seed가
-   누락되면 이 조건부 gate만 별도 metric·bounded log를 남기고 fail-open하며 #3~#5 stage gate는 유지한다.
+   누락되면 이 조건부 gate만 별도 metric·bounded log를 남기고 fail-open하며 LOGIN·TIMELINE_FIRST_CREATE
+   stage gate는 유지한다.
 6. geo/photo enrich를 DB transaction 밖에서 수행한다. 지오코딩 대상은 STAY 좌표, MOVEMENT start/end와
    **좌표를 가진 PHOTO**의 합집합이다(PHOTO 좌표는 선택 — 둘 다 없으면 비대상이고, 한쪽만 있거나
    범위 밖이면 입력 경계가 400 `-400`으로 거절한다). 필터 뒤 unique coordinate가 100개

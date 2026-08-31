@@ -120,7 +120,6 @@ class TermCatalogReadinessTest {
 
     @Test
     void missingRequiredCurrentDocument_marksStageNotReady() {
-        // TERMS_OF_SERVICE의 current 문서 없음(활성화 전) — stage 전체 미준비.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
 
         TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
@@ -131,7 +130,6 @@ class TermCatalogReadinessTest {
 
     @Test
     void emptyCatalogTransition_logsWarnOnce_notError() {
-        // seed 전(테이블 완전 비어있음)은 예정된 pre-activation fail-open — 경보(ERROR)가 아니라 WARN 1회다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(0L);
 
@@ -143,13 +141,12 @@ class TermCatalogReadinessTest {
                 .filter(event -> event.getLevel() == Level.WARN)
                 .map(ILoggingEvent::getFormattedMessage)
                 .filter(message -> message.contains("not seeded")))
-                .hasSize(1); // bounded — 지속 미준비 중 반복 없음
-        assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0); // gauge는 수위와 무관하게 0
+                .hasSize(1);
+        assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0);
     }
 
     @Test
     void emptyCurrentWithSeededRows_logsErrorOnTransition() {
-        // 행이 존재하는데(예: 전부 소문자 오타·다른 stage) current 후보가 0건 — seed 실수라 ERROR다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
@@ -160,7 +157,6 @@ class TermCatalogReadinessTest {
 
     @Test
     void seededButBrokenTransition_logsErrorOnceUntilRecovery() {
-        // 필수 종류 하나가 빠진 seed(행은 존재) — 예정 상태가 아니라 ERROR 경보 대상이다.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
@@ -170,9 +166,8 @@ class TermCatalogReadinessTest {
         long errorCount = logAppender.list.stream()
                 .filter(event -> event.getLevel() == Level.ERROR)
                 .count();
-        assertThat(errorCount).isEqualTo(1); // bounded — 지속 미준비 중 반복 ERROR 없음
+        assertThat(errorCount).isEqualTo(1);
 
-        // 회복 → INFO 1줄, 이후 다시 퇴행하면 새 ERROR 1줄.
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
@@ -196,12 +191,11 @@ class TermCatalogReadinessTest {
 
     @Test
     void startupCheck_reportsMissingSeedAndUnknownLiteral() {
-        // raw row 검사라 미지 literal도 예외 없이 관측된다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
                 catalogRow("TERMS_OF_SERVICE"),
-                catalogRow("BOGUS_TYPE"))); // 미지 literal
+                catalogRow("BOGUS_TYPE")));
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
-        when(termDocumentRepository.count()).thenReturn(2L); // 행이 존재하는 seed 실수 — ERROR 경로
+        when(termDocumentRepository.count()).thenReturn(2L);
 
         readiness.verifyCatalogOnStartup();
 
@@ -218,12 +212,10 @@ class TermCatalogReadinessTest {
 
     @Test
     void startupCheck_reportsMalformedContentUrl() {
-        // 게시 URL은 운영 seed가 손으로 넣는 값이라 형식 오류가 조용히 통과하면 안 된다. host는 보지
-        // 않는다 — 게시 위치는 정책이 아니라 운영 선택이다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"), // https 아님
-                catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),                                // blank
-                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),    // 형식 OK
+                catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"),
+                catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),
+                catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://laimory.app/terms/x/1.0")));
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
@@ -237,14 +229,12 @@ class TermCatalogReadinessTest {
         assertThat(problems)
                 .contains("invalid contentUrl for termType=TERMS_OF_SERVICE")
                 .contains("invalid contentUrl for termType=SENSITIVE_INFORMATION_CONSENT")
-                // host는 검사하지 않는다 — 형식만 맞으면 통과한다.
                 .doesNotContain("invalid contentUrl for termType=THIRD_PARTY_PROVISION_CONSENT")
                 .doesNotContain("invalid contentUrl for termType=CROSS_BORDER_TRANSFER_CONSENT");
     }
 
     @Test
     void startupCheck_emptyCatalog_logsWarnNotError() {
-        // seed 전 반복 기동이 ERROR 경보(Discord)를 만들지 않는다 — WARN으로만 pre-activation을 알린다.
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of());
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(0L);
@@ -307,7 +297,7 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentSummary document(TermType type) {
-        return new TermDocumentSummary((long) type.displayOrder(), type, "1.0");
+        return new TermDocumentSummary((long) type.ordinal() + 1L, type, "1.0");
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {

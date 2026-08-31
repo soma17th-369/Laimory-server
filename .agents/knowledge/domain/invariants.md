@@ -280,7 +280,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
   운영 SQL로도 바뀌지 않는다.
 - 앱 온보딩 완료 여부의 단일 권위는 `subject_preferences.onboarding_completed`다(#382, 기본 false).
-  약관 동의 이력·`TermStage`·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
+  약관 동의 이력·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
   완료 상태를 되돌리지 않는다(재동의 강제는 terms gate의 별도 책임) — 두 상태를 엮으면 약관 개정이
   온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
 - 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
@@ -343,8 +343,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   차단한다.
 - 약관 시각(`effective_at`·`accepted_at`)은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 판정·기록은
   캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
-- 공개 조회의 타입 필터와 화면 순서는 `TermType` enum mapping이 권위다. 필수 동의는 enum 속성이 아니라
-  `TermCatalogReadiness`의 stage별 enforcement 대상과 위치약관 조건부 gate가 명시한다. DB는 이 값을 복제하지 않는다.
+- 공개 조회의 타입 필터와 순서는 클라이언트가 반복 query에 보낸 `termTypes` 배열이 권위다. DB의 `IN`
+  결과 순서는 보장되지 않으므로 종류별 map을 만든 뒤 요청 배열로 재구성한다. 중복 `termTypes`는 400이다.
+  필수·조건부 동의 대상은 enum 속성이 아니라 `TermCatalogReadiness`의 stage별 대상과 위치약관 조건부
+  gate가 명시하며 DB는 이 값을 복제하지 않는다.
   미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
   `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비

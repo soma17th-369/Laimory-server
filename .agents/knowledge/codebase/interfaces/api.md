@@ -237,10 +237,10 @@ controller에서 원문을 렌더링하지 않고 classpath의 exact version res
 
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
-`termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·미지원 값은
+`termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은
 400 `-400`이다. 응답
 `terms[]`는 요청 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
-버전)를 서버 정의 화면 순서(`TermType.displayOrder`)로 담으며 각 원소는
+버전)를 클라이언트가 반복 query에 보낸 순서로 담으며 각 원소는
 `termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
