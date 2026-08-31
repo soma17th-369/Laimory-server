@@ -31,6 +31,13 @@ AWS_TEST_DEPLOY_ROLE_ARN`, trust가 `refs/heads/test`뿐이고 SSM 대상도 tes
 고를 때는 **실행 ref도 `test`여야 한다** — trust가 다른 ref를 거부하므로 resolve가 자격증명 전에
 명확한 진단으로 fail-closed한다(dev·prod의 cross-ref dispatch는 기존 계약 그대로).
 
+⚠️ test 브랜치를 **새로 만들거나 dev로 리셋한 직후의 push는 배포를 트리거하지 않는다.** 브랜치 생성
+push는 비교할 diff가 없어(대개 dev HEAD와 동일 커밋) push 트리거의 `paths` 필터에 걸리는 변경 파일이
+0개이기 때문이다. 빈 커밋 push도 같은 이유로 안 뜬다. 그 시점의 첫 배포는 deploy-existing
+dispatch로 한다 — test ref에서 `environment=test`를 고르고, 직전 dev 배포가 빌드한 image의 commit
+SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회). 이후 image 입력 경로에
+닿는 실변경 push부터는 자동 배포가 정상 동작한다.
+
 환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
 Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
 
