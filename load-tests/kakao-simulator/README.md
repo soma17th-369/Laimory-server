@@ -39,6 +39,9 @@ keyword 결과는 카페와 식당 두 개이고, provider는 coord2address의 �
 ## 가짜 AI 경로
 
 Issue [#276](https://github.com/soma17th-369/Laimory-server/issues/276)의 fake AI 서버 stub이다.
+
+**소유권: test 환경 전용 자산이다(#400).** dev는 `agentcore`로 전환해 이 시뮬레이터를 더 쓰지 않는다.
+webhook 콜백 URL·SG 인바운드는 test WAS를 향하며, mapping은 한 벌뿐이라 두 환경을 동시에 섬기지 않는다.
 서버의 `HttpTimelineAiDispatcher`·user-memory dispatcher가 보내는 dispatch를 202로 접수하고, WireMock
 core webhook(3.1.0+ 내장, 별도 extension 불필요)으로 지연 뒤 서버 콜백 endpoint를 호출한다.
 
@@ -58,7 +61,7 @@ core webhook(3.1.0+ 내장, 별도 extension 불필요)으로 지연 뒤 서버 
 
 ### 콜백 URL 하드코딩
 
-webhook URL의 `10.0.4.78:8080`은 dev WAS private IP다. JSON mapping에는 주석을 넣을 수 없어 여기에
+webhook URL의 `10.0.9.207:8080`은 **test WAS** private IP다(#400에서 dev → test 이관). JSON mapping에는 주석을 넣을 수 없어 여기에
 기록한다. **WAS IP·포트·콜백 경로가 바뀌면** `mappings/ai-timeline.json`과
 `mappings/ai-user-memory.json`의 `serveEventListeners[0].parameters.url`을 수정하고 container를
 recreate한다. 콜백 지연을 바꿀 때도 같은 위치의 `delay.milliseconds`를 수정한다.
@@ -72,8 +75,8 @@ APP_AI_MODE=http
 APP_AI_HTTP_BASE_URL=http://SIMULATOR_PRIVATE_IP:8080
 ```
 
-선행 조건(사용자 AWS 작업): 현재 SG는 WAS→시뮬레이터 단방향만 열려 있으므로, webhook 콜백이
-도달하려면 **dev WAS SG inbound 8080에 시뮬레이터 소스를 허용**해야 한다. geo만 측정하는 #251 부하
+선행 조건: WAS→시뮬레이터 인바운드는 test WAS private IP가, 콜백 역방향(시뮬레이터→WAS 8080)은
+WAS SG의 시뮬레이터 SG 소스 허용이 담당한다 — 둘 다 #400 Phase 1에서 적용됐다. geo만 측정하는 #251 부하
 테스트에서는 기존대로 `APP_AI_MODE=noop`을 유지한다.
 
 기대 루프: draft 생성 → 202 접수 → 약 2초 뒤 FAILED 콜백 → 폴링이 FAILED 반환.

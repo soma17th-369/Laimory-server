@@ -154,7 +154,7 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 
 ## Distributed Tracing (Tempo + OTel, #277)
 
-- dev WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
+- dev·test WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
   WebClient/Redis** span으로 분해해 monitoring host의 Tempo(OTLP gRPC 4317)로 push한다.
   보관은 로컬 스토리지 48h, metrics generator는 끈다. 조회는 Grafana Tempo datasource.
 - agent jar는 배포 이미지에 항상 탑재되고(`/otel/opentelemetry-javaagent.jar`), 활성화는 host
@@ -278,7 +278,7 @@ Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
-node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
+node_exporter는 monitoring, dev WAS, test WAS(#400), dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
 interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
 root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
