@@ -63,7 +63,7 @@ class PublicTermControllerTest {
                 // 원문은 응답에서 사라지고 버전별 page URL만 남는다(#320).
                 .andExpect(jsonPath("$.body.terms[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.terms[0].contentUrl")
-                        .value("https://laimory.app/terms/location-based-service-terms/1.0"))
+                        .value("https://www.laimory.app/terms/location-based-service-terms/1.0"))
                 .andExpect(jsonPath("$.body.terms[0].required").doesNotExist())
                 // KST 벽시계 LocalDateTime — offset 없는 ISO 문자열로 직렬화된다.
                 .andExpect(jsonPath("$.body.terms[0].effectiveAt").value("2026-08-01T09:30:15"))
@@ -162,6 +162,6 @@ class PublicTermControllerTest {
 
     /** 게시 URL은 행에 저장된 값이라 fixture가 그대로 정한다(서버가 규칙으로 만들지 않는다). */
     private static String url(TermType type) {
-        return "https://laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + VERSION;
+        return "https://www.laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + VERSION;
     }
 }

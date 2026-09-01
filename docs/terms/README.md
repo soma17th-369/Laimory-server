@@ -10,14 +10,13 @@
 
 ## 1. 전달 방식 — #320으로 바뀌었다
 
-원문은 **DB에 저장하지 않는다.** `laimory.app`에 버전별 정적 HTML을 게시하고
-`term_documents.content_url`이 그 URL을 가리키며, Android는 WebView로 연다. 현재 `laimory.app`은
-운영 ALB를 거쳐 Spring Server로 연결되므로, 별도 CDN을 만들지 않고 build-time에 생성한 classpath
-정적 resource를 `TermContentController`가 로그인 없이 그대로 전달한다.
+원문은 **DB에 저장하지 않는다.** 버전별 정적 HTML을 게시하고 `term_documents.content_url`이 그 URL을
+가리키며, Android는 WebView로 연다. **게시는 랜딩페이지(Vercel, `www.laimory.app`)가 소유한다(#418)** —
+Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laimory.app/terms/*`는 더 이상 응답하지 않는다.
 
 | 항목 | 값 |
 |---|---|
-| URL 규칙 | `https://laimory.app/terms/{term-slug}/{term-version}` |
+| URL 규칙 | `https://www.laimory.app/terms/{term-slug}/{term-version}` |
 | version 형식 | `1.0`, `1.1`, `2.0` (문자열, exact match). **날짜 아님** |
 | seed 컬럼 | `term_type`, `version`, `title`, `content_url`, `effective_at` 5개뿐 |
 | URL 생성 | 코드가 역산하지 않는다. **운영 seed가 넣는 값**이다 |
@@ -31,8 +30,7 @@
 변환한다. 결과물은 Git에 넣지 않고 `build/terms-site/`에 만든다.
 
 ```bash
-node --test docs/terms/scripts/build-site.test.mjs
-node docs/terms/scripts/build-site.mjs --sync-resources
+node docs/terms/scripts/build-site.mjs
 ```
 
 - `build/terms-site/terms/{term-slug}/1.0`: canonical URL과 같은 S3 object key의 HTML
@@ -40,7 +38,6 @@ node docs/terms/scripts/build-site.mjs --sync-resources
 - `build/terms-site/term-documents-1.0.sql`: 빈 catalog에서 URL 200 확인 뒤 실행할 6종 전체 seed
 - `build/terms-site/term-documents-add-privacy-policy-1.0.sql`: 기존 5종 catalog에 개인정보 처리방침만
   추가하는 1회성 seed
-- `src/main/resources/terms-content/terms/{term-slug}/1.0`: Spring이 그대로 전달하는 동일 HTML
 
 이미 기존 5종 seed를 실행한 DB에는 전체 seed를 다시 실행하지 않는다. 개인정보 처리방침 URL의 200
 응답을 확인한 뒤 1회성 seed만 실행한다. 이 SQL은 중복이나 기존 데이터 불일치를 숨기지 않도록
@@ -52,8 +49,8 @@ node docs/terms/scripts/build-site.mjs --sync-resources
 굵기·색·밑줄로 구분한다. 확대를 제한하는 viewport option은 사용하지 않는다.
 
 로컬 확인은 builder 실행 뒤 `node docs/terms/scripts/serve-site.mjs`로 하고, 출력된 URL을 모바일 폭에서
-검사한다. 운영에서는 `TermContentController`가 동일 파일을 로그인 없이 전달하고 1년 `immutable`
-cache header를 붙인다. canonical URL이 공개된 뒤에는 같은 version resource를 덮어쓰지 않는다.
+검사한다. 운영에서는 랜딩페이지가 같은 HTML을 로그인 없이 전달하고 1년 `immutable` cache header를
+붙인다. canonical URL이 공개된 뒤에는 같은 version 문서를 덮어쓰지 않는다.
 
 **#320이 해결해 준 것** — Markdown 표 확장 문제가 사라졌고(HTML이므로),
 "중요한 내용은 9pt 이상 + 본문 대비 20% 크게" 요구를 CSS로 정확히 구현할 수 있게 됐다.

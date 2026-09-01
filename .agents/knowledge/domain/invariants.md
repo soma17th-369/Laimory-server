@@ -324,9 +324,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
   버전·효력일을 바꾸는 API는 없다.
 - 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
-  `src/main/resources/terms-content`에 생성한다. `TermContentController`는 `/terms/{slug}/{version}`에서
-  그 정적 byte와 1년 `immutable` cache header만 전달한다. 약관 DB·API 응답에는 Markdown/HTML을 담지
-  않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP 조회하거나 원문을 동적 렌더링하지 않는다.
+  `build/terms-site`에 생성한다. 그 HTML을 랜딩페이지가 게시하며 Server는 원문 route를 두지 않는다(#418).
+  약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
+  조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
@@ -335,9 +335,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   검증할 수 없으므로(요청·기동 중 HTTP 조회 금지, 기동 형식 검사는 멀쩡한 오타를 통과시킨다) 게시 page가
   200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 gate가 미동의 사용자를 막는 동안 약관 page는
   열리지 않는 창이 생긴다 — 이 창을 닫는 것은 코드가 아니라 순서다.
-- 게시된 버전 URL은 영구 불변이다 — 내용 수정·재사용·삭제를 하지 않고 개정은 새 version·새 URL로
-  게시한다. 과거 버전 URL이 동의 이력의 유일한 원문 재현 근거이므로 도메인·path를 옮기더라도 기존 URL
-  접근성을 보존한다. 이 보존은 서버가 검증하지 못하므로 게시 절차가 소유한다.
+- 게시된 버전 page의 **내용**은 영구 불변이다 — 수정·재사용·삭제를 하지 않고 개정은 새 version·새
+  URL로 게시한다. 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이므로, 호스팅을
+  옮길 때는 **새 행을 만들지 않고 기존 행의 `content_url`만 새 주소로 갱신한다**(#418에서 서버 서빙 →
+  랜딩 게시로 이전하며 6행을 그렇게 옮겼다). 조건은 두 가지다: 새 주소의 원문이 옛 주소가 주던 것과
+  동일할 것, 그리고 `term_document_id`가 그대로일 것(id가 바뀌면 전 회원이 재동의를 요구받는다).
+  옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
+  서버가 하지 못하므로 게시 절차가 소유한다.
 - 현재 문서는 `effective_at <= now(KST)`인 종류별 최신 행으로만 계산한다(별도 active flag 없음).
   `(term_type, version)`·`(term_type, effective_at)` UNIQUE가 버전 식별과 동시 최신 모호성을 DB에서
   차단한다.
