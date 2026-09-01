@@ -5,7 +5,7 @@ import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
-import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.AiTimelineTestInputRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.util.HashSet;
@@ -59,12 +59,12 @@ public class TimelineAiTestService {
         requireValidRequest(request);
 
         String taskId = UuidV7.randomUuidV7().toString();
-        TimelineAiTestAiRequest aiRequest = toAiRequest(taskId, request);
+        AiTimelineTestInputRequest aiInput = toAiInput(taskId, request);
         long startedAt = System.nanoTime();
         try {
-            TimelineAiTestResponse response = timelineAiTestClient.generate(aiRequest);
+            TimelineAiTestResponse response = timelineAiTestClient.generate(aiInput);
             log.info("timeline ai test completed: taskId={} sourceItems={} events={} timedOut={} elapsedMs={}",
-                    taskId, aiRequest.sourceItems().size(), response.events().size(), response.timedOut(),
+                    taskId, aiInput.sourceItems().size(), response.events().size(), response.timedOut(),
                     elapsedMs(startedAt));
             return response;
         } catch (TimelineAiTestCallException e) {
@@ -117,8 +117,8 @@ public class TimelineAiTestService {
     }
 
     /** 호출자 body에 서버 발행 {@code taskId}를 붙이고 AI로 나가는 텍스트를 v1 치환한다. */
-    private TimelineAiTestAiRequest toAiRequest(String taskId, TimelineAiTestRequest request) {
-        return new TimelineAiTestAiRequest(
+    private AiTimelineTestInputRequest toAiInput(String taskId, TimelineAiTestRequest request) {
+        return new AiTimelineTestInputRequest(
                 taskId,
                 request.recordDate(),
                 // recordTimeZone 기본값(Asia/Seoul)은 AI가 소유한다 — 서버가 채워 넣지 않는다.

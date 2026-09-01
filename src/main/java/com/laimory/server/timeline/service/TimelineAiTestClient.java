@@ -3,7 +3,7 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
-import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.AiTimelineTestInputRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.io.IOException;
 import java.net.URI;
@@ -41,7 +41,7 @@ import org.springframework.web.client.RestClientException;
 @ConditionalOnProperty(name = "app.ai.timeline-test.enabled", havingValue = "true")
 public class TimelineAiTestClient {
 
-/**
+    /**
      * AI가 제한 시간 안에 <b>마지막 확정본</b>을 돌려줬다는 표시(실패가 아니다). AI와의 계약은 헤더지만
      * 우리 응답에서는 {@code timedOut} body 필드로 나간다 — 결과와 그 결과의 성격은 같은 자리에 있어야
      * 호출자가 헤더를 따로 보지 않고도 읽는다.
@@ -90,15 +90,15 @@ public class TimelineAiTestClient {
      * @throws IllegalArgumentException 직렬화 결과가 요청 상한을 넘음(호출자 입력 문제 → 400)
      * @throws TimelineAiTestCallException AI 4xx/5xx·timeout·전송 실패·비 JSON·계약 불일치·응답 상한 초과
      */
-    public TimelineAiTestResponse generate(TimelineAiTestAiRequest request) {
-        byte[] payload = serialize(request);
+    public TimelineAiTestResponse generate(AiTimelineTestInputRequest input) {
+        byte[] payload = serialize(input);
         try {
             return restClient.post()
                     .uri(endpoint)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(payload)
-                    .exchange((clientRequest, clientResponse) -> readResponse(request.taskId(), clientResponse));
+                    .exchange((clientRequest, clientResponse) -> readResponse(input.taskId(), clientResponse));
         } catch (RestClientException e) {
             // read timeout·connect 실패·전송 오류 — AI 응답 자체가 없어 status·errorCode를 알 수 없다.
             throw new TimelineAiTestCallException(
@@ -110,10 +110,10 @@ public class TimelineAiTestClient {
      * 전송 body를 만들고 상한을 넘는지 본다. 상한 초과는 호출자가 보낸 입력이 그만큼 컸다는 뜻이라
      * 400으로 끝낸다 — AI를 부르지 않으므로 토큰 비용도 발생하지 않는다.
      */
-    private byte[] serialize(TimelineAiTestAiRequest request) {
+    private byte[] serialize(AiTimelineTestInputRequest input) {
         byte[] payload;
         try {
-            payload = objectMapper.writeValueAsBytes(request);
+            payload = objectMapper.writeValueAsBytes(input);
         } catch (IOException e) {
             // Jackson 예외 메시지는 payload 원문을 포함할 수 있어 cause로도 연결하지 않는다.
             throw new IllegalArgumentException("AI 동기 테스트 요청을 직렬화하지 못했습니다.");

@@ -6,8 +6,11 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * dev 전용 AI 동기 테스트 endpoint의 request body — AI {@code POST /v1/timeline/test} 요청과 같은 shape다
- * ({@code taskId}만 제외 — 서버가 발행해 붙인다).
+ * dev 전용 AI 동기 테스트 endpoint가 <b>받는</b> body(호출자 → App Server). AI
+ * {@code POST /v1/timeline/test} 요청과 같은 shape다({@code taskId}만 제외 — 서버가 발행해 붙인다).
+ *
+ * <p>같은 요청이 AI로 <b>나갈</b> 때의 record는 {@link AiTimelineTestInputRequest}다 — 이름이
+ * {@code Ai}로 시작하면 AI와의 wire 계약, 아니면 이 endpoint의 호출자 계약이다.
  *
  * <p>{@link AiTimelineTaskInputResponse}의 {@code Window}·{@code SourceItem} record를 <b>그대로 재사용</b>한다.
  * AI 쪽도 입력 조회 응답과 테스트 요청이 같은 base 스키마를 상속하므로, 여기서 필드를 재선언하면 양쪽

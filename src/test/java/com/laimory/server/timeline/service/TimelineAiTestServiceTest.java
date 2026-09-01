@@ -17,7 +17,7 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
-import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.AiTimelineTestInputRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.time.LocalDate;
@@ -84,15 +84,15 @@ class TimelineAiTestServiceTest {
     void issuesFreshTaskIdOnEveryCallAndSendsItToAi() {
         // client는 받은 taskId를 그대로 되싣는다(그 계약은 client 테스트가 소유한다).
         when(client.generate(any())).thenAnswer(invocation -> {
-            TimelineAiTestAiRequest sent = invocation.getArgument(0);
+            AiTimelineTestInputRequest sent = invocation.getArgument(0);
             return new TimelineAiTestResponse(sent.taskId(), false, aiResult(false).events());
         });
 
         TimelineAiTestResponse first = service.generate("v1", request());
         TimelineAiTestResponse second = service.generate("v1", request());
 
-        ArgumentCaptor<TimelineAiTestAiRequest> captor =
-                ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
+        ArgumentCaptor<AiTimelineTestInputRequest> captor =
+                ArgumentCaptor.forClass(AiTimelineTestInputRequest.class);
         verify(client, times(2)).generate(captor.capture());
 
         assertThat(first.taskId()).isEqualTo(captor.getAllValues().get(0).taskId());
@@ -126,8 +126,8 @@ class TimelineAiTestServiceTest {
                 LocalDate.of(2026, 6, 20), "Asia/Seoul", window(), userMemory,
                 List.of(sourceItem(RAW_ID, photoPayload))));
 
-        ArgumentCaptor<TimelineAiTestAiRequest> captor =
-                ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
+        ArgumentCaptor<AiTimelineTestInputRequest> captor =
+                ArgumentCaptor.forClass(AiTimelineTestInputRequest.class);
         verify(client).generate(captor.capture());
         JsonNode sentPayload = captor.getValue().sourceItems().getFirst().payload();
 
@@ -152,8 +152,8 @@ class TimelineAiTestServiceTest {
                 LocalDate.of(2026, 6, 20), null, window(), null,
                 List.of(sourceItem(RAW_ID, null))));
 
-        ArgumentCaptor<TimelineAiTestAiRequest> captor =
-                ArgumentCaptor.forClass(TimelineAiTestAiRequest.class);
+        ArgumentCaptor<AiTimelineTestInputRequest> captor =
+                ArgumentCaptor.forClass(AiTimelineTestInputRequest.class);
         verify(client).generate(captor.capture());
         assertThat(captor.getValue().sourceItems().getFirst().payload()).isNull();
         // recordTimeZone 기본값은 AI가 소유한다 — 서버가 채워 넣지 않는다.

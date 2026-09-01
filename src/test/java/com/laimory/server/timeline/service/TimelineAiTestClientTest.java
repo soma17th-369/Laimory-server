@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
-import com.laimory.server.timeline.dto.TimelineAiTestAiRequest;
+import com.laimory.server.timeline.dto.AiTimelineTestInputRequest;
 import com.laimory.server.timeline.dto.TimelineAiTestResponse;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -129,7 +129,7 @@ class TimelineAiTestClientTest {
         // recordTimeZone 기본값(Asia/Seoul)은 AI가 소유한다 — 명시적 null 대신 key를 생략해 전달한다.
         server.enqueue(json(200, RESULT_BODY));
 
-        client().generate(new TimelineAiTestAiRequest(
+        client().generate(new AiTimelineTestInputRequest(
                 TASK_ID, LocalDate.of(2026, 6, 20), null, window(), null, List.of(sourceItem())));
 
         JsonNode sent = MAPPER.readTree(server.takeRequest().getBody().readUtf8());
@@ -256,8 +256,8 @@ class TimelineAiTestClientTest {
                 readTimeout, DataSize.ofBytes(maxRequestBytes));
     }
 
-    private static TimelineAiTestAiRequest request() {
-        return new TimelineAiTestAiRequest(TASK_ID, LocalDate.of(2026, 6, 20), "Asia/Seoul",
+    private static AiTimelineTestInputRequest request() {
+        return new AiTimelineTestInputRequest(TASK_ID, LocalDate.of(2026, 6, 20), "Asia/Seoul",
                 window(), null, List.of(sourceItem()));
     }
 
