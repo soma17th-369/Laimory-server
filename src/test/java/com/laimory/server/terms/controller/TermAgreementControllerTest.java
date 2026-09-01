@@ -152,14 +152,14 @@ class TermAgreementControllerTest {
                 // 이력은 현재 버전이 아니라 동의한 버전의 page를 가리킨다(원문 key는 없다).
                 .andExpect(jsonPath("$.body.agreements[0].content").doesNotExist())
                 .andExpect(jsonPath("$.body.agreements[0].contentUrl")
-                        .value("https://laimory.app/terms/sensitive-information-consent/1.1"))
+                        .value("https://www.laimory.app/terms/sensitive-information-consent/1.1"))
                 .andExpect(jsonPath("$.body.agreements[0].required").doesNotExist())
                 .andExpect(jsonPath("$.body.agreements[0].effectiveAt").value("2026-08-01T09:30:15"))
                 // 수락 시각도 offset 없는 KST 벽시계 문자열이다.
                 .andExpect(jsonPath("$.body.agreements[0].acceptedAt").value("2026-08-16T09:30:05"))
                 .andExpect(jsonPath("$.body.agreements[1].termType").value("TERMS_OF_SERVICE"))
                 .andExpect(jsonPath("$.body.agreements[1].contentUrl")
-                        .value("https://laimory.app/terms/terms-of-service/1.0"))
+                        .value("https://www.laimory.app/terms/terms-of-service/1.0"))
                 .andExpect(jsonPath("$.body.agreements[1].acceptedAt").value("2026-07-02T10:00:05"));
 
         verify(termAgreementService).getHistory("v1", USER_ID);
@@ -179,7 +179,7 @@ class TermAgreementControllerTest {
     private static TermAgreementHistoryEntry entry(TermType type, String version, String title,
                                                    String acceptedAt) {
         // 게시 URL은 동의한 그 버전 행에 저장된 값이다 — 현재 규칙으로 다시 만들지 않는다.
-        String contentUrl = "https://laimory.app/terms/"
+        String contentUrl = "https://www.laimory.app/terms/"
                 + type.name().toLowerCase().replace('_', '-') + "/" + version;
         TermDocument document = TermDocument.of(type, version, title, contentUrl,
                 LocalDateTime.parse("2026-08-01T09:30:15"));

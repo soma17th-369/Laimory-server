@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIRECTORY, "../../..");
 const DEFAULT_OUTPUT_ROOT = resolve(REPOSITORY_ROOT, "build/terms-site");
-const STATIC_RESOURCE_ROOT = resolve(REPOSITORY_ROOT, "src/main/resources/terms-content");
 
-const SITE_ORIGIN = "https://laimory.app";
+// 원문 page는 랜딩(Vercel)이 게시하고 Server는 catalog의 content_url만 다룬다 — 서버 정적 자산 동기화는 없다(#418).
+const SITE_ORIGIN = "https://www.laimory.app";
 const VERSION = "1.0";
 const EFFECTIVE_AT_KST = "2026-08-31 00:00:00";
 // 운영 catalog는 클라이언트 연동을 위해 먼저 활성화하되, 공개 원문의 시행일은 위 값을 유지한다.
@@ -320,7 +320,7 @@ ${rows.join(",\n")};
 }
 
 function assertSafeOutputRoot(outputRoot) {
-    if (!new Set(["terms-site", "terms-content"]).has(basename(outputRoot))) {
+    if (basename(outputRoot) !== "terms-site") {
         throw new Error(`Refusing to clean unexpected output directory: ${outputRoot}`);
     }
 }
@@ -380,26 +380,9 @@ export async function buildTermsSite({ outputRoot = DEFAULT_OUTPUT_ROOT } = {}) 
     return { outputRoot: resolvedOutputRoot, manifest };
 }
 
-async function syncStaticResources(buildResult) {
-    assertSafeOutputRoot(STATIC_RESOURCE_ROOT);
-    await rm(STATIC_RESOURCE_ROOT, { recursive: true, force: true });
-    for (const document of buildResult.manifest.documents) {
-        const source = resolve(buildResult.outputRoot, document.objectKey);
-        const destination = resolve(STATIC_RESOURCE_ROOT, document.objectKey);
-        await mkdir(dirname(destination), { recursive: true });
-        await copyFile(source, destination);
-    }
-}
-
 const invokedAsScript = process.argv[1]
     && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 if (invokedAsScript) {
     const result = await buildTermsSite();
-    if (process.argv.includes("--sync-resources")) {
-        await syncStaticResources(result);
-    }
     process.stdout.write(`Built ${result.manifest.documents.length} immutable terms pages in ${result.outputRoot}\n`);
-    if (process.argv.includes("--sync-resources")) {
-        process.stdout.write(`Synced immutable pages to ${STATIC_RESOURCE_ROOT}\n`);
-    }
 }

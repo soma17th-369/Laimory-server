@@ -3,8 +3,8 @@
 -- 왜 필요한가 — 합성 사용자는 `term_agreements`가 0이다. 서버의 `TermsEnforcementInterceptor`는
 -- LOGIN 단계 필수 문서를 `/a/api` 대부분에 강제하고, draft 생성은 TIMELINE_FIRST_CREATE 단계까지 본다.
 -- 다만 `TermsEnforcementService`는 stage catalog가 준비되지 않았으면 **stage 전체를 fail-open**한다.
--- 지금은 catalog가 비어 있어 통과하지만, #383이 운영 원문을 seed하는 순간 합성 사용자는 **전량 403**이
--- 되고 부하 테스트는 한 건도 성공하지 못한다. 그 전환을 조용히 맞지 않도록 실행 전에 확인한다.
+-- 운영 catalog는 #383으로 이미 seed됐으므로 운영에서는 합성 사용자가 **전량 403**이다. catalog가 비어
+-- 있는 환경(예: dev)에서만 fail-open으로 통과한다. 대상 DB가 어느 쪽인지 실행 전에 확인한다.
 --
 -- 사용:
 --   mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/00-preflight-terms-gate.sql

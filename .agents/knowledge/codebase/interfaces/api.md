@@ -231,10 +231,6 @@ userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소�
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
 
-`GET /terms/{slug}/{version}`은 build-time에 생성한 약관 원문 HTML을 로그인 없이 반환한다. DB나
-controller에서 원문을 렌더링하지 않고 classpath의 exact version resource만 전달하며, 응답은
-`text/html;charset=UTF-8`과 1년 `public, immutable` cache를 사용한다. 미게시 slug/version은 404다.
-
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
 `termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은
@@ -244,8 +240,9 @@ controller에서 원문을 렌더링하지 않고 classpath의 exact version res
 `termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
-아니다(현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가 강제하는
-형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
+아니다(현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가
+강제하는 형식은 https 절대 URI뿐이다). 원문 page는 랜딩페이지가 게시하며 Server에는 약관 원문 route가
+없다(#418). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
 파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
 조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수·조건부 동의 판정은 API 메타데이터가

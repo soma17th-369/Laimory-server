@@ -254,7 +254,7 @@ class AccessLogBodyMaskerTest {
         // 실제 URL 값이 log preview에 남지 않는다(종류·버전은 구조 필드로 남아 추적에 충분하다).
         String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"terms\":[{"
                 + "\"termType\":\"TERMS_OF_SERVICE\",\"version\":\"1.0\",\"title\":\"이용약관\","
-                + "\"contentUrl\":\"https://laimory.app/terms/terms-of-service/1.0\","
+                + "\"contentUrl\":\"https://www.laimory.app/terms/terms-of-service/1.0\","
                 + "\"effectiveAt\":\"2026-09-01T00:00:00\"}]}}";
 
         assertThat(maskGetResponse("/api/v1/terms", raw))
@@ -269,7 +269,7 @@ class AccessLogBodyMaskerTest {
     void agreementHistoryResponseMasksContentUrl() {
         String raw = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"agreements\":[{"
                 + "\"termType\":\"SENSITIVE_INFORMATION_CONSENT\",\"version\":\"1.0\",\"title\":\"민감정보 처리 동의\","
-                + "\"contentUrl\":\"https://laimory.app/terms/sensitive-information-consent/1.0\","
+                + "\"contentUrl\":\"https://www.laimory.app/terms/sensitive-information-consent/1.0\","
                 + "\"effectiveAt\":\"2026-09-01T00:00:00\",\"acceptedAt\":\"2026-09-02T09:30:00\"}]}}";
 
         assertThat(maskGetResponse("/a/api/v1/terms/agreements", raw))
