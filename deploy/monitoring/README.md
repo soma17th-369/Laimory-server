@@ -178,8 +178,11 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
 - **환경 중립 9개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
   `laimory_hikari_saturated`, `laimory_target_down`, `laimory_host_memory_low`,
   `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`.
-  PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
-  환경마다 별개 alert instance가 나오게 한다. `environment` 라벨은 **선언하지 않는다** — Grafana가
+  PromQL에 환경을 고정하지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
+  환경마다 별개 alert instance가 나오게 한다. 단 **`environment!="test"`는 공통 제외다(#400)** —
+  test는 부하 실험용 sandbox라 p95 급등·인스턴스 정지가 by-design이고(정지 운용이 기본),
+  지표·트레이스 **관측 전용**으로 편입하되 경보 평가 대상은 아니다. test 타깃을 file-SD에 추가해도
+  이 제외 덕에 경보가 새로 생기지 않는다. `environment` 라벨은 **선언하지 않는다** — Grafana가
   조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고, 여기에 커스텀 라벨을 두면
   쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 라벨 템플릿을 쓰지 않는 이유는 템플릿이 잘못되면
   파일 단위 provisioning이 실패해 같은 파일의 다른 환경 경보까지 함께 죽기 때문이다.

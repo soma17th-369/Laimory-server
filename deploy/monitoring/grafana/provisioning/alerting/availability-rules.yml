@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'up{job=~"spring_boot|node|mysqld|redis|prometheus|blackbox_exporter|grafana"}'
+              expr: 'up{job=~"spring_boot|node|mysqld|redis|prometheus|blackbox_exporter|grafana",environment!="test"}'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
