@@ -100,6 +100,16 @@ application 배포·health gate 의존성이 아니다.
 - AgentCore mode 전용(`app.ai.mode=agentcore`에서만 소비·기동 시 형식·리전 검증):
   `APP_AI_AGENTCORE_RUNTIME_ARN`, `APP_AI_AGENTCORE_ENDPOINT`(자격증명은 SDK 기본 체인 —
   access key property를 추가하지 않는다)
+- dev 전용 AI 동기 테스트 endpoint(#394 — `app.ai.timeline-test.*`, **`APP_AI_MODE`와 완전히 별개
+  스위치**라 비동기 경로가 `noop`이어도 동작한다): `APP_AI_TIMELINE_TEST_ENABLED`(기본 `false` —
+  꺼져 있으면 controller 빈이 없어 `/t/api` 경로 자체가 부재), `APP_AI_TIMELINE_TEST_URL`(AI 동기 테스트
+  endpoint의 absolute URL — `APP_AI_HTTP_BASE_URL`을 재사용하지 않아 다른 AI 인스턴스를 가리킬 수 있다),
+  `APP_AI_TIMELINE_TEST_CONNECT_TIMEOUT`, `APP_AI_TIMELINE_TEST_READ_TIMEOUT`(AI
+  `PIPELINE_TIMEOUT_SEC`(120s)보다 길어야 하며 위반은 기동 실패),
+  `APP_AI_TIMELINE_TEST_MAX_REQUEST_BYTES`(응답 상한은 코드 상수).
+  활성화하면 AI URL 누락·형식 오류가 기동 실패다(fail-fast). **호출자 인증 설정은 여기 없다** —
+  `/t/api` Bearer token 검증은 security 계층 몫이고 현재 미구현이다. deploy pre-flight 검증 대상도
+  아직 아니라 prod 차단은 앱 기본값 off 하나에 의존한다.
   `APP_GEO_MAX_UNIQUE_COORDINATES`(공개 제품 상한 — 운영 tuning으로 낮추지 않음)
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
   upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):

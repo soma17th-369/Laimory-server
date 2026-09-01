@@ -13,6 +13,7 @@ public final class ApiUrls {
 
     private static final String API = "/api";
     private static final String SERVER_API = "/s/api";
+    private static final String TEST_API = "/t/api";
 
     /**
      * 사용자 인증 영역 prefix. SecurityConfig matcher와 JWT 필터가 재사용한다 —
@@ -31,4 +32,13 @@ public final class ApiUrls {
 
     /** 사용자 인증이 필요한 요청 — 유효한 자체 access JWT(Bearer) 없이는 401 {@code -2001}로 거절된다. */
     public static final String AUTHENTICATED_API_URL = AUTHENTICATED_API_PREFIX + "/" + VERSION;
+
+    /**
+     * dev 전용 테스트 요청(엔드포인트별 자체 인증 — 전용 opaque Bearer token).
+     *
+     * <p>SecurityConfig는 이 prefix를 특별 취급하지 않는다({@code /a/api} 외 permitAll 유지). 노출 통제는
+     * 활성화 property 하나가 소유하며, 미설정이면 controller 빈 자체가 없어 <b>mapping이 존재하지 않는다</b>
+     * (인증 실패 401이 아니라 없는 경로와 같은 404).
+     */
+    public static final String TEST_API_URL = TEST_API + "/" + VERSION;
 }

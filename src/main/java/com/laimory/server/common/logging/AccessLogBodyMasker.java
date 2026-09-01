@@ -48,7 +48,10 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+/events$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/result$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/callback$")),
-            new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")));
+            new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")),
+            // dev 전용 AI 동기 테스트(#394) — 호출자가 AI Timeline Input 원문(source payload·userMemory)을
+            // 그대로 싣는다. staging을 거치지 않아 저장 시점 치환도 없으므로 여기서 반드시 마스킹한다.
+            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")));
 
     // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건·
     // 약관 두 GET. 약관 응답은 #320 이후 법률 원문 대신 page URL만 담지만 skeleton을 해제하지 않는다 —
@@ -65,7 +68,9 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+/events$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/api/v\\d+/terms$")),
-            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/terms/agreements$")));
+            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/terms/agreements$")),
+            // dev 전용 AI 동기 테스트(#394) 응답 — AI가 방금 만든 Event 제목·부제·질문·장소가 실린다.
+            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")));
     private static final Set<String> EXACT_SECRET_NAMES =
             Set.of("appcode", "appverifier", "uploadurl", "firebaseinstallationid");
     private static final List<String> CONTAINED_SECRET_NAMES =
@@ -77,6 +82,10 @@ final class AccessLogBodyMasker {
             // draft 생성·Event 수정 request envelope
             "recorddate", "recordat", "recordtimezone", "timelinewindow", "starttime", "endtime",
             "sourceitems", "itemtype", "rawid", "startat", "endat", "photostoadd",
+            // dev 전용 AI 동기 테스트(#394): window는 구조 필드, taskId는 서버 발행 상관키(UUID)라
+            // 로그에 남아야 AI 로그·Langfuse와 이어진다. timedOut은 사용자 값이 아닌 boolean 신호다.
+            // userMemory·payload는 allowlist 밖이라 마스크된다.
+            "window", "taskid", "timedout",
             // AI result·상태 전이
             "events", "eventtype", "sourcerawids", "status", "elapsedseconds",
             // 조회 response 구조(ApiResponse envelope 포함 — message는 제외)
