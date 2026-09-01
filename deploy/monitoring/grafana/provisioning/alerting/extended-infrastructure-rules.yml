@@ -137,7 +137,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'sum by (environment,instance,host) (increase(node_vmstat_oom_kill{job="node"}[10m]))'
+              expr: 'sum by (environment,instance,host) (increase(node_vmstat_oom_kill{job="node",environment!="test"}[10m]))'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
