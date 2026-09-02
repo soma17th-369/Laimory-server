@@ -19,7 +19,7 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.testsupport.TestSubjects;
-import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.SubjectMappingCache;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,11 +56,11 @@ class PushRegistrationControllerTest {
     private PushRegistrationService pushRegistrationService;
 
     @MockitoBean
-    private SubjectMappingService subjectMappingService;
+    private SubjectMappingCache subjectMappingCache;
 
     @BeforeEach
     void resolveSubject() {
-        org.mockito.Mockito.when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        org.mockito.Mockito.when(subjectMappingCache.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
     }
 
     @Test

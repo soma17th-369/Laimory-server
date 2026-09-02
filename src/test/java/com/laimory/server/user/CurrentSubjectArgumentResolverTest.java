@@ -6,7 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.SubjectMappingCache;
 import java.lang.reflect.Method;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -37,21 +37,21 @@ class CurrentSubjectArgumentResolverTest {
     @Test
     void resolveArgument_mapsAuthenticatedLongPrincipal() throws Exception {
         UUID expected = UUID.randomUUID();
-        SubjectMappingService mappingService = mock(SubjectMappingService.class);
-        when(mappingService.getRequired(USER_ID)).thenReturn(expected);
+        SubjectMappingCache mappingCache = mock(SubjectMappingCache.class);
+        when(mappingCache.getRequired(USER_ID)).thenReturn(expected);
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(USER_ID, null, java.util.List.of()));
 
-        UUID actual = resolver(mappingService).resolveArgument(
+        UUID actual = resolver(mappingCache).resolveArgument(
                 parameter("subject", UUID.class), null, null, null);
 
         assertThat(actual).isEqualTo(expected);
-        verify(mappingService).getRequired(USER_ID);
+        verify(mappingCache).getRequired(USER_ID);
     }
 
     @Test
     void resolveArgument_rejectsMissingOrWrongPrincipal() throws Exception {
-        CurrentSubjectArgumentResolver resolver = resolver(mock(SubjectMappingService.class));
+        CurrentSubjectArgumentResolver resolver = resolver(mock(SubjectMappingCache.class));
 
         assertThatThrownBy(() -> resolver.resolveArgument(
                 parameter("subject", UUID.class), null, null, null))
@@ -67,20 +67,20 @@ class CurrentSubjectArgumentResolverTest {
     }
 
     @Test
-    void resolveArgument_failsClosedWhenMappingServiceIsUnavailable() throws Exception {
+    void resolveArgument_failsClosedWhenMappingCacheIsUnavailable() throws Exception {
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(USER_ID, null, java.util.List.of()));
 
         assertThatThrownBy(() -> resolver(null).resolveArgument(
                 parameter("subject", UUID.class), null, null, null))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("subject mapping service is unavailable");
+                .hasMessage("subject mapping cache is unavailable");
     }
 
-    private static CurrentSubjectArgumentResolver resolver(SubjectMappingService mappingService) {
+    private static CurrentSubjectArgumentResolver resolver(SubjectMappingCache mappingCache) {
         @SuppressWarnings("unchecked")
-        ObjectProvider<SubjectMappingService> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(mappingService);
+        ObjectProvider<SubjectMappingCache> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(mappingCache);
         return new CurrentSubjectArgumentResolver(provider);
     }
 

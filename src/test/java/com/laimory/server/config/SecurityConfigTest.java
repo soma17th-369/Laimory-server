@@ -19,7 +19,7 @@ import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.testsupport.AuthTestSupport;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.RedisActiveStatusCache;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,9 +64,9 @@ class SecurityConfigTest {
     @MockitoBean
     private SocialLoginService socialLoginService;
 
-    // JwtTokensTestConfig의 항상-활성 기본 빈을 대체 — 테스트별로 active/탈퇴를 stub한다(#305).
+    // JwtTokensTestConfig의 항상-활성 기본 빈을 대체 — 테스트별로 active/탈퇴를 stub한다(#305, #429 캐시 경유).
     @MockitoBean
-    private UserAccountAccessService userAccountAccessService;
+    private RedisActiveStatusCache redisActiveStatusCache;
 
     @BeforeEach
     void attachAccessLogAppender() {
@@ -176,7 +176,7 @@ class SecurityConfigTest {
     @Test
     void authenticatedPrefix_withValidToken_passesSecurityToHandler404() throws Exception {
         // 유효 토큰 + ACTIVE 회원은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
-        org.mockito.Mockito.when(userAccountAccessService.isActive(42L)).thenReturn(true);
+        org.mockito.Mockito.when(redisActiveStatusCache.isActive(42L)).thenReturn(true);
         String token = jwtTokens.issueAccessToken(42L);
 
         MvcResult result = mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")

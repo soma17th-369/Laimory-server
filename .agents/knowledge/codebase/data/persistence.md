@@ -413,6 +413,7 @@ application-owned access는 `RedisGateway`를 거친다.
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
+| `user:active:{userId}` | `/a/api` 필터 ACTIVE 검사 캐시(#429 — `RedisActiveStatusCache`, 필터 경로 전용). 값은 존재 표식 `"1"`이고 **ACTIVE=true만** 적재한다(음성 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 DEL 하나뿐(갱신 경로 없음)이며, DEL 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). GET 실패는 miss로 강등해 DB 직행(fail-safe), SET 실패는 무시한다. | 15m — SET EX 쓰기 시점 고정(조회가 연장하지 않음) |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.

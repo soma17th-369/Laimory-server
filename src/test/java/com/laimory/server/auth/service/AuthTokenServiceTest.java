@@ -14,7 +14,7 @@ import com.laimory.server.auth.dto.TokenResponse;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountService;
 import java.util.function.LongPredicate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,19 +42,19 @@ class AuthTokenServiceTest {
     @Mock
     private JwtTokens jwtTokens;
     @Mock
-    private UserAccountAccessService userAccountAccessService;
+    private UserAccountService userAccountService;
 
     private AuthTokenService service;
 
     @BeforeEach
     void setUp() {
-        service = new AuthTokenService(appCodeService, refreshTokenService, jwtTokens, userAccountAccessService);
+        service = new AuthTokenService(appCodeService, refreshTokenService, jwtTokens, userAccountService);
     }
 
     @Test
     void issueTokens_activeUser_usesConsumedUserIdForBothTokens() {
         when(appCodeService.consume("app-code", "verifier")).thenReturn(USER_ID);
-        when(userAccountAccessService.isActive(USER_ID)).thenReturn(true);
+        when(userAccountService.isActive(USER_ID)).thenReturn(true);
         when(jwtTokens.issueAccessToken(USER_ID)).thenReturn("access-42");
         when(refreshTokenService.issue(USER_ID)).thenReturn("refresh-42");
 
@@ -71,7 +71,7 @@ class AuthTokenServiceTest {
     void issueTokens_inactiveUser_throwsAppCodeInvalid2002_withoutIssuing() {
         // app code 발급 후 탈퇴한 회원(#305 §5.4): 신규 탈퇴 전용 code 없이 기존 -2002(INFO)로 수렴한다.
         when(appCodeService.consume("app-code", "verifier")).thenReturn(USER_ID);
-        when(userAccountAccessService.isActive(USER_ID)).thenReturn(false);
+        when(userAccountService.isActive(USER_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.issueTokens(VERSION, "app-code", "verifier"))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
@@ -94,7 +94,7 @@ class AuthTokenServiceTest {
         // 소비 실패 뒤 토큰이 하나라도 발급되면 미인증 발급이다 — 후속 호출 자체가 없어야 한다.
         verify(jwtTokens, never()).issueAccessToken(anyLong());
         verify(refreshTokenService, never()).issue(anyLong());
-        verifyNoInteractions(userAccountAccessService);
+        verifyNoInteractions(userAccountService);
     }
 
     @Test
@@ -111,10 +111,10 @@ class AuthTokenServiceTest {
         verify(jwtTokens).issueAccessToken(USER_ID);
         verify(refreshTokenService, never()).issue(anyLong());
 
-        // 회전에 전달한 발급 전 검사는 UserAccountAccessService#isActive 그 자체다(#305 §5.4).
+        // 회전에 전달한 발급 전 검사는 DB 직행 UserAccountService#isActive 그 자체다(#305 §5.4, #429 캐시 금지 경계).
         ArgumentCaptor<LongPredicate> ownerActive = ArgumentCaptor.forClass(LongPredicate.class);
         verify(refreshTokenService).rotate(eq("old-refresh"), ownerActive.capture());
-        when(userAccountAccessService.isActive(7L)).thenReturn(true).thenReturn(false);
+        when(userAccountService.isActive(7L)).thenReturn(true).thenReturn(false);
         assertThat(ownerActive.getValue().test(7L)).isTrue();
         assertThat(ownerActive.getValue().test(7L)).isFalse();
     }
@@ -136,6 +136,6 @@ class AuthTokenServiceTest {
 
         // access는 서버에 저장되지 않아 만료로 소멸한다 — logout은 제시된 refresh 폐기만 수행한다.
         verify(refreshTokenService).revoke("refresh-42");
-        verifyNoInteractions(jwtTokens, appCodeService, userAccountAccessService);
+        verifyNoInteractions(jwtTokens, appCodeService, userAccountService);
     }
 }

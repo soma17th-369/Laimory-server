@@ -1,7 +1,7 @@
 package com.laimory.server.testsupport;
 
 import com.laimory.server.auth.token.JwtTokens;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.RedisActiveStatusCache;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -45,12 +45,15 @@ public final class AuthTestSupport {
         }
 
         /**
-         * JWT 필터의 매 요청 active 검사(#305)용 슬라이스 기본 빈 — 항상 활성 회원으로 취급한다.
-         * 탈퇴·장애 시나리오가 필요한 테스트는 {@code @MockitoBean UserAccountAccessService}로 대체한다.
+         * JWT 필터의 요청별 active 검사(#305, #429부터 캐시 경유)용 슬라이스 기본 빈 — 항상 활성
+         * 회원으로 취급한다(Redis 없는 슬라이스라 mock — 실제 캐시 로직은 자체 단위·통합 테스트 몫).
+         * 탈퇴·장애 시나리오가 필요한 테스트는 {@code @MockitoBean RedisActiveStatusCache}로 대체한다.
          */
         @Bean
-        UserAccountAccessService userAccountAccessService() {
-            return userId -> true;
+        RedisActiveStatusCache redisActiveStatusCache() {
+            RedisActiveStatusCache cache = org.mockito.Mockito.mock(RedisActiveStatusCache.class);
+            org.mockito.Mockito.when(cache.isActive(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+            return cache;
         }
     }
 }

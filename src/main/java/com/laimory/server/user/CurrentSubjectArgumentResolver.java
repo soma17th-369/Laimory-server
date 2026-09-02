@@ -1,6 +1,6 @@
 package com.laimory.server.user;
 
-import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.SubjectMappingCache;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.MethodParameter;
@@ -12,14 +12,17 @@ import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 
-/** {@link CurrentSubject} 파라미터를 현재 인증 사용자의 콘텐츠 subject로 변환한다. */
+/**
+ * {@link CurrentSubject} 파라미터를 현재 인증 사용자의 콘텐츠 subject로 변환한다.
+ * 해석은 {@link SubjectMappingCache}를 탄다(#429) — 적중 시 transaction·DB 조회 없이 끝난다.
+ */
 @Component
 public class CurrentSubjectArgumentResolver implements HandlerMethodArgumentResolver {
 
-    private final ObjectProvider<SubjectMappingService> subjectMappingServiceProvider;
+    private final ObjectProvider<SubjectMappingCache> subjectMappingCacheProvider;
 
-    public CurrentSubjectArgumentResolver(ObjectProvider<SubjectMappingService> subjectMappingServiceProvider) {
-        this.subjectMappingServiceProvider = subjectMappingServiceProvider;
+    public CurrentSubjectArgumentResolver(ObjectProvider<SubjectMappingCache> subjectMappingCacheProvider) {
+        this.subjectMappingCacheProvider = subjectMappingCacheProvider;
     }
 
     @Override
@@ -35,10 +38,10 @@ public class CurrentSubjectArgumentResolver implements HandlerMethodArgumentReso
         if (authentication == null || !(authentication.getPrincipal() instanceof Long userId)) {
             throw new IllegalStateException("authenticated Long principal required for subject resolution");
         }
-        SubjectMappingService subjectMappingService = subjectMappingServiceProvider.getIfAvailable();
-        if (subjectMappingService == null) {
-            throw new IllegalStateException("subject mapping service is unavailable");
+        SubjectMappingCache subjectMappingCache = subjectMappingCacheProvider.getIfAvailable();
+        if (subjectMappingCache == null) {
+            throw new IllegalStateException("subject mapping cache is unavailable");
         }
-        return subjectMappingService.getRequired(userId);
+        return subjectMappingCache.getRequired(userId);
     }
 }

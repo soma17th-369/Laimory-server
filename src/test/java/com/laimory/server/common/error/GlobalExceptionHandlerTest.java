@@ -21,7 +21,7 @@ import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
-import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.SubjectMappingCache;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,14 +63,14 @@ class GlobalExceptionHandlerTest {
     @MockitoBean
     private PhotoUploadService photoUploadService;
     @MockitoBean
-    private SubjectMappingService subjectMappingService;
+    private SubjectMappingCache subjectMappingCache;
     // 약관 gate interceptor(#303)가 슬라이스에도 적용된다 — 기본 no-op mock이면 gate 통과.
     @MockitoBean
     private TermsEnforcementService termsEnforcementService;
 
     @BeforeEach
     void resolveSubject() {
-        when(subjectMappingService.getRequired(USER_ID)).thenReturn(id(USER_ID));
+        when(subjectMappingCache.getRequired(USER_ID)).thenReturn(id(USER_ID));
     }
 
     @Test
