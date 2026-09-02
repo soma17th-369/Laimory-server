@@ -289,10 +289,10 @@ enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summa
 모든 비면제 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
-현재 `laimory.app`은 운영 ALB를 거쳐 Server로 연결된다. 공개 page는 Markdown을 build-time에 변환한
-classpath 정적 resource이며 `TermContentController`가 `/terms/{slug}/{version}`에서 전달한다. 이 전달
-경로는 catalog 조회와 분리되어 있어 `content_url`을 코드에서 역산하지 않고, page 요청도 DB를 읽지 않는다.
-원문을 바꾸는 개정은 기존 resource 덮어쓰기가 아니라 새 version resource와 새 catalog 행을 함께 추가한다.
+공개 page는 랜딩페이지(Vercel, `www.laimory.app`)가 게시한다(#418). Server는 원문을 서빙하지 않고
+`/terms/*` route도 두지 않으므로 약관 열람 트래픽이 WAS에 오지 않는다. 게시 경로가 catalog 조회와 완전히
+분리돼 있어 `content_url`을 코드에서 역산하지 않는다. 원문을 바꾸는 개정은 게시본 덮어쓰기가 아니라 새
+version page와 새 catalog 행을 함께 추가한다.
 
 기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
 매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
@@ -339,7 +339,7 @@ INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES
     ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
-     'https://laimory.app/terms/terms-of-service/1.0',
+     'https://www.laimory.app/terms/terms-of-service/1.0',
      '2026-08-28 00:00:00',                                        -- catalog 효력(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));

@@ -10,8 +10,10 @@ Kakao WebClient pool인지"를 구분할 수 있다.
 ## 안전 경계
 
 - 실제 Kakao Local API를 호출하지 않는다. geo 부하는 [#257 simulator](../kakao-simulator/README.md)만 쓴다.
-- 실제 AI service로 dispatch가 전파되지 않게 `APP_AI_MODE=noop`을 확인하고 실행한다.
-  localhost 외 대상에는 `CONFIRM_AI_NOOP=yes` 없이 k6가 실행되지 않는다.
+- **기본 대상은 test 환경(`https://test.laimory.app`)이다(#400).** test는 `APP_AI_MODE=http` +
+  #257 simulator가 영구 구성이라 dispatch가 실 AI로 나가지 않으며, `CONFIRM_AI_SIMULATOR=yes`로
+  발사한다. dev를 대상으로 할 때만 `APP_AI_MODE=noop` 확인 + `CONFIRM_AI_NOOP=yes`가 필요하다.
+  localhost 외 대상에는 두 표식 중 하나 없이 k6가 실행되지 않는다.
 - 실제 사용자 데이터를 읽거나 쓰지 않는다. 사용자·좌표·주소·rawId는 전부 합성값이다.
 - access token, user manifest, k6 raw 결과는 `.artifacts/`에만 두고 커밋하지 않는다.
 - dev WAS `.env` 변경, container recreate, simulator EC2 조작과 원복은 **사용자가 직접 수행한다**.
@@ -31,11 +33,13 @@ load-tests/timeline-draft/
 │   └── lib/{config,payload,tokens,spike}.js
 ├── scripts/
 │   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
+│   ├── generate-subject-rows.py    # user_id 목록 → subject 행 SQL(mapping·설정)과 정리용 subject 집합
 │   ├── run-ladder.sh               # 단계 사다리 + 중단 gate
 │   ├── dev-recreate.sh             # .env 수정분 반영(컨테이너 재생성, dev host에서 실행)
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
 │   └── verify-redis-residue.sh     # Redis 잔여 확인
 └── sql/
+    ├── 00-preflight-terms-gate.sql # 실행 전: 약관 catalog가 아직 fail-open인지 확인
     ├── 01-seed-users.sql           # 합성 사용자 1,000명
     ├── 02-export-user-ids.sql      # user_id 목록 추출
     ├── 03-db-size-baseline.sql     # DB 규모·buffer pool 기준선
@@ -50,6 +54,7 @@ load-tests/timeline-draft/
 - k6 (검증 시점 `v2.1.0`), Python 3, `mysql` client, `redis-cli`, `git`
 - dev MySQL과 shared Redis 접근 경로(WAS SSH 터널 또는 SSM)
 - dev `JWT_SECRET` 값(토큰 발급용, 파일이나 환경변수로만 다룬다)
+- dev subject HMAC secret(Secrets Manager JSON 원문 — subject 행 생성용, 환경변수로만 다룬다)
 - geo 시나리오에만: #257 simulator가 기동돼 있고 contract/preflight를 통과한 상태
 
 ## 시나리오
@@ -128,7 +133,16 @@ geo 단계는 다음 두 값을 함께 확인해야 유효하다.
 
 ### 0. 실행 조건 확인·기록
 
-**대상의 `APP_AI_MODE`가 `noop`인지 먼저 확인한다.** draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를
+**test 환경이 기본 대상이다.** test는 `.env`가 `APP_AI_MODE=http` + simulator base URL로 고정돼 있고
+(worker 5종 off·trace always-on 포함) **원복 절차가 없다** — 이 절의 dev `.env` 전환·원복은 dev를
+대상으로 할 때만 해당한다. test 대상 실행 예:
+
+```bash
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app VUS=1 CONFIRM_AI_SIMULATOR=yes \
+  k6 run load-tests/timeline-draft/k6/calendar-core.js
+```
+
+**dev를 대상으로 한다면, 그 `APP_AI_MODE`가 `noop`인지 먼저 확인한다.** draft 생성은 시나리오와 무관하게 매 요청 AI dispatch를
 부르므로, `noop`이 아니면 요청 수만큼 실제 AI로 그대로 전파된다. `http`면 실 AI service가 1,000건을 받고,
 `fake`는 dispatch마다 2초 대기 후 자기 서버로 HTTP 3콜과 타임라인 저장을 수행하는데 실행기가 기본
 `applicationTaskExecutor`(스레드 8, 무제한 큐)라 뒤 단계 관측 구간까지 self-callback 부하가 번지고 정리
@@ -178,16 +192,30 @@ run-id
 WAS EC2 instance type / T3 credit mode / 시작 credit balance
 BASE_URL(대상)과 k6 실행기 위치·리전
 APP_AI_MODE / APP_GEO_MODE
+Filebeat 유무(test는 미설치 — 실환경 대비 그만큼 유리한 편향)와 OTEL_TRACES_SAMPLER 값
 DB 규모 기준선(03-db-size-baseline.sql 출력)
 ```
 
 ### 1. 합성 사용자 seed
 
+먼저 약관 gate를 확인한다. 합성 사용자는 `term_agreements`가 0인데, catalog가 활성화되면
+LOGIN·TIMELINE_FIRST_CREATE 필수 동의 검사가 걸려 **전량 403**이 된다. 지금은 catalog가 비어
+stage 전체가 fail-open이라 통과하지만, #383이 운영 원문을 seed하면 그 순간 조용히 깨진다.
+
+```bash
+mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/00-preflight-terms-gate.sql
+```
+
+`active_documents`가 0이 아니면 실행하지 않는다 — 합성 사용자에게 현재 문서 동의를 함께 seed하고,
+`term_agreements`는 users FK가 없으므로 정리(06)에도 직접 DELETE를 추가해야 한다.
+
 ```bash
 mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/01-seed-users.sql
 ```
 
-재실행해도 안전하다(이미 있는 행은 건너뛴다). 마지막 SELECT의 `min_created_at`이 `seoul_now`와 같은
+재실행해도 안전하다(이미 있는 행은 건너뛴다). **이것만으로는 요청이 성공하지 않는다** — `users` 행만으로는
+subject mapping이 없어 draft 생성이 500이다(서버는 mapping을 자동 생성하지 않고 fail-closed한다).
+3단계까지 마쳐야 사용자 준비가 끝난다. 마지막 SELECT의 `min_created_at`이 `seoul_now`와 같은
 대역인지 확인한다 — dev MySQL 호스트는 UTC이고 앱은 Asia/Seoul 벽시계로 저장하므로 시각을 그대로
 `NOW()`로 심으면 앱 기준 9시간 과거가 된다.
 
@@ -199,7 +227,36 @@ mysql --defaults-extra-file=<config> -N -B <db> \
   > load-tests/timeline-draft/.artifacts/user-ids.txt
 ```
 
-### 3. access token 발급
+### 3. subject 행 생성·적용
+
+가입 transaction이 만드는 세 행(`user_subject_links`·`subject_preferences`·
+`daily_notification_preferences`)을 합성 사용자에게도 만든다. lookup key는 애플리케이션과 같은
+HMAC-SHA-256 파생이라 SQL로는 만들 수 없다.
+
+```bash
+SUBJECT_HMAC_SECRET="$(cat ~/laimory-dev-subject-secret.json)" \
+  python3 load-tests/timeline-draft/scripts/generate-subject-rows.py \
+    --user-ids load-tests/timeline-draft/.artifacts/user-ids.txt
+
+mysql --defaults-extra-file=<config> <db> \
+  < load-tests/timeline-draft/.artifacts/subject-seed.sql
+```
+
+secret은 환경변수로만 전달한다(인자로 넘기면 프로세스 목록에 남는다). 출력 SQL에는 secret도 key
+바이트도 들어가지 않는다. subject UUID는 secret에서 결정적으로 파생하므로 같은 사용자 목록이면
+몇 번을 다시 돌려도 같은 값이 나온다 — 정리 단계가 이 성질에 의존한다.
+
+`subject-seed.sql`의 마지막 SELECT 세 줄이 모두 사용자 수와 같아야 한다. 함께 나온
+`subject-set.sql`은 9단계 정리·검증이 쓰는 subject 집합이니 지우지 않는다.
+
+일일 리마인더만 가입 기본값(ON)과 달리 **OFF**로 심는다 — 합성 사용자 1,000명이 매일 21:00 발송
+worker의 스캔 대상이 되지 않게 한다. 이미 ON으로 존재하는 행은 건드리지 않는다(끄려면 직접 UPDATE한다).
+
+**mapping이 이미 있는 사용자**(과거 seed + 이후 backfill로 생긴 행)라면 links는 건너뛰고 설정 행만
+채운다. 이때 설정 행이 가리키는 subject는 파생값이 아니라 **DB에 있는 실제 subject**다 — 그래서
+`subject-set.sql`도 DB를 조회해 만든다. 파생값을 정리 대상으로 믿으면 그 집합이 통째로 어긋난다.
+
+### 4. access token 발급
 
 ```bash
 JWT_SECRET="$(cat ~/laimory-dev-jwt-secret)" \
@@ -214,7 +271,7 @@ JWT_SECRET="$(cat ~/laimory-dev-jwt-secret)" \
 
 secret은 환경변수로만 전달한다(인자로 넘기면 프로세스 목록에 남는다).
 
-### 4. VU 1 calibration
+### 5. VU 1 calibration
 
 **배포·컨테이너 재기동 직후라면 워밍업부터 한다.** 새 JVM은 JIT가 덜 컴파일된 상태라 앱 연산 구간이
 2~4배 부풀며(실측: 68행 요청의 비-geo 구간 438ms → 웜 99ms), 요청 40~80건이 지나야 풀린다. 배포
@@ -232,17 +289,17 @@ health check(`/intro` 반복)는 draft 경로를 데우지 못한다. 측정 전
 고VU 단계(≥10)는 표본이 커서 단발로 충분하다.
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app VUS=1 CONFIRM_AI_NOOP=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app VUS=1 CONFIRM_AI_SIMULATOR=yes \
   k6 run load-tests/timeline-draft/k6/calendar-core.js
 ```
 
 제공된 dev median 기준값은 `/status` 34ms, 1좌표 POST 163ms, 18좌표 POST 287ms다. geo 값이 이 범위를
 크게 벗어나면 #251에서 임의 지연을 만들지 않고 #257의 latency profile을 보정한다.
 
-### 5. calendar-core 사다리
+### 6. calendar-core 사다리
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes \
   load-tests/timeline-draft/scripts/run-ladder.sh calendar-core
 ```
 
@@ -252,9 +309,22 @@ RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
 
 단계 사이에는 PROCESSING TTL 3분이 지나도록 기본 190초 쉰다(`COOLDOWN_SECONDS`로 조정).
 
-### 6. geo 사다리
+### 7. geo 사다리
 
-**전환(사용자 직접 수행)** — dev host에서 `.env`의 다음 두 값을 고치고 반영한다.
+**test 기본 경로 — `.env` 전환이 없다.** test의 `.env`는 simulator base URL + dummy key
+(`APP_GEO_KAKAO_BASE_URL`·`KAKAO_REST_API_KEY=k6-257-dummy`)가 영구 구성이라(#400) 고칠 것도
+되돌릴 것도 없다. 필요한 준비는 둘뿐이다:
+
+1. simulator EC2 start(정지 운용이 기본, private IP는 유지된다) + 컨테이너 health 200 확인
+2. journal reset 후 1좌표 요청 하나로 **coord2address 1회 + keyword 1회, unmatched 0** 확인 —
+   이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다. k6는 애플리케이션이 어느 base URL을
+   보는지 알 수 없다
+
+<details>
+<summary><b>dev를 대상으로 할 때만</b> — .env 전환(사용자 직접 수행)</summary>
+
+dev host에서 `.env`의 다음 두 값을 고치고 반영한다. `APP_GEO_MODE=kakao`와 `APP_AI_MODE=noop`은
+이미 맞춰진 상태여야 한다.
 
 ```text
 APP_GEO_KAKAO_BASE_URL=http://<SIMULATOR_PRIVATE_IP>:8080
@@ -266,14 +336,10 @@ sudo vi /home/ubuntu/app/.env
 sudo ./dev-recreate.sh
 ```
 
-`APP_GEO_MODE=kakao`와 `APP_AI_MODE=noop`은 이미 맞춰진 상태여야 한다.
-
-전환 직후 simulator journal을 reset하고 1좌표 요청 하나를 보내 **coord2address 1회 + keyword 1회,
-unmatched 0**을 확인한다. 이것이 "실제 Kakao로 나가지 않았다"의 유일한 실증이다 — k6는 애플리케이션이
-어느 base URL을 보는지 알 수 없다.
+</details>
 
 ```bash
-RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
+RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes CONFIRM_SIMULATOR=yes \
   load-tests/timeline-draft/scripts/run-ladder.sh geo-day
 ```
 
@@ -281,7 +347,12 @@ geo-day 사다리는 `1 → 2 → 3 → 5 → 10 → 20`으로 짧다 — 2 VU�
 예상되어, 전이 구간 밖은 같은 실패의 반복이기 때문이다. 보고할 값은 최대 VU가 아니라
 **좌표 누락 없이 통과한 마지막 VU**다.
 
-**원복(사용자 직접 수행)** — 0단계에서 남긴 원본으로 되돌린다.
+**run 종료 후(test)** — 원복이 없다. simulator EC2만 다시 중지한다(정지 운용이 기본).
+
+<details>
+<summary><b>dev를 대상으로 했을 때만</b> — 원복(사용자 직접 수행)</summary>
+
+0단계에서 남긴 원본으로 되돌린다.
 
 ```bash
 sudo cp -p /home/ubuntu/app/.env.before-loadtest /home/ubuntu/app/.env
@@ -292,7 +363,9 @@ sudo ./dev-recreate.sh --show   # AI/geo 값이 원래대로인지 눈으로 확
 이후 integration smoke를 확인한 다음 simulator를 중지한다. WAS 원복 확인 전에 simulator를 먼저
 내리지 않는다.
 
-### 7. 지표 대조
+</details>
+
+### 8. 지표 대조
 
 k6 결과(`.artifacts/*-summary.json`)와 같은 시간대의 서버 지표를 나란히 본다.
 
@@ -310,26 +383,38 @@ geo run은 추가로:
 - `reactor.netty.connection.provider.*`(pool 이름 `kakao-local`) — active/pending
 - simulator 측: WireMock endpoint count, unmatched, container CPU/memory/restart/OOM
 
-### 8. 검증과 정리
+### 9. 검증과 정리
 
 ```bash
 # run 결과 검증 — 단계별로 확인한다.
-# @run_id는 RUN_ID, @scenario_step은 시나리오 코드(c|m|gd) + 단계 번호다(예: geo-day 2단계 → gd1).
-sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/g13/" \
+# @run_id는 RUN_ID(사람이 쓰는 YYYYMMDD-NN 그대로), @scenario_step은 rawId 세 번째 그룹(4 hex)이다.
+# rawId가 canonical UUID여야 해서(서버가 그 외를 400으로 거절) 식별 정보를 자릿수에 인코딩했다.
+#   시나리오: calendar-core=1, mixed-day=2, geo-day=3   단계: STEP_INDEX를 hex 3자리
+#   예) geo-day 2단계(STEP_INDEX=1) → @scenario_step='3001', 시나리오 전체 → '3%'
+sed -e "s/REPLACE_WITH_RUN_ID/20260806-01/" -e "s/REPLACE_WITH_SCENARIO_STEP/gd1/" \
   load-tests/timeline-draft/sql/04-verify-run.sql \
   | mysql --defaults-extra-file=<config> <db>
 
+# 05~07은 subject 집합(임시 테이블)이 필요하다 — 3단계가 만든 subject-set.sql을 같은 세션에서 먼저
+# 흘려 넣는다. 임시 테이블은 세션 범위라 파일을 따로 실행하면 "Table doesn't exist"가 난다.
+
 # 삭제 예정 행 수 → manifest에 기록
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/05-cleanup-dry-run.sql
+cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/05-cleanup-dry-run.sql | mysql --defaults-extra-file=<config> <db>
 
-# 실제 삭제
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/06-cleanup.sql
+# 실제 삭제 + 잔여 0 확인(모든 residue_rows가 0)
+#
+# ⚠️ 06과 07은 반드시 **한 세션에서 이어서** 실행한다. subject-set.sql은 k6_251_subjects를
+#    user_subject_links를 조회해 채우는데, 06이 그 mapping을 지우고 커밋한 뒤 새 세션에서 다시
+#    흘려 넣으면 빈 집합이 만들어진다. 그러면 07의 "(synthetic subject)" 검사 5개가 빈 집합과
+#    JOIN 되어 무엇이 남았든 0을 돌려준다 — 검증이 통과하는 게 아니라 아무것도 보지 않는 것이다.
+cat load-tests/timeline-draft/.artifacts/subject-set.sql \
+    load-tests/timeline-draft/sql/06-cleanup.sql \
+    load-tests/timeline-draft/sql/07-verify-residue.sql | mysql --defaults-extra-file=<config> <db>
 
-# 잔여 0 확인(모든 residue_rows가 0)
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/07-verify-residue.sql
-
-# Redis 잔여 확인
-REDIS_HOST=<host> REDIS_PREFIX=dev_ \
+# Redis 잔여 확인 — prefix는 대상 환경을 따른다(test는 test_, dev는 dev_).
+# 스크립트 기본값이 dev_라 test 대상 실행에서 빠뜨리면 없는 키를 조회해 "잔여 0"이 거짓 통과한다.
+REDIS_HOST=<host> REDIS_PREFIX=test_ \
   load-tests/timeline-draft/scripts/verify-redis-residue.sh
 ```
 
@@ -338,14 +423,21 @@ noop 격리 전제가 깨진 것이므로 삭제를 진행하지 말고 원인�
 
 정리 범위에 대해 알아둘 것:
 
-- 삭제 기준은 **합성 사용자 집합 하나뿐**이다(`provider='KAKAO' AND provider_user_id LIKE 'k6-251-%'`).
+- 삭제 기준은 **합성 사용자 집합과 그 subject 집합**이다(`provider='KAKAO' AND provider_user_id LIKE
+  'k6-251-%'`, 그리고 3단계가 만든 `subject-set.sql`의 subject 목록). 콘텐츠 테이블은 raw user_id를
+  저장하지 않으므로 사용자 접두사만으로는 콘텐츠에 닿을 수 없다 — 그래서 subject 집합을 밖에서 넣는다.
   날짜·rawId·user_id 범위는 기준이 아니므로, 실제 사용자가 같은 날짜에 기록을 갖고 있거나 `k6-`로 시작하는
   rawId를 손으로 넣어 뒀어도 지워지지 않는다. 합성 event와 실제 event에 함께 연결된 item도 남는다
   (모든 연결이 합성일 때만 삭제 대상이다).
-- run 단위 선택 삭제는 없다. 한 번 실행하면 `k6-251-` 사용자 전체와 그들의 데이터가 함께 사라진다.
-  여러 회차를 비교 중이라면 마지막에 한 번만 돌린다.
-- `refresh_tokens`·`push_registrations`는 dry-run이 세기만 하고 cleanup이 지우지 않는다. 합성 사용자는
-  로그인·푸시 등록을 하지 않으므로 0이어야 하며, 0이 아니면 전제가 깨진 것이라 사람이 직접 확인한다.
+- run 단위 선택 삭제는 없다. 한 번 실행하면 `k6-251-` 사용자 전체와 그들의 데이터(콘텐츠 + subject 축
+  설정 3종 + user memory)가 함께 사라진다. 여러 회차를 비교 중이라면 마지막에 한 번만 돌린다.
+- 삭제 순서는 FK가 정한다 — 콘텐츠(item→source→record) → user_memories →
+  daily_notification_preferences → subject_preferences → user_subject_links → users. subject FK가 전부
+  RESTRICT라 순서를 어기면 삭제가 거절된다(조용히 지나가지 않는다).
+- `refresh_tokens`·`push_registrations`·`term_agreements`·`account_erasure_jobs`는 dry-run이 세기만 하고
+  cleanup이 지우지 않는다. 합성 사용자는 로그인·푸시 등록·약관 동의·탈퇴를 하지 않으므로 0이어야 하며,
+  0이 아니면 전제가 깨진 것이라 사람이 직접 확인한다(뒤 둘은 users FK가 RESTRICT라 남아 있으면
+  cleanup의 users 삭제가 실패한다).
 
 Redis는 수동 삭제가 필요 없다. task 키와 사용자 index 키는 TTL 3분으로 사라지고, 전역 PROCESSING index는
 stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
@@ -354,7 +446,9 @@ stuck 지표가 scrape될 때 TTL 밖 member를 prune한다.
 
 ```bash
 rm -f load-tests/timeline-draft/.artifacts/tokens.json \
-      load-tests/timeline-draft/.artifacts/user-ids.txt
+      load-tests/timeline-draft/.artifacts/user-ids.txt \
+      load-tests/timeline-draft/.artifacts/subject-seed.sql \
+      load-tests/timeline-draft/.artifacts/subject-set.sql
 load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 ```
 
@@ -362,13 +456,14 @@ load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 
 | 이름 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `RUN_ID` | ✅ | — | run 식별자. 결과 파일명과 rawId에 들어간다 |
-| `BASE_URL` | ✅ | — | 대상(예: `https://dev.laimory.app`) |
+| `RUN_ID` | ✅ | — | run 식별자(**`YYYYMMDD-NN` 형식 고정** — rawId canonical UUID의 앞 두 그룹으로 인코딩). 결과 파일명에도 들어간다 |
+| `BASE_URL` | ✅ | — | 대상(기본 test 환경 — 예: `https://test.laimory.app`) |
 | `VUS` | ✅ | — | 이 단계의 VU 수(= 사용자 수). `run-ladder.sh`가 주입한다 |
-| `CONFIRM_AI_NOOP` | 원격 대상 ✅ | — | `yes`가 아니면 localhost 외 대상에서 실행을 거부한다 |
+| `CONFIRM_AI_SIMULATOR` | 원격 대상 ✅* | — | **test 전용** — `APP_AI_MODE=http` + base URL이 #257 simulator임을 눈으로 확인했다는 표식 |
+| `CONFIRM_AI_NOOP` | 원격 대상 ✅* | — | **dev 전용** — `APP_AI_MODE`가 `noop`/`fake`임을 눈으로 확인했다는 표식. *원격 대상은 두 표식 중 **대상 서버 설정에 맞는 하나**가 필수 — 다른 쪽을 붙이면 안전 확인의 의미가 없다 |
 | `CONFIRM_SIMULATOR` | geo만 ✅ | — | `yes`가 아니면 geo 스크립트가 실행을 거부한다 |
 | `STEP_INDEX` | | `0` | 사다리 단계 번호. recordDate를 하루씩 민다 |
-| `RECORD_DATE_BASE` | | `2031-01-01` | 합성 날짜 대역의 시작 |
+| `RECORD_DATE_BASE` | | `2025-01-01` | 합성 날짜 대역의 시작. **과거여야 한다** — 서버가 미래 recordDate를 400으로 거절하므로(#366) init에서 먼저 끊는다 |
 | `TOKENS_FILE` | | `.artifacts/tokens.json` | token 파일 경로 |
 | `ARTIFACT_DIR` | | `load-tests/timeline-draft/.artifacts` | 결과 출력 경로 |
 | `START_DELAY_MS` | | `5000` | barrier까지의 대기(모든 VU가 도달할 시간) |

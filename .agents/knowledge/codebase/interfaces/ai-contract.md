@@ -327,6 +327,57 @@ Task-Token: <접수 body로 준 token>
   breaker도 두지 않는다. 재시도는 하루 1회 배치가 담당하며, 그 대상은 이 결과 호출이 "반영 못 함"으로
   표시한 날들이다.
 
+### 7. dev 전용 동기 테스트 (별도 흐름 — task 배관 없음)
+
+타임라인 생성(1~5)과 **같은 AI 파이프라인을 부르지만 배관이 전혀 없다**. AI가 요청 안에서 추론을 끝내고
+결과를 응답하며 어디에도 저장하지 않는다 — 입력 조회·결과 저장·완료 callback·token 회전이 모두 없다.
+운영 경로(`POST /v1/timeline`, `POST /invocations`)는 이 기능으로 달라지지 않는다.
+
+```http
+POST /t/api/{version}/timeline/test           (호출자 → App Server)
+
+POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}/v1/timeline/test)
+```
+
+- App Server 요청 body는 **입력 조회 응답에서 `taskId`·`taskToken`을 뺀 것**이고, AI로 나가는 body는
+  거기에 서버 발행 `taskId`를 더한 것이다. `window`는 이 흐름에서만 **필수**다 — 시간 창을 줄 다른
+  통로(Redis task)가 없다. `recordTimeZone` 생략 시 기본 `Asia/Seoul`은 **AI가 소유**하며 서버가 채워
+  넣지 않는다. `userMemory`는 선택이고 서버는 해석하지 않는다.
+- **`taskToken`은 계약에 없다** — AI가 App Server를 되부르지 않으므로 토큰이 필요 없다. AI는 보내도
+  무시한다. 따라서 §2의 회전 token·`ProcessStage`·retry receipt는 이 흐름과 무관하다.
+- **`taskId`는 상관키 전용**이다. 서버가 `UuidV7`로 발행해 AI 요청과 자기 응답 양쪽에 싣고, AI는 조회·
+  저장에 쓰지 않되 같은 `taskId`로 돌린 비동기 실행과 로그·Langfuse에서 이어 볼 수 있게 한다.
+  AI는 빈 문자열을 `1001`로 거절한다.
+- AI는 `PIPELINE_TIMEOUT_SEC`(기본 120s)이 끝나면 마지막 확정본을 **200 + `X-Timeline-Timed-Out: true`**
+  로 돌려준다(실패가 아니며 비동기 경로가 저장하는 값과 같다). App Server는 이 신호를 헤더로 되전달하지
+  않고 **응답 body의 `timedOut`** 으로 옮겨 싣는다 — 성공 응답은 envelope이 없어 body에 자리가 있고,
+  결과와 그 결과의 성격이 같은 자리에 있어야 호출자가 헤더를 따로 보지 않는다(오류 `X-Ai-Error-Code`가
+  헤더인 이유는 반대다 — 에러 envelope은 `body=null`이 계약이라 담을 자리가 없다).
+  **read timeout이 AI 제한 시간보다 길어야 한다**(기동 시 강제 — 짧으면 성공 응답 직전에 끊어 502가 된다).
+- AI 오류는 `{errorCode, error}` + HTTP status다: 422 `1001`(`taskId` 빈 값·`recordDate`·`window` 누락),
+  404 `1003`(AI 쪽 비활성), 500 `1102`(원본 계약 위반 — sourceItems 0건·rawId 중복), 500 `1201`(제한
+  시간 내 확정 결과 없음), 500 `1202`(구조화 출력 실패), 500 `1301`(입력에 없는 rawId 참조).
+  App Server는 이를 전부 502 `-1009`로 수렴시키되 **numeric `errorCode`만** `X-Ai-Error-Code` 응답
+  헤더로 전달한다. 자유 text `error`는 사용자 원문이 섞일 수 있어 응답·로그 어디에도 남기지 않는다
+  (§5 FAILED callback과 같은 정책).
+- **재시도하지 않는다** — 호출 1회가 실 LLM 토큰 비용 1회다.
+- 서버가 AI보다 먼저 거르는 것은 `window` 존재·`startAt < endAt`, `sourceItems` 1건 이상, `rawId`
+  canonical lowercase UUID·중복 없음뿐이고 나머지(payload 포함)는 해석 없이 통과시킨다. 이 검증들은
+  AI가 5xx로 낼 입력 오류를 400으로 앞당기기 위한 것이다.
+- **치환 규칙은 운영과 같다**(아래 invariant 유지) — 이 경로에는 staging이 없으므로 전달 직전에
+  `redactTree(payload, {clientPhotoUri, filename, photoUrl})` + PHOTO `clientPhotoUri` →
+  `[REDACTED_DEVICE_URI]`를 한 pass로 적용해 §3 입력 조회 응답과 같은 결과를 만든다. `userMemory`는
+  §6과 같이 제외 없이 치환한다. **`photoUrl`·`filename`은 원문으로 나간다** — AI가 `photoUrl`을 HTTP
+  GET으로 소비해 실제 이미지를 받기 때문이다. 다만 운영에서 두 필드가 안전한 근거("서버 파생 식별자")는
+  이 경로에 없다 — enrich 단계가 없어 **호출자 입력이 그대로 전달**되므로, 제외를 "PII 없음 보장"으로
+  읽으면 안 된다(dev 전용·호출자가 QA라는 전제로 수용).
+- 노출은 양쪽 모두 자기 스위치가 소유한다 — App Server는 `app.ai.timeline-test.enabled`(기본 off,
+  꺼져 있으면 controller 빈이 없어 경로 자체가 부재), AI는 `APP_ENV`가 local/dev이고
+  `TIMELINE_TEST_ENABLED`가 이긴다. **`app.ai.mode`와 무관하다** — 비동기 경로가 `noop`이어도 이
+  endpoint는 동작한다.
+- **호출자 인증은 이 계약에 없다.** `/t/api` Bearer token 검증은 security 계층 몫이고 현재 미구현이라,
+  켠 환경에서는 무인증으로 호출된다(아래 Known Gaps). §2의 회전 task token과는 별개 축이다.
+
 ## Failure Semantics
 
 - Redis와 MySQL을 분산 transaction으로 묶지 않는다.
@@ -377,7 +428,7 @@ timeout이 소유한다.
 - callback body에 graph를 추가하지 않는다.
 - 실제 token 값을 문서·로그에 기록하지 않는다.
 - 서버→AI로 나가는 텍스트 값(입력 조회 payload, User Memory 접수 body)은 v1 privacy 치환본이며
-  `[REDACTED_*]` token literal을 포함할 수 있다 — 치환은 값만 바꾸고 wire DTO 필드 집합은 불변이다.
+  `[REDACTED_*]` token literal을 포함할 수 있다 — 치환은 값만 바꾸고 wire DTO 필드 집합은 불변이다. dev 전용 동기 테스트(§7)도 이 invariant를 지킨다 — staging이 없어 전달 직전에 같은 치환을 적용한다.
 
 ## Known Gaps
 
@@ -386,11 +437,13 @@ timeout이 소유한다.
   만료). commit 이후 구간은 재시도 창 안에서 재시도 안전하다. 어느 쪽도 자동 reconciliation·redispatch는
   없다.
 - 프로세스 즉사로 선점 receipt가 남으면 그 task의 재요청이 409로 막힌 채 TTL까지 간다(takeover 규칙 없음).
+- dev 동기 테스트(§7) 경로의 호출자 인증 미구현 — 켠 환경에서 무인증 호출이 가능하다. 노출 통제는
+  기본 off 스위치 하나뿐이라 **prod에서 켜면 안 된다**.
 
 ## Update When
 
-dispatch shape, 입력·결과 DTO, token/header, Redis stage, 결과 transaction, callback 또는 failure semantics가
-바뀔 때 갱신한다.
+dispatch shape, 입력·결과 DTO, token/header, Redis stage, 결과 transaction, callback, dev 동기 테스트 계약
+또는 failure semantics가 바뀔 때 갱신한다.
 
 ## Validation
 

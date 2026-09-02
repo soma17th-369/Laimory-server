@@ -221,7 +221,7 @@ class TermCatalogReadinessTest {
                 catalogRow("TERMS_OF_SERVICE", "http://laimory.app/terms/terms-of-service/1.0"),
                 catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),
-                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://laimory.app/terms/x/1.0")));
+                catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://www.laimory.app/terms/x/1.0")));
         when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
@@ -345,7 +345,7 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {
-        return catalogRow(termType, "https://laimory.app/terms/page/1.0");
+        return catalogRow(termType, "https://www.laimory.app/terms/page/1.0");
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String contentUrl) {

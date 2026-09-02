@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",status=~"5..",uri!~"/actuator.*"}[5m])) / clamp_min(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*"}[5m])), 1)) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*"}[5m])) >= 20)'
+              expr: '(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",status=~"5..",uri!~"/actuator.*",environment!="test"}[5m])) / clamp_min(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])), 1)) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])) >= 20)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -164,7 +164,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(histogram_quantile(0.95, sum by (le, environment, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",uri!~"/actuator.*"}[5m])))) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*"}[5m])) >= 20)'
+              expr: '(histogram_quantile(0.95, sum by (le, environment, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])))) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])) >= 20)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -228,7 +228,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'sum by (environment, instance) (jvm_memory_used_bytes{job="spring_boot",area="heap"}) / clamp_min(sum by (environment, instance) (jvm_memory_max_bytes{job="spring_boot",area="heap"} > 0), 1)'
+              expr: 'sum by (environment, instance) (jvm_memory_used_bytes{job="spring_boot",area="heap",environment!="test"}) / clamp_min(sum by (environment, instance) (jvm_memory_max_bytes{job="spring_boot",area="heap",environment!="test"} > 0), 1)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -292,7 +292,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(max by (environment, instance) (hikaricp_connections_active{job="spring_boot"}) / clamp_min(max by (environment, instance) (hikaricp_connections_max{job="spring_boot"}), 1)) and on (environment, instance) (max by (environment, instance) (hikaricp_connections_pending{job="spring_boot"}) > 0)'
+              expr: '(max by (environment, instance) (hikaricp_connections_active{job="spring_boot",environment!="test"}) / clamp_min(max by (environment, instance) (hikaricp_connections_max{job="spring_boot",environment!="test"}), 1)) and on (environment, instance) (max by (environment, instance) (hikaricp_connections_pending{job="spring_boot",environment!="test"}) > 0)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

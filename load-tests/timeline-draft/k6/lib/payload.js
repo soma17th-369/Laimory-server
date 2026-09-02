@@ -15,14 +15,19 @@ const LON_ORIGIN = 127.0;
 const COORD_STEP = 0.0001;
 
 /**
- * rawId — 클라 원본 데이터 식별자. 서버는 형식을 검증하지 않고 그대로 저장·echo하며 최대 36자다.
- * `(task_id, raw_id)`가 UNIQUE라 요청 하나 안에서만 유일하면 되지만, run·시나리오·단계·VU를 모두 넣어
- * 정리·검증 쿼리가 `LIKE 'k6-<runId>-<code><step>-%'` 하나로 대상을 정확히 집어낼 수 있게 한다.
- * 길이 상한은 config가 init에서 검증한다(여기서 잘라내면 요청 안 rawId가 충돌한다).
+ * rawId — 클라 원본 데이터 식별자. **canonical lowercase UUID여야 한다** — 서버가
+ * `RawIds.isCanonicalUuid`가 아닌 값을 저장·dispatch 전에 400으로 거절한다(#287, 임의 문자열에
+ * 개인정보가 실리는 것을 막는 경계). 그래서 식별 정보를 UUID 자릿수 안에 hex로 인코딩한다:
+ *
+ *   <YYYYMMDD>-<seq4>-<scenario+step>-<vu4>-<index12>
+ *
+ * 앞 세 그룹(= `config.rawIdPrefix`)이 run·시나리오·단계를 고정하므로 정리·검증 쿼리는 여전히
+ * `LIKE '<prefix>%'` 하나로 대상을 집는다. `(task_id, raw_id)` UNIQUE는 마지막 두 그룹이 보장한다.
  */
 function rawId(config, vu, index) {
-  return `k6-${config.runId}-${config.scenarioCode}${config.stepIndex}`
-    + `-${String(vu).padStart(5, '0')}-${String(index).padStart(2, '0')}`;
+  return `${config.rawIdPrefix}`
+    + `-${vu.toString(16).padStart(4, '0')}`
+    + `-${index.toString(16).padStart(12, '0')}`;
 }
 
 function envelope(config, sourceItems) {

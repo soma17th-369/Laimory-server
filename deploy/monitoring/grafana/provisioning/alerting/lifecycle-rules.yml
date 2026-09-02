@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot"}'
+              expr: 'laimory_timeline_task_processing_stuck{job="spring_boot",environment!="test"}'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

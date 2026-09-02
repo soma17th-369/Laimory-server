@@ -6,10 +6,10 @@
 # (user_id, record_date) UNIQUE라 같은 날짜를 재사용하면 두 번째 단계가 INSERT 대신 UPDATE가 된다.
 #
 # 사용:
-#   RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes \
+#   RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes \
 #     load-tests/timeline-draft/scripts/run-ladder.sh calendar-core
 #
-#   RUN_ID=20260806-01 BASE_URL=https://dev.laimory.app CONFIRM_AI_NOOP=yes CONFIRM_SIMULATOR=yes \
+#   RUN_ID=20260906-01 BASE_URL=https://test.laimory.app CONFIRM_AI_SIMULATOR=yes CONFIRM_SIMULATOR=yes \
 #     load-tests/timeline-draft/scripts/run-ladder.sh geo-day
 #
 # 사다리 재정의: LADDER="1 10 50" ... run-ladder.sh calendar-core
@@ -32,7 +32,7 @@ if [ ! -f "$SCRIPT_PATH" ]; then
 fi
 
 : "${RUN_ID:?RUN_ID가 필요합니다(예: 20260806-01)}"
-: "${BASE_URL:?BASE_URL이 필요합니다(예: https://dev.laimory.app)}"
+: "${BASE_URL:?BASE_URL이 필요합니다(예: https://test.laimory.app)}"
 
 ARTIFACT_DIR="${ARTIFACT_DIR:-load-tests/timeline-draft/.artifacts}"
 mkdir -p "$ARTIFACT_DIR"

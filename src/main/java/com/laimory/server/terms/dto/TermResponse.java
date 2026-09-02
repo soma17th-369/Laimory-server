@@ -20,7 +20,7 @@ public record TermResponse(
         @Schema(description = "약관 제목", example = "이용약관",
                 requiredMode = Schema.RequiredMode.REQUIRED) String title,
         @Schema(description = "버전별 약관 원문 WebView HTTPS URL",
-                example = "https://laimory.app/terms/privacy-policy/1.0",
+                example = "https://www.laimory.app/terms/privacy-policy/1.0",
                 format = "uri",
                 requiredMode = Schema.RequiredMode.REQUIRED) String contentUrl,
         @Schema(description = "효력 시작 시각(Asia/Seoul 벽시계, offset 없음)",

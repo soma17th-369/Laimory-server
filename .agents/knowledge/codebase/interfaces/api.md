@@ -27,6 +27,7 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 | `/api/{version}` | 인증 없는 app-facing public API | public |
 | `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | 단계별 task token을 endpoint가 강제 |
 | `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `-2001` |
+| `/t/api/{version}` | dev 전용 테스트 API | 활성화 property가 없으면 controller 빈 자체가 없어 mapping 부재(404). **인증 enforcement는 아직 없다** — `/a/api` 외 permitAll 계약이 그대로 적용된다 |
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
@@ -179,6 +180,23 @@ terminal callback은 409 `-1017`다. 이미 소비된 token의 재요청은 재�
 창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
+`POST /t/api/{version}/timeline/test`(#394)는 **dev 전용 AI 동기 테스트** endpoint다. AI Timeline
+Input JSON을 받아 AI 서버의 테스트 전용 동기 endpoint로 전달하고 추론 결과를 반환하며, **MySQL·Redis에
+읽지도 쓰지도 않는다** — 회원·DailyRecord·Draft Task·staging·`ProcessStage`·결과 저장 transaction·
+callback·polling 어느 것도 거치지 않고 결과를 저장하지도 않는다. 요청 shape는 서버간 입력 조회 응답과
+같고 `window`가 필수라는 점만 다르다(시간 창을 줄 다른 통로가 없다). `taskId`는 서버가 발행해 AI
+요청과 응답에 함께 싣는 상관키라 요청에 담지 않으며, `taskToken`은 계약에 없다(AI가 App Server를
+되부르지 않는다). 성공은 `ApiResponse` envelope 없이 `{taskId, timedOut, events[]}` typed JSON이고
+`events`는 결과 저장 계약과 같은 shape다(에러만 envelope). AI가 제한 시간이 끝나 마지막 확정본을
+돌려주면 `timedOut`이 true다 — 실패가 아니다. AI가 오류를 반환하면 502 `-1009`와 함께 응답 헤더
+`X-Ai-Error-Code`로 AI numeric 코드를 전달한다(envelope `body=null` 계약을 지키면서 AI 실패 원인을
+구분하기 위한 것이며, AI 자유 text `error`는 어디에도 싣지 않는다). 입력 검증 실패는 400 `-400`,
+비활성 환경은 경로 부재로 404다 — **새 error code는 추가하지 않았다.**
+노출은 `app.ai.timeline-test.enabled` 하나가 소유하며 기본이 off라 미설정·prod에서는 OpenAPI 문서에도
+라우팅에도 존재하지 않는다. **호출자 인증은 이 endpoint가 소유하지 않는다** — `/t/api` Bearer token
+검증은 security 계층 몫이며 현재 미구현이라 켠 환경에서는 무인증 접근이 가능하다(known gap).
+draft의 회전 task token 계약과는 무관하다. 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
+
 `PUT/DELETE /a/api/{version}/push-registrations`는 FID(Firebase Installation ID)를 path/query가 아닌
 request body(`firebaseInstallationId`)로 받는다 — access log·프록시 URL에 민감 opaque 식별자가 남지
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
@@ -231,10 +249,6 @@ userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소�
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
 
-`GET /terms/{slug}/{version}`은 build-time에 생성한 약관 원문 HTML을 로그인 없이 반환한다. DB나
-controller에서 원문을 렌더링하지 않고 classpath의 exact version resource만 전달하며, 응답은
-`text/html;charset=UTF-8`과 1년 `public, immutable` cache를 사용한다. 미게시 slug/version은 404다.
-
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
 `termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은
@@ -244,8 +258,9 @@ controller에서 원문을 렌더링하지 않고 classpath의 exact version res
 `termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
-아니다(현재 게시 규약은 `https://laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가 강제하는
-형식은 https 절대 URI뿐이다). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
+아니다(현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가
+강제하는 형식은 https 절대 URI뿐이다). 원문 page는 랜딩페이지가 게시하며 Server에는 약관 원문 route가
+없다(#418). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
 파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
 조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수·조건부 동의 판정은 API 메타데이터가

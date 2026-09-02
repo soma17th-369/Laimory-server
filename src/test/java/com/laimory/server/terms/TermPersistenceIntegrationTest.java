@@ -215,7 +215,7 @@ class TermPersistenceIntegrationTest {
         jdbcTemplate.update("INSERT INTO term_documents"
                 + " (term_type, version, title, content_url, effective_at, created_at, updated_at)"
                 + " VALUES ('terms_of_service', 'it-lc-1', '이용약관',"
-                + "  'https://laimory.app/terms/terms-of-service/it-lc-1',"
+                + "  'https://www.laimory.app/terms/terms-of-service/it-lc-1',"
                 + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
         // 1) binary collation — 소문자 행은 enum literal 조회에 매칭되지 않아 hydration 예외가 없다.
         List<TermDocument> current = termDocumentService.findCurrentDocuments(
@@ -235,7 +235,7 @@ class TermPersistenceIntegrationTest {
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {
         TermDocument document = termDocumentRepository.saveAndFlush(TermDocument.of(
                 type, version, "통합 테스트 제목",
-                "https://laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version,
+                "https://www.laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version,
                 LocalDateTime.parse(effectiveAt)));
         createdDocumentIds.add(document.getTermDocumentId());
         return document;

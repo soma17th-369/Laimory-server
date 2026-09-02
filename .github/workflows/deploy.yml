@@ -2,8 +2,9 @@ name: Deploy to EC2 (SSM)
 
 on:
   push:
-    # dev push -> dev 환경, main push -> prod 환경. 매핑은 Resolve deploy environment 한 곳이 소유한다.
-    branches: [dev, main]
+    # dev push -> dev 환경, main push -> prod 환경, test push -> test 환경(#400).
+    # 매핑은 Resolve deploy environment 한 곳이 소유한다.
+    branches: [dev, main, test]
     paths:
       - .github/workflows/deploy.yml
       - .dockerignore
@@ -24,7 +25,7 @@ on:
         description: "배포 대상 환경"
         required: true
         type: choice
-        options: [dev, prod]
+        options: [dev, prod, test]
       image_sha:
         description: "배포할 기존 ECR image의 40자 commit SHA (build 없이 재배포)"
         required: true
@@ -43,17 +44,18 @@ permissions:
 # group은 step 출력을 못 읽으므로 아래 Resolve 단계와 같은 매핑을 식으로 다시 쓴다 —
 # 두 곳이 갈리면 서로 다른 환경이 같은 group을 쓰거나 같은 환경이 두 group으로 갈리므로 함께 고친다.
 concurrency:
-  group: deploy-${{ inputs.environment || (github.ref_name == 'main' && 'prod' || 'dev') }}
+  group: deploy-${{ inputs.environment || (github.ref_name == 'main' && 'prod' || (github.ref_name == 'test' && 'test' || 'dev')) }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: ap-northeast-2
   ECR_REPOSITORY: laimory
   # 확인한 Sandbox 실측값은 repo 설정으로 주입한다(하드코딩 금지).
-  # 필수 Secrets: DEV_INSTANCE_ID, PROD_INSTANCE_IDS — Actions는 step의 env: 블록을 로그에 그대로
-  #   echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라 instance id가 공개
-  #   워크플로 로그에 남는다. Secret은 Actions가 ***로 마스킹한다.
-  # 필수 Variables: AWS_DEPLOY_ROLE_ARN, DEPLOY_PAUSED (비밀이 아니고 로그에 보여야 진단이 된다)
+  # 필수 Secrets: DEV_INSTANCE_ID, PROD_INSTANCE_IDS, TEST_INSTANCE_ID — Actions는 step의 env: 블록을
+  #   로그에 그대로 echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라 instance id가
+  #   공개 워크플로 로그에 남는다. Secret은 Actions가 ***로 마스킹한다.
+  # 필수 Variables: AWS_DEPLOY_ROLE_ARN, AWS_TEST_DEPLOY_ROLE_ARN, DEPLOY_PAUSED
+  #   (비밀이 아니고 로그에 보여야 진단이 된다)
 
 jobs:
   deploy:
@@ -73,11 +75,27 @@ jobs:
           # Variable로 두면 매 실행마다 instance id가 남는다(Secret은 ***로 마스킹된다).
           DEV_INSTANCE_ID: ${{ secrets.DEV_INSTANCE_ID }}
           PROD_INSTANCE_IDS: ${{ secrets.PROD_INSTANCE_IDS }}
+          TEST_INSTANCE_ID: ${{ secrets.TEST_INSTANCE_ID }}
+          # 배포 role은 환경별로 갈린다(#400) — test role의 OIDC trust는 refs/heads/test뿐이라
+          # 기존 단일 role을 계속 쓰면 test push가 자격증명 단계에서 실패한다. role ARN은 비밀이
+          # 아니고 로그에 보여야 진단이 되므로 Variable로 둔다(기존 AWS_DEPLOY_ROLE_ARN과 같은 원칙).
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_TEST_DEPLOY_ROLE_ARN: ${{ vars.AWS_TEST_DEPLOY_ROLE_ARN }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             ENVIRONMENT="$DISPATCH_ENVIRONMENT"
+            # test role의 OIDC trust가 refs/heads/test 하나뿐이라, 다른 ref에서 environment=test를
+            # 고르면 AssumeRoleWithWebIdentity가 sub 불일치로 실패한다. 그 불투명한 에러 대신
+            # 자격증명 접근 전에 원인을 말하고 fail-closed한다. dev/prod의 cross-ref dispatch
+            # ("main에서 dev를 고를 수도")는 기존 계약 그대로 둔다.
+            if [ "$ENVIRONMENT" = "test" ] && [ "$GITHUB_REF_NAME" != "test" ]; then
+              echo "environment=test must be dispatched from the test branch ref (current: $GITHUB_REF_NAME) - the test deploy role trusts refs/heads/test only" >&2
+              exit 1
+            fi
           elif [ "$GITHUB_REF_NAME" = "main" ]; then
             ENVIRONMENT=prod
+          elif [ "$GITHUB_REF_NAME" = "test" ]; then
+            ENVIRONMENT=test
           else
             ENVIRONMENT=dev
           fi
@@ -89,6 +107,7 @@ jobs:
           case "$ENVIRONMENT" in
             dev)
               INSTANCE_IDS="$DEV_INSTANCE_ID"
+              ROLE_ARN="$AWS_DEPLOY_ROLE_ARN"
               EXPECT_HOST_COUNT=1
               EXPECT_APP_ENV=dev
               EXPECT_REDIS_KEY_PREFIX=dev_
@@ -97,17 +116,29 @@ jobs:
               ;;
             prod)
               INSTANCE_IDS="$PROD_INSTANCE_IDS"
+              ROLE_ARN="$AWS_DEPLOY_ROLE_ARN"
               EXPECT_HOST_COUNT=2
               EXPECT_APP_ENV=prod
               EXPECT_REDIS_KEY_PREFIX=      # prod는 빈 prefix(dev만 dev_로 Redis 키를 격리)
               EXPECT_SWAGGER_ENABLED=false
               EXPECT_APP_GEO_MODE=kakao
               ;;
+            test)
+              INSTANCE_IDS="$TEST_INSTANCE_ID"
+              ROLE_ARN="$AWS_TEST_DEPLOY_ROLE_ARN"
+              EXPECT_HOST_COUNT=1
+              EXPECT_APP_ENV=test
+              EXPECT_REDIS_KEY_PREFIX=test_
+              EXPECT_SWAGGER_ENABLED=true
+              EXPECT_APP_GEO_MODE=kakao
+              ;;
             *)
-              echo "unknown deploy environment: '$ENVIRONMENT' (expected dev or prod)" >&2; exit 1 ;;
+              echo "unknown deploy environment: '$ENVIRONMENT' (expected dev, prod or test)" >&2; exit 1 ;;
           esac
           [ -n "$INSTANCE_IDS" ] \
             || { echo "no instance ids configured for environment $ENVIRONMENT (check repository secrets)" >&2; exit 1; }
+          [ -n "$ROLE_ARN" ] \
+            || { echo "no deploy role arn configured for environment $ENVIRONMENT (check repository variables)" >&2; exit 1; }
           # 공백·콤마 어느 쪽으로 적혀 있어도 같은 개수로 센다(배포 루프와 같은 정규화).
           set -- ${INSTANCE_IDS//,/ }
           [ "$#" = "$EXPECT_HOST_COUNT" ] \
@@ -115,6 +146,7 @@ jobs:
           {
             echo "environment=$ENVIRONMENT"
             echo "instance_ids=$INSTANCE_IDS"
+            echo "role_arn=$ROLE_ARN"
             echo "host_count=$EXPECT_HOST_COUNT"
             echo "expect_app_env=$EXPECT_APP_ENV"
             echo "expect_redis_key_prefix=$EXPECT_REDIS_KEY_PREFIX"
@@ -156,7 +188,8 @@ jobs:
         if: steps.gate.outputs.deploy == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          # 환경별 role은 Resolve 단계가 고른다(#400) — 여기서 다시 판단하지 않는다.
+          role-to-assume: ${{ steps.env.outputs.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
