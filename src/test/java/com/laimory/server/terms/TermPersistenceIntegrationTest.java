@@ -229,7 +229,7 @@ class TermPersistenceIntegrationTest {
         assertThat(termCatalogReadiness.checkStage(TermStage.LOGIN).ready()).isFalse();
 
         // 3) gate — 미준비 stage는 fail-open이라 예외 없이 통과한다(5xx가 아니라 경보 metric).
-        termsEnforcementService.requireAgreements(TermStage.LOGIN, newUserId());
+        termsEnforcementService.requireAgreements(List.of(TermStage.LOGIN), newUserId());
     }
 
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {

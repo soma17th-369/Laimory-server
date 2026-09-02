@@ -65,11 +65,14 @@ allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(�
 /user·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE·
 push-settings 3종·앱 초기화 GET /initializer와 온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은
 약관 동의와 독립된 절차라 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마쳐야 한다)). draft 생성·사진 presign은
-`@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위(현재
-필수 문서의 ID·종류·버전 summary + 동의 existence 1회)이고 TTL cache가 없으며, catalog 미준비
-stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal 때문에
-current 조회에서 빠진 경우)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness` metric·bounded
-log 경보).
+`@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위이고
+TTL cache가 없다 — 요청당 전 종류 current 요약을 catalog snapshot 1쿼리로 떠서(request attribute
+캐시, #428) 요청이 강제하는 stage들과 조건부 위치약관 판정이 공유하고, 동의는 ready stage 필수 문서
+id 합집합의 existence 1쿼리(+조건부는 별도 1쿼리)로 확인한다. 판정 시각 계약: 요청당 첫 판정 시점에
+캡처한 snapshot이 그 요청 전체의 판정 권위라 요청 도중 발효된 문서는 다음 요청부터 강제된다. catalog
+미준비 stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal
+때문에 current 조회에서 빠진 경우)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness`
+metric·bounded log 경보).
 token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니다.
 
 구현된 로그인·token 기능:

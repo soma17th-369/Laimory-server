@@ -54,7 +54,6 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -143,7 +142,7 @@ class TermsEnforcementInterceptorMvcTest {
     @Test
     void loginNotAgreed_generalProtectedEndpointRejected403BeforeService() throws Exception {
         doThrow(new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED))
-                .when(termsEnforcementService).requireAgreements(TermStage.LOGIN, USER_ID);
+                .when(termsEnforcementService).requireAgreements(List.of(TermStage.LOGIN), USER_ID);
 
         mockMvc.perform(get("/a/api/v1/timeline/daily-records").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isForbidden())
@@ -223,9 +222,11 @@ class TermsEnforcementInterceptorMvcTest {
 
     @Test
     void timelineFirstCreateNotAgreed_draftCreateRejected403BeforeAnyWork() throws Exception {
-        // LOGIN은 통과(no-op mock), TIMELINE_FIRST_CREATE만 미동의 — 검사는 검증·지오코딩·저장·dispatch 전이다.
+        // 미동의 판정 — 검사는 검증·지오코딩·저장·dispatch 전이다. 기본 LOGIN gate와 추가 stage는
+        // 한 번의 판정 호출로 병합된다(#428, 목록 순서는 LOGIN → 추가 stage).
         doThrow(new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED))
-                .when(termsEnforcementService).requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID);
+                .when(termsEnforcementService)
+                .requireAgreements(List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID);
 
         mockMvc.perform(post(DRAFTS).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(DRAFT_BODY))
@@ -233,16 +234,15 @@ class TermsEnforcementInterceptorMvcTest {
                 .andExpect(jsonPath("$.header.code").value(-3001));
 
         verifyNoInteractions(timelineDraftTaskService);
-        // 기본 LOGIN gate도 함께 적용된다(LOGIN → 추가 stage 순).
-        InOrder inOrder = Mockito.inOrder(termsEnforcementService);
-        inOrder.verify(termsEnforcementService).requireAgreements(TermStage.LOGIN, USER_ID);
-        inOrder.verify(termsEnforcementService).requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID);
+        verify(termsEnforcementService)
+                .requireAgreements(List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID);
     }
 
     @Test
     void timelineFirstCreateNotAgreed_photoPresignRejected403BeforeS3() throws Exception {
         doThrow(new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED))
-                .when(termsEnforcementService).requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID);
+                .when(termsEnforcementService)
+                .requireAgreements(List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID);
 
         mockMvc.perform(post(DRAFTS + "/photo-uploads").with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -260,8 +260,8 @@ class TermsEnforcementInterceptorMvcTest {
                         .contentType(MediaType.APPLICATION_JSON).content(DRAFT_BODY))
                 .andExpect(status().isAccepted());
 
-        verify(termsEnforcementService).requireAgreements(TermStage.LOGIN, USER_ID);
-        verify(termsEnforcementService).requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID);
+        verify(termsEnforcementService)
+                .requireAgreements(List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID);
         verify(timelineDraftTaskService).createDraftTask(Mockito.eq("v1"), Mockito.eq(USER_ID), Mockito.eq(SUBJECT_ID),
                 Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
     }
@@ -275,6 +275,6 @@ class TermsEnforcementInterceptorMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0));
 
-        verify(termsEnforcementService).requireAgreements(TermStage.LOGIN, USER_ID);
+        verify(termsEnforcementService).requireAgreements(List.of(TermStage.LOGIN), USER_ID);
     }
 }

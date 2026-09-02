@@ -3,6 +3,8 @@ package com.laimory.server.terms;
 import com.laimory.server.terms.service.TermsEnforcementService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,6 +18,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
  *
  * <p>기본은 {@code LOGIN} 단계 필수 문서 전부 동의다. {@link LoginTermsExempt}가 붙은 operation만
  * 기본 gate를 면제하고, {@link RequiredTermsStage}가 붙은 operation은 해당 단계를 추가로 검사한다.
+ * 두 gate는 stage 목록으로 모아 한 번에 판정한다 — catalog snapshot과 동의 existence 조회가 요청당
+ * 1회로 병합된다(#428, 판정 정책은 stage별 그대로).
  * annotation은 {@code *Api} interface method에 선언한다 — {@link HandlerMethod}의 annotation 탐색
  * (find semantics)이 구현 method의 interface 선언까지 본다.
  *
@@ -40,23 +44,27 @@ public class TermsEnforcementInterceptor implements HandlerInterceptor {
         if (userId == null) {
             return true;
         }
+        List<TermStage> stages = new ArrayList<>(2);
         if (handlerMethod.getMethodAnnotation(LoginTermsExempt.class) == null) {
-            enforce(TermStage.LOGIN, userId);
+            stages.add(TermStage.LOGIN);
         }
         RequiredTermsStage requiredStage = handlerMethod.getMethodAnnotation(RequiredTermsStage.class);
         if (requiredStage != null) {
-            enforce(requiredStage.value(), userId);
+            stages.add(requiredStage.value());
+        }
+        if (!stages.isEmpty()) {
+            enforce(stages, userId);
         }
         return true;
     }
 
-    private void enforce(TermStage stage, Long userId) {
+    private void enforce(List<TermStage> stages, Long userId) {
         TermsEnforcementService termsEnforcementService = termsEnforcementServiceProvider.getIfAvailable();
         if (termsEnforcementService == null) {
             // 구성 오류는 gate를 조용히 여는 대신 실패시킨다(CurrentSubjectArgumentResolver 선례).
             throw new IllegalStateException("terms enforcement service is unavailable");
         }
-        termsEnforcementService.requireAgreements(stage, userId);
+        termsEnforcementService.requireAgreements(stages, userId);
     }
 
     private static Long authenticatedUserId() {
