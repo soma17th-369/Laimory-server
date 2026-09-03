@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
  * DB에서 ACTIVE를 다시 읽어 재적재해 evict가 무효가 된다. 정상 반환 = commit 완료이므로 그 직후가
  * 올바른 시점이다. 멱등 202 수렴(이미 탈퇴)에서도 evict는 반복 무해(DEL/invalidate 멱등)하고,
  * transaction 예외 시에는 evict 없이 전파한다(회원이 ACTIVE로 남으므로 지울 것도 없다).
- * evict 실패는 {@link RedisActiveStatusCache#evict}가 삼킨다 — stale은 TTL이 수렴시키고 탈퇴 202를
+ * evict 실패는 {@code FailSafeCacheErrorHandler}가 삼킨다 — stale은 TTL이 수렴시키고 탈퇴 202를
  * 캐시 장애로 실패시키지 않는다(#429 보안 정책 ⓐ).
  */
 @Service
@@ -21,7 +21,7 @@ public class UserWithdrawalService {
 
     private final UserWithdrawalTransactionService userWithdrawalTransactionService;
     private final RedisActiveStatusCache redisActiveStatusCache;
-    private final SubjectMappingCache subjectMappingCache;
+    private final SubjectMappingService subjectMappingService;
 
     /**
      * 탈퇴를 접수한다. 정상 반환 = 논리 탈퇴·모든 push 차단(알림 OFF)·삭제 작업 접수가 commit되고
@@ -35,6 +35,6 @@ public class UserWithdrawalService {
         // ACTIVE gate가 보안 경계라 먼저 지운다(공유 Redis DEL — 전 인스턴스 즉시). subject는 값
         // 불변이라 위생 evict(자기 인스턴스 한정, 타 인스턴스 잔존은 ACTIVE gate가 앞에서 끊음).
         redisActiveStatusCache.evict(userId);
-        subjectMappingCache.evict(userId);
+        subjectMappingService.evictCachedMapping(userId);
     }
 }

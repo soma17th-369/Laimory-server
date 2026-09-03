@@ -47,7 +47,7 @@ import com.laimory.server.timeline.service.TimelineSaveService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.controller.UserController;
 import com.laimory.server.user.entity.User;
-import com.laimory.server.user.service.SubjectMappingCache;
+import com.laimory.server.user.service.SubjectMappingService;
 import com.laimory.server.user.service.UserService;
 import com.laimory.server.user.service.UserWithdrawalService;
 import java.util.List;
@@ -97,7 +97,7 @@ class TermsEnforcementInterceptorMvcTest {
     @MockitoBean
     private TermsEnforcementService termsEnforcementService;
     @MockitoBean
-    private SubjectMappingCache subjectMappingCache;
+    private SubjectMappingService subjectMappingService;
 
     @MockitoBean
     private TimelineDraftTaskService timelineDraftTaskService;
@@ -136,7 +136,7 @@ class TermsEnforcementInterceptorMvcTest {
 
     @BeforeEach
     void resolveSubject() {
-        when(subjectMappingCache.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
     }
 
     @Test

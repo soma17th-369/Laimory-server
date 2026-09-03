@@ -36,7 +36,7 @@ import com.laimory.server.timeline.service.PhotoUploadService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
-import com.laimory.server.user.service.SubjectMappingCache;
+import com.laimory.server.user.service.SubjectMappingService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -93,14 +93,14 @@ class TimelineControllerTest {
     @MockitoBean
     private PhotoUploadService photoUploadService;
     @MockitoBean
-    private SubjectMappingCache subjectMappingCache;
+    private SubjectMappingService subjectMappingService;
     // 약관 gate interceptor(#303)가 슬라이스에도 적용된다 — 기본 no-op mock이면 gate 통과.
     @MockitoBean
     private TermsEnforcementService termsEnforcementService;
 
     @BeforeEach
     void resolveSubject() {
-        when(subjectMappingCache.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
     }
 
     @Test

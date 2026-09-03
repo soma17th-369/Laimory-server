@@ -14,7 +14,7 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.onboarding.service.OnboardingService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.testsupport.TestSubjects;
-import com.laimory.server.user.service.SubjectMappingCache;
+import com.laimory.server.user.service.SubjectMappingService;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,11 +43,11 @@ class OnboardingControllerTest {
     private OnboardingService onboardingService;
 
     @MockitoBean
-    private SubjectMappingCache subjectMappingCache;
+    private SubjectMappingService subjectMappingService;
 
     @BeforeEach
     void resolveSubject() {
-        when(subjectMappingCache.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
+        when(subjectMappingService.getRequired(USER_ID)).thenReturn(SUBJECT_ID);
     }
 
     @Test

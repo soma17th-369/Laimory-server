@@ -59,7 +59,10 @@ dependencies {
 	// @WithSpan 선택 계측(서비스 경계 span — #277). OTel javaagent(배포 이미지 탑재, .env로 활성화)가
 	// 없으면 애노테이션은 완전 no-op. 버전은 agent와 동일 라인 유지. Spring BOM 비관리 → 버전 명시.
 	implementation 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-annotations:2.30.0'
-	// subject 매핑 in-memory 캐시(#429 — 요청 고정비 제거, 값 불변이라 per-host 안전). 버전은 Spring BOM 관리.
+	// 인증 요청 고정비 캐시(#429)의 추상화 — @Cacheable/@CacheEvict와 CacheManager 계약. 배선은
+	// CacheConfig가 소유한다(Redis 매니저 + Caffeine 매니저). 버전은 Spring BOM 관리.
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	// 위 추상화의 로컬 저장소 구현(#429 — subject 매핑처럼 무효화 전파가 불필요한 캐시용). 버전은 Spring BOM 관리.
 	implementation 'com.github.ben-manes.caffeine:caffeine'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'

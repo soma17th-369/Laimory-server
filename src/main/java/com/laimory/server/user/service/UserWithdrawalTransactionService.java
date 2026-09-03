@@ -62,7 +62,10 @@ public class UserWithdrawalTransactionService {
             // WITHDRAWAL_PENDING: 이미 인증을 통과한 동시 탈퇴가 먼저 commit — 멱등 202 수렴(작업은 승자가 완료).
             return;
         }
-        // 탈퇴 회원은 일반 request 경로를 다시 타지 않으므로 이 해석이 마지막 lazy rekey 기회다(§4.2).
+        // 이 해석은 subject 캐시를 탈 수 있다(#429 — 캐시가 서비스 안쪽이다). rotation 중 mapping을
+        // current로 옮기는 최종 보장은 erasure의 대상 해석(AccountErasureService#resolveTarget)이 하고,
+        // 유예가 캐시 TTL을 압도해 그 시점엔 사실상 miss다. 여기서 hit가 나면 그 행이 rotation 완료
+        // 게이트를 유예기간만큼 붙잡을 수 있다는 것이 유일한 대가이며 — 드문 교차라 수용한다.
         UUID subjectId = subjectMappingService.getRequired(userId);
         // 마스터 OFF 하나로 예정 알림과 타임라인 완료 push가 모두 막힌다. 어느 UPDATE든 0행이면 예외가
         // 전파돼 이 transaction 전체가 rollback되므로 중간 상태는 존재하지 않는다.

@@ -3,127 +3,116 @@ package com.laimory.server.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.redis.RedisGateway;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.dao.QueryTimeoutException;
-import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 
 /**
- * ACTIVE 검사 캐시(#429)의 계약 고정: ACTIVE=true만 캐시(음성 미적재), 적중 시 DB 미호출,
- * Redis 장애 fail-safe-to-DB(GET=miss 간주·SET 무시·DEL은 TTL 수렴), miss 경로 DB 장애는
- * 그대로 전파(필터 fail-closed 500 계약 유지).
+ * ACTIVE 검사 캐시(#429)의 어노테이션 계약 고정: 적중 시 DB 미호출, 음성(false) 미적재,
+ * evict 후 재조회는 DB 재확인, miss 경로 DB 장애는 그대로 전파(필터 fail-closed 500 계약 유지).
+ *
+ * <p>저장소는 스탠드인 {@link ConcurrentMapCacheManager}다 — 검증 대상이 "어느 저장소에 어떻게
+ * 쓰이는가"가 아니라 "{@code @Cacheable}/{@code @CacheEvict}가 이 메서드에 어떤 계약을 만드는가"라서다.
+ * 다만 <b>빈 이름은 실제 매니저 이름과 같아야</b> 어노테이션의 {@code cacheManager} 지정이 풀린다 —
+ * 이름이 어긋나면 컨텍스트가 뜨지 않아 오타가 여기서 잡힌다. 실 Redis 왕복(키 모양·TTL 고정·공유
+ * DEL 전파)은 {@code RedisActiveStatusCacheIntegrationTest}가 담당한다.
  */
+@SpringJUnitConfig(RedisActiveStatusCacheTest.CacheSliceConfig.class)
 class RedisActiveStatusCacheTest {
 
     private static final long USER_ID = 42L;
-    private static final String KEY = RedisActiveStatusCache.KEY_PREFIX + USER_ID;
 
+    @Autowired
     private UserAccountService userAccountService;
-    private RedisGateway redisGateway;
+    @Autowired
     private RedisActiveStatusCache cache;
+    @Autowired
+    private CacheManager activeStatusCacheManager;
 
     @BeforeEach
-    void setUp() {
-        userAccountService = mock(UserAccountService.class);
-        redisGateway = mock(RedisGateway.class);
-        cache = new RedisActiveStatusCache(userAccountService, redisGateway, new SimpleMeterRegistry());
+    void resetSlice() {
+        reset(userAccountService);
+        activeStatusCacheManager.getCache(RedisActiveStatusCache.CACHE_NAME).clear();
     }
 
     @Test
     void isActive_cacheHit_trustsCacheWithoutDbCall() {
-        when(redisGateway.get(KEY)).thenReturn(RedisActiveStatusCache.CACHED_VALUE);
-
-        assertThat(cache.isActive(USER_ID)).isTrue();
-
-        // 적중은 DB를 아예 안 본다 — 요청 고정비 제거의 본체이자 "hit는 캐시 신뢰" 의미론.
-        verifyNoInteractions(userAccountService);
-        verify(redisGateway, never()).set(Mockito.anyString(), Mockito.anyString(), Mockito.any());
-    }
-
-    @Test
-    void isActive_missAndActive_populatesWithWriteFixedTtl() {
-        when(redisGateway.get(KEY)).thenReturn(null);
         when(userAccountService.isActive(USER_ID)).thenReturn(true);
 
         assertThat(cache.isActive(USER_ID)).isTrue();
+        assertThat(cache.isActive(USER_ID)).isTrue();
 
-        verify(redisGateway).set(KEY, RedisActiveStatusCache.CACHED_VALUE, RedisActiveStatusCache.TTL);
+        // 두 번째 호출은 DB를 아예 안 본다 — 요청 고정비 제거의 본체이자 "hit는 캐시 신뢰" 의미론.
+        verify(userAccountService, times(1)).isActive(USER_ID);
     }
 
     @Test
-    void isActive_missAndInactive_neverCachesNegative() {
-        when(redisGateway.get(KEY)).thenReturn(null);
+    void isActive_negativeResult_isNeverCached() {
         when(userAccountService.isActive(USER_ID)).thenReturn(false);
 
         assertThat(cache.isActive(USER_ID)).isFalse();
+        assertThat(cache.isActive(USER_ID)).isFalse();
 
         // 음성 캐시 금지 — 탈퇴 판정이 캐시에 얼어붙으면 안 된다(#429 원칙 2).
-        verify(redisGateway, never()).set(Mockito.anyString(), Mockito.anyString(), Mockito.any());
+        verify(userAccountService, times(2)).isActive(USER_ID);
+        assertThat(activeStatusCacheManager.getCache(RedisActiveStatusCache.CACHE_NAME).get(USER_ID))
+                .isNull();
     }
 
     @Test
-    void isActive_redisReadFailure_fallsBackToDbWithoutWriteAttempt() {
-        when(redisGateway.get(KEY)).thenThrow(new RedisConnectionFailureException("down"));
-        when(userAccountService.isActive(USER_ID)).thenReturn(true);
-
-        // Redis 장애는 miss로 강등 — 인증을 Redis발 500으로 만들지도, 조용한 401로 숨기지도 않는다.
-        assertThat(cache.isActive(USER_ID)).isTrue();
-
-        // GET이 실패한 요청은 SET도 생략 — 장애 중 요청당 command timeout을 두 번 물지 않는다.
-        verify(redisGateway, never()).set(Mockito.anyString(), Mockito.anyString(), Mockito.any());
-    }
-
-    @Test
-    void isActive_unknownCachedValue_isNotTrustedAndReverifiesAgainstDb() {
-        when(redisGateway.get(KEY)).thenReturn("0");
-        when(userAccountService.isActive(USER_ID)).thenReturn(true);
+    void evict_forcesDbReverificationOnNextCall() {
+        when(userAccountService.isActive(USER_ID)).thenReturn(true).thenReturn(false);
 
         assertThat(cache.isActive(USER_ID)).isTrue();
+        cache.evict(USER_ID);
 
-        // "1" 외 값은 hit가 아니다 — 손상·비호환 값이 DB 확인 없이 인증되지 않고, 정상 적재가 덮어쓴다.
-        verify(userAccountService).isActive(USER_ID);
-        verify(redisGateway).set(KEY, RedisActiveStatusCache.CACHED_VALUE, RedisActiveStatusCache.TTL);
-    }
-
-    @Test
-    void isActive_redisWriteFailure_isSwallowed() {
-        when(redisGateway.get(KEY)).thenReturn(null);
-        when(userAccountService.isActive(USER_ID)).thenReturn(true);
-        Mockito.doThrow(new QueryTimeoutException("timeout"))
-                .when(redisGateway).set(KEY, RedisActiveStatusCache.CACHED_VALUE, RedisActiveStatusCache.TTL);
-
-        assertThat(cache.isActive(USER_ID)).isTrue();
+        // 탈퇴 커밋 후 evict → 다음 검사는 miss → DB 재확인 → 차단.
+        assertThat(cache.isActive(USER_ID)).isFalse();
+        verify(userAccountService, times(2)).isActive(USER_ID);
     }
 
     @Test
     void isActive_missPathDbFailure_propagates() {
-        when(redisGateway.get(KEY)).thenReturn(null);
         when(userAccountService.isActive(USER_ID)).thenThrow(new IllegalStateException("db down"));
 
         // miss 경로의 DB 장애는 그대로 전파 — 필터의 fail-closed 500 -500 계약이 여기서 성립한다.
         assertThatThrownBy(() -> cache.isActive(USER_ID)).isInstanceOf(IllegalStateException.class);
     }
 
-    @Test
-    void evict_deletesSharedKey() {
-        cache.evict(USER_ID);
+    /**
+     * {@code proxyTargetClass}는 슬라이스에 Boot의 AOP auto-config(기본값이 class proxying)가 없어서
+     * 명시한다 — 이 빈은 인터페이스를 구현하므로 JDK 프록시가 되면 구체 타입 주입이 깨진다
+     * (배선을 그 형태로 하는 곳은 {@code SecurityConfig}다).
+     */
+    @Configuration
+    @EnableCaching(proxyTargetClass = true)
+    static class CacheSliceConfig {
 
-        verify(redisGateway).delete(KEY);
-    }
+        /** 빈 이름이 곧 어노테이션의 {@code cacheManager} 지정값이다. */
+        @Bean
+        CacheManager activeStatusCacheManager() {
+            return new ConcurrentMapCacheManager(RedisActiveStatusCache.CACHE_NAME);
+        }
 
-    @Test
-    void evict_deleteFailure_isSwallowedForTtlConvergence() {
-        when(redisGateway.delete(KEY)).thenThrow(new RedisConnectionFailureException("down"));
+        @Bean
+        UserAccountService userAccountService() {
+            return mock(UserAccountService.class);
+        }
 
-        // DEL 실패는 TTL 수렴(#429 정책 ⓐ) — 탈퇴 202를 캐시 장애로 실패시키지 않는다.
-        cache.evict(USER_ID);
+        @Bean
+        RedisActiveStatusCache redisActiveStatusCache(UserAccountService userAccountService) {
+            return new RedisActiveStatusCache(userAccountService);
+        }
     }
 }

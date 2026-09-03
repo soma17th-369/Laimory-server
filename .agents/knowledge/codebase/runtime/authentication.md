@@ -63,9 +63,9 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 
 ### 탈퇴 차단 정책(#429) — #305 §5.3 "매 요청 확인·즉시 차단"의 명시적 완화
 
-필터 ACTIVE 검사의 캐시 규칙: **ACTIVE=true만** 캐시(음성 미적재), 무효화는 탈퇴 orchestrator의
-commit 후 **DEL 하나**(갱신 경로 없음), TTL 15분은 evict 유실 대비 안전망으로 **쓰기 시점
-고정**(SET EX — 조회가 연장하지 않음)이다. 발급·회전(`AuthTokenService`)은 캐시 없이
+필터 ACTIVE 검사의 캐시 규칙: **ACTIVE=true만** 캐시(음성 미적재 — `@Cacheable`의 `unless`),
+무효화는 탈퇴 orchestrator의 commit 후 **evict 하나**(갱신 경로 없음), TTL 15분은 evict 유실 대비
+안전망으로 **쓰기 시점 고정**(조회가 연장하지 않음)이다. 발급·회전(`AuthTokenService`)은 캐시 없이
 `UserAccountService`로 DB 직행하며, 이 경계는 `AuthContextCacheAccessArchTest`가 빌드에서 강제한다.
 
 탈퇴 시점 기준의 유한한 hard bound는 선언하지 않는다(fencing·발급 직렬화·완료시간 상한 비채택의

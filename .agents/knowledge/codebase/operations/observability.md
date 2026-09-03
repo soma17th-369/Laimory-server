@@ -220,6 +220,10 @@ Spring JSON stdout
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
 - 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
+- 캐시(#429)는 Spring Cache 표준 meter를 그대로 쓴다 — `cache.gets{cache,result=hit|miss}`와
+  `cache.puts`·`cache.evictions` 계열이며 `cache` tag 값은 캐시 이름(`user:active`,
+  `subject:mapping`)이다. Boot는 **기동 시점에 존재하는 캐시만** 바인딩하므로 `CacheConfig`가
+  두 manager에 캐시 이름을 미리 선언한다(선언이 빠지면 meter가 영영 노출되지 않는다).
 - 경보 규칙까지 물리지 않을 지표는 붙이지 않는다(write-only 지표 금지) — 예: 계정 삭제 작업(#305)
   PENDING backlog는 gauge 없이 runbook의 수동 SELECT로 확인한다.
 - custom meter:
@@ -238,11 +242,12 @@ Spring JSON stdout
   - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
     subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다.
     ⚠️ #429부터 `lookup`은 subject 캐시 **miss 시 load에서만** 기록된다 — 요청당 해석 전수가 아니므로
-    배포 전후 count를 같은 의미로 비교하지 말 것. 해석 전수(hit 포함)는 Caffeine 표준 meter
-    `cache.gets{cache=subject-mapping,result=hit|miss}`가 담당한다(`cache.size`·eviction 계열 동반)
-  - `laimory.user.active.cache{result=hit|miss|fallback}`: 필터 ACTIVE 검사 캐시 조회 counter(#429).
-    `fallback`은 Redis 장애로 DB 직행한 조회 — redis 가용성 경보의 요청 관점 보조 신호다.
-    hit는 DB를 보지 않으므로 users 조회량 지표와의 차이가 곧 캐시 절감분이다
+    배포 전후 count를 같은 의미로 비교하지 말 것. 해석 전수(hit 포함)는 표준 meter
+    `cache.gets{cache=subject:mapping,result=hit|miss}`가 담당한다(`cache.size`·eviction 계열 동반)
+  - `laimory.cache.fallback{cache=user:active|subject:mapping}`: 캐시 저장소 조회가 실패해 원본
+    경로(DB)로 강등된 수(#429 — `FailSafeCacheErrorHandler`). 사실상 Redis 장애 신호이며 redis
+    가용성 경보의 요청 관점 보조다. 적재·무효화 실패는 요청을 강등시키지 않으므로 세지 않는다
+    (무효화 실패는 WARN 로그로 남는다). tag는 캐시 이름뿐이다 — 식별자를 넣지 않는다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
   - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
     unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회
