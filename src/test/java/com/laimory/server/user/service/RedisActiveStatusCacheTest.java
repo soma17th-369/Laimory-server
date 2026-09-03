@@ -70,12 +70,27 @@ class RedisActiveStatusCacheTest {
     }
 
     @Test
-    void isActive_redisReadFailure_fallsBackToDb() {
+    void isActive_redisReadFailure_fallsBackToDbWithoutWriteAttempt() {
         when(redisGateway.get(KEY)).thenThrow(new RedisConnectionFailureException("down"));
         when(userAccountService.isActive(USER_ID)).thenReturn(true);
 
         // Redis 장애는 miss로 강등 — 인증을 Redis발 500으로 만들지도, 조용한 401로 숨기지도 않는다.
         assertThat(cache.isActive(USER_ID)).isTrue();
+
+        // GET이 실패한 요청은 SET도 생략 — 장애 중 요청당 command timeout을 두 번 물지 않는다.
+        verify(redisGateway, never()).set(Mockito.anyString(), Mockito.anyString(), Mockito.any());
+    }
+
+    @Test
+    void isActive_unknownCachedValue_isNotTrustedAndReverifiesAgainstDb() {
+        when(redisGateway.get(KEY)).thenReturn("0");
+        when(userAccountService.isActive(USER_ID)).thenReturn(true);
+
+        assertThat(cache.isActive(USER_ID)).isTrue();
+
+        // "1" 외 값은 hit가 아니다 — 손상·비호환 값이 DB 확인 없이 인증되지 않고, 정상 적재가 덮어쓴다.
+        verify(userAccountService).isActive(USER_ID);
+        verify(redisGateway).set(KEY, RedisActiveStatusCache.CACHED_VALUE, RedisActiveStatusCache.TTL);
     }
 
     @Test

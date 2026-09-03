@@ -236,7 +236,13 @@ Spring JSON stdout
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
     없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)
   - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
-    subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다
+    subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다.
+    ⚠️ #429부터 `lookup`은 subject 캐시 **miss 시 load에서만** 기록된다 — 요청당 해석 전수가 아니므로
+    배포 전후 count를 같은 의미로 비교하지 말 것. 해석 전수(hit 포함)는 Caffeine 표준 meter
+    `cache.gets{cache=subject-mapping,result=hit|miss}`가 담당한다(`cache.size`·eviction 계열 동반)
+  - `laimory.user.active.cache{result=hit|miss|fallback}`: 필터 ACTIVE 검사 캐시 조회 counter(#429).
+    `fallback`은 Redis 장애로 DB 직행한 조회 — redis 가용성 경보의 요청 관점 보조 신호다.
+    hit는 DB를 보지 않으므로 users 조회량 지표와의 차이가 곧 캐시 절감분이다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
   - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
     unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회

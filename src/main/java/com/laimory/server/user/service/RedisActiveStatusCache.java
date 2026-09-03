@@ -21,7 +21,8 @@ import org.springframework.stereotype.Component;
  * 한시적으로 허용된다 — 정확한 노출 정책은 #429 "🔒 보안 정책 개정" 참고.
  *
  * <p>장애 의미론: Redis 장애는 fail-safe-to-DB다 — GET 실패는 miss로 간주해 DB 직행하고(Redis 장애로
- * 인증을 500으로 만들지 않는다), SET 실패는 무시, DEL 실패는 TTL 수렴에 맡긴다. 반면 miss 경로의
+ * 인증을 500으로 만들지 않는다), GET이 실패한 요청은 SET도 생략해 장애 중 요청당 Redis 시도를
+ * 1회(command timeout 1회분)로 제한한다. SET 실패는 무시, DEL 실패는 TTL 수렴에 맡긴다. 반면 miss 경로의
  * DB 장애는 그대로 전파해 필터의 기존 fail-closed 500 {@code -500} 계약을 유지한다(warm hit는 DB를
  * 호출하지 않으므로 그 요청에서는 DB 장애가 관측되지 않는다 — 의도된 의미 변화). 예외·로그에
  * userId를 담지 않는다.
@@ -30,7 +31,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class RedisActiveStatusCache implements UserAccountAccessService {
 
-    /** logical key는 {@code {feature}:{entity}:{id}} 규칙(persistence knowledge)이다. 값은 존재 표식 "1". */
+    /**
+     * logical key는 {@code {feature}:{entity}:{id}} 규칙(persistence knowledge)이다. 값은 존재 표식
+     * "1"이며 그 외 값은 hit로 인정하지 않는다 — 손상·비호환 값이 DB 확인 없이 인증되는 것을 막고,
+     * miss로 강등된 뒤 정상 적재("1")가 덮어쓴다.
+     */
     static final String KEY_PREFIX = "user:active:";
     static final String CACHED_VALUE = "1";
     /**
@@ -64,13 +69,14 @@ public class RedisActiveStatusCache implements UserAccountAccessService {
             redisDown = true;
             log.warn("active cache read failed - falling back to DB: type={}", e.getClass().getName());
         }
-        if (cached != null) {
+        if (CACHED_VALUE.equals(cached)) {
             record("hit");
             return true;
         }
         record(redisDown ? "fallback" : "miss");
         boolean active = userAccountService.isActive(userId);
-        if (active) {
+        // GET이 실패한 장애 중엔 SET을 생략 — 어차피 실패할 시도로 요청당 timeout을 한 번 더 물지 않는다.
+        if (active && !redisDown) {
             try {
                 redisGateway.set(KEY_PREFIX + userId, CACHED_VALUE, TTL);
             } catch (RuntimeException e) {
