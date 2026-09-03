@@ -66,8 +66,10 @@ public class RedisActiveStatusCache implements UserAccountAccessService {
             cached = redisGateway.get(KEY_PREFIX + userId);
         } catch (RuntimeException e) {
             // fail-safe-to-DB: Redis 장애를 miss로 간주 — 조용한 401 강등도, Redis발 500도 만들지 않는다.
+            // hot path라 요청량 비례 로그를 남기지 않는다(DEBUG) — 장애 신호는 fallback counter와
+            // redis_up 경보 몫이고, 예외 상세가 필요하면 이 로거만 레벨을 낮춰 본다.
             redisDown = true;
-            log.warn("active cache read failed - falling back to DB: type={}", e.getClass().getName());
+            log.debug("active cache read failed - falling back to DB: type={}", e.getClass().getName());
         }
         if (CACHED_VALUE.equals(cached)) {
             record("hit");
@@ -80,8 +82,8 @@ public class RedisActiveStatusCache implements UserAccountAccessService {
             try {
                 redisGateway.set(KEY_PREFIX + userId, CACHED_VALUE, TTL);
             } catch (RuntimeException e) {
-                // 적재 실패는 성능 손실로 끝난다(다음 요청이 다시 DB를 읽음).
-                log.warn("active cache write failed: type={}", e.getClass().getName());
+                // 적재 실패는 성능 손실로 끝난다(다음 요청이 다시 DB를 읽음). hot path라 DEBUG.
+                log.debug("active cache write failed: type={}", e.getClass().getName());
             }
         }
         return active;
