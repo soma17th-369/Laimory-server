@@ -52,12 +52,13 @@ public interface UserApi {
                     + "`/a/api` 접근과 token/refresh 발급 차단), 모든 push 발송 차단(전체 알림 마스터와 일일 "
                     + "알림을 OFF로 전환), 개인정보 삭제 작업의 durable 접수가 commit됐다는 뜻이며 데이터 물리 "
                     + "삭제 완료를 뜻하지 않는다(후속 worker 책임). refresh 행과 push 등록(FID)은 이 시점에 "
-                    + "지우지 않고 보존하며(#367), 사용 차단은 매 요청·발급 전의 회원 상태 검사가 담당한다 — "
+                    + "지우지 않고 보존하며(#367), 사용 차단은 요청·발급 전의 회원 상태 검사가 담당한다 — "
                     + "물리 삭제는 후속 삭제 worker가 소유한다. "
                     + "request body는 없다 — 유효한 bearer 인증이 본인 확인 수단이다. "
                     + "이미 인증을 통과한 동시 탈퇴 요청은 같은 202로 멱등 수렴하고, 접수 commit 뒤 같은 access "
-                    + "token의 새 요청은 401이다(앱은 이를 이미 탈퇴 처리된 terminal 결과로 취급). 같은 소셜 "
-                    + "계정의 다음 로그인은 과거 데이터·약관 동의와 연결되지 않는 완전히 새로운 가입이다.")
+                    + "token의 새 요청은 401로 수렴한다(#429 — 접수와 겹친 in-flight 요청·발급의 산물만 "
+                    + "한시적으로 남을 수 있고 연장은 불가; 앱은 401을 이미 탈퇴 처리된 terminal 결과로 취급). "
+                    + "같은 소셜 계정의 다음 로그인은 과거 데이터·약관 동의와 연결되지 않는 완전히 새로운 가입이다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "탈퇴 접수 완료(body=null) — 논리 탈퇴·credential 차단·삭제 작업 접수가 "

@@ -6,7 +6,7 @@ import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.auth.security.JwtAuthenticationFilter;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.RedisActiveStatusCache;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
@@ -60,10 +60,11 @@ public class SecurityConfig {
 
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokens jwtTokens,
-                                                           UserAccountAccessService userAccountAccessService,
+                                                           RedisActiveStatusCache redisActiveStatusCache,
                                                            ApiErrorResponseWriter apiErrorResponseWriter) {
-        // #305: JWT 파싱 후 매 요청 active 검사 — 탈퇴 회원의 기존 access token을 즉시 차단한다.
-        return new JwtAuthenticationFilter(jwtTokens, userAccountAccessService, apiErrorResponseWriter);
+        // #305/#429: JWT 파싱 후 요청마다 active 검사 — 필터 경로만 캐시를 태운다(탈퇴 커밋 후 시작된
+        // 요청은 evict로 차단되고, 한시적 stale은 #429 보안 정책 개정이 허용). 발급·회전은 DB 직행 유지.
+        return new JwtAuthenticationFilter(jwtTokens, redisActiveStatusCache, apiErrorResponseWriter);
     }
 
     /** Filter 빈은 Boot가 서블릿 필터로도 자동 등록한다 — Security 체인 안에서만 실행되도록 전역 등록을 끈다. */

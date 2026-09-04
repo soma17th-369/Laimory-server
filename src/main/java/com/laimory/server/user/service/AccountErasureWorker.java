@@ -49,6 +49,7 @@ public class AccountErasureWorker {
 
     private final AccountErasureJobService jobService;
     private final AccountErasureService erasureService;
+    private final SubjectMappingService subjectMappingService;
     private final AccountErasureWorkerProperties properties;
     private final TaskExecutor quiesceExecutor;
     private final TaskExecutor deleteExecutor;
@@ -59,12 +60,14 @@ public class AccountErasureWorker {
     public AccountErasureWorker(
             AccountErasureJobService jobService,
             AccountErasureService erasureService,
+            SubjectMappingService subjectMappingService,
             AccountErasureWorkerProperties properties,
             @Qualifier("accountErasureQuiesceWorkerExecutor") TaskExecutor quiesceExecutor,
             @Qualifier("accountErasureDeleteWorkerExecutor") TaskExecutor deleteExecutor,
             Clock clock) {
         this.jobService = jobService;
         this.erasureService = erasureService;
+        this.subjectMappingService = subjectMappingService;
         this.properties = properties;
         this.quiesceExecutor = quiesceExecutor;
         this.deleteExecutor = deleteExecutor;
@@ -210,6 +213,10 @@ public class AccountErasureWorker {
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
             erasureService.deletePhotoObjects(subjectId);
             erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
+            // 위 대상 해석이 subject 캐시에 이 회원을 적재해 뒀다(#429). 그대로 두면 TTL까지 이미
+            // 삭제된 mapping의 해석이 남으므로, 적재한 host 자신이 finalization commit 뒤에 걷어낸다
+            // — 적재 host = 이 worker host라 로컬 evict로 충분하다.
+            subjectMappingService.evictCachedMapping(job.getUserId());
             summary.recordProcessed();
         } catch (TimelineContentErasureService.CrossSubjectItemException exception) {
             // 다른 subject가 소유한 Item이 섞여 있다 — 손상 상태이므로 재시도로 풀리지 않는다.

@@ -12,7 +12,11 @@ import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 
-/** {@link CurrentSubject} 파라미터를 현재 인증 사용자의 콘텐츠 subject로 변환한다. */
+/**
+ * {@link CurrentSubject} 파라미터를 현재 인증 사용자의 콘텐츠 subject로 변환한다.
+ * 해석은 {@link SubjectMappingService#getRequired}가 소유한 캐시를 탄다(#429) — 적중 시
+ * transaction·DB 조회 없이 끝난다.
+ */
 @Component
 public class CurrentSubjectArgumentResolver implements HandlerMethodArgumentResolver {
 

@@ -21,18 +21,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /**
  * {@code /a/api} 요청의 Bearer access JWT를 검증해 {@code Long} userId principal을 SecurityContext에 넣는다.
  *
- * <p>JWT 파싱 성공만으로는 인증이 성립하지 않는다 — 매 요청 {@link UserAccountAccessService#isActive}로
- * 회원 행이 {@code ACTIVE}인지 확인한 경우에만 SecurityContext를 만든다(#305 §5.3, 탈퇴 회원의 기존
- * access token 즉시 차단). 회원 없음과 {@code WITHDRAWAL_PENDING}은 token 상세와 구분하지 않고 context
- * 없이 통과시켜 인가 단계의 기존 401 {@code -2001}로 수렴한다. active 상태는 cache하지 않는다(탈퇴
- * 직후 stale 허용 창 금지).
+ * <p>JWT 파싱 성공만으로는 인증이 성립하지 않는다 — 요청마다 {@link UserAccountAccessService#isActive}로
+ * 회원 행이 {@code ACTIVE}인지 확인한 경우에만 SecurityContext를 만든다(#305 §5.3). 회원 없음과
+ * {@code WITHDRAWAL_PENDING}은 token 상세와 구분하지 않고 context 없이 통과시켜 인가 단계의 기존
+ * 401 {@code -2001}로 수렴한다. 이 검사는 #429부터 공유 Redis 캐시({@code RedisActiveStatusCache},
+ * ACTIVE=true만·탈퇴 시 DEL·TTL 안전망)를 탄다 — 탈퇴 커밋·evict 뒤 시작된 요청은 결정적으로
+ * 차단되고, evict 유실·적재 경합의 한시적 stale 인증은 #429 "보안 정책 개정"이 명시적으로 허용한다
+ * (커밋 전 in-flight 작업의 산물만 노출되고, 각 token은 발급 시각+수명까지, 회전 사슬은 1회 종결).
  *
  * <p>이 필터는 인증 "시도"만 한다 — 헤더 부재·형식 불량·검증 실패는 사유 구분 없이 context 없이 chain을
  * 진행시키고, 거절(401 {@code -2001})은 인가 단계의 {@link ApiAuthenticationEntryPoint}가 담당한다.
  * 사유는 클라이언트 행동을 바꾸지 않으므로(전부 재인증 경로) 응답·로그에 상세를 남기지 않는다.
  * 단 하나의 예외가 상태 조회의 DB 장애다 — 장애를 조용한 401(credential 오류)로 숨기지 않고
  * {@link ApiErrorResponseWriter}로 fail-closed 500 {@code -500} envelope와 ERROR 관측(access 로그
- * attribute + stacktrace 로그)을 남긴 뒤 chain을 중단한다.
+ * attribute + stacktrace 로그)을 남긴 뒤 chain을 중단한다. 이 계약은 <b>캐시 miss 경로</b>에서
+ * 유지된다 — warm hit는 DB를 호출하지 않아 그 요청에서 DB 장애가 관측되지 않고, Redis 장애는
+ * 캐시가 miss로 강등해 DB 직행한다(#429 장애 의미론).
  *
  * <p>principal은 별도 래퍼 없이 {@code Long} userId 그대로다 — 컨트롤러의
  * {@code @AuthenticationPrincipal Long userId}와 1:1로 맞춘다. token 원문은 credentials나
