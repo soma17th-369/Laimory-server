@@ -81,8 +81,12 @@ a:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; border-radius
 hr { margin: 3rem 0; border: 0; border-top: 1px solid #cbd5e1; }
 .table-scroll { width: 100%; margin: 1.25rem 0 1.75rem; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: .65rem; background: #fff; -webkit-overflow-scrolling: touch; }
 .table-scroll:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+/* 화면이 넉넉하면 표만 본문 좌우로 넓혀, 열이 많은 표가 가로 스크롤 없이 들어가게 한다. */
+@media (min-width: 1320px) {
+  .table-scroll { width: calc(100% + 340px); margin-inline: -170px; }
+}
 table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: .9375rem; line-height: 1.6; }
-th, td { padding: .85rem .9rem; border-right: 1px solid #dbe2ea; border-bottom: 1px solid #dbe2ea; text-align: left; vertical-align: top; }
+th, td { overflow-wrap: break-word; padding: .85rem .9rem; border-right: 1px solid #dbe2ea; border-bottom: 1px solid #dbe2ea; text-align: left; vertical-align: top; }
 th:last-child, td:last-child { border-right: 0; }
 tbody tr:last-child td { border-bottom: 0; }
 th { color: #111827; background: #eef3f8; font-weight: 700; }
