@@ -86,7 +86,7 @@ th, td { overflow-wrap: break-word; padding: .85rem .9rem; border-right: 1px sol
 th:last-child, td:last-child { border-right: 0; }
 tbody tr:last-child td { border-bottom: 0; }
 th { color: #111827; background: #eef3f8; font-weight: 700; }
-p strong, li strong, td strong, th strong { color: #172554; font-size: 1.2em; font-weight: 750; text-decoration-line: underline; text-decoration-color: #93c5fd; text-decoration-thickness: .12em; text-underline-offset: .2em; }
+p strong, li strong, td strong, th strong { font-weight: 700; }
 @media (max-width: 640px) {
   .legal-document { padding: 1.6rem 1.1rem 3rem; box-shadow: none; }
   h1 { margin-bottom: 2rem; font-size: 1.65rem; }
