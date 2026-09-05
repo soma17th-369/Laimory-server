@@ -10,5 +10,30 @@
         "95:7C:55:EE:29:A5:D4:71:73:47:FB:6A:D3:60:06:9A:4D:06:82:9F:B5:48:D3:E7:4C:23:35:38:90:53:95:8B"
       ]
     }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.soma369.laimory",
+      "sha256_cert_fingerprints": [
+        "34:50:B6:6C:30:EA:B5:C1:0B:9C:D8:5B:9E:E9:90:C5:24:0B:D1:FA:73:27:58:9D:12:7F:4F:66:7C:48:E3:8A",
+        "9B:C9:F1:1D:C2:CA:91:8C:E7:A9:41:0C:0C:11:79:E7:D8:4A:FB:05:62:D4:3F:F6:73:5C:02:61:B1:42:BE:11"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.soma369.laimory.qa",
+      "sha256_cert_fingerprints": [
+        "30:56:73:00:FA:02:B7:04:CA:89:37:86:AA:D7:78:8B:EF:C6:89:EE:C5:A5:20:B4:3A:18:70:6F:F4:AE:A4:10"
+      ]
+    }
   }
 ]
