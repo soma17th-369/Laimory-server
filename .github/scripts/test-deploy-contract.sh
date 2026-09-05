@@ -54,7 +54,7 @@ ruby -ryaml -e '
   end
   wf = load_yaml.call(ARGV[0])
   triggers = wf["on"] || wf[true]
-  abort "dev/main push trigger missing" unless triggers.dig("push", "branches") == ["dev", "main"]
+  abort "dev/main/test push trigger missing" unless triggers.dig("push", "branches") == ["dev", "main", "test"]
   expected_paths = [
     ".github/workflows/deploy.yml",
     ".dockerignore",
@@ -78,7 +78,7 @@ ruby -ryaml -e '
   dispatch_env = triggers.dig("workflow_dispatch", "inputs", "environment")
   abort "workflow_dispatch environment input missing" unless dispatch_env
   abort "environment input must be required" unless dispatch_env["required"] == true
-  abort "environment input must be a choice of dev/prod" unless dispatch_env["options"] == ["dev", "prod"]
+  abort "environment input must be a choice of dev/prod/test" unless dispatch_env["options"] == ["dev", "prod", "test"]
   abort "environment input must not have a default" if dispatch_env.key?("default")
   push_only = "github.event_name == #{q}push#{q}"
   dispatch_only = "github.event_name == #{q}workflow_dispatch#{q}"
@@ -96,16 +96,29 @@ ruby -ryaml -e '
   # repository Variable은 마스킹되지 않아 PUBLIC 저장소의 공개 워크플로 로그에 instance id가 남는다.
   # Secret은 ***로 마스킹되므로 vars.로 되돌아가는 회귀를 여기서 함께 막는다.
   {"DEV_INSTANCE_ID" => resolve.dig("env", "DEV_INSTANCE_ID").to_s,
-   "PROD_INSTANCE_IDS" => resolve.dig("env", "PROD_INSTANCE_IDS").to_s}.each do |key, expr|
+   "PROD_INSTANCE_IDS" => resolve.dig("env", "PROD_INSTANCE_IDS").to_s,
+   "TEST_INSTANCE_ID" => resolve.dig("env", "TEST_INSTANCE_ID").to_s}.each do |key, expr|
     abort "resolve step must read #{key} from repository secrets" unless expr.include?("secrets.#{key}")
     abort "resolve step must not read #{key} from an unmasked repository variable" if expr.include?("vars.")
   end
+  # 배포 role은 환경별로 갈린다(#400). ARN은 비밀이 아니라 Variable이 맞고(로그에 보여야 진단이 된다),
+  # 선택은 resolve 한 곳만 한다 — OIDC step이 vars를 직접 읽으면 결정 지점이 둘이 된다.
+  {"AWS_DEPLOY_ROLE_ARN" => resolve.dig("env", "AWS_DEPLOY_ROLE_ARN").to_s,
+   "AWS_TEST_DEPLOY_ROLE_ARN" => resolve.dig("env", "AWS_TEST_DEPLOY_ROLE_ARN").to_s}.each do |key, expr|
+    abort "resolve step must read #{key} from repository variables" unless expr.include?("vars.#{key}")
+  end
+  abort "resolve step must fail closed on a missing role arn" unless resolve_run.include?("no deploy role arn configured")
+  oidc = steps.find { |s| s["uses"].to_s.include?("configure-aws-credentials") }
+  abort "OIDC credentials step missing" unless oidc
+  abort "OIDC step must assume the role selected by the resolve step" unless oidc.dig("with", "role-to-assume").to_s.include?("steps.env.outputs.role_arn")
+  abort "OIDC step must not pick a role variable itself" if oidc.dig("with", "role-to-assume").to_s.include?("vars.")
   abort "resolve step must fail closed on an unknown environment" unless resolve_run.include?("unknown deploy environment")
   abort "resolve step must fail closed on empty instance ids" unless resolve_run.include?("no instance ids configured")
-  # harness는 아래 값들을 그대로 재현해 원격 script를 두 벌로 확장한다(dev_runner_env/prod_runner_env).
+  # harness는 아래 값들을 그대로 재현해 원격 script를 세 벌로 확장한다
+  # (dev_runner_env/prod_runner_env/test_runner_env).
   # workflow 쪽만 바뀌고 harness가 모르면 검증이 실물과 갈리므로 여기서 묶어둔다.
-  ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=prod",
-   "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=",
+  ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=prod", "EXPECT_APP_ENV=test",
+   "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=", "EXPECT_REDIS_KEY_PREFIX=test_",
    "EXPECT_SWAGGER_ENABLED=true", "EXPECT_SWAGGER_ENABLED=false",
    "EXPECT_APP_GEO_MODE=kakao"].each do |pair|
     abort "resolve step must define #{pair} (harness reproduces these values)" unless resolve_run.include?(pair)
@@ -178,12 +191,18 @@ ok "T0: pause gate, deploy-existing dispatch and build-only workflow contract"
 # 모두 허용하게 된 뒤로는 이 매핑이 prod 오배포를 막는 유일한 지점이라 값으로 확인해야 한다.
 FAKE_DEV_ID="i-dev00000000000001"
 FAKE_PROD_IDS="i-prod0000000000001 i-prod0000000000002"
+FAKE_TEST_ID="i-test0000000000001"
+FAKE_ROLE_ARN="arn:aws:iam::000000000000:role/fixture-deploy"
+FAKE_TEST_ROLE_ARN="arn:aws:iam::000000000000:role/fixture-deploy-test"
 run_resolve() {
-  # $1 event, $2 ref, $3 dispatch environment, $4(선택) PROD_INSTANCE_IDS override
+  # $1 event, $2 ref, $3 dispatch environment, $4(선택) PROD_INSTANCE_IDS override,
+  # $5(선택) TEST_INSTANCE_ID override
   RESOLVE_OUT="$WORK/resolve_output"; : > "$RESOLVE_OUT"
   RESOLVE_LOG="$WORK/resolve.log"
   env "GITHUB_EVENT_NAME=$1" "GITHUB_REF_NAME=$2" "DISPATCH_ENVIRONMENT=$3" \
       "DEV_INSTANCE_ID=$FAKE_DEV_ID" "PROD_INSTANCE_IDS=${4-$FAKE_PROD_IDS}" \
+      "TEST_INSTANCE_ID=${5-$FAKE_TEST_ID}" \
+      "AWS_DEPLOY_ROLE_ARN=$FAKE_ROLE_ARN" "AWS_TEST_DEPLOY_ROLE_ARN=$FAKE_TEST_ROLE_ARN" \
       "GITHUB_OUTPUT=$RESOLVE_OUT" \
       /bin/bash "$WORK/resolve_run.sh" > "$RESOLVE_LOG" 2>&1
   RESOLVE_RC=$?
@@ -199,6 +218,7 @@ assert_resolved "dev push" "environment=dev"
 assert_resolved "dev push" "expect_app_env=dev"
 assert_resolved "dev push" "expect_redis_key_prefix=dev_"
 assert_resolved "dev push" "expect_swagger_enabled=true"
+assert_resolved "dev push" "role_arn=$FAKE_ROLE_ARN"
 
 run_resolve push main ""
 [ "$RESOLVE_RC" = "0" ] || fail "T0b(main push): resolve must succeed"
@@ -206,12 +226,34 @@ assert_resolved "main push" "environment=prod"
 assert_resolved "main push" "expect_app_env=prod"
 assert_resolved "main push" "expect_redis_key_prefix="
 assert_resolved "main push" "expect_swagger_enabled=false"
+assert_resolved "main push" "role_arn=$FAKE_ROLE_ARN"
+
+# test push(#400): GITHUB_REF_NAME은 러너에서 branch 이름 그대로다 — 'test'를 넣는다.
+run_resolve push test ""
+[ "$RESOLVE_RC" = "0" ] || fail "T0b(test push): resolve must succeed"
+assert_resolved "test push" "environment=test"
+assert_resolved "test push" "expect_app_env=test"
+assert_resolved "test push" "expect_redis_key_prefix=test_"
+assert_resolved "test push" "expect_swagger_enabled=true"
+assert_resolved "test push" "host_count=1"
+assert_resolved "test push" "role_arn=$FAKE_TEST_ROLE_ARN"
 
 # 수동 실행은 branch가 아니라 입력이 이긴다(main에서 dev를 고를 수도, dev에서 prod를 고를 수도 있다).
 run_resolve workflow_dispatch main dev
 assert_resolved "dispatch dev from main" "environment=dev"
 run_resolve workflow_dispatch refs/heads/dev prod
 assert_resolved "dispatch prod from dev" "environment=prod"
+
+# test 수동 배포(#400)는 test ref에서만 — test role의 OIDC trust가 refs/heads/test뿐이라,
+# 다른 ref의 dispatch는 자격증명 단계의 불투명한 실패 대신 resolve에서 원인을 말하고 끊는다.
+run_resolve workflow_dispatch test test
+[ "$RESOLVE_RC" = "0" ] || fail "T0b(dispatch test from test): resolve must succeed"
+assert_resolved "dispatch test from test" "environment=test"
+assert_resolved "dispatch test from test" "role_arn=$FAKE_TEST_ROLE_ARN"
+run_resolve workflow_dispatch main test
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(dispatch test from main): resolve must fail closed"
+grep -q "must be dispatched from the test branch ref" "$RESOLVE_LOG" \
+  || fail "T0b(dispatch test guard): ref-guard diagnostic expected"
 
 # fail-closed: 알 수 없는 환경 / 빈 목록 / 개수 불일치
 run_resolve workflow_dispatch main staging
@@ -221,10 +263,12 @@ run_resolve push main "" ""
 run_resolve push main "" "i-prod0000000000001"
 [ "$RESOLVE_RC" != "0" ] || fail "T0b(truncated prod ids): resolve must fail closed on host count"
 grep -q "expects 2 host(s)" "$RESOLVE_LOG" || fail "T0b(truncated prod ids): host count diagnostic expected"
+run_resolve push test "" "$FAKE_PROD_IDS" ""
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(empty test id): resolve must fail closed"
 
 # 저장소가 PUBLIC이고 Actions 로그도 공개다. instance id를 stdout에 싣지 않는다.
 run_resolve push main ""
-if grep -qE 'i-(dev|prod)[0-9]+' "$RESOLVE_LOG"; then
+if grep -qE 'i-(dev|prod|test)[0-9]+' "$RESOLVE_LOG"; then
   fail "T0b(log hygiene): instance ids must not be printed to the workflow log"
 fi
 ok "T0b: branch/dispatch -> environment mapping resolves by value and fails closed"
@@ -250,6 +294,10 @@ dev_runner_env() {
 prod_runner_env() {
   echo "ENVIRONMENT=prod"; echo "EXPECT_APP_ENV=prod"; echo "EXPECT_REDIS_KEY_PREFIX="
   echo "EXPECT_SWAGGER_ENABLED=false"; echo "EXPECT_APP_GEO_MODE=kakao"
+}
+test_runner_env() {
+  echo "ENVIRONMENT=test"; echo "EXPECT_APP_ENV=test"; echo "EXPECT_REDIS_KEY_PREFIX=test_"
+  echo "EXPECT_SWAGGER_ENABLED=true"; echo "EXPECT_APP_GEO_MODE=kakao"
 }
 expand_script() {
   # $1: runner env emitter, $2: output path, 나머지: 추가 env
@@ -605,8 +653,51 @@ grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5f(prod): container mu
 assert_sha_line "T5f(prod)"
 assert_no_sentinel "T5f(prod)"
 
+# --- 9b. T5g(#400): test 확장 — 세 번째 환경의 기대값이 러너 변수로 정확히 박히고,
+# 환경이 섞이면(test script + dev .env) fail-closed하며, test 기대값 fixture로는 끝까지 성공한다. ---
+expand_script test_runner_env "$WORK/remote_test_script.sh" \
+  "GITHUB_EVENT_NAME=push" "IMG=registry.test/laimory:$FAKE_SHA" || fail "T5g: test heredoc expansion"
+TEST_SCRIPT_FILE="$WORK/remote_test_script.sh"
+
+grep -qF 'require_exact_line APP_ENV "APP_ENV=test"' "$TEST_SCRIPT_FILE" \
+  || fail "T5g: test script must require APP_ENV=test"
+grep -qF 'require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX=test_"' "$TEST_SCRIPT_FILE" \
+  || fail "T5g: test script must require the test_ Redis key prefix"
+grep -qF 'require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=true"' "$TEST_SCRIPT_FILE" \
+  || fail "T5g: test script must require SWAGGER_ENABLED=true"
+grep -qF 'require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-test"' "$TEST_SCRIPT_FILE" \
+  || fail "T5g: test OTel service name must not stay another environment literal"
+
+test_env_fixture() {
+  base_env_fixture
+  PATH=/usr/bin:/bin sed -i.bak \
+    -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=test_/' \
+    -e 's/^APP_ENV=dev$/APP_ENV=test/' "$CASE_DIR/.env"
+  rm -f "$CASE_DIR/.env.bak"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+}
+
+SCRIPT_FILE="$TEST_SCRIPT_FILE"
+
+# 환경 혼선: test로 보내는 script에 dev host의 .env가 걸리면 배포가 진행되면 안 된다.
+new_case; base_env_fixture
+execute_script
+[ "$RC" != "0" ] || fail "T5g(cross): test script must reject a dev .env"
+grep -q "PREFLIGHT FAILED: .env REDIS_KEY_PREFIX" "$CASE_DIR/out.log" || fail "T5g(cross): key-only diagnostic expected"
+assert_env_untouched "T5g(cross)"
+assert_no_stop_no_run "T5g(cross)"
+
+# test 정상 경로: test 기대값 fixture로 배포가 끝까지 성공해야 한다.
+new_case; test_env_fixture
+execute_script
+[ "$RC" = "0" ] || fail "T5g(test): success expected, rc=$RC ($(cat "$CASE_DIR/out.log"))"
+grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5g(test): container must start"
+assert_sha_line "T5g(test)"
+assert_no_sentinel "T5g(test)"
+
 SCRIPT_FILE="$DEV_SCRIPT_FILE"
 ok "T5f: env branch pins per-environment expectations and fails closed on mixed environments"
+ok "T5g: test environment expansion pins test expectations and deploys cleanly"
 
 # --- 10. T5b(http): base URL 필수 계약 ---
 for mutation in missing empty dup ; do

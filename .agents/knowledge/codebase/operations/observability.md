@@ -85,14 +85,18 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 15개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 17개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361) — request 7개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394) — request 8개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
-  User Memory result POST),
-  response 8개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
+  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`),
+  response 9개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
-  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`). 감정 수정 PUT
+  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든
+  Event 제목·부제·질문·장소를 그대로 돌려주므로 request와 함께 대상).
+  AI 동기 테스트 경로는 staging을 거치지 않아 <b>저장 시점 치환이 없는 원문</b>이 request로 들어오므로
+  마스킹이 유일한 방어선이다(치환은 AI로 나갈 때만 적용된다). 서버 발행 `taskId`는 상관키라 allowlist에
+  포함해 로그에 남기고, 응답의 `timedOut`도 사용자 값이 아닌 boolean 신호라 그대로 남긴다. 감정 수정 PUT
   `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
   status·`ApiResponse` envelope의 header/code/body·약관 termType/version/effectiveAt/
@@ -154,7 +158,7 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 
 ## Distributed Tracing (Tempo + OTel, #277)
 
-- dev WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
+- dev·test WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
   WebClient/Redis** span으로 분해해 monitoring host의 Tempo(OTLP gRPC 4317)로 push한다.
   보관은 로컬 스토리지 48h, metrics generator는 끈다. 조회는 Grafana Tempo datasource.
 - agent jar는 배포 이미지에 항상 탑재되고(`/otel/opentelemetry-javaagent.jar`), 활성화는 host
@@ -216,6 +220,10 @@ Spring JSON stdout
 - 공통 tag는 `application=laimory`, `environment=${APP_ENV:local}`이다.
 - 표준 JVM/process/HTTP server·client/Hikari meter를 사용하고, HTTP server/client latency와 timeline
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
+- 캐시(#429)는 Spring Cache 표준 meter를 그대로 쓴다 — `cache.gets{cache,result=hit|miss}`와
+  `cache.puts`·`cache.evictions` 계열이며 `cache` tag 값은 캐시 이름(`user:active`,
+  `subject:mapping`)이다. Boot는 **기동 시점에 존재하는 캐시만** 바인딩하므로 `CacheConfig`가
+  두 manager에 캐시 이름을 미리 선언한다(선언이 빠지면 meter가 영영 노출되지 않는다).
 - 경보 규칙까지 물리지 않을 지표는 붙이지 않는다(write-only 지표 금지) — 예: 계정 삭제 작업(#305)
   PENDING backlog는 gauge 없이 runbook의 수동 SELECT로 확인한다.
 - custom meter:
@@ -232,7 +240,14 @@ Spring JSON stdout
     경로만 무tag로 기록한다(실패 시 context가 기동하지 않아 Prometheus가 meter를 수집할 수
     없는 죽은 관측 — 실패 관측은 기동 실패 로그와 deploy preflight가 담당)
   - `laimory.subject.mapping.operation{operation=create|lookup,result=success|rotated|missing|failed}`:
-    subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다
+    subject mapping 생성·조회 timer. timer count가 결과별 건수를 겸하며 식별자는 tag에 넣지 않는다.
+    ⚠️ #429부터 `lookup`은 subject 캐시 **miss 시 load에서만** 기록된다 — 요청당 해석 전수가 아니므로
+    배포 전후 count를 같은 의미로 비교하지 말 것. 해석 전수(hit 포함)는 표준 meter
+    `cache.gets{cache=subject:mapping,result=hit|miss}`가 담당한다(`cache.size`·eviction 계열 동반)
+  - `laimory.cache.fallback{cache=user:active|subject:mapping}`: 캐시 저장소 조회가 실패해 원본
+    경로(DB)로 강등된 수(#429 — `FailSafeCacheErrorHandler`). 사실상 Redis 장애 신호이며 redis
+    가용성 경보의 요청 관점 보조다. 적재·무효화 실패는 요청을 강등시키지 않으므로 세지 않는다
+    (무효화 실패는 WARN 로그로 남는다). tag는 캐시 이름뿐이다 — 식별자를 넣지 않는다
   - `laimory.build.info{commit=<short SHA|local|unknown>}=1`: 실행 중인 앱 build
   - `laimory.geo.batch{outcome=success|partial|rejected|bug, failure_kind=none|transient|permanent|mixed}`:
     unique geo lookup batch(품질 판정 포함) timer — terminal마다 정확히 1회
@@ -278,7 +293,7 @@ Prometheus는 30초 scrape, 7일 또는 12GB
 retention과 persistent volume을 쓰고 public `/status` probe만 60초다. Grafana 3000만
 loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker network에만 둔다.
 
-node_exporter는 monitoring, dev WAS, dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
+node_exporter는 monitoring, dev WAS, test WAS(#400), dev MySQL, Redis, ELK와 **prod WAS 2대**의 private
 interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
 root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은

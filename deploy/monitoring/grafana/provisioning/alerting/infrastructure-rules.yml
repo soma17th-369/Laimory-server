@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'max by (environment, instance, host) (node_memory_MemAvailable_bytes{job="node",host!="elk"}) / max by (environment, instance, host) (node_memory_MemTotal_bytes{job="node",host!="elk"})'
+              expr: 'max by (environment, instance, host) (node_memory_MemAvailable_bytes{job="node",host!="elk",environment!="test"}) / max by (environment, instance, host) (node_memory_MemTotal_bytes{job="node",host!="elk",environment!="test"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -147,7 +147,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: 'max by (environment, instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"}) / max by (environment, instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs"})'
+              expr: 'max by (environment, instance, host, mountpoint, device) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs",environment!="test"}) / max by (environment, instance, host, mountpoint, device) (node_filesystem_size_bytes{job="node",fstype!~"tmpfs|devtmpfs|overlay|squashfs|nsfs|ramfs",environment!="test"})'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

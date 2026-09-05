@@ -317,6 +317,10 @@ mapping["name"] = mapping["name"] + "-webhook-verification"
 webhook_parameters = mapping["serveEventListeners"][0]["parameters"]
 original_path = webhook_parameters["url"].split("/", 3)[3]
 webhook_parameters["url"] = sys.argv[3].rstrip("/") + "/" + original_path
+# 검증용 임시 mapping은 지연을 2초로 override한다. production mapping의 지연(60초)은 운영값이라
+# 보존하되, C13이 재는 것은 지연값이 아니라 webhook 전달 메커니즘(URL 파생·header·body)이다 —
+# production 지연을 그대로 복사하면 아래 10초 대기·1.5~8초 판정과 양립하지 않아 확정 실패한다.
+webhook_parameters["delay"] = {"type": "fixed", "milliseconds": 2000}
 json.dump(mapping, sys.stdout)
 PY
 

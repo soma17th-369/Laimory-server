@@ -23,7 +23,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - Hibernate는 `ddl-auto=validate`이며 schema를 자동 생성·변경하지 않는다.
 - Flyway/Liquibase가 없어 기존 DB schema 변경에는 수동 DDL과 rollout 순서가 필요하다.
 - Compose의 `schema.sql`은 빈 MySQL volume 최초 초기화에만 적용된다.
-- application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다.
+- application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 `CacheConfig`의 Spring
+  Cache Redis manager 배선 하나이며(#429), 같은 `app.redis.key-prefix`를 캐시 키에 붙인다.
 - dev와 prod가 Redis를 공유하므로 dev는 환경 prefix로 격리한다.
 - 기본 Spring profile은 원격 의존성을 기대한다. 로컬 실행은 `docker` profile을 사용한다.
 - DB·Redis·JWT·OAuth의 필수 설정 일부는 startup에서 fail-fast한다.

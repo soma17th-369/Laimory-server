@@ -25,6 +25,7 @@ automation을 바꿀 때 읽는다.
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
 | prod | default | prod MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
+| test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
 배포된 환경의 runtime 값은 전부 host `/home/ubuntu/app/.env`가 소유한다(workflow `-e` 주입 없음).
 deploy pre-flight는 환경 고정값(`REDIS_KEY_PREFIX`·`APP_ENV`·`APP_GEO_MODE`·`SWAGGER_ENABLED`)과
@@ -45,7 +46,12 @@ container를 내리기 전에 실패한다. `APP_TRACING_MODE`는 앱이 소비�
 환경 고정값의 기대값은 workflow가 소유한다 — `deploy.yml`의 Resolve deploy environment step이
 branch(또는 수동 실행 입력)로 환경을 정하고 그 환경의 기대값을 원격 pre-flight에 주입한다.
 dev는 `REDIS_KEY_PREFIX=dev_`·`APP_ENV=dev`·`SWAGGER_ENABLED=true`, prod는 빈 prefix·`APP_ENV=prod`·
-`SWAGGER_ENABLED=false`이며 `APP_GEO_MODE=kakao`는 두 환경 공통이다. `APP_AI_MODE`·`APP_PUSH_MODE`는
+`SWAGGER_ENABLED=false`, test(#400)는 `REDIS_KEY_PREFIX=test_`·`APP_ENV=test`·`SWAGGER_ENABLED=true`이며
+`APP_GEO_MODE=kakao`는 전 환경 공통이다. 배포 role도 환경별로 갈린다 — test는 전용 OIDC role
+(trust가 `refs/heads/test`뿐)을 쓰며 Resolve 단계가 환경별 role ARN을 함께 고른다.
+test 환경은 추가로 **scheduled worker 5종을 `.env`로 전부 끈다** — dev와 같은 DB를 보므로 켜두면
+dev의 작업 큐(특히 일일 리마인더 claim)를 소비해 dev 알림이 조용히 유실된다. 대가로 test는
+background worker 동작을 재현하지 않는다. `APP_AI_MODE`·`APP_PUSH_MODE`는
 값을 고정하지 않고 허용 집합만 검사하므로 host `.env`가 실제 값의 권위다. `APP_AI_MODE=agentcore`면
 `APP_AI_AGENTCORE_RUNTIME_ARN`(배포 리전의 full Runtime ARN)과 `APP_AI_AGENTCORE_ENDPOINT`도 exact-one
 non-empty로 함께 검증한다.
@@ -94,6 +100,16 @@ application 배포·health gate 의존성이 아니다.
 - AgentCore mode 전용(`app.ai.mode=agentcore`에서만 소비·기동 시 형식·리전 검증):
   `APP_AI_AGENTCORE_RUNTIME_ARN`, `APP_AI_AGENTCORE_ENDPOINT`(자격증명은 SDK 기본 체인 —
   access key property를 추가하지 않는다)
+- dev 전용 AI 동기 테스트 endpoint(#394 — `app.ai.timeline-test.*`, **`APP_AI_MODE`와 완전히 별개
+  스위치**라 비동기 경로가 `noop`이어도 동작한다): `APP_AI_TIMELINE_TEST_ENABLED`(기본 `false` —
+  꺼져 있으면 controller 빈이 없어 `/t/api` 경로 자체가 부재), `APP_AI_TIMELINE_TEST_URL`(AI 동기 테스트
+  endpoint의 absolute URL — `APP_AI_HTTP_BASE_URL`을 재사용하지 않아 다른 AI 인스턴스를 가리킬 수 있다),
+  `APP_AI_TIMELINE_TEST_CONNECT_TIMEOUT`, `APP_AI_TIMELINE_TEST_READ_TIMEOUT`(AI
+  `PIPELINE_TIMEOUT_SEC`(120s)보다 길어야 하며 위반은 기동 실패),
+  `APP_AI_TIMELINE_TEST_MAX_REQUEST_BYTES`(응답 상한은 코드 상수).
+  활성화하면 AI URL 누락·형식 오류가 기동 실패다(fail-fast). **호출자 인증 설정은 여기 없다** —
+  `/t/api` Bearer token 검증은 security 계층 몫이고 현재 미구현이다. deploy pre-flight 검증 대상도
+  아직 아니라 prod 차단은 앱 기본값 off 하나에 의존한다.
   `APP_GEO_MAX_UNIQUE_COORDINATES`(공개 제품 상한 — 운영 tuning으로 낮추지 않음)
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
   upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):

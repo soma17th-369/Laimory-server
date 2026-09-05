@@ -2,8 +2,10 @@ package com.laimory.server.terms.service;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
@@ -49,7 +51,8 @@ class TermsEnforcementServiceTest {
         when(termCatalogReadiness.checkStage(TermStage.LOGIN))
                 .thenReturn(new TermCatalogReadiness.StageCatalog(false, List.of()));
 
-        assertThatCode(() -> service.requireAgreements(TermStage.LOGIN, USER_ID)).doesNotThrowAnyException();
+        assertThatCode(() -> service.requireAgreements(List.of(TermStage.LOGIN), USER_ID))
+                .doesNotThrowAnyException();
 
         verify(termCatalogReadiness).recordFailOpen(TermStage.LOGIN);
         verifyNoInteractions(termAgreementService);
@@ -61,7 +64,7 @@ class TermsEnforcementServiceTest {
                 .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
         when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L))).thenReturn(false);
 
-        assertThatThrownBy(() -> service.requireAgreements(TermStage.LOGIN, USER_ID))
+        assertThatThrownBy(() -> service.requireAgreements(List.of(TermStage.LOGIN), USER_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getExceptionType())
                 .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED);
@@ -77,8 +80,62 @@ class TermsEnforcementServiceTest {
                 .thenReturn(new TermCatalogReadiness.StageCatalog(true, timelineDocuments));
         when(termAgreementService.hasAgreedToAll(USER_ID, List.of(12L, 13L, 14L))).thenReturn(true);
 
-        assertThatCode(() -> service.requireAgreements(TermStage.TIMELINE_FIRST_CREATE, USER_ID))
+        assertThatCode(() -> service.requireAgreements(List.of(TermStage.TIMELINE_FIRST_CREATE), USER_ID))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void multiStageRequest_mergesAgreementExistenceIntoSingleUnionQuery() {
+        // interceptor가 모아 보낸 stage들의 필수 문서 id 합집합이 existence 1쿼리로 판정된다(#428).
+        when(termCatalogReadiness.checkStage(TermStage.LOGIN))
+                .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
+        when(termCatalogReadiness.checkStage(TermStage.TIMELINE_FIRST_CREATE))
+                .thenReturn(new TermCatalogReadiness.StageCatalog(true, List.of(
+                        new TermDocumentSummary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"),
+                        new TermDocumentSummary(13L, TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
+                        new TermDocumentSummary(14L, TermType.CROSS_BORDER_TRANSFER_CONSENT, "1.0"))));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L, 12L, 13L, 14L))).thenReturn(true);
+
+        assertThatCode(() -> service.requireAgreements(
+                List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID))
+                .doesNotThrowAnyException();
+
+        verify(termAgreementService).hasAgreedToAll(USER_ID, List.of(11L, 12L, 13L, 14L));
+        verifyNoMoreInteractions(termAgreementService);
+    }
+
+    @Test
+    void partiallyReadyStages_enforceOnlyReadyStageAndFailOpenTheOther() {
+        // 한 stage만 미준비면 그 stage만 fail-open하고 ready stage는 부분 강제 없이 그대로 강제한다.
+        when(termCatalogReadiness.checkStage(TermStage.LOGIN))
+                .thenReturn(new TermCatalogReadiness.StageCatalog(false, List.of()));
+        when(termCatalogReadiness.checkStage(TermStage.TIMELINE_FIRST_CREATE))
+                .thenReturn(new TermCatalogReadiness.StageCatalog(true, List.of(
+                        new TermDocumentSummary(12L, TermType.SENSITIVE_INFORMATION_CONSENT, "1.0"))));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(12L))).thenReturn(false);
+
+        assertThatThrownBy(() -> service.requireAgreements(
+                List.of(TermStage.LOGIN, TermStage.TIMELINE_FIRST_CREATE), USER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getExceptionType())
+                .isEqualTo(ExceptionType.TERMS_AGREEMENT_REQUIRED);
+
+        verify(termCatalogReadiness).recordFailOpen(TermStage.LOGIN);
+    }
+
+    @Test
+    void duplicateStages_areJudgedAndCountedOnce() {
+        // 같은 stage 중복 지정이 합집합 count 불일치로 오탐 403을 만들지 않는다(dedupe 방어).
+        when(termCatalogReadiness.checkStage(TermStage.LOGIN))
+                .thenReturn(new TermCatalogReadiness.StageCatalog(true, requiredDocuments));
+        when(termAgreementService.hasAgreedToAll(USER_ID, List.of(11L))).thenReturn(true);
+
+        assertThatCode(() -> service.requireAgreements(
+                List.of(TermStage.LOGIN, TermStage.LOGIN), USER_ID))
+                .doesNotThrowAnyException();
+
+        verify(termCatalogReadiness, times(1)).checkStage(TermStage.LOGIN);
+        verify(termAgreementService).hasAgreedToAll(USER_ID, List.of(11L));
     }
 
     @Test

@@ -2,7 +2,7 @@
 
 ## Scope
 
-현재 dev·prod 애플리케이션 배포, Docker runtime과 수동 운영 경계를 설명한다.
+현재 dev·prod·test 애플리케이션 배포, Docker runtime과 수동 운영 경계를 설명한다.
 
 ## Read When
 
@@ -18,12 +18,25 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 
 ## Current Application Deployment
 
-`deploy.yml` 하나가 dev와 prod를 모두 배포한다. 환경은 **Resolve deploy
-environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `main` push는 prod, `workflow_dispatch`는
-필수 `environment` 입력(기본값 없음)을 따른다. 이후 어떤 step도 branch·event를 다시 보지 않고 이
-step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 instance 목록이 비면 AWS 접근 전에
-실패한다. deploy role이 두 환경의 instance를 모두 SSM 대상으로 허용하므로, 이 단일 분기가
-환경 혼선을 막는 지점이다.
+`deploy.yml` 하나가 dev·prod·test를 모두 배포한다. 환경은 **Resolve deploy
+environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `main` push는 prod, `test` push는
+test(#400), `workflow_dispatch`는 필수 `environment` 입력(기본값 없음)을 따른다. 이후 어떤 step도
+branch·event를 다시 보지 않고 이 step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 instance
+목록·role ARN이 비면 AWS 접근 전에 실패한다.
+
+배포 role도 이 step이 고른다 — dev·prod는 기존 공용 role, test는 전용 OIDC role(`vars.
+AWS_TEST_DEPLOY_ROLE_ARN`, trust가 `refs/heads/test`뿐이고 SSM 대상도 test instance 1대 한정)이다.
+기존 role이 dev·prod instance를 모두 SSM 대상으로 허용하므로 그 두 환경 사이에서는 이 단일 분기가
+환경 혼선을 막는 지점이고, test는 role 자체가 격리를 더한다. `workflow_dispatch`로 `environment=test`를
+고를 때는 **실행 ref도 `test`여야 한다** — trust가 다른 ref를 거부하므로 resolve가 자격증명 전에
+명확한 진단으로 fail-closed한다(dev·prod의 cross-ref dispatch는 기존 계약 그대로).
+
+⚠️ test 브랜치를 **새로 만들거나 dev로 리셋한 직후의 push는 배포를 트리거하지 않는다.** 브랜치 생성
+push는 비교할 diff가 없어(대개 dev HEAD와 동일 커밋) push 트리거의 `paths` 필터에 걸리는 변경 파일이
+0개이기 때문이다. 빈 커밋 push도 같은 이유로 안 뜬다. 그 시점의 첫 배포는 deploy-existing
+dispatch로 한다 — test ref에서 `environment=test`를 고르고, 직전 dev 배포가 빌드한 image의 commit
+SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회). 이후 image 입력 경로에
+닿는 실변경 push부터는 자동 배포가 정상 동작한다.
 
 환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
 Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
@@ -93,7 +106,7 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
   `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` presence
 - 환경 고정값 exact-one: `REDIS_KEY_PREFIX` · `APP_ENV` · `APP_GEO_MODE` · `SWAGGER_ENABLED`가
   각각 정확히 한 줄이고 기대값과 byte 일치. 기대값은 Resolve step이 환경별로 주입한다
-  (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`).
+  (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`, test는 `test_`/`test`/`kakao`/`true`).
   값이 리터럴에서 변수로 내려갔을 뿐 exact-one·byte 일치 성질은 같다. 다만 prod의
   `REDIS_KEY_PREFIX`는 빈 값이 정상이라, 이 키만은 Resolve step의 환경 판정이 유일한 방어선이다
 - `APP_AI_MODE` exact-one(`noop|fake|http|agentcore`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도

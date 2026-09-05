@@ -59,6 +59,11 @@ dependencies {
 	// @WithSpan 선택 계측(서비스 경계 span — #277). OTel javaagent(배포 이미지 탑재, .env로 활성화)가
 	// 없으면 애노테이션은 완전 no-op. 버전은 agent와 동일 라인 유지. Spring BOM 비관리 → 버전 명시.
 	implementation 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-annotations:2.30.0'
+	// 인증 요청 고정비 캐시(#429)의 추상화 — @Cacheable/@CacheEvict와 CacheManager 계약. 배선은
+	// CacheConfig가 소유한다(Redis 매니저 + Caffeine 매니저). 버전은 Spring BOM 관리.
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	// 위 추상화의 로컬 저장소 구현(#429 — subject 매핑처럼 무효화 전파가 불필요한 캐시용). 버전은 Spring BOM 관리.
+	implementation 'com.github.ben-manes.caffeine:caffeine'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
@@ -86,6 +91,11 @@ tasks.named('test') {
 	useJUnitPlatform {
 		excludeTags 'integration'
 	}
+	// Gradle은 fork한 테스트 JVM의 file.encoding을 빌드 머신 기본값으로 넘긴다(Windows는 cp949).
+	// 콘솔 출력을 캡처해 한글 로그를 단언하는 테스트(OutputCaptureExtension)는 JSON appender가 쓴
+	// UTF-8 바이트를 그 기본 charset으로 디코딩하므로 한글이 깨진다. 어떤 appender가 활성이냐는 앞선
+	// 테스트가 띄운 Spring 컨텍스트에 좌우돼 클래스 순서만 바뀌어도 결과가 달라지므로 여기서 고정한다.
+	defaultCharacterEncoding = 'UTF-8'
 }
 
 tasks.named('jacocoTestReport') {
@@ -104,6 +114,8 @@ def integrationTest = tasks.register('integrationTest', Test) {
 	useJUnitPlatform {
 		includeTags 'integration'
 	}
+	// test 태스크와 같은 이유로 고정한다(빌드 머신 기본 charset에 결과가 좌우되지 않게).
+	defaultCharacterEncoding = 'UTF-8'
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 	shouldRunAfter('test')

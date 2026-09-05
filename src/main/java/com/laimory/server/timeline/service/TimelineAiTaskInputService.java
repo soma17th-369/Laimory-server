@@ -161,8 +161,11 @@ public class TimelineAiTaskInputService {
      *
      * <p>{@code source.getPayload()}는 Hibernate 관리 엔티티 필드라 변형하지 않는다 — 해당 필드가 있을 때만
      * deep copy 뒤 치환하고, 없으면 read-only 직렬화 용도이므로 기존 인스턴스를 그대로 반환한다.
+     *
+     * <p>package-private인 이유: dev 전용 AI 동기 테스트 경로({@code TimelineAiTestService}, #394)가 같은
+     * AI 경계 규칙을 써야 해서다. 규칙을 복제하면 한쪽만 고쳐지는 순간 두 경로가 갈리므로 정의는 여기 하나다.
      */
-    private static JsonNode redactClientPhotoUri(JsonNode payload) {
+    static JsonNode redactClientPhotoUri(JsonNode payload) {
         if (payload == null || !payload.isObject()) {
             return payload;
         }

@@ -12,9 +12,10 @@ import org.springframework.stereotype.Service;
  * 회원 계정 상태 leaf 서비스(#305) — 일반 active 조회와 탈퇴 조건부 상태 전이만 담당하며
  * {@link UserRepository}에만 접근한다. 로그인 find-or-create/프로필 조회는 {@link UserService} 소유다.
  *
- * <p>{@link UserAccountAccessService} 구현으로 {@code JwtAuthenticationFilter}의 매 요청 검사와
- * token/refresh 발급 경로가 사용한다. active 상태를 cache하지 않는다 — cache하면 탈퇴 직후 stale
- * 허용 창이 생긴다(#305 §5.3). userId는 예외 message·log에 넣지 않는다.
+ * <p>{@link UserAccountAccessService}의 <b>DB 직행 구현</b>이다 — token/refresh 발급 경로
+ * ({@code AuthTokenService})와 필터 캐시({@code RedisActiveStatusCache})의 miss 적재가 사용한다.
+ * 발급·회전이 캐시가 아니라 이 구현을 직접 쓰는 것은 #429의 보안 경계다(회전 사슬 1회 종결).
+ * userId는 예외 message·log에 넣지 않는다.
  */
 @Service
 @RequiredArgsConstructor

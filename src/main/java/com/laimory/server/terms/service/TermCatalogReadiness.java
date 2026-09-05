@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -24,6 +25,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 /**
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 종류 커버리지의 단일 판정 지점.
@@ -36,8 +39,12 @@ import org.springframework.stereotype.Component;
  * literal·잘못된 URL) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge/counter는 수위와 무관하게 동일하게
  * 기록한다(대시보드 추적).
  *
- * <p>runtime enforcement는 요청마다 {@link #checkStage(TermStage, LocalDateTime)}로 DB 권위를 직접
- * 조회한다(임의 TTL cache 없음 — activation 즉시 판정 반영). stage별 enforcement 대상 중 하나라도 current 문서가
+ * <p>runtime enforcement는 전 종류 current 요약을 한 쿼리로 뜬 catalog snapshot 위에서 stage·조건부
+ * 판정을 메모리로 한다(#428). snapshot은 request attribute에 캐시돼 같은 요청의 LOGIN·추가 stage·조건부
+ * 위치약관 판정이 공유하고, 요청 밖(기동 검증·비웹 호출)은 attribute가 없어 매번 직접 조회로 강등된다.
+ * 요청 간 캐시는 아니다(임의 TTL cache 없음). 판정 시각 계약: 요청당 첫 판정 시점에 캡처한 snapshot이
+ * 그 요청 전체의 판정 권위이며, 요청 도중 발효된 문서는 다음 요청부터 강제된다 — 동의 등록이 batch당
+ * 한 번 캡처한 시각을 쓰는 것과 같은 축이다. stage별 enforcement 대상 중 하나라도 current 문서가
  * 없는 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage 전체를 fail-open하고,
  * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다. 위치약관은 따로 판정해 누락 시 그 gate만
  * fail-open한다.
@@ -53,6 +60,8 @@ public class TermCatalogReadiness {
     static final String GATE_FAIL_OPEN_COUNTER = "laimory.terms.gate.fail_open";
     static final String CONDITIONAL_CATALOG_READY_GAUGE = "laimory.terms.conditional.catalog.ready";
     static final String CONDITIONAL_GATE_FAIL_OPEN_COUNTER = "laimory.terms.conditional.gate.fail_open";
+
+    private static final String SNAPSHOT_ATTRIBUTE = TermCatalogReadiness.class.getName() + ".CATALOG_SNAPSHOT";
 
     private final TermDocumentRepository termDocumentRepository;
     private final TermDocumentService termDocumentService;
@@ -102,26 +111,31 @@ public class TermCatalogReadiness {
     public record ConditionalTermCatalog(boolean ready, Optional<TermDocumentSummary> currentDocument) {
     }
 
-    /** 판정 시각은 지금 캡처한 instant의 KST 벽시계다. */
+    /** 요청당 한 번 뜨는 전 종류 current 요약 — 같은 요청의 stage·조건부 판정이 공유하는 판정 권위다. */
+    private record CatalogSnapshot(Map<TermType, TermDocumentSummary> currentByType) {
+    }
+
+    /** 판정 시각은 요청 snapshot을 캡처한 instant의 KST 벽시계다(요청당 1회 — 클래스 주석의 판정 시각 계약). */
     public StageCatalog checkStage(TermStage stage) {
-        return checkStage(stage, TermTimes.kstWallClock(clock.instant()));
+        return judgeStage(stage, requestSnapshot());
     }
 
     /**
-     * stage 준비 상태와 현재 enforcement 문서 집합을 함께 계산한다. 준비 조건:
-     * 강제 대상 종류 전부에 현재 문서가 있다.
+     * stage 준비 상태와 현재 enforcement 문서 집합을 함께 계산한다. 준비 조건: 강제 대상 종류 전부에
+     * 현재 문서가 있다. 기동 검증·테스트용 — 주어진 시각으로 캐시 없이 조회한다.
      */
     public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
-        // 요청마다 도는 판정이라 실제 강제할 문서의 식별 요약만 조회한다.
+        return judgeStage(stage, loadSnapshot(nowKst));
+    }
+
+    private StageCatalog judgeStage(TermStage stage, CatalogSnapshot snapshot) {
         List<TermType> enforcedTypes = enforcedTypesOf(stage);
-        List<TermDocumentSummary> currentDocuments = termDocumentService.findCurrentSummaries(
-                enforcedTypes, nowKst);
+        List<TermDocumentSummary> currentDocuments = enforcedTypes.stream()
+                .map(snapshot.currentByType()::get)
+                .filter(Objects::nonNull)
+                .toList();
 
-        Set<TermType> currentTypes = currentDocuments.stream()
-                .map(TermDocumentSummary::termType)
-                .collect(Collectors.toSet());
-
-        boolean ready = currentTypes.containsAll(enforcedTypes);
+        boolean ready = currentDocuments.size() == enforcedTypes.size();
         publishStageState(stage, ready, currentDocuments.isEmpty());
         return new StageCatalog(ready, currentDocuments);
     }
@@ -131,20 +145,50 @@ public class TermCatalogReadiness {
         failOpenCounters.get(stage).increment();
     }
 
-    /** 조건부 약관의 현재 문서를 요청 시점 DB 권위로 조회한다. */
+    /** 조건부 약관의 현재 문서를 요청 snapshot으로 판정한다(판정 시각 계약은 {@link #checkStage(TermStage)}와 동일). */
     public ConditionalTermCatalog checkConditionalTerm(TermType termType) {
-        return checkConditionalTerm(termType, TermTimes.kstWallClock(clock.instant()));
+        requireConditional(termType);
+        return judgeConditionalTerm(termType, requestSnapshot());
     }
 
     ConditionalTermCatalog checkConditionalTerm(TermType termType, LocalDateTime nowKst) {
         requireConditional(termType);
-        Optional<TermDocumentSummary> currentDocument = termDocumentService
-                .findCurrentSummaries(List.of(termType), nowKst)
-                .stream()
-                .findFirst();
+        return judgeConditionalTerm(termType, loadSnapshot(nowKst));
+    }
+
+    private ConditionalTermCatalog judgeConditionalTerm(TermType termType, CatalogSnapshot snapshot) {
+        Optional<TermDocumentSummary> currentDocument =
+                Optional.ofNullable(snapshot.currentByType().get(termType));
         boolean ready = currentDocument.isPresent();
         publishConditionalState(termType, ready);
         return new ConditionalTermCatalog(ready, currentDocument);
+    }
+
+    /** 전 종류 current 요약 1쿼리 — load 자체는 어떤 stage/조건부 상태도 발행하지 않는다(판정이 발행). */
+    private CatalogSnapshot loadSnapshot(LocalDateTime nowKst) {
+        Map<TermType, TermDocumentSummary> currentByType = new EnumMap<>(TermType.class);
+        termDocumentService.findCurrentSummaries(List.of(TermType.values()), nowKst)
+                .forEach(summary -> currentByType.put(summary.termType(), summary));
+        return new CatalogSnapshot(currentByType);
+    }
+
+    /**
+     * request attribute read-through 캐시 — 같은 요청의 LOGIN·추가 stage·조건부 판정이 catalog 1쿼리를
+     * 공유한다(#428). 요청 수명이라 요청 간에는 남지 않고, request context가 없으면 매번 직접 조회로
+     * 강등된다(캐시 없음).
+     */
+    private CatalogSnapshot requestSnapshot() {
+        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+        if (requestAttributes == null) {
+            return loadSnapshot(TermTimes.kstWallClock(clock.instant()));
+        }
+        CatalogSnapshot cached = (CatalogSnapshot) requestAttributes.getAttribute(
+                SNAPSHOT_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
+        if (cached == null) {
+            cached = loadSnapshot(TermTimes.kstWallClock(clock.instant()));
+            requestAttributes.setAttribute(SNAPSHOT_ATTRIBUTE, cached, RequestAttributes.SCOPE_REQUEST);
+        }
+        return cached;
     }
 
     /** 조건부 gate가 문서 누락 때문에 통과할 때 호출한다. */

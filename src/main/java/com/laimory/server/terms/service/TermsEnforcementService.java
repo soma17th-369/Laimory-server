@@ -4,6 +4,8 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -11,7 +13,9 @@ import org.springframework.stereotype.Service;
 /**
  * 단계별 필수 약관과 요청별 조건부 약관 동의 강제.
  *
- * <p>판정은 요청 시점 DB 권위(현재 필수 문서 + 동의 existence 한 번)다. "첫 1회"류 판정도 기록 존재가
+ * <p>판정은 요청 시점 DB 권위다 — 요청이 강제하는 stage들이 catalog snapshot 1쿼리를 공유하고
+ * ({@link TermCatalogReadiness}의 판정 시각 계약), 동의는 ready stage 필수 문서 id 합집합의
+ * existence 1쿼리로 확인한다(#428). "첫 1회"류 판정도 기록 존재가
  * 아니라 해당 현재 약관 버전의 agreement 존재로 한다 — 약관이 개정되면 새 필수 버전 재동의를 요구한다.
  *
  * <p>catalog가 준비되지 않은 stage(seed/activation 누락·mapping 불일치)는 부분 강제 없이 전체를
@@ -26,16 +30,24 @@ public class TermsEnforcementService {
     private final TermCatalogReadiness termCatalogReadiness;
     private final TermAgreementService termAgreementService;
 
-    /** 현재 필수 문서 전부에 동의가 없으면 403({@code -3001})을 던진다. */
-    public void requireAgreements(TermStage stage, Long userId) {
-        TermCatalogReadiness.StageCatalog catalog = termCatalogReadiness.checkStage(stage);
-        if (!catalog.ready()) {
-            termCatalogReadiness.recordFailOpen(stage);
+    /** 요청이 강제하는 stage들의 현재 필수 문서 전부에 동의가 없으면 403({@code -3001})을 던진다. */
+    public void requireAgreements(List<TermStage> stages, Long userId) {
+        List<Long> requiredDocumentIds = new ArrayList<>();
+        // 같은 stage 중복 지정(annotation으로 LOGIN 재요구 등)은 합집합 count 불일치로 오탐 403을
+        // 만들기 때문에 판정 전에 제거한다.
+        for (TermStage stage : new LinkedHashSet<>(stages)) {
+            TermCatalogReadiness.StageCatalog catalog = termCatalogReadiness.checkStage(stage);
+            if (!catalog.ready()) {
+                termCatalogReadiness.recordFailOpen(stage);
+                continue;
+            }
+            catalog.currentEnforcedDocuments().stream()
+                    .map(TermDocumentSummary::termDocumentId)
+                    .forEach(requiredDocumentIds::add);
+        }
+        if (requiredDocumentIds.isEmpty()) {
             return;
         }
-        List<Long> requiredDocumentIds = catalog.currentEnforcedDocuments().stream()
-                .map(TermDocumentSummary::termDocumentId)
-                .toList();
         if (!termAgreementService.hasAgreedToAll(userId, requiredDocumentIds)) {
             throw new BusinessException(ExceptionType.TERMS_AGREEMENT_REQUIRED);
         }

@@ -21,9 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
  * insert-if-absent.
  *
  * <p><b>행을 지우지 않는다</b>(#367). refresh 행·FID 등록·두 알림 설정 행은 모두 보존하고, 알림은
- * 삭제 대신 OFF로 바꿔 발송만 차단한다. 탈퇴 credential은 매 요청·발급 전 {@code ACTIVE} 검사가
- * 이미 막으므로 refresh 전량 {@code REVOKED}는 즉시 차단의 필수 조건이 아니고, 운영 요청 경로에서
- * 삭제를 줄이면 transaction 범위와 FK 순서 부담도 사라진다. 보존 행의 물리 삭제는 #302가 소유한다.
+ * 삭제 대신 OFF로 바꿔 발송만 차단한다. 탈퇴 credential은 요청·발급 전 {@code ACTIVE} 검사가
+ * 막으므로(필터 경로는 commit 후 캐시 evict부터 — #429 보안 정책 개정) refresh 전량 {@code REVOKED}는
+ * 차단의 필수 조건이 아니고, 운영 요청 경로에서 삭제를 줄이면 transaction 범위와 FK 순서 부담도
+ * 사라진다. 보존 행의 물리 삭제는 #302가 소유한다. 캐시 evict는 이 transaction 바깥
+ * {@code UserWithdrawalService}가 commit 뒤에 수행한다.
  *
  * <p>동시성은 ①의 영향 행 수가 유일한 직렬화 지점이다. 승자만 ②~⑤를 수행하고, 영향 0행은 fresh
  * 조회로 분류한다 — {@code WITHDRAWAL_PENDING}이면 이미 인증을 통과한 동시 탈퇴의 멱등 수렴(202),
@@ -35,8 +37,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 남기지 않는다.
  *
  * <p>S3·Redis·AI 호출은 이 transaction 안에서 하지 않는다. 탈퇴 전에 이미 ACTIVE 검사를 통과한
- * in-flight token 발급이 race로 늦게 저장한 ACTIVE refresh 행은 다음 회전의 ACTIVE 검사에서
- * 거절되며 #302 정리 대상이다(202는 물리적 zero가 아니라 사용·연장 불가를 뜻한다 — §5.2).
+ * in-flight token 발급이 race로 늦게 저장한 ACTIVE refresh 행은 다음 회전의 ACTIVE 검사(DB 직행 —
+ * #429)에서 거절되며 #302 정리 대상이다. 202는 물리적 zero가 아니라 "commit 후 시작분 차단 +
+ * in-flight 산물의 한시적 잔존(각 token은 발급 시각+수명까지, 회전 사슬 1회 종결)"을 뜻한다 —
+ * 정확한 노출 정책은 #429 "보안 정책 개정"(§5.2의 명시적 완화).
  */
 @Service
 @RequiredArgsConstructor
@@ -58,7 +62,10 @@ public class UserWithdrawalTransactionService {
             // WITHDRAWAL_PENDING: 이미 인증을 통과한 동시 탈퇴가 먼저 commit — 멱등 202 수렴(작업은 승자가 완료).
             return;
         }
-        // 탈퇴 회원은 일반 request 경로를 다시 타지 않으므로 이 해석이 마지막 lazy rekey 기회다(§4.2).
+        // 이 해석은 subject 캐시를 탈 수 있다(#429 — 캐시가 서비스 안쪽이다). rotation 중 mapping을
+        // current로 옮기는 최종 보장은 erasure의 대상 해석(AccountErasureService#resolveTarget)이 하고,
+        // 유예가 캐시 TTL을 압도해 그 시점엔 사실상 miss다. 여기서 hit가 나면 그 행이 rotation 완료
+        // 게이트를 유예기간만큼 붙잡을 수 있다는 것이 유일한 대가이며 — 드문 교차라 수용한다.
         UUID subjectId = subjectMappingService.getRequired(userId);
         // 마스터 OFF 하나로 예정 알림과 타임라인 완료 push가 모두 막힌다. 어느 UPDATE든 0행이면 예외가
         // 전파돼 이 transaction 전체가 rollback되므로 중간 상태는 존재하지 않는다.

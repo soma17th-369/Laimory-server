@@ -324,9 +324,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
   버전·효력일을 바꾸는 API는 없다.
 - 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
-  `src/main/resources/terms-content`에 생성한다. `TermContentController`는 `/terms/{slug}/{version}`에서
-  그 정적 byte와 1년 `immutable` cache header만 전달한다. 약관 DB·API 응답에는 Markdown/HTML을 담지
-  않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP 조회하거나 원문을 동적 렌더링하지 않는다.
+  `build/terms-site`에 생성한다. 그 HTML을 랜딩페이지가 게시하며 Server는 원문 route를 두지 않는다(#418).
+  약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
+  조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
@@ -335,9 +335,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   검증할 수 없으므로(요청·기동 중 HTTP 조회 금지, 기동 형식 검사는 멀쩡한 오타를 통과시킨다) 게시 page가
   200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 gate가 미동의 사용자를 막는 동안 약관 page는
   열리지 않는 창이 생긴다 — 이 창을 닫는 것은 코드가 아니라 순서다.
-- 게시된 버전 URL은 영구 불변이다 — 내용 수정·재사용·삭제를 하지 않고 개정은 새 version·새 URL로
-  게시한다. 과거 버전 URL이 동의 이력의 유일한 원문 재현 근거이므로 도메인·path를 옮기더라도 기존 URL
-  접근성을 보존한다. 이 보존은 서버가 검증하지 못하므로 게시 절차가 소유한다.
+- 게시된 버전 page의 **내용**은 영구 불변이다 — 수정·재사용·삭제를 하지 않고 개정은 새 version·새
+  URL로 게시한다. 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이므로, 호스팅을
+  옮길 때는 **새 행을 만들지 않고 기존 행의 `content_url`만 새 주소로 갱신한다**(#418에서 서버 서빙 →
+  랜딩 게시로 이전하며 6행을 그렇게 옮겼다). 조건은 두 가지다: 새 주소의 원문이 옛 주소가 주던 것과
+  동일할 것, 그리고 `term_document_id`가 그대로일 것(id가 바뀌면 전 회원이 재동의를 요구받는다).
+  옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
+  서버가 하지 못하므로 게시 절차가 소유한다.
 - 현재 문서는 `effective_at <= now(KST)`인 종류별 최신 행으로만 계산한다(별도 active flag 없음).
   `(term_type, version)`·`(term_type, effective_at)` UNIQUE가 버전 식별과 동시 최신 모호성을 DB에서
   차단한다.
@@ -393,10 +397,12 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
-- `/a/api` 인증은 JWT 파싱에 더해 매 요청 users PK로 회원 `ACTIVE`를 확인한다(#305 — cache 금지).
-  회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애만 fail-closed
-  500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음). userId 로그 attribute는 active 인증이
-  성립한 뒤에만 기록한다.
+- `/a/api` 인증은 JWT 파싱에 더해 요청마다 회원 `ACTIVE`를 확인한다(#305). #429부터 이 필터 검사만
+  공유 Redis 캐시를 탄다 — ACTIVE=true만 캐시(음성 미적재), 탈퇴 시 commit 후 DEL, TTL은 쓰기 고정
+  안전망이며, 한시적 stale 허용 범위는 authentication.md의 "탈퇴 차단 정책(#429)"이 소유한다.
+  회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애(캐시 miss
+  경로)만 fail-closed 500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음 — Redis 장애는 miss
+  강등 후 DB 직행). userId 로그 attribute는 active 인증이 성립한 뒤에만 기록한다.
 - 탈퇴(#305, #367)는 단일 DB transaction이다 — 조건부 `ACTIVE → WITHDRAWAL_PENDING` + 탈퇴 시각 +
   `provider_user_id` NULL release + `subject_preferences.push_enabled=false` +
   `daily_notification_preferences.enabled=false` + userId-only
@@ -405,16 +411,19 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   #302가 소유한다. 두 UPDATE의 0행은 예외로 전파돼 회원 전이·identity release·선행 UPDATE·job enqueue를
   함께 rollback한다(알림이 켜진 채 탈퇴만 접수되는 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
-  수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 old
-  credential의 사용·연장 불가를 뜻한다.
+  수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 "commit
+  후 시작분 차단 + in-flight 산물의 한시적 잔존(각 token은 발급 시각+수명까지, 회전 사슬 1회
+  종결)"을 뜻한다(#429 — authentication.md "탈퇴 차단 정책").
 - `WITHDRAWAL_PENDING` 행을 `ACTIVE`로 되돌리는 경로는 없다. 같은 provider의 다음 로그인은 released
   identity로 `findOrCreate` 신규 생성 경로를 타 새 userId·새 subject의 완전히 새로운 회원이 된다 —
   old subject/콘텐츠/약관 동의를 새 회원에 연결하거나 email로 병합하지 않는다.
 - token 발급(app-code 교환)과 refresh 회전은 발급 전에 회원 `ACTIVE`를 조회한다(#305). 회원
   없음/탈퇴는 각각 기존 401 `-2002`(`APP_CODE_INVALID`)/`-2003`(`REFRESH_TOKEN_INVALID`, INFO)으로
   수렴하며 탈퇴 전용 code·WARN·ERROR를 만들지 않는다(WARN은 실제 verifier 불일치·active 회원 refresh
-  재사용만). 검사 통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이고 그 credential도 매 요청
-  ACTIVE 검사·다음 회전 검사에서 거절된다(race로 늦게 저장된 ACTIVE refresh 행은 #302 정리 대상).
+  재사용만). 이 발급 전 조회는 #429 캐시를 타지 않는 DB 직행이다(회전 사슬 1회 종결 보장). 검사
+  통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이고 그 credential도 `/a/api` ACTIVE
+  검사(탈퇴 evict 뒤 miss부터)·다음 회전 검사(DB 직행)에서 거절된다(race로 늦게 저장된 ACTIVE
+  refresh 행은 #302 정리 대상).
   탈퇴-회전 경합의 좁은 창(ACTIVE 검사 통과 후 claim 전에 탈퇴 commit)에서는 스퓨리어스 reuse WARN
   1회가 가능하다(문서화된 제한 예외 — 401 `-2003` 수렴 계약 자체는 동일).
 - PENDING 계정 삭제 작업이 남아 있는 동안 previous HMAC key retire와 두 번째 rotation을 수행하지

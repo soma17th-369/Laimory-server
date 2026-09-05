@@ -107,7 +107,7 @@ class TermDocumentServiceTest {
     }
 
     private static TermDocument document(TermType type, String title) {
-        return TermDocument.of(type, "1.0", title, "https://laimory.app/terms/page/1.0",
+        return TermDocument.of(type, "1.0", title, "https://www.laimory.app/terms/page/1.0",
                 LocalDateTime.parse("2026-08-01T00:00:00"));
     }
 }

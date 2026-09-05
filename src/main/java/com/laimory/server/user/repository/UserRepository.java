@@ -23,7 +23,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByProviderAndProviderUserId(Provider provider, String providerUserId);
 
-    /** {@code /a/api} 매 요청·token 발급 경로의 활성 확인 — 회원 없음과 탈퇴를 구분하지 않는다. */
+    /** {@code /a/api} 인증(캐시 miss 적재 — #429)·token 발급 경로의 활성 확인 — 회원 없음과 탈퇴를 구분하지 않는다. */
     boolean existsByUserIdAndStatus(Long userId, UserStatus status);
 
     /**

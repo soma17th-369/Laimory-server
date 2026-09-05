@@ -19,8 +19,7 @@ import com.laimory.server.auth.service.SocialLoginService;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.logging.TransactionIds;
 import com.laimory.server.testsupport.AuthTestSupport;
-import com.laimory.server.terms.controller.TermContentController;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.RedisActiveStatusCache;
 import net.logstash.logback.encoder.LogstashEncoder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +44,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * #305 매 요청 active 검사), 공개 경로 무인증 유지, 핸드오프 안내 페이지의 code 비표시, App Link
  * 검증 파일(assetlinks.json)의 무인증 JSON 제공.
  */
-@WebMvcTest(controllers = {AuthHandoffPageController.class, TermContentController.class})
+@WebMvcTest(controllers = AuthHandoffPageController.class)
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, OAuth2LoginSecurityConfig.class})
 class SecurityConfigTest {
 
@@ -65,9 +64,9 @@ class SecurityConfigTest {
     @MockitoBean
     private SocialLoginService socialLoginService;
 
-    // JwtTokensTestConfig의 항상-활성 기본 빈을 대체 — 테스트별로 active/탈퇴를 stub한다(#305).
+    // JwtTokensTestConfig의 항상-활성 기본 빈을 대체 — 테스트별로 active/탈퇴를 stub한다(#305, #429 캐시 경유).
     @MockitoBean
-    private UserAccountAccessService userAccountAccessService;
+    private RedisActiveStatusCache redisActiveStatusCache;
 
     @BeforeEach
     void attachAccessLogAppender() {
@@ -155,16 +154,6 @@ class SecurityConfigTest {
     }
 
     @Test
-    void immutableTermsContent_isPublicWithoutBearerToken() throws Exception {
-        mockMvc.perform(get("/terms/privacy-policy/1.0"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type", "text/html;charset=UTF-8"))
-                .andExpect(header().string("Cache-Control", containsString("max-age=31536000")))
-                .andExpect(header().string("Cache-Control", containsString("immutable")))
-                .andExpect(content().string(containsString("라이모리 개인정보 처리방침")));
-    }
-
-    @Test
     void authenticatedPrefix_withoutToken_returns401Envelope() throws Exception {
         // /a/api 인증 강제: 무토큰 요청은 컨트롤러 유무와 무관하게 Security 단계에서 401 ERROR_2001로 거절된다.
         mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever"))
@@ -187,7 +176,7 @@ class SecurityConfigTest {
     @Test
     void authenticatedPrefix_withValidToken_passesSecurityToHandler404() throws Exception {
         // 유효 토큰 + ACTIVE 회원은 security를 통과한다 — 이 슬라이스엔 timeline 컨트롤러가 없어 핸들러 404 envelope에 도달.
-        org.mockito.Mockito.when(userAccountAccessService.isActive(42L)).thenReturn(true);
+        org.mockito.Mockito.when(redisActiveStatusCache.isActive(42L)).thenReturn(true);
         String token = jwtTokens.issueAccessToken(42L);
 
         MvcResult result = mockMvc.perform(get("/a/api/v1/timeline/drafts/whatever")

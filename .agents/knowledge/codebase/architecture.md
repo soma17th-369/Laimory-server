@@ -35,16 +35,23 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - 다른 feature의 상태를 읽거나 쓰는 orchestrator는 그 feature의 repository가 아니라 leaf service를
   통한다 — 예: `initializer`/`onboarding`은 `subject_preferences`를 소유한 `SubjectPreferenceService`만
   의존하고, 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다(#382).
-- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 application code의
-  Redis 직접 접근 금지(`RedisAccessArchTest`)와, subject mapping 내부(repository·lookup key
-  deriver)를 `SubjectMappingService` 외에는 의존 금지(`SubjectMappingAccessArchTest`, #282)다.
+- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 셋이다 — application code의
+  Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping
+  내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
+  (`SubjectMappingAccessArchTest`, #282), ACTIVE 검사 캐시(`RedisActiveStatusCache`)를 filter 배선과
+  탈퇴 evict 외에는 의존 금지(`AuthContextCacheAccessArchTest`, #429 — 발급·회전은 DB 직행 유지).
+  subject mapping 캐시에는 대응 규칙이 없다. 우회해야 하는 호출자가 없어 `SubjectMappingService`에
+  직접 달았기 때문이다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
 
 저장 경계:
 
 - MySQL은 JPA와 `ddl-auto=validate`를 사용한다. schema 변경은 애플리케이션이 수행하지 않는다.
-- application-owned Redis 접근은 `RedisGateway`를 거친다.
+- application-owned Redis 접근은 `RedisGateway`를 거친다(승인 예외: `CacheConfig`의 Spring Cache
+  Redis manager — 같은 key prefix를 붙인다).
+- 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager,
+  아니면 Caffeine manager(`@Primary`)이며 어노테이션마다 `cacheManager`를 명시한다.
 - OAuth handshake chain만 Redis-backed HTTP session을 사용하고 일반 API chain은 stateless다.
 
 timeline draft의 큰 흐름은 다음과 같다.

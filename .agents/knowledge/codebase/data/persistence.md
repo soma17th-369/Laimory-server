@@ -289,10 +289,10 @@ enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summa
 모든 비면제 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
-현재 `laimory.app`은 운영 ALB를 거쳐 Server로 연결된다. 공개 page는 Markdown을 build-time에 변환한
-classpath 정적 resource이며 `TermContentController`가 `/terms/{slug}/{version}`에서 전달한다. 이 전달
-경로는 catalog 조회와 분리되어 있어 `content_url`을 코드에서 역산하지 않고, page 요청도 DB를 읽지 않는다.
-원문을 바꾸는 개정은 기존 resource 덮어쓰기가 아니라 새 version resource와 새 catalog 행을 함께 추가한다.
+공개 page는 랜딩페이지(Vercel, `www.laimory.app`)가 게시한다(#418). Server는 원문을 서빙하지 않고
+`/terms/*` route도 두지 않으므로 약관 열람 트래픽이 WAS에 오지 않는다. 게시 경로가 catalog 조회와 완전히
+분리돼 있어 `content_url`을 코드에서 역산하지 않는다. 원문을 바꾸는 개정은 게시본 덮어쓰기가 아니라 새
+version page와 새 catalog 행을 함께 추가한다.
 
 기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
 매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
@@ -339,7 +339,7 @@ INSERT INTO term_documents
     (term_type, version, title, content_url, effective_at, created_at, updated_at)
 VALUES
     ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
-     'https://laimory.app/terms/terms-of-service/1.0',
+     'https://www.laimory.app/terms/terms-of-service/1.0',
      '2026-08-28 00:00:00',                                        -- catalog 효력(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));
@@ -402,7 +402,9 @@ live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다(`dd
 
 ### Redis
 
-application-owned access는 `RedisGateway`를 거친다.
+application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig` 하나이며(#429), Spring
+Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
+`app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다.
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
@@ -413,9 +415,13 @@ application-owned access는 `RedisGateway`를 거친다.
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
+| `user:active:{userId}` | `/a/api` 필터 ACTIVE 검사 캐시(#429 — `RedisActiveStatusCache`의 `@Cacheable`, 필터 경로 전용). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
+Spring Cache 값의 shape 변경은 rolling 배포에서 안전하지 않다 — 저장된 값이 **유효 JSON인데 타입만
+다르면** 역직렬화는 성공하고 프록시 반환 지점의 `ClassCastException`으로 500이 된다(error handler
+사정권 밖). shape를 바꿀 때는 캐시 이름을 바꾸거나 배포 전에 해당 key를 비운다.
 Timeline task 최초 저장은 native `SET PX`, 서버간 처리 stage 전이는 native `SET XX KEEPTTL`, terminal
 전이는 native `SET XX PX`로 수행한다 — timeline task에 Lua script는 0개다. `XX`는 missing key에서
 실패해 만료 task를 부활시키지 않고, `KEEPTTL`은 최초 PROCESSING 만료 시각을 보존한다. 전역·사용자별
@@ -494,7 +500,8 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
   `title`/`subtitle`/`question`/`place`/`address`, `user_memories.memory`는 v1 privacy 치환 후의 값이다
   (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
   title·subtitle·memo는 원문 저장이다.
-- application Redis 접근은 `RedisGateway`를 우회하지 않는다.
+- application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
+  Redis manager — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
 - Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard

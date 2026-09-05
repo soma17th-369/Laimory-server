@@ -33,7 +33,7 @@
       "name": "webhook",
       "parameters": {
         "method": "POST",
-        "url": "http://10.0.4.78:8080/s/api/v1/user-memory/updates/{{jsonPath originalRequest.body '$.taskId'}}/result",
+        "url": "http://10.0.9.207:8080/s/api/v1/user-memory/updates/{{jsonPath originalRequest.body '$.taskId'}}/result",
         "headers": {
           "Content-Type": "application/json",
           "Task-Token": "{{jsonPath originalRequest.body '$.taskToken'}}"

@@ -220,10 +220,13 @@ class ActuatorEndpointIntegrationTest {
     })
     static class TestApplication {
 
-        /** DB 없는 최소 앱 — JWT 필터의 active 검사(#305)는 항상 활성으로 stub한다(이 경계와 무관). */
+        /** DB 없는 최소 앱 — JWT 필터의 active 검사(#305, #429 캐시 경유)는 항상 활성 mock으로 stub한다(이 경계와 무관). */
         @org.springframework.context.annotation.Bean
-        com.laimory.server.user.service.UserAccountAccessService userAccountAccessService() {
-            return userId -> true;
+        com.laimory.server.user.service.RedisActiveStatusCache redisActiveStatusCache() {
+            com.laimory.server.user.service.RedisActiveStatusCache cache =
+                    org.mockito.Mockito.mock(com.laimory.server.user.service.RedisActiveStatusCache.class);
+            org.mockito.Mockito.when(cache.isActive(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+            return cache;
         }
 
         /**

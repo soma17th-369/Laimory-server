@@ -19,7 +19,6 @@ import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
-import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -316,14 +315,20 @@ class KakaoGeoResourceBoundaryTest {
         assertThat(reopened.count()).isGreaterThanOrEqualTo(1);
     }
 
-    // ── R6/T27: connection lifecycle — keep-alive reuse, remote close 뒤 새 연결, idle eviction, dispose ──
+    // ── R6/T27: connection lifecycle — keep-alive reuse, idle eviction, dispose ──
+    // 두 시나리오는 서로 모순되는 idle 설정을 요구해 별도 테스트로 분리한다: 재사용 검증은 "그 사이에
+    // 퇴출되지 않는다"를, 퇴출 검증은 "빨리 퇴출된다"를 전제한다. 한 provider로 합치면 짧은 idle이
+    // 재사용 전제를 침식해 느린 러너에서 플레이키가 된다(2026-08-31 CI 2회 실증).
+    // remote close 후 새 연결로 계속되는 동작은 Reactor Netty 소관이라 별도로 검증하지 않는다.
 
     @Test
-    void keepAlive_reusesConnection_thenReplacesAfterRemoteClose_andIdleEviction() throws Exception {
+    void keepAlive_reusesConnectionAcrossSequentialRequests() throws Exception {
+        // idle(30s)·eviction(10s)을 러너 지연보다 훨씬 넉넉히 둔다 — 재사용 단언이 타이밍 가정 없이 성립.
         KakaoMapPlaceProvider provider = provider(properties(2, 2, 2, Duration.ofSeconds(2),
-                Duration.ofMillis(300), Duration.ofSeconds(30), Duration.ofMillis(100), quietCircuit()));
+                Duration.ofSeconds(30), Duration.ofMinutes(5), Duration.ofSeconds(10), quietCircuit()));
 
-        // 1) 순차 정상 — 같은 connection 재사용(HTTP/1.1 keep-alive).
+        // geo 부하 모델의 전제다: 요청당 Kakao 74콜이 연결을 재사용한다. 재사용이 꺼지면 콜마다
+        // TCP+TLS 핸드셰이크가 붙어 용량 계산이 통째로 바뀐다(#251).
         enqueueJson("{\"documents\":[]}");
         enqueueJson("{\"documents\":[]}");
         provider.lookup(37.01, 127.01).block();
@@ -333,21 +338,26 @@ class KakaoGeoResourceBoundaryTest {
         assertThat(first.getSequenceNumber()).isZero();
         // sequenceNumber>0 = 같은 socket의 두 번째 요청(reuse).
         assertThat(second.getSequenceNumber()).isEqualTo(1);
+    }
 
-        // 2) remote close 뒤에는 새 connection으로 계속된다.
-        server.enqueue(new MockResponse().setHeader("Content-Type", "application/json")
-                .setBody("{\"documents\":[]}").setSocketPolicy(SocketPolicy.DISCONNECT_AT_END));
-        provider.lookup(37.03, 127.03).block();
-        server.takeRequest(2, TimeUnit.SECONDS);
-        enqueueJson("{\"documents\":[]}");
-        provider.lookup(37.04, 127.04).block();
-        RecordedRequest afterClose = server.takeRequest(2, TimeUnit.SECONDS);
-        assertThat(afterClose.getSequenceNumber()).isZero();
+    @Test
+    void idleEviction_replacesConnection_thenDisposeReleasesPool() throws Exception {
+        KakaoMapPlaceProvider provider = provider(properties(2, 2, 2, Duration.ofSeconds(2),
+                Duration.ofMillis(300), Duration.ofSeconds(30), Duration.ofMillis(100), quietCircuit()));
 
-        // 3) max-idle(300ms) 경과 + background eviction(100ms) → 다음 요청은 새 connection.
-        Thread.sleep(800);
+        // 1) 첫 요청으로 connection 하나를 만든다.
         enqueueJson("{\"documents\":[]}");
-        provider.lookup(37.05, 127.05).block();
+        provider.lookup(37.01, 127.01).block();
+        assertThat(server.takeRequest(2, TimeUnit.SECONDS).getSequenceNumber()).isZero();
+
+        // 2) max-idle(300ms) + background eviction(100ms)이 idle connection을 실제로 닫을 때까지
+        //    pool gauge로 관찰한다 — 고정 sleep은 빠른 러너에서 낭비, 느린 러너에서 플레이키다.
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(
+                () -> assertThat(totalConnections()).isZero());
+
+        // 3) 퇴출 뒤 다음 요청은 새 connection이다(우리 property가 pool에 배선됐다는 증거).
+        enqueueJson("{\"documents\":[]}");
+        provider.lookup(37.02, 127.02).block();
         RecordedRequest afterIdle = server.takeRequest(2, TimeUnit.SECONDS);
         assertThat(afterIdle.getSequenceNumber()).isZero();
 
@@ -358,6 +368,14 @@ class KakaoGeoResourceBoundaryTest {
                 .find("reactor.netty.connection.provider.total.connections")
                 .tag("name", KakaoGeoHttpConfiguration.POOL_NAME)
                 .gauges()).isEmpty());
+    }
+
+    private double totalConnections() {
+        return meterRegistry.find("reactor.netty.connection.provider.total.connections")
+                .tag("name", KakaoGeoHttpConfiguration.POOL_NAME)
+                .gauges().stream()
+                .mapToDouble(gauge -> gauge.value())
+                .sum();
     }
 
     private double pendingConnections() {
