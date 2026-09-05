@@ -65,7 +65,7 @@ const PAGE_STYLE = `
   text-size-adjust: 100%;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: #f5f7fb; line-height: 1.75; word-break: keep-all; overflow-wrap: anywhere; }
+body { margin: 0; background: #f5f7fb; font-size: .9375rem; line-height: 1.75; word-break: keep-all; overflow-wrap: anywhere; }
 .skip-link { position: absolute; left: 1rem; top: -4rem; z-index: 10; padding: .65rem .9rem; color: #fff; background: #111827; border-radius: .5rem; }
 .skip-link:focus { top: 1rem; }
 .legal-document { width: min(100%, 960px); min-height: 100vh; margin: 0 auto; padding: 3rem 2.5rem 5rem; background: #fff; box-shadow: 0 0 0 1px rgba(15, 23, 42, .04); }
@@ -81,10 +81,6 @@ a:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; border-radius
 hr { margin: 3rem 0; border: 0; border-top: 1px solid #cbd5e1; }
 .table-scroll { width: 100%; margin: 1.25rem 0 1.75rem; overflow-x: auto; border: 1px solid #cbd5e1; border-radius: .65rem; background: #fff; -webkit-overflow-scrolling: touch; }
 .table-scroll:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
-/* 화면이 넉넉하면 표만 본문 좌우로 넓혀, 열이 많은 표가 가로 스크롤 없이 들어가게 한다. */
-@media (min-width: 1320px) {
-  .table-scroll { width: calc(100% + 340px); margin-inline: -170px; }
-}
 table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: .9375rem; line-height: 1.6; }
 th, td { overflow-wrap: break-word; padding: .85rem .9rem; border-right: 1px solid #dbe2ea; border-bottom: 1px solid #dbe2ea; text-align: left; vertical-align: top; }
 th:last-child, td:last-child { border-right: 0; }
