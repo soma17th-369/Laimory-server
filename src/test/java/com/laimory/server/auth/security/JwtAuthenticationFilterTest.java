@@ -1,13 +1,18 @@
 package com.laimory.server.auth.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -39,13 +44,15 @@ class JwtAuthenticationFilterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private JwtTokens jwtTokens;
-    private UserAccountAccessService userAccountAccessService;
+    private UserAccountService userAccountService;
     private JwtAuthenticationFilter filter;
 
     @BeforeEach
     void setUp() {
         jwtTokens = new JwtTokens(SECRET, Duration.ofMinutes(15), Clock.fixed(NOW, ZoneOffset.UTC));
-        userAccountAccessService = userId -> true;
+        // #441로 필터가 구체 서비스 빈(캐시 프록시)을 직접 받는다 — 슬라이스에서는 mock으로 대체한다.
+        userAccountService = mock(UserAccountService.class);
+        when(userAccountService.isActive(anyLong())).thenReturn(true);
         filter = newFilter(jwtTokens);
         SecurityContextHolder.clearContext();
     }
@@ -60,7 +67,7 @@ class JwtAuthenticationFilterTest {
         ResourceBundleMessageSource messageSource = new ResourceBundleMessageSource();
         messageSource.setBasename("messages");
         messageSource.setDefaultEncoding("UTF-8");
-        return new JwtAuthenticationFilter(tokens, userId -> userAccountAccessService.isActive(userId),
+        return new JwtAuthenticationFilter(tokens, userAccountService,
                 new ApiErrorResponseWriter(messageSource, objectMapper));
     }
 
@@ -106,7 +113,7 @@ class JwtAuthenticationFilterTest {
     void validBearer_inactiveUser_leavesContextEmptyWithoutUserIdAttribute() throws Exception {
         // 탈퇴(WITHDRAWAL_PENDING)/삭제 회원: 서명이 유효해도 인증이 성립하지 않는다(#305) — 인가 단계
         // 401 -2001 수렴. userId 로그 attribute도 active 인증 성립 전이라 심지 않는다.
-        userAccountAccessService = userId -> false;
+        when(userAccountService.isActive(anyLong())).thenReturn(false);
         MockHttpServletRequest request = request("Bearer " + jwtTokens.issueAccessToken(42L));
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -123,9 +130,7 @@ class JwtAuthenticationFilterTest {
     @Test
     void accountStatusLookupFailure_failsClosedWith500Envelope_withoutContinuingChain() throws Exception {
         // DB 장애를 조용한 401(credential 오류)로 숨기지 않는다 — 500 -500 envelope + ERROR 관측 후 중단.
-        userAccountAccessService = userId -> {
-            throw new RuntimeException("db down");
-        };
+        when(userAccountService.isActive(anyLong())).thenThrow(new RuntimeException("db down"));
         MockHttpServletRequest request = request("Bearer " + jwtTokens.issueAccessToken(42L));
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -181,11 +186,9 @@ class JwtAuthenticationFilterTest {
     @Test
     void tamperedToken_leavesContextEmpty_withoutAccountLookup() throws Exception {
         // 서명 검증 실패 token으로는 상태 조회 자체를 하지 않는다(파싱 성공 후에만 active 검사).
-        userAccountAccessService = userId -> {
-            throw new AssertionError("account lookup must not run for an invalid token");
-        };
-
         assertThat(runFilter(request("Bearer " + tamper(jwtTokens.issueAccessToken(42L))))).isNull();
+
+        verify(userAccountService, never()).isActive(anyLong());
     }
 
     private String tamper(String token) {

@@ -38,8 +38,9 @@ user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding compl
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
 `@AuthenticationPrincipal Long userId`로 주입돼 둘 다 OpenAPI parameter에 나타나지 않는다(클라이언트
-입력이 아님). draft 생성만 콘텐츠 owner와 계정 소유 약관 동의를 함께 판정하므로 두 hidden principal을
-받는다. 인증 흐름 상세는 [authentication runtime](../runtime/authentication.md)이 소유한다.
+입력이 아님). 유일한 예외인 앱 초기화 GET만 온보딩(subject 소유)과 약관 동의 필요 판정(계정 raw
+`user_id` 소유)을 함께 반환하므로 두 hidden principal을 받는다(#434). 인증 흐름 상세는
+[authentication runtime](../runtime/authentication.md)이 소유한다.
 
 `POST /a/api/{version}/timeline/drafts`의 각 sourceItem은 `startAt` 필수·`endAt` nullable이다(원래
 timestamp 계약 — 누락 `startAt`은 lookup·저장·dispatch 전 400/`-400`). `rawId`는 canonical lowercase
@@ -203,8 +204,7 @@ request body(`firebaseInstallationId`)로 받는다 — access log·프록시 UR
 않게 하는 의도적 계약이다(body는 access log masker가 마스킹). PUT은 등록·갱신·계정 전환 재결합의
 멱등 upsert, DELETE는 (owner, FID) 동시 일치 시에만 지우는 멱등 해제다(미존재도 200).
 `GET /a/api/{version}/push-settings`와 두 개의 `PUT` (`/enabled`, `/daily-reminder/enabled`)은 푸시
-수신 설정의 서버 권위 계약이다(#314, #318). 세 operation 모두 `@LoginTermsExempt`라 약관 미동의
-상태에서도 알림을 끌 수 있으며 bearer 인증은 그대로 요구한다. GET은
+수신 설정의 서버 권위 계약이다(#314, #318). GET은
 전체 ON/OFF와 일일 리마인더 ON/OFF·`HH:mm` 시각을 반환한다(순수 조회 — 행 생성은 가입 transaction과
 rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으로 가리거나 조용한 no-op 없이 500이다 —
 기본이 ON이라 가려버리면 "켜짐"이라 답하면서 실제로는 아무것도 발송되지 않는 상태가 된다.
@@ -218,17 +218,22 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 도입해야 한다.
 
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
-조회·기록 계약이다. GET은 인증 subject의 저장된 `onboardingCompleted` boolean 하나를 반환하고, POST는
-그 값을 `true`로 전이한다. 값의 단일 권위는 저장된 subject 설정(`subject_preferences.onboarding_completed`)
-이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나 자동 동기화하지 않는다 — 약관 개정도 저장된
-완료 상태를 되돌리지 않는다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
+조회·기록 계약이다. GET은 최상위 `onboardingCompleted`와 약관 그룹 `terms.agreementRequired`(#434)를
+반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
+(`subject_preferences.onboarding_completed`)이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나
+자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
+지금 현재 버전 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
+목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는
+종류는 그 종류만 판정에서 빠진다(종류별 fail-open — seed 누락이 500으로 앱 시작을 막지 않는다). 서버는
+이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이고, 앱은 받은 `(termType, version)`
+을 동의 등록에 그대로 회신한다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
 subject의 반복 POST도 같은 `200 + body=null`로 멱등 성공한다(matched row 기준 — 값이 같아도 0행이
 아니다). POST는 request body가 없다: 대상은 언제나 인증 subject 자신이고 바꿀 값도 하나뿐이다. 두
-operation 모두 `@LoginTermsExempt`라 약관 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마칠 수 있으며
-bearer 인증과 `ACTIVE` 회원 검사는 그대로 요구한다. 설정 행이 없으면 push 설정과 같은 정책으로 조회·기록
+operation 모두 bearer 인증과 `ACTIVE` 회원 검사를 요구한다. 설정 행이 없으면 push 설정과 같은 정책으로 조회·기록
 모두 기본값 추정이나 조용한 no-op 없이 500이다 — `false`로 가리면 앱이 온보딩을 다시 태우고 그 완료
-요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지한다(응답에
-다른 상태를 미리 넣거나 provider 병렬 aggregation framework를 만들지 않는다).
+요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지하며,
+그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다(응답에 다른 상태를 미리 넣거나 provider 병렬
+aggregation framework를 만들지 않는다).
 
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
@@ -241,14 +246,14 @@ bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`�
 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
 콘텐츠·Redis·S3의 물리 삭제 완료(#302 worker 책임)를 뜻하지 않는다. **이 transaction은 행을 지우지
 않는다**(#367) — refresh 행·push 등록(FID)·두 알림 설정 행은 모두 보존되고, 발송 차단은 삭제가 아니라
-OFF로 표현하며, credential 사용·연장 차단은 요청·발급 전 `ACTIVE` 검사가 담당한다(#429 — 필터
-경로는 commit 후 캐시 evict부터, 발급·회전은 DB 직행; authentication.md "탈퇴 차단 정책"). 보존 행의 물리
+OFF로 표현하며, credential 사용·연장 차단은 요청·발급 전 `ACTIVE` 검사가 담당한다(#429·#441 —
+필터·발급·회전 모두 commit 후 캐시 evict부터; authentication.md "탈퇴 차단 정책"). 보존 행의 물리
 삭제 책임은 #302에 있다. 이미 인증을 통과한 동시 요청은
 같은 202로 멱등 수렴하고, commit 뒤 같은 access token의 새 요청은 401 `-2001`로 수렴한다 — 통상은
 commit 후 evict로 즉시이나, 캐시 정책상 한시적 stale 통과가 가능하다(시점 보장은 authentication.md
 "탈퇴 차단 정책" 소유). 응답을 잃은 앱은 401을 이미 탈퇴된 terminal 결과로 취급한다.
 미인증/무효/만료/이미 최종 삭제된 회원도 401 `-2001`로
-존재를 노출하지 않는다. `@LoginTermsExempt`라 약관 미동의 상태에서도 탈퇴할 수 있다. 내부
+존재를 노출하지 않는다. 내부
 userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소셜 계정의 다음 로그인은 과거
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
@@ -267,8 +272,9 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 없다(#418). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
 파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
-조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 필수·조건부 동의 판정은 API 메타데이터가
-아니라 실제 enforcement 지점의 정책이다.
+조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 어떤 종류가 동의 대상인지는 API
+메타데이터가 아니라 서버 정책이 소유한다(동의 필요 판정의 대상 5종은 `TermAgreementService`의 상수가
+소유 — #434).
 
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
 도메인이라 hidden `@AuthenticationPrincipal Long userId`). body `agreements[]`의 각
@@ -283,12 +289,9 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `agreements=[]`다. 두 약관 GET response는 access log에서 privacy skeleton으로 마스킹되어 제목과
 `contentUrl` 값이 남지 않는다([observability](../operations/observability.md)).
 
-미동의 약관 gate: `/a/api` HandlerMethod는 기본으로 현재 `LOGIN` 필수 약관 동의를 요구하고(미동의
-403 `-3001`), draft 생성·사진 presign은 `TIMELINE_FIRST_CREATE` 필수 3종을 추가 요구한다. draft 생성은
-신규 처리 항목에 STAY·MOVEMENT·좌표가 있는 PHOTO가 있으면 현재 위치약관도 요구한다. 클라이언트는
-위치약관에 동의하거나 해당 위치 항목을 제외해 재시도하며 서버는 위치를 자동 제거하지 않는다.
-exemption(회원 탈퇴 DELETE /user 포함)과 fail-open 계약은
-[authentication runtime](../runtime/authentication.md)이 소유한다.
+약관 동의 여부는 `/a/api`에서 강제하지 않는다(#436 — 403 `-3001` 미반환). 동의 확인·차단은 가입
+flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필요 여부는 앱 초기화 GET의
+`terms.agreementRequired`(#434)가 알려준다.
 
 ### Boundary conventions
 

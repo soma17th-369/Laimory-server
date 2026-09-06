@@ -2,7 +2,6 @@ package com.laimory.server.terms.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.terms.LoginTermsExempt;
 import com.laimory.server.terms.dto.TermAgreementCreateRequest;
 import com.laimory.server.terms.dto.TermAgreementHistoryResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,9 +23,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>회원 account 도메인이라 콘텐츠 subject 변환 없이 JWT 인증 principal인 raw {@code Long userId}를
  * 그대로 받는다({@code UserApi} 선례) — 클라이언트 입력이 아니므로 OpenAPI에는 노출하지 않는다.
- *
- * <p>두 operation 모두 {@link LoginTermsExempt}다 — 동의를 완료하는 경로 자체가 필수 약관 gate에 막히면
- * 미동의 상태를 벗어날 수 없다. bearer 인증(401)은 그대로 요구된다.
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
@@ -53,7 +49,6 @@ public interface TermAgreementApi {
                             + "(개정 직후의 stale 버전 포함 — 전체 미기록, 현재 약관 재조회 필요)")
     })
     @PostMapping
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> agreeToTerms(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId,
@@ -71,7 +66,6 @@ public interface TermAgreementApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @GetMapping
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<TermAgreementHistoryResponse>> getMyAgreements(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);

@@ -31,9 +31,6 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
                        @Param("acceptedAt") LocalDateTime acceptedAt,
                        @Param("auditNow") LocalDateTime auditNow);
 
-    /** 필수 동의 existence 판정용 단일 count — {@code (user_id, term_document_id)} UNIQUE 인덱스를 탄다. */
-    long countByUserIdAndTermDocumentIdIn(Long userId, Collection<Long> termDocumentIds);
-
     /**
      * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정이라 탈퇴 회원의 동의 증적은
      * 보존하지 않는다(계획 §3.2).
@@ -58,4 +55,16 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
             ORDER BY a.acceptedAt DESC, a.termAgreementId DESC
             """)
     List<TermAgreementHistoryEntry> findHistoryByUserId(@Param("userId") Long userId);
+
+    /**
+     * 후보 문서 중 이 회원이 동의한 문서 id 집합 — 재동의 판정(#434)이 현재 문서 집합에서 빼는 용도다.
+     * {@code (user_id, term_document_id)} UNIQUE 인덱스를 그대로 탄다. 빈 후보는 호출자가 걸러 보낸다.
+     */
+    @Query("""
+            SELECT a.termDocumentId
+            FROM TermAgreement a
+            WHERE a.userId = :userId AND a.termDocumentId IN :termDocumentIds
+            """)
+    List<Long> findAgreedDocumentIds(@Param("userId") Long userId,
+                                     @Param("termDocumentIds") Collection<Long> termDocumentIds);
 }

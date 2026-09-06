@@ -281,8 +281,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   운영 SQL로도 바뀌지 않는다.
 - 앱 온보딩 완료 여부의 단일 권위는 `subject_preferences.onboarding_completed`다(#382, 기본 false).
   약관 동의 이력·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
-  완료 상태를 되돌리지 않는다(재동의 강제는 terms gate의 별도 책임) — 두 상태를 엮으면 약관 개정이
-  온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
+  완료 상태를 되돌리지 않는다(동의 필요 판정은 같은 응답의 `terms.agreementRequired`가 지는 별도
+  책임 — #434) — 두 상태를 엮으면
+  약관 개정이 온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
 - 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
   이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
   부재를 뜻한다 — 이 판정이 changed 기준으로 바뀌면 정상 재시도가 500이 된다).
@@ -330,10 +331,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
   것은 형식(https 절대 URI, NOT NULL)뿐이고 게시 위치는 운영 규약이다.
-- enforcement 대상 종류의 current 행 **존재가 해당 stage gate의 활성화 조건**이다. 개인정보 처리방침처럼
-  조회만 하는 종류는 gate를 활성화하지 않는다. 서버는 `content_url`이 실제로 열리는지
+- current 행이 INSERT되는 순간 그 문서는 공개 조회와 동의 등록 검증의 현재 버전이 된다. 서버는
+  `content_url`이 실제로 열리는지
   검증할 수 없으므로(요청·기동 중 HTTP 조회 금지, 기동 형식 검사는 멀쩡한 오타를 통과시킨다) 게시 page가
-  200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 gate가 미동의 사용자를 막는 동안 약관 page는
+  200임을 확인한 뒤에만 행을 INSERT한다. 순서를 뒤집으면 앱이 동의 화면에서 여는 약관 page가
   열리지 않는 창이 생긴다 — 이 창을 닫는 것은 코드가 아니라 순서다.
 - 게시된 버전 page의 **내용**은 영구 불변이다 — 수정·재사용·삭제를 하지 않고 개정은 새 version·새
   URL로 게시한다. 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이므로, 호스팅을
@@ -349,35 +350,26 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   캡처한 instant를 같은 명시적 KST 변환(`TermTimes`)으로만 바꾼다 — JVM/Clock zone에 의존하지 않는다.
 - 공개 조회의 타입 필터와 순서는 클라이언트가 반복 query에 보낸 `termTypes` 배열이 권위다. DB의 `IN`
   결과 순서는 보장되지 않으므로 종류별 map을 만든 뒤 요청 배열로 재구성한다. 중복 `termTypes`는 400이다.
-  필수·조건부 동의 대상은 enum 속성이 아니라 `TermCatalogReadiness`의 stage별 대상과 위치약관 조건부
-  gate가 명시하며 DB는 이 값을 복제하지 않는다.
+  동의 대상 분류는 enum 속성으로 두지 않으며 DB에도 복제하지 않는다 — 기동 seed 검사의 stage별
+  대상은 `TermCatalogReadiness`가, 동의 필요 판정 대상(`PRIVACY_POLICY` 제외 5종)은
+  `TermAgreementService`의 상수(#434)가 명시한다.
   미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
   `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
-  판정을 바꾸지 않는다 — gate 판정은 현재 필수 문서 존재 여부만 본다.
+  판정을 바꾸지 않는다 — 준비 판정은 현재 필수 문서 존재 여부만 본다.
 - 동의 등록은 all-or-nothing이다 — 제출 전부가 검증 시각의 현재 버전일 때만 한 DB transaction으로
   기록하고, 하나라도 미존재·stale이면 0건 기록 + 409 `-3002`다. 수락 시각은 서버가 batch당 한 번 캡처한
   KST 값이고 같은 버전 재전송은 native insert-if-absent(멱등)라 최초 수락 시각을 덮어쓰지 않는다
   (save 반복 + unique 예외 catch 금지 — rollback-only 오염 방지).
 - 동의가 남아 있는 문서 행은 삭제할 수 없다(FK `ON DELETE RESTRICT`) — 이력 재구성 권위 보존.
-- `/a/api` LOGIN gate와 draft 생성·사진 presign의 `TIMELINE_FIRST_CREATE` gate는 controller 진입 전
-  interceptor에서 끝난다(미동의 403 `-3001`, S3 presign·외부 호출·DB/Redis write 전). "첫 1회" 판정은
-  기록 존재가 아니라 해당 현재 약관 버전의 agreement 존재다 — 개정되면 현재 버전 재동의를 요구한다.
-- 위치약관은 다른 문서와 같이 `termTypes`로 조회하되 stage 일괄 gate에는 포함하지 않는다. draft 생성에서 기본
-  검증과 기존 final rawId 제외가 끝난 신규 item 중 STAY·MOVEMENT·좌표가 모두 있는 PHOTO가 하나라도
-  있으면 현재 위치약관 동의를 요구하고, 미동의는 지오코딩·DB/Redis write·AI dispatch 전에 403
-  `-3001`로 끝난다. 위치 없는 항목만 보내 재시도할 수 있으며 서버가 위치를 조용히 제거하지 않는다.
-- exemption은 raw path allowlist가 아니라 `*Api` interface method의 명시적 annotation이다 — 동의
-  등록/이력·내 회원 조회·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push 등록
-  PUT/DELETE(계정 전환 FID 재결합·로그아웃 정리)·push 수신 설정 3종·앱 초기화 GET /initializer와
-  온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은 약관 동의와 독립된 절차)만 면제하고
-  bearer 인증(401)은 그대로 요구한다.
-- 기대 필수 종류 중 current 문서가 없는 stage는 부분 강제하지 않고 전체를
-  fail-open한다 — seed/activation 문제가 5xx나 전 회원 차단으로 이어지지 않게 하고 metric·bounded
-  전이 로그로만 알린다. 로그 수위: 테이블이 완전히 빈 pre-activation 상태는 예정된 fail-open이라
-  WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은 ERROR(경보 대상)다.
-- 조건부 위치문서의 current 행이 없으면 위치 gate만 별도 metric·bounded log를 남기고 fail-open한다.
-  이 누락은 #3~#5의 stage 준비 판정과 강제를 약화하지 않는다.
+- 서버는 인증 API에서 약관 동의 여부·최신 버전을 강제하지 않는다(#436 — #303 gate 제거, 403 `-3001`
+  미반환). 동의 보장은 가입 flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필요 여부는
+  앱 초기화 응답 `terms.agreementRequired`(#434)가 알려준다 — 서버는 그 판정으로도 요청을 막지 않는다.
+- 기대 필수 종류 중 current 문서가 없는 stage는 준비되지 않은 catalog로 표시하고 metric·bounded
+  전이 로그로만 알린다(기동 검사 — 기동·공개 조회는 막지 않는다). 로그 수위: 테이블이 완전히 빈
+  pre-activation 상태는 예정된 미준비라 WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은
+  ERROR(경보 대상)다. 조건부 위치문서의 current 행 누락도 별도 gauge·bounded log로 같은 수위 정책을
+  따르며 stage 준비 판정을 약화하지 않는다.
 - 두 약관 GET response(`/api/{v}/terms`, `/a/api/{v}/terms/agreements`)는 응답에 법률 원문이 없어진
   뒤에도 privacy skeleton 대상으로 남는다 — 제목과 `contentUrl` 값은 allowlist 밖이라 마스크되고
   종류·버전만 구조 필드로 남는다.
@@ -397,8 +389,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.
-- `/a/api` 인증은 JWT 파싱에 더해 요청마다 회원 `ACTIVE`를 확인한다(#305). #429부터 이 필터 검사만
-  공유 Redis 캐시를 탄다 — ACTIVE=true만 캐시(음성 미적재), 탈퇴 시 commit 후 DEL, TTL은 쓰기 고정
+- `/a/api` 인증은 JWT 파싱에 더해 요청마다 회원 `ACTIVE`를 확인한다(#305). #429부터 이 검사는
+  공유 Redis 캐시를 탄다(#441부터 token 발급·회전도 같은 캐시) — ACTIVE=true만 캐시(음성 미적재),
+  탈퇴 시 commit 후 DEL, TTL은 쓰기 고정
   안전망이며, 한시적 stale 허용 범위는 authentication.md의 "탈퇴 차단 정책(#429)"이 소유한다.
   회원 없음과 `WITHDRAWAL_PENDING`은 구분 없이 같은 401 `-2001`이고, 상태 조회 DB 장애(캐시 miss
   경로)만 fail-closed 500 `-500`+ERROR 관측이다(장애를 조용한 401로 숨기지 않음 — Redis 장애는 miss
@@ -412,17 +405,18 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   함께 rollback한다(알림이 켜진 채 탈퇴만 접수되는 상태 금지). 동시성 판정은 조건부
   UPDATE 영향 행 수 하나다 — 승자만 정리를 수행하고, 이미 인증을 통과한 동시 요청은 202로 멱등
   수렴하며 회원 없음은 401 `-2001`이다. 202는 물리 삭제(#302)나 refresh 물리 zero가 아니라 "commit
-  후 시작분 차단 + in-flight 산물의 한시적 잔존(각 token은 발급 시각+수명까지, 회전 사슬 1회
-  종결)"을 뜻한다(#429 — authentication.md "탈퇴 차단 정책").
+  후 시작분 차단 + in-flight 산물의 한시적 잔존(각 token은 발급 시각+수명까지)"을 뜻한다
+  (#429 — authentication.md "탈퇴 차단 정책").
 - `WITHDRAWAL_PENDING` 행을 `ACTIVE`로 되돌리는 경로는 없다. 같은 provider의 다음 로그인은 released
   identity로 `findOrCreate` 신규 생성 경로를 타 새 userId·새 subject의 완전히 새로운 회원이 된다 —
   old subject/콘텐츠/약관 동의를 새 회원에 연결하거나 email로 병합하지 않는다.
 - token 발급(app-code 교환)과 refresh 회전은 발급 전에 회원 `ACTIVE`를 조회한다(#305). 회원
   없음/탈퇴는 각각 기존 401 `-2002`(`APP_CODE_INVALID`)/`-2003`(`REFRESH_TOKEN_INVALID`, INFO)으로
   수렴하며 탈퇴 전용 code·WARN·ERROR를 만들지 않는다(WARN은 실제 verifier 불일치·active 회원 refresh
-  재사용만). 이 발급 전 조회는 #429 캐시를 타지 않는 DB 직행이다(회전 사슬 1회 종결 보장). 검사
+  재사용만). 이 발급 전 조회는 #441부터 필터와 같은 공유 Redis 캐시를 경유한다 — 탈퇴 evict 뒤에는
+  miss → DB로 거절된다(stale 허용 범위는 authentication.md "탈퇴 차단 정책" 소유). 검사
   통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이고 그 credential도 `/a/api` ACTIVE
-  검사(탈퇴 evict 뒤 miss부터)·다음 회전 검사(DB 직행)에서 거절된다(race로 늦게 저장된 ACTIVE
+  검사·다음 회전 검사(둘 다 탈퇴 evict 뒤 miss부터)에서 거절된다(race로 늦게 저장된 ACTIVE
   refresh 행은 #302 정리 대상).
   탈퇴-회전 경합의 좁은 창(ACTIVE 검사 통과 후 claim 전에 탈퇴 commit)에서는 스퓨리어스 reuse WARN
   1회가 가능하다(문서화된 제한 예외 — 401 `-2003` 수렴 계약 자체는 동일).

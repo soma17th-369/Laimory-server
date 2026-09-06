@@ -4,8 +4,8 @@ package com.laimory.server.terms;
  * 약관 종류.
  *
  * <p>DB {@code term_documents}는 종류·버전·효력일과 제목을 들고 있다. 공개 조회 순서는
- * 클라이언트가 반복 query parameter로 보낸 순서가 권위이며, 실제 필수 동의 대상은
- * enforcement catalog에서 명시한다.
+ * 클라이언트가 반복 query parameter로 보낸 순서가 권위이며, 동의 대상 분류는 enum 속성이 아니라
+ * 기동 seed 검사({@code TermCatalogReadiness})가 명시한다.
  */
 public enum TermType {
 

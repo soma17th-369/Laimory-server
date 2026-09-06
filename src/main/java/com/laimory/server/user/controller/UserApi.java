@@ -2,7 +2,6 @@ package com.laimory.server.user.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.terms.LoginTermsExempt;
 import com.laimory.server.user.dto.UserProfileResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -41,8 +40,6 @@ public interface UserApi {
                             + "없음도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
     @GetMapping
-    // 필수 약관 gate exemption(#303): 계정 확인은 동의 전에도 가능해야 한다(bearer 인증은 그대로 요구).
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);
@@ -68,8 +65,6 @@ public interface UserApi {
                             + "삭제된 회원도 같은 응답으로 수렴해 존재 여부를 노출하지 않음)")
     })
     @DeleteMapping
-    // 필수 약관 gate exemption(#303): 미동의 사용자도 탈퇴할 수 있어야 한다(bearer 인증·ACTIVE 검사는 그대로).
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> withdraw(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @AuthenticationPrincipal(errorOnInvalidType = true) Long userId);

@@ -27,21 +27,22 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - `*Api` interface가 OpenAPI annotation과 HTTP signature를 소유하고 controller가 구현한다.
 - timeline/push/initializer/onboarding의 인증 사용자 API는 `@CurrentSubject UUID subjectId` parameter를
   쓰고 MVC argument resolver가 SecurityContext의 raw `Long` principal을
-  `SubjectMappingService.getRequired`로 변환한다.
+  `SubjectMappingService.getRequired`로 변환한다(앱 초기화 GET만 약관 판정용 hidden
+  `@AuthenticationPrincipal Long userId`를 추가로 받는다 — #434, 예외 상세는 authentication.md 소유).
 - component dependency는 field injection 대신 constructor injection을 사용한다
   (일반적으로 `@RequiredArgsConstructor`와 `private final` field).
 - leaf service는 대체로 하나의 repository/store/adapter 책임을 감싼다.
 - 여러 domain 작업은 orchestrator가 leaf service를 합성한다.
 - 다른 feature의 상태를 읽거나 쓰는 orchestrator는 그 feature의 repository가 아니라 leaf service를
-  통한다 — 예: `initializer`/`onboarding`은 `subject_preferences`를 소유한 `SubjectPreferenceService`만
-  의존하고, 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다(#382).
-- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 셋이다 — application code의
+  통한다 — 예: `initializer`는 `subject_preferences`를 소유한 `SubjectPreferenceService`와 약관 동의를
+  소유한 `TermAgreementService`를 각 owner 축(subjectId/userId)으로 합성하고(#382, #434), `onboarding`은
+  `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
+- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
   Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping
   내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
-  (`SubjectMappingAccessArchTest`, #282), ACTIVE 검사 캐시(`RedisActiveStatusCache`)를 filter 배선과
-  탈퇴 evict 외에는 의존 금지(`AuthContextCacheAccessArchTest`, #429 — 발급·회전은 DB 직행 유지).
-  subject mapping 캐시에는 대응 규칙이 없다. 우회해야 하는 호출자가 없어 `SubjectMappingService`에
-  직접 달았기 때문이다.
+  (`SubjectMappingAccessArchTest`, #282). 캐시는 wrapper 없이 서비스 메서드에 직접 단다 —
+  ACTIVE 검사(`UserAccountService`, #441)와 subject 매핑(`SubjectMappingService`) 둘 다이며,
+  우회해야 하는 호출자가 없어 별도 경계 arch test도 없다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
 

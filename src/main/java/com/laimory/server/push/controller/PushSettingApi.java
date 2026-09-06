@@ -4,7 +4,6 @@ import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.push.dto.PushEnabledRequest;
 import com.laimory.server.push.dto.PushSettingsResponse;
-import com.laimory.server.terms.LoginTermsExempt;
 import com.laimory.server.user.CurrentSubject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -24,10 +23,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>모든 값의 권위는 서버다 — 앱은 재설치·기기 변경 뒤에도 로컬 추정값이 아니라 조회 응답을 표시한다.
  * 설정 owner는 {@code @CurrentSubject}가 JWT principal에서 해석한 subject이며 클라이언트 입력이 아니다.
- *
- * <p>모든 operation에 {@link LoginTermsExempt}를 붙인다 — 약관에 아직 동의하지 않은 사용자도 알림을
- * 끌 수 있어야 한다. bearer 인증(401)은 그대로 요구한다.
- *
  */
 @Tag(name = "Push Settings", description = "푸시 수신 설정 — 전체 ON/OFF, 일일 리마인더")
 @SecurityRequirement(name = "bearerAuth")
@@ -47,7 +42,6 @@ public interface PushSettingApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @GetMapping
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<PushSettingsResponse>> getPushSettings(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId);
@@ -66,7 +60,6 @@ public interface PushSettingApi {
                     description = "`-2001` — 인증 필요")
     })
     @PutMapping("/enabled")
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> updatePushEnabled(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
@@ -85,7 +78,6 @@ public interface PushSettingApi {
                     description = "`-2001` — 인증 필요"),
     })
     @PutMapping("/daily-reminder/enabled")
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> updateDailyReminderEnabled(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
