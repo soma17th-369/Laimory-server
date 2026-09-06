@@ -11,7 +11,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 앱 초기화 조회 API 구현. HTTP 문서·계약은 {@link AppInitializerApi}.
  *
- * <p>subjectId는 클라이언트 값이 아니라 {@code @CurrentSubject}가 JWT principal을 해석한 결과다.
+ * <p>userId·subjectId 모두 클라이언트 값이 아니다 — userId는 JWT principal, subjectId는
+ * {@code @CurrentSubject}가 그 principal을 해석한 결과다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -21,8 +22,8 @@ public class AppInitializerController implements AppInitializerApi {
 
     @Override
     public ResponseEntity<ApiResponse<InitializerResponse>> getInitializer(
-            String applicationVersion, UUID subjectId) {
+            String applicationVersion, Long userId, UUID subjectId) {
         return ResponseEntity.ok(ApiResponse.success(
-                appInitializerService.getInitialState(applicationVersion, subjectId)));
+                appInitializerService.getInitialState(applicationVersion, userId, subjectId)));
     }
 }

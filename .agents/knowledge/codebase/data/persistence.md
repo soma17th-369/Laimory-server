@@ -284,9 +284,9 @@ not-ready로 경보한다. `content_url`을 `URI`가 아닌 `String`으로 매�
 서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
 공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고 원문 slug는 게시 문서가 소유하므로 DB에
-복제하지 않는다. 동의 대상 분류는 enum 메타데이터가 아니라 기동 seed 검사(readiness)와 재동의 판정
-(initializer 후속 #434)의 각 지점에 명시한다. readiness·동의 버전 검증은 ID·종류·버전만 담은 summary
-projection을 조회한다 — 판정에 쓰지 않는 컬럼을 함께 적재하지 않는 좁은 투영이다.
+복제하지 않는다. 동의 대상 분류는 enum 메타데이터가 아니라 기동 seed 검사(readiness)와 동의 필요 판정
+(`TermAgreementService` 상수, #434)의 각 지점에 명시한다. readiness·동의 버전/필요 판정은 ID·종류·버전만
+담은 summary projection을 조회한다 — 판정에 쓰지 않는 컬럼을 함께 적재하지 않는 좁은 투영이다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
 공개 page는 랜딩페이지(Vercel, `www.laimory.app`)가 게시한다(#418). Server는 원문을 서빙하지 않고
