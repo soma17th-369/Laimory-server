@@ -107,8 +107,8 @@ public interface TimelineRecordApi {
 
     @Operation(summary = "캘린더 월별 하루 기록 경량 조회",
             description = "인증 사용자가 소유한 해당 월(양끝 포함)의 DRAFT/SAVED 하루 기록을 recordDate "
-                    + "오름차순으로 반환한다. 앱 캘린더 화면용 경량 read model이라 각 항목은 recordDate와 "
-                    + "nullable emotionType만 담고 Event·Item graph는 조회하지 않는다. "
+                    + "오름차순으로 반환한다. 앱 캘린더 화면용 경량 read model이라 각 항목은 recordDate, "
+                    + "non-null status(DRAFT/SAVED), nullable emotionType만 담고 Event·Item graph는 조회하지 않는다. "
                     + "기록이 없는 월은 404가 아니라 dailyRecords 빈 배열이다. "
                     + "year는 1000~9999(MySQL DATE 지원 범위), month는 1~12만 허용한다.")
     @ApiResponses({

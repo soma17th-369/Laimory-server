@@ -77,8 +77,9 @@ Event별 연결 Item을 `events[].items[]`에 포함한다.
 
 `GET /a/api/{version}/timeline/monthly-records?year=&month=`는 인증 사용자가 소유한 해당 월(양끝 포함)의
 DRAFT/SAVED DailyRecord를 `recordDate` 오름차순으로 반환하는 캘린더용 경량 조회다. 각 항목은
-`MonthlyDailyRecordResponse(recordDate, nullable emotionType)`뿐이고 `dailyRecordId`·`status`·`events`는
-싣지 않으며 Event·Item graph를 조회하지 않는다. null 감정은 key 생략이 아니라 명시적 JSON null이다.
+`MonthlyDailyRecordResponse(recordDate, non-null status, nullable emotionType)`이고
+`dailyRecordId`·`events`는 싣지 않으며 Event·Item graph를 조회하지 않는다. null 감정은 key 생략이
+아니라 명시적 JSON null이다.
 기록 없는 월은 404가 아니라 200과 `dailyRecords=[]`다. `year`·`month`는 필수 정수 query parameter이며
 `year`는 1000~9999(MySQL `DATE` 지원 범위), `month`는 1~12만 허용한다 — 누락·비정수·범위 밖은 모두
 400 `-400`이다. URL·DTO·method 이름에 `calendar`는 쓰지 않는다(Source Item `ItemType.CALENDAR`와 충돌).

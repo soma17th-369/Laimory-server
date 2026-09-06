@@ -172,7 +172,7 @@ class TimelineSaveFlowIntegrationTest {
 
     @Test
     void 저장한_감정은_일별_조회와_월별_조회에_함께_보인다() {
-        // #304+#298 결합: HAPPY 저장 → 기존 일별 조회는 SAVED+HAPPY, 같은 달 월별 조회는 recordDate+HAPPY.
+        // #304+#298 결합: HAPPY 저장 → 기존 일별 조회는 SAVED+HAPPY, 같은 달 월별 조회는 recordDate+SAVED+HAPPY.
         timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
 
         DailyTimelineResponse daily = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE);
@@ -182,7 +182,7 @@ class TimelineSaveFlowIntegrationTest {
         MonthlyDailyRecordListResponse monthly = dailyTimelineService.getMonthlyDailyRecords(
                 "v1", subjectId, DATE.getYear(), DATE.getMonthValue());
         assertThat(monthly.dailyRecords())
-                .contains(new MonthlyDailyRecordResponse(DATE, EmotionType.HAPPY));
+                .contains(new MonthlyDailyRecordResponse(DATE, DailyRecordStatus.SAVED, EmotionType.HAPPY));
     }
 
     @Test
