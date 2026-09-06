@@ -3,7 +3,6 @@ package com.laimory.server.initializer.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.initializer.dto.InitializerResponse;
-import com.laimory.server.terms.LoginTermsExempt;
 import com.laimory.server.user.CurrentSubject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -21,9 +20,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 자리다. 상태의 owner는 {@code @CurrentSubject}가
  * JWT principal에서 해석한 subject이며 클라이언트 입력이 아니다.
- *
- * <p>{@link LoginTermsExempt}를 붙인다 — 약관에 아직 동의하지 않은 사용자도 이 값을 읽어 시작 화면을
- * 분기해야 한다. bearer 인증과 {@code ACTIVE} 회원 검사는 그대로 요구한다.
  */
 @Tag(name = "App Initializer", description = "앱 시작 시 필요한 사용자별 초기 상태")
 @SecurityRequirement(name = "bearerAuth")
@@ -42,7 +38,6 @@ public interface AppInitializerApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @GetMapping
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<InitializerResponse>> getInitializer(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId);

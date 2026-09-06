@@ -27,7 +27,7 @@ public interface TermDocumentRepository extends JpaRepository<TermDocument, Long
                                             @Param("nowKst") LocalDateTime nowKst);
 
     /**
-     * 현재 문서의 식별 요약 — enforcement/readiness/동의 버전 검증용. 위 전체 조회와 같은 current
+     * 현재 문서의 식별 요약 — 기동 catalog 검증(readiness)·동의 버전 검증용. 위 전체 조회와 같은 current
      * selection이지만 판정에 쓰는 ID·종류·버전만 투영한다.
      */
     @Query("""

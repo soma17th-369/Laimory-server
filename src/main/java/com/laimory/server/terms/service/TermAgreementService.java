@@ -63,21 +63,12 @@ public class TermAgreementService {
         return termAgreementRepository.findHistoryByUserId(userId);
     }
 
-    /** 주어진 문서 전부에 동의했는지 — enforcement용 단일 existence query. 빈 목록은 true다. */
     /**
      * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정(계획 §3.2)이라 탈퇴 회원의 증적은
      * 보존하지 않는다. 미존재는 0행(멱등)이며 호출자 transaction에 합류한다.
      */
     public void deleteAllByUserId(long userId) {
         termAgreementRepository.deleteAllByUserId(userId);
-    }
-
-    public boolean hasAgreedToAll(Long userId, List<Long> termDocumentIds) {
-        if (termDocumentIds.isEmpty()) {
-            return true;
-        }
-        return termAgreementRepository.countByUserIdAndTermDocumentIdIn(userId, termDocumentIds)
-                == termDocumentIds.size();
     }
 
     private static void validateShape(List<TermAgreementCommand> agreements) {

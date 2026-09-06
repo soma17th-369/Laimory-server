@@ -76,22 +76,10 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 refresh의 재회전은 DB 직행 검사가 거절하므로 회전 사슬은 1회로 종결된다(연장 불가). TTL은 지배적
 실용 상한(기대치)이다. 응답 계약(401 `-2001` 수렴·존재 비노출)은 변하지 않았다.
 
-인증을 통과한 `/a/api` HandlerMethod에는 약관 gate(#303)가 이어진다 — `TermsEnforcementInterceptor`가
-controller 진입 전에 SecurityContext의 `Long` principal로 현재 `LOGIN` 필수 약관 동의를 검사하고
-미동의는 403 `-3001`이다(401 인증 계약과 독립 — bearer 실패가 항상 먼저다). exemption은 raw path
-allowlist가 아니라 `*Api` interface method의 `@LoginTermsExempt`뿐이다(동의 등록/이력·회원 조회 GET
-/user·회원 탈퇴 DELETE /user(#305 — 미동의 사용자도 탈퇴 가능)·push-registrations PUT/DELETE·
-push-settings 3종·앱 초기화 GET /initializer와 온보딩 완료 POST /onboarding/complete(#382 — 앱 온보딩은
-약관 동의와 독립된 절차라 미동의 상태에서도 시작 화면을 분기하고 온보딩을 마쳐야 한다)). draft 생성·사진 presign은
-`@RequiredTermsStage(TIMELINE_FIRST_CREATE)`로 단계를 추가 검사한다. 판정은 요청 시점 DB 권위이고
-TTL cache가 없다 — 요청당 전 종류 current 요약을 catalog snapshot 1쿼리로 떠서(request attribute
-캐시, #428) 요청이 강제하는 stage들과 조건부 위치약관 판정이 공유하고, 동의는 ready stage 필수 문서
-id 합집합의 existence 1쿼리(+조건부는 별도 1쿼리)로 확인한다. 판정 시각 계약: 요청당 첫 판정 시점에
-캡처한 snapshot이 그 요청 전체의 판정 권위라 요청 도중 발효된 문서는 다음 요청부터 강제된다. catalog
-미준비 stage(기대 필수 종류의 current 문서 누락 — seed/activation 전, 또는 미지 `term_type` literal
-때문에 current 조회에서 빠진 경우)는 부분 강제 없이 전체 fail-open한다(`TermCatalogReadiness`
-metric·bounded log 경보).
-token refresh/logout은 public auth 경로라 이 interceptor 대상이 아니다.
+약관 동의는 인증 API에서 강제하지 않는다(#436 — #303의 enforcement gate 제거). 동의 보장은 가입
+flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제된 상태), 약관 개정 후 재동의 필요 여부는
+앱 초기화 API 응답으로 이관한다(후속 #434). 인증을 통과한 `/a/api` 요청은 약관 동의 여부와 무관하게
+controller에 도달하며 403 `-3001`은 더 이상 반환되지 않는다.
 
 구현된 로그인·token 기능:
 

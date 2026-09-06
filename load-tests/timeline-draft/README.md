@@ -39,7 +39,6 @@ load-tests/timeline-draft/
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
 │   └── verify-redis-residue.sh     # Redis 잔여 확인
 └── sql/
-    ├── 00-preflight-terms-gate.sql # 실행 전: 약관 catalog가 아직 fail-open인지 확인
     ├── 01-seed-users.sql           # 합성 사용자 1,000명
     ├── 02-export-user-ids.sql      # user_id 목록 추출
     ├── 03-db-size-baseline.sql     # DB 규모·buffer pool 기준선
@@ -198,16 +197,8 @@ DB 규모 기준선(03-db-size-baseline.sql 출력)
 
 ### 1. 합성 사용자 seed
 
-먼저 약관 gate를 확인한다. 합성 사용자는 `term_agreements`가 0인데, catalog가 활성화되면
-LOGIN·TIMELINE_FIRST_CREATE 필수 동의 검사가 걸려 **전량 403**이 된다. 지금은 catalog가 비어
-stage 전체가 fail-open이라 통과하지만, #383이 운영 원문을 seed하면 그 순간 조용히 깨진다.
-
-```bash
-mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/00-preflight-terms-gate.sql
-```
-
-`active_documents`가 0이 아니면 실행하지 않는다 — 합성 사용자에게 현재 문서 동의를 함께 seed하고,
-`term_agreements`는 users FK가 없으므로 정리(06)에도 직접 DELETE를 추가해야 한다.
+합성 사용자는 `term_agreements`가 0이지만 문제되지 않는다 — 서버는 인증 API에서 약관 동의를
+강제하지 않으므로(#436) catalog 활성 여부와 무관하게 동의 seed 없이 실행할 수 있다.
 
 ```bash
 mysql --defaults-extra-file=<config> <db> < load-tests/timeline-draft/sql/01-seed-users.sql

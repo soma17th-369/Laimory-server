@@ -26,7 +26,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
-import com.laimory.server.terms.service.TermsEnforcementService;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
@@ -133,9 +132,6 @@ class TimelineRecordControllerTest {
     private TimelineEventCreateService timelineEventCreateService;
     @MockitoBean
     private SubjectMappingService subjectMappingService;
-    // 약관 gate interceptor(#303)가 슬라이스에도 적용된다 — 기본 no-op mock이면 gate 통과.
-    @MockitoBean
-    private TermsEnforcementService termsEnforcementService;
 
     @BeforeEach
     void resolveSubject() {

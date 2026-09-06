@@ -2,7 +2,6 @@ package com.laimory.server.onboarding.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
-import com.laimory.server.terms.LoginTermsExempt;
 import com.laimory.server.user.CurrentSubject;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -21,9 +20,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
  * <p>{@code GET /initializer}가 읽는 값을 바꾸는 유일한 client-facing 경로다. 완료는 단방향이라
  * {@code false}로 되돌리는 짝을 두지 않으며, 상태의 owner는 {@code @CurrentSubject}가 JWT principal에서
  * 해석한 subject이고 클라이언트 입력이 아니다.
- *
- * <p>{@link LoginTermsExempt}를 붙인다 — 앱 온보딩은 약관 동의와 독립된 절차라 미동의 상태에서도 완료를
- * 기록할 수 있어야 한다. bearer 인증과 {@code ACTIVE} 회원 검사는 그대로 요구한다.
  */
 @Tag(name = "Onboarding", description = "앱 온보딩 완료 기록")
 @SecurityRequirement(name = "bearerAuth")
@@ -43,7 +39,6 @@ public interface OnboardingApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
     })
     @PostMapping("/complete")
-    @LoginTermsExempt
     ResponseEntity<ApiResponse<Void>> completeOnboarding(
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
             @Parameter(hidden = true) @CurrentSubject UUID subjectId);

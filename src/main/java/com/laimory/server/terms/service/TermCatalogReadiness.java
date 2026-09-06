@@ -4,7 +4,6 @@ import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.repository.TermDocumentRepository;
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.net.URI;
@@ -25,8 +24,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-import org.springframework.web.context.request.RequestAttributes;
-import org.springframework.web.context.request.RequestContextHolder;
 
 /**
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 종류 커버리지의 단일 판정 지점.
@@ -35,43 +32,30 @@ import org.springframework.web.context.request.RequestContextHolder;
  * {@code term_type} literal·{@code content_url}
  * 형식을 검사하고, 누락·잘못된 값·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
  * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
- * 상태(법무 원문 대기 — 예정된 fail-open)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·미지
- * literal·잘못된 URL) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge/counter는 수위와 무관하게 동일하게
+ * 상태(법무 원문 대기 — 예정된 미준비)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·미지
+ * literal·잘못된 URL) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge는 수위와 무관하게 동일하게
  * 기록한다(대시보드 추적).
  *
- * <p>runtime enforcement는 전 종류 current 요약을 한 쿼리로 뜬 catalog snapshot 위에서 stage·조건부
- * 판정을 메모리로 한다(#428). snapshot은 request attribute에 캐시돼 같은 요청의 LOGIN·추가 stage·조건부
- * 위치약관 판정이 공유하고, 요청 밖(기동 검증·비웹 호출)은 attribute가 없어 매번 직접 조회로 강등된다.
- * 요청 간 캐시는 아니다(임의 TTL cache 없음). 판정 시각 계약: 요청당 첫 판정 시점에 캡처한 snapshot이
- * 그 요청 전체의 판정 권위이며, 요청 도중 발효된 문서는 다음 요청부터 강제된다 — 동의 등록이 batch당
- * 한 번 캡처한 시각을 쓰는 것과 같은 축이다. stage별 enforcement 대상 중 하나라도 current 문서가
- * 없는 stage는 부분 강제하지 않고 준비되지 않은 catalog로 표시한다 — gate는 stage 전체를 fail-open하고,
- * 잘못된 seed가 5xx나 전 회원 차단으로 이어지지 않게 한다. 위치약관은 따로 판정해 누락 시 그 gate만
- * fail-open한다.
+ * <p>판정은 전 종류 current 요약을 한 쿼리로 뜬 catalog snapshot 위에서 stage·조건부 단위로 메모리
+ * 계산한다. 호출 지점은 기동 검증(과 테스트)뿐이다 — 요청 경로 enforcement gate는 #436에서 제거됐고,
+ * ready gauge 2종은 마지막 기동 검증이 기록한 기동 시점 값만 유지한다.
  *
- * <p>로그는 상태 전이에서만 남기고(bounded — 요청마다 반복하지 않음) 발생 빈도는
- * stage와 조건부 문서에 분리된 fail-open counter와 ready gauge가 담당한다.
+ * <p>로그는 상태 전이에서만 남기고(bounded) 상태는 stage와 조건부 문서로 분리된 ready gauge가 담당한다.
  */
 @Slf4j
 @Component
 public class TermCatalogReadiness {
 
     static final String CATALOG_READY_GAUGE = "laimory.terms.catalog.ready";
-    static final String GATE_FAIL_OPEN_COUNTER = "laimory.terms.gate.fail_open";
     static final String CONDITIONAL_CATALOG_READY_GAUGE = "laimory.terms.conditional.catalog.ready";
-    static final String CONDITIONAL_GATE_FAIL_OPEN_COUNTER = "laimory.terms.conditional.gate.fail_open";
-
-    private static final String SNAPSHOT_ATTRIBUTE = TermCatalogReadiness.class.getName() + ".CATALOG_SNAPSHOT";
 
     private final TermDocumentRepository termDocumentRepository;
     private final TermDocumentService termDocumentService;
     private final Clock clock;
 
     private final Map<TermStage, AtomicInteger> stageReadyGauges = new EnumMap<>(TermStage.class);
-    private final Map<TermStage, Counter> failOpenCounters = new EnumMap<>(TermStage.class);
     private final Map<TermStage, AtomicBoolean> notReadyLogged = new EnumMap<>(TermStage.class);
     private final Map<TermType, AtomicInteger> conditionalReadyGauges = new EnumMap<>(TermType.class);
-    private final Map<TermType, Counter> conditionalFailOpenCounters = new EnumMap<>(TermType.class);
     private final Map<TermType, AtomicBoolean> conditionalNotReadyLogged = new EnumMap<>(TermType.class);
 
     public TermCatalogReadiness(TermDocumentRepository termDocumentRepository,
@@ -85,10 +69,6 @@ public class TermCatalogReadiness {
             AtomicInteger readyState = new AtomicInteger(0);
             stageReadyGauges.put(stage, readyState);
             meterRegistry.gauge(CATALOG_READY_GAUGE, Tags.of("stage", stage.name()), readyState);
-            failOpenCounters.put(stage, Counter.builder(GATE_FAIL_OPEN_COUNTER)
-                    .description("Terms gate skipped because the stage catalog is not ready (fail-open)")
-                    .tag("stage", stage.name())
-                    .register(meterRegistry));
             notReadyLogged.put(stage, new AtomicBoolean(false));
         }
         TermType locationTerms = TermType.LOCATION_BASED_SERVICE_TERMS;
@@ -96,32 +76,23 @@ public class TermCatalogReadiness {
         conditionalReadyGauges.put(locationTerms, locationReadyState);
         meterRegistry.gauge(CONDITIONAL_CATALOG_READY_GAUGE,
                 Tags.of("term_type", locationTerms.name()), locationReadyState);
-        conditionalFailOpenCounters.put(locationTerms, Counter.builder(CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
-                .description("Conditional terms gate skipped because its current document is unavailable")
-                .tag("term_type", locationTerms.name())
-                .register(meterRegistry));
         conditionalNotReadyLogged.put(locationTerms, new AtomicBoolean(false));
     }
 
-    /** stage catalog 판정 결과 — 준비되지 않았으면 enforcement가 stage 전체를 fail-open한다. */
+    /** stage catalog 판정 결과 — ready가 아니면 그 stage의 필수 종류 current 집합이 불완전하다. */
     public record StageCatalog(boolean ready, List<TermDocumentSummary> currentEnforcedDocuments) {
     }
 
-    /** 조건부 약관 하나의 catalog 판정 결과 — 누락 시 해당 조건부 gate만 fail-open한다. */
+    /** 조건부 약관 하나의 catalog 판정 결과 — ready가 아니면 current 문서가 없다. */
     public record ConditionalTermCatalog(boolean ready, Optional<TermDocumentSummary> currentDocument) {
     }
 
-    /** 요청당 한 번 뜨는 전 종류 current 요약 — 같은 요청의 stage·조건부 판정이 공유하는 판정 권위다. */
+    /** 전 종류 current 요약 — 한 판정 회차의 stage·조건부 계산이 공유하는 판정 권위다. */
     private record CatalogSnapshot(Map<TermType, TermDocumentSummary> currentByType) {
     }
 
-    /** 판정 시각은 요청 snapshot을 캡처한 instant의 KST 벽시계다(요청당 1회 — 클래스 주석의 판정 시각 계약). */
-    public StageCatalog checkStage(TermStage stage) {
-        return judgeStage(stage, requestSnapshot());
-    }
-
     /**
-     * stage 준비 상태와 현재 enforcement 문서 집합을 함께 계산한다. 준비 조건: 강제 대상 종류 전부에
+     * stage 준비 상태와 현재 필수 문서 집합을 함께 계산한다. 준비 조건: 필수 대상 종류 전부에
      * 현재 문서가 있다. 기동 검증·테스트용 — 주어진 시각으로 캐시 없이 조회한다.
      */
     public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
@@ -138,17 +109,6 @@ public class TermCatalogReadiness {
         boolean ready = currentDocuments.size() == enforcedTypes.size();
         publishStageState(stage, ready, currentDocuments.isEmpty());
         return new StageCatalog(ready, currentDocuments);
-    }
-
-    /** gate가 미준비 stage를 통과시킬 때 호출한다 — 발생량은 counter, 상세는 전이 로그가 담당한다. */
-    public void recordFailOpen(TermStage stage) {
-        failOpenCounters.get(stage).increment();
-    }
-
-    /** 조건부 약관의 현재 문서를 요청 snapshot으로 판정한다(판정 시각 계약은 {@link #checkStage(TermStage)}와 동일). */
-    public ConditionalTermCatalog checkConditionalTerm(TermType termType) {
-        requireConditional(termType);
-        return judgeConditionalTerm(termType, requestSnapshot());
     }
 
     ConditionalTermCatalog checkConditionalTerm(TermType termType, LocalDateTime nowKst) {
@@ -170,31 +130,6 @@ public class TermCatalogReadiness {
         termDocumentService.findCurrentSummaries(List.of(TermType.values()), nowKst)
                 .forEach(summary -> currentByType.put(summary.termType(), summary));
         return new CatalogSnapshot(currentByType);
-    }
-
-    /**
-     * request attribute read-through 캐시 — 같은 요청의 LOGIN·추가 stage·조건부 판정이 catalog 1쿼리를
-     * 공유한다(#428). 요청 수명이라 요청 간에는 남지 않고, request context가 없으면 매번 직접 조회로
-     * 강등된다(캐시 없음).
-     */
-    private CatalogSnapshot requestSnapshot() {
-        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
-        if (requestAttributes == null) {
-            return loadSnapshot(TermTimes.kstWallClock(clock.instant()));
-        }
-        CatalogSnapshot cached = (CatalogSnapshot) requestAttributes.getAttribute(
-                SNAPSHOT_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
-        if (cached == null) {
-            cached = loadSnapshot(TermTimes.kstWallClock(clock.instant()));
-            requestAttributes.setAttribute(SNAPSHOT_ATTRIBUTE, cached, RequestAttributes.SCOPE_REQUEST);
-        }
-        return cached;
-    }
-
-    /** 조건부 gate가 문서 누락 때문에 통과할 때 호출한다. */
-    public void recordConditionalFailOpen(TermType termType) {
-        requireConditional(termType);
-        conditionalFailOpenCounters.get(termType).increment();
     }
 
     /** 기동 정합성 검사 — seed 누락·미지 literal·잘못된 URL·stage 미준비를 경보하되 기동은 막지 않는다. */
@@ -231,13 +166,13 @@ public class TermCatalogReadiness {
             return;
         }
         if (!seeded) {
-            // seed 전(테이블 완전 비어있음)은 법무 원문 대기 중의 예정된 fail-open 상태다 — 경보(ERROR)가
+            // seed 전(테이블 완전 비어있음)은 법무 원문 대기 중의 예정된 미준비 상태다 — 경보(ERROR)가
             // 아니라 WARN 1줄로만 알린다(반복 기동 경보 소음 방지). 행이 하나라도 생기면 아래 ERROR 경로다.
-            log.warn("term catalog not seeded yet — enforcement fails open until activation (pre-activation state)");
+            log.warn("term catalog not seeded yet — public terms queries stay empty until activation (pre-activation state)");
         } else if (problems.isEmpty()) {
             log.info("term catalog verified: all {} term types seeded", TermType.values().length);
         } else {
-            // 경보 1줄(bounded) — 기동·공개 조회는 계속되고 미준비 stage의 gate는 fail-open된다.
+            // 경보 1줄(bounded) — 기동·공개 조회는 계속된다(잘못된 seed는 공개 조회에서 조용히 빠진다).
             log.error("term catalog inconsistent: {}", String.join("; ", problems));
         }
     }
@@ -272,18 +207,18 @@ public class TermCatalogReadiness {
     /**
      * 상태 gauge 갱신 + 전이 시에만 로그(bounded — not-ready 지속 중 반복 없음). not-ready 전이의 수위는
      * catalog 성격으로 가른다: 이 stage의 current 후보가 0건이고 테이블 전체도 빈 pre-activation 상태면
-     * WARN(예정된 fail-open — seed 전 소음 방지), 그 외(행이 있는데 틀림·ready였다가 퇴행)는 ERROR다.
-     * 전체 행 수 확인은 전이 시점에만 수행한다(요청마다 아님). gauge는 수위와 무관하게 0/1을 기록한다.
+     * WARN(예정된 미준비 — seed 전 소음 방지), 그 외(행이 있는데 틀림·ready였다가 퇴행)는 ERROR다.
+     * 전체 행 수 확인은 전이 시점에만 수행한다. gauge는 수위와 무관하게 0/1을 기록한다.
      */
     private void publishStageState(TermStage stage, boolean ready, boolean noCurrentCandidates) {
         stageReadyGauges.get(stage).set(ready ? 1 : 0);
         AtomicBoolean logged = notReadyLogged.get(stage);
         if (!ready && logged.compareAndSet(false, true)) {
             if (noCurrentCandidates && termDocumentRepository.count() == 0) {
-                log.warn("term catalog not seeded yet for stage {} — enforcement fails open until activation",
+                log.warn("term catalog not seeded yet for stage {} — required set stays incomplete until activation",
                         stage.name());
             } else {
-                log.error("term catalog not ready for stage {} — enforcement fails open until "
+                log.error("term catalog not ready for stage {} — required set stays incomplete until "
                         + "seed/activation is fixed", stage.name());
             }
         } else if (ready && logged.compareAndSet(true, false)) {
@@ -296,10 +231,10 @@ public class TermCatalogReadiness {
         AtomicBoolean logged = conditionalNotReadyLogged.get(termType);
         if (!ready && logged.compareAndSet(false, true)) {
             if (termDocumentRepository.count() == 0) {
-                log.warn("conditional term catalog not seeded yet for {} — only its gate fails open until activation",
+                log.warn("conditional term catalog not seeded yet for {} — its current document stays missing until activation",
                         termType.name());
             } else {
-                log.error("conditional term catalog not ready for {} — only its gate fails open until "
+                log.error("conditional term catalog not ready for {} — its current document stays missing until "
                         + "seed/activation is fixed", termType.name());
             }
         } else if (ready && logged.compareAndSet(true, false)) {
