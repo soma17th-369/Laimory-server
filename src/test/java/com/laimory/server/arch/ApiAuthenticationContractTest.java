@@ -32,8 +32,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
- * <p>principal은 operation마다 정확히 하나이며, 형태는 API 종류가 결정한다 — 콘텐츠·push API는
- * {@code @CurrentSubject UUID}, 회원 account API는 {@code @AuthenticationPrincipal Long}이다.
+ * <p>principal은 operation마다 원칙적으로 하나이며, 형태는 API 종류가 결정한다 — 콘텐츠·push API는
+ * {@code @CurrentSubject UUID}, 회원 account API는 {@code @AuthenticationPrincipal Long}이다. 유일한
+ * 예외는 앱 초기화 GET(#434) — 온보딩(subject 소유)과 약관 동의 필요 판정(raw userId 소유)을 함께
+ * 반환하므로 두 hidden principal을 받는다.
  * 새 보호 API는 {@link #EXPECTED_PRINCIPALS}에 기대 principal 형태와 함께 등록한다(either-or 허용이
  * 아니라 API별 고정 — 콘텐츠 API가 실수로 raw userId를 받는 회귀를 빌드에서 차단).
  * (timeline 전용이던 {@code TimelineApiAuthenticationContractTest}를 공용 계약으로 일반화해 옮겼다 —
@@ -46,7 +48,9 @@ class ApiAuthenticationContractTest {
         /** 콘텐츠·push — hidden {@code @CurrentSubject UUID subjectId}(MVC resolver가 subject로 변환). */
         CONTENT_SUBJECT,
         /** 회원 account — hidden {@code @AuthenticationPrincipal Long userId}(subject 변환 없음). */
-        ACCOUNT_USER_ID
+        ACCOUNT_USER_ID,
+        /** 앱 초기화(#434)만의 예외 — 온보딩 subject와 약관 동의 userId, 두 hidden principal을 함께 받는다. */
+        CONTENT_SUBJECT_WITH_ACCOUNT_USER_ID
     }
 
     /** 보호 API 클래스 → 기대 principal 형태. 새 보호 API 등록 시 기대 형태를 여기서 함께 선언한다. */
@@ -57,7 +61,7 @@ class ApiAuthenticationContractTest {
             PushSettingApi.class, PrincipalKind.CONTENT_SUBJECT,
             UserApi.class, PrincipalKind.ACCOUNT_USER_ID,
             TermAgreementApi.class, PrincipalKind.ACCOUNT_USER_ID,
-            AppInitializerApi.class, PrincipalKind.CONTENT_SUBJECT,
+            AppInitializerApi.class, PrincipalKind.CONTENT_SUBJECT_WITH_ACCOUNT_USER_ID,
             OnboardingApi.class, PrincipalKind.CONTENT_SUBJECT);
 
     static Stream<Method> protectedOperations() {
@@ -98,31 +102,50 @@ class ApiAuthenticationContractTest {
                         || parameter.isAnnotationPresent(AuthenticationPrincipal.class))
                 .toList();
 
-        assertThat(principals).hasSize(1);
-        List<java.lang.reflect.Parameter> expectedPrincipals = principals.stream()
-                .filter(principal -> expected == PrincipalKind.CONTENT_SUBJECT
-                        ? principal.isAnnotationPresent(CurrentSubject.class)
-                        : principal.isAnnotationPresent(AuthenticationPrincipal.class))
-                .toList();
-        assertThat(expectedPrincipals).hasSize(1);
-        java.lang.reflect.Parameter principal = expectedPrincipals.get(0);
         // API 종류가 principal 형태를 결정한다 — either-or가 아니라 선언된 기대 형태만 허용한다.
         switch (expected) {
             case CONTENT_SUBJECT -> {
-                assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isTrue();
-                assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isFalse();
-                assertThat(principal.getType()).isEqualTo(UUID.class);
+                assertThat(principals).hasSize(1);
+                assertSubjectPrincipal(principals.get(0));
             }
             case ACCOUNT_USER_ID -> {
-                assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isTrue();
-                assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isFalse();
-                assertThat(principal.getType()).isEqualTo(Long.class);
+                assertThat(principals).hasSize(1);
+                assertAccountPrincipal(principals.get(0));
+            }
+            case CONTENT_SUBJECT_WITH_ACCOUNT_USER_ID -> {
+                // 유일한 두 principal 예외(#434) — 각 형태가 정확히 하나씩이다.
+                assertThat(principals).hasSize(2);
+                assertAccountPrincipal(onlyOne(principals, AuthenticationPrincipal.class));
+                assertSubjectPrincipal(onlyOne(principals, CurrentSubject.class));
             }
         }
-        // principal은 클라이언트 입력이 아니다 — 생성된 OpenAPI parameter에 나타나면 안 된다.
-        Parameter openApiParameter = principal.getAnnotation(Parameter.class);
-        assertThat(openApiParameter).isNotNull();
-        assertThat(openApiParameter.hidden()).isTrue();
+        for (java.lang.reflect.Parameter principal : principals) {
+            // principal은 클라이언트 입력이 아니다 — 생성된 OpenAPI parameter에 나타나면 안 된다.
+            Parameter openApiParameter = principal.getAnnotation(Parameter.class);
+            assertThat(openApiParameter).isNotNull();
+            assertThat(openApiParameter.hidden()).isTrue();
+        }
+    }
+
+    private static java.lang.reflect.Parameter onlyOne(List<java.lang.reflect.Parameter> principals,
+            Class<? extends java.lang.annotation.Annotation> annotation) {
+        List<java.lang.reflect.Parameter> matched = principals.stream()
+                .filter(principal -> principal.isAnnotationPresent(annotation))
+                .toList();
+        assertThat(matched).hasSize(1);
+        return matched.get(0);
+    }
+
+    private static void assertSubjectPrincipal(java.lang.reflect.Parameter principal) {
+        assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isTrue();
+        assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isFalse();
+        assertThat(principal.getType()).isEqualTo(UUID.class);
+    }
+
+    private static void assertAccountPrincipal(java.lang.reflect.Parameter principal) {
+        assertThat(principal.isAnnotationPresent(AuthenticationPrincipal.class)).isTrue();
+        assertThat(principal.isAnnotationPresent(CurrentSubject.class)).isFalse();
+        assertThat(principal.getType()).isEqualTo(Long.class);
     }
 
     @Test

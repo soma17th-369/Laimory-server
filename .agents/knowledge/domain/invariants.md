@@ -281,7 +281,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   운영 SQL로도 바뀌지 않는다.
 - 앱 온보딩 완료 여부의 단일 권위는 `subject_preferences.onboarding_completed`다(#382, 기본 false).
   약관 동의 이력·DailyRecord 존재 여부에서 계산하거나 동기화하지 않으며, 약관 개정도 저장된
-  완료 상태를 되돌리지 않는다(재동의 판정은 initializer 후속 #434의 별도 책임) — 두 상태를 엮으면
+  완료 상태를 되돌리지 않는다(동의 필요 판정은 같은 응답의 `terms.agreementRequired`가 지는 별도
+  책임 — #434) — 두 상태를 엮으면
   약관 개정이 온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
 - 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
   이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
@@ -350,7 +351,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 공개 조회의 타입 필터와 순서는 클라이언트가 반복 query에 보낸 `termTypes` 배열이 권위다. DB의 `IN`
   결과 순서는 보장되지 않으므로 종류별 map을 만든 뒤 요청 배열로 재구성한다. 중복 `termTypes`는 400이다.
   동의 대상 분류는 enum 속성으로 두지 않으며 DB에도 복제하지 않는다 — 기동 seed 검사의 stage별
-  대상은 `TermCatalogReadiness`가, 재동의 판정 대상은 initializer 후속(#434)이 명시한다.
+  대상은 `TermCatalogReadiness`가, 동의 필요 판정 대상(`PRIVACY_POLICY` 제외 5종)은
+  `TermAgreementService`의 상수(#434)가 명시한다.
   미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
   `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
@@ -361,8 +363,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   (save 반복 + unique 예외 catch 금지 — rollback-only 오염 방지).
 - 동의가 남아 있는 문서 행은 삭제할 수 없다(FK `ON DELETE RESTRICT`) — 이력 재구성 권위 보존.
 - 서버는 인증 API에서 약관 동의 여부·최신 버전을 강제하지 않는다(#436 — #303 gate 제거, 403 `-3001`
-  미반환). 동의 보장은 가입 flow와 위치정보 사용 시점의 클라이언트 책임이고, 재동의 필요 여부는
-  initializer 후속(#434)이 소유한다.
+  미반환). 동의 보장은 가입 flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필요 여부는
+  앱 초기화 응답 `terms.agreementRequired`(#434)가 알려준다 — 서버는 그 판정으로도 요청을 막지 않는다.
 - 기대 필수 종류 중 current 문서가 없는 stage는 준비되지 않은 catalog로 표시하고 metric·bounded
   전이 로그로만 알린다(기동 검사 — 기동·공개 조회는 막지 않는다). 로그 수위: 테이블이 완전히 빈
   pre-activation 상태는 예정된 미준비라 WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은

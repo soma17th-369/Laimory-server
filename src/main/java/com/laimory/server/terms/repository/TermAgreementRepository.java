@@ -3,6 +3,7 @@ package com.laimory.server.terms.repository;
 import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -54,4 +55,16 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
             ORDER BY a.acceptedAt DESC, a.termAgreementId DESC
             """)
     List<TermAgreementHistoryEntry> findHistoryByUserId(@Param("userId") Long userId);
+
+    /**
+     * 후보 문서 중 이 회원이 동의한 문서 id 집합 — 재동의 판정(#434)이 현재 문서 집합에서 빼는 용도다.
+     * {@code (user_id, term_document_id)} UNIQUE 인덱스를 그대로 탄다. 빈 후보는 호출자가 걸러 보낸다.
+     */
+    @Query("""
+            SELECT a.termDocumentId
+            FROM TermAgreement a
+            WHERE a.userId = :userId AND a.termDocumentId IN :termDocumentIds
+            """)
+    List<Long> findAgreedDocumentIds(@Param("userId") Long userId,
+                                     @Param("termDocumentIds") Collection<Long> termDocumentIds);
 }

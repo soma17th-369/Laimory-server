@@ -7,6 +7,9 @@ import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +20,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
- * 약관 동의 일괄 등록·이력 조회.
+ * 약관 동의 일괄 등록·이력 조회·동의 필요 판정.
  *
  * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 지금 이 순간의 현재
  * 버전이어야 기록한다. 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고
@@ -28,6 +31,10 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TermAgreementService {
+
+    /** 동의 대상 약관 종류 — 고지 전용 {@code PRIVACY_POLICY}만 제외한 전부. 재동의 판정 대상의 단일 소유 지점이다(#434). */
+    private static final Set<TermType> AGREEMENT_TARGET_TYPES =
+            Collections.unmodifiableSet(EnumSet.complementOf(EnumSet.of(TermType.PRIVACY_POLICY)));
 
     private final TermDocumentService termDocumentService;
     private final TermAgreementTransactionService termAgreementTransactionService;
@@ -61,6 +68,29 @@ public class TermAgreementService {
     public List<TermAgreementHistoryEntry> getHistory(String applicationVersion, Long userId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         return termAgreementRepository.findHistoryByUserId(userId);
+    }
+
+    /**
+     * 지금 이 순간 현재 버전 동의가 없는 동의 대상 약관(#434) — 앱 초기화가 재동의 안내에 쓴다.
+     * 최초 동의와 재동의를 구분하지 않는다(가입 시 전부 동의가 전제라, 동의가 아예 없는 문서도 같은
+     * 목록에 포함된다). current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open — 목록에
+     * 들어갈 수 없으니 seed 누락이 안내를 만들지도 앱 시작을 막지도 않고, 준비된 종류의 판정은 유지된다).
+     * 서버는 이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이다.
+     */
+    public List<TermDocumentSummary> findAgreementRequiredTerms(Long userId) {
+        LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
+        List<TermDocumentSummary> currentDocuments =
+                termDocumentService.findCurrentSummaries(AGREEMENT_TARGET_TYPES, nowKst);
+        if (currentDocuments.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> agreedDocumentIds = Set.copyOf(termAgreementRepository.findAgreedDocumentIds(
+                userId, currentDocuments.stream().map(TermDocumentSummary::termDocumentId).toList()));
+        return currentDocuments.stream()
+                .filter(document -> !agreedDocumentIds.contains(document.termDocumentId()))
+                // IN 조회 결과 순서는 보장되지 않는다 — 응답 순서를 enum 선언 순으로 고정한다.
+                .sorted(Comparator.comparing(TermDocumentSummary::termType))
+                .toList();
     }
 
     /**

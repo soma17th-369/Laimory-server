@@ -7,10 +7,12 @@ import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
+import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
 import com.laimory.server.terms.service.TermCatalogReadiness;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,6 +60,9 @@ class TermPersistenceIntegrationTest {
 
     @Autowired
     private TermDocumentService termDocumentService;
+
+    @Autowired
+    private TermAgreementService termAgreementService;
 
     @Autowired
     private TermCatalogReadiness termCatalogReadiness;
@@ -205,6 +210,34 @@ class TermPersistenceIntegrationTest {
     }
 
     @Test
+    void agreementRequired_revisionCycle_tracksCurrentVersionAgreement() {
+        // #434 동의 필요 판정의 개정 전/후 사이클을 실 DB로 검증한다. 판정 시각은 실 시계 now(KST)라
+        // 직전 효력(now-10m/-5m) 문서로 이 종류의 current를 결정적으로 만들고, 다른 종류의 행 존재
+        // 여부에 영향받지 않도록 이 종류의 포함/제외만 단언한다.
+        LocalDateTime nowKst = TermTimes.kstWallClock(Instant.now());
+        Long userId = newUserId();
+        TermType type = TermType.CROSS_BORDER_TRANSFER_CONSENT;
+
+        // 가입 시나리오 — v1이 current일 때 동의 완료: 판정 목록에 이 종류가 없다.
+        TermDocument v1 = saveDocument(type, "it-ar-1.0", nowKst.minusMinutes(10).toString());
+        termAgreementRepository.insertIfAbsent(userId, v1.getTermDocumentId(), nowKst, nowKst);
+        assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
+
+        // 개정 — 새 버전이 current가 되는 순간 그 종류가 현재 버전으로 목록에 들어온다.
+        saveDocument(type, "it-ar-2.0", nowKst.minusMinutes(5).toString());
+        List<TermDocumentSummary> required = termAgreementService.findAgreementRequiredTerms(userId);
+        TermDocumentSummary entry = required.stream()
+                .filter(document -> document.termType() == type)
+                .findFirst()
+                .orElseThrow();
+        assertThat(entry.version()).isEqualTo("it-ar-2.0");
+
+        // 새 버전 동의를 등록하면 목록에서 빠진다.
+        termAgreementRepository.insertIfAbsent(userId, entry.termDocumentId(), nowKst, nowKst);
+        assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
+    }
+
+    @Test
     void lowercaseRawSeed_convergesToNotReady_insteadOf500() {
         // 소문자 오타 seed — term_type이 binary collation이 아니라면 IN(enum literal)에 case-insensitive
         // 매칭돼 @Enumerated hydration이 공개 조회를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
@@ -258,6 +291,12 @@ class TermPersistenceIntegrationTest {
     private List<TermAgreement> findAgreements(Long userId) {
         return termAgreementRepository.findAll().stream()
                 .filter(agreement -> agreement.getUserId().equals(userId))
+                .toList();
+    }
+
+    private List<TermType> agreementRequiredTypes(Long userId) {
+        return termAgreementService.findAgreementRequiredTerms(userId).stream()
+                .map(TermDocumentSummary::termType)
                 .toList();
     }
 }

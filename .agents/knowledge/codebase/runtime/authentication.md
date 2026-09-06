@@ -77,9 +77,9 @@ refresh의 재회전은 DB 직행 검사가 거절하므로 회전 사슬은 1�
 실용 상한(기대치)이다. 응답 계약(401 `-2001` 수렴·존재 비노출)은 변하지 않았다.
 
 약관 동의는 인증 API에서 강제하지 않는다(#436 — #303의 enforcement gate 제거). 동의 보장은 가입
-flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제된 상태), 약관 개정 후 재동의 필요 여부는
-앱 초기화 API 응답으로 이관한다(후속 #434). 인증을 통과한 `/a/api` 요청은 약관 동의 여부와 무관하게
-controller에 도달하며 403 `-3001`은 더 이상 반환되지 않는다.
+flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제된 상태), 약관 개정 후 동의 필요 여부는
+앱 초기화 API 응답 `terms.agreementRequired`(#434)가 알려준다. 인증을 통과한 `/a/api` 요청은 약관
+동의 여부와 무관하게 controller에 도달하며 403 `-3001`은 더 이상 반환되지 않는다.
 
 구현된 로그인·token 기능:
 
@@ -160,11 +160,12 @@ handoff를 그대로 사용한다.
 - refresh rotation/reuse detection과 App Code one-time consumption의 atomicity를 보존한다.
 - 401 응답·로그에 token 원문, Authorization 헤더, parse 실패 상세를 남기지 않는다.
 - SecurityContext principal은 별도 래퍼 없는 `Long` userId다. 보호 operation의 principal parameter는
-  원칙적으로 하나다 — 콘텐츠·push·앱 초기화/온보딩 controller는 `@CurrentSubject UUID subjectId`를,
-  회원 account controller는 hidden `@AuthenticationPrincipal Long userId`를 받는다. 유일한 예외인 draft
-  생성은 콘텐츠 owner subject와 계정 소유 약관 동의를 함께 판정하므로 두 hidden principal을 받되,
-  콘텐츠 귀속에는 subjectId만, 동의 조회에는 userId만 쓴다(String principal을 만드는 테스트 헬퍼
-  `user()` 사용 금지, `AuthTestSupport` 사용).
+  원칙적으로 하나다 — 콘텐츠·push·온보딩 완료 controller는 `@CurrentSubject UUID subjectId`를,
+  회원 account controller는 hidden `@AuthenticationPrincipal Long userId`를 받는다. 유일한 예외인
+  앱 초기화 GET은 온보딩(subject 소유)과 약관 동의 필요 판정(계정 raw userId 소유)을 함께 반환하므로
+  두 hidden principal을 받되, 온보딩 조회에는 subjectId만, 동의 판정에는 userId만 쓴다(#434 — draft
+  생성의 두 principal 예외는 #436에서 소멸). String principal을 만드는 테스트 헬퍼 `user()`는 쓰지
+  않고 `AuthTestSupport`를 쓴다.
 - access JWT의 `sub` claim은 raw userId다 — 콘텐츠 subject를 token·principal에 넣지 않으며,
   subject 전환은 인증 계약과 인증 도메인 스키마(users·refresh_tokens)를 바꾸지 않는다.
 
