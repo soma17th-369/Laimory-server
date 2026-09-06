@@ -383,7 +383,7 @@ class DailyTimelineServiceTest {
     // --- getMonthlyDailyRecords (캘린더 월별 경량 조회) ---
 
     @Test
-    void getMonthlyDailyRecords_mapsDateAndEmotionOnlyWithoutLoadingGraph() {
+    void getMonthlyDailyRecords_mapsDateStatusAndEmotionWithoutLoadingGraph() {
         DailyRecord withEmotion = record(300L, LocalDate.of(2026, 5, 3));
         ReflectionTestUtils.setField(withEmotion, "status", DailyRecordStatus.SAVED);
         ReflectionTestUtils.setField(withEmotion, "emotionType", EmotionType.HAPPY);
@@ -395,10 +395,11 @@ class DailyTimelineServiceTest {
         MonthlyDailyRecordListResponse result =
                 dailyTimelineService.getMonthlyDailyRecords("v1", SUBJECT_ID, 2026, 5);
 
-        // 캘린더 read model은 recordDate·nullable emotionType만 담는다 — DRAFT/SAVED 모두 포함.
+        // 캘린더 read model은 recordDate·non-null status·nullable emotionType만 담는다 — DRAFT/SAVED 모두 포함.
         assertThat(result.dailyRecords()).containsExactly(
-                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 3), EmotionType.HAPPY),
-                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 19), null));
+                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 3), DailyRecordStatus.SAVED,
+                        EmotionType.HAPPY),
+                new MonthlyDailyRecordResponse(LocalDate.of(2026, 5, 19), DailyRecordStatus.DRAFT, null));
         // Event·junction·Item leaf 서비스는 호출하지 않는다(경량 조회).
         verifyNoInteractions(timelineEventService, timelineEventItemService, timelineItemService);
     }

@@ -309,11 +309,13 @@ class TimelineRecordControllerTest {
     // --- getMonthlyDailyRecords (캘린더 월별 경량 조회) ---
 
     @Test
-    void getMonthlyDailyRecords_returns200WithDateAndNullableEmotionAndPassesPrincipal() throws Exception {
+    void getMonthlyDailyRecords_returns200WithDateStatusAndNullableEmotionAndPassesPrincipal() throws Exception {
         when(dailyTimelineService.getMonthlyDailyRecords(any(), any(), eq(2026), eq(5)))
                 .thenReturn(new MonthlyDailyRecordListResponse(List.of(
-                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-03"), null),
-                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-19"), EmotionType.HAPPY))));
+                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-03"), DailyRecordStatus.DRAFT,
+                                null),
+                        new MonthlyDailyRecordResponse(LocalDate.parse("2026-05-19"), DailyRecordStatus.SAVED,
+                                EmotionType.HAPPY))));
 
         mockMvc.perform(get(MONTHLY_RECORDS_PATH).queryParam("year", "2026").queryParam("month", "5")
                         .with(authenticatedUser(USER_ID)))
@@ -323,9 +325,11 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.dailyRecords[0].recordDate").value("2026-05-03"))
                 .andExpect(jsonPath("$.body.dailyRecords[1].recordDate").value("2026-05-19"))
                 .andExpect(jsonPath("$.body.dailyRecords[1].emotionType").value("HAPPY"))
-                // 캘린더 응답은 경량 read model이다 — dailyRecordId·status·events 키가 없어야 한다.
+                // status는 non-null로 항상 실린다.
+                .andExpect(jsonPath("$.body.dailyRecords[0].status").value("DRAFT"))
+                .andExpect(jsonPath("$.body.dailyRecords[1].status").value("SAVED"))
+                // 캘린더 응답은 경량 read model이다 — dailyRecordId·events 키가 없어야 한다.
                 .andExpect(jsonPath("$.body.dailyRecords[0].dailyRecordId").doesNotExist())
-                .andExpect(jsonPath("$.body.dailyRecords[0].status").doesNotExist())
                 .andExpect(jsonPath("$.body.dailyRecords[0].events").doesNotExist())
                 // null 감정은 key 생략(NON_NULL)이 아니라 명시적 JSON null이다.
                 .andExpect(result -> {

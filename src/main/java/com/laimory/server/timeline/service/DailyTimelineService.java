@@ -100,8 +100,8 @@ public class DailyTimelineService {
 
     /**
      * 캘린더 월별 경량 조회. 요청 subject가 소유한 해당 월의 DRAFT/SAVED record를 날짜 오름차순으로
-     * {@code recordDate}·{@code emotionType}만 담아 반환한다. Event·junction·Item graph는 읽지 않으며
-     * 기록이 없는 월은 404가 아니라 빈 배열이다.
+     * {@code recordDate}·{@code status}·{@code emotionType}을 담아 반환한다. Event·junction·Item graph는
+     * 읽지 않으며 기록이 없는 월은 404가 아니라 빈 배열이다.
      *
      * @throws IllegalArgumentException {@code year}가 1000~9999(MySQL {@code DATE} 지원 범위) 밖이거나
      *                                  {@code month}가 1~12 밖일 때(400 {@code -400})
@@ -120,7 +120,8 @@ public class DailyTimelineService {
         List<DailyRecord> records = dailyRecordService.findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
                 subjectId, yearMonth.atDay(1), yearMonth.atEndOfMonth());
         return new MonthlyDailyRecordListResponse(records.stream()
-                .map(record -> new MonthlyDailyRecordResponse(record.getRecordDate(), record.getEmotionType()))
+                .map(record -> new MonthlyDailyRecordResponse(
+                        record.getRecordDate(), record.getStatus(), record.getEmotionType()))
                 .toList());
     }
 
