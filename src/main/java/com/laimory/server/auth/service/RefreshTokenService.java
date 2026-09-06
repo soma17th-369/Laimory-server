@@ -57,11 +57,12 @@ public class RefreshTokenService {
      * {@code -2003}(재로그인)으로 나가고, 내부 구분은 access 로그의 exceptionType에 남는다.
      *
      * <p>{@code ownerActive}는 발급 전에 수행하는 소유 회원의 일반 ACTIVE 검사다(#305 §5.4 —
-     * {@code AuthTokenService}가 {@code UserAccountAccessService#isActive}를 넘긴다). 탈퇴/삭제 회원의
+     * {@code AuthTokenService}가 {@code UserAccountService#isActive}를 넘긴다). 탈퇴/삭제 회원의
      * 회전은 — 탈퇴가 보존한 ACTIVE 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN 재사용 경로에
      * 들어가기 전에 credential 무효와 구분 없는 {@code REFRESH_TOKEN_INVALID}(INFO)로 수렴한다.
-     * 탈퇴는 refresh를 폐기하지 않으므로(#367) 이 ACTIVE 검사가 유일한 차단 지점이다.
-     * 검사 통과 직후 탈퇴와 겹친 in-flight 회전은 §5.1의 제한된 예외다.
+     * 탈퇴는 refresh를 폐기하지 않으므로(#367) 이 ACTIVE 검사가 유일한 차단 지점이다 — #441부터
+     * 검사가 공유 캐시를 경유하므로 차단은 탈퇴 evict 뒤 miss부터 결정적이고, evict 유실·늦은 적재의
+     * stale 창 안 회전은 #429 "보안 정책 개정"이 허용하는 한시적 예외다.
      *
      * <p><b>회전 승자의 claim + 새 refresh 저장은 한 트랜잭션</b>으로 묶는다(아래 {@code transactionTemplate}).
      * 그 트랜잭션은 old row 락을 커밋까지 쥐므로, 같은 토큰으로 동시에 들어온 loser는 <b>승자 커밋 이후에야</b>

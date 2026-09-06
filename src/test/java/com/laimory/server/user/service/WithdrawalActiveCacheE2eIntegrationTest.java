@@ -77,7 +77,7 @@ class WithdrawalActiveCacheE2eIntegrationTest {
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, createdSubjectId);
         userRepository.deleteById(createdUserId);
         userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(createdUserId));
-        redisGateway.delete(RedisActiveStatusCache.KEY_PREFIX + createdUserId);
+        redisGateway.delete(UserAccountService.KEY_PREFIX + createdUserId);
     }
 
     @Test

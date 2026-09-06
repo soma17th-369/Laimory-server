@@ -246,8 +246,8 @@ bearer 인증이 본인 확인 수단) 첫 성공은 `202 Accepted + body=null`�
 작업의 durable 접수가 한 DB transaction으로 commit됐다는 뜻이며 MySQL
 콘텐츠·Redis·S3의 물리 삭제 완료(#302 worker 책임)를 뜻하지 않는다. **이 transaction은 행을 지우지
 않는다**(#367) — refresh 행·push 등록(FID)·두 알림 설정 행은 모두 보존되고, 발송 차단은 삭제가 아니라
-OFF로 표현하며, credential 사용·연장 차단은 요청·발급 전 `ACTIVE` 검사가 담당한다(#429 — 필터
-경로는 commit 후 캐시 evict부터, 발급·회전은 DB 직행; authentication.md "탈퇴 차단 정책"). 보존 행의 물리
+OFF로 표현하며, credential 사용·연장 차단은 요청·발급 전 `ACTIVE` 검사가 담당한다(#429·#441 —
+필터·발급·회전 모두 commit 후 캐시 evict부터; authentication.md "탈퇴 차단 정책"). 보존 행의 물리
 삭제 책임은 #302에 있다. 이미 인증을 통과한 동시 요청은
 같은 202로 멱등 수렴하고, commit 뒤 같은 access token의 새 요청은 401 `-2001`로 수렴한다 — 통상은
 commit 후 evict로 즉시이나, 캐시 정책상 한시적 stale 통과가 가능하다(시점 보장은 authentication.md

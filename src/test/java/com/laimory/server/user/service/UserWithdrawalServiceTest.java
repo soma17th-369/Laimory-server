@@ -21,16 +21,16 @@ class UserWithdrawalServiceTest {
     private static final long USER_ID = 11L;
 
     private UserWithdrawalTransactionService transactionService;
-    private RedisActiveStatusCache redisActiveStatusCache;
+    private UserAccountService userAccountService;
     private SubjectMappingService subjectMappingService;
     private UserWithdrawalService service;
 
     @BeforeEach
     void setUp() {
         transactionService = mock(UserWithdrawalTransactionService.class);
-        redisActiveStatusCache = mock(RedisActiveStatusCache.class);
+        userAccountService = mock(UserAccountService.class);
         subjectMappingService = mock(SubjectMappingService.class);
-        service = new UserWithdrawalService(transactionService, redisActiveStatusCache, subjectMappingService);
+        service = new UserWithdrawalService(transactionService, userAccountService, subjectMappingService);
     }
 
     @Test
@@ -38,9 +38,9 @@ class UserWithdrawalServiceTest {
         service.withdraw("v1", USER_ID);
 
         // commit(정상 반환) 뒤 evict — transaction 안에서 지우면 커밋 전 재적재로 무효가 된다(#429 ③).
-        InOrder inOrder = inOrder(transactionService, redisActiveStatusCache, subjectMappingService);
+        InOrder inOrder = inOrder(transactionService, userAccountService, subjectMappingService);
         inOrder.verify(transactionService).withdraw(USER_ID);
-        inOrder.verify(redisActiveStatusCache).evict(USER_ID);
+        inOrder.verify(userAccountService).evictActive(USER_ID);
         inOrder.verify(subjectMappingService).evictCachedMapping(USER_ID);
     }
 
@@ -53,6 +53,6 @@ class UserWithdrawalServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         // rollback/거절 경로에서는 회원이 그대로라 지울 것이 없다.
-        verifyNoInteractions(redisActiveStatusCache, subjectMappingService);
+        verifyNoInteractions(userAccountService, subjectMappingService);
     }
 }

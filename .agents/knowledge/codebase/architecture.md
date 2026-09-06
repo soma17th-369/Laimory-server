@@ -37,13 +37,12 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   통한다 — 예: `initializer`는 `subject_preferences`를 소유한 `SubjectPreferenceService`와 약관 동의를
   소유한 `TermAgreementService`를 각 owner 축(subjectId/userId)으로 합성하고(#382, #434), `onboarding`은
   `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
-- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 셋이다 — application code의
+- 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
   Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping
   내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
-  (`SubjectMappingAccessArchTest`, #282), ACTIVE 검사 캐시(`RedisActiveStatusCache`)를 filter 배선과
-  탈퇴 evict 외에는 의존 금지(`AuthContextCacheAccessArchTest`, #429 — 발급·회전은 DB 직행 유지).
-  subject mapping 캐시에는 대응 규칙이 없다. 우회해야 하는 호출자가 없어 `SubjectMappingService`에
-  직접 달았기 때문이다.
+  (`SubjectMappingAccessArchTest`, #282). 캐시는 wrapper 없이 서비스 메서드에 직접 단다 —
+  ACTIVE 검사(`UserAccountService`, #441)와 subject 매핑(`SubjectMappingService`) 둘 다이며,
+  우회해야 하는 호출자가 없어 별도 경계 arch test도 없다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
 
