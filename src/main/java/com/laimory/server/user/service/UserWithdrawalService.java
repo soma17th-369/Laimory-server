@@ -20,14 +20,14 @@ import org.springframework.stereotype.Service;
 public class UserWithdrawalService {
 
     private final UserWithdrawalTransactionService userWithdrawalTransactionService;
-    private final RedisActiveStatusCache redisActiveStatusCache;
+    private final UserAccountService userAccountService;
     private final SubjectMappingService subjectMappingService;
 
     /**
      * 탈퇴를 접수한다. 정상 반환 = 논리 탈퇴·모든 push 차단(알림 OFF)·삭제 작업 접수가 commit됐고
      * 인증 캐시 evict가 <b>시도</b>됐다는 뜻이며(evict 실패는 error handler가 삼켜 stale이 TTL로
      * 수렴한다 — 클래스 주석·#429 정책 ⓐ. credential 행은 폐기하지 않고 보존한다 — 차단은 요청·발급 전
-     * ACTIVE 검사가 담당하되 필터 경로는 evict 뒤 miss부터, #367·#429) 컨트롤러는 202를 반환한다.
+     * ACTIVE 검사가 담당하며 필터·발급·회전 모두 evict 뒤 miss부터, #367·#429·#441) 컨트롤러는 202를 반환한다.
      * 회원 없음(이미 최종 삭제)은 기존 401 {@code -2001}로 수렴한다.
      */
     public void withdraw(String applicationVersion, Long userId) {
@@ -35,7 +35,7 @@ public class UserWithdrawalService {
         userWithdrawalTransactionService.withdraw(userId);
         // ACTIVE gate가 보안 경계라 먼저 지운다(공유 Redis DEL — 전 인스턴스 즉시). subject는 값
         // 불변이라 위생 evict(자기 인스턴스 한정, 타 인스턴스 잔존은 ACTIVE gate가 앞에서 끊음).
-        redisActiveStatusCache.evict(userId);
+        userAccountService.evictActive(userId);
         subjectMappingService.evictCachedMapping(userId);
     }
 }

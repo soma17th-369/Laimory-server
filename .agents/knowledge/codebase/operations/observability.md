@@ -224,6 +224,8 @@ Spring JSON stdout
   `cache.puts`·`cache.evictions` 계열이며 `cache` tag 값은 캐시 이름(`user:active`,
   `subject:mapping`)이다. Boot는 **기동 시점에 존재하는 캐시만** 바인딩하므로 `CacheConfig`가
   두 manager에 캐시 이름을 미리 선언한다(선언이 빠지면 meter가 영영 노출되지 않는다).
+  `cache.gets{cache=user:active}`의 모수에는 #441부터 필터 경로에 더해 token 발급·회전 경로의
+  hit/miss도 포함된다(meter 이름·의미는 그대로).
 - 경보 규칙까지 물리지 않을 지표는 붙이지 않는다(write-only 지표 금지) — 예: 계정 삭제 작업(#305)
   PENDING backlog는 gauge 없이 runbook의 수동 SELECT로 확인한다.
 - custom meter:

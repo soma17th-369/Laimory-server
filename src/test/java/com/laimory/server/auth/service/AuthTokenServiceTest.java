@@ -111,7 +111,7 @@ class AuthTokenServiceTest {
         verify(jwtTokens).issueAccessToken(USER_ID);
         verify(refreshTokenService, never()).issue(anyLong());
 
-        // 회전에 전달한 발급 전 검사는 DB 직행 UserAccountService#isActive 그 자체다(#305 §5.4, #429 캐시 금지 경계).
+        // 회전에 전달한 발급 전 검사는 UserAccountService#isActive 그 자체다(#305 §5.4 — #441부터 캐시 프록시 경유).
         ArgumentCaptor<LongPredicate> ownerActive = ArgumentCaptor.forClass(LongPredicate.class);
         verify(refreshTokenService).rotate(eq("old-refresh"), ownerActive.capture());
         when(userAccountService.isActive(7L)).thenReturn(true).thenReturn(false);

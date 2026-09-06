@@ -1,8 +1,8 @@
 package com.laimory.server.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.laimory.server.user.service.RedisActiveStatusCache;
 import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.UserAccountService;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Set;
@@ -27,7 +27,7 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
  * 나누고, {@code @Cacheable}/{@code @CacheEvict}는 항상 {@code cacheManager}를 명시해 어느 저장소에
  * 사는 캐시인지 선언 지점에서 읽히게 한다.
  *
- * <p><b>결정 규칙 1 — 저장소는 무엇으로 하나.</b> "무효화가 다른 인스턴스에 전파돼야 하는가?"
+ * <p><b>결정 규칙 — 저장소는 무엇으로 하나.</b> "무효화가 다른 인스턴스에 전파돼야 하는가?"
  * <ul>
  *   <li>예 → {@link #activeStatusCacheManager}(Redis). prod는 WAS 2대가 한 Redis를 공유하므로
  *       탈퇴 evict가 전 인스턴스에 즉시 반영된다. 대가는 요청당 네트워크 왕복이다.</li>
@@ -35,14 +35,8 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
  *       잔존이 문제가 되지 않는 캐시용 — 요청당 네트워크가 0이다.</li>
  * </ul>
  * 어느 쪽도 계층형(L1+L2)이 아니다. per-host miss 증폭이 아프거나(서버 증설) Redis 왕복이 실측에서
- * 유의미해질 때 승격을 검토한다.
- *
- * <p><b>결정 규칙 2 — 캐시를 어디에 다나.</b> "이 캐시를 <b>우회해야만 하는</b> 호출자가 있는가?"
- * <ul>
- *   <li>예 → 별도 wrapper 컴포넌트에 어노테이션을 달고 호출자 분리를 arch test로 고정한다.
- *       ACTIVE 검사({@link RedisActiveStatusCache})가 그 경우다 — 발급·회전은 DB 직행이어야 한다.</li>
- *   <li>아니오 → 서비스 메서드에 직접 단다. subject 매핑({@link SubjectMappingService})이 그 경우다.</li>
- * </ul>
+ * 유의미해질 때 승격을 검토한다. 캐시는 wrapper 없이 서비스 메서드에 직접 단다
+ * (ACTIVE 검사 {@link UserAccountService}, subject 매핑 {@link SubjectMappingService} — #441).
  *
  * <p>{@code @Primary}는 로컬 매니저에 둔다. 매니저가 둘이라 {@code cacheManager} 미지정은 실수인데,
  * 그 실수가 "공유돼야 할 캐시가 조용히 per-host가 되는" 쪽이 아니라 로컬로 수렴하는 쪽이 되게
@@ -86,13 +80,13 @@ public class CacheConfig implements CachingConfigurer {
     @Bean
     public RedisCacheManager activeStatusCacheManager(RedisConnectionFactory redisConnectionFactory) {
         RedisCacheConfiguration configuration = RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(RedisActiveStatusCache.TTL)
+                .entryTtl(UserAccountService.TTL)
                 .computePrefixWith(cacheName -> keyPrefix + cacheName + ":")
                 .serializeValuesWith(RedisSerializationContext.SerializationPair
                         .fromSerializer(new GenericJackson2JsonRedisSerializer()));
         return RedisCacheManager.builder(redisConnectionFactory)
                 .cacheDefaults(configuration)
-                .initialCacheNames(Set.of(RedisActiveStatusCache.CACHE_NAME))
+                .initialCacheNames(Set.of(UserAccountService.CACHE_NAME))
                 .enableStatistics()
                 .build();
     }

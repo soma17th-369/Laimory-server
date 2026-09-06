@@ -4,7 +4,7 @@ import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.logging.RequestLogAttributes;
-import com.laimory.server.user.service.UserAccountAccessService;
+import com.laimory.server.user.service.UserAccountService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,13 +21,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 /**
  * {@code /a/api} 요청의 Bearer access JWT를 검증해 {@code Long} userId principal을 SecurityContext에 넣는다.
  *
- * <p>JWT 파싱 성공만으로는 인증이 성립하지 않는다 — 요청마다 {@link UserAccountAccessService#isActive}로
+ * <p>JWT 파싱 성공만으로는 인증이 성립하지 않는다 — 요청마다 {@link UserAccountService#isActive}로
  * 회원 행이 {@code ACTIVE}인지 확인한 경우에만 SecurityContext를 만든다(#305 §5.3). 회원 없음과
  * {@code WITHDRAWAL_PENDING}은 token 상세와 구분하지 않고 context 없이 통과시켜 인가 단계의 기존
- * 401 {@code -2001}로 수렴한다. 이 검사는 #429부터 공유 Redis 캐시({@code RedisActiveStatusCache},
- * ACTIVE=true만·탈퇴 시 DEL·TTL 안전망)를 탄다 — 탈퇴 커밋·evict 뒤 시작된 요청은 결정적으로
- * 차단되고, evict 유실·적재 경합의 한시적 stale 인증은 #429 "보안 정책 개정"이 명시적으로 허용한다
- * (커밋 전 in-flight 작업의 산물만 노출되고, 각 token은 발급 시각+수명까지, 회전 사슬은 1회 종결).
+ * 401 {@code -2001}로 수렴한다. 이 검사는 #429부터 공유 Redis 캐시(ACTIVE=true만·탈퇴 시 DEL·TTL
+ * 안전망)를 타고, #441부터 token 발급·회전도 같은 캐시를 공유한다 — 탈퇴 커밋·evict 뒤 시작된
+ * 요청은 결정적으로 차단되고, evict 유실·적재 경합의 한시적 stale 인증·발급은 #429 "보안 정책
+ * 개정"이 명시적으로 허용한다(각 token은 발급 시각+수명까지, stale 엔트리는 적재 시각+TTL까지).
  *
  * <p>이 필터는 인증 "시도"만 한다 — 헤더 부재·형식 불량·검증 실패는 사유 구분 없이 context 없이 chain을
  * 진행시키고, 거절(401 {@code -2001})은 인가 단계의 {@link ApiAuthenticationEntryPoint}가 담당한다.
@@ -50,14 +50,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokens jwtTokens;
-    private final UserAccountAccessService userAccountAccessService;
+    private final UserAccountService userAccountService;
     private final ApiErrorResponseWriter apiErrorResponseWriter;
 
     public JwtAuthenticationFilter(JwtTokens jwtTokens,
-                                   UserAccountAccessService userAccountAccessService,
+                                   UserAccountService userAccountService,
                                    ApiErrorResponseWriter apiErrorResponseWriter) {
         this.jwtTokens = jwtTokens;
-        this.userAccountAccessService = userAccountAccessService;
+        this.userAccountService = userAccountService;
         this.apiErrorResponseWriter = apiErrorResponseWriter;
     }
 
@@ -78,7 +78,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             long userId = parsedUserId.get();
             boolean active;
             try {
-                active = userAccountAccessService.isActive(userId);
+                active = userAccountService.isActive(userId);
             } catch (RuntimeException e) {
                 // DB 장애를 credential 오류(401)로 숨기지 않는다 — fail-closed 500 + ERROR 관측 후 chain 중단.
                 // catch-all(GlobalExceptionHandler)처럼 stacktrace는 여기서 남긴다(필터 단계 미도달).
