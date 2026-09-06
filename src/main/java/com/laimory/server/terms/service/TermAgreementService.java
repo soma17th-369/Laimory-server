@@ -17,7 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
- * 약관 동의 일괄 등록·이력 조회·필수 동의 판정.
+ * 약관 동의 일괄 등록·이력 조회.
  *
  * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 지금 이 순간의 현재
  * 버전이어야 기록한다. 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고

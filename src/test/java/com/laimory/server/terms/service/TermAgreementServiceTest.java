@@ -25,8 +25,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 동의 일괄 등록의 all-or-nothing 검증(전체 성공 / stale 409 / shape 400)과 KST 수락 시각 계약,
- * 필수 동의 existence 판정 검증.
+ * 동의 일괄 등록의 all-or-nothing 검증(전체 성공 / stale 409 / shape 400)과 KST 수락 시각 계약 검증.
  */
 @ExtendWith(MockitoExtension.class)
 class TermAgreementServiceTest {
