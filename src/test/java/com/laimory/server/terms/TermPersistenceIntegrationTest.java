@@ -11,7 +11,6 @@ import com.laimory.server.terms.service.TermAgreementTransactionService;
 import com.laimory.server.terms.service.TermCatalogReadiness;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
-import com.laimory.server.terms.service.TermsEnforcementService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,9 +61,6 @@ class TermPersistenceIntegrationTest {
 
     @Autowired
     private TermCatalogReadiness termCatalogReadiness;
-
-    @Autowired
-    private TermsEnforcementService termsEnforcementService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -209,9 +205,9 @@ class TermPersistenceIntegrationTest {
     }
 
     @Test
-    void lowercaseRawSeed_convergesToNotReadyFailOpen_insteadOf500() {
+    void lowercaseRawSeed_convergesToNotReady_insteadOf500() {
         // 소문자 오타 seed — term_type이 binary collation이 아니라면 IN(enum literal)에 case-insensitive
-        // 매칭돼 @Enumerated hydration이 공개 조회·gate를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
+        // 매칭돼 @Enumerated hydration이 공개 조회를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
         jdbcTemplate.update("INSERT INTO term_documents"
                 + " (term_type, version, title, content_url, effective_at, created_at, updated_at)"
                 + " VALUES ('terms_of_service', 'it-lc-1', '이용약관',"
@@ -226,10 +222,8 @@ class TermPersistenceIntegrationTest {
         assertThat(summaries).isEmpty();
 
         // 2) readiness — TERMS_OF_SERVICE의 current 문서가 없으므로 stage는 not-ready로 수렴한다.
-        assertThat(termCatalogReadiness.checkStage(TermStage.LOGIN).ready()).isFalse();
-
-        // 3) gate — 미준비 stage는 fail-open이라 예외 없이 통과한다(5xx가 아니라 경보 metric).
-        termsEnforcementService.requireAgreements(List.of(TermStage.LOGIN), newUserId());
+        assertThat(termCatalogReadiness.checkStage(
+                TermStage.LOGIN, LocalDateTime.parse("2026-08-16T00:00:00")).ready()).isFalse();
     }
 
     private TermDocument saveDocument(TermType type, String version, String effectiveAt) {

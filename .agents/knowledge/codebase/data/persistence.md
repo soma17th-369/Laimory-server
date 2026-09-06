@@ -277,16 +277,16 @@ current selection을 지원해 별도 조회 index를 두지 않는다.
 `term_type`은 enum literal exact-match라 컬럼 단위 `ascii_bin`이다(subject_id 선례) — 테이블 기본
 `_unicode_ci`면 소문자 오타 seed가 JPQL `IN`(enum literal)에 case-insensitive 매칭돼 `@Enumerated`
 hydration을 500으로 깨뜨리지만, binary 비교면 불일치 행이 조회에서 빠지고 readiness가
-not-ready(fail-open)로 경보한다. `content_url`을 `URI`가 아닌 `String`으로 매핑하는 것도 같은 이유다 —
+not-ready로 경보한다. `content_url`을 `URI`가 아닌 `String`으로 매핑하는 것도 같은 이유다 —
 타입 변환을 걸면 오타 seed 행 하나가 공개 조회 hydration을 500으로 깨뜨린다. readiness의 raw catalog
 조회는 `term_type`·`content_url` 두 컬럼만 native projection으로 읽어, 미지 literal과 https 절대 URI가
 아닌 URL을 hydration 없이 관측해 기동 경보로 올린다(host는 검사하지 않는다 — 게시 위치는 운영 선택이지
 서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
 `effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
 공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고 원문 slug는 게시 문서가 소유하므로 DB에
-복제하지 않는다. 필수·조건부 동의 대상은 enum 메타데이터가 아니라 enforcement/readiness 지점에 명시한다.
-enforcement/readiness/동의 버전 검증은 ID·종류·버전만 담은 summary projection을 조회한다 — LOGIN gate가
-모든 비면제 `/a/api` 요청에서 도는 경로라 판정에 쓰지 않는 컬럼을 함께 적재하지 않는다.
+복제하지 않는다. 동의 대상 분류는 enum 메타데이터가 아니라 기동 seed 검사(readiness)와 재동의 판정
+(initializer 후속 #434)의 각 지점에 명시한다. readiness·동의 버전 검증은 ID·종류·버전만 담은 summary
+projection을 조회한다 — 판정에 쓰지 않는 컬럼을 함께 적재하지 않는 좁은 투영이다.
 운영 seed는 원문 page 게시 후 수동 INSERT다.
 
 공개 page는 랜딩페이지(Vercel, `www.laimory.app`)가 게시한다(#418). Server는 원문을 서빙하지 않고
@@ -323,11 +323,11 @@ ALTER TABLE term_documents
 catalog에 재실행하지 않으며, delta도 중복이나 데이터 불일치를 숨기는 `INSERT IGNORE`를 쓰지 않는다.
 
 개인정보 처리방침도 상시 공개와 같은 `termTypes` 조회를 위해 catalog에 넣는다. 서버는 이 순서에
-의존한다: enforcement 대상 종류의 current 행 존재가 해당 stage 또는 조건부 gate의 활성화 조건인데, 서버는
+의존한다: current 행이 INSERT되는 순간 그 문서는 공개 조회와 동의 등록 검증의 현재 버전이 되는데, 서버는
 `content_url`이 실제로 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을
 외부 호스트에 묶지 않는 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
-`privacy-poilcy` 같은 **형식이 멀쩡한 오타는 통과한다**. 순서를 뒤집어 확인 전에 INSERT하면 gate는
-미동의 사용자를 403으로 막기 시작하는데 정작 약관 page는 열리지 않는 상태가 되고, 기동 후 INSERT라
+`privacy-poilcy` 같은 **형식이 멀쩡한 오타는 통과한다**. 순서를 뒤집어 확인 전에 INSERT하면 앱이
+동의 화면에서 여는 약관 page가 열리지 않는 상태가 되고, 기동 후 INSERT라
 형식 검사조차 다음 재기동까지 돌지 않는다. 즉 이 창을 닫는 것은 코드가 아니라 순서다.
 
 INSERT는 다음 shape를 쓴다. 감사 컬럼에 `NOW()`를 쓰지 않는 것이 중요하다 — DB 호스트가 UTC라

@@ -50,8 +50,8 @@ public class TermDocumentService {
     }
 
     /**
-     * 지정 종류들의 현재 문서 식별 요약 — enforcement/readiness/동의 버전 검증용.
-     * gate가 모든 비면제 {@code /a/api} 요청에서 호출되므로 판정에 쓰는 컬럼만 투영한다.
+     * 지정 종류들의 현재 문서 식별 요약 — 기동 catalog 검증(readiness)·동의 버전 검증용.
+     * 판정에 쓰는 컬럼만 투영한다.
      */
     public List<TermDocumentSummary> findCurrentSummaries(Collection<TermType> termTypes, LocalDateTime nowKst) {
         if (termTypes.isEmpty()) {

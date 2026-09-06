@@ -3,9 +3,7 @@ package com.laimory.server.terms.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -28,9 +26,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
-import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * catalog 준비 판정(필수 종류 current 커버리지)과 기동 정합성 검사, bounded 전이 로그·metric 계약 검증.
@@ -64,8 +59,6 @@ class TermCatalogReadinessTest {
     @AfterEach
     void tearDown() {
         logger.detachAppender(logAppender);
-        // request attribute를 바인딩한 테스트의 snapshot 캐시가 다른 테스트로 새지 않게 한다.
-        RequestContextHolder.resetRequestAttributes();
     }
 
     @Test
@@ -98,20 +91,16 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void conditionalDocumentReadinessAndFailOpen_haveSeparateMetrics() {
+    void conditionalDocumentReadiness_publishesSeparateGauge() {
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
         TermCatalogReadiness.ConditionalTermCatalog missing = readiness.checkConditionalTerm(
                 TermType.LOCATION_BASED_SERVICE_TERMS, NOW_KST);
-        readiness.recordConditionalFailOpen(TermType.LOCATION_BASED_SERVICE_TERMS);
 
         assertThat(missing.ready()).isFalse();
         assertThat(conditionalReadyGauge(TermType.LOCATION_BASED_SERVICE_TERMS)).isEqualTo(0.0);
-        assertThat(meterRegistry.get(TermCatalogReadiness.CONDITIONAL_GATE_FAIL_OPEN_COUNTER)
-                .tag("term_type", TermType.LOCATION_BASED_SERVICE_TERMS.name())
-                .counter().count()).isEqualTo(1.0);
 
         when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
                 .thenReturn(List.of(document(TermType.LOCATION_BASED_SERVICE_TERMS)));
@@ -183,15 +172,6 @@ class TermCatalogReadinessTest {
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
         readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(2);
-    }
-
-    @Test
-    void recordFailOpen_incrementsPerStageCounter() {
-        readiness.recordFailOpen(TermStage.LOGIN);
-        readiness.recordFailOpen(TermStage.LOGIN);
-
-        assertThat(meterRegistry.get(TermCatalogReadiness.GATE_FAIL_OPEN_COUNTER)
-                .tag("stage", TermStage.LOGIN.name()).counter().count()).isEqualTo(2.0);
     }
 
     @Test
@@ -277,57 +257,6 @@ class TermCatalogReadinessTest {
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).isEmpty();
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(1.0);
         assertThat(readyGauge(TermStage.TIMELINE_FIRST_CREATE)).isEqualTo(1.0);
-    }
-
-    @Test
-    void requestScope_sharesSingleCatalogQueryAcrossStageAndConditionalJudgments() {
-        // 요청 안에서는 LOGIN·추가 stage·조건부 판정이 request attribute의 snapshot 1쿼리를 공유한다(#428).
-        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE),
-                        document(TermType.SENSITIVE_INFORMATION_CONSENT),
-                        document(TermType.THIRD_PARTY_PROVISION_CONSENT),
-                        document(TermType.CROSS_BORDER_TRANSFER_CONSENT),
-                        document(TermType.LOCATION_BASED_SERVICE_TERMS)));
-
-        assertThat(readiness.checkStage(TermStage.LOGIN).ready()).isTrue();
-        assertThat(readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE).ready()).isTrue();
-        assertThat(readiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS).ready()).isTrue();
-
-        verify(termDocumentService).findCurrentSummaries(List.of(TermType.values()), NOW_KST);
-        verifyNoMoreInteractions(termDocumentService);
-    }
-
-    @Test
-    void withoutRequestContext_eachJudgmentLoadsCatalogDirectly() {
-        // 요청 밖(기동 검증·비웹 호출)은 캐시 없이 매번 직접 조회로 강등된다.
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
-
-        readiness.checkStage(TermStage.LOGIN);
-        readiness.checkStage(TermStage.LOGIN);
-
-        verify(termDocumentService, times(2)).findCurrentSummaries(anyCollection(), any());
-    }
-
-    @Test
-    void activationDuringRequest_staysOnSnapshotAuthorityUntilNextRequest() {
-        // 판정 시각 계약(#428): 요청당 첫 판정이 캡처한 snapshot이 그 요청 전체의 권위다 —
-        // 요청 도중 발효된 조건부 문서는 같은 요청에서 보이지 않고 다음 요청부터 강제된다.
-        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
-        when(termDocumentRepository.count()).thenReturn(1L);
-
-        assertThat(readiness.checkStage(TermStage.LOGIN).ready()).isTrue();
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
-                .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE),
-                        document(TermType.LOCATION_BASED_SERVICE_TERMS)));
-        assertThat(readiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS).ready()).isFalse();
-
-        // 다음 요청(새 attribute)은 새 snapshot을 떠서 발효분을 본다.
-        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest()));
-        assertThat(readiness.checkConditionalTerm(TermType.LOCATION_BASED_SERVICE_TERMS).ready()).isTrue();
     }
 
     private double readyGauge(TermStage stage) {

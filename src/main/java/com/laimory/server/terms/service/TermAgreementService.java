@@ -17,7 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
- * 약관 동의 일괄 등록·이력 조회·필수 동의 판정.
+ * 약관 동의 일괄 등록·이력 조회.
  *
  * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 지금 이 순간의 현재
  * 버전이어야 기록한다. 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고
@@ -63,21 +63,12 @@ public class TermAgreementService {
         return termAgreementRepository.findHistoryByUserId(userId);
     }
 
-    /** 주어진 문서 전부에 동의했는지 — enforcement용 단일 existence query. 빈 목록은 true다. */
     /**
      * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정(계획 §3.2)이라 탈퇴 회원의 증적은
      * 보존하지 않는다. 미존재는 0행(멱등)이며 호출자 transaction에 합류한다.
      */
     public void deleteAllByUserId(long userId) {
         termAgreementRepository.deleteAllByUserId(userId);
-    }
-
-    public boolean hasAgreedToAll(Long userId, List<Long> termDocumentIds) {
-        if (termDocumentIds.isEmpty()) {
-            return true;
-        }
-        return termAgreementRepository.countByUserIdAndTermDocumentIdIn(userId, termDocumentIds)
-                == termDocumentIds.size();
     }
 
     private static void validateShape(List<TermAgreementCommand> agreements) {

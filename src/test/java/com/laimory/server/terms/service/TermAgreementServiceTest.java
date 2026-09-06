@@ -25,8 +25,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 동의 일괄 등록의 all-or-nothing 검증(전체 성공 / stale 409 / shape 400)과 KST 수락 시각 계약,
- * 필수 동의 existence 판정 검증.
+ * 동의 일괄 등록의 all-or-nothing 검증(전체 성공 / stale 409 / shape 400)과 KST 수락 시각 계약 검증.
  */
 @ExtendWith(MockitoExtension.class)
 class TermAgreementServiceTest {
@@ -139,22 +138,6 @@ class TermAgreementServiceTest {
 
         assertThat(service.getHistory("v1", USER_ID)).isEmpty();
         verify(termAgreementRepository).findHistoryByUserId(USER_ID);
-    }
-
-    @Test
-    void hasAgreedToAll_comparesCountAgainstDocumentIdSet() {
-        List<Long> documentIds = List.of(11L, 12L);
-        when(termAgreementRepository.countByUserIdAndTermDocumentIdIn(USER_ID, documentIds))
-                .thenReturn(1L, 2L);
-
-        assertThat(service.hasAgreedToAll(USER_ID, documentIds)).isFalse();
-        assertThat(service.hasAgreedToAll(USER_ID, documentIds)).isTrue();
-    }
-
-    @Test
-    void hasAgreedToAll_emptyDocumentSet_isTrueWithoutQuery() {
-        assertThat(service.hasAgreedToAll(USER_ID, List.of())).isTrue();
-        verifyNoInteractions(termAgreementRepository);
     }
 
     private static TermDocumentSummary summary(Long id, TermType type, String version) {

@@ -3,7 +3,6 @@ package com.laimory.server.terms.repository;
 import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
 import java.time.LocalDateTime;
-import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -30,9 +29,6 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
                        @Param("termDocumentId") Long termDocumentId,
                        @Param("acceptedAt") LocalDateTime acceptedAt,
                        @Param("auditNow") LocalDateTime auditNow);
-
-    /** 필수 동의 existence 판정용 단일 count — {@code (user_id, term_document_id)} UNIQUE 인덱스를 탄다. */
-    long countByUserIdAndTermDocumentIdIn(Long userId, Collection<Long> termDocumentIds);
 
     /**
      * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정이라 탈퇴 회원의 동의 증적은
