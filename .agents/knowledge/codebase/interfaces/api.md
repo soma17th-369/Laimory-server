@@ -95,9 +95,12 @@ nullable `place`·`address`(AI가 Event 단위로 고른 장소명과 그 주소
 같은 DTO라 세 필드가 그대로 실린다.
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
-`title`·`subtitle`·`startAt`·`endAt`(네 key 모두 필수), 선택적 `eventType`, 선택적 `memo`와 선택적
-`photosToAdd`를 처리한다. `memo` 부재는 변경 없음이고 null·blank는 제거다. `photosToAdd` 부재 또는 빈
-배열은 Item 변경 없음이며 명시적 null은 400이다. 배열 원소는
+선택적 `title`·`subtitle`·`startAt`·`endAt`·`eventType`·`memo`와 `photosToAdd`를 처리한다.
+`title`·`startAt`·`eventType`은 누락·null이면 유지하며, title 값은 strip 후 1~255자여야 한다.
+`subtitle`·`memo`는 누락·null이면 유지, 빈 문자열·공백뿐이면 제거다(subtitle은 strip 후 최대 255자,
+memo는 trim 없이 원문 최대 500자). **endAt만 누락·null 모두 비움(단일 시점)**이므로 종료 시각을
+유지하려면 현재 값을 보내야 한다. 시간 범위는 transaction 안에서 기존 startAt과 병합한 뒤 검증한다.
+`photosToAdd`는 누락·null·빈 배열 모두 Item 변경 없음이며 비배열은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추기 위해 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
@@ -107,7 +110,8 @@ nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추�
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
-`body=null`이다. `photosToAdd`의 full object key에 `PENDING` PHOTO delete job이 있으면 job을 취소하고
+`body=null`이다. memo PUT은 필드 부재·null·blank 모두 제거라 PATCH의 null=유지와 다르다.
+`photosToAdd`의 full object key에 `PENDING` PHOTO delete job이 있으면 job을 취소하고
 보존 Item을 재연결하며, 유효한 `PROCESSING`이면 같은 object key 생성을 막고 409 `-1019`를 반환한다.
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
@@ -148,10 +152,10 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 
 `POST /a/api/{version}/timeline/daily-records/{recordDate}/events`(#326)는 기존 하루 기록에 Event를
 수동 생성한다(DRAFT/SAVED 모두, DailyRecord 자동 생성 없음 — 없음·비소유는 404 `-404` 은닉).
-`eventType`·`title`·`subtitle`·`startAt`·`endAt` 5개 키는 모두 필수다(키 누락 400). `eventType`은
-명시적 null도 400이고 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 값이 nullable이고,
+`eventType`·`title`·`startAt`만 필수다(누락·null은 Bean Validation으로 서비스 호출 전 400).
+`eventType`은 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 누락·null 모두 비움이고,
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
-`photosToAdd`도 optional 키다(누락/빈 배열은 사진 없음, 명시적 null·비배열은 400). 사진 입력·개수·
+`photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). 사진 입력·개수·
 rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400)·pending delete job
 재연결 규칙은 Event PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO
 Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
@@ -328,13 +332,19 @@ app-facing success/error는 다음 envelope를 사용한다.
 
 ### Errors
 
+- Boot 관리 ObjectMapper는 enum 숫자 ordinal과 정수 필드의 문자열·빈 문자열·소수 coercion을 거절한다.
+  Event·감정·약관·AI 결과/콜백의 enum, AI errorCode와 presign size 등 JSON body 전체에 적용되며,
+  query/path parameter의 Spring 타입 변환에는 적용되지 않는다. nullable 정수의 JSON null은 허용한다.
 - service는 response를 만들지 않고 exception을 던진다.
 - client가 구분해야 하는 domain rejection은 `BusinessException(ExceptionType)`이다.
   각 `ExceptionType`은 공개 `int code`, HTTP status와 access log level을 소유한다. 서로 다른 내부 타입이
   같은 code를 공유할 수 있다(예: `REFRESH_TOKEN_INVALID`/`REFRESH_TOKEN_REUSED` → 둘 다 `-2003`).
   numeric code를 타입으로 되돌리는 전역 lookup은 없고 task/callback 경계만 local allowlist를 소유한다.
-- 모든 상태에서 잘못된 input은 `IllegalArgumentException`이며 400 `-400`
-  (`VALIDATION_FAILED`)으로 매핑한다.
+- 서비스 입력 규칙 위반은 `IllegalArgumentException`이며 400 `-400`(`VALIDATION_FAILED`)으로 매핑한다.
+  생성 DTO의 필수값(eventType·title·startAt)과 감정 수정 DTO의 emotionType은 `@NotNull` +
+  `@Valid @RequestBody`로 검사한다. 실패는 `MethodArgumentNotValidException`을 거쳐
+  400 `-400`(`MVC_REQUEST_REJECTED`)이며 공개 메시지는 같은 `ERROR_0400`이다.
+  PATCH는 전 필드 optional이므로 필수 제약이 없고, 공백·길이·시간 관계는 서비스가 계속 소유한다.
 - `ResponseStatusException`을 domain service에서 사용하지 않는다.
 - 내부 invariant failure는 catch-all 500 `-500`(`UNEXPECTED_ERROR`)으로 처리한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만

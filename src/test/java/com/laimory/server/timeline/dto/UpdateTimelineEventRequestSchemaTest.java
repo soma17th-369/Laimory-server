@@ -16,14 +16,13 @@ import org.springframework.core.ResolvableType;
 class UpdateTimelineEventRequestSchemaTest {
 
     @Test
-    void eventPatch_requiresOnlyTheLegacyFourKeys_andHidesInternalMemoPresence() {
+    void eventPatch_hasNoRequiredFields() {
         Map<String, Schema> schemas = ModelConverters.getInstance().readAll(UpdateTimelineEventRequest.class);
         Schema request = schemas.get("UpdateTimelineEventRequest");
 
-        assertThat(request.getRequired())
-                .containsExactlyInAnyOrder("title", "subtitle", "startAt", "endAt");
-        assertThat(request.getProperties()).containsKeys("eventType", "memo", "photosToAdd");
-        assertThat(request.getProperties()).doesNotContainKey("memoPresent");
+        assertThat(request.getRequired()).isNullOrEmpty();
+        assertThat(request.getProperties().keySet()).containsExactlyInAnyOrder(
+                "title", "subtitle", "startAt", "endAt", "eventType", "memo", "photosToAdd");
     }
 
     @Test

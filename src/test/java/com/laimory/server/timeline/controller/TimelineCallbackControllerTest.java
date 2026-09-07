@@ -17,8 +17,11 @@ import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.config.JacksonConfig;
 import com.laimory.server.timeline.service.TimelineCallbackService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -33,7 +36,7 @@ import org.mockito.ArgumentCaptor;
  * (토큰 검증 자체의 정/오답 로직은 TimelineCallbackServiceTest에서 단위 검증.)
  */
 @WebMvcTest(TimelineCallbackController.class)
-@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
+@Import({JacksonConfig.class, SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineCallbackControllerTest {
 
     private static final String CALLBACK =
@@ -84,6 +87,37 @@ class TimelineCallbackControllerTest {
                     .andExpect(status().isBadRequest());
         }
 
+        verifyNoInteractions(timelineCallbackService);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"-1008.0", "1e3", "\"\"", "\"   \"", "true", "[]", "{}"})
+    void callback_rejectsNonIntegerErrorCode(String errorCode) throws Exception {
+        mockMvc.perform(post(CALLBACK).header("Task-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"FAILED\",\"errorCode\":" + errorCode + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+        verifyNoInteractions(timelineCallbackService);
+    }
+
+    @Test
+    void callback_acceptsNullErrorCode() throws Exception {
+        mockMvc.perform(post(CALLBACK).header("Task-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"FAILED\",\"errorCode\":null}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<DraftTaskCallbackRequest> request = ArgumentCaptor.forClass(DraftTaskCallbackRequest.class);
+        verify(timelineCallbackService).handleCallback(anyString(), eq("t-1"), eq("tok-123"), request.capture());
+        assertThat(request.getValue().errorCode()).isNull();
+    }
+
+    @Test
+    void callback_rejectsNumericStatus() throws Exception {
+        mockMvc.perform(post(CALLBACK).header("Task-Token", "tok-123")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
         verifyNoInteractions(timelineCallbackService);
     }
 

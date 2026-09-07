@@ -319,6 +319,64 @@ class TimelineEventEditTransactionServiceTest {
         assertThat(event.getEndAt()).isEqualTo(NEW_END);
     }
 
+    @Test
+    void updateEvent_noChangeSignalsPreserveCurrentValuesExceptEndAt() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                null, null, false, null, null, null, false, null, List.of()));
+
+        assertThat(event.getEventType()).isEqualTo(TimelineEventType.REST);
+        assertThat(event.getTitle()).isEqualTo("원래 제목");
+        assertThat(event.getSubtitle()).isEqualTo("원래 부제");
+        assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
+        assertThat(event.getEndAt()).isNull();
+        assertThat(event.getMemo()).isEqualTo("기존 메모");
+        verifyNoWrites();
+    }
+
+    @Test
+    void updateEvent_changedNullValuesClearSubtitleAndMemo() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                null, null, true, null, null, ORIGINAL_END, true, null, List.of()));
+
+        assertThat(event.getSubtitle()).isNull();
+        assertThat(event.getMemo()).isNull();
+        assertThat(event.getEndAt()).isEqualTo(ORIGINAL_END);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void updateEvent_invalidMergedTimeRangeFailsBeforeAnyMutation(boolean replaceStart) {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateMemo("기존 메모");
+
+        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                TimelineEventType.MEAL, "새 제목", true, null,
+                replaceStart ? NEW_START : null,
+                replaceStart ? NEW_START.minusNanos(1) : ORIGINAL_START.minusNanos(1),
+                true, null, List.of(photo(RAW_ID, FILENAME)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("endAt is before startAt");
+
+        assertOriginalState(event, "기존 메모");
+        verifyNoWrites();
+        verify(timelineEventService, never()).findByDailyRecordId(any());
+    }
+
+    @Test
+    void updateEvent_endAtCanEqualPreservedStartAt() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                null, null, false, null, null, ORIGINAL_START, false, null, List.of()));
+        assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
+        assertThat(event.getEndAt()).isEqualTo(ORIGINAL_START);
+    }
+
     private TimelineEvent stubOwnedDraftEvent() {
         TimelineEvent event = event(EVENT_ID);
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
@@ -366,15 +424,16 @@ class TimelineEventEditTransactionServiceTest {
         return item;
     }
 
-    private TimelineEventEditCommand command(boolean memoPresent, String memo,
+    private TimelineEventEditCommand command(boolean memoChanged, String memo,
                                              List<TimelineEventPhotoAddService.PhotoToAdd> photos) {
         return new TimelineEventEditCommand(
                 TimelineEventType.MEAL,
                 "새 제목",
+                true,
                 "새 부제",
                 NEW_START,
                 NEW_END,
-                memoPresent,
+                memoChanged,
                 memo,
                 photos);
     }

@@ -5,8 +5,8 @@ import java.time.LocalDateTime;
 /**
  * 사용자 Event 입력의 공통 상세 규칙(title·subtitle·시간 범위·memo) — Event PATCH/memo PUT
  * ({@link TimelineEventEditService})과 수동 Event 생성({@link TimelineEventCreateService})이 공유해
- * 같은 필드 규칙이 갈라지지 않게 한다. PATCH 전용 로직(eventType 누락 병합·memo presence·PHOTO 검증)은
- * 각 서비스가 소유한다.
+ * 같은 필드 규칙이 갈라지지 않게 한다. DTO의 Bean Validation은 생성 필수값만 담당하며,
+ * 정규화 후 길이·시간 관계는 이 규칙이 소유한다. PATCH의 기존 값 병합·변경 여부·PHOTO 검증은 각 서비스가 소유한다.
  */
 final class TimelineEventInputRules {
 
