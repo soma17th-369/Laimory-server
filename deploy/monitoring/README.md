@@ -19,7 +19,7 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
   MySQL/Redis, AWS credit 수집, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
-Grafana 3000은 loopback과 monitoring private IP에, Tempo OTLP 4317은 monitoring private IP에만
+Grafana 3000은 loopback에만, Tempo OTLP 4317은 monitoring private IP에만
 publish한다(dev WAS의 push 유입 — SG source 계약은 environments.md). Prometheus 9090, Tempo 3200,
 blackbox 9115, mysqld exporter 9104, redis exporter 9121은 Docker network에만 expose한다.
 `/status`는 DB 중심 health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
@@ -31,6 +31,38 @@ refresh는 30초다. 24시간 관찰에서 host memory 75% 초과가 15분 이�
 duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 뒤에도 해소되지 않을 때 t3.large를
 별도 변경으로 검토한다. monitoring EC2의 CPU credit과 root EBS 지표는 5분마다 CloudWatch에서 읽어
 Infrastructure dashboard에 표시한다.
+
+## 접속 (SSM 포트포워딩 전용)
+
+Grafana·Kibana는 공개 엔드포인트가 없다(#437 — 공인 DNS·ALB·WAF에 흔적을 남기지 않는다).
+접속 통제는 터널을 열 수 있는 IAM identity(`ssm:StartSession`)가 담당하고, 접속 감사는
+CloudTrail의 SSM 세션 기록이 담당한다.
+
+**로컬 포트 규약: Grafana 3000 · Kibana 5601 고정.** Logs dashboard의 Kibana 딥링크와 Discord
+알림의 `runbook_url`이 `http://localhost:5601/...` 정적 문자열이라 이 규약을 전제한다. 로컬에서
+규약 포트가 이미 사용 중이면 다른 로컬 포트로 열 수는 있으나 그때는 링크가 동작하지 않는다.
+
+```bash
+# wrapper — 인스턴스는 Name 태그로 조회한다
+scripts/open-observability-tunnel.sh grafana   # → http://localhost:3000 (admin 비밀번호 로그인)
+scripts/open-observability-tunnel.sh kibana    # → http://localhost:5601 (Kibana 자체 로그인)
+```
+
+원시 명령은 다음과 같다(세션이 열려 있는 동안만 localhost가 살아 있고, Ctrl+C로 끊는다).
+
+```bash
+aws ssm start-session --profile sandbox --target <monitoring-instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters 'portNumber=3000,localPortNumber=3000'
+
+aws ssm start-session --profile sandbox --target <elk-instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters 'portNumber=5601,localPortNumber=5601'
+```
+
+전제: AWS CLI + session-manager-plugin 설치, `AWS-StartPortForwardingSession` 세션 문서에 대한
+`ssm:StartSession` 허용. 일반 셸 세션이 된다고 포트포워딩까지 보장되지는 않으므로 새 단말에서는
+위 명령으로 먼저 확인한다.
 
 ## Tempo trace 수집
 
@@ -230,7 +262,7 @@ prod 알림이 한 그룹으로 묶여, 이미 활성인 그룹에 얹힌 알림
 다음 파일은 Git, S3 bootstrap, command argument에 값을 넣지 않는다. Secret을 소비하는
 Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장애만 Docker가 복구한다.
 비밀이 없는 Prometheus와 blackbox는 `unless-stopped`를 유지한다. host boot는 systemd가 전체 stack을
-시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 일곱 secret을
+시작하고, Docker service를 재시작했다면 `sudo systemctl start laimory-monitoring`으로 여섯 secret을
 다시 확인한다.
 
 | 파일 | 소비 UID:GID | 내용 |
@@ -239,12 +271,11 @@ Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장
 | `grafana_secret_key` | `472:0` | datasource/contact credential 암호화 key |
 | `elasticsearch_api_key` | `472:0` | Elasticsearch create API key 응답의 `encoded` 값 |
 | `discord_webhook_url` | `472:0` | 지정 Discord channel incoming webhook URL |
-| `google_oauth_client_secret` | `472:0` | Grafana Google OAuth client secret (client ID는 `.env`의 `GRAFANA_GOOGLE_CLIENT_ID`) |
 | `mysql_exporter_my.cnf` | `65534:0` | exporter 전용 `[client]` credential |
 | `redis_exporter_password.json` | `59000:59000` | exporter URI별 password JSON |
 
 parent directory는 `0700 root:root`, 각 파일은 `0400`이다. systemd는
-`scripts/validate-secrets.sh`로 일곱 파일의 non-empty/owner/mode를 모두 확인하므로 일부만 준비된
+`scripts/validate-secrets.sh`로 여섯 파일의 non-empty/owner/mode를 모두 확인하므로 일부만 준비된
 stack은 시작하지 않는다. 비밀이 없는 Prometheus와 blackbox만 먼저 기동할 수 있다.
 
 SSM Session Manager로 monitoring host에 접속한 뒤 stdin 전용 helper로 주입한다.
@@ -261,21 +292,12 @@ openssl rand -hex 32 | sudo scripts/install-secret.sh grafana_secret_key
 read -rsp 'Discord webhook URL: ' SECRET_VALUE; echo
 printf %s "$SECRET_VALUE" | sudo scripts/install-secret.sh discord_webhook_url
 unset SECRET_VALUE
-
-read -rsp 'Google OAuth client secret: ' SECRET_VALUE; echo
-printf %s "$SECRET_VALUE" | sudo scripts/install-secret.sh google_oauth_client_secret
-unset SECRET_VALUE
 ```
 
 Grafana admin username 기본값은 `laimory`다. admin password는 최초 DB 생성 때 각인된다. 이후 파일만
 바꾸지 말고 Grafana admin password reset 절차를 사용한다. `grafana_secret_key`는 재부팅과 재배포에도
-유지해야 기존 암호화 값을 읽는다.
-
-Google OAuth 사용자를 추가할 때는 Grafana에 이메일로 선등록한 뒤 **첫 로그인 전에**
-`GF_AUTH_OAUTH_ALLOW_INSECURE_EMAIL_LOOKUP=true`를 임시로 켠다. Grafana 기본값은 OAuth 로그인을
-이메일로 매칭하지 않으므로, auth 링크가 없는 선등록 계정은 `allow_sign_up=false`에 걸려
-"Sign up is disabled"로 거부된다(2026-08-26 실측). 첫 로그인으로 링크가 생기면
-(`authLabels: ["Google"]`) 플래그를 제거하고 재시작한다 — 이후 로그인은 링크로 매칭된다.
+유지해야 기존 암호화 값을 읽는다. 브라우저 로그인은 이 admin 계정이 유일하다 — Google OAuth는
+#437에서 제거했다(접근 통제·감사가 SSM IAM + CloudTrail로 옮겨감).
 
 ## Exporter identity와 secret
 
@@ -494,7 +516,6 @@ grafana/provisioning/dashboards/json/laimory-overview.json
 grafana/provisioning/dashboards/json/laimory-jvm-spring.json
 grafana/provisioning/dashboards/json/laimory-infrastructure.json
 grafana/provisioning/dashboards/json/laimory-logs.json
-scripts/backup-ebs-snapshot.sh
 scripts/backup-mysql-dump.sh
 scripts/collect-aws-metrics.sh
 scripts/collect-elasticsearch-metrics.sh
@@ -508,8 +529,6 @@ systemd/laimory-aws-metrics.timer
 systemd/laimory-binlog-stream.service
 systemd/laimory-binlog-upload.service
 systemd/laimory-binlog-upload.timer
-systemd/laimory-ebs-snapshot.service
-systemd/laimory-ebs-snapshot.timer
 systemd/laimory-elasticsearch-metrics.service
 systemd/laimory-elasticsearch-metrics.timer
 systemd/laimory-filebeat-metrics.service
@@ -729,33 +748,27 @@ curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" |
 
 ## prod MySQL backup
 
-prod MySQL은 관리형이 아니라 백업이 저절로 생기지 않는다. AWS Backup·DLM은 조직 SCP로 거부되어
-(2026-08-24 policy simulation 실측: `backup-storage:*` 명시 거부) EBS 스냅샷도 직접 호출로 만든다.
-백업은 두 갈래이고 각 갈래의 마지막 성공이 26시간을 넘으면 `backup-rules.yml`의 rule이 발화한다.
+prod MySQL은 관리형이 아니라 백업이 저절로 생기지 않는다(AWS Backup은 조직 SCP로 거부 —
+2026-08-24 policy simulation 실측: `backup-storage:*` 명시 거부). 백업은 논리 덤프 한 갈래이고,
+여기에 아래 "prod MySQL binlog off-host stream"이 더해져 "최신 덤프 적재 + binlog 재생"으로
+시점 복구(PITR)를 담보한다. 덤프의 마지막 성공이 26시간을 넘으면 `backup-rules.yml`의 rule이
+발화한다.
 
 - **논리 덤프** — prod MySQL host의 `laimory-mysqldump-backup.timer`(매일 04:15 KST)가
   `mysqldump --single-transaction`을 gzip해 backup bucket `prod-mysql/mysqldump/`(30일 만료
   lifecycle)로 올린다. **일관된 복구의 권위는 이쪽이다.**
-- **EBS 스냅샷** — monitoring host의 `laimory-ebs-snapshot.timer`(매일 04:30 KST)가 root volume
-  snapshot 생성 → 완료 대기 → 14일 초과분 prune → 최신 완료 시각을 textfile metric으로 기록한다.
-  스냅샷은 crash-consistent(전원 차단과 동일)이며 복원 기동은 InnoDB crash recovery 경로다.
 
-두 host 모두 node_exporter textfile collector가 전제다(위 node_exporter 설치 절차 참고).
+prod MySQL host의 node_exporter textfile collector가 전제다(위 node_exporter 설치 절차 참고).
 IAM은 로컬 운영자 권한으로 반영한다 — prod MySQL role의 `laimory-prod-mysqldump-s3-put`
-(dump prefix 한정 `s3:PutObject`)과 monitoring role의 `laimory-prod-mysql-ebs-snapshot`
-(생성은 대상 volume 한정, 삭제는 `laimory-backup=prod-mysql` tag 조건).
+(dump prefix 한정 `s3:PutObject`).
 
-설정 파일은 각 host가 소유하며 저장소에 두지 않는다(버킷 이름에 계정 ID 포함).
+설정 파일은 host가 소유하며 저장소에 두지 않는다(버킷 이름에 계정 ID 포함).
 
 ```bash
 # prod MySQL host: /etc/laimory/mysqldump-backup.env (root 0600)
 MYSQL_USER='laimory_backup'
 MYSQL_PASSWORD='<backup password>'
 S3_PREFIX='s3://<backup bucket>/prod-mysql/mysqldump'
-
-# monitoring host: /etc/laimory/ebs-snapshot-backup.env (root 0600)
-VOLUME_ID='<prod MySQL root EBS volume id>'
-RETENTION_DAYS=14
 ```
 
 prod MySQL host 설치 — 백업 계정을 만들고(대화형: backup password 입력. MySQL은 host 네이티브
@@ -785,32 +798,12 @@ sudo systemctl enable --now laimory-mysqldump-backup.timer
 sudo systemctl start laimory-mysqldump-backup.service
 ```
 
-monitoring host 설치 — 같은 순서로 설치하고 1회 실행한다.
+확인은 설정이 아니라 산출물로 한다 — `laimory_mysqldump_up`이 1이고
+`laimory_mysqldump_last_success_unixtime_seconds`가 갱신되는지, S3 dump object가 생기는지,
+service를 의도적으로 1회 실패시켜(예: env 파일 임시 이동) alert가 발화하는지 본다.
 
-```bash
-BACKUP_BUCKET='<backup bucket>'
-sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/scripts/backup-ebs-snapshot.sh" \
-  /opt/laimory-monitoring/scripts/backup-ebs-snapshot.sh --region ap-northeast-2 --only-show-errors
-sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-ebs-snapshot.service" \
-  /etc/systemd/system/laimory-ebs-snapshot.service --region ap-northeast-2 --only-show-errors
-sudo aws s3 cp "s3://$BACKUP_BUCKET/bootstrap/monitoring/systemd/laimory-ebs-snapshot.timer" \
-  /etc/systemd/system/laimory-ebs-snapshot.timer --region ap-northeast-2 --only-show-errors
-sudo chmod 0750 /opt/laimory-monitoring/scripts/backup-ebs-snapshot.sh
-sudo chmod 0644 /etc/systemd/system/laimory-ebs-snapshot.*
-sudo install -d -m 0700 /etc/laimory
-sudo vi /etc/laimory/ebs-snapshot-backup.env   # 위 포맷, 저장 후 chmod 0600
-sudo chmod 0600 /etc/laimory/ebs-snapshot-backup.env
-sudo systemctl daemon-reload
-sudo systemctl enable --now laimory-ebs-snapshot.timer
-sudo systemctl start laimory-ebs-snapshot.service
-```
-
-확인은 설정이 아니라 산출물로 한다 — `laimory_mysqldump_up`·`laimory_ebs_snapshot_up`이 1이고
-`*_last_success_unixtime_seconds`가 갱신되는지, S3 dump object와 EC2 snapshot 실물이 생기는지,
-service를 의도적으로 1회 실패시켜(예: env 파일 임시 이동) 두 alert가 발화하는지 본다.
-
-정리(uninstall)는 각 host에서 timer disable → unit/script/`.prom`/설정 파일 제거, 로컬 운영자
-권한에서 위 inline policy 2건과 bucket lifecycle rule(`expire-prod-mysqldump-30d`) 제거다.
+정리(uninstall)는 prod MySQL host에서 timer disable → unit/script/`.prom`/설정 파일 제거, 로컬
+운영자 권한에서 위 inline policy와 bucket lifecycle rule(`expire-prod-mysqldump-30d`) 제거다.
 
 ## prod MySQL binlog off-host stream
 
@@ -1181,6 +1174,6 @@ aws iam delete-role-policy --profile sandbox \
 철거할 때만 각 host의 node_exporter와 MySQL/Redis monitoring identity를 함께 disable/revoke한다.
 stack rollback은
 `sudo systemctl stop laimory-monitoring`으로 수행하며 TSDB/Grafana volume은 보존한다. 다시 올릴 때는
-`sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. 외부 노출을 끊을 때는
-prod ALB의 `grafana.laimory.app` host 규칙을 삭제한다(#368) — Kibana host 규칙과 독립이라 Kibana는
-보존된다.
+`sudo systemctl start laimory-monitoring`으로 secret validator를 통과시킨다. Grafana·Kibana는
+공개 엔드포인트가 없으므로(#437) 외부 노출 관련 rollback 항목은 없다 — 접속은 항상 SSM
+포트포워딩 터널이다(위 "접속" 절).

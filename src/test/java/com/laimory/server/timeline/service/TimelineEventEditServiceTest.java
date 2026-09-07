@@ -124,7 +124,7 @@ class TimelineEventEditServiceTest {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID,
-                request(null, "제목", null, NEW_START, null, null, false, List.of()));
+                request(null, "제목", null, NEW_START, null, null, List.of()));
 
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), any());
     }
@@ -150,7 +150,7 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
                 TimelineEventType.MEAL, "  a  ", "   ", NEW_START, NEW_START,
-                null, false, List.of());
+                null, List.of());
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
@@ -160,10 +160,11 @@ class TimelineEventEditServiceTest {
         TimelineEventEditCommand command = commandCaptor.getValue();
         assertThat(command.eventType()).isEqualTo(TimelineEventType.MEAL);
         assertThat(command.title()).isEqualTo("a");
+        assertThat(command.subtitleChanged()).isTrue();
         assertThat(command.subtitle()).isNull();
         assertThat(command.startAt()).isEqualTo(NEW_START);
         assertThat(command.endAt()).isEqualTo(NEW_START);
-        assertThat(command.memoPresent()).isFalse();
+        assertThat(command.memoChanged()).isFalse();
         assertThat(command.memo()).isNull();
         assertThat(command.photosToAdd()).isEmpty();
     }
@@ -172,32 +173,66 @@ class TimelineEventEditServiceTest {
     void updateEvent_presentMemoPreservesNonBlankRawTextInCommand() {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, " 앞뒤 공백 메모 ", true, List.of());
+                null, "제목", null, NEW_START, null, " 앞뒤 공백 메모 ", List.of());
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
-        assertThat(commandCaptor.getValue().memoPresent()).isTrue();
+        assertThat(commandCaptor.getValue().memoChanged()).isTrue();
         assertThat(commandCaptor.getValue().memo()).isEqualTo(" 앞뒤 공백 메모 ");
     }
 
     @ParameterizedTest
-    @NullSource
     @ValueSource(strings = {"", "   "})
-    void updateEvent_presentNullOrBlankMemoNormalizesToRemoval(String memo) {
+    void updateEvent_blankMemoNormalizesToRemoval(String memo) {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, memo, true, List.of());
+                null, "제목", null, NEW_START, null, memo, List.of());
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
         ArgumentCaptor<TimelineEventEditCommand> commandCaptor =
                 ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), commandCaptor.capture());
-        assertThat(commandCaptor.getValue().memoPresent()).isTrue();
+        assertThat(commandCaptor.getValue().memoChanged()).isTrue();
         assertThat(commandCaptor.getValue().memo()).isNull();
+    }
+
+    @Test
+    void updateEvent_nullFieldsRemainNoChangeSignalsWithoutCopyingPreflightValues() {
+        stubOwnedDraftEvent();
+
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID,
+                new UpdateTimelineEventRequest(null, null, null, null, null, null, null));
+
+        ArgumentCaptor<TimelineEventEditCommand> captor = ArgumentCaptor.forClass(TimelineEventEditCommand.class);
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), captor.capture());
+        TimelineEventEditCommand command = captor.getValue();
+        assertThat(command.title()).isNull();
+        assertThat(command.startAt()).isNull();
+        assertThat(command.eventType()).isNull();
+        assertThat(command.subtitleChanged()).isFalse();
+        assertThat(command.memoChanged()).isFalse();
+        assertThat(command.endAt()).isNull();
+        assertThat(command.photosToAdd()).isEmpty();
+    }
+
+    @Test
+    void updateEvent_textLimitsApplyAfterStripAndBlankCheck() {
+        stubOwnedDraftEvent();
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventRequest(
+                " " + "a".repeat(255) + " ", " " + "b".repeat(255) + " ", null, null, null,
+                " ".repeat(501), null));
+
+        ArgumentCaptor<TimelineEventEditCommand> captor = ArgumentCaptor.forClass(TimelineEventEditCommand.class);
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), captor.capture());
+        assertThat(captor.getValue().title()).isEqualTo("a".repeat(255));
+        assertThat(captor.getValue().subtitle()).isEqualTo("b".repeat(255));
+        assertThat(captor.getValue().subtitleChanged()).isTrue();
+        assertThat(captor.getValue().memoChanged()).isTrue();
+        assertThat(captor.getValue().memo()).isNull();
     }
 
     @ParameterizedTest(name = "{0}")
@@ -216,7 +251,7 @@ class TimelineEventEditServiceTest {
     void updateEvent_rejectsOversizedMemoBeforeWriter() {
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, "m".repeat(501), true,
+                null, "제목", null, NEW_START, null, "m".repeat(501),
                 List.of(photo(RAW_ID_1, FILENAME_1, "content://first")));
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
@@ -233,7 +268,7 @@ class TimelineEventEditServiceTest {
         // writer 호출 전에 전파되는 오케스트레이션 계약만 대표 케이스로 고정한다.
         stubOwnedDraftEvent();
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, null, false,
+                null, "제목", null, NEW_START, null, null,
                 List.of(photo("   ", FILENAME_1, "content://photo")));
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
@@ -247,7 +282,7 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
         UpdateTimelineEventPhotoRequest samePhoto = photo(RAW_ID_1, FILENAME_1, "content://same");
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, null, false,
+                null, "제목", null, NEW_START, null, null,
                 List.of(samePhoto, samePhoto, samePhoto));
 
         assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
@@ -267,7 +302,7 @@ class TimelineEventEditServiceTest {
         String titleWithPii = "친구 010-1234-5678에게 전화한 날";
         String memoWithPii = "메일 yun@example.com로 보냈다";
         UpdateTimelineEventRequest request = request(
-                null, titleWithPii, null, NEW_START, null, memoWithPii, true, List.of());
+                null, titleWithPii, null, NEW_START, null, memoWithPii, List.of());
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
@@ -301,7 +336,7 @@ class TimelineEventEditServiceTest {
                 RAW_ID_1, NEW_END, NEW_END,
                 new UpdateTimelineEventPhotoPayloadRequest(FILENAME_1, "content://second", 38.2, 128.2));
         UpdateTimelineEventRequest request = request(
-                null, "제목", null, NEW_START, null, null, false, List.of(first, duplicate));
+                null, "제목", null, NEW_START, null, null, List.of(first, duplicate));
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request);
 
@@ -422,7 +457,7 @@ class TimelineEventEditServiceTest {
 
     private static UpdateTimelineEventRequest requestWithOnePhoto() {
         return request(
-                null, "제목", null, NEW_START, null, null, false,
+                null, "제목", null, NEW_START, null, null,
                 List.of(photo(RAW_ID_1, FILENAME_1, "content://first")));
     }
 
@@ -441,23 +476,18 @@ class TimelineEventEditServiceTest {
             LocalDateTime startAt,
             LocalDateTime endAt,
             String memo,
-            boolean memoPresent,
             List<UpdateTimelineEventPhotoRequest> photos) {
         return new UpdateTimelineEventRequest(
-                title, subtitle, startAt, endAt, eventType, memo, memoPresent, photos);
+                title, subtitle, startAt, endAt, eventType, memo, photos);
     }
 
     private static Stream<Arguments> invalidScalarRequests() {
         return Stream.of(
-                Arguments.of("null title", request(null, null, null, NEW_START, null, null, false, List.of())),
-                Arguments.of("blank title", request(null, "   ", null, NEW_START, null, null, false, List.of())),
+                Arguments.of("blank title", request(null, "   ", null, NEW_START, null, null, List.of())),
                 Arguments.of("title over 255", request(
-                        null, "a".repeat(256), null, NEW_START, null, null, false, List.of())),
+                        null, "a".repeat(256), null, NEW_START, null, null, List.of())),
                 Arguments.of("subtitle over 255", request(
-                        null, "제목", "b".repeat(256), NEW_START, null, null, false, List.of())),
-                Arguments.of("null startAt", request(null, "제목", null, null, null, null, false, List.of())),
-                Arguments.of("endAt before startAt", request(
-                        null, "제목", null, NEW_START, NEW_START.minusNanos(1), null, false, List.of())));
+                        null, "제목", "b".repeat(256), NEW_START, null, null, List.of())));
     }
 
 }

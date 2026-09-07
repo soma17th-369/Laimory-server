@@ -264,92 +264,57 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 `TimelineEventType`이며, 결과 저장 transaction은 allowlist literal만 INSERT한다(미지원 literal은 결과 저장
 400 — 새 literal 활성화 순서는 "Server enum 배포 → AI writer 활성화").
 
-`term_documents`(#303)는 버전별 불변 약관 문서다. 컬럼은 핵심 5개(`term_type`·`version`·`title`·
-`content_url`·`effective_at`)와 감사 3개다. 원문은 담지 않고(#320) 게시된 버전별 page가 소유하며 이 행은
-그 주소만 들고 있다. `content_url`은 게시 시점에 확정된 **사실이라 저장한다** — 코드에서 slug+version으로
-역산하면 게시 host·경로 규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리키고(동의 이력이 소급
-변조된다), 버전마다 다른 호스팅을 쓸 수도 없다. 서버는 이 값을 읽고 형식만 검사할 뿐 게시 위치 정책을
-알지 않는다. 게시 행 UPDATE·삭제 API가 없고 개정은 새 행 INSERT이며, 현재 문서는
-`effective_at <= now(KST)`의 종류별 최신 행으로 계산한다(별도 active flag 없음).
-`(term_type, version)`·`(term_type, effective_at)` UNIQUE만 가진다 — 후자의 leftmost prefix가 종류별
-current selection을 지원해 별도 조회 index를 두지 않는다.
-`version`은 exact-match 식별자라 컬럼 단위 `utf8mb4_bin`(raw_id·FID 선례),
-`term_type`은 enum literal exact-match라 컬럼 단위 `ascii_bin`이다(subject_id 선례) — 테이블 기본
-`_unicode_ci`면 소문자 오타 seed가 JPQL `IN`(enum literal)에 case-insensitive 매칭돼 `@Enumerated`
-hydration을 500으로 깨뜨리지만, binary 비교면 불일치 행이 조회에서 빠지고 readiness가
-not-ready로 경보한다. `content_url`을 `URI`가 아닌 `String`으로 매핑하는 것도 같은 이유다 —
-타입 변환을 걸면 오타 seed 행 하나가 공개 조회 hydration을 500으로 깨뜨린다. readiness의 raw catalog
-조회는 `term_type`·`content_url` 두 컬럼만 native projection으로 읽어, 미지 literal과 https 절대 URI가
-아닌 URL을 hydration 없이 관측해 기동 경보로 올린다(host는 검사하지 않는다 — 게시 위치는 운영 선택이지
-서버 정책이 아니다). URL이 실제로 200인지는 요청·기동 중 확인하지 않고 게시 게이트가 검증한다.
-`effective_at`은 KST 벽시계 `DATETIME(6)`+`LocalDateTime`이다(`Instant` 매핑 금지 — 저장소 공통 계약).
-공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고 원문 slug는 게시 문서가 소유하므로 DB에
-복제하지 않는다. 동의 대상 분류는 enum 메타데이터가 아니라 기동 seed 검사(readiness)와 동의 필요 판정
-(`TermAgreementService` 상수, #434)의 각 지점에 명시한다. readiness·동의 버전/필요 판정은 ID·종류·버전만
-담은 summary projection을 조회한다 — 판정에 쓰지 않는 컬럼을 함께 적재하지 않는 좁은 투영이다.
-운영 seed는 원문 page 게시 후 수동 INSERT다.
+`term_documents`(#303/#432)는 버전별 불변 약관 문서다. 핵심 컬럼은 `term_type`·`version`·`title`·
+`content_url` 네 개이고 `(term_type, version)`이 복합 PK다. 원문은 담지 않고(#320) 게시된 버전별 page가
+소유하며 이 행은 게시 시점에 확정한 주소만 저장한다. Server는 원문을 서빙·proxy하지 않고
+`content_url`을 slug/version으로 역산하지 않는다. URL이 실제로 200인지는 요청·기동 중 확인하지 않고
+게시 게이트가 검증한다.
+
+`version`은 `VARCHAR(64) utf8mb4_bin`의 canonical `major.minor` 문자열이다. DB CHECK
+`^[1-9][0-9]*[.](0|[1-9][0-9]*)$`와 `version NOT REGEXP '[^0-9.]'`를 함께 적용해
+`1`, `01.0`, `1.01`, `1.0.0`과 줄 구분자가 붙은 값을 거절한다. MySQL ICU의 `$`가 마지막 줄 구분자
+앞에도 매칭되므로 문자 집합 검사로 Java `TermDocumentId.validateVersion`의 전체 문자열 검증과 일치시킨다.
+형식 검증은 키 생성·동의 등록 요청과 DB INSERT/UPDATE 경계가 담당하며, 조회 중에는 반복하지 않는다.
+repository는 요청한 종류(최대 6종)의 전체 후보를 엔티티 한 query로 읽고,
+`TermDocumentService`가 `TermDocument.isNewerThan`의 `BigInteger` major/minor 비교로 종류별 maximum을
+고른다. 공개 조회·동의 검증·initializer는 같은 조회와 선택 경로를 공유하고, 요약이 필요한
+호출자는 선택된 엔티티를 `(termType, version)`의 `TermDocumentSummary`로 변환한다. 별도 summary 후보
+쿼리와 버전 값 객체는 두지 않는다.
+DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 새 상위 버전 INSERT는 즉시
+current가 되며 future 예약 효력 시각은 없다.
+
+`term_type`은 enum literal exact-match를 위해 `ascii_bin`이다. 기동 검사(`TermCatalogReadiness`)는
+raw projection으로 `term_type`·`content_url`을 한 번 읽어 전체 종류의 seed 누락·미지 literal·잘못된
+HTTPS URL 형식을 로그로 알린다. 빈 catalog는 WARN, 잘못된 seed나 조회 실패는 ERROR이며 기동은 계속된다.
+단계별 판정·current 후보 조회·상태 저장·별도 metric은 없다. 버전 형식은 enforced DB CHECK와 migration
+preflight로 보장하며, 기동 검사에서 재검증하지 않는다.
+공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고, 동의 대상 분류는 enum이나 DB가 아니라
+`TermAgreementService`의 대상 5종 상수가 소유한다.
 
 공개 page는 랜딩페이지(Vercel, `www.laimory.app`)가 게시한다(#418). Server는 원문을 서빙하지 않고
 `/terms/*` route도 두지 않으므로 약관 열람 트래픽이 WAS에 오지 않는다. 게시 경로가 catalog 조회와 완전히
 분리돼 있어 `content_url`을 코드에서 역산하지 않는다. 원문을 바꾸는 개정은 게시본 덮어쓰기가 아니라 새
 version page와 새 catalog 행을 함께 추가한다.
 
-기존 live DB에서 #320으로 넘어갈 때는 **추가 DDL → 배포 → 제거 DDL** 세 단계로 나눈다. `ddl-auto=validate`는
-매핑되지 않은 잔여 컬럼은 문제 삼지 않지만 **매핑된 컬럼이 없으면 기동을 실패시키므로**, 신규
-`content_url`은 새 Server가 뜨기 전에 존재해야 한다(제거만 있던 변경과 순서가 다르다).
-
-```sql
--- 1) 배포 전: 새 Server가 매핑하는 컬럼을 먼저 만든다. 구 Server는 이 컬럼을 모르므로 영향 없다.
-ALTER TABLE term_documents ADD COLUMN content_url VARCHAR(512) NOT NULL AFTER title;
-
--- 2) 신버전 Server 배포 + smoke
-
--- 3) 배포 후: 구 entity만 쓰던 컬럼과 index를 제거한다.
-ALTER TABLE term_documents
-    DROP INDEX idx_term_documents_stage_effective,
-    DROP COLUMN content,
-    DROP COLUMN stage,
-    DROP COLUMN required,
-    DROP COLUMN display_order;
-```
-
-`content_url`과 제거 대상 네 컬럼 모두 NOT NULL·무기본값이라 행이 있으면 1단계 ADD 자체가 실패하고
-2~3단계 사이 INSERT도 실패한다. 그래서 이 전환은 두 테이블이 **0행인 pre-activation 창에서만** 수행한다.
-3단계 전까지는 구 image rollback이 가능하다(추가된 `content_url`은 구 Server가 무시한다).
-
-약관 활성화(운영 seed)는 **페이지 게시 -> 삽입 대상 URL 200 확인 -> INSERT** 순서를 지킨다. 빈 catalog는
-`term-documents-1.0.sql`로 현재 `TermType` 6종을 넣고, 기존 5종 catalog는
-`term-documents-add-privacy-policy-1.0.sql`로 개인정보 처리방침 한 건만 추가한다. 전체 seed를 기존
-catalog에 재실행하지 않으며, delta도 중복이나 데이터 불일치를 숨기는 `INSERT IGNORE`를 쓰지 않는다.
-
-개인정보 처리방침도 상시 공개와 같은 `termTypes` 조회를 위해 catalog에 넣는다. 서버는 이 순서에
-의존한다: current 행이 INSERT되는 순간 그 문서는 공개 조회와 동의 등록 검증의 현재 버전이 되는데, 서버는
-`content_url`이 실제로 열리는지 확인할 방법이 없다(요청·기동 중 HTTP 조회 금지 — 응답 지연·가용성을
-외부 호스트에 묶지 않는 결정). 기동 시 형식 검사(https 절대 URI)는 URL 자리에 URL 아닌 값이 온 경우만 걸러내며,
-`privacy-poilcy` 같은 **형식이 멀쩡한 오타는 통과한다**. 순서를 뒤집어 확인 전에 INSERT하면 앱이
-동의 화면에서 여는 약관 page가 열리지 않는 상태가 되고, 기동 후 INSERT라
-형식 검사조차 다음 재기동까지 돌지 않는다. 즉 이 창을 닫는 것은 코드가 아니라 순서다.
-
-INSERT는 다음 shape를 쓴다. 감사 컬럼에 `NOW()`를 쓰지 않는 것이 중요하다 — DB 호스트가 UTC라
-`NOW(6)`는 KST보다 9시간 이른 값을 넣고, 이 저장소의 DATETIME은 전부 `Asia/Seoul` 벽시계 계약이다.
-아래 `CONVERT_TZ`는 세션 tz가 `SYSTEM`이든 명시 offset이든 KST로 수렴하므로 접속 환경에 의존하지 않는다.
+약관 seed는 **version별 page 게시 → URL 200 확인 → 상위 canonical version INSERT** 순서다. 감사 컬럼은
+저장소의 KST 벽시계 계약에 맞춰 `CONVERT_TZ`로 넣는다.
 
 ```sql
 INSERT INTO term_documents
-    (term_type, version, title, content_url, effective_at, created_at, updated_at)
+    (term_type, version, title, content_url, created_at, updated_at)
 VALUES
     ('TERMS_OF_SERVICE', '1.0', '라이모리 이용약관',
      'https://www.laimory.app/terms/terms-of-service/1.0',
-     '2026-08-28 00:00:00',                                        -- catalog 효력(KST 벽시계)
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'),
      CONVERT_TZ(NOW(6), @@session.time_zone, '+09:00'));
 ```
 
-`effective_at`이 미래면 그 시각까지 이 행은 current가 아니다 — 사전 고지 기간 동안 문서를 미리 넣어두고
-배포 없이 자동 전환시키는 방식이다. 개정은 기존 행 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 행을
-가리키는 `term_agreements` 이력이 소급 변조된다).
-최초 `1.0` 공개 원문의 시행일은 2026-08-31이지만 클라이언트 연동을 위해 catalog 행만 2026-08-28
-00:00:00(KST)부터 current로 두는 운영 결정을 적용했다. 원문 HTML과 불변 URL은 수정하지 않는다.
+#432의 live 전환은 인조 PK/FK 제거 때문에 구·신 Server가 동시에 쓸 수 없는 maintenance cutover다.
+앱 배포 전 계약 변경으로 Android도 `effectiveAt` 의존을 제거하며 구 build 호환 필드나 `/v2`는 두지 않는다.
+배포 전 약관 조회·동의·이력을 새 응답으로 연동 검증한다. 데이터 보존용 shadow copy, final recopy,
+atomic rename, 검증, rollback 순서는
+[`docs/terms/term-version-composite-key-migration.md`](../../../../docs/terms/term-version-composite-key-migration.md)가
+소유한다.
 
 `users`(#305)는 회원 상태 컬럼을 가진다 — `status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'`
 (`ACTIVE`|`WITHDRAWAL_PENDING`)와 `withdrawal_requested_at DATETIME(6) NULL`. `provider_user_id`는
@@ -390,15 +355,16 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 `(status, created_at)` index를 타는 수동 SELECT다. live dev/prod 반영은 앱 배포 전
 수동 DDL(users ALTER + job CREATE)이 필요하다(`ddl-auto=validate`).
 
-`term_agreements`(#303)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(FK 없음 —
-`refresh_tokens` 선례)이고 — #305는 탈퇴 시 동의 이력을 old userId에 그대로 남기며 신규 가입에
-연결하지 않는다(보존 기간·삭제 방식은 #302/#303 확정 대상) —
-`(user_id, term_document_id)` UNIQUE + `(user_id, accepted_at, term_agreement_id)` 이력 index를 가진다.
-문서 FK는 `ON DELETE RESTRICT`다(동의가 남은 문서 삭제 금지). 쓰기는 repository의 native
+`term_agreements`(#303/#432)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(users FK 없음 —
+`refresh_tokens` 선례)이고 `(user_id, term_type, version)`이 복합 PK다. `(term_type, version)` 복합 FK는
+`term_documents`를 `ON DELETE RESTRICT`로 참조하며, PK가 child FK의 leftmost가 아니므로
+`idx_term_agreements_document(term_type, version)`를 별도로 둔다. 이력 index는
+`(user_id, accepted_at, term_type, version)`이다. 쓰기는 repository의 native
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
-(`modified_by` NULL), 재전송·동시 동일 batch가 unique 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
+(`modified_by` NULL), 재전송·동시 동일 batch가 PK 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
 않는다. `accepted_at`은 서버가 batch당 한 번 캡처한 KST 벽시계다. entity는 조회·validate용 read model이다.
-live dev/prod 반영은 앱 배포 전 수동 `CREATE TABLE`이 필요하다(`ddl-auto=validate`).
+동의 필요 판정은 current `(term_type, version)` 집합에서 회원의 agreed key 집합을 Java record set으로
+차감하며 JPQL tuple-list IN에 의존하지 않는다.
 
 ### Redis
 

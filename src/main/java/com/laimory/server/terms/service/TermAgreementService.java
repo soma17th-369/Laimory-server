@@ -4,6 +4,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -25,8 +26,7 @@ import org.springframework.stereotype.Service;
  * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 지금 이 순간의 현재
  * 버전이어야 기록한다. 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고
  * 409({@code -3002})로 거절해 앱이 현재 약관을 다시 조회하게 한다. 수락 시각은 클라이언트 입력이 아니라
- * 서버가 한 번 캡처한 instant의 KST 벽시계이며 batch 전체에 같은 값을 쓴다 — 유효성 판정과 수락 시각이
- * 같은 시각 축을 공유한다.
+ * 서버가 한 번 캡처한 instant의 KST 벽시계이며 batch 전체에 같은 값을 쓴다.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,15 +50,15 @@ public class TermAgreementService {
         validateShape(agreements);
 
         LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
-        // 버전 검증에는 원문이 필요 없다 — content 제외 요약만 조회한다.
+        // 공개 조회와 같은 엔티티 current 선택을 사용하고, 동의 검증에는 선택된 문서 key만 전달받는다.
         Map<TermType, TermDocumentSummary> currentByType = termDocumentService.findCurrentSummaries(
-                        agreements.stream().map(TermAgreementCommand::termType).collect(Collectors.toSet()), nowKst)
+                        agreements.stream().map(TermAgreementCommand::termType).collect(Collectors.toSet()))
                 .stream()
                 .collect(Collectors.toMap(TermDocumentSummary::termType, Function.identity()));
 
-        List<Long> documentIds = agreements.stream()
+        List<TermDocumentId> documentIds = agreements.stream()
                 .map(agreement -> requireCurrentDocument(currentByType, agreement))
-                .map(TermDocumentSummary::termDocumentId)
+                .map(document -> new TermDocumentId(document.termType(), document.version()))
                 .toList();
 
         termAgreementTransactionService.recordAgreements(userId, documentIds, nowKst);
@@ -78,16 +78,15 @@ public class TermAgreementService {
      * 서버는 이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이다.
      */
     public List<TermDocumentSummary> findAgreementRequiredTerms(Long userId) {
-        LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
         List<TermDocumentSummary> currentDocuments =
-                termDocumentService.findCurrentSummaries(AGREEMENT_TARGET_TYPES, nowKst);
+                termDocumentService.findCurrentSummaries(AGREEMENT_TARGET_TYPES);
         if (currentDocuments.isEmpty()) {
             return List.of();
         }
-        Set<Long> agreedDocumentIds = Set.copyOf(termAgreementRepository.findAgreedDocumentIds(
-                userId, currentDocuments.stream().map(TermDocumentSummary::termDocumentId).toList()));
+        Set<TermDocumentSummary> agreedDocumentKeys = Set.copyOf(termAgreementRepository.findAgreedDocumentKeys(
+                userId, currentDocuments.stream().map(TermDocumentSummary::termType).collect(Collectors.toSet())));
         return currentDocuments.stream()
-                .filter(document -> !agreedDocumentIds.contains(document.termDocumentId()))
+                .filter(document -> !agreedDocumentKeys.contains(document))
                 // IN 조회 결과 순서는 보장되지 않는다 — 응답 순서를 enum 선언 순으로 고정한다.
                 .sorted(Comparator.comparing(TermDocumentSummary::termType))
                 .toList();
@@ -113,13 +112,14 @@ public class TermAgreementService {
             if (agreement.version() == null || agreement.version().isBlank()) {
                 throw new IllegalArgumentException("each agreement requires version");
             }
+            TermDocumentId.validateVersion(agreement.version());
             if (!seen.add(agreement)) {
                 throw new IllegalArgumentException("duplicate (termType, version) in agreements");
             }
         }
     }
 
-    /** 제출 항목이 현재 버전과 정확히 일치해야 한다 — 미존재·과거/미래 버전은 같은 409로 수렴한다. */
+    /** 제출 항목이 현재 버전과 정확히 일치해야 한다 — 미존재·과거 버전은 같은 409로 수렴한다. */
     private static TermDocumentSummary requireCurrentDocument(Map<TermType, TermDocumentSummary> currentByType,
                                                               TermAgreementCommand agreement) {
         TermDocumentSummary current = currentByType.get(agreement.termType());

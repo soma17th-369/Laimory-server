@@ -15,12 +15,12 @@ import org.springframework.core.ResolvableType;
 class CreateTimelineEventRequestSchemaTest {
 
     @Test
-    void eventCreate_requiresExactlyTheFiveKeys_andMemoAndPhotosAreOptional() {
+    void eventCreate_requiresOnlyEventTypeTitleAndStartAt() {
         Map<String, Schema> schemas = ModelConverters.getInstance().readAll(CreateTimelineEventRequest.class);
         Schema request = schemas.get("CreateTimelineEventRequest");
 
         assertThat(request.getRequired())
-                .containsExactlyInAnyOrder("eventType", "title", "subtitle", "startAt", "endAt");
+                .containsExactlyInAnyOrder("eventType", "title", "startAt");
         // photosToAdd는 #361부터 optional 키다 — properties에는 있고 required에는 없다.
         assertThat(request.getProperties().keySet())
                 .containsExactlyInAnyOrder(

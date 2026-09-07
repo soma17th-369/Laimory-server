@@ -41,15 +41,15 @@ class GrafanaLogDashboardAssetTest {
         JsonNode links = panel.path("fieldConfig").path("defaults").path("links");
 
         assertThat(kibanaNavigationLink.path("url").asText())
-                .isEqualTo("https://kibana.laimory.app/");
+                .isEqualTo("http://localhost:5601/");
         assertThat(kibanaGuidePanel.path("options").path("content").asText())
-                .contains("[Kibana에서 상세 로그 열기](https://kibana.laimory.app/)");
+                .contains("[Kibana에서 상세 로그 열기](http://localhost:5601/)");
         assertThat(links).hasSize(1);
         JsonNode link = links.get(0);
         assertThat(link.path("targetBlank").asBoolean()).isTrue();
         assertThat(link.path("title").asText()).isEqualTo("Kibana에서 ${__series.name} 로그 보기");
         assertThat(link.path("url").asText())
-                .startsWith("https://kibana.laimory.app/app/discover#/")
+                .startsWith("http://localhost:5601/app/discover#/")
                 .doesNotContain("/grafana/kibana/")
                 .contains("${__value.time:date:iso}%7C%7C-5m")
                 .contains("${__value.time:date:iso}%7C%7C%2B5m")

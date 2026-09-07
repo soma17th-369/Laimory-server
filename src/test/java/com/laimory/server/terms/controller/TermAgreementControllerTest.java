@@ -23,6 +23,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermAgreement;
+import com.laimory.server.terms.entity.TermAgreementId;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.service.TermAgreementCommand;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
@@ -154,7 +155,7 @@ class TermAgreementControllerTest {
                 .andExpect(jsonPath("$.body.agreements[0].contentUrl")
                         .value("https://www.laimory.app/terms/sensitive-information-consent/1.1"))
                 .andExpect(jsonPath("$.body.agreements[0].required").doesNotExist())
-                .andExpect(jsonPath("$.body.agreements[0].effectiveAt").value("2026-08-01T09:30:15"))
+                .andExpect(jsonPath("$.body.agreements[0].effectiveAt").doesNotExist())
                 // 수락 시각도 offset 없는 KST 벽시계 문자열이다.
                 .andExpect(jsonPath("$.body.agreements[0].acceptedAt").value("2026-08-16T09:30:05"))
                 .andExpect(jsonPath("$.body.agreements[1].termType").value("TERMS_OF_SERVICE"))
@@ -181,10 +182,9 @@ class TermAgreementControllerTest {
         // 게시 URL은 동의한 그 버전 행에 저장된 값이다 — 현재 규칙으로 다시 만들지 않는다.
         String contentUrl = "https://www.laimory.app/terms/"
                 + type.name().toLowerCase().replace('_', '-') + "/" + version;
-        TermDocument document = TermDocument.of(type, version, title, contentUrl,
-                LocalDateTime.parse("2026-08-01T09:30:15"));
+        TermDocument document = TermDocument.of(type, version, title, contentUrl);
         TermAgreement agreement = BeanUtils.instantiateClass(TermAgreement.class);
-        ReflectionTestUtils.setField(agreement, "userId", USER_ID);
+        ReflectionTestUtils.setField(agreement, "id", new TermAgreementId(USER_ID, type, version));
         ReflectionTestUtils.setField(agreement, "acceptedAt", LocalDateTime.parse(acceptedAt));
         return new TermAgreementHistoryEntry(agreement, document);
     }

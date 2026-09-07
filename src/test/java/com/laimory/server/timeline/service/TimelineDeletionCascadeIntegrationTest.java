@@ -322,6 +322,7 @@ class TimelineDeletionCascadeIntegrationTest {
                 new TimelineEventEditCommand(
                         TimelineEventType.UNKNOWN,
                         "재연결 대상",
+                        false,
                         null,
                         DATE.atTime(10, 0),
                         null,
@@ -357,6 +358,7 @@ class TimelineDeletionCascadeIntegrationTest {
         TimelineEventEditCommand command = new TimelineEventEditCommand(
                 TimelineEventType.UNKNOWN,
                 "재연결 대상",
+                false,
                 null,
                 DATE.atTime(10, 0),
                 null,

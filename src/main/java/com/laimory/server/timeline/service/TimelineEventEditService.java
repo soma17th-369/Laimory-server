@@ -63,14 +63,13 @@ public class TimelineEventEditService {
         if (request == null) {
             throw new IllegalArgumentException("request is required");
         }
-        String title = TimelineEventInputRules.requireValidTitle(request.title());
+        String title = request.title() == null ? null : TimelineEventInputRules.requireValidTitle(request.title());
         String subtitle = TimelineEventInputRules.normalizeSubtitle(request.subtitle());
-        TimelineEventInputRules.requireValidTimeRange(request.startAt(), request.endAt());
-        String memo = request.memoPresent() ? TimelineEventInputRules.normalizeMemo(request.memo()) : null;
+        String memo = TimelineEventInputRules.normalizeMemo(request.memo());
         List<TimelineEventPhotoAddService.PhotoToAdd> photos =
                 timelineEventPhotoAddService.requireValidPhotos(request.photosToAdd());
         return new TimelineEventEditCommand(
-                request.eventType(), title, subtitle, request.startAt(), request.endAt(),
-                request.memoPresent(), memo, photos);
+                request.eventType(), title, request.subtitle() != null, subtitle, request.startAt(), request.endAt(),
+                request.memo() != null, memo, photos);
     }
 }

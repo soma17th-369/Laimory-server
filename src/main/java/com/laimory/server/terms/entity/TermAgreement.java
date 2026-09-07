@@ -1,17 +1,16 @@
 package com.laimory.server.terms.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.terms.TermType;
 import jakarta.persistence.Column;
+import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import lombok.Getter;
 
 /**
- * 회원의 약관 버전 동의 이력 한 건 — {@code (user_id, term_document_id)}당 1행이다.
+ * 회원의 약관 버전 동의 이력 한 건 — {@code (user_id, term_type, version)}당 1행이다.
  *
  * <p>문서 버전이 불변이므로 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이다 — 그 버전의 원문은
  * 불변 URL로 게시된 page가 재현한다(#320). 같은 버전 재동의는
@@ -30,21 +29,25 @@ import lombok.Getter;
 @Getter
 public class TermAgreement extends BaseEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "term_agreement_id")
-    private Long termAgreementId;
-
-    @Column(name = "user_id", nullable = false)
-    private Long userId;
-
-    @Column(name = "term_document_id", nullable = false)
-    private Long termDocumentId;
+    @EmbeddedId
+    private TermAgreementId id;
 
     /** 서버 수락 시각 — KST 벽시계(batch 전체 동일 값, 재동의에도 불변). */
     @Column(name = "accepted_at", nullable = false)
     private LocalDateTime acceptedAt;
 
     protected TermAgreement() {
+    }
+
+    public Long getUserId() {
+        return id.getUserId();
+    }
+
+    public TermType getTermType() {
+        return id.getTermType();
+    }
+
+    public String getVersion() {
+        return id.getVersion();
     }
 }

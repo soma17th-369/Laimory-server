@@ -67,7 +67,7 @@ class GrafanaAlertProvisioningAssetTest {
         }
 
         assertThat(groupNames).hasSize(9);
-        assertThat(ruleUids).hasSize(29);
+        assertThat(ruleUids).hasSize(28);
         assertMemoryRule(rulesByUid.get("laimory_host_memory_low"), "host!=\"elk\"", 0.15);
         assertMemoryRule(rulesByUid.get("laimory_elk_memory_low"), "host=\"elk\"", 0.1);
         assertApplicationErrorRule(rulesByUid.get("laimory_application_error_log"));
@@ -147,7 +147,7 @@ class GrafanaAlertProvisioningAssetTest {
 
         Map<String, Object> annotations = map(rule.get("annotations"));
         assertThat((String) annotations.get("runbook_url"))
-                .startsWith("https://kibana.laimory.app/app/discover#/")
+                .startsWith("http://localhost:5601/app/discover#/")
                 .contains("level%3A%22ERROR%22");
         assertThat((String) annotations.get("summary")).doesNotContain("{{");
         assertThat((String) annotations.get("description")).doesNotContain("{{");

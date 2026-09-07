@@ -99,7 +99,7 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   포함해 로그에 남기고, 응답의 `timedOut`도 사용자 값이 아닌 boolean 신호라 그대로 남긴다. 감정 수정 PUT
   `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
-  status·`ApiResponse` envelope의 header/code/body·약관 termType/version/effectiveAt/
+  status·`ApiResponse` envelope의 header/code/body·약관 termType/version/
   acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —
   새 DTO 필드는 자동 마스크, title/payload/memo/userMemory·약관 `contentUrl`·envelope `message`가 대표
   대상). 약관 `contentUrl`을 allowlist에 넣지 않는 것은 값 자체를 로그에 남기지 않기 위해서다 —
@@ -205,8 +205,8 @@ Spring JSON stdout
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
   환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
-- Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 prod ALB의
-  `kibana.laimory.app` host 규칙으로 노출한다(ACM TLS 종단, Kibana 자체 로그인 유지).
+- Elasticsearch/Kibana는 private dev ELK instance에서 실행된다. Kibana는 공개 엔드포인트가 없고
+  SSM 포트포워딩 → `http://localhost:5601`(로컬 포트 규약)로만 접속한다(#437, Kibana 자체 로그인 유지).
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
@@ -312,25 +312,26 @@ user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrap
 
 Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로 나눠 1분 histogram으로
 평가해 최근 5분 합계가 1 이상인 환경마다 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
-않으며, notification의 runbook URL은 `kibana.laimory.app`의 Kibana data view에서 전 환경 최근 15분 ERROR 문서와
-`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
+않으며, notification의 runbook URL은 `http://localhost:5601`(SSM 터널 로컬 포트 규약)의 Kibana data view에서
+전 환경 최근 15분 ERROR 문서와 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 조사 경로다 —
+터널을 먼저 열어야 링크가 동작한다(deploy/monitoring/README.md "접속" 절). WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
 Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
 
-Grafana는 prod ALB의 `grafana.laimory.app` host 규칙으로 노출한다(#368). 브라우저 로그인은
-Grafana 자체 Google OAuth이며 `[auth.google] allow_sign_up=false`라 미리 등록된 Grafana 사용자
-이메일만 로그인된다. admin Basic 인증은 alert 배포기 등 localhost 자동화용이다 — 외부(ALB) 경로의
-`POST /login`·`Authorization: Basic` 차단(#368 A13)은 아직 적용 전이라, 그전까지는 공유 admin
-비밀번호로도 외부 로그인이 가능하다.
+Grafana는 공개 엔드포인트가 없고 SSM 포트포워딩 → `http://localhost:3000`(로컬 포트 규약)로만
+접속한다(#437 — #368의 공개 host·Google OAuth·WAF 층은 제거됨). 브라우저 로그인은 공유 `laimory`
+admin 비밀번호이고, 접근 통제는 터널을 열 수 있는 IAM identity(`ssm:StartSession`), 접속 감사는
+CloudTrail의 SSM 세션 기록이 담당한다. admin Basic 인증은 alert 배포기 등 localhost 자동화용으로
+유지된다.
 Prometheus target file의 실제 IP와 적용 상태는 live host가
 소유하며 현재 repository 상태만으로 rollout 완료를 의미하지 않는다.
 
 Grafana admin username의 repository 기본값은 `laimory`이며 compose 최초 생성과 alert provisioning
 reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
-Google OAuth client secret, MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 일곱 UID별 `0400` secret
+MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 여섯 UID별 `0400` secret
 file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
 Prometheus/blackbox만 먼저 기동할 수 있다.
 alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지
@@ -353,9 +354,9 @@ monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으
 histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
 `((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
 staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이라 threshold(>0)를 넘지 못한다.
-`backup-rules.yml`의 백업 신선도 rule 2종(prod MySQL mysqldump·EBS snapshot의 26h staleness)은 각각
-prod MySQL host와 monitoring host의 backup timer가 쓰는 textfile 시계열 하나씩만 읽는 환경 고정
-rule이다 — 백업 체계 자체의 계약은 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
+`backup-rules.yml`의 백업 신선도 rule(prod MySQL mysqldump의 26h staleness)은 prod MySQL host의
+backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 — 백업 체계 자체의 계약은
+`deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.

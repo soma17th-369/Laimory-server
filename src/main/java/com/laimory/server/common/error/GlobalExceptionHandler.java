@@ -22,7 +22,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * 전역 예외 → {@code ApiResponse} envelope 변환의 단일 지점.
  *
  * <p>{@link ResponseEntityExceptionHandler}를 상속해 Spring MVC 표준 예외
- * (404 {@code NoResourceFound}, 405, 415, 깨진 JSON, 타입 미스매치, 향후 {@code @Valid}까지)는
+ * (404 {@code NoResourceFound}, 405, 415, 깨진 JSON, 타입 미스매치, {@code @Valid} 요청 본문 검증)는
  * 베이스 클래스가 status/headers를 정해 {@link #handleExceptionInternal}로 모이고,
  * 여기서 envelope body만 만든다 — 예외 타입 열거 누락으로 4xx가 500으로 강등되는 문제를 구조적으로 방지한다.
  *

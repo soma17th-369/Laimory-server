@@ -2,8 +2,6 @@ package com.laimory.server.timeline.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.laimory.server.common.error.StrictErrorCodeDeserializer;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -43,7 +41,6 @@ public record TimelineDraftTask(
         TaskStatus status,
         long dailyRecordId,
         @JsonInclude(JsonInclude.Include.NON_NULL) TimelineWindow timelineWindow,
-        @JsonDeserialize(using = StrictErrorCodeDeserializer.class)
         Integer error,
         String tokenHash,
         @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
