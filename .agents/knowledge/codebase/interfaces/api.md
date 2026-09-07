@@ -224,7 +224,7 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
 조회·기록 계약이다. GET은 최상위 `onboardingCompleted`와 약관 그룹 `terms.agreementRequired`(#434)를
 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
-(`subject_preferences.onboarding_completed`)이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나
+(`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
 지금 현재 버전 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
 목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는

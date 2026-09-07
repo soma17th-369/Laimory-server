@@ -277,15 +277,17 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 형식 검증은 키 생성·동의 등록 요청과 DB INSERT/UPDATE 경계가 담당하며, 조회 중에는 반복하지 않는다.
 repository는 요청한 종류(최대 6종)의 전체 후보를 엔티티 한 query로 읽고,
 `TermDocumentService`가 `TermDocument.isNewerThan`의 `BigInteger` major/minor 비교로 종류별 maximum을
-고른다. 공개 조회·동의 검증·initializer·readiness는 같은 조회와 선택 경로를 공유하고, 요약이 필요한
+고른다. 공개 조회·동의 검증·initializer는 같은 조회와 선택 경로를 공유하고, 요약이 필요한
 호출자는 선택된 엔티티를 `(termType, version)`의 `TermDocumentSummary`로 변환한다. 별도 summary 후보
 쿼리와 버전 값 객체는 두지 않는다.
 DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 새 상위 버전 INSERT는 즉시
 current가 되며 future 예약 효력 시각은 없다.
 
-`term_type`은 enum literal exact-match를 위해 `ascii_bin`이다. readiness의 raw projection은
-`term_type`·`content_url`을 읽어 미지 literal과 https 절대 URI가 아닌 URL을 hydration 없이 기동 경보로
-올린다. 버전 형식은 enforced DB CHECK와 migration preflight로 보장하며, readiness에서 재검증하지 않는다.
+`term_type`은 enum literal exact-match를 위해 `ascii_bin`이다. 기동 검사(`TermCatalogReadiness`)는
+raw projection으로 `term_type`·`content_url`을 한 번 읽어 전체 종류의 seed 누락·미지 literal·잘못된
+HTTPS URL 형식을 로그로 알린다. 빈 catalog는 WARN, 잘못된 seed나 조회 실패는 ERROR이며 기동은 계속된다.
+단계별 판정·current 후보 조회·상태 저장·별도 metric은 없다. 버전 형식은 enforced DB CHECK와 migration
+preflight로 보장하며, 기동 검사에서 재검증하지 않는다.
 공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고, 동의 대상 분류는 enum이나 DB가 아니라
 `TermAgreementService`의 대상 5종 상수가 소유한다.
 

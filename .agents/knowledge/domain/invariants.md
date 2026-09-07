@@ -352,13 +352,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   변환(`TermTimes`)으로 바꾸며 JVM/Clock zone에 의존하지 않는다.
 - 공개 조회의 타입 필터와 순서는 클라이언트가 반복 query에 보낸 `termTypes` 배열이 권위다. DB의 `IN`
   결과 순서는 보장되지 않으므로 종류별 map을 만든 뒤 요청 배열로 재구성한다. 중복 `termTypes`는 400이다.
-  동의 대상 분류는 enum 속성으로 두지 않으며 DB에도 복제하지 않는다 — 기동 seed 검사의 stage별
-  대상은 `TermCatalogReadiness`가, 동의 필요 판정 대상(`PRIVACY_POLICY` 제외 5종)은
-  `TermAgreementService`의 상수(#434)가 명시한다.
-  미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
-  `content_url`은
-  `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
-  판정을 바꾸지 않는다 — 준비 판정은 현재 필수 문서 존재 여부만 본다.
+  동의 대상 분류는 enum 속성으로 두지 않으며 DB에도 복제하지 않는다 — 동의 필요 판정 대상
+  (`PRIVACY_POLICY` 제외 5종)은 `TermAgreementService`의 상수(#434)가 명시한다.
+  기동 seed 검사는 동의 대상과 무관하게 `TermType` 전체를 확인한다.
 - 동의 등록은 all-or-nothing이다 — 제출 전부가 검증 시각의 현재 버전일 때만 한 DB transaction으로
   기록하고, 하나라도 미존재·stale이면 0건 기록 + 409 `-3002`다. 수락 시각은 서버가 batch당 한 번 캡처한
   KST 값이고 같은 버전 재전송은 native insert-if-absent(멱등)라 최초 수락 시각을 덮어쓰지 않는다
@@ -367,11 +363,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 서버는 인증 API에서 약관 동의 여부·최신 버전을 강제하지 않는다(#436 — #303 gate 제거, 403 `-3001`
   미반환). 동의 보장은 가입 flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필요 여부는
   앱 초기화 응답 `terms.agreementRequired`(#434)가 알려준다 — 서버는 그 판정으로도 요청을 막지 않는다.
-- 기대 필수 종류 중 current 문서가 없는 stage는 준비되지 않은 catalog로 표시하고 metric·bounded
-  전이 로그로만 알린다(기동 검사 — 기동·공개 조회는 막지 않는다). 로그 수위: 테이블이 완전히 빈
-  pre-seed 상태는 예정된 미준비라 WARN(경보 소음 방지), seed 행이 존재하는 문제·ready 퇴행은
-  ERROR(경보 대상)다. 조건부 위치문서의 current 행 누락도 별도 gauge·bounded log로 같은 수위 정책을
-  따르며 stage 준비 판정을 약화하지 않는다.
+- `TermCatalogReadiness`는 기동 시 raw catalog를 한 번 조회해 종류별 seed 누락·미지 `term_type`
+  literal·HTTPS 절대 URI가 아닌 `content_url`을 검사한다. 빈 catalog는 WARN 한 줄, 잘못된 seed는
+  ERROR 한 줄, 정상은 INFO 한 줄이다. 조회 실패도 ERROR로 알리되 기동·공개 조회는 막지 않는다.
+  별도 metric·단계/조건부 준비 상태·전이/중복 로그 관리는 두지 않는다.
 - 두 약관 GET response(`/api/{v}/terms`, `/a/api/{v}/terms/agreements`)는 응답에 법률 원문이 없어진
   뒤에도 privacy skeleton 대상으로 남는다 — 제목과 `contentUrl` 값은 allowlist 밖이라 마스크되고
   종류·버전만 구조 필드로 남는다.
