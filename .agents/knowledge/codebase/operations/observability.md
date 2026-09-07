@@ -353,9 +353,9 @@ monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으
 histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
 `((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
 staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이라 threshold(>0)를 넘지 못한다.
-`backup-rules.yml`의 백업 신선도 rule 2종(prod MySQL mysqldump·EBS snapshot의 26h staleness)은 각각
-prod MySQL host와 monitoring host의 backup timer가 쓰는 textfile 시계열 하나씩만 읽는 환경 고정
-rule이다 — 백업 체계 자체의 계약은 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
+`backup-rules.yml`의 백업 신선도 rule(prod MySQL mysqldump의 26h staleness)은 prod MySQL host의
+backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 — 백업 체계 자체의 계약은
+`deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
