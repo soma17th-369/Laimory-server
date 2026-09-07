@@ -2,7 +2,6 @@ package com.laimory.server.terms.service;
 
 import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.TermVersion;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -167,7 +166,7 @@ public class TermCatalogReadiness {
         } else if (problems.isEmpty()) {
             log.info("term catalog verified: all {} term types seeded", TermType.values().length);
         } else {
-            // 경보 1줄(bounded) — 기동·공개 조회는 계속된다(잘못된 seed는 공개 조회에서 조용히 빠진다).
+            // 경보 1줄(bounded) — 기동·공개 조회는 계속된다.
             log.error("term catalog inconsistent: {}", String.join("; ", problems));
         }
     }
@@ -178,10 +177,6 @@ public class TermCatalogReadiness {
         } catch (IllegalArgumentException e) {
             problems.add("unknown termType literal in term_documents: " + row.getTermType());
             return;
-        }
-        if (!TermVersion.isCanonical(row.getVersion())) {
-            problems.add("invalid version for termType=" + row.getTermType()
-                    + " (must be canonical major.minor): " + row.getVersion());
         }
         if (!isPublishedPageUrl(row.getContentUrl())) {
             // 운영 seed가 넣는 문자열이라 형식만 본다 — 게시 host는 정책이 아니라 운영 선택이고,

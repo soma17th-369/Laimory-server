@@ -343,9 +343,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   동일할 것, 그리고 `(term_type, version)` key가 그대로일 것(key가 바뀌면 전 회원이 재동의를 요구받는다).
   옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
   서버가 하지 못하므로 게시 절차가 소유한다.
-- version은 최대 64자의 canonical `major.minor` 문자열이고 DB CHECK와 입력 경계가 non-canonical 값을
-  거절한다. 현재 문서는 요청 종류 후보를 한 query로 읽어 major/minor를 숫자로 비교한 maximum이다
-  (`1.9 < 1.10 < 2.0`). SQL VARCHAR 정렬·문자열 파싱으로 current를 계산하지 않는다.
+- version은 최대 64자의 canonical `major.minor` 문자열이고 DB CHECK와 키 생성·동의 등록 입력 경계가
+  non-canonical 값을 거절한다. 조회 중 형식 재검증은 하지 않는다. 현재 문서는 요청 종류의 엔티티 후보를
+  한 query로 읽고 `TermDocument.isNewerThan`으로 major/minor를 숫자 비교한 maximum이다
+  (`1.9 < 1.10 < 2.0`). 요약은 선택 후 변환하며 SQL VARCHAR 정렬·문자열 파싱으로 current를 계산하지 않는다.
 - 새 상위 버전 INSERT는 즉시 current가 된다. future 예약 효력 시각·active flag·scheduler는 없다.
 - 약관 동의 `accepted_at`은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 캡처한 instant를 명시적 KST
   변환(`TermTimes`)으로 바꾸며 JVM/Clock zone에 의존하지 않는다.
@@ -354,7 +355,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   동의 대상 분류는 enum 속성으로 두지 않으며 DB에도 복제하지 않는다 — 기동 seed 검사의 stage별
   대상은 `TermCatalogReadiness`가, 동의 필요 판정 대상(`PRIVACY_POLICY` 제외 5종)은
   `TermAgreementService`의 상수(#434)가 명시한다.
-  미지 `term_type` literal(오타 seed), non-canonical version과 https 절대 URI가 아닌
+  미지 `term_type` literal(오타 seed)과 https 절대 URI가 아닌
   `content_url`은
   `TermCatalogReadiness`가 기동 경보로 올린다(조용한 정상 취급 금지). 다만 잘못된 URL은 stage 준비
   판정을 바꾸지 않는다 — 준비 판정은 현재 필수 문서 존재 여부만 본다.

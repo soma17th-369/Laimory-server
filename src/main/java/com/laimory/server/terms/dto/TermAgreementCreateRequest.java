@@ -1,7 +1,7 @@
 package com.laimory.server.terms.dto;
 
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.TermVersion;
+import com.laimory.server.terms.entity.TermDocumentId;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
@@ -22,7 +22,7 @@ public record TermAgreementCreateRequest(
             @Schema(description = "약관 종류", example = "TERMS_OF_SERVICE",
                     requiredMode = Schema.RequiredMode.REQUIRED) TermType termType,
             @Schema(description = "동의한 canonical major.minor 버전", example = "1.0",
-                    pattern = TermVersion.PATTERN_TEXT, maxLength = TermVersion.MAX_LENGTH,
+                    pattern = TermDocumentId.VERSION_PATTERN_TEXT, maxLength = TermDocumentId.VERSION_MAX_LENGTH,
                     requiredMode = Schema.RequiredMode.REQUIRED) String version
     ) {
     }

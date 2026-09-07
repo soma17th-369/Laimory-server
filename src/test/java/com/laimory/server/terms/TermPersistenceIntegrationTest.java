@@ -118,7 +118,8 @@ class TermPersistenceIntegrationTest {
             "1.10\u0085", "1.10\u2028", "1.10\u2029", "1.10\f", "1.10\u000B"})
     @Transactional // CHECK가 퇴행해 INSERT가 성공하더라도 잘못된 fixture를 rollback한다.
     void canonicalVersionCheck_rejectsNonCanonicalDocuments(String version) {
-        assertThat(TermVersion.isCanonical(version)).isFalse();
+        assertThatThrownBy(() -> new TermDocumentId(TermType.PRIVACY_POLICY, version))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> insertDocumentRaw("PRIVACY_POLICY", version))
                 .isInstanceOf(DataAccessException.class)
                 .rootCause()
@@ -251,7 +252,7 @@ class TermPersistenceIntegrationTest {
                 .extracting(TermDocument::getVersion)
                 .doesNotContain(version);
         assertThat(termDocumentRepository.findCatalogRows())
-                .anyMatch(row -> row.getTermType().equals("terms_of_service") && row.getVersion().equals(version));
+                .anyMatch(row -> row.getTermType().equals("terms_of_service"));
     }
 
     @Test

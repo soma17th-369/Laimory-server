@@ -211,21 +211,6 @@ class TermCatalogReadinessTest {
     }
 
     @Test
-    void startupCheck_reportsNonCanonicalVersion() {
-        when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
-                catalogRow("TERMS_OF_SERVICE", "1.01", "https://www.laimory.app/terms/page/1.01")));
-        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
-        when(termDocumentRepository.count()).thenReturn(1L);
-
-        readiness.verifyCatalogOnStartup();
-
-        assertThat(logAppender.list.stream()
-                .filter(event -> event.getLevel() == Level.ERROR)
-                .map(ILoggingEvent::getFormattedMessage))
-                .anyMatch(message -> message.contains("invalid version for termType=TERMS_OF_SERVICE"));
-    }
-
-    @Test
     void startupCheck_emptyCatalog_logsWarnNotError() {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of());
         when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
@@ -285,20 +270,10 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String contentUrl) {
-        return catalogRow(termType, "1.0", contentUrl);
-    }
-
-    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String version,
-                                                                     String contentUrl) {
         return new TermDocumentRepository.TermCatalogRow() {
             @Override
             public String getTermType() {
                 return termType;
-            }
-
-            @Override
-            public String getVersion() {
-                return version;
             }
 
             @Override

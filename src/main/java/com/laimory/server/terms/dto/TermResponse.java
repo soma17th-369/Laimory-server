@@ -1,7 +1,7 @@
 package com.laimory.server.terms.dto;
 
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.TermVersion;
+import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.entity.TermDocument;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -15,7 +15,7 @@ public record TermResponse(
         @Schema(description = "약관 종류", example = "TERMS_OF_SERVICE",
                 requiredMode = Schema.RequiredMode.REQUIRED) TermType termType,
         @Schema(description = "버전 문자열 — 동의 등록 시 그대로 회신한다", example = "1.0",
-                pattern = TermVersion.PATTERN_TEXT, maxLength = TermVersion.MAX_LENGTH,
+                pattern = TermDocumentId.VERSION_PATTERN_TEXT, maxLength = TermDocumentId.VERSION_MAX_LENGTH,
                 requiredMode = Schema.RequiredMode.REQUIRED) String version,
         @Schema(description = "약관 제목", example = "이용약관",
                 requiredMode = Schema.RequiredMode.REQUIRED) String title,

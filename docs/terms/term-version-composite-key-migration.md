@@ -9,8 +9,8 @@
 
 ## 배포 게이트
 
-- Android `develop`은 현재 `effectiveAt`을 non-null로 역직렬화한다. Android가 이 의존을 제거하고 구 build
-  지원 정책이 확정되기 전에는 Server를 `dev`/`main`에 머지하거나 이 cutover를 실행하지 않는다.
+- 앱 배포 전 계약 변경이며 Android도 `effectiveAt` 의존을 제거한다. 구 build용 호환 필드나 `/v2`는
+  두지 않는다. 배포 전 필드 없는 응답으로 약관 조회·동의·이력을 연동 검증한다.
 - 자동 배포를 pause하고 이전/신규 Server image의 정확한 digest를 기록한다.
 - cutover 동안 해당 DB를 쓰는 모든 Server를 정지한다. dev DB는 dev와 test가 공유하므로 둘 다 대상이다.
 - cutover부터 rollback 창 종료까지 새 약관 version INSERT를 금지한다.

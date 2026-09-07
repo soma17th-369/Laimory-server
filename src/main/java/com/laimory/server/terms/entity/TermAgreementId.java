@@ -1,7 +1,6 @@
 package com.laimory.server.terms.entity;
 
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.TermVersion;
 import jakarta.persistence.Column;
 import jakarta.persistence.Embeddable;
 import jakarta.persistence.EnumType;
@@ -22,7 +21,7 @@ public class TermAgreementId implements Serializable {
     @Column(name = "term_type", nullable = false, length = 64)
     private TermType termType;
 
-    @Column(name = "version", nullable = false, length = TermVersion.MAX_LENGTH)
+    @Column(name = "version", nullable = false, length = TermDocumentId.VERSION_MAX_LENGTH)
     private String version;
 
     protected TermAgreementId() {
@@ -32,7 +31,7 @@ public class TermAgreementId implements Serializable {
         if (userId == null || termType == null) {
             throw new IllegalArgumentException("userId and termType must not be null");
         }
-        TermVersion.parse(version);
+        TermDocumentId.validateVersion(version);
         this.userId = userId;
         this.termType = termType;
         this.version = version;

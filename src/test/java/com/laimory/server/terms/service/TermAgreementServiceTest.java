@@ -96,6 +96,8 @@ class TermAgreementServiceTest {
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "01.0")),
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.01")),
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0.0")),
+                List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.10\n")),
+                List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "9".repeat(63) + ".0")),
                 List.of(new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0"),
                         new TermAgreementCommand(TermType.TERMS_OF_SERVICE, "1.0")));
 

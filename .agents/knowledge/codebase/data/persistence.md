@@ -273,15 +273,19 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 `version`은 `VARCHAR(64) utf8mb4_bin`의 canonical `major.minor` 문자열이다. DB CHECK
 `^[1-9][0-9]*[.](0|[1-9][0-9]*)$`와 `version NOT REGEXP '[^0-9.]'`를 함께 적용해
 `1`, `01.0`, `1.01`, `1.0.0`과 줄 구분자가 붙은 값을 거절한다. MySQL ICU의 `$`가 마지막 줄 구분자
-앞에도 매칭되므로 문자 집합 검사로 Java `TermVersion`의 전체 문자열 검증과 일치시킨다.
-repository는 요청한 종류(최대 6종)의 전체 후보를 full/projection 각각 한 query로 읽고,
-`TermDocumentService`가 `TermVersion`의 `BigInteger` major/minor 비교로 종류별 maximum을 고른다.
+앞에도 매칭되므로 문자 집합 검사로 Java `TermDocumentId.validateVersion`의 전체 문자열 검증과 일치시킨다.
+형식 검증은 키 생성·동의 등록 요청과 DB INSERT/UPDATE 경계가 담당하며, 조회 중에는 반복하지 않는다.
+repository는 요청한 종류(최대 6종)의 전체 후보를 엔티티 한 query로 읽고,
+`TermDocumentService`가 `TermDocument.isNewerThan`의 `BigInteger` major/minor 비교로 종류별 maximum을
+고른다. 공개 조회·동의 검증·initializer·readiness는 같은 조회와 선택 경로를 공유하고, 요약이 필요한
+호출자는 선택된 엔티티를 `(termType, version)`의 `TermDocumentSummary`로 변환한다. 별도 summary 후보
+쿼리와 버전 값 객체는 두지 않는다.
 DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 새 상위 버전 INSERT는 즉시
 current가 되며 future 예약 효력 시각은 없다.
 
 `term_type`은 enum literal exact-match를 위해 `ascii_bin`이다. readiness의 raw projection은
-`term_type`·`version`·`content_url`을 읽어 미지 literal, non-canonical version, https 절대 URI가 아닌 URL을
-hydration 없이 기동 경보로 올린다. 잘못된 known-type version 후보는 공개/current 계산에서 제외한다.
+`term_type`·`content_url`을 읽어 미지 literal과 https 절대 URI가 아닌 URL을 hydration 없이 기동 경보로
+올린다. 버전 형식은 enforced DB CHECK와 migration preflight로 보장하며, readiness에서 재검증하지 않는다.
 공개 응답 순서는 반복 query의 `termTypes` 순서가 권위이고, 동의 대상 분류는 enum이나 DB가 아니라
 `TermAgreementService`의 대상 5종 상수가 소유한다.
 
@@ -304,8 +308,9 @@ VALUES
 ```
 
 #432의 live 전환은 인조 PK/FK 제거 때문에 구·신 Server가 동시에 쓸 수 없는 maintenance cutover다.
-Android가 `effectiveAt` 필수 소비를 제거하고 구 build 정책이 확정되기 전에는 Server 머지·배포와 DB
-cutover를 하지 않는다. 데이터 보존용 shadow copy, final recopy, atomic rename, 검증, rollback 순서는
+앱 배포 전 계약 변경으로 Android도 `effectiveAt` 의존을 제거하며 구 build 호환 필드나 `/v2`는 두지 않는다.
+배포 전 약관 조회·동의·이력을 새 응답으로 연동 검증한다. 데이터 보존용 shadow copy, final recopy,
+atomic rename, 검증, rollback 순서는
 [`docs/terms/term-version-composite-key-migration.md`](../../../../docs/terms/term-version-composite-key-migration.md)가
 소유한다.
 

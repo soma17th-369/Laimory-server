@@ -4,7 +4,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.TermVersion;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
@@ -51,7 +50,7 @@ public class TermAgreementService {
         validateShape(agreements);
 
         LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
-        // 버전 검증에는 원문이 필요 없다 — content 제외 요약만 조회한다.
+        // 공개 조회와 같은 엔티티 current 선택을 사용하고, 동의 검증에는 선택된 문서 key만 전달받는다.
         Map<TermType, TermDocumentSummary> currentByType = termDocumentService.findCurrentSummaries(
                         agreements.stream().map(TermAgreementCommand::termType).collect(Collectors.toSet()))
                 .stream()
@@ -113,7 +112,7 @@ public class TermAgreementService {
             if (agreement.version() == null || agreement.version().isBlank()) {
                 throw new IllegalArgumentException("each agreement requires version");
             }
-            TermVersion.parse(agreement.version());
+            TermDocumentId.validateVersion(agreement.version());
             if (!seen.add(agreement)) {
                 throw new IllegalArgumentException("duplicate (termType, version) in agreements");
             }

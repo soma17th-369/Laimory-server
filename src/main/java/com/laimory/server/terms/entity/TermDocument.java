@@ -6,6 +6,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import java.math.BigInteger;
 
 /**
  * 약관 문서 한 버전 — 불변(immutable) 행이다. 개정은 기존 행 UPDATE가 아니라 새 행 INSERT이며,
@@ -47,6 +48,24 @@ public class TermDocument extends BaseEntity {
     /** 새 버전 행을 만든다(테스트·초기화 도구용). */
     public static TermDocument of(TermType termType, String version, String title, String contentUrl) {
         return new TermDocument(new TermDocumentId(termType, version), title, contentUrl);
+    }
+
+    /**
+     * 같은 종류의 후보 중 더 높은 버전인지 숫자로 비교한다. canonical 형식은 키 생성과 DB CHECK가
+     * 보장하므로 조회 중 정규식 검증을 반복하지 않는다.
+     */
+    public boolean isNewerThan(TermDocument other) {
+        String version = getVersion();
+        String otherVersion = other.getVersion();
+        int separator = version.indexOf('.');
+        int otherSeparator = otherVersion.indexOf('.');
+        int majorComparison = new BigInteger(version.substring(0, separator))
+                .compareTo(new BigInteger(otherVersion.substring(0, otherSeparator)));
+        if (majorComparison != 0) {
+            return majorComparison > 0;
+        }
+        return new BigInteger(version.substring(separator + 1))
+                .compareTo(new BigInteger(otherVersion.substring(otherSeparator + 1))) > 0;
     }
 
     public TermDocumentId getId() {

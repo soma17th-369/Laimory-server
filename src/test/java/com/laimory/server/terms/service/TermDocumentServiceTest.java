@@ -48,32 +48,33 @@ class TermDocumentServiceTest {
     }
 
     @Test
-    void summarySelection_usesSameSemanticComparator() {
+    void summarySelection_mapsTheSameEntitySelectionAfterOneQuery() {
         List<TermType> requested = List.of(
                 TermType.THIRD_PARTY_PROVISION_CONSENT,
                 TermType.SENSITIVE_INFORMATION_CONSENT);
-        when(termDocumentRepository.findDocumentSummaryCandidates(requested)).thenReturn(List.of(
-                new TermDocumentSummary(TermType.SENSITIVE_INFORMATION_CONSENT, "1.9"),
-                new TermDocumentSummary(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
-                new TermDocumentSummary(TermType.SENSITIVE_INFORMATION_CONSENT, "1.10")));
+        when(termDocumentRepository.findDocumentCandidates(requested)).thenReturn(List.of(
+                document(TermType.SENSITIVE_INFORMATION_CONSENT, "1.9"),
+                document(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
+                document(TermType.SENSITIVE_INFORMATION_CONSENT, "1.10")));
 
         assertThat(service.findCurrentSummaries(requested)).containsExactly(
                 new TermDocumentSummary(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
                 new TermDocumentSummary(TermType.SENSITIVE_INFORMATION_CONSENT, "1.10"));
+        verify(termDocumentRepository).findDocumentCandidates(requested);
     }
 
     @Test
-    void missingOrInvalidCandidates_areSkippedWithoutChangingRelativeRequestOrder() {
+    void missingCandidates_areSkippedWithoutChangingRelativeRequestOrder() {
         when(termDocumentRepository.findDocumentCandidates(anyCollection())).thenReturn(List.of(
                 document(TermType.TERMS_OF_SERVICE, "1.0"),
-                invalidDocument(TermType.LOCATION_BASED_SERVICE_TERMS, "1.0.0")));
+                document(TermType.PRIVACY_POLICY, "1.0")));
 
         assertThat(service.findCurrentDocuments("v1", List.of(
                 TermType.PRIVACY_POLICY,
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.TERMS_OF_SERVICE)))
                 .extracting(TermDocument::getTermType)
-                .containsExactly(TermType.TERMS_OF_SERVICE);
+                .containsExactly(TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE);
     }
 
     @Test
@@ -85,11 +86,5 @@ class TermDocumentServiceTest {
 
     private static TermDocument document(TermType type, String version) {
         return TermDocument.of(type, version, type.name(), "https://www.laimory.app/terms/page/" + version);
-    }
-
-    private static TermDocument invalidDocument(TermType type, String version) {
-        TermDocument document = document(type, "1.0");
-        org.springframework.test.util.ReflectionTestUtils.setField(document.getId(), "version", version);
-        return document;
     }
 }

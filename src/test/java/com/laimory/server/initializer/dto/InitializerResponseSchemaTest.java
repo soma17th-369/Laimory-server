@@ -2,7 +2,7 @@ package com.laimory.server.initializer.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.laimory.server.terms.TermVersion;
+import com.laimory.server.terms.entity.TermDocumentId;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.media.Schema;
 import java.util.Map;
@@ -39,8 +39,8 @@ class InitializerResponseSchemaTest {
         assertThat(element.getProperties().keySet()).containsExactlyInAnyOrder("termType", "version");
         Schema<?> version = element.getProperties().get("version");
         assertThat(version.getType()).isEqualTo("string");
-        assertThat(version.getPattern()).isEqualTo(TermVersion.PATTERN_TEXT);
-        assertThat(version.getMaxLength()).isEqualTo(TermVersion.MAX_LENGTH);
+        assertThat(version.getPattern()).isEqualTo(TermDocumentId.VERSION_PATTERN_TEXT);
+        assertThat(version.getMaxLength()).isEqualTo(TermDocumentId.VERSION_MAX_LENGTH);
     }
 
     @Test
