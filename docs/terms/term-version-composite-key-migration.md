@@ -17,7 +17,8 @@
 
 ## 1. read-only preflight
 
-MySQL 8.0.16+와 canonical source data를 확인한다. 결과가 한 건이라도 나오면 중단한다.
+MySQL 8.0.16+와 canonical source data를 확인한다. 위반 행이 한 건이라도 나오면 중단한다.
+MySQL ICU의 `$`는 마지막 줄 구분자 앞에도 매칭되므로 숫자·점 외 문자도 별도로 검사한다.
 
 ```sql
 SELECT VERSION();
@@ -30,7 +31,8 @@ SELECT 'term_agreements', COUNT(*) FROM term_agreements;
 SELECT term_document_id, term_type, version
 FROM term_documents
 WHERE CHAR_LENGTH(version) > 64
-   OR version NOT REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$';
+   OR version NOT REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
+   OR version REGEXP '[^0-9.]';
 
 SELECT a.term_agreement_id, a.term_document_id
 FROM term_agreements a
@@ -67,7 +69,8 @@ CREATE TABLE term_documents_v2_432 (
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (term_type, version),
     CONSTRAINT chk_term_documents_v2_432_version
-        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$')
+        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
+            AND version NOT REGEXP '[^0-9.]')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE term_agreements_v2_432 (
@@ -255,5 +258,6 @@ ALTER TABLE term_agreements
 ALTER TABLE term_documents
     DROP CHECK chk_term_documents_v2_432_version,
     ADD CONSTRAINT chk_term_documents_version_canonical
-        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$');
+        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
+            AND version NOT REGEXP '[^0-9.]');
 ```

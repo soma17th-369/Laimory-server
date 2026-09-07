@@ -271,7 +271,9 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 게시 게이트가 검증한다.
 
 `version`은 `VARCHAR(64) utf8mb4_bin`의 canonical `major.minor` 문자열이다. DB CHECK
-`^[1-9][0-9]*[.](0|[1-9][0-9]*)$`와 Service 입력 검증이 `1`, `01.0`, `1.01`, `1.0.0`을 거절한다.
+`^[1-9][0-9]*[.](0|[1-9][0-9]*)$`와 `version NOT REGEXP '[^0-9.]'`를 함께 적용해
+`1`, `01.0`, `1.01`, `1.0.0`과 줄 구분자가 붙은 값을 거절한다. MySQL ICU의 `$`가 마지막 줄 구분자
+앞에도 매칭되므로 문자 집합 검사로 Java `TermVersion`의 전체 문자열 검증과 일치시킨다.
 repository는 요청한 종류(최대 6종)의 전체 후보를 full/projection 각각 한 query로 읽고,
 `TermDocumentService`가 `TermVersion`의 `BigInteger` major/minor 비교로 종류별 maximum을 고른다.
 DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 새 상위 버전 INSERT는 즉시

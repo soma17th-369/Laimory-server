@@ -274,8 +274,10 @@ CREATE TABLE IF NOT EXISTS term_documents (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (term_type, version),
+    -- ICU의 $는 마지막 줄 구분자 앞에도 매칭되므로 숫자·점 외 문자를 별도로 거부한다.
     CONSTRAINT chk_term_documents_version_canonical
-        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$')
+        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
+            AND version NOT REGEXP '[^0-9.]')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 회원 약관 동의 이력(#303/#432) — (user_id, term_type, version)당 1행. 문서 버전이 불변이라 이 행이

@@ -19,7 +19,9 @@ class TermVersionTest {
 
     @ParameterizedTest
     @NullAndEmptySource
-    @ValueSource(strings = {" ", "1", "01.0", "1.01", "v1.0", "1.0.0", "0.1", "1.-1"})
+    @ValueSource(strings = {" ", "1", "01.0", "1.01", "v1.0", "1.0.0", "0.1", "1.-1",
+            "1.10\n", "1.10\r", "1.10\r\n", "1.10\u0085", "1.10\u2028", "1.10\u2029",
+            "1.10\f", "1.10\u000B"})
     void parse_rejectsNonCanonicalValues(String value) {
         assertThatThrownBy(() -> TermVersion.parse(value)).isInstanceOf(IllegalArgumentException.class);
     }

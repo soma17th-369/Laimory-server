@@ -12,6 +12,7 @@ import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,12 +26,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
 /** final composite-key schema와 semantic current/동의 이력의 MySQL 실 왕복을 검증한다. */
 @SpringBootTest
@@ -109,14 +113,17 @@ class TermPersistenceIntegrationTest {
         saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version);
     }
 
-    @Test
-    void canonicalVersionCheck_rejectsNonCanonicalDocuments() {
-        for (String version : List.of("1", "01.0", "1.01", "1.0.0")) {
-            assertThatThrownBy(() -> insertDocumentRaw("PRIVACY_POLICY", version))
-                    .as("version=%s", version)
-                    .isInstanceOf(DataAccessException.class);
-        }
-        saveDocument(TermType.PRIVACY_POLICY, nextMajor() + ".0");
+    @ParameterizedTest
+    @ValueSource(strings = {"1", "01.0", "1.01", "1.0.0", "1.10\n", "1.10\r", "1.10\r\n",
+            "1.10\u0085", "1.10\u2028", "1.10\u2029", "1.10\f", "1.10\u000B"})
+    @Transactional // CHECK가 퇴행해 INSERT가 성공하더라도 잘못된 fixture를 rollback한다.
+    void canonicalVersionCheck_rejectsNonCanonicalDocuments(String version) {
+        assertThat(TermVersion.isCanonical(version)).isFalse();
+        assertThatThrownBy(() -> insertDocumentRaw("PRIVACY_POLICY", version))
+                .isInstanceOf(DataAccessException.class)
+                .rootCause()
+                .isInstanceOfSatisfying(SQLException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(3819));
     }
 
     @Test
