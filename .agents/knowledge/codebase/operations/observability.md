@@ -205,8 +205,8 @@ Spring JSON stdout
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
   환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 7일이다.
-- Elasticsearch/Kibana는 private dev ELK instance에서 실행되고 Kibana는 prod ALB의
-  `kibana.laimory.app` host 규칙으로 노출한다(ACM TLS 종단, Kibana 자체 로그인 유지).
+- Elasticsearch/Kibana는 private dev ELK instance에서 실행된다. Kibana는 공개 엔드포인트가 없고
+  SSM 포트포워딩 → `http://localhost:5601`(로컬 포트 규약)로만 접속한다(#437, Kibana 자체 로그인 유지).
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
 - ELK가 멈춘 동안 backfill 가능 범위는 app container의 30 MB rotated log에 제한된다.
 
@@ -312,25 +312,26 @@ user/task/FID, 좌표, exception 원문을 넣지 않는다. exporter HTTP scrap
 
 Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로 나눠 1분 histogram으로
 평가해 최근 5분 합계가 1 이상인 환경마다 pending 없이 warning을 보낸다. 이 알림은 전체 서비스 장애를 뜻하지
-않으며, notification의 runbook URL은 `kibana.laimory.app`의 Kibana data view에서 전 환경 최근 15분 ERROR 문서와
-`message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 인증된 조사 경로다. WARN 단건은
+않으며, notification의 runbook URL은 `http://localhost:5601`(SSM 터널 로컬 포트 규약)의 Kibana data view에서
+전 환경 최근 15분 ERROR 문서와 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 여는 조사 경로다 —
+터널을 먼저 열어야 링크가 동작한다(deploy/monitoring/README.md "접속" 절). WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
 Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
 
-Grafana는 prod ALB의 `grafana.laimory.app` host 규칙으로 노출한다(#368). 브라우저 로그인은
-Grafana 자체 Google OAuth이며 `[auth.google] allow_sign_up=false`라 미리 등록된 Grafana 사용자
-이메일만 로그인된다. admin Basic 인증은 alert 배포기 등 localhost 자동화용이다 — 외부(ALB) 경로의
-`POST /login`·`Authorization: Basic` 차단(#368 A13)은 아직 적용 전이라, 그전까지는 공유 admin
-비밀번호로도 외부 로그인이 가능하다.
+Grafana는 공개 엔드포인트가 없고 SSM 포트포워딩 → `http://localhost:3000`(로컬 포트 규약)로만
+접속한다(#437 — #368의 공개 host·Google OAuth·WAF 층은 제거됨). 브라우저 로그인은 공유 `laimory`
+admin 비밀번호이고, 접근 통제는 터널을 열 수 있는 IAM identity(`ssm:StartSession`), 접속 감사는
+CloudTrail의 SSM 세션 기록이 담당한다. admin Basic 인증은 alert 배포기 등 localhost 자동화용으로
+유지된다.
 Prometheus target file의 실제 IP와 적용 상태는 live host가
 소유하며 현재 repository 상태만으로 rollout 완료를 의미하지 않는다.
 
 Grafana admin username의 repository 기본값은 `laimory`이며 compose 최초 생성과 alert provisioning
 reload가 같은 값을 사용한다. Grafana admin/encryption key, Elasticsearch API key, Discord webhook,
-Google OAuth client secret, MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 일곱 UID별 `0400` secret
+MySQL/Redis exporter credential은 Git/S3에 두지 않는다. host의 여섯 UID별 `0400` secret
 file 중 하나라도 비거나 owner/mode가 다르면 systemd가 fail-closed하고, 비밀이 필요 없는
 Prometheus/blackbox만 먼저 기동할 수 있다.
 alert rule은 manifest가 소유하는 책임별 file-provisioning YAML로 관리하며 live EC2에서 직접 편집하지

@@ -76,10 +76,10 @@ dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나�
 
 유일한 인바운드 예외는 trace 수집이다 — Tempo의
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
-전용 마커 SG `laimory-monitoring-proxy-source-sg`(Grafana 3000 인바운드와 같은 SG)로 제한한다.
+전용 마커 SG `laimory-monitoring-proxy-source-sg`로 제한한다.
 `laimory-was-sg`는 source로 쓰지 않는다(stopped prod-was에도 부착돼 있어 prod 기동 시 의도 없이
-열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana는 `grafana.laimory.app`
-(prod ALB·자체 Google OAuth, #368)과 SSM port forwarding으로 접근하며, monitoring 장애는
+열린다). rollback은 monitoring SG의 4317 규칙 1건 삭제다. Grafana·Kibana는 공개 엔드포인트가
+없고 SSM port forwarding(로컬 포트 규약 3000·5601, #437)으로만 접근하며, monitoring 장애는
 application 배포·health gate 의존성이 아니다.
 
 ## Configuration Names
