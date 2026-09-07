@@ -11,8 +11,6 @@ const DEFAULT_OUTPUT_ROOT = resolve(REPOSITORY_ROOT, "build/terms-site");
 const SITE_ORIGIN = "https://www.laimory.app";
 const VERSION = "1.0";
 const EFFECTIVE_AT_KST = "2026-08-31 00:00:00";
-// 운영 catalog는 클라이언트 연동을 위해 먼저 활성화하되, 공개 원문의 시행일은 위 값을 유지한다.
-const CATALOG_EFFECTIVE_AT_KST = "2026-08-28 00:00:00";
 const CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export const DOCUMENTS = Object.freeze([
@@ -303,8 +301,7 @@ function renderSeedSql(documents, instruction) {
         sqlLiteral(document.catalog.termType), ", ",
         sqlLiteral(VERSION), ", ",
         sqlLiteral(document.title), ",\n     ",
-        sqlLiteral(`${SITE_ORIGIN}/terms/${document.slug}/${VERSION}`), ", ",
-        sqlLiteral(CATALOG_EFFECTIVE_AT_KST), ",\n     ",
+        sqlLiteral(`${SITE_ORIGIN}/terms/${document.slug}/${VERSION}`), ",\n     ",
         nowKst, ", ", nowKst, ")",
     ].join(""));
 
@@ -313,7 +310,7 @@ function renderSeedSql(documents, instruction) {
 SET NAMES utf8mb4;
 
 INSERT INTO term_documents
-    (term_type, version, title, content_url, effective_at, created_at, updated_at)
+    (term_type, version, title, content_url, created_at, updated_at)
 VALUES
 ${rows.join(",\n")};
 `;

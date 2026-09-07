@@ -31,14 +31,14 @@ public interface PublicTermApi {
     @Operation(summary = "현재 유효 약관 조회",
             description = "반복 query termTypes로 요청한 종류의 현재 유효 약관을 요청한 순서대로 "
                     + "반환한다. 각 종류의 "
-                    + "현재 문서는 효력 시작(effectiveAt, Asia/Seoul 벽시계)이 지난 최신 버전이다. "
-                    + "아직 유효한 문서가 없는 종류는 목록에서 빠지며, 전부 없으면(활성화 전) 404가 아니라 "
+                    + "현재 문서는 canonical major.minor를 숫자로 비교한 가장 큰 버전이다. "
+                    + "문서가 없는 종류는 목록에서 빠지며, 전부 없으면 404가 아니라 "
                     + "빈 배열이다. 원문은 응답에 담기지 않는다 — contentUrl은 그 버전의 원문 page HTTPS "
                     + "주소이며 클라이언트가 WebView로 연다. 동의 등록 시 이 응답의 (termType, version)을 "
                     + "그대로 회신한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "조회 성공 — `body.terms`는 요청한 termTypes 순서(활성화 전이면 빈 배열)",
+                    description = "조회 성공 — `body.terms`는 요청한 termTypes 순서(문서가 없으면 빈 배열)",
                     useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — termTypes 누락·빈 배열·중복·미지원 값")

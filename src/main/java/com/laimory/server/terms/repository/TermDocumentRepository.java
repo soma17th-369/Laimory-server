@@ -2,44 +2,24 @@ package com.laimory.server.terms.repository;
 
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
-import com.laimory.server.terms.service.TermDocumentSummary;
-import java.time.LocalDateTime;
+import com.laimory.server.terms.entity.TermDocumentId;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface TermDocumentRepository extends JpaRepository<TermDocument, Long> {
+public interface TermDocumentRepository extends JpaRepository<TermDocument, TermDocumentId> {
 
     /**
-     * 종류별 현재 문서 — {@code effectiveAt <= nowKst}인 문서 중 종류별 최신 버전 한 건씩.
-     * {@code (term_type, effective_at)} UNIQUE가 "같은 시각 동시 최신" 모호성을 차단하므로 결정적이다.
-     * 아직 유효한 문서가 없는 종류는 결과에서 빠진다(부분 결과 허용 — 호출자가 활용).
+     * 요청 종류의 모든 후보 문서. VARCHAR 정렬로 current를 잘못 고르지 않도록 repository는 후보 조회만
+     * 담당하고 {@code TermDocumentService}가 엔티티의 버전 비교로 current를 선택한다.
      */
     @Query("""
             SELECT d FROM TermDocument d
-            WHERE d.termType IN :termTypes
-              AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
-                                   WHERE d2.termType = d.termType AND d2.effectiveAt <= :nowKst)
+            WHERE d.id.termType IN :termTypes
             """)
-    List<TermDocument> findCurrentDocuments(@Param("termTypes") Collection<TermType> termTypes,
-                                            @Param("nowKst") LocalDateTime nowKst);
-
-    /**
-     * 현재 문서의 식별 요약 — 기동 catalog 검증(readiness)·동의 버전 검증용. 위 전체 조회와 같은 current
-     * selection이지만 판정에 쓰는 ID·종류·버전만 투영한다.
-     */
-    @Query("""
-            SELECT new com.laimory.server.terms.service.TermDocumentSummary(
-                    d.termDocumentId, d.termType, d.version)
-            FROM TermDocument d
-            WHERE d.termType IN :termTypes
-              AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
-                                   WHERE d2.termType = d.termType AND d2.effectiveAt <= :nowKst)
-            """)
-    List<TermDocumentSummary> findCurrentDocumentSummaries(@Param("termTypes") Collection<TermType> termTypes,
-                                                           @Param("nowKst") LocalDateTime nowKst);
+    List<TermDocument> findDocumentCandidates(@Param("termTypes") Collection<TermType> termTypes);
 
     /**
      * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}

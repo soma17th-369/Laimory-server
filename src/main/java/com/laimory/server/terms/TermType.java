@@ -3,9 +3,9 @@ package com.laimory.server.terms;
 /**
  * 약관 종류.
  *
- * <p>DB {@code term_documents}는 종류·버전·효력일과 제목을 들고 있다. 공개 조회 순서는
+ * <p>DB {@code term_documents}는 종류·canonical 버전·제목·원문 URL을 들고 있다. 공개 조회 순서는
  * 클라이언트가 반복 query parameter로 보낸 순서가 권위이며, 동의 대상 분류는 enum 속성이 아니라
- * 기동 seed 검사({@code TermCatalogReadiness})가 명시한다.
+ * 동의 필요 판정({@code TermAgreementService})이 명시한다.
  */
 public enum TermType {
 

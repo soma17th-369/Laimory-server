@@ -224,7 +224,7 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
 조회·기록 계약이다. GET은 최상위 `onboardingCompleted`와 약관 그룹 `terms.agreementRequired`(#434)를
 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
-(`subject_preferences.onboarding_completed`)이며 약관 동의 이력·`TermStage`·기록 존재 여부로 계산하거나
+(`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
 지금 현재 버전 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
 목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는
@@ -266,15 +266,15 @@ code는 추가하지 않았다.**
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
 `termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은
 400 `-400`이다. 응답
-`terms[]`는 요청 종류별 현재 문서(`effectiveAt <= now(KST)` 최신
-버전)를 클라이언트가 반복 query에 보낸 순서로 담으며 각 원소는
-`termType`·`version`·`title`·`contentUrl`·`effectiveAt`(offset 없는 KST LocalDateTime)이다.
+`terms[]`는 요청 종류별 semantic 최신 버전을 클라이언트가 반복 query에 보낸 순서로 담으며 각 원소는
+`termType`·`version`·`title`·`contentUrl`이다.
 응답에 약관 원문은 없다(#320) — `contentUrl`은 always-present non-null HTTPS URI이고 클라이언트가
 WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로 내려준 것이지 서버가 규칙으로 만든 값이
 아니다(현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 운영 규약이며 서버가
 강제하는 형식은 https 절대 URI뿐이다). 원문 page는 랜딩페이지가 게시하며 Server에는 약관 원문 route가
-없다(#418). `version`은 숫자가 아니라 `MAJOR.MINOR` 문자열(`1.0`)이며 서버는
-파싱·정렬하지 않는다. 현재 유효 문서가 없으면 (activation 전 rollout) 404/500이 아니라 200과
+없다(#418). `version`은 숫자가 아니라 canonical `major.minor` 문자열(`1.0`)이며, 서버는 요청 종류의
+후보를 한 query로 읽고 major/minor를 숫자 비교해 current를 고른다(`1.9 < 1.10 < 2.0`). 문서가 없으면
+404/500이 아니라 200과
 `terms=[]`이고 일부 종류만 유효하면 그 문서만 반환한다. `PRIVACY_POLICY`도 같은 catalog에서
 조회하며, 응답에 필수/고지 여부를 나타내는 별도 필드는 없다. 어떤 종류가 동의 대상인지는 API
 메타데이터가 아니라 서버 정책이 소유한다(동의 필요 판정의 대상 5종은 `TermAgreementService`의 상수가
@@ -283,11 +283,11 @@ WebView로 연다. 이 값은 문서 행에 저장된 게시 주소를 그대로
 `POST /a/api/{version}/terms/agreements`(#303)는 동의 일괄 등록이다(`TermAgreementApi` — 회원 account
 도메인이라 hidden `@AuthenticationPrincipal Long userId`). body `agreements[]`의 각
 `(termType, version)`은 조회 응답 값을 그대로 회신한다. 배열 누락/빈 배열·항목 필드 누락·동일 pair
-중복·미지원 termType literal은 400 `-400`, 하나라도 존재하지 않거나 현재 버전이 아니면 전체 미기록 +
+중복·non-canonical version·미지원 termType literal은 400 `-400`, 하나라도 존재하지 않거나 현재 버전이 아니면 전체 미기록 +
 409 `-3002`(재조회 신호)다. 전부 현재 버전이면 한 DB transaction으로 기록하고 성공은 `200 + body=null`
 이다. 수락 시각은 서버가 batch당 한 번 캡처한 KST 벽시계이며 같은 버전 재전송은 멱등 성공(최초 수락
 시각 불변)이다. 동의 철회 API는 없다. `GET /a/api/{version}/terms/agreements`는 회원에게 남아 있는
-전체 동의 이력을 `acceptedAt DESC`(PK DESC tie-breaker)로 반환한다 — 각 원소는 조회 응답과 같은 문서
+전체 동의 이력을 `acceptedAt DESC, termType DESC, version DESC`로 반환한다 — 각 원소는 조회 응답과 같은 문서
 필드(`contentUrl`은 동의한 그 버전 행에 저장된 URL이라 이후 게시 규약이 바뀌어도 변하지 않는다) +
 `acceptedAt`이고, 이력이 없으면 404가 아니라 200과
 `agreements=[]`다. 두 약관 GET response는 access log에서 privacy skeleton으로 마스킹되어 제목과

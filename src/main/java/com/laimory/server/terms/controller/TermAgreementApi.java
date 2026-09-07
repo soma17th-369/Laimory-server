@@ -40,7 +40,7 @@ public interface TermAgreementApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "등록 성공(body 없음 — 이미 동의한 버전 재전송도 200)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — agreements 누락/빈 배열, 항목의 termType/version 누락, "
+                    description = "`-400` — agreements 누락/빈 배열, 항목의 termType/version 누락·형식 오류, "
                             + "동일 (termType, version) 중복, 미지원 termType literal"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
