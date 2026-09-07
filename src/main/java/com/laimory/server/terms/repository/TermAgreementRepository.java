@@ -1,7 +1,10 @@
 package com.laimory.server.terms.repository;
 
+import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermAgreement;
+import com.laimory.server.terms.entity.TermAgreementId;
 import com.laimory.server.terms.service.TermAgreementHistoryEntry;
+import com.laimory.server.terms.service.TermDocumentSummary;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -11,10 +14,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
-public interface TermAgreementRepository extends JpaRepository<TermAgreement, Long> {
+public interface TermAgreementRepository extends JpaRepository<TermAgreement, TermAgreementId> {
 
     /**
-     * 동의 insert-if-absent — {@code (user_id, term_document_id)} UNIQUE 중복은 원자적으로 no-op(0 반환)
+     * 동의 insert-if-absent — 복합 PK {@code (user_id, term_type, version)} 중복은 원자적으로 no-op(0 반환)
      * 한다. save 반복 중 unique 예외를 멱등성으로 catch하지 않기 위한 native 문장이다(동시 동일 batch
      * 재전송이 transaction을 rollback-only로 오염시키지 않음 — push/photo job 선례). 기존 행의
      * {@code accepted_at}은 절대 갱신하지 않는다(최초 수락 시각 보존). JPA auditing을 우회하므로 감사
@@ -23,11 +26,13 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
     @Modifying
     @Transactional // REQUIRED — batch transaction 경계(TermAgreementTransactionService)에 합류한다
     @Query(value = """
-            INSERT IGNORE INTO term_agreements (user_id, term_document_id, accepted_at, created_at, updated_at)
-            VALUES (:userId, :termDocumentId, :acceptedAt, :auditNow, :auditNow)
+            INSERT IGNORE INTO term_agreements
+                (user_id, term_type, version, accepted_at, created_at, updated_at)
+            VALUES (:userId, :termType, :version, :acceptedAt, :auditNow, :auditNow)
             """, nativeQuery = true)
     int insertIfAbsent(@Param("userId") Long userId,
-                       @Param("termDocumentId") Long termDocumentId,
+                       @Param("termType") String termType,
+                       @Param("version") String version,
                        @Param("acceptedAt") LocalDateTime acceptedAt,
                        @Param("auditNow") LocalDateTime auditNow);
 
@@ -41,30 +46,32 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Lo
      */
     @Modifying
     @Transactional
-    @Query("delete from TermAgreement a where a.userId = :userId")
+    @Query("delete from TermAgreement a where a.id.userId = :userId")
     int deleteAllByUserId(@Param("userId") Long userId);
 
     /**
-     * 회원에게 남아 있는 전체 동의 이력 + 불변 문서 행({@code acceptedAt DESC}, PK DESC 안정
-     * tie-breaker). 연관 매핑 없이 FK 값으로 join한다(저장소 방침 — JPA 연관 매핑 금지).
+     * 회원에게 남아 있는 전체 동의 이력 + 불변 문서 행. 같은 acceptedAt은 복합 PK의 종류·버전으로
+     * 전순서를 만든다. 연관 매핑 없이 복합 FK 값으로 join한다.
      */
     @Query("""
             SELECT new com.laimory.server.terms.service.TermAgreementHistoryEntry(a, d)
             FROM TermAgreement a, TermDocument d
-            WHERE d.termDocumentId = a.termDocumentId AND a.userId = :userId
-            ORDER BY a.acceptedAt DESC, a.termAgreementId DESC
+            WHERE d.id.termType = a.id.termType
+              AND d.id.version = a.id.version
+              AND a.id.userId = :userId
+            ORDER BY a.acceptedAt DESC, a.id.termType DESC, a.id.version DESC
             """)
     List<TermAgreementHistoryEntry> findHistoryByUserId(@Param("userId") Long userId);
 
     /**
-     * 후보 문서 중 이 회원이 동의한 문서 id 집합 — 재동의 판정(#434)이 현재 문서 집합에서 빼는 용도다.
-     * {@code (user_id, term_document_id)} UNIQUE 인덱스를 그대로 탄다. 빈 후보는 호출자가 걸러 보낸다.
+     * 요청 종류에서 이 회원이 동의한 문서 key 집합 — initializer가 current key 집합에서 빼는 용도다.
+     * JPQL tuple-list IN에 의존하지 않고 user/type 후보를 읽어 Java record set으로 비교한다.
      */
     @Query("""
-            SELECT a.termDocumentId
+            SELECT new com.laimory.server.terms.service.TermDocumentSummary(a.id.termType, a.id.version)
             FROM TermAgreement a
-            WHERE a.userId = :userId AND a.termDocumentId IN :termDocumentIds
+            WHERE a.id.userId = :userId AND a.id.termType IN :termTypes
             """)
-    List<Long> findAgreedDocumentIds(@Param("userId") Long userId,
-                                     @Param("termDocumentIds") Collection<Long> termDocumentIds);
+    List<TermDocumentSummary> findAgreedDocumentKeys(@Param("userId") Long userId,
+                                                     @Param("termTypes") Collection<TermType> termTypes);
 }

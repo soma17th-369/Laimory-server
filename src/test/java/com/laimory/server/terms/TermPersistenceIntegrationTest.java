@@ -5,14 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.entity.TermDocument;
+import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
-import com.laimory.server.terms.service.TermCatalogReadiness;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,257 +27,299 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
-/**
- * term_documents/term_agreements ↔ MySQL 실 왕복 검증(#303).
- * - ddl-auto=validate이므로 컨텍스트 기동 자체가 VARCHAR/DATETIME(6) ↔ 엔티티 매핑 정합을 검증한다.
- * - unique 제약(버전 식별·동시 최신 모호성 차단·동의 1행)과 current selection 결정성, INSERT IGNORE의
- *   멱등 수렴(수락 시각 불변·동시 동일 batch)은 실 DB에서만 성립하므로 여기서 검증한다.
- * - version 컬럼의 binary collation이 Java equals(대소문자 구분)와 같은 비교 의미인지 고정한다.
- *
- * 실행: docker compose up -d --wait 후 ./gradlew integrationTest
- * (schema.sql은 빈 데이터 볼륨 첫 기동에만 적용 — 신규 테이블 DDL 반영에 fresh 볼륨 또는 수동 DDL 필요)
- */
+/** final composite-key schema와 semantic current/동의 이력의 MySQL 실 왕복을 검증한다. */
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
 class TermPersistenceIntegrationTest {
 
     private static final AtomicLong USER_SEQ = new AtomicLong(930_300_000L);
+    private static final AtomicLong VERSION_SEQ = new AtomicLong(930_300_000L);
 
     @Autowired
     private TermDocumentRepository termDocumentRepository;
-
     @Autowired
     private TermAgreementRepository termAgreementRepository;
-
     @Autowired
     private TermAgreementTransactionService termAgreementTransactionService;
-
     @Autowired
     private TermDocumentService termDocumentService;
-
     @Autowired
     private TermAgreementService termAgreementService;
-
-    @Autowired
-    private TermCatalogReadiness termCatalogReadiness;
-
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private final List<Long> createdDocumentIds = new ArrayList<>();
+    private final List<TermDocumentId> createdDocumentIds = new ArrayList<>();
     private final List<Long> createdUserIds = new ArrayList<>();
+    private final List<String> rawLowercaseVersions = new ArrayList<>();
 
     @AfterEach
     void cleanUp() {
-        // raw SQL로 주입한 오타 seed(엔티티 경로로는 만들 수 없는 행) 정리.
-        jdbcTemplate.update("DELETE FROM term_documents WHERE version LIKE 'it-lc-%'");
-        // FK RESTRICT 순서: 동의 이력 → 문서.
         for (Long userId : createdUserIds) {
-            termAgreementRepository.deleteAll(termAgreementRepository.findAll().stream()
-                    .filter(agreement -> agreement.getUserId().equals(userId))
-                    .toList());
+            termAgreementRepository.deleteAllByUserId(userId);
         }
         termDocumentRepository.deleteAllById(createdDocumentIds);
+        for (String version : rawLowercaseVersions) {
+            jdbcTemplate.update("DELETE FROM term_documents WHERE term_type = 'terms_of_service' AND version = ?",
+                    version);
+        }
         createdDocumentIds.clear();
         createdUserIds.clear();
+        rawLowercaseVersions.clear();
     }
 
     @Test
-    void schema_hasNoContentOrDenormalizedColumns_andNoStageIndex() {
-        // #320 최종 shape 고정 — 원문·enum 사본 컬럼과 stage 조회 index가 되살아나면 여기서 깨진다.
-        assertThat(columnNames()).containsExactlyInAnyOrder("term_document_id", "term_type", "version",
-                "title", "content_url", "effective_at", "created_at", "updated_at", "modified_by");
-        assertThat(indexNames()).containsExactlyInAnyOrder("PRIMARY",
-                "uq_term_documents_type_version", "uq_term_documents_type_effective");
+    void schema_matchesCompositeKeyForeignKeyAndCanonicalCheckContract() {
+        assertThat(columnNames("term_documents")).containsExactlyInAnyOrder(
+                "term_type", "version", "title", "content_url", "created_at", "updated_at", "modified_by");
+        assertThat(indexNames("term_documents")).containsExactly("PRIMARY");
+
+        assertThat(columnNames("term_agreements")).containsExactlyInAnyOrder(
+                "user_id", "term_type", "version", "accepted_at", "created_at", "updated_at", "modified_by");
+        assertThat(indexNames("term_agreements")).containsExactlyInAnyOrder(
+                "PRIMARY", "idx_term_agreements_user_history", "idx_term_agreements_document");
+        assertThat(foreignKeyColumns()).containsExactly("term_type->term_type", "version->version");
+        assertThat(checkClause()).contains("regexp").contains("[1-9]");
     }
 
     @Test
-    void allDeclaredTypes_insertAtVersion1_0_withFinalColumnSet() {
-        // 활성화 시 넣을 seed와 같은 shape — 제거된 네 컬럼 없이 현재 enum 종류가 저장·조회된다.
+    void allDeclaredTypes_insertAndSemanticCurrentReturnsEveryType() {
+        String version = nextMajor() + ".0";
         for (TermType type : TermType.values()) {
-            saveDocument(type, "1.0", "2026-09-01T00:00:00");
+            saveDocument(type, version);
         }
 
-        assertThat(termDocumentRepository.findCurrentDocuments(List.of(TermType.values()),
-                LocalDateTime.parse("2026-12-01T00:00:00")))
+        assertThat(termDocumentService.findCurrentDocuments("v1", List.of(TermType.values())))
                 .extracting(TermDocument::getTermType)
-                .containsExactlyInAnyOrder(TermType.values());
+                .containsExactly(TermType.values());
     }
 
     @Test
-    void uniqueConstraints_rejectDuplicateVersionAndDuplicateEffectiveAt() {
-        saveDocument(TermType.TERMS_OF_SERVICE, "it-1.0", "2026-01-01T00:00:00");
+    void compositePrimaryKey_rejectsDuplicatePair_butAllowsSameVersionForAnotherType() {
+        String version = nextMajor() + ".0";
+        saveDocument(TermType.TERMS_OF_SERVICE, version);
 
-        // 같은 (termType, version) — 효력일이 달라도 거절(버전 문자열은 종류 안에서 유일).
-        assertThatThrownBy(() -> saveDocument(TermType.TERMS_OF_SERVICE, "it-1.0", "2026-02-01T00:00:00"))
+        assertThatThrownBy(() -> insertDocumentRaw("TERMS_OF_SERVICE", version))
                 .isInstanceOf(DataIntegrityViolationException.class);
-        // 같은 (termType, effectiveAt) — 동시 최신 모호성을 DB가 차단.
-        assertThatThrownBy(() -> saveDocument(TermType.TERMS_OF_SERVICE, "it-1.1", "2026-01-01T00:00:00"))
-                .isInstanceOf(DataIntegrityViolationException.class);
-        // 다른 종류는 같은 버전 문자열·효력일을 쓸 수 있다.
-        saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, "it-1.0", "2026-01-01T00:00:00");
+        saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version);
     }
 
     @Test
-    void currentSelection_picksLatestEffectivePerType_excludingFutureVersions() {
-        saveDocument(TermType.TERMS_OF_SERVICE, "it-old", "2026-01-01T00:00:00");
-        TermDocument current = saveDocument(TermType.TERMS_OF_SERVICE, "it-current", "2026-03-01T00:00:00");
-        saveDocument(TermType.TERMS_OF_SERVICE, "it-future", "2027-01-01T00:00:00");
+    void canonicalVersionCheck_rejectsNonCanonicalDocuments() {
+        for (String version : List.of("1", "01.0", "1.01", "1.0.0")) {
+            assertThatThrownBy(() -> insertDocumentRaw("PRIVACY_POLICY", version))
+                    .as("version=%s", version)
+                    .isInstanceOf(DataAccessException.class);
+        }
+        saveDocument(TermType.PRIVACY_POLICY, nextMajor() + ".0");
+    }
 
-        List<TermDocument> result = termDocumentRepository.findCurrentDocuments(
-                List.of(TermType.TERMS_OF_SERVICE), LocalDateTime.parse("2026-08-16T00:00:00"));
+    @Test
+    void currentSelection_ordersMinorAndMajorNumerically_andNewHigherInsertWinsImmediately() {
+        String major = nextMajor();
+        saveDocument(TermType.TERMS_OF_SERVICE, major + ".9");
+        saveDocument(TermType.TERMS_OF_SERVICE, major + ".10");
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).getTermDocumentId()).isEqualTo(current.getTermDocumentId());
-        assertThat(result.get(0).getVersion()).isEqualTo("it-current");
+        assertThat(currentVersion(TermType.TERMS_OF_SERVICE)).isEqualTo(major + ".10");
+
+        String nextMajor = Long.toString(Long.parseLong(major) + 1L);
+        saveDocument(TermType.TERMS_OF_SERVICE, nextMajor + ".0");
+        assertThat(currentVersion(TermType.TERMS_OF_SERVICE)).isEqualTo(nextMajor + ".0");
     }
 
     @Test
     void insertIfAbsent_isIdempotent_andPreservesFirstAcceptedAt() {
-        TermDocument document = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT,
-                "it-2.0", "2026-01-02T00:00:00");
+        TermDocument document = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, nextMajor() + ".0");
         Long userId = newUserId();
         LocalDateTime firstAcceptedAt = LocalDateTime.parse("2026-08-16T09:00:00");
         LocalDateTime retryAcceptedAt = LocalDateTime.parse("2026-08-16T10:00:00");
         LocalDateTime auditNow = LocalDateTime.parse("2026-08-16T09:00:00");
 
-        int first = termAgreementRepository.insertIfAbsent(
-                userId, document.getTermDocumentId(), firstAcceptedAt, auditNow);
-        int second = termAgreementRepository.insertIfAbsent(
-                userId, document.getTermDocumentId(), retryAcceptedAt, auditNow);
+        int first = insertIfAbsent(userId, document, firstAcceptedAt, auditNow);
+        int second = insertIfAbsent(userId, document, retryAcceptedAt, auditNow);
 
         assertThat(first).isEqualTo(1);
-        assertThat(second).isZero(); // unique 예외가 아니라 원자 no-op — rollback-only 오염 없음
-        List<TermAgreement> rows = findAgreements(userId);
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).getAcceptedAt()).isEqualTo(firstAcceptedAt); // 최초 수락 시각 보존
+        assertThat(second).isZero();
+        assertThat(findAgreements(userId)).singleElement()
+                .extracting(TermAgreement::getAcceptedAt).isEqualTo(firstAcceptedAt);
     }
 
     @Test
-    void concurrentSameBatch_convergesToSingleHistoryWithoutErrors() throws Exception {
-        TermDocument terms = saveDocument(TermType.TERMS_OF_SERVICE, "it-3.0", "2026-01-03T00:00:00");
-        TermDocument sensitive = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT,
-                "it-3.0", "2026-01-03T00:00:00");
+    void concurrentSameBatch_convergesToOneAgreementPerDocument() throws Exception {
+        String version = nextMajor() + ".0";
+        TermDocument terms = saveDocument(TermType.TERMS_OF_SERVICE, version);
+        TermDocument sensitive = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version);
         Long userId = newUserId();
-        List<Long> documentIds = List.of(terms.getTermDocumentId(), sensitive.getTermDocumentId());
-        LocalDateTime acceptedAtKst = LocalDateTime.parse("2026-08-16T09:30:00");
+        List<TermDocumentId> documentIds = List.of(terms.getId(), sensitive.getId());
+        LocalDateTime acceptedAt = LocalDateTime.parse("2026-08-16T09:30:00");
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         Callable<Void> batch = () -> {
             barrier.await(5, TimeUnit.SECONDS);
-            termAgreementTransactionService.recordAgreements(userId, documentIds, acceptedAtKst);
+            termAgreementTransactionService.recordAgreements(userId, documentIds, acceptedAt);
             return null;
         };
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             List<Future<Void>> futures = executor.invokeAll(List.of(batch, batch));
             for (Future<Void> future : futures) {
-                future.get(10, TimeUnit.SECONDS); // 예외 없이 완료 — 패자도 성공으로 수렴
+                future.get(10, TimeUnit.SECONDS);
             }
         } finally {
             executor.shutdownNow();
         }
 
-        assertThat(findAgreements(userId)).hasSize(2); // 문서당 정확히 1행
+        assertThat(findAgreements(userId)).hasSize(2);
     }
 
     @Test
-    void documentFkRestrict_preventsDeletingAgreedDocument() {
-        TermDocument document = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, "it-4.0",
-                "2026-01-04T00:00:00");
+    void compositeForeignKey_rejectsMissingDocument_andRestrictsDeletingAgreedDocument() {
         Long userId = newUserId();
-        termAgreementRepository.insertIfAbsent(userId, document.getTermDocumentId(),
-                LocalDateTime.parse("2026-08-16T09:00:00"), LocalDateTime.parse("2026-08-16T09:00:00"));
+        String missingVersion = nextMajor() + ".0";
+        assertThatThrownBy(() -> insertAgreementRaw(userId, "TERMS_OF_SERVICE", missingVersion,
+                LocalDateTime.parse("2026-08-16T09:00:00")))
+                .isInstanceOf(DataIntegrityViolationException.class);
 
-        // 동의가 남아 있는 문서 행 삭제는 RESTRICT — 이력 재구성 권위가 소실되지 않는다.
+        TermDocument document = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, nextMajor() + ".0");
+        insertIfAbsent(userId, document, LocalDateTime.parse("2026-08-16T09:00:00"),
+                LocalDateTime.parse("2026-08-16T09:00:00"));
         assertThatThrownBy(() -> {
-            termDocumentRepository.deleteById(document.getTermDocumentId());
+            termDocumentRepository.deleteById(document.getId());
             termDocumentRepository.flush();
         }).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
-    void versionColumn_isCaseSensitiveLikeJavaEquals() {
-        // binary collation — "IT-5.0"과 "it-5.0"은 다른 버전이다(Java equals와 같은 비교 의미).
-        saveDocument(TermType.THIRD_PARTY_PROVISION_CONSENT, "IT-5.0", "2026-01-05T00:00:00");
-        saveDocument(TermType.THIRD_PARTY_PROVISION_CONSENT, "it-5.0", "2026-01-06T00:00:00");
+    void history_hasDeterministicCompositeKeyTieBreaker() {
+        String major = nextMajor();
+        TermDocument version110 = saveDocument(TermType.TERMS_OF_SERVICE, major + ".10");
+        TermDocument version19 = saveDocument(TermType.TERMS_OF_SERVICE, major + ".9");
+        TermDocument sensitive = saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, major + ".0");
+        Long userId = newUserId();
+        LocalDateTime acceptedAt = LocalDateTime.parse("2026-08-16T09:00:00");
+        insertIfAbsent(userId, sensitive, acceptedAt, acceptedAt);
+        insertIfAbsent(userId, version110, acceptedAt, acceptedAt);
+        insertIfAbsent(userId, version19, acceptedAt, acceptedAt);
+
+        assertThat(termAgreementRepository.findHistoryByUserId(userId))
+                .extracting(entry -> entry.document().getTermType().name() + ":" + entry.document().getVersion())
+                .containsExactly("TERMS_OF_SERVICE:" + major + ".9",
+                        "TERMS_OF_SERVICE:" + major + ".10",
+                        "SENSITIVE_INFORMATION_CONSENT:" + major + ".0");
     }
 
     @Test
-    void agreementRequired_revisionCycle_tracksCurrentVersionAgreement() {
-        // #434 동의 필요 판정의 개정 전/후 사이클을 실 DB로 검증한다. 판정 시각은 실 시계 now(KST)라
-        // 직전 효력(now-10m/-5m) 문서로 이 종류의 current를 결정적으로 만들고, 다른 종류의 행 존재
-        // 여부에 영향받지 않도록 이 종류의 포함/제외만 단언한다.
-        LocalDateTime nowKst = TermTimes.kstWallClock(Instant.now());
+    void agreementRequired_revisionCycle_tracksCurrentCompositeKey() {
         Long userId = newUserId();
         TermType type = TermType.CROSS_BORDER_TRANSFER_CONSENT;
-
-        // 가입 시나리오 — v1이 current일 때 동의 완료: 판정 목록에 이 종류가 없다.
-        TermDocument v1 = saveDocument(type, "it-ar-1.0", nowKst.minusMinutes(10).toString());
-        termAgreementRepository.insertIfAbsent(userId, v1.getTermDocumentId(), nowKst, nowKst);
+        String major = nextMajor();
+        TermDocument v1 = saveDocument(type, major + ".0");
+        LocalDateTime now = LocalDateTime.parse("2026-08-16T09:00:00");
+        insertIfAbsent(userId, v1, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
 
-        // 개정 — 새 버전이 current가 되는 순간 그 종류가 현재 버전으로 목록에 들어온다.
-        saveDocument(type, "it-ar-2.0", nowKst.minusMinutes(5).toString());
-        List<TermDocumentSummary> required = termAgreementService.findAgreementRequiredTerms(userId);
-        TermDocumentSummary entry = required.stream()
+        TermDocument v11 = saveDocument(type, major + ".1");
+        TermDocumentSummary required = termAgreementService.findAgreementRequiredTerms(userId).stream()
                 .filter(document -> document.termType() == type)
                 .findFirst()
                 .orElseThrow();
-        assertThat(entry.version()).isEqualTo("it-ar-2.0");
+        assertThat(required.version()).isEqualTo(v11.getVersion());
 
-        // 새 버전 동의를 등록하면 목록에서 빠진다.
-        termAgreementRepository.insertIfAbsent(userId, entry.termDocumentId(), nowKst, nowKst);
+        insertIfAbsent(userId, v11, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
     }
 
     @Test
-    void lowercaseRawSeed_convergesToNotReady_insteadOf500() {
-        // 소문자 오타 seed — term_type이 binary collation이 아니라면 IN(enum literal)에 case-insensitive
-        // 매칭돼 @Enumerated hydration이 공개 조회를 500으로 깨뜨렸을 상태를 raw SQL로 재현한다.
-        jdbcTemplate.update("INSERT INTO term_documents"
-                + " (term_type, version, title, content_url, effective_at, created_at, updated_at)"
-                + " VALUES ('terms_of_service', 'it-lc-1', '이용약관',"
-                + "  'https://www.laimory.app/terms/terms-of-service/it-lc-1',"
-                + "  '2026-01-01 00:00:00', NOW(6), NOW(6))");
-        // 1) binary collation — 소문자 행은 enum literal 조회에 매칭되지 않아 hydration 예외가 없다.
-        List<TermDocument> current = termDocumentService.findCurrentDocuments(
-                "v1", List.of(TermType.TERMS_OF_SERVICE));
-        assertThat(current).isEmpty(); // 공개 조회는 빈 배열 — 500 아님
-        List<TermDocumentSummary> summaries = termDocumentService.findCurrentSummaries(
-                List.of(TermType.TERMS_OF_SERVICE), LocalDateTime.parse("2026-08-16T00:00:00"));
-        assertThat(summaries).isEmpty();
+    void lowercaseRawTermType_doesNotHydrateAsEnumCandidate() {
+        String version = nextMajor() + ".0";
+        rawLowercaseVersions.add(version);
+        insertDocumentRaw("terms_of_service", version);
 
-        // 2) readiness — TERMS_OF_SERVICE의 current 문서가 없으므로 stage는 not-ready로 수렴한다.
-        assertThat(termCatalogReadiness.checkStage(
-                TermStage.LOGIN, LocalDateTime.parse("2026-08-16T00:00:00")).ready()).isFalse();
+        assertThat(termDocumentRepository.findDocumentCandidates(List.of(TermType.TERMS_OF_SERVICE)))
+                .extracting(TermDocument::getVersion)
+                .doesNotContain(version);
+        assertThat(termDocumentRepository.findCatalogRows())
+                .anyMatch(row -> row.getTermType().equals("terms_of_service") && row.getVersion().equals(version));
     }
 
-    private TermDocument saveDocument(TermType type, String version, String effectiveAt) {
+    @Test
+    void deleteAllByUserId_removesEveryAgreementForEmbeddedOwnerKey() {
+        Long userId = newUserId();
+        String version = nextMajor() + ".0";
+        insertIfAbsent(userId, saveDocument(TermType.TERMS_OF_SERVICE, version),
+                LocalDateTime.parse("2026-08-16T09:00:00"), LocalDateTime.parse("2026-08-16T09:00:00"));
+        insertIfAbsent(userId, saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version),
+                LocalDateTime.parse("2026-08-16T09:00:00"), LocalDateTime.parse("2026-08-16T09:00:00"));
+
+        termAgreementService.deleteAllByUserId(userId);
+
+        assertThat(findAgreements(userId)).isEmpty();
+    }
+
+    private TermDocument saveDocument(TermType type, String version) {
         TermDocument document = termDocumentRepository.saveAndFlush(TermDocument.of(
                 type, version, "통합 테스트 제목",
-                "https://www.laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version,
-                LocalDateTime.parse(effectiveAt)));
-        createdDocumentIds.add(document.getTermDocumentId());
+                "https://www.laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version));
+        createdDocumentIds.add(document.getId());
         return document;
     }
 
-    private List<String> columnNames() {
+    private void insertDocumentRaw(String termType, String version) {
+        jdbcTemplate.update("INSERT INTO term_documents"
+                + " (term_type, version, title, content_url, created_at, updated_at)"
+                + " VALUES (?, ?, '통합 테스트 제목', 'https://www.laimory.app/terms/integration', NOW(6), NOW(6))",
+                termType, version);
+    }
+
+    private int insertIfAbsent(Long userId, TermDocument document, LocalDateTime acceptedAt,
+                               LocalDateTime auditNow) {
+        return termAgreementRepository.insertIfAbsent(userId, document.getTermType().name(),
+                document.getVersion(), acceptedAt, auditNow);
+    }
+
+    private void insertAgreementRaw(Long userId, String termType, String version, LocalDateTime acceptedAt) {
+        jdbcTemplate.update("INSERT INTO term_agreements"
+                + " (user_id, term_type, version, accepted_at, created_at, updated_at)"
+                + " VALUES (?, ?, ?, ?, ?, ?)", userId, termType, version, acceptedAt, acceptedAt, acceptedAt);
+    }
+
+    private String currentVersion(TermType type) {
+        return termDocumentService.findCurrentDocuments("v1", List.of(type)).getFirst().getVersion();
+    }
+
+    private List<String> columnNames(String tableName) {
         return jdbcTemplate.queryForList(
                 "SELECT COLUMN_NAME FROM information_schema.COLUMNS"
-                        + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'term_documents'",
+                        + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+                String.class, tableName);
+    }
+
+    private List<String> indexNames(String tableName) {
+        return jdbcTemplate.queryForList(
+                "SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS"
+                        + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME",
+                String.class, tableName);
+    }
+
+    private List<String> foreignKeyColumns() {
+        return jdbcTemplate.queryForList(
+                "SELECT CONCAT(COLUMN_NAME, '->', REFERENCED_COLUMN_NAME)"
+                        + " FROM information_schema.KEY_COLUMN_USAGE"
+                        + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'term_agreements'"
+                        + " AND CONSTRAINT_NAME = 'fk_term_agreements_document' ORDER BY ORDINAL_POSITION",
                 String.class);
     }
 
-    private List<String> indexNames() {
-        return jdbcTemplate.queryForList(
-                "SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS"
-                        + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'term_documents'",
+    private String checkClause() {
+        return jdbcTemplate.queryForObject(
+                "SELECT LOWER(CHECK_CLAUSE) FROM information_schema.CHECK_CONSTRAINTS"
+                        + " WHERE CONSTRAINT_SCHEMA = DATABASE()"
+                        + " AND CONSTRAINT_NAME = 'chk_term_documents_version_canonical'",
                 String.class);
     }
 
@@ -286,6 +327,10 @@ class TermPersistenceIntegrationTest {
         Long userId = USER_SEQ.incrementAndGet();
         createdUserIds.add(userId);
         return userId;
+    }
+
+    private String nextMajor() {
+        return Long.toString(VERSION_SEQ.incrementAndGet());
     }
 
     private List<TermAgreement> findAgreements(Long userId) {

@@ -13,7 +13,6 @@ import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.testsupport.AuthTestSupport;
-import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 공개 약관 조회 컨트롤러 슬라이스 테스트(MockMvc). 무인증 200(public 계약)·termTypes 필수/빈 값/미지원 400·
- * 요청 순서·offset 없는 KST LocalDateTime 직렬화·빈 catalog 200/[]와, 원문 대신 버전별
+ * 요청 순서·빈 catalog 200/[]와, 원문 대신 버전별
  * contentUrl만 나가는 wire 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(PublicTermController.class)
@@ -65,8 +64,7 @@ class PublicTermControllerTest {
                 .andExpect(jsonPath("$.body.terms[0].contentUrl")
                         .value("https://www.laimory.app/terms/location-based-service-terms/1.0"))
                 .andExpect(jsonPath("$.body.terms[0].required").doesNotExist())
-                // KST 벽시계 LocalDateTime — offset 없는 ISO 문자열로 직렬화된다.
-                .andExpect(jsonPath("$.body.terms[0].effectiveAt").value("2026-08-01T09:30:15"))
+                .andExpect(jsonPath("$.body.terms[0].effectiveAt").doesNotExist())
                 .andExpect(jsonPath("$.body.terms[1].termType").value("PRIVACY_POLICY"))
                 .andExpect(jsonPath("$.body.terms[1].title").value("개인정보 처리방침"))
                 .andExpect(jsonPath("$.body.terms[2].termType").value("TERMS_OF_SERVICE"))
@@ -81,7 +79,7 @@ class PublicTermControllerTest {
 
     @Test
     void getCurrentTerms_emptyCatalog_returns200WithEmptyArray() throws Exception {
-        // 활성화 전 rollout 상태 — 404/500이 아니라 200 + 빈 배열이다.
+        // seed 전 rollout 상태 — 404/500이 아니라 200 + 빈 배열이다.
         when(termDocumentService.findCurrentDocuments("v1", List.of(TermType.CROSS_BORDER_TRANSFER_CONSENT)))
                 .thenReturn(List.of());
 
@@ -157,7 +155,7 @@ class PublicTermControllerTest {
     }
 
     private static TermDocument document(TermType type, String title) {
-        return TermDocument.of(type, VERSION, title, url(type), LocalDateTime.parse("2026-08-01T09:30:15"));
+        return TermDocument.of(type, VERSION, title, url(type));
     }
 
     /** 게시 URL은 행에 저장된 값이라 fixture가 그대로 정한다(서버가 규칙으로 만들지 않는다). */

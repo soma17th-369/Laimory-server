@@ -43,8 +43,8 @@ class AppInitializerServiceTest {
     void getInitialState_composesOnboardingBySubject_andTermsByUserId() {
         when(subjectPreferenceService.findOnboardingCompleted(SUBJECT_ID)).thenReturn(true);
         when(termAgreementService.findAgreementRequiredTerms(USER_ID)).thenReturn(List.of(
-                new TermDocumentSummary(11L, TermType.TERMS_OF_SERVICE, "1.1"),
-                new TermDocumentSummary(15L, TermType.LOCATION_BASED_SERVICE_TERMS, "2.0")));
+                new TermDocumentSummary(TermType.TERMS_OF_SERVICE, "1.1"),
+                new TermDocumentSummary(TermType.LOCATION_BASED_SERVICE_TERMS, "2.0")));
 
         InitializerResponse response = service().getInitialState("v1", USER_ID, SUBJECT_ID);
 

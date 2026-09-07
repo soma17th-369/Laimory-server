@@ -1,7 +1,6 @@
 package com.laimory.server.terms.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,10 +13,6 @@ import com.laimory.server.terms.TermStage;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,8 +28,6 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class TermCatalogReadinessTest {
 
-    private static final LocalDateTime NOW_KST = LocalDateTime.parse("2026-08-16T05:00:00");
-
     @Mock
     private TermDocumentRepository termDocumentRepository;
     @Mock
@@ -48,8 +41,7 @@ class TermCatalogReadinessTest {
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        readiness = new TermCatalogReadiness(termDocumentRepository, termDocumentService,
-                Clock.fixed(Instant.parse("2026-08-15T20:00:00Z"), ZoneOffset.UTC), meterRegistry);
+        readiness = new TermCatalogReadiness(termDocumentRepository, termDocumentService, meterRegistry);
         logger = (Logger) LoggerFactory.getLogger(TermCatalogReadiness.class);
         logAppender = new ListAppender<>();
         logAppender.start();
@@ -63,27 +55,27 @@ class TermCatalogReadinessTest {
 
     @Test
     void stageWithAllRequiredCurrentDocuments_isReady() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE)));
 
-        TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN);
 
         assertThat(catalog.ready()).isTrue();
         assertThat(catalog.currentEnforcedDocuments()).hasSize(1);
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(1.0);
         // snapshot은 전 종류를 한 쿼리로 뜨고 stage 판정은 메모리 필터다(#428).
-        verify(termDocumentService).findCurrentSummaries(List.of(TermType.values()), NOW_KST);
+        verify(termDocumentService).findCurrentSummaries(List.of(TermType.values()));
     }
 
     @Test
     void timelineStageWithoutConditionalLocationDocument_keepsRequiredStageReady() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
 
         TermCatalogReadiness.StageCatalog catalog =
-                readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
+                readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE);
 
         assertThat(catalog.ready()).isTrue();
         assertThat(catalog.currentEnforcedDocuments()).hasSize(3);
@@ -92,20 +84,20 @@ class TermCatalogReadinessTest {
 
     @Test
     void conditionalDocumentReadiness_publishesSeparateGauge() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
         TermCatalogReadiness.ConditionalTermCatalog missing = readiness.checkConditionalTerm(
-                TermType.LOCATION_BASED_SERVICE_TERMS, NOW_KST);
+                TermType.LOCATION_BASED_SERVICE_TERMS);
 
         assertThat(missing.ready()).isFalse();
         assertThat(conditionalReadyGauge(TermType.LOCATION_BASED_SERVICE_TERMS)).isEqualTo(0.0);
 
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.LOCATION_BASED_SERVICE_TERMS)));
         TermCatalogReadiness.ConditionalTermCatalog recovered = readiness.checkConditionalTerm(
-                TermType.LOCATION_BASED_SERVICE_TERMS, NOW_KST);
+                TermType.LOCATION_BASED_SERVICE_TERMS);
 
         assertThat(recovered.ready()).isTrue();
         assertThat(recovered.currentDocument()).contains(document(TermType.LOCATION_BASED_SERVICE_TERMS));
@@ -114,9 +106,9 @@ class TermCatalogReadinessTest {
 
     @Test
     void missingRequiredCurrentDocument_marksStageNotReady() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
 
-        TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        TermCatalogReadiness.StageCatalog catalog = readiness.checkStage(TermStage.LOGIN);
 
         assertThat(catalog.ready()).isFalse();
         assertThat(readyGauge(TermStage.LOGIN)).isEqualTo(0.0);
@@ -124,11 +116,11 @@ class TermCatalogReadinessTest {
 
     @Test
     void emptyCatalogTransition_logsWarnOnce_notError() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(0L);
 
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        readiness.checkStage(TermStage.LOGIN);
+        readiness.checkStage(TermStage.LOGIN);
 
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).isEmpty();
         assertThat(logAppender.list.stream()
@@ -141,36 +133,36 @@ class TermCatalogReadinessTest {
 
     @Test
     void emptyCurrentWithSeededRows_logsErrorOnTransition() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
-        readiness.checkStage(TermStage.LOGIN, NOW_KST);
+        readiness.checkStage(TermStage.LOGIN);
 
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(1);
     }
 
     @Test
     void seededButBrokenTransition_logsErrorOnceUntilRecovery() {
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
 
-        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
-        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE);
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE);
         long errorCount = logAppender.list.stream()
                 .filter(event -> event.getLevel() == Level.ERROR)
                 .count();
         assertThat(errorCount).isEqualTo(1);
 
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT),
                         document(TermType.CROSS_BORDER_TRANSFER_CONSENT)));
-        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE);
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.SENSITIVE_INFORMATION_CONSENT),
                         document(TermType.THIRD_PARTY_PROVISION_CONSENT)));
-        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE, NOW_KST);
+        readiness.checkStage(TermStage.TIMELINE_FIRST_CREATE);
         assertThat(logAppender.list.stream().filter(event -> event.getLevel() == Level.ERROR)).hasSize(2);
     }
 
@@ -179,7 +171,7 @@ class TermCatalogReadinessTest {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
                 catalogRow("TERMS_OF_SERVICE"),
                 catalogRow("BOGUS_TYPE")));
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(2L);
 
         readiness.verifyCatalogOnStartup();
@@ -202,7 +194,7 @@ class TermCatalogReadinessTest {
                 catalogRow("SENSITIVE_INFORMATION_CONSENT", " "),
                 catalogRow("THIRD_PARTY_PROVISION_CONSENT", "https://example.test/whatever"),
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT", "https://www.laimory.app/terms/x/1.0")));
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(4L);
 
         readiness.verifyCatalogOnStartup();
@@ -219,9 +211,24 @@ class TermCatalogReadinessTest {
     }
 
     @Test
+    void startupCheck_reportsNonCanonicalVersion() {
+        when(termDocumentRepository.findCatalogRows()).thenReturn(List.of(
+                catalogRow("TERMS_OF_SERVICE", "1.01", "https://www.laimory.app/terms/page/1.01")));
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
+        when(termDocumentRepository.count()).thenReturn(1L);
+
+        readiness.verifyCatalogOnStartup();
+
+        assertThat(logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.ERROR)
+                .map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(message -> message.contains("invalid version for termType=TERMS_OF_SERVICE"));
+    }
+
+    @Test
     void startupCheck_emptyCatalog_logsWarnNotError() {
         when(termDocumentRepository.findCatalogRows()).thenReturn(List.of());
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any())).thenReturn(List.of());
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of());
         when(termDocumentRepository.count()).thenReturn(0L);
 
         readiness.verifyCatalogOnStartup();
@@ -244,7 +251,7 @@ class TermCatalogReadinessTest {
                 catalogRow("CROSS_BORDER_TRANSFER_CONSENT"),
                 catalogRow("LOCATION_BASED_SERVICE_TERMS"),
                 catalogRow("PRIVACY_POLICY")));
-        when(termDocumentService.findCurrentSummaries(anyCollection(), any()))
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
                 .thenReturn(List.of(document(TermType.TERMS_OF_SERVICE),
                         document(TermType.PRIVACY_POLICY),
                         document(TermType.SENSITIVE_INFORMATION_CONSENT),
@@ -270,7 +277,7 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentSummary document(TermType type) {
-        return new TermDocumentSummary((long) type.ordinal() + 1L, type, "1.0");
+        return new TermDocumentSummary(type, "1.0");
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType) {
@@ -278,10 +285,20 @@ class TermCatalogReadinessTest {
     }
 
     private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String contentUrl) {
+        return catalogRow(termType, "1.0", contentUrl);
+    }
+
+    private static TermDocumentRepository.TermCatalogRow catalogRow(String termType, String version,
+                                                                     String contentUrl) {
         return new TermDocumentRepository.TermCatalogRow() {
             @Override
             public String getTermType() {
                 return termType;
+            }
+
+            @Override
+            public String getVersion() {
+                return version;
             }
 
             @Override

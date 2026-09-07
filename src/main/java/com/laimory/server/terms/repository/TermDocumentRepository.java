@@ -2,57 +2,50 @@ package com.laimory.server.terms.repository;
 
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
+import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.service.TermDocumentSummary;
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface TermDocumentRepository extends JpaRepository<TermDocument, Long> {
+public interface TermDocumentRepository extends JpaRepository<TermDocument, TermDocumentId> {
 
     /**
-     * 종류별 현재 문서 — {@code effectiveAt <= nowKst}인 문서 중 종류별 최신 버전 한 건씩.
-     * {@code (term_type, effective_at)} UNIQUE가 "같은 시각 동시 최신" 모호성을 차단하므로 결정적이다.
-     * 아직 유효한 문서가 없는 종류는 결과에서 빠진다(부분 결과 허용 — 호출자가 활용).
+     * 요청 종류의 모든 후보 문서. VARCHAR 정렬로 current를 잘못 고르지 않도록 repository는 후보 조회만
+     * 담당하고 semantic major/minor maximum은 {@code TermDocumentService}가 계산한다.
      */
     @Query("""
             SELECT d FROM TermDocument d
-            WHERE d.termType IN :termTypes
-              AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
-                                   WHERE d2.termType = d.termType AND d2.effectiveAt <= :nowKst)
+            WHERE d.id.termType IN :termTypes
             """)
-    List<TermDocument> findCurrentDocuments(@Param("termTypes") Collection<TermType> termTypes,
-                                            @Param("nowKst") LocalDateTime nowKst);
+    List<TermDocument> findDocumentCandidates(@Param("termTypes") Collection<TermType> termTypes);
 
-    /**
-     * 현재 문서의 식별 요약 — 기동 catalog 검증(readiness)·동의 버전 검증용. 위 전체 조회와 같은 current
-     * selection이지만 판정에 쓰는 ID·종류·버전만 투영한다.
-     */
+    /** 요청 종류 후보의 key projection — current 계산은 전체 조회와 같은 Service comparator를 쓴다. */
     @Query("""
             SELECT new com.laimory.server.terms.service.TermDocumentSummary(
-                    d.termDocumentId, d.termType, d.version)
+                    d.id.termType, d.id.version)
             FROM TermDocument d
-            WHERE d.termType IN :termTypes
-              AND d.effectiveAt = (SELECT MAX(d2.effectiveAt) FROM TermDocument d2
-                                   WHERE d2.termType = d.termType AND d2.effectiveAt <= :nowKst)
+            WHERE d.id.termType IN :termTypes
             """)
-    List<TermDocumentSummary> findCurrentDocumentSummaries(@Param("termTypes") Collection<TermType> termTypes,
-                                                           @Param("nowKst") LocalDateTime nowKst);
+    List<TermDocumentSummary> findDocumentSummaryCandidates(
+            @Param("termTypes") Collection<TermType> termTypes);
 
     /**
      * 정합성 검사용 raw catalog 행 — 엔티티 hydration을 거치지 않아 미지 {@code term_type}
      * literal(오타 seed)도 예외 없이 관측된다. 검사자는 이 문자열을 enum 기대 종류와 대조하고
      * {@code content_url}이 https 절대 URI 형식인지 확인한다.
      */
-    @Query(value = "SELECT term_type AS termType, content_url AS contentUrl FROM term_documents",
+    @Query(value = "SELECT term_type AS termType, version, content_url AS contentUrl FROM term_documents",
             nativeQuery = true)
     List<TermCatalogRow> findCatalogRows();
 
     /** 정합성 검사용 raw projection — 잘못된 값을 깨지 않고 나르는 문자열 view다. */
     interface TermCatalogRow {
         String getTermType();
+
+        String getVersion();
 
         String getContentUrl();
     }

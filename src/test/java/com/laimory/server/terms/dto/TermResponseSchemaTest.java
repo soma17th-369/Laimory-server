@@ -2,6 +2,7 @@ package com.laimory.server.terms.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.terms.TermVersion;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.media.Schema;
 import java.util.Map;
@@ -21,12 +22,24 @@ class TermResponseSchemaTest {
     void contentUrl_isRequiredUriString_andContentIsGone(Class<?> dtoType) {
         Schema<?> schema = resolve(dtoType);
 
-        assertThat(schema.getProperties()).doesNotContainKeys("content", "required");
+        assertThat(schema.getProperties()).doesNotContainKeys("content", "required", "effectiveAt");
         Schema<?> contentUrl = schema.getProperties().get("contentUrl");
         assertThat(contentUrl).isNotNull();
         assertThat(contentUrl.getType()).isEqualTo("string");
         assertThat(contentUrl.getFormat()).isEqualTo("uri");
         assertThat(schema.getRequired()).contains("contentUrl");
+    }
+
+    @ParameterizedTest
+    @ValueSource(classes = {TermResponse.class, TermAgreementResponse.class})
+    void version_isRequiredCanonicalString(Class<?> dtoType) {
+        Schema<?> schema = resolve(dtoType);
+
+        Schema<?> version = schema.getProperties().get("version");
+        assertThat(version.getType()).isEqualTo("string");
+        assertThat(version.getPattern()).isEqualTo(TermVersion.PATTERN_TEXT);
+        assertThat(version.getMaxLength()).isEqualTo(TermVersion.MAX_LENGTH);
+        assertThat(schema.getRequired()).contains("version");
     }
 
     @ParameterizedTest

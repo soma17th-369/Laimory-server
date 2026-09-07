@@ -4,9 +4,10 @@
 초안 원문은 `drafts/`에 있고, 이 문서는 상태·결정·미결만 관리한다.
 
 - 추적 이슈 #383
-- 최초 작성 2026-08-18, 최종 갱신 2026-08-29
+- 최초 작성 2026-08-18, 최종 갱신 2026-09-07
 - 기본틀에서 라이모리 문서로 바뀐 내용: [`COMPARISON.md`](COMPARISON.md)
 - 이 문서는 확정한 공개 정책과 약관 원문을 관리한다. 구현 작업의 진행 여부는 별도 이슈에서 관리한다.
+- #432 복합키 DB 전환 절차: [`term-version-composite-key-migration.md`](term-version-composite-key-migration.md)
 
 ## 1. 전달 방식 — #320으로 바뀌었다
 
@@ -17,8 +18,9 @@ Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laim
 | 항목 | 값 |
 |---|---|
 | URL 규칙 | `https://www.laimory.app/terms/{term-slug}/{term-version}` |
-| version 형식 | `1.0`, `1.1`, `2.0` (문자열, exact match). **날짜 아님** |
-| seed 컬럼 | `term_type`, `version`, `title`, `content_url`, `effective_at` 5개뿐 |
+| version 형식 | canonical `major.minor` 문자열(`1.0`, `1.10`, `2.0`). **날짜 아님** |
+| current | 같은 종류에서 major, minor를 숫자로 비교한 가장 큰 version. 새 상위 version INSERT 즉시 전환 |
+| seed 컬럼 | `term_type`, `version`, `title`, `content_url` 4개 + 감사 시각 |
 | URL 생성 | 코드가 역산하지 않는다. **운영 seed가 넣는 값**이다 |
 | 게시된 버전 URL | 불변. 개정은 새 version + 새 URL |
 
@@ -112,8 +114,8 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 
 공개 문서의 개인정보처리자·계약 주체는 사업자등록증의 사업자명인 **이동건**으로 통일하고,
 **라이모리**는 서비스명 및 위치기반서비스사업 신고 명칭으로 구분했다. 최초 공개본 6종의 시행일은
-2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 클라이언트 연동을 위한 catalog `effective_at`만
-2026년 8월 28일 00:00:00(KST)로 먼저 활성화하며 공개 원문의 시행일은 바꾸지 않는다.
+2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 법률 문서의 시행일은 HTML metadata와 원문이
+계속 소유하며, DB catalog의 current 선택에는 시행 시각을 사용하지 않는다.
 
 ## 4. 남은 빈칸
 

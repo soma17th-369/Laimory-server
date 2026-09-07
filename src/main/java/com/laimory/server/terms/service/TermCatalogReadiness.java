@@ -1,15 +1,13 @@
 package com.laimory.server.terms.service;
 
 import com.laimory.server.terms.TermStage;
-import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.TermVersion;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.time.Clock;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -28,10 +26,10 @@ import org.springframework.stereotype.Component;
 /**
  * 약관 catalog 준비 상태 검사 — seed 존재와 {@link TermType} 기대 종류 커버리지의 단일 판정 지점.
  *
- * <p>기동 시 {@link TermType}에 선언된 모든 종류의 seed 존재(미래 효력 포함)와 모든 행의
- * {@code term_type} literal·{@code content_url}
+ * <p>기동 시 {@link TermType}에 선언된 모든 종류의 seed 존재와 모든 행의
+ * {@code term_type} literal·canonical {@code version}·{@code content_url}
  * 형식을 검사하고, 누락·잘못된 값·현재 유효 필수 문서 집합 불완전을 bounded log와 metric으로 경보한다 —
- * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-activation
+ * 기동과 공개 조회는 막지 않는다. 로그 수위는 상태 성격으로 가른다: 테이블이 완전히 빈 pre-seed
  * 상태(법무 원문 대기 — 예정된 미준비)는 WARN, seed 행이 존재하는데 틀렸거나(종류 누락·미지
  * literal·잘못된 URL) ready였다가 퇴행한 경우는 ERROR(운영 경보 대상)다. gauge는 수위와 무관하게 동일하게
  * 기록한다(대시보드 추적).
@@ -51,7 +49,6 @@ public class TermCatalogReadiness {
 
     private final TermDocumentRepository termDocumentRepository;
     private final TermDocumentService termDocumentService;
-    private final Clock clock;
 
     private final Map<TermStage, AtomicInteger> stageReadyGauges = new EnumMap<>(TermStage.class);
     private final Map<TermStage, AtomicBoolean> notReadyLogged = new EnumMap<>(TermStage.class);
@@ -60,11 +57,9 @@ public class TermCatalogReadiness {
 
     public TermCatalogReadiness(TermDocumentRepository termDocumentRepository,
                                 TermDocumentService termDocumentService,
-                                Clock clock,
                                 MeterRegistry meterRegistry) {
         this.termDocumentRepository = termDocumentRepository;
         this.termDocumentService = termDocumentService;
-        this.clock = clock;
         for (TermStage stage : TermStage.values()) {
             AtomicInteger readyState = new AtomicInteger(0);
             stageReadyGauges.put(stage, readyState);
@@ -93,10 +88,10 @@ public class TermCatalogReadiness {
 
     /**
      * stage 준비 상태와 현재 필수 문서 집합을 함께 계산한다. 준비 조건: 필수 대상 종류 전부에
-     * 현재 문서가 있다. 기동 검증·테스트용 — 주어진 시각으로 캐시 없이 조회한다.
+     * 현재 문서가 있다. 기동 검증·테스트용 — 캐시 없이 조회한다.
      */
-    public StageCatalog checkStage(TermStage stage, LocalDateTime nowKst) {
-        return judgeStage(stage, loadSnapshot(nowKst));
+    public StageCatalog checkStage(TermStage stage) {
+        return judgeStage(stage, loadSnapshot());
     }
 
     private StageCatalog judgeStage(TermStage stage, CatalogSnapshot snapshot) {
@@ -111,9 +106,9 @@ public class TermCatalogReadiness {
         return new StageCatalog(ready, currentDocuments);
     }
 
-    ConditionalTermCatalog checkConditionalTerm(TermType termType, LocalDateTime nowKst) {
+    ConditionalTermCatalog checkConditionalTerm(TermType termType) {
         requireConditional(termType);
-        return judgeConditionalTerm(termType, loadSnapshot(nowKst));
+        return judgeConditionalTerm(termType, loadSnapshot());
     }
 
     private ConditionalTermCatalog judgeConditionalTerm(TermType termType, CatalogSnapshot snapshot) {
@@ -125,9 +120,9 @@ public class TermCatalogReadiness {
     }
 
     /** 전 종류 current 요약 1쿼리 — load 자체는 어떤 stage/조건부 상태도 발행하지 않는다(판정이 발행). */
-    private CatalogSnapshot loadSnapshot(LocalDateTime nowKst) {
+    private CatalogSnapshot loadSnapshot() {
         Map<TermType, TermDocumentSummary> currentByType = new EnumMap<>(TermType.class);
-        termDocumentService.findCurrentSummaries(List.of(TermType.values()), nowKst)
+        termDocumentService.findCurrentSummaries(List.of(TermType.values()))
                 .forEach(summary -> currentByType.put(summary.termType(), summary));
         return new CatalogSnapshot(currentByType);
     }
@@ -151,14 +146,14 @@ public class TermCatalogReadiness {
             for (TermDocumentRepository.TermCatalogRow row : rows) {
                 validateRow(row, problems);
             }
-            LocalDateTime nowKst = TermTimes.kstWallClock(clock.instant());
+            CatalogSnapshot snapshot = loadSnapshot();
             for (TermStage stage : TermStage.values()) {
-                if (!checkStage(stage, nowKst).ready()) {
+                if (!judgeStage(stage, snapshot).ready()) {
                     problems.add("stage not ready (incomplete current required set): " + stage.name());
                 }
             }
             TermType locationTerms = TermType.LOCATION_BASED_SERVICE_TERMS;
-            if (!checkConditionalTerm(locationTerms, nowKst).ready()) {
+            if (!judgeConditionalTerm(locationTerms, snapshot).ready()) {
                 problems.add("conditional term not ready: " + locationTerms.name());
             }
         } catch (RuntimeException e) {
@@ -168,7 +163,7 @@ public class TermCatalogReadiness {
         if (!seeded) {
             // seed 전(테이블 완전 비어있음)은 법무 원문 대기 중의 예정된 미준비 상태다 — 경보(ERROR)가
             // 아니라 WARN 1줄로만 알린다(반복 기동 경보 소음 방지). 행이 하나라도 생기면 아래 ERROR 경로다.
-            log.warn("term catalog not seeded yet — public terms queries stay empty until activation (pre-activation state)");
+            log.warn("term catalog not seeded yet — public terms queries stay empty (pre-seed state)");
         } else if (problems.isEmpty()) {
             log.info("term catalog verified: all {} term types seeded", TermType.values().length);
         } else {
@@ -183,6 +178,10 @@ public class TermCatalogReadiness {
         } catch (IllegalArgumentException e) {
             problems.add("unknown termType literal in term_documents: " + row.getTermType());
             return;
+        }
+        if (!TermVersion.isCanonical(row.getVersion())) {
+            problems.add("invalid version for termType=" + row.getTermType()
+                    + " (must be canonical major.minor): " + row.getVersion());
         }
         if (!isPublishedPageUrl(row.getContentUrl())) {
             // 운영 seed가 넣는 문자열이라 형식만 본다 — 게시 host는 정책이 아니라 운영 선택이고,
@@ -206,7 +205,7 @@ public class TermCatalogReadiness {
 
     /**
      * 상태 gauge 갱신 + 전이 시에만 로그(bounded — not-ready 지속 중 반복 없음). not-ready 전이의 수위는
-     * catalog 성격으로 가른다: 이 stage의 current 후보가 0건이고 테이블 전체도 빈 pre-activation 상태면
+     * catalog 성격으로 가른다: 이 stage의 current 후보가 0건이고 테이블 전체도 빈 pre-seed 상태면
      * WARN(예정된 미준비 — seed 전 소음 방지), 그 외(행이 있는데 틀림·ready였다가 퇴행)는 ERROR다.
      * 전체 행 수 확인은 전이 시점에만 수행한다. gauge는 수위와 무관하게 0/1을 기록한다.
      */
@@ -215,11 +214,11 @@ public class TermCatalogReadiness {
         AtomicBoolean logged = notReadyLogged.get(stage);
         if (!ready && logged.compareAndSet(false, true)) {
             if (noCurrentCandidates && termDocumentRepository.count() == 0) {
-                log.warn("term catalog not seeded yet for stage {} — required set stays incomplete until activation",
+                log.warn("term catalog not seeded yet for stage {} — required set stays incomplete",
                         stage.name());
             } else {
                 log.error("term catalog not ready for stage {} — required set stays incomplete until "
-                        + "seed/activation is fixed", stage.name());
+                        + "seed is fixed", stage.name());
             }
         } else if (ready && logged.compareAndSet(true, false)) {
             log.info("term catalog recovered for stage {}", stage.name());
@@ -231,11 +230,11 @@ public class TermCatalogReadiness {
         AtomicBoolean logged = conditionalNotReadyLogged.get(termType);
         if (!ready && logged.compareAndSet(false, true)) {
             if (termDocumentRepository.count() == 0) {
-                log.warn("conditional term catalog not seeded yet for {} — its current document stays missing until activation",
+                log.warn("conditional term catalog not seeded yet for {} — its current document stays missing",
                         termType.name());
             } else {
                 log.error("conditional term catalog not ready for {} — its current document stays missing until "
-                        + "seed/activation is fixed", termType.name());
+                        + "seed is fixed", termType.name());
             }
         } else if (ready && logged.compareAndSet(true, false)) {
             log.info("conditional term catalog recovered for {}", termType.name());
