@@ -58,9 +58,6 @@ public class TimelineEventCreateService {
         if (request == null) {
             throw new IllegalArgumentException("request is required");
         }
-        if (request.eventType() == null) {
-            throw new IllegalArgumentException("eventType is required");
-        }
         String title = TimelineEventInputRules.requireValidTitle(request.title());
         String subtitle = TimelineEventInputRules.normalizeSubtitle(request.subtitle());
         TimelineEventInputRules.requireValidTimeRange(request.startAt(), request.endAt());

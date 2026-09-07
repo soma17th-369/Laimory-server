@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.config.JacksonConfig;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -33,6 +34,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 /**
  * TimelineTaskStore 직렬화 왕복 단위테스트(인프라 없음).
@@ -45,9 +47,7 @@ class TimelineTaskStoreTest {
     @Mock
     private RedisGateway redis;
 
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private ObjectMapper objectMapper;
     private SimpleMeterRegistry meterRegistry;
 
     private TimelineTaskStore store;
@@ -59,6 +59,11 @@ class TimelineTaskStoreTest {
 
     @BeforeEach
     void setUp() {
+        Jackson2ObjectMapperBuilder builder = Jackson2ObjectMapperBuilder.json()
+                .modules(new JavaTimeModule())
+                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        new JacksonConfig().strictScalarCoercion().customize(builder);
+        objectMapper = builder.build();
         meterRegistry = new SimpleMeterRegistry();
         store = new TimelineTaskStore(redis, objectMapper, meterRegistry);
         lenient().when(redis.expire(anyString(), any())).thenReturn(true);

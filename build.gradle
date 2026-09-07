@@ -27,6 +27,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	// 요청 DTO의 필수값을 @Valid + Jakarta Bean Validation으로 검증한다.
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	// WebClient(지오코딩 좌표 간 병렬 조회)용 — 서블릿 MVC 유지(web과 공존 시 WebApplicationType은 SERVLET).
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
 	// AWS SDK v2: S3 presigned PUT 업로드 + 객체 삭제(사진 저장 인프라). S3Presigner도 s3 모듈에 포함.

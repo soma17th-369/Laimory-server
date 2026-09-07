@@ -1,7 +1,5 @@
 package com.laimory.server.timeline.dto;
 
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.laimory.server.common.error.StrictErrorCodeDeserializer;
 import com.laimory.server.timeline.TaskStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 
@@ -24,7 +22,6 @@ public record DraftTaskCallbackRequest(
         TaskStatus status,
         @Schema(description = "AI 실패 분류 code. JSON integer -1008을 사용한다.",
                 type = "integer", format = "int32", example = "-1008", nullable = true)
-        @JsonDeserialize(using = StrictErrorCodeDeserializer.class)
         Integer errorCode,
         String error
 ) {

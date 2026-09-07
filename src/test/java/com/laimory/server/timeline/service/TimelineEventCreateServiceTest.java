@@ -178,7 +178,6 @@ class TimelineEventCreateServiceTest {
     private static Stream<Arguments> invalidRequests() {
         return Stream.of(
                 Arguments.of("null request", null),
-                Arguments.of("null eventType", request(null, "제목", null, START, null, null)),
                 Arguments.of("null title", request(TimelineEventType.REST, null, null, START, null, null)),
                 Arguments.of("blank title", request(TimelineEventType.REST, "   ", null, START, null, null)),
                 Arguments.of("title over 255", request(

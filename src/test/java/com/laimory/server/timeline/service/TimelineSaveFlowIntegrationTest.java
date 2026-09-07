@@ -158,7 +158,7 @@ class TimelineSaveFlowIntegrationTest {
 
         timelineEventEditService.updateMemo("v1", subjectId, eventId, "수정");
         timelineEventEditService.updateEvent("v1", subjectId, eventId,
-                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, false, List.of()));
+                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, List.of()));
         TimelineEvent edited = timelineEventRepository.findById(eventId).orElseThrow();
         assertThat(edited.getTitle()).isEqualTo("제목");
         assertThat(edited.getMemo()).isEqualTo("수정");

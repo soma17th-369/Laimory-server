@@ -25,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.logging.RequestLogAttributes;
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.config.JacksonConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
@@ -68,7 +70,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * (400/404/409)과 "userId는 인증 principal에서 서비스로 전달" 계약을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineRecordController.class)
-@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
+@Import({JacksonConfig.class, SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
 class TimelineRecordControllerTest {
 
     private static final long USER_ID = 7L;
@@ -468,29 +470,28 @@ class TimelineRecordControllerTest {
         assertThat(request.getValue().startAt()).isEqualTo(LocalDateTime.parse("2026-07-08T14:00:00"));
         assertThat(request.getValue().endAt()).isEqualTo(LocalDateTime.parse("2026-07-08T15:00:00"));
         assertThat(request.getValue().eventType()).isNull();
-        assertThat(request.getValue().memoPresent()).isFalse();
         assertThat(request.getValue().memo()).isNull();
         assertThat(request.getValue().photosToAdd()).isEmpty();
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"title", "subtitle", "startAt", "endAt"})
-    void updateTimelineEvent_missingKeyRejected400(String missingKey) throws Exception {
-        // 4개 키 모두 필수 계약: 키 누락은 역직렬화 단계에서 400(ERROR_0400) — 서비스에 도달하지 않는다.
-        // (누락을 null로 완화하면 title·startAt만 보낸 요청이 subtitle/endAt을 조용히 지운다.)
+    void updateTimelineEvent_missingKeyAccepted(String missingKey) throws Exception {
+        // 부분 전송을 허용한다. endAt 누락만 비움이며 나머지 null은 서비스에서 유지로 해석한다.
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.remove(missingKey);
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value(-400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
 
-        verifyNoInteractions(timelineEventEditService);
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
     }
 
     @Test
-    void updateTimelineEvent_explicitNullClearsSubtitleAndEndAt() throws Exception {
-        // 명시적 null은 누락(400)과 달리 "비움"이다 — subtitle/endAt에 null이 그대로 서비스로 전달된다.
+    void updateTimelineEvent_explicitNullSubtitleAndEndAtPassThrough() throws Exception {
+        // 같은 null이어도 subtitle은 유지, endAt은 비움이다(서비스 저장 테스트에서 검증).
         String body = """
                 {
                   "title": "카페에서 휴식",
@@ -523,15 +524,58 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_explicitNullEventTypeRejected400() throws Exception {
-        // eventType은 optional 키지만 값은 non-null 계약 — 명시적 null은 역직렬화 400(서비스 미도달).
+    void updateTimelineEvent_explicitNullEventTypeRequestsNoChange() throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.putNull("eventType");
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
+
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
+        assertThat(request.getValue().eventType()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"title\":null,\"subtitle\":null,\"startAt\":null,\"endAt\":null,\"eventType\":null,\"memo\":null,\"photosToAdd\":null}"})
+    void updateTimelineEvent_emptyOrAllNullBodyAccepted(String body) throws Exception {
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
+        assertThat(request.getValue()).isEqualTo(
+                new UpdateTimelineEventRequest(null, null, null, null, null, null, List.of()));
+    }
+
+    @Test
+    void updateTimelineEvent_numericEventTypeRejected400() throws Exception {
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"eventType\":1}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.header.code").value(-400));
+        verifyNoInteractions(timelineEventEditService);
+    }
 
+    @Test
+    void updateTimelineEvent_blankRemovalSignalsReachServiceUnchanged() throws Exception {
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"subtitle\":\"\",\"memo\":\"   \"}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
+        assertThat(request.getValue().subtitle()).isEmpty();
+        assertThat(request.getValue().memo()).isEqualTo("   ");
+    }
+
+    @Test
+    void updateTimelineEvent_nonArrayPhotosToAddRejected400() throws Exception {
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"photosToAdd\":{}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
         verifyNoInteractions(timelineEventEditService);
     }
 
@@ -548,7 +592,7 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_explicitNullMemoIsPresentAndRequestsRemoval() throws Exception {
+    void updateTimelineEvent_explicitNullMemoRequestsNoChange() throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.putNull("memo");
 
@@ -558,7 +602,6 @@ class TimelineRecordControllerTest {
 
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
-        assertThat(request.getValue().memoPresent()).isTrue();
         assertThat(request.getValue().memo()).isNull();
     }
 
@@ -596,7 +639,6 @@ class TimelineRecordControllerTest {
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         UpdateTimelineEventRequest parsed = request.getValue();
-        assertThat(parsed.memoPresent()).isTrue();
         assertThat(parsed.memo()).isEqualTo("사진을 정리했다.");
         assertThat(parsed.photosToAdd()).hasSize(1);
         assertThat(parsed.photosToAdd().get(0).rawId())
@@ -615,16 +657,18 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void updateTimelineEvent_explicitNullPhotosToAddRejected400() throws Exception {
+    void updateTimelineEvent_explicitNullPhotosToAddNormalizesToEmpty() throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(PATCH_BODY);
         body.putNull("photosToAdd");
 
         mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value(-400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
 
-        verifyNoInteractions(timelineEventEditService);
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
+        assertThat(request.getValue().photosToAdd()).isEmpty();
     }
 
     @Test
@@ -1187,24 +1231,59 @@ class TimelineRecordControllerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"eventType", "title", "subtitle", "startAt", "endAt"})
+    @ValueSource(strings = {"eventType", "title", "startAt"})
     void createTimelineEvent_missingRequiredKeyRejected400(String missingKey) throws Exception {
-        // 5개 키 모두 필수 계약: 키 누락은 역직렬화 단계에서 400 — 서비스에 도달하지 않는다.
+        // 필수값 3개는 Bean Validation에서 400 — 서비스에 도달하지 않는다.
         ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
         body.remove(missingKey);
 
         mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value(-400));
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.header.message").isNotEmpty())
+                .andExpect(this::assertBodyIsExplicitNull)
+                .andExpect(result -> {
+                    assertThat(result.getResolvedException()).isInstanceOf(
+                            org.springframework.web.bind.MethodArgumentNotValidException.class);
+                    assertThat(result.getRequest().getAttribute(RequestLogAttributes.EXCEPTION_TYPE))
+                            .isEqualTo(ExceptionType.MVC_REQUEST_REJECTED);
+                    assertThat(result.getRequest().getAttribute(RequestLogAttributes.ERROR_DETAIL))
+                            .isEqualTo("MethodArgumentNotValidException");
+                    assertThat(result.getResponse().getContentAsString()).doesNotContain("카페에서 휴식", "NotNull");
+                });
 
         verifyNoInteractions(timelineEventCreateService);
     }
 
     @Test
-    void createTimelineEvent_explicitNullEventTypeRejected400WithoutCallingService() throws Exception {
+    void createTimelineEvent_optionalFieldsMayAllBeOmitted() throws Exception {
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventType\":\"REST\",\"title\":\"제목\",\"startAt\":\"2026-07-08T14:00:00\"}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<CreateTimelineEventRequest> request = ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService).createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        assertThat(request.getValue().subtitle()).isNull();
+        assertThat(request.getValue().endAt()).isNull();
+        assertThat(request.getValue().memo()).isNull();
+        assertThat(request.getValue().photosToAdd()).isEmpty();
+    }
+
+    @Test
+    void saveDailyRecord_numericEmotionTypeRejected400() throws Exception {
+        mockMvc.perform(post(SAVE_DAILY_RECORD_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"emotionType\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+        verifyNoInteractions(timelineSaveService);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"eventType", "title", "startAt"})
+    void createTimelineEvent_explicitNullRequiredValueRejected400WithoutCallingService(String field) throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
-        body.putNull("eventType");
+        body.putNull(field);
 
         mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
@@ -1453,16 +1532,18 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void createTimelineEvent_explicitNullPhotosToAddRejected400WithoutCallingService() throws Exception {
+    void createTimelineEvent_explicitNullPhotosToAddNormalizesToEmpty() throws Exception {
         ObjectNode body = (ObjectNode) objectMapper.readTree(CREATE_EVENT_BODY);
         body.putNull("photosToAdd");
 
         mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(body.toString()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.header.code").value(-400));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0));
 
-        verifyNoInteractions(timelineEventCreateService);
+        ArgumentCaptor<CreateTimelineEventRequest> request = ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService).createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        assertThat(request.getValue().photosToAdd()).isEmpty();
     }
 
     @Test

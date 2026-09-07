@@ -168,11 +168,52 @@ class TimelineEventPhotoAddIntegrationTest {
         assertThat(dailyRecordRepository.findById(recordId)).isPresent();
     }
 
+    @Test
+    void partialJsonPatchPreservesNullFieldsAndClearsBlankFieldsInDatabase() throws Exception {
+        timelineEventEditService.updateMemo("v1", subjectId, eventId, "기존 메모");
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, objectMapper.readValue(
+                "{\"title\":\" 새 제목 \",\"subtitle\":null,\"memo\":null,\"photosToAdd\":null}",
+                UpdateTimelineEventRequest.class));
+
+        TimelineEvent preserved = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(preserved.getTitle()).isEqualTo("새 제목");
+        assertThat(preserved.getSubtitle()).isEqualTo("기존 부제");
+        assertThat(preserved.getMemo()).isEqualTo("기존 메모");
+        assertThat(preserved.getEventType()).isEqualTo(TimelineEventType.REST);
+        assertThat(preserved.getStartAt()).isEqualTo(DATE.atTime(9, 0));
+        assertThat(preserved.getEndAt()).isNull();
+
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, objectMapper.readValue(
+                "{\"subtitle\":\"\",\"memo\":\"   \"}", UpdateTimelineEventRequest.class));
+        TimelineEvent cleared = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(cleared.getTitle()).isEqualTo("새 제목");
+        assertThat(cleared.getSubtitle()).isNull();
+        assertThat(cleared.getMemo()).isNull();
+        assertThat(cleared.getStartAt()).isEqualTo(DATE.atTime(9, 0));
+        assertThat(timelineEventItemRepository.findByTimelineEventId(eventId)).isEmpty();
+    }
+
+    @Test
+    void invalidEndAtAgainstPreservedStartRollsBackPartialPatch() throws Exception {
+        UpdateTimelineEventRequest request = objectMapper.readValue(
+                "{\"title\":\"저장되면 안 됨\",\"subtitle\":\"\",\"endAt\":\"2000-01-06T08:59:59\"}",
+                UpdateTimelineEventRequest.class);
+
+        assertThatThrownBy(() -> timelineEventEditService.updateEvent("v1", subjectId, eventId, request))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        TimelineEvent event = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(event.getTitle()).isEqualTo("기존 제목");
+        assertThat(event.getSubtitle()).isEqualTo("기존 부제");
+        assertThat(event.getStartAt()).isEqualTo(DATE.atTime(9, 0));
+        assertThat(event.getEndAt()).isEqualTo(DATE.atTime(10, 0));
+    }
+
     private UpdateTimelineEventRequest request(String title, String memo,
                                                List<UpdateTimelineEventPhotoRequest> photos) {
         return new UpdateTimelineEventRequest(
                 title, "부제", DATE.atTime(14, 0), DATE.atTime(15, 0), null,
-                memo, true, photos);
+                memo, photos);
     }
 
     private UpdateTimelineEventPhotoRequest photo(String rawId) {

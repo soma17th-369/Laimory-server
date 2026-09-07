@@ -96,7 +96,7 @@ final class AccessLogBodyMasker {
 
     // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는
     // 자유 텍스트다(수신 후 폐기 계약) — 같은 이름의 이중 의미라 숫자·null만 남긴다. errorCode는
-    // StrictErrorCodeDeserializer 적용 전의 wire 원문이므로 같은 규칙으로 텍스트 가능성을 차단한다.
+    // Jackson 정수 타입 검증 전의 wire 원문이므로 같은 규칙으로 텍스트 가능성을 차단한다.
     private static final Set<String> SKELETON_NUMERIC_ONLY_FIELDS = Set.of("error", "errorcode");
 
     // allowlist 필드의 텍스트 값 shape guard — 현 계약의 구조 값(enum·UUID·ISO 시각·ZoneId·버전

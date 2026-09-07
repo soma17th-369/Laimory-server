@@ -87,6 +87,13 @@ package-private Spring bean `TimelineEventPhotoAddService`가 소유해 PATCH/�
 DB-dependent `resolve`/`link`는 `MANDATORY`로 호출자 transaction 합류를 강제하고 트랜잭션 안에서 S3를
 호출하지 않는다.
 
+요청 필수값은 생성 DTO(eventType·title·startAt)와 감정 수정 DTO(emotionType)의 `@NotNull`을
+HTTP 경계의 `@Valid`가 검사한다. 길이·공백 정규화는 위 서비스 규칙에 남긴다. Event PATCH는
+부분 갱신이라 preflight의 기존 값을 command에 복사하지 않는다. subtitle·memo는 변경 여부와
+정규화값을 함께 전달해 null=유지와 blank=제거를 구분하고, writer가 자기 transaction에서 기존 값과
+병합한 뒤 시간 범위를 검증한다(endAt은 누락·null도 항상 비움). Bean Validation과 JSON 타입 오류는
+기존 `GlobalExceptionHandler`의 MVC 표준 예외 경로로 400 응답한다.
+
 Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan PHOTO delete-job insert·원문
 PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. Event-Item
 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 직접 DELETE로 지운다 —

@@ -8,10 +8,11 @@ import java.util.List;
 record TimelineEventEditCommand(
         TimelineEventType eventType,
         String title,
+        boolean subtitleChanged,
         String subtitle,
         LocalDateTime startAt,
         LocalDateTime endAt,
-        boolean memoPresent,
+        boolean memoChanged,
         String memo,
         List<TimelineEventPhotoAddService.PhotoToAdd> photosToAdd
 ) {
