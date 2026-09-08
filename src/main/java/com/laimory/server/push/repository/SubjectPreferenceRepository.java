@@ -41,7 +41,7 @@ public interface SubjectPreferenceRepository extends JpaRepository<SubjectPrefer
     int updatePushEnabled(@Param("subjectId") UUID subjectId, @Param("pushEnabled") boolean pushEnabled);
 
     /**
-     * 온보딩 완료 표시(#382) — 알림 설정값은 건드리지 않는 단방향 전이다. 되돌리는 writer는 두지 않는다.
+     * 온보딩 완료 표시(#382) — 알림 설정값은 건드리지 않는 단방향 전이다. 일반 설정 경로에 되돌리는 writer는 두지 않는다.
      * 이미 true인 행도 matched row 1이므로 반복 호출이 멱등 성공한다({@code updatePushEnabled}와 같은
      * 계약 — 0행은 값이 같아서가 아니라 행이 없다는 뜻이다).
      */
