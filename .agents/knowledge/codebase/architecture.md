@@ -45,6 +45,9 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   우회해야 하는 호출자가 없어 별도 경계 arch test도 없다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
+- 임시 온보딩 reset은 일괄 제거를 위해 API·controller·service·전용 repository를
+  `onboarding/temporary`에 모은 예외다. `SubjectMappingService`로 userId를 해석하고 전용 repository가
+  `SubjectPreference`의 완료 컬럼만 갱신한다. 일반 설정 service/repository에는 임시 메서드를 추가하지 않는다.
 
 저장 경계:
 
