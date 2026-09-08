@@ -284,9 +284,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   완료 상태를 되돌리지 않는다(동의 필요 판정은 같은 응답의 `terms.agreementRequired`가 지는 별도
   책임 — #434) — 두 상태를 엮으면
   약관 개정이 온보딩을 되살리고 온보딩이 동의를 대신하는 양방향 오염이 생긴다.
-- 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command만 있고 되돌리는 writer는 두지 않으며,
+- 일반 앱 API의 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command이며,
   이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
   부재를 뜻한다 — 이 판정이 changed 기준으로 바뀌면 정상 재시도가 500이 된다).
+  임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 지정한 사용자의
+  완료 값을 false로 되돌린다. 구현·writer는 제거 가능한 `onboarding/temporary` 패키지에 격리한다.
 - 온보딩 값과 알림 마스터는 서로를 덮지 않는다 — 두 쓰기 모두 컬럼 단위 조건 UPDATE다. 특히 논리
   탈퇴의 마스터 OFF는 온보딩 값을 초기화하지 않는다(#367로 행이 보존되므로 초기화하면 접근이 막힌
   옛 subject의 온보딩만 되살아나고, 재가입은 어차피 새 subject의 기본값 false를 쓴다).

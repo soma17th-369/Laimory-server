@@ -236,7 +236,7 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는
 종류는 그 종류만 판정에서 빠진다(종류별 fail-open — seed 누락이 500으로 앱 시작을 막지 않는다). 서버는
 이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이고, 앱은 받은 `(termType, version)`
-을 동의 등록에 그대로 회신한다. 완료는 **단방향**이라 `false`로 되돌리는 API를 두지 않고, 이미 완료한
+을 동의 등록에 그대로 회신한다. 일반 앱 API의 완료는 **단방향**이며, 이미 완료한
 subject의 반복 POST도 같은 `200 + body=null`로 멱등 성공한다(matched row 기준 — 값이 같아도 0행이
 아니다). POST는 request body가 없다: 대상은 언제나 인증 subject 자신이고 바꿀 값도 하나뿐이다. 두
 operation 모두 bearer 인증과 `ACTIVE` 회원 검사를 요구한다. 설정 행이 없으면 push 설정과 같은 정책으로 조회·기록
@@ -244,6 +244,13 @@ operation 모두 bearer 인증과 `ACTIVE` 회원 검사를 요구한다. 설정
 요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지하며,
 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다(응답에 다른 상태를 미리 넣거나 provider 병렬
 aggregation framework를 만들지 않는다).
+
+`POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
+인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
+`onboarding_completed`만 false로 바꾼다. 반복 호출도 200이며 다른 사용자·알림 설정은 유지한다.
+userId 누락·형식 오류·0·음수는 400, subject 매핑·설정 행 부재는 기존 내부 오류 500이다.
+제거하려면 main/test의 `onboarding/temporary` 패키지를 삭제하고 이 문단과 관련 임시 예외 설명을
+정리한다. 일반 온보딩 완료 API·SecurityConfig·스키마의 기능 수정은 필요 없다.
 
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
 nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
