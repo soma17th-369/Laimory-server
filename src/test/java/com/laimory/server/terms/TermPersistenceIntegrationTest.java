@@ -8,6 +8,7 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
+import com.laimory.server.terms.repository.TermDocumentInsertRepository;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
 import com.laimory.server.terms.service.TermDocumentService;
@@ -47,6 +48,8 @@ class TermPersistenceIntegrationTest {
 
     @Autowired
     private TermDocumentRepository termDocumentRepository;
+    @Autowired
+    private TermDocumentInsertRepository termDocumentInserts;
     @Autowired
     private TermAgreementRepository termAgreementRepository;
     @Autowired
@@ -111,6 +114,36 @@ class TermPersistenceIntegrationTest {
         assertThatThrownBy(() -> insertDocumentRaw("TERMS_OF_SERVICE", version))
                 .isInstanceOf(DataIntegrityViolationException.class);
         saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version);
+    }
+
+    @Test
+    void adminInsertPath_duplicateRollsBackWithoutChangingExistingDocumentOrAudit() {
+        String version = nextMajor() + ".0";
+        TermDocument original = TermDocument.of(TermType.PRIVACY_POLICY, version,
+                "original", "https://example.com/original");
+        createdDocumentIds.add(original.getId());
+        // 두 호출은 테스트 transaction 없이 각각 repository proxy에서 commit/rollback한다.
+        termDocumentInserts.insert(original);
+        TermDocument before = termDocumentRepository.findById(original.getId()).orElseThrow();
+        assertThat(before.getCreatedAt()).isNotNull();
+        assertThat(before.getUpdatedAt()).isNotNull();
+        assertThat(before.getModifiedBy()).isNull();
+
+        assertThatThrownBy(() -> termDocumentInserts.insert(TermDocument.of(TermType.PRIVACY_POLICY,
+                version, "replacement", "https://example.com/replacement")))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .rootCause().isInstanceOfSatisfying(SQLException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(1062));
+
+        // rollback 뒤 새 repository transaction에서 읽어 1행·본문·감사 값 보존을 확인한다.
+        TermDocument after = termDocumentRepository.findById(original.getId()).orElseThrow();
+        assertThat(after.getTitle()).isEqualTo(before.getTitle());
+        assertThat(after.getContentUrl()).isEqualTo(before.getContentUrl());
+        assertThat(after.getCreatedAt()).isEqualTo(before.getCreatedAt());
+        assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
+        assertThat(after.getModifiedBy()).isEqualTo(before.getModifiedBy());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM term_documents WHERE term_type = ? AND version = ?",
+                Integer.class, "PRIVACY_POLICY", version)).isEqualTo(1);
     }
 
     @ParameterizedTest

@@ -44,7 +44,7 @@ class AppConfigIntroIntegrationTest {
     @Test
     void intro_servesAppConfigRowFromRealMysqlOverHttp() throws Exception {
         List<AppConfig> snapshot = appConfigRepository.findAll();
-        assertThat(snapshot).isNotEmpty();
+        assertThat(snapshot).hasSize(1);
 
         ResponseEntity<String> response = restTemplate.getForEntity("/api/v1/intro", String.class);
 
@@ -56,8 +56,7 @@ class AppConfigIntroIntegrationTest {
         JsonNode body = envelope.path("body");
         assertThat(body.isObject()).isTrue();
 
-        // findFirstBy()는 복수 row에서 어느 row를 고를지 비결정이므로 특정 row를 강제하지 않는다 —
-        // 응답이 snapshot의 "어느 한" row와 정확히 일치하면 DB-backed 응답임이 증명된다(flake 없음).
+        // 공개 API와 관리자가 동일한 exact-one 경계를 사용한다.
         Long minAppVersion = body.hasNonNull("minAppVersion") ? body.get("minAppVersion").asLong() : null;
         Long recommendAppVersion =
                 body.hasNonNull("recommendAppVersion") ? body.get("recommendAppVersion").asLong() : null;

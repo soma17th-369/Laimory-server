@@ -37,6 +37,11 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - `dev`, `main` 대상 PR CI는 alert rule shell 배포·monitoring workflow 계약을 먼저 검사한 뒤
   Compose의 MySQL·Redis healthcheck를 기다리고
   `./gradlew build integrationTest jacocoAllTestReport`를 실행한다.
+- 앱 배포 pre-stop 계약은 `.github/scripts/test-deploy-contract.sh`, 관리자 SSM target 선택은
+  `bash .github/scripts/test-admin-tunnel.sh`가 검증하며 둘 다 PR CI에서 실행한다.
+- 관리자 connector/Host/Origin/CSRF/OpenAPI는 `AdminHttpTest`·`AdminDisabledHttpTest`의 실 Tomcat
+  HTTP 테스트(인프라 없음), INSERT 불변성은 `TermPersistenceIntegrationTest`, Redis CSRF 세션과
+  저장 후 `/intro` 반영은 `AdminPersistenceIntegrationTest`가 검증한다.
 - JaCoCo는 `test`와 `integrationTest`를 각각 계측한다. `jacocoTestReport`는 unit HTML/XML을,
   `jacocoAllTestReport`는 두 실행 데이터를 합산한 HTML/XML을 만든다.
 - PR CI는 JUnit test report와 합산 coverage report를 artifact로 남긴다. coverage 최소 비율은

@@ -10,7 +10,7 @@ import java.math.BigInteger;
 
 /**
  * 약관 문서 한 버전 — 불변(immutable) 행이다. 개정은 기존 행 UPDATE가 아니라 새 행 INSERT이며,
- * 게시된 행의 본문·버전을 수정·삭제하는 API는 없다(운영 seed는 수동 INSERT).
+ * 게시된 행의 본문·버전을 수정·삭제하는 API는 없다(관리자 등록은 persist 전용 INSERT).
  * 같은 종류에서 canonical {@code major.minor} 버전이 가장 큰 행이 즉시 current다.
  *
  * <p>이 행은 원문을 담지 않는다 — 약관 원문은 게시된 버전별 page가 소유하고 이 행은 그 주소
@@ -45,7 +45,7 @@ public class TermDocument extends BaseEntity {
         this.contentUrl = contentUrl;
     }
 
-    /** 새 버전 행을 만든다(테스트·초기화 도구용). */
+    /** 새 버전 행을 만든다. 등록 저장 시 save(merge) 대신 INSERT 전용 repository를 사용한다. */
     public static TermDocument of(TermType termType, String version, String title, String contentUrl) {
         return new TermDocument(new TermDocumentId(termType, version), title, contentUrl);
     }

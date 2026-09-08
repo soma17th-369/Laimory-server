@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Laimory 운영 관리</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+  <script src="/admin/admin.js" defer></script>
+</head>
+<body>
+<main>
+  <header><div><p class="eyebrow">LAIMORY · OPERATIONS</p><h1>운영 관리</h1></div><strong id="environment">연결 확인 중</strong></header>
+  <p class="notice">SSM 터널 전용 · 저장 즉시 반영됩니다. 작업 후 브라우저와 터널을 닫아주세요.</p>
+  <p id="status" role="status" aria-live="polite">설정을 불러오는 중입니다.</p>
+  <section aria-labelledby="terms-heading">
+    <h2 id="terms-heading">약관 문서</h2>
+    <p>새 상위 버전만 등록할 수 있습니다. 기존 문서는 수정하거나 삭제할 수 없습니다.</p>
+    <form id="term-form">
+      <fieldset id="term-fields" disabled>
+        <label>약관 종류<select id="term-type" required></select></label>
+        <div class="comparison">
+          <article><h3>현재 문서</h3><pre id="current-term">등록된 문서가 없습니다.</pre><a id="current-url" target="_blank" rel="noopener noreferrer" hidden>현재 원문 보기 ↗</a></article>
+          <article><h3>새 문서</h3>
+            <label>버전 (major.minor)<input id="term-version" required maxlength="64" pattern="[1-9][0-9]*\.(0|[1-9][0-9]*)" placeholder="2.0" autocomplete="off"></label>
+            <label>제목<input id="term-title" required maxlength="255" autocomplete="off"></label>
+            <label>게시된 원문 HTTPS URL<input id="term-url" type="url" required maxlength="512" placeholder="https://…"></label>
+            <button id="open-term" type="button" class="secondary">새 원문 열어 확인 ↗</button>
+          </article>
+        </div>
+        <label class="check"><input id="published" type="checkbox" required>원문이 게시되어 HTTP 200으로 열리고, 버전과 내용이 정확함을 확인했습니다.</label>
+        <button type="submit">등록 내용 확인</button>
+      </fieldset>
+    </form>
+    <details><summary>전체 등록 이력</summary><div class="table-scroll"><table><thead><tr><th>종류</th><th>버전</th><th>제목</th><th>원문</th></tr></thead><tbody id="history"></tbody></table></div></details>
+  </section>
+  <section aria-labelledby="config-heading">
+    <h2 id="config-heading">앱 버전 설정</h2>
+    <p class="warning">최소 버전을 높이면 낮은 버전의 앱 사용자가 업데이트 대상으로 즉시 바뀝니다.</p>
+    <form id="config-form"><fieldset id="config-fields" disabled>
+      <div class="comparison">
+        <label>최소 버전 코드<input id="minimum" required inputmode="numeric" pattern="[1-9][0-9]*"></label>
+        <label>권장 버전 코드<input id="recommended" required inputmode="numeric" pattern="[1-9][0-9]*"></label>
+      </div>
+      <label>debugTestMessage (읽기 전용)<textarea id="debug-message" readonly rows="2"></textarea></label>
+      <button type="submit">변경 내용 확인</button>
+    </fieldset></form>
+  </section>
+  <footer>변경은 DB에 남습니다. 애플리케이션을 이전 버전으로 되돌려도 등록·설정은 취소되지 않습니다.</footer>
+</main>
+<dialog id="confirmation" aria-labelledby="confirm-heading">
+  <h2 id="confirm-heading">변경 확인</h2><strong id="confirm-environment"></strong><pre id="confirm-details"></pre>
+  <p id="confirm-warning" class="warning"></p>
+  <form method="dialog"><button value="cancel" class="secondary">취소</button><button value="commit">확인하고 저장</button></form>
+</dialog>
+</body>
+</html>

@@ -294,6 +294,12 @@ jobs:
           # 이 키만은 Resolve 단계의 환경 판정이 유일한 방어선이다.
           require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX=${EXPECT_REDIS_KEY_PREFIX}"
           require_exact_line APP_ENV "APP_ENV=${EXPECT_APP_ENV}"
+          # localhost admin: dev/prod만 8081, dev DB를 공유하는 test는 key 자체가 없어야 한다.
+          if [ "${EXPECT_APP_ENV}" = "test" ]; then
+            ! grep -q '^APP_ADMIN_PORT=' "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env APP_ADMIN_PORT must be absent in test"; exit 1; }
+          else
+            require_exact_line APP_ADMIN_PORT "APP_ADMIN_PORT=8081"
+          fi
           require_exact_line APP_GEO_MODE "APP_GEO_MODE=${EXPECT_APP_GEO_MODE}"
           require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=${EXPECT_SWAGGER_ENABLED}"
           AI_COUNT=\$(grep -c '^APP_AI_MODE=' "\$ENV_FILE" || true)
@@ -470,6 +476,9 @@ jobs:
           SUBJECT_SCHEMA_SQL="SELECT CASE WHEN (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links') = 3 AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND ((COLUMN_NAME = 'user_lookup_key' AND COLUMN_TYPE = 'binary(32)' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'subject_id' AND COLUMN_TYPE = 'varchar(36)' AND CHARACTER_SET_NAME = 'ascii' AND COLLATION_NAME = 'ascii_bin' AND IS_NULLABLE = 'NO') OR (COLUMN_NAME = 'lookup_key_version' AND COLUMN_TYPE = 'smallint' AND IS_NULLABLE = 'NO'))) = 3 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY') = 1 AND (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND INDEX_NAME = 'PRIMARY' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'user_lookup_key' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1 AND EXISTS (SELECT 1 FROM (SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user_subject_links' AND NON_UNIQUE = 0 AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME = 'subject_id' AND SEQ_IN_INDEX = 1 AND SUB_PART IS NULL) = 1) subject_unique) THEN 1 ELSE 0 END"
           SCHEMA_MATCH=\$(MYSQL_PWD="\$DB_PASS_VAL" docker run --rm --network host -e MYSQL_PWD mysql:8.0 mysql -h"\$DB_HOST_VAL" -P3306 -u"\$DB_USER_VAL" -N -B -e "\$SUBJECT_SCHEMA_SQL" laimory 2>/dev/null) || { echo "PREFLIGHT FAILED: subject mapping schema query failed"; exit 1; }
           [ "\$SCHEMA_MATCH" = "1" ] || { echo "PREFLIGHT FAILED: user_subject_links schema mismatch"; exit 1; }
+          # /intro와 admin이 같은 exact-one 계약을 사용한다. 데이터 수정은 자동화하지 않는다.
+          APP_CONFIG_COUNT=\$(MYSQL_PWD="\$DB_PASS_VAL" docker run --rm --network host -e MYSQL_PWD mysql:8.0 mysql -h"\$DB_HOST_VAL" -P3306 -u"\$DB_USER_VAL" -N -B -e 'SELECT COUNT(*) FROM app_config' laimory 2>/dev/null) || { echo "PREFLIGHT FAILED: app_config count query failed"; exit 1; }
+          [ "\$APP_CONFIG_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: app_config must contain exactly one row"; exit 1; }
           # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
           # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
           # 같은 디렉터리 temp + rename(같은 filesystem이라 원자적)으로 부분 쓰기를 막고 0600·owner를

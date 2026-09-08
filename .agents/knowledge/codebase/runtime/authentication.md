@@ -32,8 +32,12 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 
 ## Current Implementation
 
-두 security chain이 있다.
+세 security chain이 있다.
 
+- 관리자(`/admin/**`, order 50)는 실제 관리자 connector local port와 exact Host 검사를 통과한
+  요청만 받는다. unsafe method는 paired Origin + Redis-backed HTTP session CSRF token이 필수다.
+  별도 로그인·JWT·userId는 없고 네트워크 진입 권한은 SSM IAM이다. 포트 비활성·다른 connector는
+  상시 servlet guard가 Security 앞에서 404로 닫는다. 운영 절차는 deployment.md의 Localhost Admin.
 - OAuth handshake 경로(`/oauth2/**`, `/login/**`)는 Redis-backed HTTP session을 쓴다.
 - 그 외 API chain은 stateless다. `/a/api`(정확한 prefix와 하위 경로만 — `/a/apiary` 미매칭)는
   `authenticated()`, 나머지는 `permitAll()`이다(denyAll로 잠그지 않는다 — 미매핑 404 계약 보존).
