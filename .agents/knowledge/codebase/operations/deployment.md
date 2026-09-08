@@ -104,6 +104,11 @@ workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재�
 
 - `JWT_SECRET` minimum length, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
   `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` presence
+- `APP_ADMIN_PORT=8081`은 dev/prod exact-one, test는 key 부재. `.env` 선반영 없이 새 코드가
+  배포되면 기존 container를 내리기 전에 실패한다.
+- `SELECT COUNT(*) FROM app_config`가 1이어야 한다(dev/prod/test 공통; test는 dev DB 공유).
+  subject schema 검사 뒤·SHA upsert/stop 전에 같은 datasource와 MySQL client로 확인한다.
+  query 실패·0행·복수 행은 fail-closed하고 데이터 병합·삭제는 자동화하지 않는다.
 - 환경 고정값 exact-one: `REDIS_KEY_PREFIX` · `APP_ENV` · `APP_GEO_MODE` · `SWAGGER_ENABLED`가
   각각 정확히 한 줄이고 기대값과 byte 일치. 기대값은 Resolve step이 환경별로 주입한다
   (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`, test는 `test_`/`test`/`kakao`/`true`).
@@ -168,6 +173,8 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 
 - Java 21 multi-stage image, runtime non-root UID 1001
 - application port 8080, host network
+- optional admin port 8081은 `127.0.0.1`에만 bind한다. ALB listener/target group·SG ingress·Docker
+  publish를 추가하지 않는다. 활성화돼도 다른 connector의 `/admin/**`는 404다.
 - management port 9090도 host network에 bind된다. live 접근은
   monitoring source SG가 추가된 뒤에만 허용한다.
 - `json-file` rotation: 10 MB × 3
@@ -176,6 +183,49 @@ Firebase credential은 파일 mount로만 전달하며 즉시 완화책은 `.env
 - ECR lifecycle은 최근 15개 image를 보존
 
 ## Health and Recovery
+
+### Localhost Admin (#461)
+
+코드 배포 전 별도 승인된 작업으로 dev/prod DB의 `app_config` count=1을 확인하고 각 WAS host의
+`/home/ubuntu/app/.env`에 `APP_ADMIN_PORT=8081`을 정확히 한 줄 반영한다. test에는 넣지 않는다.
+이것은 host 수정 권한이 필요한 선행 작업이다. count 위반 데이터의 정리는 별도 승인 없이 하지 않는다.
+코드에는 이 기능이 있어도 실제 배포·host 활성화 여부는 live 상태로 확인해야 한다.
+
+```bash
+aws sso login --profile sandbox
+deploy/monitoring/scripts/open-observability-tunnel.sh admin-dev
+# prod는 WAS가 복수이면 정확한 Name을 명시한다(아래 둘 중 작업 대상 하나를 선택).
+deploy/monitoring/scripts/open-observability-tunnel.sh admin-prod laimory-prod-was-01
+deploy/monitoring/scripts/open-observability-tunnel.sh admin-prod laimory-prod-was-02
+```
+
+로컬 브라우저에서 `http://localhost:8081/admin/`로 접속한다. 원격·로컬 포트 모두 8081로 유지하며
+dev/prod 터널을 같은 로컬 포트에 동시에 열지 않는다. 스크립트는 실행 시 Name으로 조회하고 prod는
+Environment=prod도 요구한다(dev WAS는 해당 태그 없음). 0개·복수 후보 또는 SSM offline이면 실패한다.
+IAM 권한은 EC2/SSM 상태 조회, 선택한 WAS의 `AWS-StartPortForwardingSession` StartSession,
+자신의 session 종료 권한이 필요하다. instance ID·credential은 저장소에 넣지 않는다.
+
+페이지 상단과 저장 확인 dialog의 환경을 확인한다. 약관은 새 버전의 원문을 먼저 게시하고 새 창에서
+200·내용을 확인한 뒤 등록한다. 현재보다 높은 버전만 가능하고 즉시 current가 된다. 앱 설정은
+최소·권장 양의 Long을 변경하며 최소 버전 상승 시 앱 업데이트 요구가 즉시 바뀐다. 성공 뒤 UI가 공개
+`/api/v1/intro`를 다시 읽어 같은 값인지 확인한다. `debugTestMessage`는 읽기 전용이다.
+브라우저는 Long 정밀도를 위해 JSON integer 원문을 사용한다. 큰 정수의 원문 조회를 지원하지 않는
+구형 브라우저는 반올림하지 않고 오류를 표시하므로 최신 브라우저를 사용한다.
+
+접근 통제는 loopback connector + 실제 local-port guard + exact Host allowlist이며 unsafe 요청은
+paired local Origin + CSRF token + JSON body를 모두 요구한다. 관리자 GET은 이 경계를 통과하면
+익명 접근 가능하며 로그인·JWT는 없다. 모든 관리자 endpoint는 공개 OpenAPI에서 제외한다.
+SSM 권한과 해당 host의 local process 권한을 가진 사람은 관리 기능에 접근할 수 있으므로 host 자체가
+신뢰 경계다. access log(environment·Transaction-Id·요청/응답)와 SSM session 기록만 남고,
+요청을 운영자 identity에 결정적으로 연계할 수 없다. 기존 access 로그 보존은 7일이다.
+
+작업 후 브라우저를 닫고 Ctrl+C로 터널을 종료한다. CSRF 세션이 만료되면 새로고침한다. 요청 실패로
+저장 여부가 불확실하면 현재 값/이력을 다시 조회한 뒤 판단하고 자동 재시도하지 않는다.
+기능 비활성 rollback은 별도 승인 후 `APP_ADMIN_PORT` 제거와 **수동 container 재생성** 또는 이전
+image 재배포다. 새 workflow는 dev/prod key 부재를 거절하므로 제거 후 단순 workflow 재실행은 안 된다.
+자동 rollback은 없고 이미 반영된 약관 INSERT·앱 설정 UPDATE는 앱 rollback 후에도 남는다.
+
+### Existing health gates
 
 - deploy gate는 `/api/v1/intro`다. DB 연결과 `app_config` row를 사용한다.
 - `/status`는 DB connection probe지만 deploy gate가 아니다.

@@ -63,6 +63,12 @@ non-empty로 함께 검증한다.
 `environment` metric tag는 `APP_ENV`를 쓰며 미주입 local/integration은 `local`, dev는 `.env`의
 `APP_ENV=dev`가 된다. management endpoint의 실제 네트워크 접근 허용은 환경별 SG가 소유한다.
 
+관리자 connector(#461)는 `APP_ADMIN_PORT`가 있을 때만 `127.0.0.1`에 추가된다. local은 기본 off,
+dev/prod 배포 계약은 `APP_ADMIN_PORT=8081` exact-one, dev DB를 공유하는 test는 key 부재다.
+빈 값·범위 밖·test의 key 존재는 기동 실패다. 실제 포트는 `getLocalPort`로 검사하며 Host나
+forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 host 변경과 container 재생성이 필요하다.
+현재 live 활성화 여부는 host `.env`가 권위이며 코드 존재만으로 활성화됐다고 판단하지 않는다.
+
 monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
 dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
 경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).

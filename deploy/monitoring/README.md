@@ -48,6 +48,11 @@ scripts/open-observability-tunnel.sh grafana   # → http://localhost:3000 (admi
 scripts/open-observability-tunnel.sh kibana    # → http://localhost:5601 (Kibana 자체 로그인)
 ```
 
+같은 wrapper는 WAS 운영 관리 화면의 `admin-dev`·`admin-prod [WAS Name 태그]`도 지원한다(#461).
+관리자는 원격·로컬 포트 모두 8081이며 복수 WAS는 정확한 Name을 골라야 한다. instance 후보가 0개·
+복수이거나 SSM Online이 아니면 세션을 열지 않는다. 선행 `.env` 활성화·접근 통제·변경과 rollback은
+[Localhost Admin 운영 절차](../../.agents/knowledge/codebase/operations/deployment.md#localhost-admin-461)를 따른다.
+
 원시 명령은 다음과 같다(세션이 열려 있는 동안만 localhost가 살아 있고, Ctrl+C로 끊는다).
 
 ```bash
