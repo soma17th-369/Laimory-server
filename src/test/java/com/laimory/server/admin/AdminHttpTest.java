@@ -15,7 +15,7 @@ import com.laimory.server.common.error.GlobalExceptionHandler;
 import com.laimory.server.common.logging.TrustedEdgeRequestFilter;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
-import com.laimory.server.terms.repository.TermDocumentInsertRepository;
+import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermDocumentRegistrationService;
 import com.laimory.server.terms.service.TermDocumentService;
 import java.net.CookieManager;
@@ -64,7 +64,7 @@ class AdminHttpTest {
     @Autowired AdminServer server;
     @Autowired ObjectMapper mapper;
     @MockitoBean TermDocumentService documents;
-    @MockitoBean TermDocumentInsertRepository inserts;
+    @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
     private HttpClient client;
     private JsonNode csrf;
@@ -154,9 +154,9 @@ class AdminHttpTest {
         for (String bad : List.of(json.replace("2.0", "01.0"), json.replace("https:", "http:"), json.replace("true", "false"), json.replace(type, "UNSUPPORTED"))) {
             assertThat(request("POST", "/admin/api/terms", bad, origin(), true).statusCode()).isEqualTo(400);
         }
-        verifyNoInteractions(inserts);
+        verifyNoInteractions(repository);
         doThrow(new DataIntegrityViolationException("PK", new SQLException("duplicate", "23000", 1062)))
-                .when(inserts).insert(any());
+                .when(repository).insert(any(), any(), any(), any(), any());
         HttpResponse<String> duplicate = request("POST", "/admin/api/terms", json, origin(), true);
         assertThat(duplicate.statusCode()).isEqualTo(409);
         assertThat(duplicate.body()).contains("-3003");

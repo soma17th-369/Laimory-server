@@ -4,9 +4,10 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
-import com.laimory.server.terms.repository.TermDocumentInsertRepository;
+import com.laimory.server.terms.repository.TermDocumentRepository;
 import java.net.URI;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -17,9 +18,9 @@ import org.springframework.stereotype.Service;
 public class TermDocumentRegistrationService {
 
     private final TermDocumentService documents;
-    private final TermDocumentInsertRepository inserts;
+    private final TermDocumentRepository repository;
 
-    // INSERT transaction은 별도 repository proxy가 소유한다. rollback이 끝난 후에만 409로 변환한다.
+    // INSERT transaction은 repository proxy가 소유한다. rollback이 끝난 후에만 409로 변환한다.
     public TermDocument register(TermType type, String version, String title, String contentUrl,
                                  boolean publicationConfirmed) {
         if (type == null || title == null || title.isBlank() || title.length() > 255
@@ -36,7 +37,8 @@ public class TermDocumentRegistrationService {
             throw new BusinessException(ExceptionType.TERM_DOCUMENT_VERSION_CONFLICT);
         }
         try {
-            inserts.insert(proposed);
+            repository.insert(proposed.getTermType().name(), proposed.getVersion(), proposed.getTitle(),
+                    proposed.getContentUrl(), LocalDateTime.now());
         } catch (DataIntegrityViolationException exception) {
             // MySQL ER_DUP_ENTRY만 처리한다. 다른 무결성 장애를 중복 버전으로 숨기지 않는다.
             for (Throwable cause = exception; cause != null; cause = cause.getCause()) {

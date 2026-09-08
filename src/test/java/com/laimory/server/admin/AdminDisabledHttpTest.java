@@ -3,7 +3,7 @@ package com.laimory.server.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.appconfig.AppConfigRepository;
-import com.laimory.server.terms.repository.TermDocumentInsertRepository;
+import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermDocumentService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +23,7 @@ class AdminDisabledHttpTest {
     @LocalManagementPort int managementPort;
     @Autowired AdminServer server;
     @MockitoBean TermDocumentService documents;
-    @MockitoBean TermDocumentInsertRepository inserts;
+    @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
 
     @Test

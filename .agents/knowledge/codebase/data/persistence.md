@@ -298,10 +298,11 @@ version page와 새 catalog 행을 함께 추가한다.
 
 관리자 등록(#461)은 **version별 page 게시 → 운영자가 URL 200·내용 확인 → 상위 canonical version
 INSERT** 순서다. `TermDocumentRegistrationService`의 상위 버전 검사는 안내용이며,
-`TermDocumentInsertRepository`가 transaction 안에서 `EntityManager.persist`·flush로 INSERT를 강제한다.
+기존 `TermDocumentRepository.insert`가 transaction 안에서 일반 native INSERT를 실행한다.
 non-null `@EmbeddedId`에서 `save`/`merge`를 사용하면 기존 행을 UPDATE할 수 있어 이 경로에서는 금지한다.
 MySQL duplicate(1062)는 rollback 후 409 `-3003`으로 변환하고 기존 title·URL·감사 값은 보존한다.
-새 행은 기존 JPA auditing을 사용하며 운영자 identity가 없어 `modified_by`는 NULL이다.
+native INSERT는 JPA auditing을 거치지 않으므로 서비스가 캡처한 app 시각 하나를
+`created_at`·`updated_at`에 전달하며, 운영자 identity가 없어 `modified_by`는 NULL로 명시한다.
 수동 seed가 필요하면 같은 게시 순서를 따르고 감사 컬럼을 KST 벽시계 계약에 맞춰 `CONVERT_TZ`로 넣는다.
 
 ```sql

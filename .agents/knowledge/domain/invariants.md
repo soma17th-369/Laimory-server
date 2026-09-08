@@ -324,7 +324,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - 약관 문서 행은 불변이다 — 개정·rollback은 기존 행 UPDATE가 아니라 새 immutable 버전 INSERT다. 게시된
   버전을 바꾸는 API는 없다.
-- 관리자 등록은 `persist` 전용 저장 경로로만 수행한다(`save`/`merge` 금지). 같은 PK는 transaction
+- 관리자 등록은 기존 Repository의 native INSERT로만 수행한다(`save`/`merge` 금지). 같은 PK는 transaction
   rollback 후 409이고 기존 title·contentUrl·감사 값은 바뀌지 않는다.
 - 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
   `build/terms-site`에 생성한다. 그 HTML을 랜딩페이지가 게시하며 Server는 원문 route를 두지 않는다(#418).

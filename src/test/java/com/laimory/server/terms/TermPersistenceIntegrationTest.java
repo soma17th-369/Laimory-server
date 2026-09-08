@@ -8,7 +8,6 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
-import com.laimory.server.terms.repository.TermDocumentInsertRepository;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
 import com.laimory.server.terms.service.TermDocumentService;
@@ -48,8 +47,6 @@ class TermPersistenceIntegrationTest {
 
     @Autowired
     private TermDocumentRepository termDocumentRepository;
-    @Autowired
-    private TermDocumentInsertRepository termDocumentInserts;
     @Autowired
     private TermAgreementRepository termAgreementRepository;
     @Autowired
@@ -122,15 +119,17 @@ class TermPersistenceIntegrationTest {
         TermDocument original = TermDocument.of(TermType.PRIVACY_POLICY, version,
                 "original", "https://example.com/original");
         createdDocumentIds.add(original.getId());
+        LocalDateTime auditNow = LocalDateTime.parse("2026-09-08T19:30:00.123456");
         // 두 호출은 테스트 transaction 없이 각각 repository proxy에서 commit/rollback한다.
-        termDocumentInserts.insert(original);
+        termDocumentRepository.insert(original.getTermType().name(), version, original.getTitle(),
+                original.getContentUrl(), auditNow);
         TermDocument before = termDocumentRepository.findById(original.getId()).orElseThrow();
-        assertThat(before.getCreatedAt()).isNotNull();
-        assertThat(before.getUpdatedAt()).isNotNull();
+        assertThat(before.getCreatedAt()).isEqualTo(auditNow);
+        assertThat(before.getUpdatedAt()).isEqualTo(auditNow);
         assertThat(before.getModifiedBy()).isNull();
 
-        assertThatThrownBy(() -> termDocumentInserts.insert(TermDocument.of(TermType.PRIVACY_POLICY,
-                version, "replacement", "https://example.com/replacement")))
+        assertThatThrownBy(() -> termDocumentRepository.insert(TermType.PRIVACY_POLICY.name(),
+                version, "replacement", "https://example.com/replacement", auditNow.plusDays(1)))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .rootCause().isInstanceOfSatisfying(SQLException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(1062));
