@@ -296,8 +296,14 @@ preflight로 보장하며, 기동 검사에서 재검증하지 않는다.
 분리돼 있어 `content_url`을 코드에서 역산하지 않는다. 원문을 바꾸는 개정은 게시본 덮어쓰기가 아니라 새
 version page와 새 catalog 행을 함께 추가한다.
 
-약관 seed는 **version별 page 게시 → URL 200 확인 → 상위 canonical version INSERT** 순서다. 감사 컬럼은
-저장소의 KST 벽시계 계약에 맞춰 `CONVERT_TZ`로 넣는다.
+관리자 등록(#461)은 **version별 page 게시 → 운영자가 URL 200·내용 확인 → 상위 canonical version
+INSERT** 순서다. `TermDocumentRegistrationService`의 상위 버전 검사는 안내용이며,
+기존 `TermDocumentRepository.insert`가 transaction 안에서 일반 native INSERT를 실행한다.
+non-null `@EmbeddedId`에서 `save`/`merge`를 사용하면 기존 행을 UPDATE할 수 있어 이 경로에서는 금지한다.
+MySQL duplicate(1062)는 rollback 후 409 `-3003`으로 변환하고 기존 title·URL·감사 값은 보존한다.
+native INSERT는 JPA auditing을 거치지 않으므로 서비스가 캡처한 app 시각 하나를
+`created_at`·`updated_at`에 전달하며, 운영자 identity가 없어 `modified_by`는 NULL로 명시한다.
+수동 seed가 필요하면 같은 게시 순서를 따르고 감사 컬럼을 KST 벽시계 계약에 맞춰 `CONVERT_TZ`로 넣는다.
 
 ```sql
 INSERT INTO term_documents
@@ -315,6 +321,12 @@ VALUES
 atomic rename, 검증, rollback 순서는
 [`docs/terms/term-version-composite-key-migration.md`](../../../../docs/terms/term-version-composite-key-migration.md)가
 소유한다.
+
+`app_config`는 정확히 1행이어야 한다. `findTop2ByOrderByAppConfigIdAsc`로 0행·2행 이상을 판별하고,
+공개 `/api/{version}/intro`와 관리자 조회·변경 모두 `AppConfigService`의 같은 exact-one 경계를 사용한다.
+불변식 위반은 500이며 임의 첫 행이나 default를 반환하지 않는다. 배포 pre-stop도 COUNT=1을 요구한다.
+관리자 UPDATE는 transaction 안에서 다시 1행을 조회하고 양의 Long인 최소·권장 버전에
+`minimum <= recommended`를 강제한다. `debugTestMessage`는 읽기 전용이고 감사 DDL은 없다.
 
 `users`(#305)는 회원 상태 컬럼을 가진다 — `status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'`
 (`ACTIVE`|`WITHDRAWAL_PENDING`)와 `withdrawal_requested_at DATETIME(6) NULL`. `provider_user_id`는

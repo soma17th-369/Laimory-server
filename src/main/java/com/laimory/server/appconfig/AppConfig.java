@@ -18,4 +18,13 @@ public class AppConfig {
     private Long recommendAppVersion;
 
     private String debugTestMessage;
+
+    public void updateVersions(Long minimum, Long recommended) {
+        if (minimum == null || recommended == null || minimum <= 0 || recommended <= 0
+                || minimum > recommended) {
+            throw new IllegalArgumentException("App versions must be positive and minimum <= recommended");
+        }
+        minAppVersion = minimum;
+        recommendAppVersion = recommended;
+    }
 }

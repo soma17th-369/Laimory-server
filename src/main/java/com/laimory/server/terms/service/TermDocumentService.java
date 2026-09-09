@@ -31,7 +31,7 @@ public class TermDocumentService {
         return findCurrentDocuments(termTypes);
     }
 
-    private List<TermDocument> findCurrentDocuments(Collection<TermType> termTypes) {
+    public List<TermDocument> findCurrentDocuments(Collection<TermType> termTypes) {
         if (termTypes.isEmpty()) {
             return List.of();
         }
@@ -44,6 +44,17 @@ public class TermDocumentService {
                 .map(documentsByType::get)
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    /** 관리자용 전체 이력: 종류 순서, 같은 종류에서는 숫자 버전 내림차순. */
+    public List<TermDocument> findAllDocuments() {
+        return termDocumentRepository.findDocumentCandidates(List.of(TermType.values())).stream()
+                .sorted((left, right) -> {
+                    int typeOrder = left.getTermType().compareTo(right.getTermType());
+                    if (typeOrder != 0) return typeOrder;
+                    if (left.getVersion().equals(right.getVersion())) return 0;
+                    return left.isNewerThan(right) ? -1 : 1;
+                }).toList();
     }
 
     /**

@@ -28,6 +28,12 @@ endpoint, DTO, HTTP status, error code/message, OpenAPI annotation 또는 transa
 | `/s/api/{version}` | server-to-server API, endpoint별 자체 인증 | 단계별 task token을 endpoint가 강제 |
 | `/a/api/{version}` | bearer-authenticated user API | security chain이 `authenticated()` 강제 — 무토큰/무효 토큰 401 `-2001` |
 | `/t/api/{version}` | dev 전용 테스트 API | 활성화 property가 없으면 controller 빈 자체가 없어 mapping 부재(404). **인증 enforcement는 아직 없다** — `/a/api` 외 permitAll 계약이 그대로 적용된다 |
+| `/admin/**` | localhost 운영 UI·API(비버전·공개 OpenAPI 제외) | 실제 admin local port + exact Host, unsafe method는 paired Origin·CSRF·JSON 필수; 다른 connector/비활성은 404 |
+
+`GET /api/{version}/intro`의 URL·response shape는 유지한다. 다만 `app_config`가 정확히 1행이
+아니면 내부 불변식 위반 500이며 임의의 첫 행을 선택하지 않는다. 관리자 앱 설정 변경도 같은
+exact-one 조회를 사용한다. 관리자 약관의 같거나 낮은 버전·PK 중복은 409 `-3003`,
+Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관하다.
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.

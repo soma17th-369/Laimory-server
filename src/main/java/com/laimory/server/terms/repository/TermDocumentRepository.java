@@ -3,13 +3,34 @@ package com.laimory.server.terms.repository;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.entity.TermDocumentId;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface TermDocumentRepository extends JpaRepository<TermDocument, TermDocumentId> {
+
+    /**
+     * 약관 등록은 INSERT 전용이다 — save(merge)로 기존 불변 행을 덮어쓰지 않는다.
+     * native INSERT는 JPA auditing을 우회하므로 호출자가 감사 시각을 한 번 캡처해 전달한다.
+     * 같은 복합 PK는 DB가 거절하며 modified_by는 운영자 identity 미전파 정책에 따라 NULL이다.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = """
+            INSERT INTO term_documents
+                (term_type, version, title, content_url, created_at, updated_at, modified_by)
+            VALUES (:termType, :version, :title, :contentUrl, :auditNow, :auditNow, NULL)
+            """, nativeQuery = true)
+    void insert(@Param("termType") String termType,
+                @Param("version") String version,
+                @Param("title") String title,
+                @Param("contentUrl") String contentUrl,
+                @Param("auditNow") LocalDateTime auditNow);
 
     /**
      * 요청 종류의 모든 후보 문서. VARCHAR 정렬로 current를 잘못 고르지 않도록 repository는 후보 조회만

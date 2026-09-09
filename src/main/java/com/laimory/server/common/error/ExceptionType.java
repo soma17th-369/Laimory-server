@@ -24,6 +24,7 @@ public enum ExceptionType {
     MVC_REQUEST_REJECTED(-400, HttpStatus.BAD_REQUEST, Level.INFO),
     VALIDATION_FAILED(-400, HttpStatus.BAD_REQUEST, Level.INFO),
     APP_CHALLENGE_REJECTED(-400, HttpStatus.BAD_REQUEST, Level.INFO),
+    ADMIN_REQUEST_REJECTED(-403, HttpStatus.FORBIDDEN, Level.INFO),
     RESOURCE_NOT_FOUND(-404, HttpStatus.NOT_FOUND, Level.INFO),
     METHOD_NOT_ALLOWED(-405, HttpStatus.METHOD_NOT_ALLOWED, Level.INFO),
     UNSUPPORTED_MEDIA_TYPE(-415, HttpStatus.UNSUPPORTED_MEDIA_TYPE, Level.INFO),
@@ -73,6 +74,7 @@ public enum ExceptionType {
     // ── terms ──
     /** 동의 요청의 (termType, version)이 존재하지 않거나 현재 유효 버전이 아님 — 전체 미기록·재조회 신호. */
     STALE_TERM_VERSION(-3002, HttpStatus.CONFLICT, Level.INFO),
+    TERM_DOCUMENT_VERSION_CONFLICT(-3003, HttpStatus.CONFLICT, Level.INFO),
 
     // ── auth ──
     API_AUTHENTICATION_REQUIRED(-2001, HttpStatus.UNAUTHORIZED, Level.INFO),

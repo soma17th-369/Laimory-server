@@ -369,6 +369,9 @@ case "$1" in
     # subject schema preflight의 mysql:8.0 one-shot run은 UID check와 별도 seam으로 제어한다.
     # 성공 시 schema 질의의 exact-shape 판정(기본 1)만 stdout으로 낸다 — row/값 출력 없음.
     case " $* " in
+      *"SELECT COUNT(*) FROM app_config"*)
+        [ "${FAKE_APP_CONFIG_EXIT:-0}" = "0" ] && echo "${FAKE_APP_CONFIG_COUNT:-1}"
+        exit "${FAKE_APP_CONFIG_EXIT:-0}" ;;
       *" mysql:8.0 "*)
         [ "${FAKE_MYSQL_EXIT:-0}" = "0" ] && echo "${FAKE_MYSQL_OUTPUT:-1}"
         exit "${FAKE_MYSQL_EXIT:-0}" ;;
@@ -459,6 +462,7 @@ KAKAO_CLIENT_ID=kakao-id-fixture
 KAKAO_CLIENT_SECRET=${SENTINEL}_kakao-secret
 REDIS_KEY_PREFIX=dev_
 APP_ENV=dev
+APP_ADMIN_PORT=8081
 APP_GEO_MODE=kakao
 SWAGGER_ENABLED=true
 APP_AI_MODE=fake
@@ -590,7 +594,7 @@ mutate_env() {
   chmod 600 "$CASE_DIR/.env"
   cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 }
-for key in REDIS_KEY_PREFIX APP_ENV APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP_TRACING_MODE \
+for key in REDIS_KEY_PREFIX APP_ENV APP_ADMIN_PORT APP_GEO_MODE SWAGGER_ENABLED APP_AI_MODE APP_TRACING_MODE \
   APP_SUBJECT_MODE APP_SUBJECT_SECRET_ARN ; do
   for mutation in missing wrong dup ; do
     new_case; base_env_fixture
@@ -672,6 +676,7 @@ test_env_fixture() {
   base_env_fixture
   PATH=/usr/bin:/bin sed -i.bak \
     -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=test_/' \
+    -e '/^APP_ADMIN_PORT=/d' \
     -e 's/^APP_ENV=dev$/APP_ENV=test/' "$CASE_DIR/.env"
   rm -f "$CASE_DIR/.env.bak"
   cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
@@ -694,6 +699,16 @@ execute_script
 grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5g(test): container must start"
 assert_sha_line "T5g(test)"
 assert_no_sentinel "T5g(test)"
+
+for value in '' 8081 0; do
+  new_case; test_env_fixture
+  echo "APP_ADMIN_PORT=$value" >> "$CASE_DIR/.env"
+  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
+  execute_script
+  [ "$RC" != "0" ] || fail "T461: test must reject any APP_ADMIN_PORT key"
+  assert_env_untouched "T461(test admin)"
+  assert_no_stop_no_run "T461(test admin)"
+done
 
 SCRIPT_FILE="$DEV_SCRIPT_FILE"
 ok "T5f: env branch pins per-environment expectations and fails closed on mixed environments"
@@ -971,6 +986,11 @@ grep -q "PREFLIGHT FAILED: subject mapping schema query failed" "$CASE_DIR/out.l
 run_prestop_failure "subject-schema-mismatch" base "FAKE_MYSQL_OUTPUT=0"
 grep -q "PREFLIGHT FAILED: user_subject_links schema mismatch" "$CASE_DIR/out.log" \
   || fail "T3a(subject-schema-mismatch): diagnostic expected"
+
+run_prestop_failure "app-config-query" base "FAKE_APP_CONFIG_EXIT=1"
+for count in 0 2 3; do
+  run_prestop_failure "app-config-count-$count" base "FAKE_APP_CONFIG_COUNT=$count"
+done
 ok "T5d: subject mode/ARN/runtime-role/secret-read/DB/schema preflights fail closed before stopping the old container"
 
 # --- 10c. T5e: subject secret 내용 계약 — 앱 parse()와 동일 규칙 fail-closed·payload 비출력 ---

@@ -113,6 +113,38 @@ class TermPersistenceIntegrationTest {
         saveDocument(TermType.SENSITIVE_INFORMATION_CONSENT, version);
     }
 
+    @Test
+    void adminInsertPath_duplicateRollsBackWithoutChangingExistingDocumentOrAudit() {
+        String version = nextMajor() + ".0";
+        TermDocument original = TermDocument.of(TermType.PRIVACY_POLICY, version,
+                "original", "https://example.com/original");
+        createdDocumentIds.add(original.getId());
+        LocalDateTime auditNow = LocalDateTime.parse("2026-09-08T19:30:00.123456");
+        // 두 호출은 테스트 transaction 없이 각각 repository proxy에서 commit/rollback한다.
+        termDocumentRepository.insert(original.getTermType().name(), version, original.getTitle(),
+                original.getContentUrl(), auditNow);
+        TermDocument before = termDocumentRepository.findById(original.getId()).orElseThrow();
+        assertThat(before.getCreatedAt()).isEqualTo(auditNow);
+        assertThat(before.getUpdatedAt()).isEqualTo(auditNow);
+        assertThat(before.getModifiedBy()).isNull();
+
+        assertThatThrownBy(() -> termDocumentRepository.insert(TermType.PRIVACY_POLICY.name(),
+                version, "replacement", "https://example.com/replacement", auditNow.plusDays(1)))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .rootCause().isInstanceOfSatisfying(SQLException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(1062));
+
+        // rollback 뒤 새 repository transaction에서 읽어 1행·본문·감사 값 보존을 확인한다.
+        TermDocument after = termDocumentRepository.findById(original.getId()).orElseThrow();
+        assertThat(after.getTitle()).isEqualTo(before.getTitle());
+        assertThat(after.getContentUrl()).isEqualTo(before.getContentUrl());
+        assertThat(after.getCreatedAt()).isEqualTo(before.getCreatedAt());
+        assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
+        assertThat(after.getModifiedBy()).isEqualTo(before.getModifiedBy());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM term_documents WHERE term_type = ? AND version = ?",
+                Integer.class, "PRIVACY_POLICY", version)).isEqualTo(1);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"1", "01.0", "1.01", "1.0.0", "1.10\n", "1.10\r", "1.10\r\n",
             "1.10\u0085", "1.10\u2028", "1.10\u2029", "1.10\f", "1.10\u000B"})
