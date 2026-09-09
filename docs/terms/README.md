@@ -3,10 +3,12 @@
 법무 원문이 없어 비어 있는 약관 catalog를 채우는 작업의 단일 관리 문서다.
 초안 원문은 `drafts/`에 있고, 이 문서는 상태·결정·미결만 관리한다.
 
-- 추적 이슈 #383
-- 최초 작성 2026-08-18, 최종 갱신 2026-09-07
+- 최초 원문 추적 이슈 #383, Crashlytics 공개사항 보완 #468
+- 최초 작성 2026-08-18, 최종 갱신 2026-09-09
 - 기본틀에서 라이모리 문서로 바뀐 내용: [`COMPARISON.md`](COMPARISON.md)
 - 이 문서는 확정한 공개 정책과 약관 원문을 관리한다. 구현 작업의 진행 여부는 별도 이슈에서 관리한다.
+- Crashlytics 수집·국가·법적 근거 대조: [`crashlytics-privacy-review.md`](crashlytics-privacy-review.md)
+- Crashlytics 보완안은 검토 중이다. 이미 전송된 진단 정보의 삭제 요구 처리 절차를 확인하고 제4조·제7조와 대조한 뒤 게시한다. 상세 미결 사항은 검토 문서 제6절 참조.
 - #432 복합키 DB 전환 절차: [`term-version-composite-key-migration.md`](term-version-composite-key-migration.md)
 
 ## 1. 전달 방식 — #320으로 바뀌었다
@@ -22,7 +24,7 @@ Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laim
 | current | 같은 종류에서 major, minor를 숫자로 비교한 가장 큰 version. 새 상위 version INSERT 즉시 전환 |
 | seed 컬럼 | `term_type`, `version`, `title`, `content_url` 4개 + 감사 시각 |
 | URL 생성 | 코드가 역산하지 않는다. **운영 seed가 넣는 값**이다 |
-| 게시된 버전 URL | 불변. 개정은 새 version + 새 URL |
+| 게시된 버전 URL | 원칙적으로 불변. 개정은 새 version + 새 URL. 앱 최초 출시 전 `1.0` 보완은 아래 예외 적용 |
 
 `drafts/`의 Markdown이 원문의 source of truth이고, 게시용 HTML은 거기서 렌더한다.
 
@@ -52,7 +54,10 @@ node docs/terms/scripts/build-site.mjs
 
 로컬 확인은 builder 실행 뒤 `node docs/terms/scripts/serve-site.mjs`로 하고, 출력된 URL을 모바일 폭에서
 검사한다. 운영에서는 랜딩페이지가 같은 HTML을 로그인 없이 전달하고 1년 `immutable` cache header를
-붙인다. canonical URL이 공개된 뒤에는 같은 version 문서를 덮어쓰지 않는다.
+붙인다. canonical URL이 공개된 뒤에는 원칙적으로 같은 version 문서를 덮어쓰지 않는다.
+
+이번 Crashlytics 공개사항은 사용자 결정에 따라 앱 최초 출시 전 기존 `1.0`에 반영한다. 기존 시행일과
+URL을 유지하며 DB/catalog 등록·수정은 수행하지 않는다. 이 예외를 출시 후 문서 개정에 일반화하지 않는다.
 
 **#320이 해결해 준 것** — Markdown 표 확장 문제가 사라졌고(HTML이므로), 표시 방식을 CSS로
 정확히 제어할 수 있게 됐다.
@@ -71,7 +76,7 @@ node docs/terms/scripts/build-site.mjs
 | 4 | 민감정보 처리 동의 | `drafts/04-...` | 타임라인 첫 생성 | 확정 정책·유사 서비스 골격 반영 |
 | 5 | 개인정보 국외 이전 동의 | `drafts/05-...` | 타임라인 첫 생성 | AWS·Langfuse 이전 정책 반영 |
 | 6 | 위치기반서비스 이용약관 | `drafts/06-...` | 위치정보를 포함한 첫 생성 | 확정 정책·신고정보 반영 |
-| 8 | 개인정보 처리방침 | `drafts/08-privacy-policy.md` | — | 일반 개인정보 수집·이용 및 개인위치정보 공개사항 통합 |
+| 8 | 개인정보 처리방침 | `drafts/08-privacy-policy.md` | — | 일반 개인정보·개인위치정보 및 Crashlytics 공개사항 반영. HTML 게시 여부는 #468에서 관리 |
 
 **개인정보 처리방침도 `term_documents`에 넣어 같은 `termTypes` API로 조회한다.** 다만 동의 대상이
 아닌 상시 공개 문서이며, API 응답에 필수/고지 여부를 나타내는 별도 속성은 두지 않는다. 법정 공개
@@ -92,7 +97,7 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 | 동의 강제 | #3~#5는 타임라인 첫 생성 단계의 필수 동의. #6은 위치정보를 포함해 처음 생성할 때 별도로 받고, 미동의 시 위치만 제외한 타임라인은 허용. 각 동의의 거부는 해당 범위를 넘어 로그인·열람·탈퇴를 막지 않음. 동의 확인·차단은 클라이언트(앱) 책임이며 서버는 인증 API에서 동의를 강제하지 않는다(#436 — 재동의 필요 여부는 initializer 후속 #434) | 비례성·위치정보 일부 동의 유보권 |
 | 연령 확인 | 약관 동의와 분리하여 신규 가입 시 기본 해제된 `만 14세 이상입니다` 자기확인 항목을 필수로 제시한다. 생년월일·휴대전화 본인인증 정보는 수집하지 않는다 | 개인정보 최소화·제품 결정 |
 | 동의 요구 시점 | 첫 타임라인 생성 단계 유지. 가입(로그인) 시점으로 올리지 않는다(서버 enforcement gate는 #436으로 제거 — 이 시점 결정은 앱 동의 화면이 소유) | 위와 같음 |
-| 탈퇴 후 파기 | **접수일로부터 5일 이내** | 복구 기능·재가입 악용 여지 없음 |
+| 탈퇴 후 파기 | 회사가 회원 계정에 연결하여 관리하는 개인정보는 **접수일로부터 5일 이내**. Crashlytics에 전송된 진단 정보의 보유·삭제 절차는 #8 제3조·제7조에 별도 공개하며 정보주체의 삭제·처리정지 요구 절차를 유지 | 계정 삭제와 외부 진단 정보의 보유기간을 구분 |
 | 약관 동의 이력 | **회원 탈퇴 접수 후 5일 이내 파기** | 이용계약과 동의 내용 증명에 필요한 기간으로 한정 |
 | 접속기록 보존 | **수집일로부터 3개월** | 공개 보관 정책 |
 | AI 제공받는 자 | **Amazon Web Services, Inc.** | 법무 검토에 따른 제3자 제공 상대방 |
@@ -101,7 +106,11 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 | AgentCore 저장 경로 | AgentCore Memory·online Evaluations·영구 filesystem은 미사용. Runtime session은 유휴 15분·최대 8시간의 임시 환경 | 2026-08-29 AWS 읽기 전용 조회 |
 | AI 관측 데이터 | **Langfuse Cloud Japan과 `SANITIZED` content capture 유지**. Langfuse GmbH의 일본 이전을 #5 별도 동의와 #8 위탁·국외이전에 함께 공개한다. 프로젝트 삭제 또는 이용계약 종료 후 활성 시스템 사본은 30일 이내, 백업 사본은 최대 90일 이내 파기한다. AgentCore CloudWatch 운영로그는 AI 입력·출력 원문 없이 처리 시각·모델·상태·오류·가명 식별자만 90일 보관 | 제품 결정, Langfuse DPA·Cloud Japan·T&C |
 | FCM 국외이전 문서 | Google LLC의 푸시 처리는 **위탁**으로 #8 처리방침에 공개하고, 제3자 제공인 AI 전송만 #5 별도 동의에 둔다 | 개인정보 보호법 제28조의8 제1항 제3호 |
-| FCM 처리 국가 표기 | FCM은 전역 서비스이므로 미국 한 곳으로 한정하지 않는다. **2026-08-29 현재 Google Cloud 지역·운영 중인 Google 데이터센터·Firebase에 이용될 수 있는 Google 계열 재수탁자 처리국가를 합친 41개국**을 #8에 열거하고 공식 목록을 연결한다 | Firebase 공식 개인정보·보안 설명, Google Cloud 지역·데이터센터·재수탁자 목록 |
+| Firebase 처리 국가 표기 | FCM·Crashlytics에 공통 공개 위치 범위를 적용한다. 기존 41개 중 한국은 국외 목록에서 제외한다. 나머지 40개 중 39개는 현재 리전·재수탁 자료로 대조되며 우루과이는 공개된 시설 위치로 유지하되 가동 여부를 확정하지 않는다 | 공식 자료별 국가 대조는 [검토 문서](crashlytics-privacy-review.md) 참조 |
+| Crashlytics 일반 개인정보 | 앱의 가입·로그인·이용 과정에서 발생하는 오류를 진단하는 최소 일반 개인정보를 #8에 공개한다. 제1조의 실제 수집 항목과 제7조의 전송 시점을 대응시킨다 | 제15조 제1항 제4호, 제28조의8 제1항 제3호는 계약 **체결 및 이행**을 포함. 필요성 평가는 [검토 문서](crashlytics-privacy-review.md) 참조 |
+| Crashlytics 수탁자 | 한국 사업자에게 적용되는 공개 표준약관에 따라 Google Asia Pacific Pte. Ltd.를 기재한다. FCM의 Google LLC와 구분한다 | [Crashlytics 이용약관](https://firebase.google.com/terms/crashlytics) 전문 |
+| Crashlytics 보유기간 | 90일 보관 후 활성·백업 시스템에서 삭제 절차 시작. 90일 안에 완전 삭제된다고 약속하지 않는다 | [Firebase 개인정보·보안 설명](https://firebase.google.com/support/privacy) |
+| Crashlytics 거부 안내 | 기기 설정에서 앱 삭제 → 해당 기기의 추가 전송 중단·앱 이용 불가. 이미 전송된 정보의 보유·삭제와 제12조 권리 행사를 별도 안내한다. FCM 알림 해제 안내는 FCM에만 적용한다 | 제28조의8 제1항 제3호 가목·제2항 제5호, 개인정보위 2026 작성지침 45~48쪽. 앱 삭제에 대한 개별 유권해석을 받은 것은 아님 |
 | 항목 선택 | 사진·좌표·알림·일정을 회원이 **건별로** 보고 고른다. 선택 안 한 항목은 서버에 오지 않는다 | |
 | 건강 입력 | `HEALTH`는 **걸음 수(`STEPS`)만** 수집. 건강 이동 거리와 수면 시간은 받지 않는다 | 이동 거리는 `MOVEMENT.distanceMeters`와 중복 |
 | 위치 약관 | 위치정보법은 별개 법이라 별도 약관 추가. 위치정보를 전송 대상으로 고른 최초 시점에 조건부 동의 | 서버는 같은 API로 공개하고, 위치 포함 최초 생성 시점의 동의 확인은 앱 책임(#436 — 서버 gate 제거) |
@@ -152,7 +161,7 @@ Langfuse는 유지한다. Hobby 30일·Core 90일·Pro/Enterprise 3년은 **data
 
 **확보·반영 완료**
 - 개인정보보호위원회 「개인정보 처리방침 작성지침」 2026.4 → #8에 반영
-- 개인정보보호위원회 「알기쉬운 개인정보 처리 동의 안내서」 2022.3 → #3~#5 별도 동의의 고지 구조에 반영
+- 개인정보보호위원회 [「개인정보 처리 통합 안내서」 2025.7](https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS217&mCode=G010030000&nttId=11352) → 계약 체결·이행과 최소 수집의 판단 기준 대조. 종전 2022 동의 안내서는 과거 원문 작성 참고자료로 구분
 - 공정거래위원회 「디지털콘텐츠 이용 표준약관」 → #1 대조·선별 반영 완료
 - KB국민은행 위치기반서비스 이용약관 → #6 반영 완료
 
@@ -185,11 +194,9 @@ D·LOG가 공개한 나머지 문서는 [이용약관](https://softlunch.notion.
 
 - [Firebase 개인정보·보안 설명](https://firebase.google.com/support/privacy)은 FCM 설치 식별자를 삭제 요청 시까지 보관하고 요청 후 최대 180일 안에 제거한다고 밝힌다.
 - [Firebase 메시지 수명 문서](https://firebase.google.com/docs/cloud-messaging/customize-messages/setting-message-lifespan)를 기준으로 알림 메시지 보유기간은 최대 1시간으로 정했다.
-- FCM은 전역 서비스이고 FCM 전용 단일 처리국가를 제공하지 않는다. 2026년 8월 29일 현재
-  [Google Cloud 리전](https://cloud.google.com/about/locations)·[Google 데이터센터](https://datacenters.google/locations/)와
-  [Google Cloud 재수탁자](https://cloud.google.com/terms/subprocessors)의 처리국가를 합쳐 중복을 제거한
-  현재 처리 가능한 41개국을 #8에 직접 열거했다. 위치·재수탁자 목록이 바뀌면 새 국가에서 처리가 시작되기 전에 #8과
-  관계 법령상 필요한 절차를 갱신한다.
+- FCM·Crashlytics는 모두 글로벌 서비스다. 2026-09-09 공식 리전·시설·Firebase 재수탁 자료를
+  대조한 공통 목록과 우루과이의 운영 상태 불확실성은 [Crashlytics 검토 문서](crashlytics-privacy-review.md)에
+  기록했다. 제28조의8 제1항 제3호를 적용하더라도 거부 방법·절차·효과는 #8에 공개한다.
 - 현행 위치정보법 제21조의2·시행령 제25조의2 → 별도 9번째 문서를 추가하지 않고,
   #8에 `개인위치정보 처리에 관한 사항`을 독립 절로 반영
   - 위치기반서비스 이용약관(#6)은 동의와 이용계약을, 개인정보 처리방침(#8)은 법정 공개사항을 맡는다.
