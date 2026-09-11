@@ -24,7 +24,7 @@ jobs:
         run: docker compose up -d --wait --wait-timeout 120
       - name: Run build, integration tests, and coverage
         run: ./gradlew build integrationTest jacocoAllTestReport
-      - name: Verify Flyway initialization and existing DB adoption
+      - name: Verify Flyway adoption and concurrent migrations
         run: bash .github/scripts/test-flyway-migrations.sh
       - name: Upload test reports
         if: always()

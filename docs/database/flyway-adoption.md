@@ -1,4 +1,4 @@
-# Flyway 최초 편입과 스키마 변경
+# Flyway 자동 실행과 기존 DB 편입
 
 Spring Boot 3.5.8이 관리하는 Flyway 11.7.2를 사용한다. 실행 가능한 스키마 원천은
 `src/main/resources/db/migration`의 버전 SQL이다. 배포한 SQL은 수정하지 않고 다음 버전을 추가한다.
@@ -8,16 +8,32 @@ V1은 도입 시점의 업무 테이블 17개와 신규 DB에 필요한 `app_con
 
 | 환경 | 실행 |
 |---|---|
-| local / CI (`docker` profile) | 앱 시작 시 Flyway migrate → Hibernate validate |
-| dev / prod / test (기본 profile) | 앱 Flyway off. 승인된 CLI 실행 → 검증 → 기존 앱 배포 |
+| local / CI / dev / prod / test | 앱 시작 시 Flyway migrate → Hibernate validate → 서버 기동 |
+| 기존 DB 최초 편입 / 빈 운영 DB 준비 | 승인된 CLI로 baseline / bootstrap 후 앱 배포 |
 
 `ddl-auto=validate`는 모든 환경에서 유지한다. Compose는 MySQL DB/사용자만 준비하며 schema init SQL을
 mount하지 않는다. 기존 volume은 자동 초기화/삭제하지 않는다. `spring.sql.init.mode=never`,
-`baseline-on-migrate=false`, `clean-disabled=true`가 공통 정책이다.
+`spring.flyway.enabled=true`, `baseline-on-migrate=false`, `clean-disabled=true`가 공통 정책이다.
+앱은 기존 DataSource를 사용한다. Flyway를 켜려고 앱 `.env`에 새 항목을 추가할 필요는 없다.
+적용한 migration의 checksum 검증과 미적용 SQL 실행이 실패하면 앱도 기동에 실패한다.
 
-기본 profile은 Flyway 자체의 이력 검증도 실행하지 않는다. `deploy.yml`의 subject schema와
-`app_config` 검사 및 health gate는 유지되지만 Flyway pending/checksum을 검사하지는 않는다.
-따라서 아래 CLI 확인은 운영자가 수행하는 배포 전 절차다.
+### 여러 서버와 배포 순서
+
+- 같은 DB를 쓰는 서버는 같은 기본 `flyway_schema_history`와 migration 집합을 사용한다.
+  Flyway 11.7.2는 MySQL named lock으로 실행을 조정한다. 동시 시작 시 잠금을 기다린 프로세스는
+  이력을 다시 확인하여 이미 적용된 SQL을 건너뛴다. 앱 별도 lock이나 leader 선출은 두지 않는다.
+- 기존 `deploy.yml`은 host를 한 대씩 교체하고 health 성공 후 다음으로 진행한다. 실패하면 남은 host는
+  교체하지 않는다. ALB target 해제/재등록은 없어 무중단 배포를 보장하지 않는다.
+- 한 서버가 migration을 실행하는 동안 다른 서버는 구 앱을 실행할 수 있다. SQL은 구 앱과 호환되어야 한다.
+  컬럼 삭제/rename은 새 컬럼 추가 → 양쪽 호환 코드 전환 → 구 앱 제거 → 후속 삭제처럼 단계적으로 진행한다.
+- dev/test는 DB를 공유하므로 test 브랜치의 독자 migration은 금지한다. dev에서 적용·검증한 동일 SQL을
+  test에도 사용하고, 뒤처진 test 앱도 새 schema와 호환되는지 확인한다.
+- 현재 health 대기는 90초이며 migration과 잠금 대기도 이 시간에 포함된다. 오래 걸리는 DDL/대량 갱신은
+  평소 앱 시작에 묶지 않고 승인된 별도 작업으로 수행한다. health timeout은 DB 작업 취소/원복이 아니다.
+
+`deploy.yml`의 앱 시작 전 subject schema와 `app_config` 검사는 유지한다. **빈 운영 DB는 이 검사 전에**
+아래 CLI bootstrap을 완료한다. 향후 이 검사 대상 테이블을 변경하는 PR은 배포 중 구/신 schema 양쪽에서
+preflight가 유효하도록 함께 조정해야 한다. 이번 V1은 업무 DDL을 바꾸지 않아 기존 검사를 통과한다.
 
 ## 1. 실행 대상과 권한 확인
 
@@ -26,13 +42,18 @@ AWS 조사는 먼저 `sandbox` SSO를 확인한 뒤 조회·SSM 비변경 진단
 
 - 실제 endpoint와 DB 이름, MySQL 버전, 현재 앱 revision을 확인한다. 저장소 설정만으로 live 상태를 단정하지 않는다.
 - dev와 test는 같은 DB를 공유하므로 baseline과 migration 이력도 하나다. prod DB는 별도다.
-- CLI 계정은 대상 schema의 필요한 CREATE/ALTER/INDEX/REFERENCES 및 history·업무 SQL에 필요한 DML 권한을
-  확인한다. DROP 등 추가 권한은 실제 SQL이 요구할 때만 검토한다. 앱 계정 권한을 임의로 넓히지 않는다.
-- 운영에 `SPRING_FLYWAY_ENABLED=true`나 `docker` profile이 설정돼 있지 않은지 확인한다.
-- 스키마 변경 배포는 머지 전에 기존 `DEPLOY_PAUSED`를 사용하고 진행 중인 배포가 없는지 확인한다.
-  pause는 이미 시작한 run을 멈추지 않는다. 검증 뒤 승인된 SHA/digest로 기존 수동 deploy-existing을 실행한다.
+- 앱 DataSource 계정에는 대상 schema의 migration/history에 필요한 CREATE/ALTER/INDEX/REFERENCES 및
+  SELECT/DML 권한이 필요하다. 실제 권한을 조회하고, 부족한 권한은 대상과 영향을 제시한 별도 승인 후 부여한다.
+  DROP 등은 실행할 SQL이 요구할 때만 검토한다. CLI 계정도 수행할 baseline/bootstrap 권한을 확인한다.
+- 앱 `.env`에 자동 실행을 끄는 `SPRING_FLYWAY_ENABLED=false` override가 없는지 확인한다.
+  운영에서 `docker` profile은 여전히 금지한다(로컬 DB/fixture 설정이 함께 켜진다).
+- 최초 편입 또는 maintenance는 머지 전에 기존 `DEPLOY_PAUSED`를 사용하고 진행 중인 배포가 없는지 확인한다.
+  pause는 이미 시작한 run을 멈추지 않는다. 편입 완료 후 승인된 SHA/digest를 배포하고 자동 배포를 재개한다.
 
-## 2. 같은 버전 CLI와 승인된 SQL 준비
+## 2. 최초 편입용 CLI와 승인된 SQL 준비
+
+이 CLI 준비는 최초 baseline/빈 운영 DB bootstrap 또는 별도로 승인한 maintenance에 필요하다.
+일반 배포에서는 앱이 migration을 실행하므로 매번 CLI를 실행하지 않는다.
 
 테스트와 운영 CLI는 다음 공식 이미지로 고정한다. 공식 이미지에는 MariaDB JDBC 2.7.11이 들어 있으므로
 앱 JAR의 MySQL Connector/J를 추가 mount하고 드라이버를 명시한다. MySQL 연결 및 아래 baseline/migrate/validate
@@ -117,40 +138,39 @@ legacy 테이블 삭제나 데이터 보정을 섞지 않는다. 제약 이름 �
 
 ```bash
 flyway -baselineVersion=1 baseline
-flyway info
-flyway validate
-flyway migrate
+flyway -target=1 validate
 flyway info
 ```
 
-history에는 `BASELINE` 버전 1이 기록되어야 한다. V1의 CREATE/INSERT는 실행하지 않는다. 이 도입 release에
-후속 migration이 없다면 migrate는 변경 없이 종료한다. `baseline`은 빠진 컬럼을 보정하거나 기존 데이터가
-올바른지 검증하는 기능이 아니다. 변경 전후 데이터·운영 설정 보존과 failed/pending 없음 확인 뒤 앱을 배포한다.
+history에는 `BASELINE` 버전 1이 기록되어야 한다. V1의 CREATE/INSERT는 실행하지 않는다.
+`baseline`은 빠진 컬럼을 보정하거나 기존 데이터가 올바른지 검증하는 기능이 아니다.
+변경 전후 데이터·운영 설정 보존과 이력을 확인한 뒤 앱을 배포한다. 현재 V1 도입 release에는 후속 SQL이 없어
+앱의 migrate는 변경 없이 끝난다. 이후 버전은 앱이 자동 실행한다. `target=1`은 최초 편입 확인에만 사용한다.
 
 기존 local volume도 동일하다. `docker compose up -d`로 기존 DB를 기동하고 구조 대조 후 명시 baseline한다.
 데이터를 버려도 된다는 사용자 선택이 있을 때만 별도로 초기화한다. 테스트 script는 기존 volume을 사용하지 않는다.
 
 ## 4. 빈 DB 및 이후 변경
 
-빈 DB는 baseline 없이 `flyway migrate`로 V1부터 실행한다. baseline을 먼저 하면 V1이 생략된다.
-신규 운영 DB는 앱 배포의 subject schema/`app_config` preflight **전에** CLI 초기화를 끝내야 한다.
-
-이후 SQL은 `V2__description.sql`, `V3__description.sql`로 추가한다. 배포된 파일은 불변이며 과거 오류도
-새 버전으로 고친다. 같은 번호를 쓴 PR끼리는 어느 공유 DB에도 실행되기 전에 번호를 조정한다.
-dev/test는 동일한 migration 집합을 사용하고, test에서 공유 DB의 독자적인 schema 실험을 하지 않는다.
+빈 local/CI DB는 앱 시작 시 V1부터 실행한다. baseline을 먼저 하면 V1이 생략되므로 등록하지 않는다.
+신규 운영 DB는 subject schema/`app_config` preflight **전에** 아래 CLI 초기화를 한 번 완료한다.
 
 ```bash
-flyway info
-# 대상·변경 SQL을 확인하고 실행 승인 후
+# 빈 운영 DB의 최초 bootstrap: 대상·SQL 확인과 실행 승인 후
 flyway migrate
 flyway validate
 flyway info
 ```
 
-failed/pending이 없는지 확인한 후 SQL과 같은 commit의 앱 image를 기존 배포 절차로 실행한다.
-nullable 컬럼 추가 등 구 앱과 호환되는 변경은 선적용할 수 있다. 삭제/rename 등은 구 앱이 사용하는
-schema를 깨므로 단계적으로 전환하거나, 그 DB를 쓰는 모든 서버를 중단하는 maintenance 순서를 별도로 정한다.
-마이그레이션 동시 실행 잠금이 구 앱과 새 schema의 호환성을 보장하지는 않는다.
+이후 일반 변경은 다음 순서다.
+
+1. `V2__description.sql`, `V3__description.sql`을 추가하고 구 앱과 호환되는지 확인한다.
+2. CI에서 빈 DB와 이전 버전 + 대표 데이터의 업그레이드를 검증한다.
+3. 기존 배포로 새 앱을 기동한다. Flyway가 checksum 검증과 미적용 SQL을 실행하고 JPA가 검증한다.
+4. health 성공 후 다음 host로 진행하고, 모든 host의 성공 및 migration 이력을 확인한다.
+
+배포된 SQL은 수정하지 않고 새 버전으로 고친다. 같은 번호를 사용한 PR끼리는 어느 공유 DB에도 실행되기
+전에 번호를 조정한다. 잠금은 중복 실행을 방지하지만 구 앱과 새 schema의 호환성을 보장하지 않는다.
 
 ## 5. 실패와 복구
 
@@ -170,8 +190,10 @@ docker compose up -d --wait
 ./gradlew build integrationTest jacocoAllTestReport
 ```
 
-첫 script는 빌드된 앱 JAR의 JDBC를 사용해 독립 MySQL에서 신규 생성, 이전 스키마와 DDL 동일성, 재실행, 명시 baseline과 합성 데이터 보존,
-자동 baseline 거부 및 checksum 불일치를 검증하고 만든 리소스만 정리한다.
+첫 script는 앱 JAR의 JDBC로 독립 MySQL에서 두 프로세스의 최초 생성, 이전 스키마와 DDL 동일성, 재실행,
+명시 baseline과 데이터 보존, 자동 baseline 거부, checksum 불일치를 검증한다. 최초 편입 검증은 V1에 고정한다.
+임시 V2에서는 첫 migration의 실행과 둘째의 native lock 대기를 겹치게 한 뒤, 이력/결과 한 건과 양쪽 성공을
+확인한다. 테스트용 V2는 앱에 포함되지 않는다. 만든 컨테이너/네트워크만 정리한다.
 `src/test/resources/db/legacy/pre-flyway-schema.sql`은 도입 직전 스냅샷으로 동결한다. 운영 초기화에 쓰거나
 이후 스키마에 맞춰 갱신하지 않는다. 실제 V2부터는 해당 변경에 이전 버전과 대표 데이터를 최신으로 올리는
 업그레이드 검증을 추가한다. CI의 앱 DB는 Spring Flyway가 생성하고 기존 `/intro`·JPA 통합 테스트가 검증한다.
@@ -179,6 +201,7 @@ docker compose up -d --wait
 ## 근거
 
 - [Spring Boot 3.5 초기화](https://docs.spring.io/spring-boot/3.5/how-to/data-initialization.html)
+- [Flyway 11.7.2 MySQL 잠금](https://github.com/flyway/flyway/blob/flyway-11.7.2/flyway-database/flyway-mysql/src/main/java/org/flywaydb/database/mysql/MySQLNamedLockTemplate.java)
 - [Flyway baseline](https://documentation.red-gate.com/fd/baseline-277578867.html)
 - [버전 SQL 관리](https://documentation.red-gate.com/fd/versioned-migrations-273973333.html)
 - [MySQL 트랜잭션 한계](https://documentation.red-gate.com/fd/migration-transaction-handling-273973399.html)

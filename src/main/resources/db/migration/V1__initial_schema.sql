@@ -1,6 +1,6 @@
 -- Flyway V1: 기존 스키마의 최초 생성 기준. 배포 후 수정하지 않고 다음 버전 SQL을 추가한다.
 -- 빈 DB만 이 SQL을 실행한다. 기존 DB는 구조 확인 후 명시적으로 baselineVersion=1을 등록한다.
--- local/CI는 앱 시작 시, dev/prod는 배포 전에 CLI로 실행한다(ddl-auto=validate 유지).
+-- 모든 환경에서 앱 시작 시 실행한다(ddl-auto=validate 유지). 신규 운영 DB bootstrap은 runbook을 따른다.
 
 -- 기존 appconfig 도메인 테이블 (AppConfig 엔티티 대응)
 CREATE TABLE app_config (

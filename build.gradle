@@ -25,7 +25,7 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	// 스키마 생성/변경 이력(#472). 버전은 Boot BOM 관리; 운영은 CLI, local/CI는 앱 시작 시 실행.
+	// 스키마 생성/변경 이력(#472). 버전은 Boot BOM 관리; 모든 환경에서 앱 시작 시 실행.
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly 'org.flywaydb:flyway-mysql'
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'

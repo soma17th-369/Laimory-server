@@ -21,8 +21,8 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - Java 21, Spring Boot 3.5.8과 repository의 Gradle Wrapper를 사용한다.
 - persistence runtime은 MySQL 8과 Redis 7이다.
 - Hibernate는 `ddl-auto=validate`이며 schema를 자동 생성·변경하지 않는다.
-- Flyway 11.7.2(Boot BOM)가 schema를 관리한다. local/CI의 `docker` profile만 앱 시작 시 실행하고,
-  dev/prod/test는 자동 실행을 끈다. 운영은 승인된 CLI migration 후 기존 배포 절차를 따른다.
+- Flyway 11.7.2(Boot BOM)가 모든 환경의 앱 시작 시 schema를 관리한다. 여러 서버는 공통 DB/history와
+  native MySQL 잠금으로 실행을 조정한다. SQL은 배포 중인 구 앱과 호환되어야 한다.
 - Compose는 schema를 초기화하지 않는다. 이력 없는 기존 DB는 구조 확인 후 명시 baseline으로 편입한다.
 - application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 `CacheConfig`의 Spring
   Cache Redis manager 배선 하나이며(#429), 같은 `app.redis.key-prefix`를 캐시 키에 붙인다.
@@ -65,7 +65,7 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 
 ## Known Gaps
 
-- 자동 schema rollout, production deploy workflow, application automatic rollback, distributed tracing과 완성된
+- 비호환 schema 변경의 자동 전환/복구, production deploy workflow, application automatic rollback, distributed tracing과 완성된
   live monitoring/alerting rollout이 없다.
 
 ## Update When

@@ -23,8 +23,8 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 ### MySQL
 
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
-Flyway 11.7.2가 schema를 관리한다. local/CI는 `docker` profile의 앱 시작 시 적용하고,
-배포 환경은 앱 Flyway를 끈 채 승인된 CLI로 먼저 적용한다.
+Flyway 11.7.2가 모든 환경에서 앱 시작 시 schema를 관리한다. 기존 DataSource를 사용하며
+migration 실행·이력 검증에 실패하면 JPA 초기화와 앱 기동도 실패한다.
 
 이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
 계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
@@ -70,14 +70,15 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 `db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
 Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.
 baseline은 V1 SQL이나 seed를 재실행하지 않는다. 이미 적용한 SQL은 수정하지 않고 새 버전을 추가한다.
-dev/prod DB 변경은 앱 배포 전에 승인된 CLI의 `migrate → validate → info`로 적용 상태를 확인한다.
+일반 변경은 앱 시작 시 이력을 확인하고 미적용 SQL을 실행한다. 여러 서버는 같은 DB/history와 native
+MySQL 잠금으로 중복 실행을 방지한다. CLI는 최초 편입/빈 운영 DB bootstrap/승인된 maintenance에 사용한다.
 실제 편입·후속 변경 절차는 [Flyway runbook](../../../../docs/database/flyway-adoption.md)이 소유한다.
 dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/workflows/deploy.yml` — 구 컨테이너
-중단 후 새 컨테이너 기동), 스키마 변경 PR은 **머지 전에** `DEPLOY_PAUSED`로 자동 배포를 멈추고 진행 중인
-배포가 없는지 확인한다. 승인된 image의 SQL을 적용·검증한 뒤 그 image를 기존 수동 배포 절차로 실행한다.
-필요한 DDL 없이 앱을 배포하면 `ddl-auto=validate` 기동 실패로 dev가 다운될 수 있다.
-테이블 rename은 구 컨테이너를 즉시 깨뜨리므로(옛 이름 매핑이 table not found) 선적용이 아니라 구 컨테이너
-중단~신 컨테이너 기동 사이에 실행해야 한다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
+중단 후 새 컨테이너 기동), 최초 편입과 maintenance는 **머지 전에** `DEPLOY_PAUSED`와 진행 중인 배포
+없음을 확인한다. 이후 호환 가능한 일반 migration은 기존 자동 배포에서 실행한다.
+구조/권한 불일치나 SQL 실패는 기동 실패로 이어진다. 첫 host가 실패하면 다음 host는 교체하지 않는다.
+테이블 rename은 DB를 공유하는 구 앱을 깨뜨리므로 단계적으로 전환하거나 해당 DB를 사용하는 구 앱을
+모두 중단하는 maintenance가 필요하다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
 **제약 이름은 옛 이름 그대로 남기므로**, 신규 DB의 제약 이름과 맞추려면 후속 migration의 `ALTER TABLE ... DROP
 FOREIGN KEY ... ADD CONSTRAINT ...` 한 문장을 따로 실행해야 신규 DB와 기존 DB가 같아진다(이 ALTER는
 애플리케이션이 제약 이름을 읽지 않으므로 cutover 창 밖에서 실행해도 안전하다).
@@ -498,7 +499,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
 
 ## Known Gaps
 
-- 운영 Flyway 실행은 수동이며 자동 schema rollout은 없다. 실제 DB 편입 여부는 live 이력으로 확인한다.
+- 비호환 schema의 자동 전환/복구는 없다. 실제 DB 최초 편입 여부는 live 이력으로 확인한다.
 - finalized photo와 presign 후 staging이 없는 orphan object는 cleanup 대상이 아니다.
 - authenticated auditor propagation이 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제 사이의 공통 admission과 경합 정합성 보장은 미구현이다.
