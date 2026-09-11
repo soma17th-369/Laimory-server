@@ -44,7 +44,9 @@ AI와 geo는 별도 override가 없으면 noop이다.
 
 - 기본 profile은 remote DB/Redis와 필수 JWT/OAuth 환경변수를 기대하므로 plain `./gradlew bootRun`은
   일반적인 local 명령이 아니다.
-- Compose가 `schema.sql`을 적용하는 시점은 빈 MySQL volume 최초 기동뿐이다.
+- Compose는 DB/사용자를 준비하고, 앱이 Flyway로 migration과 필수 `app_config` seed를 적용한다.
+- 이력 없는 기존 volume은 [Flyway 편입 절차](../../../../docs/database/flyway-adoption.md)에 따라
+  구조를 확인한 뒤 명시 baseline한다. 데이터 보존 여부를 확인하지 않고 volume을 삭제하지 않는다.
 - local Redis는 authentication/TLS를 사용하지 않는다.
 - AWS client는 credential 없이 생성될 수 있지만 실제 presign/delete에는 유효한 AWS 설정이 필요하다.
 - CDN domain이 비어 있으면 생성한 photo URL은 실제 serving URL이 아니다.
@@ -52,7 +54,7 @@ AI와 geo는 별도 override가 없으면 noop이다.
 
 ## Known Gaps
 
-local setup을 자동으로 reset/migrate하는 task는 없다. 기존 volume schema 변경은 수동으로 다룬다.
+자동 DB reset task는 없다. 기존 Flyway 관리 volume은 앱 시작 시 미적용 migration만 실행한다.
 
 ## Update When
 

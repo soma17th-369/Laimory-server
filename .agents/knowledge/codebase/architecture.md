@@ -51,7 +51,8 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 
 저장 경계:
 
-- MySQL은 JPA와 `ddl-auto=validate`를 사용한다. schema 변경은 애플리케이션이 수행하지 않는다.
+- MySQL은 JPA와 `ddl-auto=validate`를 사용한다. 모든 환경에서 앱 시작 시 Flyway가 미적용 SQL을
+  실행한 뒤 JPA가 검증한다. 여러 서버는 같은 DB/history와 Flyway의 MySQL 잠금을 사용한다.
 - application-owned Redis 접근은 `RedisGateway`를 거친다(승인 예외: `CacheConfig`의 Spring Cache
   Redis manager — 같은 key prefix를 붙인다).
 - 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager,
@@ -128,7 +129,7 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 
 - 실 AI(Laimory-AI)의 서버간 입력·결과 호출 구현은 별도 저장소 진행분이다(서버 측 http dispatcher와
   입력·결과 endpoint는 구현됨).
-- schema migration framework가 없다.
+- 기존 DB 최초 baseline과 비호환/장시간 schema 변경은 별도 운영 절차다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제의 교차 작업 concurrency control은 미구현이다.
 
 ## Update When

@@ -21,7 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
  * 배포 경로를 증명하지 못하는 구간).
  *
  * <p>테스트는 row를 삽입·삭제하지 않는 read-only 검증이다. 매 run fresh volume을 만드는 CI에서는
- * non-empty 전제 확인이 곧 schema.sql seed 실행 증명을 겸하고, 기존 local volume에서는 현재 row를
+ * non-empty 전제 확인이 곧 Flyway seed 실행 증명을 겸하고, 기존 local volume에서는 현재 row를
  * 그대로 사용한다(비어 있으면 실제 endpoint와 같이 실패).
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest

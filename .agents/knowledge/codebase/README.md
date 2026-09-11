@@ -21,7 +21,7 @@ Laimory 서버의 구조, 런타임 흐름, 외부·내부 계약, 저장소와 
 | [API interface](interfaces/api.md) | endpoint·DTO·envelope·error·OpenAPI를 바꿀 때 | `*Api.java`, controllers, DTOs, error handling | 공개 HTTP 계약이 바뀔 때 | API interfaces·tests·runtime OpenAPI | controller/contract tests |
 | [AI contract](interfaces/ai-contract.md) | AI staging·dispatch·callback 계약을 바꿀 때 | dispatcher, staging, assembler, callback | write-then-notify 계약이나 인증이 바뀔 때 | code/schema/tests | fake unit/wiring + callback integration tests |
 | [External integrations](interfaces/external-integrations.md) | OAuth provider·Kakao Maps·S3/CDN을 바꿀 때 | provider/storage code, properties | 외부 요청·retry·보안 계약이 바뀔 때 | adapter/config/tests | provider/storage tests |
-| [Persistence](data/persistence.md) | Entity·schema·repository·Redis key를 바꿀 때 | entities, repositories, `schema.sql`, Redis stores | shape·key·TTL·migration 절차가 바뀔 때 | schema/entities/stores | unit + integration tests |
+| [Persistence](data/persistence.md) | Entity·schema·repository·Redis key를 바꿀 때 | entities, repositories, `db/migration/*.sql`, Redis stores | shape·key·TTL·migration 절차가 바뀔 때 | schema/entities/stores | unit + integration tests |
 | [Local development](operations/local-development.md) | 로컬에서 앱과 의존성을 실행할 때 | Gradle, properties, Compose | 로컬 profile·명령·dependency가 바뀔 때 | config/Compose | `docker compose config --quiet` |
 | [Testing](operations/testing.md) | 검증 범위·CI·integration test가 필요할 때 | Gradle tasks, test tags, CI | test task·tag·CI 범위가 바뀔 때 | build/tests/workflow | 해당 Gradle task |
 | [Environments](operations/environments.md) | local/dev/prod 차이와 환경변수를 다룰 때 | properties, workflow, live configuration | profile·mode·주입 방식이 바뀔 때 | config/workflow/live state | context boot·config search |

@@ -27,6 +27,12 @@ automation을 바꿀 때 읽는다.
 | prod | default | prod MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
+Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 새 `.env` 항목은 필수가 아니며
+기존 DataSource 계정의 migration DDL 권한을 최초 편입 전에 확인한다. dev/test는 DB와 migration 이력을
+공유하므로 test 브랜치의 독자 SQL을 실행하지 않고 동일한 migration 집합을 사용한다.
+모든 환경에서 Hibernate `ddl-auto=validate`를 유지하며, 기존 DB 최초 baseline은 별도 명시 작업이다.
+실제 환경 편입 상태는 [운영 절차](../../../../docs/database/flyway-adoption.md)로 확인한다.
+
 배포된 환경의 runtime 값은 전부 host `/home/ubuntu/app/.env`가 소유한다(workflow `-e` 주입 없음).
 deploy pre-flight는 환경 고정값(`REDIS_KEY_PREFIX`·`APP_ENV`·`APP_GEO_MODE`·`SWAGGER_ENABLED`)과
 `APP_AI_MODE`(`noop|fake|http|agentcore`)/`APP_PUSH_MODE`/`APP_TRACING_MODE`,

@@ -19,7 +19,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   `UserMemoryUpdateResultService`, `UserMemoryUpdatePendingStore`/`UserMemoryUpdateTaskStore`
 - `DailyTimelineService`(읽기), `TimelineDeletionService`/`TimelineDeletionTransactionService`
 - timeline entities(junction 포함), repositories, Redis stores and integration tests
-- `src/main/resources/db/schema.sql`, `application*.properties`
+- `src/main/resources/db/migration/*.sql`, `application*.properties`
 
 ## Current Implementation
 
