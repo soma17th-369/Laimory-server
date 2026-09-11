@@ -11,6 +11,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 ## Authoritative Sources
 
 - `build.gradle`
+- `.github/scripts/test-flyway-migrations.sh`, `src/test/resources/db/legacy/pre-flyway-schema.sql`
 - `.github/workflows/ci.yml`, `.github/scripts/test-monitoring-deploy-contract.sh`
 - `Dockerfile`
 - tests의 `@Tag("integration")`, `@ActiveProfiles("docker")`
@@ -24,10 +25,14 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 | integration | `./gradlew integrationTest` | local MySQL·Redis |
 | unit coverage | `./gradlew test jacocoTestReport` | 없음 |
 | combined coverage | `./gradlew build integrationTest jacocoAllTestReport` | local MySQL·Redis |
+| Flyway 최초 생성·기존 DB 편입 | `./gradlew bootJar` 후 `bash .github/scripts/test-flyway-migrations.sh` | 독립 Docker MySQL·Flyway CLI + 앱 JDBC |
 
 - `test`는 `integration` tag를 제외한다.
 - `integrationTest`는 `integration` tag만 실행한다.
 - integration tests는 `docker` profile로 실제 local MySQL·Redis에 연결한다.
+- CI의 빈 앱 DB는 Spring Flyway가 생성하고 JPA가 검증한다. 별도 migration 검증 script는 기존
+  스키마 fixture와 V1 DDL을 비교하고 baseline의 데이터 보존·재실행·checksum 실패를 검증한다.
+  script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름
   (dispatch→입력→결과→콜백)의 실제 MySQL·Redis 계약은 `TimelineAiTaskFlowIntegrationTest`(integration)가
   검증한다.

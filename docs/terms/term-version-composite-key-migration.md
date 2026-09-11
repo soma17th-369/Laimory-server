@@ -1,8 +1,9 @@
 # #432 약관 복합키 전환 runbook
 
 `term_documents`/`term_agreements`의 인조 ID와 `effective_at`을 제거하면서 기존 문서와 동의 이력을
-보존하는 maintenance cutover 절차다. `schema.sql`은 기존 DB를 변경하지 않으므로 dev/prod는 이 절차가
-필요하다.
+보존하는 maintenance cutover 절차다. 이 전환이 끝나지 않은 기존 DB는 아래 절차가 필요하다.
+Flyway V1은 이 전환 이후의 최초 생성 기준이며 기존 DB에서 재실행하지 않는다. 전환 완료 후
+[Flyway 편입 절차](../database/flyway-adoption.md)에 따라 baseline을 등록한다.
 
 이 문서는 실행 승인이 아니다. 환경별 DB·host 변경 전에는 대상, 영향(API 중단), rollback을 다시 제시하고
 명시적 승인을 받는다. 아래 이름의 shadow/legacy/failed table이 이미 있으면 재사용하지 말고 중단한다.
@@ -238,8 +239,8 @@ old schema와 row count를 확인한 뒤 이전 image digest를 기동한다. Se
 
 ## 5. rollback 창 종료
 
-go/no-go 승인 뒤에만 legacy child→parent를 삭제한다. shadow 전용 FK/CHECK/index 이름을 fresh
-`schema.sql`의 이름으로 맞추려면 legacy 삭제 후 별도 `ALTER TABLE`로 교체하고 다시 `SHOW CREATE TABLE`을
+go/no-go 승인 뒤에만 legacy child→parent를 삭제한다. shadow 전용 FK/CHECK/index 이름을
+신규 DB DDL의 이름으로 맞추려면 legacy 삭제 후 별도 `ALTER TABLE`로 교체하고 다시 `SHOW CREATE TABLE`을
 대조한다. prod backup/binlog가 새 schema 이후 정상 복구 좌표를 남긴 것도 확인한다. legacy/failed table
 삭제는 복구 불가능한 정리이므로 별도 승인을 받아 실행한다.
 

@@ -12,7 +12,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 ## Authoritative Sources
 
 - timeline/auth/user의 entity, enum, DTO, service와 tests
-- `src/main/resources/db/schema.sql`
+- `src/main/resources/db/migration/*.sql`
 - `*Api.java`, security/OpenAPI config
 - [Timeline draft runtime](../codebase/runtime/timeline-draft.md)
 - [Authentication runtime](../codebase/runtime/authentication.md)

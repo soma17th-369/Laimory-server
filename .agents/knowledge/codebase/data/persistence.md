@@ -10,7 +10,8 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 
 ## Authoritative Sources
 
-- `src/main/resources/db/schema.sql`
+- `src/main/resources/db/migration/*.sql`
+- `docs/database/flyway-adoption.md`
 - `src/main/resources/application*.properties`
 - `src/main/java/com/laimory/server/**/entity/*.java`, repositories
 - `BaseEntity`, `JpaAuditingConfig`, `RedisGateway`
@@ -22,7 +23,8 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 ### MySQL
 
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
-애플리케이션은 schema를 생성·변경하지 않는다.
+Flyway 11.7.2가 schema를 관리한다. local/CI는 `docker` profile의 앱 시작 시 적용하고,
+배포 환경은 앱 Flyway를 끈 채 승인된 CLI로 먼저 적용한다.
 
 이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
 계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
@@ -65,15 +67,18 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
-`schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
-`CREATE TABLE IF NOT EXISTS`라 기존 table을 변경하지 않으며 migration framework는 없다.
-기존 dev/prod DB 변경은 애플리케이션 배포 전에 수동 DDL과 검증이 필요하다.
+`db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
+Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.
+baseline은 V1 SQL이나 seed를 재실행하지 않는다. 이미 적용한 SQL은 수정하지 않고 새 버전을 추가한다.
+dev/prod DB 변경은 앱 배포 전에 승인된 CLI의 `migrate → validate → info`로 적용 상태를 확인한다.
+실제 편입·후속 변경 절차는 [Flyway runbook](../../../../docs/database/flyway-adoption.md)이 소유한다.
 dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/workflows/deploy.yml` — 구 컨테이너
-중단 후 새 컨테이너 기동), 스키마 변경 PR의 live DDL은 **머지 전에** dev DB에 적용해야 한다.
-미적용 상태로 머지하면 새 앱이 `ddl-auto=validate` 기동 실패로 dev가 다운된다.
+중단 후 새 컨테이너 기동), 스키마 변경 PR은 **머지 전에** `DEPLOY_PAUSED`로 자동 배포를 멈추고 진행 중인
+배포가 없는지 확인한다. 승인된 image의 SQL을 적용·검증한 뒤 그 image를 기존 수동 배포 절차로 실행한다.
+필요한 DDL 없이 앱을 배포하면 `ddl-auto=validate` 기동 실패로 dev가 다운될 수 있다.
 테이블 rename은 구 컨테이너를 즉시 깨뜨리므로(옛 이름 매핑이 table not found) 선적용이 아니라 구 컨테이너
 중단~신 컨테이너 기동 사이에 실행해야 한다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
-**제약 이름은 옛 이름 그대로 남기므로**, `schema.sql`의 제약 이름을 함께 바꿨다면 `ALTER TABLE ... DROP
+**제약 이름은 옛 이름 그대로 남기므로**, 신규 DB의 제약 이름과 맞추려면 후속 migration의 `ALTER TABLE ... DROP
 FOREIGN KEY ... ADD CONSTRAINT ...` 한 문장을 따로 실행해야 신규 DB와 기존 DB가 같아진다(이 ALTER는
 애플리케이션이 제약 이름을 읽지 않으므로 cutover 창 밖에서 실행해도 안전하다).
 
@@ -456,7 +461,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
 
 ## Invariants
 
-- entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
+- entity 변경에는 새 버전 migration SQL을 함께 추가하고 running DB rollout을 별도로 계획한다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
   연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 같은 record의 기존 PHOTO Item을 대상
@@ -493,7 +498,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
 
 ## Known Gaps
 
-- Flyway/Liquibase와 자동 schema rollout이 없다.
+- 운영 Flyway 실행은 수동이며 자동 schema rollout은 없다. 실제 DB 편입 여부는 live 이력으로 확인한다.
 - finalized photo와 presign 후 staging이 없는 orphan object는 cleanup 대상이 아니다.
 - authenticated auditor propagation이 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제 사이의 공통 admission과 경합 정합성 보장은 미구현이다.

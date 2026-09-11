@@ -11,7 +11,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 ## Authoritative Sources
 
 - timeline/auth/user services, entities, repositories and tests
-- `src/main/resources/db/schema.sql`
+- `src/main/resources/db/migration/*.sql`
 - `SecurityConfig`, `OpenApiConfig`
 - Redis stores and cleanup schedulers
 

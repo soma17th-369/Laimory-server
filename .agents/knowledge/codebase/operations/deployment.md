@@ -251,6 +251,11 @@ flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생�
 
 ## Manual Operations
 
+Flyway는 배포 앱에서 비활성화되어 있다. [Flyway 운영 절차](../../../../docs/database/flyway-adoption.md)에
+따라 앱 image와 같은 commit의 SQL을 CLI로 실행하고 `validate`와 `info`의 failed/pending 없음 확인 후
+기존 배포를 실행한다. 이 단계는 workflow에 자동 연결되어 있지 않다. 신규 DB 초기화도 subject schema와
+`app_config` preflight 전에 완료한다. 기존 DB의 실제 baseline 적용 여부는 live 이력으로 확인한다.
+
 - 저장소는 전체 AWS topology와 신규 host 초기화를 자동화하지 않는다.
 - live AWS, GitHub repository Variables/Secrets와 실제 host 상태가 운영 구성의 권위 원천이다.
 - AWS 작업은 먼저 `sandbox` SSO를 확인하고 조회와 SSM 비변경 진단으로 제한한다. AWS·host 수정은
