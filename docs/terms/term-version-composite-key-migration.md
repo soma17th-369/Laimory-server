@@ -239,26 +239,13 @@ old schema와 row count를 확인한 뒤 이전 image digest를 기동한다. Se
 
 ## 5. rollback 창 종료
 
-go/no-go 승인 뒤에만 legacy child→parent를 삭제한다. shadow 전용 FK/CHECK/index 이름을
-신규 DB DDL의 이름으로 맞추려면 legacy 삭제 후 별도 `ALTER TABLE`로 교체하고 다시 `SHOW CREATE TABLE`을
-대조한다. prod backup/binlog가 새 schema 이후 정상 복구 좌표를 남긴 것도 확인한다. legacy/failed table
+go/no-go 승인 뒤에만 legacy child→parent를 삭제한다. FK/CHECK/index는 cutover 때 생성한
+`*_v2_432_*` 이름을 유지한다. Flyway V1도 이 이름을 사용하므로 신규/기존 DB의 후속 SQL이 같은 객체를
+참조한다. prod backup/binlog가 새 schema 이후 정상 복구 좌표를 남긴 것도 확인한다. legacy/failed table
 삭제는 복구 불가능한 정리이므로 별도 승인을 받아 실행한다.
+Flyway baseline을 위해 rollback 창을 종료하거나 legacy table을 삭제할 필요는 없다.
 
 ```sql
 DROP TABLE term_agreements_legacy_432;
 DROP TABLE term_documents_legacy_432;
-
-ALTER TABLE term_agreements
-    DROP FOREIGN KEY fk_term_agreements_v2_432_document,
-    RENAME INDEX idx_term_agreements_v2_432_history TO idx_term_agreements_user_history,
-    RENAME INDEX idx_term_agreements_v2_432_document TO idx_term_agreements_document,
-    ADD CONSTRAINT fk_term_agreements_document
-        FOREIGN KEY (term_type, version)
-        REFERENCES term_documents (term_type, version) ON DELETE RESTRICT;
-
-ALTER TABLE term_documents
-    DROP CHECK chk_term_documents_v2_432_version,
-    ADD CONSTRAINT chk_term_documents_version_canonical
-        CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
-            AND version NOT REGEXP '[^0-9.]');
 ```

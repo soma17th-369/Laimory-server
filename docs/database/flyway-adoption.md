@@ -3,6 +3,8 @@
 Spring Boot 3.5.8이 관리하는 Flyway 11.7.2를 사용한다. 실행 가능한 스키마 원천은
 `src/main/resources/db/migration`의 버전 SQL이다. 배포한 SQL은 수정하지 않고 다음 버전을 추가한다.
 V1은 도입 시점의 업무 테이블 17개와 신규 DB에 필요한 `app_config` 한 행을 생성한다.
+약관 index/FK/CHECK는 #432 cutover를 완료한 기존 DB의 이름을 사용한다. 신규 DB와 baseline한
+기존 DB에서 이후 migration이 같은 이름을 참조하도록 맞춘 도입 전 결정이며, 배포한 V1을 수정하는 절차가 아니다.
 
 ## 실행 주체
 
@@ -128,6 +130,20 @@ V1로 생성한 임시 DB와 대상 DB의 `SHOW CREATE TABLE`/`information_schem
 인덱스·제약 전체 일치를 증명하지 않는다. AUTO_INCREMENT의 현재 counter처럼 데이터에 따라 달라지는 값은
 구조 차이와 구분한다. `app_config`가 정확히 한 행인지도 확인한다.
 
+약관 전환 후 유지할 이름은 다음과 같다. 이 이름들은 V1과 일치해야 한다.
+
+| 객체 | 이름 |
+|---|---|
+| 동의 이력 index | `idx_term_agreements_v2_432_history` |
+| 문서 참조 index | `idx_term_agreements_v2_432_document` |
+| 문서 참조 FK | `fk_term_agreements_v2_432_document` |
+| 버전 형식 CHECK | `chk_term_documents_v2_432_version` |
+
+#432의 rollback용 `term_agreements_legacy_432`/`term_documents_legacy_432`는 업무 테이블 17개와
+구분하여 보존한다. 활성 테이블이 legacy를 참조하지 않는지 확인하며 baseline을 위해 삭제하지 않는다.
+컬럼의 물리적 순서만 다른 것은 이름을 명시하는 앱 SQL 계약의 구조 차이가 아니다. 컬럼 정의와
+복합 index/FK 내부의 컬럼 순서는 그대로 대조한다. 그 밖의 테이블/구조 차이는 개별 조사한다.
+
 과거 수동 DDL이나 약관 전환이 남아 있으면 해당 변경의 기존 runbook으로 먼저 해결한다. 이 작업에 무관한
 legacy 테이블 삭제나 데이터 보정을 섞지 않는다. 제약 이름 차이는 이후 migration이 참조할 이름을 확인한 뒤
 기준을 확정한다. 차이가 해소되지 않은 DB를 V1과 같은 것으로 등록하지 않는다.
@@ -192,6 +208,7 @@ docker compose up -d --wait
 
 첫 script는 앱 JAR의 JDBC로 독립 MySQL에서 두 프로세스의 최초 생성, 이전 스키마와 DDL 동일성, 재실행,
 명시 baseline과 데이터 보존, 자동 baseline 거부, checksum 불일치를 검증한다. 최초 편입 검증은 V1에 고정한다.
+동결한 이전 SQL fixture의 약관 이름 네 개만 위 기준으로 치환한 사본을 사용하며, 이외 DDL은 전체 비교한다.
 임시 V2에서는 첫 migration의 실행과 둘째의 native lock 대기를 겹치게 한 뒤, 이력/결과 한 건과 양쪽 성공을
 확인한다. 테스트용 V2는 앱에 포함되지 않는다. 만든 컨테이너/네트워크만 정리한다.
 `src/test/resources/db/legacy/pre-flyway-schema.sql`은 도입 직전 스냅샷으로 동결한다. 운영 초기화에 쓰거나

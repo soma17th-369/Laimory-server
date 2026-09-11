@@ -31,7 +31,8 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - `integrationTest`는 `integration` tag만 실행한다.
 - integration tests는 `docker` profile로 실제 local MySQL·Redis에 연결한다.
 - CI의 빈 앱 DB는 운영과 동일한 공통 Flyway 활성화 설정으로 생성하고 JPA가 검증한다.
-  별도 script는 V1 target을 고정해 기존 스키마 fixture와 DDL을 비교하고 baseline의 데이터 보존·재실행·checksum
+  별도 script는 V1 target을 고정해 기존 스키마 fixture의 #432 약관 이름 네 개만 현재 기준으로 치환한 뒤
+  전체 DDL을 비교하고 baseline의 데이터 보존·재실행·checksum
   실패를 검증한다. 두 독립 프로세스의 최초 생성과, 임시 V2를 실행 중 native lock 대기가 겹친 뒤
   두 프로세스가 성공하고 이력/결과는 한 번만 기록되는 것도 검증한다. 임시 V2는 앱에 포함되지 않는다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.

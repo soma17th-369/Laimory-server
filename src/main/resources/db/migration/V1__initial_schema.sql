@@ -275,7 +275,8 @@ CREATE TABLE term_documents (
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (term_type, version),
     -- ICU의 $는 마지막 줄 구분자 앞에도 매칭되므로 숫자·점 외 문자를 별도로 거부한다.
-    CONSTRAINT chk_term_documents_version_canonical
+    -- #432에서 편입한 기존 DB와 동일한 이름을 유지한다. 신규 DB도 후속 SQL의 참조 이름이 같다.
+    CONSTRAINT chk_term_documents_v2_432_version
         CHECK (version REGEXP '^[1-9][0-9]*[.](0|[1-9][0-9]*)$'
             AND version NOT REGEXP '[^0-9.]')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -296,10 +297,10 @@ CREATE TABLE term_agreements (
     updated_at DATETIME(6) NOT NULL,
     modified_by VARCHAR(32) NULL,
     PRIMARY KEY (user_id, term_type, version),
-    KEY idx_term_agreements_user_history (user_id, accepted_at, term_type, version),
-    KEY idx_term_agreements_document (term_type, version),
+    KEY idx_term_agreements_v2_432_history (user_id, accepted_at, term_type, version),
+    KEY idx_term_agreements_v2_432_document (term_type, version),
     -- 동의가 남아 있는 문서 행 삭제 금지 — 이력 재구성 권위 보존(문서 정리는 동의 이력 정책과 함께 결정).
-    CONSTRAINT fk_term_agreements_document
+    CONSTRAINT fk_term_agreements_v2_432_document
         FOREIGN KEY (term_type, version) REFERENCES term_documents (term_type, version) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

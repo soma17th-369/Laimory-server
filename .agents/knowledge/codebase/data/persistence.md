@@ -25,6 +25,8 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 Flyway 11.7.2가 모든 환경에서 앱 시작 시 schema를 관리한다. 기존 DataSource를 사용하며
 migration 실행·이력 검증에 실패하면 JPA 초기화와 앱 기동도 실패한다.
+약관 index/FK/CHECK는 #432 cutover의 `*_v2_432_*` 이름을 V1에서도 유지한다. baseline을 위한
+legacy rollback 테이블 삭제는 하지 않으며, 활성 업무 구조와 보관 테이블을 구분해 대조한다.
 
 이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
 계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
@@ -376,7 +378,7 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 `term_agreements`(#303/#432)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(users FK 없음 —
 `refresh_tokens` 선례)이고 `(user_id, term_type, version)`이 복합 PK다. `(term_type, version)` 복합 FK는
 `term_documents`를 `ON DELETE RESTRICT`로 참조하며, PK가 child FK의 leftmost가 아니므로
-`idx_term_agreements_document(term_type, version)`를 별도로 둔다. 이력 index는
+`idx_term_agreements_v2_432_document(term_type, version)`를 별도로 둔다. 이력 index는
 `(user_id, accepted_at, term_type, version)`이다. 쓰기는 repository의 native
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
 (`modified_by` NULL), 재전송·동시 동일 batch가 PK 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지

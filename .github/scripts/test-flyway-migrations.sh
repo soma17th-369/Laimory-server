@@ -110,8 +110,15 @@ cmp -s "$WORK/fresh-before.sql" "$WORK/fresh-after.sql" || fail 'repeat migrate 
 [ "$(mysql flyway_fresh -e 'SELECT COUNT(*) FROM flyway_schema_history')" = 1 ] || fail 'repeat migrate changed history'
 ok 'repeat migrate preserves data and history'
 
-# 운영 V1을 복사해 legacy를 만들지 않는다. 도입 직전 스키마를 독립 fixture로 고정한다.
-mysql flyway_legacy <"$LEGACY"
+# 도입 직전 저장소 SQL은 독립 fixture로 동결한다. 실제 DB의 #432 cutover 이름 네 개만
+# 명시적으로 맞춘 사본을 편입한다. 이외 모든 DDL은 원문과 V1이 같아야 한다.
+sed \
+  -e 's/idx_term_agreements_user_history/idx_term_agreements_v2_432_history/g' \
+  -e 's/idx_term_agreements_document/idx_term_agreements_v2_432_document/g' \
+  -e 's/fk_term_agreements_document/fk_term_agreements_v2_432_document/g' \
+  -e 's/chk_term_documents_version_canonical/chk_term_documents_v2_432_version/g' \
+  "$LEGACY" >"$WORK/legacy-adoption.sql"
+mysql flyway_legacy <"$WORK/legacy-adoption.sql"
 dump flyway_fresh --no-data >"$WORK/fresh-schema.sql"
 dump flyway_legacy --no-data >"$WORK/legacy-schema.sql"
 diff -u "$WORK/legacy-schema.sql" "$WORK/fresh-schema.sql" || fail 'V1 changed the pre-Flyway schema'
