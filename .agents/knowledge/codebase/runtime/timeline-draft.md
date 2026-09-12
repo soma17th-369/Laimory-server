@@ -205,8 +205,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 ### Delete
 
 - orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): junction·delete job이 모두 없는 final Item을
-  PK 커서로 훑어 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
+  PK MOD 담당에서 slot당 한 배치(기본 250)만 조회해 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
   0-junction Item의 수렴을 담당하며 S3는 호출하지 않는다.
+  후보 최초 관측을 먼저 commit하고 별도 transaction에서 처리한다. 처리 실패에도 최초 시각은 유지하며,
+  재연결은 표시를 해제한다. 처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 ERROR로 알린다.
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
@@ -220,11 +222,11 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
 - Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 모든 REST
   process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
-  KST 생성일 기준 D+1~D+3 처리 창 안의 job을 250개 단위 `FOR UPDATE SKIP LOCKED`로 나눠 claim한다.
+  KST 생성일 기준 D+1~D+3 처리 창 안의 자기 PK MOD 담당 job을 slot당 최대 250개 한 번 일반 조회한다.
   claim transaction이 `status=PROCESSING`과 `updated_at=claim 시각`을 기록해 같은 날 재선택을 막고
   commit한 뒤 verbose `DeleteObjects`를 호출하며,
-  `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. process당 concurrency 1,
-  최대 4 batch/60초가 기본이고 Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 stale
+  `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. 기본 서버 2대 × 서버당 worker-count 1이며 slot당 한 배치다.
+  Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 stale
   `PROCESSING`으로 다음 일일 실행에서 재claim한다. 처리 창을 벗어난 미완료 job은 재시도 없이 보존되고
   worker가 run 시작에 건수만 ERROR 로그로 경보한다.
   실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은 다음 실행까지 MySQL에 남는다.
@@ -325,7 +327,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   member가 누적될 수 있다(수용된 MVP trade-off).
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)이다. 채택된 source는 결과 저장 transaction에서
   이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
-- 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.
+- 초안 정리는 `created_at < cutoff`와 PK MOD 담당 조건으로 최대 250개 한 번 일반 조회한다.
+  cleanup_available_at·선점 UPDATE·내부 반복은 없다. 만료된 PHOTO source는 transaction 밖의
+  S3 삭제 성공 뒤 row를 삭제하며 실패 행은 다음 일일 실행에서 재조회한다. 같은 날 재선택을 막는
+  DB 시각 조건이나 초안 적체 전용 알림은 없다.
 
 ## Invariants
 

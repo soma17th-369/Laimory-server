@@ -30,21 +30,14 @@ public interface TimelineDraftSourceItemRepository extends JpaRepository<Timelin
     void deleteByTaskIdAndRawIdIn(String taskId, Collection<String> rawIds);
 
     @Query(value = "select * from timeline_draft_source_items "
-            + "where created_at < :cutoff and cleanup_available_at <= :eligibleAt "
-            + "order by cleanup_available_at, created_at, timeline_draft_source_item_id "
-            + "limit :limit for update skip locked",
-            nativeQuery = true)
-    List<TimelineDraftSourceItem> findExpiredForUpdateSkipLocked(
+            + "where created_at < :cutoff "
+            + "and mod(timeline_draft_source_item_id - 1, :totalWorkerCount) = :workerIndex "
+            + "order by created_at, timeline_draft_source_item_id limit :limit", nativeQuery = true)
+    List<TimelineDraftSourceItem> findExpired(
             @Param("cutoff") LocalDateTime cutoff,
-            @Param("eligibleAt") LocalDateTime eligibleAt,
+            @Param("workerIndex") int workerIndex,
+            @Param("totalWorkerCount") int totalWorkerCount,
             @Param("limit") int limit);
-
-    @Modifying
-    @Query("update TimelineDraftSourceItem source "
-            + "set source.cleanupAvailableAt = :nextAvailableAt "
-            + "where source.timelineDraftSourceItemId in :ids")
-    int deferCleanupUntil(@Param("ids") Collection<Long> ids,
-                          @Param("nextAvailableAt") LocalDateTime nextAvailableAt);
 
     @Modifying
     @Transactional

@@ -8,6 +8,9 @@ import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -19,53 +22,44 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * junction이 0개가 된 final Item을 batch 단위로 수렴시키는 transaction 소유자.
- *
- * <p>Item과 junction은 항상 한 transaction에서 insert되므로(AI 결과 store·수동 PHOTO link) 커밋된
- * 0-junction Item은 언제나 쓰레기다. 정리 규칙은 기존 삭제 흐름과 같다 — 유효한 PHOTO는 delete job으로
- * 넘겨 S3 삭제를 worker에 맡기고, non-PHOTO와 job을 만들 수 없는 손상 PHOTO만 즉시 hard delete한다.
- *
- * <p>batch 한 번은 <b>탐색(무잠금) → PK 지정 claim({@code FOR UPDATE SKIP LOCKED}) → 잠금 하 재검증 →
- * key 그룹 분류 → enqueue/삭제</b> 순서다. 탐색 statement에 잠금을 걸지 않는 이유와 그룹 규칙의 근거는
- * 각 단계 주석에 있다. S3를 포함한 외부 호출은 하지 않으므로 잠금 보유 시간이 짧다.
- */
+/** 고아의 최초 관측과 처리를 각각 독립 transaction에서 수행한다. S3는 호출하지 않는다. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TimelineOrphanItemSweepService {
 
+    private static final ZoneId OBSERVATION_ZONE = ZoneId.of("Asia/Seoul");
+
     private final TimelineItemService timelineItemService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    /**
-     * 커서 이후 한 batch를 처리하고 다음 커서를 돌려준다.
-     *
-     * <p>{@code scanned == 0}일 때만 테이블을 다 훑은 것이다. claim이나 재검증이 모두 탈락해
-     * {@code claimed == 0}이어도 run을 끝내면 안 된다 — 다른 host가 선점한 구간에서 조기 종료해 그날
-     * 나머지를 건너뛰게 된다.
-     */
-    @Transactional
-    public SweepBatchResult sweepBatch(long cursor, int limit) {
-        List<TimelineItem> scanned = timelineItemService.findOrphanCandidates(cursor, limit);
-        if (scanned.isEmpty()) {
-            return SweepBatchResult.exhausted(cursor);
-        }
-        long nextCursor = scanned.get(scanned.size() - 1).getTimelineItemId();
-        List<Long> scannedIds = scanned.stream().map(TimelineItem::getTimelineItemId).toList();
+    /** 후보 조회와 최초 기록을 commit한 뒤 PK만 반환해 처리 snapshot과 분리한다. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<Long> observeBatch(int workerIndex, int totalWorkerCount, int limit) {
+        List<Long> ids = timelineItemService.findOrphanCandidates(workerIndex, totalWorkerCount, limit).stream()
+                .map(TimelineItem::getTimelineItemId).toList();
+        timelineItemService.markOrphanObserved(ids, LocalDateTime.ofInstant(clock.instant(), OBSERVATION_ZONE));
+        return ids;
+    }
 
-        List<TimelineItem> claimed = timelineItemService.claimOrphanCandidates(scannedIds);
-        int skippedLocked = scanned.size() - claimed.size();
-        if (claimed.isEmpty()) {
-            return SweepBatchResult.nothingClaimed(scanned.size(), skippedLocked, nextCursor);
-        }
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public long countStaleObservedOrphans(int workerIndex, int totalWorkerCount) {
+        LocalDateTime staleBefore = LocalDateTime.ofInstant(clock.instant(), OBSERVATION_ZONE).minusHours(72);
+        return timelineItemService.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
+    }
 
-        List<TimelineItem> actionable = revalidate(claimed);
-        int revalidationDropped = claimed.size() - actionable.size();
+    /** 관측이 commit된 뒤 선택된 PK를 새 transaction에서 읽고 재검증·분류·처리한다. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public SweepBatchResult sweepBatch(List<Long> candidateIds) {
+        List<TimelineItem> items = timelineItemService.findByIds(candidateIds);
+        List<TimelineItem> actionable = revalidate(items);
+        int revalidationDropped = candidateIds.size() - actionable.size();
 
         Counters counters = new Counters();
         List<Long> immediateDeleteIds = new ArrayList<>();
@@ -88,29 +82,22 @@ public class TimelineOrphanItemSweepService {
         schedulePhotoDeletions(keyedPhotos, counters, immediateDeleteIds);
         timelineItemService.deleteByIds(immediateDeleteIds);
 
-        return new SweepBatchResult(scanned.size(), claimed.size(), skippedLocked, revalidationDropped,
+        return new SweepBatchResult(candidateIds.size(), revalidationDropped,
                 counters.photoScheduled, counters.photoAlreadyJob, counters.keyShared,
-                counters.invalidDeleted, counters.nonPhotoDeleted, nextCursor, false);
+                counters.invalidDeleted, counters.nonPhotoDeleted);
     }
 
-    /**
-     * claim 이후 다시 한 번 junction·job을 확인해 탐색과 claim 사이에 상태가 바뀐 행을 뺀다.
-     *
-     * <p>job 조회는 반드시 current read다 — 무잠금 탐색이 이 transaction의 snapshot을 이미 고정했기
-     * 때문에 일반 SELECT는 그 뒤 commit된 job을 보지 못하고, 그러면 job 있는 Item을 지워 FK 위반이 난다.
-     *
-     * <p>junction 조회는 snapshot read로 둔다. 0-junction·job 없는 Item에 junction을 붙이는 요청 경로가
-     * 없고(재연결은 job 경유, rawId 재사용은 record junction 경유), 설령 놓쳐 job을 만들어도 다음 날
-     * worker의 재검증이 취소한다. 반대로 여기서 {@code FOR SHARE}를 쓰면 존재하지 않는 key 구간에
-     * gap lock이 걸려 draft finalize의 junction insert를 막을 수 있다.
-     */
-    private List<TimelineItem> revalidate(List<TimelineItem> claimed) {
-        List<Long> claimedIds = claimed.stream().map(TimelineItem::getTimelineItemId).toList();
-        Set<Long> withJob = timelinePhotoDeleteJobService.findItemIdsWithJob(claimedIds);
-        Set<Long> linked = timelineEventItemService.findByTimelineItemIds(claimedIds).stream()
+    /** 새 처리 snapshot에서 연결과 job을 일반 조회한다. DML 경합 실패는 전체 처리가 rollback된다. */
+    private List<TimelineItem> revalidate(List<TimelineItem> items) {
+        if (items.isEmpty()) {
+            return List.of();
+        }
+        List<Long> itemIds = items.stream().map(TimelineItem::getTimelineItemId).toList();
+        Set<Long> withJob = timelinePhotoDeleteJobService.findItemIdsWithJob(itemIds);
+        Set<Long> linked = timelineEventItemService.findByTimelineItemIds(itemIds).stream()
                 .map(TimelineEventItem::getTimelineItemId)
                 .collect(Collectors.toSet());
-        return claimed.stream()
+        return items.stream()
                 .filter(item -> !withJob.contains(item.getTimelineItemId()))
                 .filter(item -> !linked.contains(item.getTimelineItemId()))
                 .toList();
@@ -158,8 +145,9 @@ public class TimelineOrphanItemSweepService {
                 continue;
             }
             // insert ignore는 item UNIQUE와 object UNIQUE 어느 쪽으로 막혀도 실패를 구분하지 않는다.
-            // 자기 job이 생겼으면 다른 process가 방금 만든 것이라 행을 보존하고, 아니면 다른 Item이
-            // 같은 object key를 선점한 것이라 행만 지운다(FK 위반 회피).
+            // 자기 job이 보이면 행을 보존하고, 아니면 다른 Item이 같은 object key를 소유한 것으로 처리한다.
+            // 처리 snapshot 뒤 동시 생성된 자기 job은 안 보일 수 있다. 그 경우 FK가 삭제를 거절하고
+            // 처리 transaction 전체를 rollback하며, 이미 commit한 관측 기록은 남는다.
             if (timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(itemId)).contains(itemId)) {
                 counters.photoAlreadyJob++;
             } else {
@@ -223,29 +211,14 @@ public class TimelineOrphanItemSweepService {
         private int nonPhotoDeleted;
     }
 
-    /**
-     * batch 결과. {@code scanned}와 {@code claimed}를 분리해 담는다 — 잠금 경합으로 건너뛴 양이 보이지
-     * 않으면 run 요약을 "다 훑었다"로 오독하게 된다.
-     */
+    /** 선택 후보 수와 재검증 탈락·처리 결과. 후보 수는 실제 삭제 성공 수가 아니다. */
     public record SweepBatchResult(
-            int scanned,
-            int claimed,
-            int skippedLocked,
+            int selected,
             int revalidationDropped,
             int photoScheduled,
             int photoAlreadyJob,
             int keyShared,
             int invalidDeleted,
-            int nonPhotoDeleted,
-            long nextCursor,
-            boolean exhausted) {
-
-        private static SweepBatchResult exhausted(long cursor) {
-            return new SweepBatchResult(0, 0, 0, 0, 0, 0, 0, 0, 0, cursor, true);
-        }
-
-        private static SweepBatchResult nothingClaimed(int scanned, int skippedLocked, long nextCursor) {
-            return new SweepBatchResult(scanned, 0, skippedLocked, 0, 0, 0, 0, 0, 0, nextCursor, false);
-        }
+            int nonPhotoDeleted) {
     }
 }

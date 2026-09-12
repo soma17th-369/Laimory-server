@@ -20,7 +20,6 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -64,9 +63,29 @@ class TimelineDraftCleanupSchedulerTest {
         lenient().when(properties.isWorkerEnabled()).thenReturn(true);
         lenient().when(properties.getRetentionDays()).thenReturn(7L);
         lenient().when(properties.getBatchSize()).thenReturn(250);
-        lenient().when(properties.getConcurrency()).thenReturn(1);
-        lenient().when(properties.getMaxBatchesPerRun()).thenReturn(1);
-        lenient().when(properties.getMaxRunDuration()).thenReturn(Duration.ofSeconds(60));
+        lenient().when(properties.getWorkerCount()).thenReturn(1);
+        lenient().when(properties.getTotalWorkerCount()).thenReturn(2);
+    }
+
+    @Test
+    void fullBatchIsSelectedOnlyOncePerSlotAndCanRetryNextRun() {
+        var configured = new TimelineDraftCleanupWorkerProperties(true, 7, 1, 1, 2, 2);
+        var worker = new TimelineDraftCleanupScheduler(timelineDraftSourceItemService, s3PhotoStorageService,
+                new ObjectMapper(), FIXED, configured, Runnable::run);
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(2),
+                org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1)))
+                .thenReturn(List.of(stayRow(30L)));
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(3),
+                org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1)))
+                .thenReturn(List.of(stayRow(31L)));
+        worker.cleanupExpiredDrafts();
+        verify(timelineDraftSourceItemService).findExpired(any(), org.mockito.ArgumentMatchers.eq(2),
+                org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1));
+        verify(timelineDraftSourceItemService).findExpired(any(), org.mockito.ArgumentMatchers.eq(3),
+                org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1));
+        worker.cleanupExpiredDrafts();
+        verify(timelineDraftSourceItemService, org.mockito.Mockito.times(2)).findExpired(any(),
+                org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1));
     }
 
     @Test
@@ -74,24 +93,24 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler().cleanupExpiredDrafts();
 
         ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(timelineDraftSourceItemService).claimExpired(cutoff.capture(), org.mockito.ArgumentMatchers.eq(250));
+        verify(timelineDraftSourceItemService).findExpired(cutoff.capture(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250));
         assertThat(cutoff.getValue()).isEqualTo(LocalDateTime.of(2026, 6, 15, 3, 0));
     }
 
     @Test
     void cleanup_photo_usesBatchDeleteThenBulkDeletesSuccessfulRow() {
         TimelineDraftSourceItem photo = photoRow(10L, FILENAME);
-        when(timelineDraftSourceItemService.claimExpired(any(), org.mockito.ArgumentMatchers.eq(250)))
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250)))
                 .thenReturn(List.of(photo));
         String objectKey = PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID);
         when(s3PhotoStorageService.deleteAll(List.of(objectKey)))
                 .thenReturn(result(Set.of(objectKey), Map.of(), Set.of()));
-        when(timelineDraftSourceItemService.deleteClaimed(Set.of(10L))).thenReturn(1);
+        when(timelineDraftSourceItemService.deleteExpired(Set.of(10L))).thenReturn(1);
 
         scheduler().cleanupExpiredDrafts();
 
         verify(s3PhotoStorageService).deleteAll(List.of(objectKey));
-        verify(timelineDraftSourceItemService).deleteClaimed(Set.of(10L));
+        verify(timelineDraftSourceItemService).deleteExpired(Set.of(10L));
     }
 
     @Test
@@ -99,21 +118,21 @@ class TimelineDraftCleanupSchedulerTest {
         TimelineDraftSourceItem deleted = photoRow(20L, FILENAME);
         TimelineDraftSourceItem failed = photoRow(21L, "failed.jpg");
         TimelineDraftSourceItem stay = stayRow(22L);
-        when(timelineDraftSourceItemService.claimExpired(any(), org.mockito.ArgumentMatchers.eq(250)))
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250)))
                 .thenReturn(List.of(deleted, failed, stay));
         String deletedKey = PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID);
         String failedKey = PhotoObjectKeys.subjectFullKey("failed.jpg", SUBJECT_ID);
         when(s3PhotoStorageService.deleteAll(List.of(deletedKey, failedKey)))
                 .thenReturn(result(Set.of(deletedKey), Map.of(failedKey, "InternalError"), Set.of()));
-        when(timelineDraftSourceItemService.deleteClaimed(Set.of(22L, 20L))).thenReturn(2);
+        when(timelineDraftSourceItemService.deleteExpired(Set.of(22L, 20L))).thenReturn(2);
 
         scheduler().cleanupExpiredDrafts();
 
-        verify(timelineDraftSourceItemService).deleteClaimed(Set.of(22L, 20L));
+        verify(timelineDraftSourceItemService).deleteExpired(Set.of(22L, 20L));
         assertThat(output)
-                .contains("draft cleanup batch 완료: claimed=3, succeeded=2, failed=1, deleted=2")
+                .contains("draft cleanup batch 완료: selected=3, succeeded=2, failed=1, deleted=2")
                 .contains("photoDeleteRequested=2, photoDeleteSucceeded=1, photoDeleteFailed=1")
-                .contains("draft cleanup run 완료: batches=1, claimed=3, succeeded=2, failed=1, deleted=2")
+                .contains("draft cleanup run 완료: batches=1, selected=3, succeeded=2, failed=1, deleted=2")
                 .contains("workerErrors=0, durationMs=");
     }
 
@@ -121,15 +140,15 @@ class TimelineDraftCleanupSchedulerTest {
     void cleanup_s3FailureStillDeletesNonPhotoButKeepsValidPhoto() {
         TimelineDraftSourceItem photo = photoRow(30L, FILENAME);
         TimelineDraftSourceItem stay = stayRow(31L);
-        when(timelineDraftSourceItemService.claimExpired(any(), org.mockito.ArgumentMatchers.eq(250)))
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250)))
                 .thenReturn(List.of(photo, stay));
         String objectKey = PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID);
         when(s3PhotoStorageService.deleteAll(List.of(objectKey))).thenThrow(new RuntimeException("s3 down"));
-        when(timelineDraftSourceItemService.deleteClaimed(Set.of(31L))).thenReturn(1);
+        when(timelineDraftSourceItemService.deleteExpired(Set.of(31L))).thenReturn(1);
 
         scheduler().cleanupExpiredDrafts();
 
-        verify(timelineDraftSourceItemService).deleteClaimed(Set.of(31L));
+        verify(timelineDraftSourceItemService).deleteExpired(Set.of(31L));
     }
 
     @Test
@@ -138,14 +157,14 @@ class TimelineDraftCleanupSchedulerTest {
                 photoRow(40L, ""),
                 photoRow(41L, NullNode.getInstance()),
                 photoRow(42L, MAPPER.createArrayNode()));
-        when(timelineDraftSourceItemService.claimExpired(any(), org.mockito.ArgumentMatchers.eq(250)))
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250)))
                 .thenReturn(rows);
-        when(timelineDraftSourceItemService.deleteClaimed(Set.of(40L, 41L, 42L))).thenReturn(3);
+        when(timelineDraftSourceItemService.deleteExpired(Set.of(40L, 41L, 42L))).thenReturn(3);
 
         scheduler().cleanupExpiredDrafts();
 
         verifyNoInteractions(s3PhotoStorageService);
-        verify(timelineDraftSourceItemService).deleteClaimed(Set.of(40L, 41L, 42L));
+        verify(timelineDraftSourceItemService).deleteExpired(Set.of(40L, 41L, 42L));
     }
 
     @Test
@@ -154,7 +173,7 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler().cleanupExpiredDrafts();
 
         verifyNoInteractions(s3PhotoStorageService);
-        verify(timelineDraftSourceItemService, never()).claimExpired(any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(timelineDraftSourceItemService, never()).findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.anyInt());
     }
 
     private TimelineDraftCleanupScheduler scheduler() {

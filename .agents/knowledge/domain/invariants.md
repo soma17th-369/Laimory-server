@@ -129,7 +129,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
   03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
   D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
-  처리하지 않은(`updated_at < 오늘 00:00`) job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고
+  처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
   `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
   commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
   원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 처리 창
@@ -158,8 +158,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
-- **junction이 0인 final Item은 항상 쓰레기다.** Item과 junction은 언제나 한 transaction에서 insert되므로
-  (AI 결과 store·수동 PHOTO link) 커밋된 0-junction Item을 되살리는 요청 경로가 없다. 일일 스위퍼가
+- **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item은 job 취소를 거쳐 재연결할 수 있다. 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
 - **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
@@ -169,12 +169,18 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   계산해(`SHA2(UNHEX(REPLACE(subject_id,'-','')),256)` = `PhotoObjectKeys.subjectNamespace`) 저장본이
   손상돼 있어도 보호가 유지된다. 같은 key의 orphan만 여럿이면 최소 `timeline_item_id`가 job 소유자이고
   나머지 행은 삭제된다(삭제 순서에 의존하지 않는 규칙).
-- 스위퍼는 후보를 PK 지정 `FOR UPDATE SKIP LOCKED`로 claim해 process 간에 나눈다. 탐색 statement에는
-  잠금을 걸지 않는다(전량 anti-join이라 `REPEATABLE READ`에서 테이블이 잠긴다). run 종료 조건은 탐색이
-  비는 것뿐이고, claim·재검증이 비어도 커서만 올려 계속한다. 잠금 하 job 재검증은 반드시 current read다
-  — 무잠금 탐색이 고정한 snapshot으로는 동시 생성된 job을 못 봐 FK 위반으로 batch가 깨진다.
-  삭제 요청이 스위퍼가 잠근 행의 FK 부모 잠금을 기다리거나 드물게 deadlock으로 한쪽이 롤백되는 것은
-  되돌릴 수 있는 실패로 수용한다.
+- 고아 스위퍼는 `MOD(id - 1, serverCount * workerCount)`로 담당을 나누고 slot당 후보 최대
+  batch-size(기본 250) 한 배치만 처리한다. workerIndex는 workerId * workerCount + localIndex다.
+  선점용 잠금 읽기·내부 반복·cursor는 없다. DML 잠금은 남는다.
+- 스위퍼는 선택한 PK 안의 미표시 고아에만 `ORPHAN_SWEEPER`와 KST 최초 관측 시각을 기록해 먼저
+  commit한다. 같은 PK를 새 transaction에서 일반 조회·재검증하며, 처리 rollback은 최초 기록을
+  되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
+- 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 기존 Item 재연결 transaction은 junction 저장 전에
+  표시를 해제하며 다시 고아가 되면 새 최초 시각을 쓴다. BaseEntity·공통 AuditorAware는 변경하지 않는다.
+  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job 모두 없는 건수를 집계한다.
+  이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
+- 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
+  서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.
 - `filename` 자체가 손상된 살아 있는 Item은 coarse filter에 잡히지 않아 두 방어를 모두 통과한다.
   #387 배포 이전 저장분에만 존재하는 상태이며 복구하지 않고 수용한다.
 

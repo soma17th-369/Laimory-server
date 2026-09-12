@@ -14,8 +14,8 @@ public class TimelineWorkerExecutorConfig {
     public ThreadPoolTaskExecutor timelineDraftCleanupWorkerExecutor(
             TimelineDraftCleanupWorkerProperties properties) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(properties.getConcurrency());
-        executor.setMaxPoolSize(properties.getConcurrency());
+        executor.setCorePoolSize(properties.getWorkerCount());
+        executor.setMaxPoolSize(properties.getWorkerCount());
         executor.setQueueCapacity(0);
         executor.setThreadNamePrefix("draft-cleanup-");
         return executor;
@@ -25,8 +25,8 @@ public class TimelineWorkerExecutorConfig {
     public ThreadPoolTaskExecutor timelinePhotoDeleteWorkerExecutor(
             TimelinePhotoDeleteWorkerProperties properties) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(properties.getConcurrency());
-        executor.setMaxPoolSize(properties.getConcurrency());
+        executor.setCorePoolSize(properties.getWorkerCount());
+        executor.setMaxPoolSize(properties.getWorkerCount());
         executor.setQueueCapacity(0);
         executor.setThreadNamePrefix("photo-delete-");
         return executor;

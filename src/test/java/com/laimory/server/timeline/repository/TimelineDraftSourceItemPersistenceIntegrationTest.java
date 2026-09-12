@@ -94,7 +94,6 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
         assertThat(reloaded.getModifiedBy()).isNull();
-        assertThat(reloaded.getCleanupAvailableAt()).isNotNull();
     }
 
     @Test
@@ -157,8 +156,8 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         em.clear();
 
         // strict < : 정확히 cutoff인 행은 아직 만료가 아니다. 공유 로컬 DB의 무관한 행은 taskId로 걸러 판정한다.
-        List<Long> expiredIds = timelineDraftSourceItemRepository.findExpiredForUpdateSkipLocked(
-                        cutoff, LocalDateTime.now().plusDays(1), 1_000).stream()
+        List<Long> expiredIds = timelineDraftSourceItemRepository.findExpired(
+                        cutoff, 0, 1, 1_000).stream()
                 .filter(row -> taskId.equals(row.getTaskId()))
                 .map(TimelineDraftSourceItem::getTimelineDraftSourceItemId)
                 .toList();

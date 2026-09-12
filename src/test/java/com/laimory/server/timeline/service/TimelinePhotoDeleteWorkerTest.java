@@ -55,9 +55,8 @@ class TimelinePhotoDeleteWorkerTest {
     void setUp() {
         worker = new TimelinePhotoDeleteWorker(
                 jobService, s3PhotoStorageService, properties, Runnable::run);
-        lenient().when(properties.getConcurrency()).thenReturn(1);
-        lenient().when(properties.getMaxBatchesPerRun()).thenReturn(1);
-        lenient().when(properties.getMaxRunDuration()).thenReturn(Duration.ofSeconds(60));
+        lenient().when(properties.getWorkerCount()).thenReturn(1);
+        lenient().when(properties.getTotalWorkerCount()).thenReturn(2);
         lenient().when(jobService.completeSucceeded(anyList()))
                 .thenAnswer(invocation -> invocation.<List<?>>getArgument(0).size());
         lenient().when(jobService.retainOrphanJobs(anyList()))
@@ -77,7 +76,7 @@ class TimelinePhotoDeleteWorkerTest {
     void emptyQueueSkipsS3() {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
-        when(jobService.claimEligible(250)).thenReturn(List.of());
+        when(jobService.claimEligible(0, 2, 250)).thenReturn(List.of());
 
         worker.deletePendingPhotoObjects();
 
@@ -90,7 +89,7 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.countExpired()).thenReturn(3L);
-        when(jobService.claimEligible(250)).thenReturn(List.of());
+        when(jobService.claimEligible(0, 2, 250)).thenReturn(List.of());
 
         List<ILoggingEvent> events = captureWorkerLogs(worker::deletePendingPhotoObjects);
 
@@ -108,7 +107,7 @@ class TimelinePhotoDeleteWorkerTest {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
         when(jobService.countExpired()).thenReturn(0L);
-        when(jobService.claimEligible(250)).thenReturn(List.of());
+        when(jobService.claimEligible(0, 2, 250)).thenReturn(List.of());
 
         List<ILoggingEvent> events = captureWorkerLogs(worker::deletePendingPhotoObjects);
 
@@ -258,21 +257,20 @@ class TimelinePhotoDeleteWorkerTest {
     }
 
     @Test
-    void allWorkerSlotsShareProcessWideBatchBudget() {
+    void eachSlotSelectsOneFullBatchAndNextRunSelectsAgain() {
+        TimelinePhotoDeleteWorkerProperties configured = new TimelinePhotoDeleteWorkerProperties(true, 1, 1, 2, 2);
+        worker = new TimelinePhotoDeleteWorker(jobService, s3PhotoStorageService, configured, Runnable::run);
         TimelinePhotoDeleteJob job = job(71L, "hash/photos/deleted.jpg");
-        when(properties.isWorkerEnabled()).thenReturn(true);
-        when(properties.getConcurrency()).thenReturn(2);
-        when(properties.getMaxBatchesPerRun()).thenReturn(4);
-        when(properties.getBatchSize()).thenReturn(250);
-        when(jobService.claimEligible(250)).thenReturn(List.of(job));
-        when(s3PhotoStorageService.deleteAll(List.of("hash/photos/deleted.jpg")))
+        when(jobService.claimEligible(2, 4, 1)).thenReturn(List.of(job));
+        when(jobService.claimEligible(3, 4, 1)).thenReturn(List.of(job));
+        when(s3PhotoStorageService.deleteAll(anyList()))
                 .thenReturn(result(Set.of("hash/photos/deleted.jpg"), Map.of(), Set.of()));
-
         worker.deletePendingPhotoObjects();
-
-        verify(jobService, org.mockito.Mockito.times(4)).claimEligible(250);
-        verify(s3PhotoStorageService, org.mockito.Mockito.times(4))
-                .deleteAll(List.of("hash/photos/deleted.jpg"));
+        verify(jobService).claimEligible(2, 4, 1);
+        verify(jobService).claimEligible(3, 4, 1);
+        worker.deletePendingPhotoObjects();
+        verify(jobService, org.mockito.Mockito.times(2)).claimEligible(2, 4, 1);
+        verify(jobService, org.mockito.Mockito.times(2)).claimEligible(3, 4, 1);
     }
 
     @Test
@@ -280,7 +278,7 @@ class TimelinePhotoDeleteWorkerTest {
         TimelinePhotoDeleteJob first = job(81L, "hash/photos/first.jpg");
         TimelinePhotoDeleteJob second = job(82L, "hash/photos/second.jpg");
         TimelinePhotoDeleteWorkerProperties concurrentProperties =
-                new TimelinePhotoDeleteWorkerProperties(true, 250, 2, 2, Duration.ofSeconds(60));
+                new TimelinePhotoDeleteWorkerProperties(true, 250, 1, 2, 2);
         ThreadPoolTaskExecutor executor = new TimelineWorkerExecutorConfig()
                 .timelinePhotoDeleteWorkerExecutor(concurrentProperties);
         executor.initialize();
@@ -288,7 +286,7 @@ class TimelinePhotoDeleteWorkerTest {
         CountDownLatch bothSlotsClaiming = new CountDownLatch(2);
         AtomicInteger claimOrder = new AtomicInteger();
         Set<String> claimThreadNames = ConcurrentHashMap.newKeySet();
-        when(jobService.claimEligible(250)).thenAnswer(invocation -> {
+        when(jobService.claimEligible(org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(250))).thenAnswer(invocation -> {
             int order = claimOrder.getAndIncrement();
             claimThreadNames.add(Thread.currentThread().getName());
             bothSlotsClaiming.countDown();
@@ -339,7 +337,7 @@ class TimelinePhotoDeleteWorkerTest {
     private void enableWithJobs(TimelinePhotoDeleteJob... jobs) {
         when(properties.isWorkerEnabled()).thenReturn(true);
         when(properties.getBatchSize()).thenReturn(250);
-        when(jobService.claimEligible(250)).thenReturn(List.of(jobs));
+        when(jobService.claimEligible(0, 2, 250)).thenReturn(List.of(jobs));
     }
 
     private TimelinePhotoDeleteJob job(long id, String objectKey) {

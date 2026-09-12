@@ -95,30 +95,45 @@ class TimelinePhotoDeleteJobServiceTest {
         LocalDateTime windowStart = LocalDateTime.of(2026, 8, 11, 0, 0);
         LocalDateTime todayStart = LocalDateTime.of(2026, 8, 14, 0, 0);
         LocalDateTime claimedAt = LocalDateTime.of(2026, 8, 14, 3, 30);
-        when(repository.findClaimableForUpdateSkipLocked(windowStart, todayStart, 250))
+        when(repository.findClaimable(windowStart, todayStart, 0, 1, 250))
                 .thenReturn(List.of(first, second));
         when(repository.markProcessing(
                 List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING, claimedAt))
                 .thenReturn(2);
 
-        assertThat(service.claimEligible(250)).containsExactly(first, second);
+        assertThat(service.claimEligible(0, 1, 250)).containsExactly(first, second);
 
         verify(repository).markProcessing(
                 List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING, claimedAt);
     }
 
     @Test
+    void missingSelectedJobAbortsClaimBeforeReturningToWorker() {
+        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
+        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
+        var windowStart = LocalDateTime.of(2026, 8, 11, 0, 0);
+        var todayStart = LocalDateTime.of(2026, 8, 14, 0, 0);
+        when(repository.findClaimable(windowStart, todayStart, 0, 2, 250))
+                .thenReturn(List.of(first, second));
+        when(repository.markProcessing(List.of(11L, 12L), TimelinePhotoDeleteJobStatus.PROCESSING,
+                LocalDateTime.of(2026, 8, 14, 3, 30))).thenReturn(1);
+        org.assertj.core.api.Assertions.assertThatIllegalStateException()
+                .isThrownBy(() -> service.claimEligible(0, 2, 250))
+                .withMessage("PHOTO delete job claim count mismatch");
+    }
+
+    @Test
     void claimEligible_validatesBatchAndDoesNotUpdateEmptySelection() {
-        when(repository.findClaimableForUpdateSkipLocked(
-                LocalDateTime.of(2026, 8, 11, 0, 0), LocalDateTime.of(2026, 8, 14, 0, 0), 250))
+        when(repository.findClaimable(
+                LocalDateTime.of(2026, 8, 11, 0, 0), LocalDateTime.of(2026, 8, 14, 0, 0), 0, 1, 250))
                 .thenReturn(List.of());
 
-        assertThat(service.claimEligible(250)).isEmpty();
+        assertThat(service.claimEligible(0, 1, 250)).isEmpty();
         verify(repository, never()).markProcessing(
                 List.of(), TimelinePhotoDeleteJobStatus.PROCESSING,
                 LocalDateTime.of(2026, 8, 14, 3, 30));
-        assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(0));
-        assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(1_001));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(0, 1, 0));
+        assertThatIllegalArgumentException().isThrownBy(() -> service.claimEligible(0, 1, 1_001));
     }
 
     @Test

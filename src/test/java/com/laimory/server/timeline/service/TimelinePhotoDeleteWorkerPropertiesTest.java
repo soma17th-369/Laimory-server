@@ -1,67 +1,37 @@
 package com.laimory.server.timeline.service;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.reflect.Constructor;
-import java.time.Duration;
-import java.util.Properties;
+import static org.assertj.core.api.Assertions.*;
+import java.util.HashSet;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Value;
 
 class TimelinePhotoDeleteWorkerPropertiesTest {
-
     @Test
-    void enablesWorkerByDefault() throws IOException, NoSuchMethodException {
-        Properties properties = new Properties();
-        try (InputStream input = getClass().getResourceAsStream("/application.properties")) {
-            assertThat(input).isNotNull();
-            properties.load(input);
+    void assignsEverySlotExactlyOnceForTwoServers() {
+        for (int count : new int[] {1, 2}) {
+            Set<Integer> assigned = new HashSet<>();
+            for (int server = 0; server < 2; server++) {
+                var properties = new TimelinePhotoDeleteWorkerProperties(true, 250, server, 2, count);
+                assertThat(properties.getWorkerCount()).isEqualTo(count);
+                assertThat(properties.getBatchSize()).isEqualTo(250);
+                assertThat(properties.getTotalWorkerCount()).isEqualTo(2 * count);
+                for (int slot = 0; slot < count; slot++) {
+                    assertThat(assigned.add(properties.getWorkerIndex(slot))).isTrue();
+                }
+                assertThatIllegalArgumentException().isThrownBy(() -> properties.getWorkerIndex(count));
+                assertThatIllegalArgumentException().isThrownBy(() -> properties.getWorkerIndex(-1));
+            }
+            assertThat(assigned).containsExactlyInAnyOrderElementsOf(
+                    java.util.stream.IntStream.range(0, 2 * count).boxed().toList());
         }
-
-        assertThat(properties.getProperty("app.timeline.photo-delete.worker-enabled"))
-                .isEqualTo("${TIMELINE_PHOTO_DELETE_WORKER_ENABLED:true}");
-
-        Constructor<TimelinePhotoDeleteWorkerProperties> constructor =
-                TimelinePhotoDeleteWorkerProperties.class.getDeclaredConstructor(
-                        boolean.class, int.class, int.class, int.class, Duration.class);
-        assertThat(constructor.getParameters()[0].getAnnotation(Value.class).value())
-                .isEqualTo("${app.timeline.photo-delete.worker-enabled:true}");
     }
 
     @Test
-    void acceptsInclusiveBounds() {
-        TimelinePhotoDeleteWorkerProperties minimum = properties(true, 1, 1, 1, Duration.ofMillis(1));
-        TimelinePhotoDeleteWorkerProperties maximum = properties(
-                false, 1_000, 2, 1_000, Duration.ofMinutes(10));
-
-        assertThat(minimum.isWorkerEnabled()).isTrue();
-        assertThat(minimum.getBatchSize()).isEqualTo(1);
-        assertThat(maximum.isWorkerEnabled()).isFalse();
-        assertThat(maximum.getConcurrency()).isEqualTo(2);
-    }
-
-    @Test
-    void rejectsValuesOutsideBounds() {
-        assertThatIllegalStateException().isThrownBy(
-                () -> properties(false, 0, 1, 4, Duration.ofSeconds(60)))
-                .withMessageContaining("batch-size");
-        assertThatIllegalStateException().isThrownBy(
-                () -> properties(false, 250, 3, 4, Duration.ofSeconds(60)))
-                .withMessageContaining("concurrency");
-        assertThatIllegalStateException().isThrownBy(
-                () -> properties(false, 250, 1, 0, Duration.ofSeconds(60)))
-                .withMessageContaining("max-batches-per-run");
-        assertThatIllegalStateException().isThrownBy(
-                () -> properties(false, 250, 1, 4, Duration.ZERO))
-                .withMessageContaining("max-run-duration");
-    }
-
-    private TimelinePhotoDeleteWorkerProperties properties(
-            boolean enabled, int batchSize, int concurrency, int maxBatches, Duration duration) {
-        return new TimelinePhotoDeleteWorkerProperties(
-                enabled, batchSize, concurrency, maxBatches, duration);
+    void rejectsInvalidWorkerTopology() {
+        assertThatIllegalStateException().isThrownBy(() -> new TimelinePhotoDeleteWorkerProperties(true, 250, -1, 2, 1));
+        assertThatIllegalStateException().isThrownBy(() -> new TimelinePhotoDeleteWorkerProperties(true, 250, 2, 2, 1));
+        assertThatIllegalStateException().isThrownBy(() -> new TimelinePhotoDeleteWorkerProperties(true, 250, 0, 0, 1));
+        assertThatIllegalStateException().isThrownBy(() -> new TimelinePhotoDeleteWorkerProperties(true, 250, 0, 2, 0));
+        assertThatIllegalStateException().isThrownBy(() -> new TimelinePhotoDeleteWorkerProperties(true, 1001, 0, 2, 1));
     }
 }
