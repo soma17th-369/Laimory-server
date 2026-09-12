@@ -1,13 +1,10 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.lang.reflect.Method;
-import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import org.junit.jupiter.api.Test;
@@ -37,7 +34,7 @@ class TimelineOrphanItemSweeperSchedulingTest {
 
         assertThat(CronExpression.parse(DEFAULT_CRON).next(beforeRun))
                 .isEqualTo(ZonedDateTime.of(2026, 8, 6, 3, 30, 0, 0, zone));
-        // PHOTO 삭제(03:00, 최대 run 60s)가 끝난 뒤이고 draft cleanup(04:00)보다 앞이다.
+        // PHOTO 삭제의 정규 시작(03:00) 뒤이고 draft cleanup(04:00)보다 앞이다.
         assertThat(CronExpression.parse("0 0 3 * * *").next(beforeRun.minusHours(1)))
                 .isBefore(ZonedDateTime.of(2026, 8, 6, 3, 30, 0, 0, zone));
     }
@@ -46,33 +43,43 @@ class TimelineOrphanItemSweeperSchedulingTest {
     void disabledSweeperDoesNotTouchDatabase() {
         TimelineOrphanItemSweepService sweepService = mock(TimelineOrphanItemSweepService.class);
         TimelineOrphanItemSweeper sweeper = new TimelineOrphanItemSweeper(sweepService,
-                new TimelineOrphanItemSweeperProperties(false, 250, 4, Duration.ofSeconds(60)));
+                new TimelineOrphanItemSweeperProperties(false, 250, 0, 2, 1));
 
         sweeper.sweepOrphanItems();
 
         verifyNoInteractions(sweepService);
     }
 
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
     @Test
-    void terminatesRunOnlyWhenScanIsExhausted() {
-        TimelineOrphanItemSweepService sweepService = mock(TimelineOrphanItemSweepService.class);
-        // claim이 0인 batch(다른 host가 선점)를 만나도 커서를 올려 계속 훑어야 한다.
-        org.mockito.Mockito.when(sweepService.sweepBatch(anyLong(), anyInt()))
-                .thenReturn(new TimelineOrphanItemSweepService.SweepBatchResult(
-                        2, 0, 2, 0, 0, 0, 0, 0, 0, 10L, false))
-                .thenReturn(new TimelineOrphanItemSweepService.SweepBatchResult(
-                        1, 1, 0, 0, 0, 0, 0, 0, 1, 20L, false))
-                .thenReturn(new TimelineOrphanItemSweepService.SweepBatchResult(
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 20L, true));
-        TimelineOrphanItemSweeper sweeper = new TimelineOrphanItemSweeper(sweepService,
-                new TimelineOrphanItemSweeperProperties(true, 250, 4, Duration.ofSeconds(60)));
-
+    void reportsStaleCountEvenWhenCurrentBatchIsEmpty(org.springframework.boot.test.system.CapturedOutput output) {
+        TimelineOrphanItemSweepService service = mock(TimelineOrphanItemSweepService.class);
+        org.mockito.Mockito.when(service.countStaleObservedOrphans(1, 2)).thenReturn(3L);
+        var sweeper = new TimelineOrphanItemSweeper(service,
+                new TimelineOrphanItemSweeperProperties(true, 250, 1, 2, 1));
         sweeper.sweepOrphanItems();
+        assertThat(output).contains("orphan Item 최초 관측 후 72시간 잔존: workerIndex=1 count=3");
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never())
+                .sweepBatch(org.mockito.ArgumentMatchers.anyList());
+    }
 
-        org.mockito.InOrder order = org.mockito.Mockito.inOrder(sweepService);
-        order.verify(sweepService).sweepBatch(0L, 250);
-        order.verify(sweepService).sweepBatch(10L, 250);
-        order.verify(sweepService).sweepBatch(20L, 250);
+    @Test
+    void eachSlotObservesOnceAndAlertsAfterFailedProcessing() {
+        TimelineOrphanItemSweepService service = mock(TimelineOrphanItemSweepService.class);
+        org.mockito.Mockito.when(service.observeBatch(2, 4, 1)).thenReturn(java.util.List.of(11L));
+        org.mockito.Mockito.when(service.observeBatch(3, 4, 1)).thenReturn(java.util.List.of(12L));
+        org.mockito.Mockito.when(service.sweepBatch(org.mockito.ArgumentMatchers.anyList()))
+                .thenThrow(new IllegalStateException("rollback"));
+        var sweeper = new TimelineOrphanItemSweeper(service,
+                new TimelineOrphanItemSweeperProperties(true, 1, 1, 2, 2));
+        sweeper.sweepOrphanItems();
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(service);
+        order.verify(service).observeBatch(2, 4, 1);
+        order.verify(service).sweepBatch(java.util.List.of(11L));
+        order.verify(service).countStaleObservedOrphans(2, 4);
+        order.verify(service).observeBatch(3, 4, 1);
+        order.verify(service).sweepBatch(java.util.List.of(12L));
+        order.verify(service).countStaleObservedOrphans(3, 4);
         order.verifyNoMoreInteractions();
     }
 }

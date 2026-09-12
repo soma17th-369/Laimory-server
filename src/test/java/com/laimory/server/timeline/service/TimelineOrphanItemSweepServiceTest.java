@@ -50,7 +50,7 @@ class TimelineOrphanItemSweepServiceTest {
     @BeforeEach
     void setUp() {
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
-                timelinePhotoDeleteJobService, new ObjectMapper());
+                timelinePhotoDeleteJobService, new ObjectMapper(), java.time.Clock.systemUTC());
         lenient().when(timelineEventItemService.findByTimelineItemIds(anyCollection()))
                 .thenReturn(List.of());
         lenient().when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
@@ -62,14 +62,22 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void emptyScanEndsTheRun() {
-        when(timelineItemService.findOrphanCandidates(0L, 250)).thenReturn(List.of());
+    void observationAndStaleThresholdUseClockInSeoul() {
+        var clock = java.time.Clock.fixed(java.time.Instant.parse("2026-09-11T18:30:00Z"), java.time.ZoneOffset.UTC);
+        service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
+                timelinePhotoDeleteJobService, new ObjectMapper(), clock);
+        scan(notificationItem(11L));
+        assertThat(service.observeBatch(1, 2, 250)).containsExactly(11L);
+        verify(timelineItemService).markOrphanObserved(List.of(11L), LocalDateTime.of(2026, 9, 12, 3, 30));
+        service.countStaleObservedOrphans(1, 2);
+        verify(timelineItemService).countStaleObservedOrphans(1, 2, LocalDateTime.of(2026, 9, 9, 3, 30));
+    }
 
-        var result = service.sweepBatch(0L, 250);
-
-        assertThat(result.exhausted()).isTrue();
-        assertThat(result.scanned()).isZero();
-        verify(timelineItemService, never()).claimOrphanCandidates(anyCollection());
+    @Test
+    void emptySelectionReturnsNoCandidates() {
+        when(timelineItemService.findOrphanCandidates(0, 2, 250)).thenReturn(List.of());
+        assertThat(service.observeBatch(0, 2, 250)).isEmpty();
+        verify(timelineItemService, never()).findByIds(anyCollection());
     }
 
     @Test
@@ -78,10 +86,9 @@ class TimelineOrphanItemSweepServiceTest {
         scan(item);
         claim(item);
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
-        assertThat(result.nextCursor()).isEqualTo(11L);
         verify(timelineItemService).deleteByIds(List.of(11L));
         verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
     }
@@ -95,7 +102,7 @@ class TimelineOrphanItemSweepServiceTest {
                 .thenReturn(List.of(row(12L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(12L, KEY_A)).thenReturn(true);
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.photoScheduled()).isEqualTo(1);
         verify(timelinePhotoDeleteJobService).insertIfAbsent(12L, KEY_A);
@@ -109,7 +116,7 @@ class TimelineOrphanItemSweepServiceTest {
         claim(item);
         when(timelineItemService.findLiveObjectKeysByFilenames(anyCollection())).thenReturn(Set.of(KEY_A));
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.keyShared()).isEqualTo(1);
         verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
@@ -129,7 +136,7 @@ class TimelineOrphanItemSweepServiceTest {
                 .thenReturn(List.of(row(14L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(14L, KEY_A)).thenReturn(true);
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.photoScheduled()).isEqualTo(1);
         assertThat(result.keyShared()).isZero();
@@ -146,7 +153,7 @@ class TimelineOrphanItemSweepServiceTest {
                 row(16L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(15L, KEY_A)).thenReturn(true);
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.photoScheduled()).isEqualTo(1);
         assertThat(result.keyShared()).isEqualTo(1);
@@ -162,7 +169,7 @@ class TimelineOrphanItemSweepServiceTest {
         scan(broken);
         claim(broken);
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.invalidDeleted()).isEqualTo(1);
         verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
@@ -170,10 +177,9 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void concurrentlyCreatedJobPreservesRowInsteadOfDeleting() {
+    void duplicateInsertPreservesRowWhenItsJobIsVisible() {
         // insert ignore가 false를 돌려준 이유가 "이 Item의 job이 방금 생겼다"면 행을 지우면 FK 위반이다.
-        // claim이 Item 행을 잠그므로 실제로는 FK 부모 잠금이 이 경합을 먼저 막지만, 잠금 설계가 바뀌어도
-        // 안전하도록 backstop을 둔다. 재검증은 job을 못 봤고 insert 직전에 생긴 순서를 재현한다.
+        // 이 mock은 조회 결과별 분기만 검증한다. RR snapshot 뒤 동시 생성 job의 가시성을 보장하지 않는다.
         TimelineItem item = photoItem(18L, FILENAME, "https://cdn.example.net/" + KEY_A);
         scan(item);
         claim(item);
@@ -183,7 +189,7 @@ class TimelineOrphanItemSweepServiceTest {
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of(), Set.of(18L));
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.photoAlreadyJob()).isEqualTo(1);
         assertThat(result.keyShared()).isZero();
@@ -200,7 +206,7 @@ class TimelineOrphanItemSweepServiceTest {
         when(timelinePhotoDeleteJobService.insertIfAbsent(19L, KEY_A)).thenReturn(false);
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(19L))).thenReturn(Set.of());
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.keyShared()).isEqualTo(1);
         verify(timelineItemService).deleteByIds(List.of(19L));
@@ -216,7 +222,7 @@ class TimelineOrphanItemSweepServiceTest {
         when(timelineEventItemService.findByTimelineItemIds(List.of(20L, 21L)))
                 .thenReturn(List.of(TimelineEventItem.of(99L, 21L)));
 
-        var result = service.sweepBatch(0L, 250);
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.revalidationDropped()).isEqualTo(2);
         verify(timelineItemService).deleteByIds(List.of());
@@ -224,28 +230,21 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void lockedRowsAreCountedAndCursorStillAdvances() {
-        TimelineItem first = notificationItem(30L);
-        TimelineItem second = notificationItem(31L);
-        scan(first, second);
-        when(timelineItemService.claimOrphanCandidates(List.of(30L, 31L))).thenReturn(List.of());
-
-        var result = service.sweepBatch(0L, 250);
-
-        assertThat(result.scanned()).isEqualTo(2);
-        assertThat(result.claimed()).isZero();
-        assertThat(result.skippedLocked()).isEqualTo(2);
-        assertThat(result.exhausted()).isFalse();
-        assertThat(result.nextCursor()).isEqualTo(31L);
+    void rowsRemovedAfterObservationAreRevalidationDrops() {
+        scan(notificationItem(30L), notificationItem(31L));
+        when(timelineItemService.findByIds(List.of(30L, 31L))).thenReturn(List.of());
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
+        assertThat(result.selected()).isEqualTo(2);
+        assertThat(result.revalidationDropped()).isEqualTo(2);
     }
 
     private void scan(TimelineItem... items) {
-        when(timelineItemService.findOrphanCandidates(anyLong(), anyInt()))
+        when(timelineItemService.findOrphanCandidates(anyInt(), anyInt(), anyInt()))
                 .thenReturn(List.of(items));
     }
 
     private void claim(TimelineItem... items) {
-        when(timelineItemService.claimOrphanCandidates(anyCollection())).thenReturn(List.of(items));
+        when(timelineItemService.findByIds(anyCollection())).thenReturn(List.of(items));
     }
 
     private TimelineItem photoItem(long id, String filename, String photoUrl) {

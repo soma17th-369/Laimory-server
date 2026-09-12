@@ -166,6 +166,11 @@ class TimelineEventPhotoAddServiceTest {
 
         List<Long> linked = service.link(SUBJECT_ID, EVENT_ID, changes);
 
+        // Item UPDATE가 junction FK 공유 잠금보다 먼저 실행돼 동시 재사용의 S→X 교착을 피한다.
+        var order = org.mockito.Mockito.inOrder(timelineItemService, timelineEventItemService);
+        order.verify(timelineItemService).clearOrphanObservation(org.mockito.ArgumentMatchers.eq(List.of(31L)), any());
+        order.verify(timelineEventItemService).saveAll(any());
+
         // 반환 ID는 기존 재사용·job 재연결·신규를 모두 포함한다 — 생성 응답 조립의 입력이다.
         assertThat(linked).containsExactly(31L, 21L);
         @SuppressWarnings("unchecked")

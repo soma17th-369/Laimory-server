@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.repository;
 
 import com.laimory.server.timeline.entity.TimelineItem;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -30,28 +31,48 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     List<TimelineItem> findByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);
 
-    /**
-     * orphan 스위퍼의 <b>탐색</b> 조회 — junction과 delete job이 모두 없는 Item을 PK 커서로 훑는다.
-     *
-     * <p>여기에 {@code FOR UPDATE}를 붙이지 않는다. 이 statement는 조건에 안 맞는 행까지 훑으므로
-     * {@code REPEATABLE READ}에서 잠금을 걸면 사실상 테이블 전체가 잠긴다. 배타 claim은 이 결과의 PK만
-     * 골라 {@link #claimOrphanCandidatesForUpdateSkipLocked}가 좁게 건다.
-     */
+    /** 담당 PK에서 한 배치만 일반 조회한다. 관측 표시는 후보 제외 조건이 아니다. */
     @Query(value = "select * from timeline_items i "
-            + "where i.timeline_item_id > :cursor "
+            + "where mod(i.timeline_item_id - 1, :totalWorkerCount) = :workerIndex "
             + "and not exists (select 1 from timeline_event_items l "
             + "                where l.timeline_item_id = i.timeline_item_id) "
             + "and not exists (select 1 from timeline_photo_delete_jobs j "
             + "                where j.timeline_item_id = i.timeline_item_id) "
-            + "order by i.timeline_item_id limit :limit",
-            nativeQuery = true)
-    List<TimelineItem> findOrphanCandidates(@Param("cursor") long cursor, @Param("limit") int limit);
+            + "order by i.timeline_item_id limit :limit", nativeQuery = true)
+    List<TimelineItem> findOrphanCandidates(@Param("workerIndex") int workerIndex,
+                                            @Param("totalWorkerCount") int totalWorkerCount,
+                                            @Param("limit") int limit);
 
-    /** 탐색이 고른 후보만 PK로 좁게 claim한다. 다른 process가 잠근 행은 건너뛴다(process 간 분배). */
-    @Query(value = "select * from timeline_items where timeline_item_id in (:itemIds) "
-            + "for update skip locked",
-            nativeQuery = true)
-    List<TimelineItem> claimOrphanCandidatesForUpdateSkipLocked(@Param("itemIds") Collection<Long> itemIds);
+    /** 선택한 PK 안의 미표시 고아만 기록한다. 재시도는 최초 관측 시각을 덮어쓰지 않는다. */
+    @Modifying
+    @Query(value = "update timeline_items i set modified_by = 'ORPHAN_SWEEPER', updated_at = :observedAt "
+            + "where i.timeline_item_id in (:itemIds) "
+            + "and (i.modified_by is null or i.modified_by <> 'ORPHAN_SWEEPER') "
+            + "and not exists (select 1 from timeline_event_items l "
+            + "                where l.timeline_item_id = i.timeline_item_id) "
+            + "and not exists (select 1 from timeline_photo_delete_jobs j "
+            + "                where j.timeline_item_id = i.timeline_item_id)", nativeQuery = true)
+    int markOrphanObserved(@Param("itemIds") Collection<Long> itemIds,
+                           @Param("observedAt") LocalDateTime observedAt);
+
+    /** 현재 배치 밖을 포함해 담당 전체에서 72시간 이상 관측된 고아를 센다. */
+    @Query(value = "select count(*) from timeline_items i "
+            + "where mod(i.timeline_item_id - 1, :totalWorkerCount) = :workerIndex "
+            + "and i.modified_by = 'ORPHAN_SWEEPER' and i.updated_at <= :staleBefore "
+            + "and not exists (select 1 from timeline_event_items l "
+            + "                where l.timeline_item_id = i.timeline_item_id) "
+            + "and not exists (select 1 from timeline_photo_delete_jobs j "
+            + "                where j.timeline_item_id = i.timeline_item_id)", nativeQuery = true)
+    long countStaleObservedOrphans(@Param("workerIndex") int workerIndex,
+                                   @Param("totalWorkerCount") int totalWorkerCount,
+                                   @Param("staleBefore") LocalDateTime staleBefore);
+
+    /** 재연결 transaction에서 관측을 끝낸다. 공통 감사나 다른 modified_by 값은 바꾸지 않는다. */
+    @Modifying
+    @Query(value = "update timeline_items set modified_by = null, updated_at = :linkedAt "
+            + "where timeline_item_id in (:itemIds) and modified_by = 'ORPHAN_SWEEPER'", nativeQuery = true)
+    int clearOrphanObservation(@Param("itemIds") Collection<Long> itemIds,
+                               @Param("linkedAt") LocalDateTime linkedAt);
 
     /**
      * 주어진 filename을 참조하면서 <b>junction이 살아 있는</b> PHOTO Item의 full object key 집합.

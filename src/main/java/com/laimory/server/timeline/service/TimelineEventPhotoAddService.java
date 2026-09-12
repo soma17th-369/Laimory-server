@@ -245,6 +245,9 @@ class TimelineEventPhotoAddService {
             linkedItemIds.add(item.getTimelineItemId());
         }
         if (!links.isEmpty()) {
+            // junction INSERT의 FK 공유 잠금 뒤 Item UPDATE로 승격하면 동시 재사용이 교착된다.
+            timelineItemService.clearOrphanObservation(photoChanges.existingItemIdsToLink(),
+                    LocalDateTime.now());
             timelineEventItemService.saveAll(links);
         }
         return List.copyOf(linkedItemIds);
