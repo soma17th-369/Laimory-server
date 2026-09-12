@@ -147,9 +147,11 @@ application 배포·health gate 의존성이 아니다.
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CRON`,
   `TIMELINE_PHOTO_DELETE_ZONE`, `TIMELINE_PHOTO_DELETE_BATCH_SIZE`,
-  `TIMELINE_PHOTO_DELETE_CONCURRENCY`, `TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN`,
-  `TIMELINE_PHOTO_DELETE_MAX_RUN_DURATION` (checked-in default는 worker on, 매일 `03:00`
-  `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
+  `TIMELINE_PHOTO_DELETE_WORKER_ID`, `TIMELINE_PHOTO_DELETE_SERVER_COUNT`,
+  `TIMELINE_PHOTO_DELETE_WORKER_COUNT` (checked-in default는 worker on, 매일 `03:00`
+  `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
+  서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
+  최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-photo-delete-rollout.md)를 따른다.
 - `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_QUIESCE_CRON`, `ACCOUNT_ERASURE_DELETE_CRON`,
   `ACCOUNT_ERASURE_ZONE`, `ACCOUNT_ERASURE_QUIESCE_DELAY`, `ACCOUNT_ERASURE_STALE_AFTER`,
   `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,

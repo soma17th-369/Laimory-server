@@ -34,7 +34,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
-/** 실제 MySQL에서 두 transaction의 SKIP LOCKED claim 결과가 겹치지 않는지 검증한다. */
+/** 실제 MySQL에서 스케줄러별 분배와 처리 상태 전이를 검증한다. */
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
@@ -94,12 +94,14 @@ class DistributedScheduledClaimIntegrationTest {
         jdbcTemplate.update("update timeline_photo_delete_jobs set created_at = ?, updated_at = ?",
                 withinWindow, withinWindow);
 
+        java.util.concurrent.atomic.AtomicInteger owner = new java.util.concurrent.atomic.AtomicInteger();
         List<List<TimelinePhotoDeleteJob>> claims = claimConcurrently(
-                () -> photoJobService.claimEligible(ROW_COUNT / 2));
-        assertDisjointAndEventuallyDrained(
-                claims,
-                () -> photoJobService.claimEligible(ROW_COUNT),
-                TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
+                () -> photoJobService.claimEligible(owner.getAndIncrement(), 2, ROW_COUNT));
+        Set<Long> selected = new HashSet<>();
+        claims.forEach(batch -> addDisjoint(selected, batch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId));
+        assertThat(selected).hasSize(ROW_COUNT);
+        assertThat(photoJobService.claimEligible(0, 2, ROW_COUNT)).isEmpty();
+        assertThat(photoJobService.claimEligible(1, 2, ROW_COUNT)).isEmpty();
         assertThat(photoJobRepository.findAll())
                 .extracting(TimelinePhotoDeleteJob::getStatus)
                 .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
@@ -141,6 +143,31 @@ class DistributedScheduledClaimIntegrationTest {
                 claims,
                 () -> draftSourceItemService.claimExpired(cutoff, ROW_COUNT),
                 TimelineDraftSourceItem::getTimelineDraftSourceItemId);
+    }
+
+    @Test
+    void sparsePhotoPrimaryKeysHaveOneOwnerForTwoAndFourWorkers() {
+        photoItemIds = java.util.stream.IntStream.range(0, 24).mapToObj(this::savePhotoItem).toList();
+        for (int index = 0; index < photoItemIds.size(); index++) {
+            photoJobService.insertIfAbsent(photoItemIds.get(index), "partition/photos/" + index + ".jpg");
+        }
+        jdbcTemplate.update("DELETE FROM timeline_photo_delete_jobs "
+                + "WHERE MOD(timeline_photo_delete_job_id, 4)=1 OR MOD(timeline_photo_delete_job_id, 7)=0");
+        var expectedIds = photoJobRepository.findAll().stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId).toList();
+        for (int total : List.of(2, 4)) {
+            var yesterday = LocalDateTime.now().toLocalDate().atStartOfDay().minusHours(12);
+            jdbcTemplate.update("UPDATE timeline_photo_delete_jobs SET created_at=?, updated_at=?, status='PENDING'",
+                    yesterday, yesterday);
+            Set<Long> selected = new HashSet<>();
+            for (int worker = 0; worker < total; worker++) {
+                var batch = photoJobService.claimEligible(worker, total, 250);
+                final int owner = worker;
+                assertThat(batch).allMatch(job -> (job.getTimelinePhotoDeleteJobId() - 1) % total == owner);
+                addDisjoint(selected, batch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
+            }
+            assertThat(selected).containsExactlyInAnyOrderElementsOf(expectedIds);
+        }
     }
 
     private long savePhotoItem(int index) {

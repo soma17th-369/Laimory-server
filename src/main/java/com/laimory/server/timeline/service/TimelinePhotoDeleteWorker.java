@@ -1,6 +1,5 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.common.ScheduledWorkerRunBudget;
 import com.laimory.server.common.logging.LogSanitizer;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
@@ -22,7 +21,7 @@ import org.springframework.stereotype.Component;
 /**
  * MySQL PHOTO delete-job을 여러 process/thread에서 batch claim해 처리하는 worker.
  *
- * <p>짧은 claim transaction이 {@code SKIP LOCKED}로 KST 생성일 기준 D+1~D+3 처리 창의 작업을 분리하고
+ * <p>짧은 claim transaction이 PK MOD 분배로 KST 생성일 기준 D+1~D+3 처리 창의 작업을 분리하고
  * {@code updated_at}을 갱신해 같은 날 재선택을 막은 뒤 commit한다. S3 호출은 DB transaction 밖이며
  * 성공이 확인된 job과 원문 PHOTO Item만 짧은 별도 transaction으로 최종 삭제한다. 실패·응답 누락·SDK
  * 예외는 두 행을 남긴다. 처리 창을 벗어난 미완료 job은 재시도하지 않고 건수만 ERROR로 경보한다.
@@ -63,16 +62,15 @@ public class TimelinePhotoDeleteWorker {
         }
         alertExpiredJobs();
 
-        ScheduledWorkerRunBudget budget = new ScheduledWorkerRunBudget(
-                properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
-        AtomicInteger remainingSlots = new AtomicInteger(properties.getConcurrency());
+        AtomicInteger remainingSlots = new AtomicInteger(properties.getWorkerCount());
         RunSummary summary = new RunSummary();
-        log.info("PHOTO 삭제 worker run 시작: batchSize={} concurrency={} maxBatches={} maxRunDurationMs={}",
-                properties.getBatchSize(), properties.getConcurrency(), properties.getMaxBatchesPerRun(),
-                properties.getMaxRunDuration().toMillis());
-        for (int slot = 0; slot < properties.getConcurrency(); slot++) {
+        log.info("PHOTO 삭제 worker run 시작: batchSize={} workerIndexStart={} workerCount={} totalWorkerCount={}",
+                properties.getBatchSize(), properties.getWorkerIndex(0), properties.getWorkerCount(),
+                properties.getTotalWorkerCount());
+        for (int slot = 0; slot < properties.getWorkerCount(); slot++) {
+            int workerIndex = properties.getWorkerIndex(slot);
             try {
-                workerExecutor.execute(() -> runWorkerSlot(budget, remainingSlots, summary));
+                workerExecutor.execute(() -> runWorkerSlot(workerIndex, remainingSlots, summary));
             } catch (RuntimeException exception) {
                 summary.recordWorkerError();
                 log.warn("PHOTO 삭제 worker task 제출 실패: exceptionType={}",
@@ -83,25 +81,24 @@ public class TimelinePhotoDeleteWorker {
     }
 
     private void runWorkerSlot(
-            ScheduledWorkerRunBudget budget,
+            int workerIndex,
             AtomicInteger remainingSlots,
             RunSummary summary) {
         try {
-            while (budget.tryAcquireBatch()) {
-                List<TimelinePhotoDeleteJob> jobs;
-                try {
-                    jobs = jobService.claimEligible(properties.getBatchSize());
-                } catch (RuntimeException exception) {
-                    summary.recordClaimError();
-                    log.warn("PHOTO 삭제 job claim 실패: exceptionType={}",
-                            exception.getClass().getSimpleName());
-                    return;
-                }
-                if (jobs.isEmpty()) {
-                    return;
-                }
-                summary.record(processClaimedBatch(jobs));
+            List<TimelinePhotoDeleteJob> jobs;
+            try {
+                jobs = jobService.claimEligible(
+                        workerIndex, properties.getTotalWorkerCount(), properties.getBatchSize());
+            } catch (RuntimeException exception) {
+                summary.recordClaimError();
+                log.warn("PHOTO 삭제 job claim 실패: exceptionType={}",
+                        exception.getClass().getSimpleName());
+                return;
             }
+            if (jobs.isEmpty()) {
+                return;
+            }
+            summary.record(processClaimedBatch(jobs));
         } finally {
             workerSlotFinished(remainingSlots, summary);
         }

@@ -34,7 +34,7 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
                        @Param("auditAt") LocalDateTime auditAt);
 
     /**
-     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 job을 claim 후보로 잠근다.
+     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 job을 자기 담당 후보로 조회한다.
      * {@code updated_at < todayStart}가 PENDING의 같은 날 재선택과 활성 PROCESSING을 함께 거르므로,
      * 남는 PROCESSING은 전날 이전 claim이 남긴 stale 행이다.
      */
@@ -42,12 +42,15 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
             + "where created_at >= :windowStart and created_at < :todayStart "
             + "and updated_at < :todayStart "
             + "and status in ('PENDING', 'PROCESSING') "
+            + "and mod(timeline_photo_delete_job_id - 1, :totalWorkerCount) = :workerIndex "
             + "order by created_at, timeline_photo_delete_job_id "
-            + "limit :limit for update skip locked",
+            + "limit :limit",
             nativeQuery = true)
-    List<TimelinePhotoDeleteJob> findClaimableForUpdateSkipLocked(
+    List<TimelinePhotoDeleteJob> findClaimable(
             @Param("windowStart") LocalDateTime windowStart,
             @Param("todayStart") LocalDateTime todayStart,
+            @Param("workerIndex") int workerIndex,
+            @Param("totalWorkerCount") int totalWorkerCount,
             @Param("limit") int limit);
 
     /** claim한 행을 PROCESSING으로 바꾸고 같은 날 재선택을 막는 {@code updated_at}을 함께 갱신한다. */

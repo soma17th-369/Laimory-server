@@ -165,7 +165,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         em.flush();
         em.clear();
 
-        assertThat(service.claimEligible(2))
+        assertThat(service.claimEligible(0, 1, 2))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(firstItemId, secondItemId);
         em.flush();
@@ -203,7 +203,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         em.flush();
         em.clear();
 
-        assertThat(service.claimEligible(100))
+        assertThat(service.claimEligible(0, 1, 100))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(dPlusThreeItemId, dPlusOneItemId);
         em.flush();
@@ -240,7 +240,7 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
         em.flush();
         em.clear();
 
-        assertThat(service.claimEligible(100))
+        assertThat(service.claimEligible(0, 1, 100))
                 .extracting(TimelinePhotoDeleteJob::getTimelineItemId)
                 .containsExactly(staleItemId);
     }
