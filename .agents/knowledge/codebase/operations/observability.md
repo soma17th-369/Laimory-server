@@ -280,7 +280,8 @@ Spring JSON stdout
   이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
   각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
   DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
-- draft retention cleanup도 custom meter를 등록하지 않는다. 각 process가 run 시작 설정과 batch/run 종료의
+- draft retention cleanup은 custom meter나 적체 전용 알림을 등록하지 않는다. run 시작 설정과
+  batch/run 종료의 selected/succeeded/failed/deleted, PHOTO 결과와 DB 오류 수를 로그로 남긴다.
 - **계정 삭제 worker(#302)**: 삭제 pass는 run 시작에 두 건수를 ERROR로 남겨 같은 경보에 태운다 —
   처리 창(접수일 D 기준 D+8~D+10)을 벗어나 재시도에서 제외된 `expiredCount`와 수동 확인 대기
   `manualReviewCount`다. 데이터와 job은 보존되며 로그에 userId·subjectId·jobId를 싣지 않는다.

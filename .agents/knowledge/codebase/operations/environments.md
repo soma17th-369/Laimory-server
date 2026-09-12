@@ -172,9 +172,11 @@ application 배포·health gate 의존성이 아니다.
   잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
   로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
-  `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,
-  `DRAFT_CLEANUP_MAX_BATCHES_PER_RUN`, `DRAFT_CLEANUP_MAX_RUN_DURATION` (checked-in default는 worker on,
-  7일 retention, 매일 `04:00` `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
+  `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_WORKER_ID`,
+  `DRAFT_CLEANUP_SERVER_COUNT`, `DRAFT_CLEANUP_WORKER_COUNT` (checked-in default는 worker on,
+  7일 retention, 매일 `04:00` `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
+  서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
+  최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-draft-cleanup-rollout.md)를 따른다.
 - `USER_MEMORY_UPDATE_CRON`, `USER_MEMORY_UPDATE_ZONE`, `USER_MEMORY_UPDATE_RETENTION`
 - `APP_ENV`
 

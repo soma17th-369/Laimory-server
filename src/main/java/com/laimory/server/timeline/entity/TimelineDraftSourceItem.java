@@ -61,10 +61,6 @@ public class TimelineDraftSourceItem extends BaseEntity {
     @Column(name = "payload", nullable = false)
     private JsonNode payload;
 
-    /** 이 시각부터 retention cleanup claim 대상이 된다. */
-    @Column(name = "cleanup_available_at", nullable = false, insertable = false)
-    private LocalDateTime cleanupAvailableAt;
-
     protected TimelineDraftSourceItem() {
     }
 
