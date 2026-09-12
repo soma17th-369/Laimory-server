@@ -71,6 +71,10 @@ class TimelineOrphanItemSweepIntegrationTest {
     private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
     @Autowired
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private TimelineItemService itemService;
+    @Autowired
+    private TimelineEventPhotoAddService photoAddService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -81,7 +85,6 @@ class TimelineOrphanItemSweepIntegrationTest {
 
     private UUID subjectId;
     private Long recordId;
-    private long cursor;
 
     @BeforeEach
     void setUp() {
@@ -90,11 +93,6 @@ class TimelineOrphanItemSweepIntegrationTest {
         fixtureItemIds.clear();
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
-        // 다른 fixture가 남긴 행을 건드리지 않도록 이번 테스트가 만든 첫 id 직전부터 훑는다.
-        cursor = timelineItemRepository.findAll().stream()
-                .mapToLong(TimelineItem::getTimelineItemId)
-                .max()
-                .orElse(0L);
     }
 
     @AfterEach
@@ -138,8 +136,8 @@ class TimelineOrphanItemSweepIntegrationTest {
         // 동시 해제 두 요청이 남긴 종단 상태를 직접 만든다(스레드 타이밍에 의존하지 않는 결정적 재현).
         jdbcTemplate.update("DELETE FROM timeline_event_items WHERE timeline_item_id = ?", itemId);
 
-        var first = sweepService.sweepBatch(cursor, 250);
-        var second = sweepService.sweepBatch(cursor, 250);
+        var first = sweep(0, 1, 250);
+        var second = sweep(0, 1, 250);
 
         assertThat(first.photoScheduled()).isEqualTo(1);
         assertThat(second.photoScheduled()).isZero();
@@ -155,7 +153,7 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long linked = saveCalendar("raw-linked", eventId);
         Long orphan = saveCalendar("raw-orphan");
 
-        var result = sweepService.sweepBatch(cursor, 250);
+        var result = sweep(0, 1, 250);
 
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
         assertThat(timelineItemRepository.existsById(orphan)).isFalse();
@@ -173,7 +171,7 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long orphan = savePhotoWithKey("raw-orphan-b2", filename,
                 PhotoObjectKeys.subjectFullKey(filename, subjectId));
 
-        var result = sweepService.sweepBatch(cursor, 250);
+        var result = sweep(0, 1, 250);
 
         assertThat(result.keyShared()).isEqualTo(1);
         assertThat(result.photoScheduled()).isZero();
@@ -200,7 +198,7 @@ class TimelineOrphanItemSweepIntegrationTest {
                 PhotoObjectKeys.subjectFullKey(filename, subjectId));
 
         try {
-            var result = sweepService.sweepBatch(cursor, 250);
+            var result = sweep(0, 1, 250);
 
             assertThat(result.photoScheduled()).isEqualTo(1);
             assertThat(result.keyShared()).isZero();
@@ -220,7 +218,7 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long lower = savePhotoWithKey("raw-lower", filename, objectKey);
         Long higher = savePhotoWithKey("raw-higher", filename, objectKey);
 
-        var result = sweepService.sweepBatch(cursor, 250);
+        var result = sweep(0, 1, 250);
 
         assertThat(result.photoScheduled()).isEqualTo(1);
         assertThat(result.keyShared()).isEqualTo(1);
@@ -237,8 +235,8 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long lower = savePhotoWithKey("raw-lower-e5", filename, objectKey);
         Long higher = savePhotoWithKey("raw-higher-e5", filename, objectKey);
 
-        var first = sweepService.sweepBatch(cursor, 1);
-        var second = sweepService.sweepBatch(first.nextCursor(), 1);
+        var first = sweep(0, 1, 1);
+        var second = sweep(0, 1, 1);
 
         assertThat(first.photoScheduled() + second.photoScheduled()).isEqualTo(1);
         assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId)
@@ -250,7 +248,7 @@ class TimelineOrphanItemSweepIntegrationTest {
     void damagedPhotoUrlDropsJobAndDeletesRow() {
         Long orphan = savePhotoWithKey("raw-damaged", filename(6), "not-a-valid-object-key");
 
-        var result = sweepService.sweepBatch(cursor, 250);
+        var result = sweep(0, 1, 250);
 
         assertThat(result.invalidDeleted()).isEqualTo(1);
         assertThat(jobsOfFixture()).isEmpty();
@@ -260,19 +258,14 @@ class TimelineOrphanItemSweepIntegrationTest {
     @Test
     void itemWithExistingJobIsExcludedFromCandidates() {
         // job이 있는 Item은 후보 조회 단계에서 빠진다(worker 소유라 스위퍼가 건드리면 FK 위반).
-        //
-        // NOTE: "탐색 이후 다른 transaction이 job을 commit"하는 순서(잠금 하 current read 재검증이
-        // 막는 경로)는 이 테스트가 아니라 TimelineOrphanItemSweepServiceTest의
-        // concurrentlyCreatedJobPreservesRowInsteadOfDeleting이 mock으로만 덮는다. 실 MySQL에서
-        // 그 순서를 재현하려면 서비스 내부에 개입 지점이 필요해 통합 커버리지는 비어 있다.
         String filename = filename(7);
         Long orphan = savePhotoWithKey("raw-g7", filename,
                 PhotoObjectKeys.subjectFullKey(filename, subjectId));
         timelinePhotoDeleteJobService.insertIfAbsent(orphan, PhotoObjectKeys.subjectFullKey(filename, subjectId));
 
-        var result = sweepService.sweepBatch(cursor, 250);
+        var result = sweep(0, 1, 250);
 
-        assertThat(result.scanned()).isZero();
+        assertThat(result.selected()).isZero();
         assertThat(timelineItemRepository.existsById(orphan)).isTrue();
         assertThat(jobsOfFixture()).hasSize(1);
     }
@@ -283,17 +276,16 @@ class TimelineOrphanItemSweepIntegrationTest {
         String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
         Long orphan = savePhotoWithKey("raw-h8", filename, objectKey);
         TransactionTemplate template = new TransactionTemplate(transactionManager);
-        long startCursor = cursor;
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<Integer> first = executor.submit(() -> {
                 start.await();
-                return template.execute(status -> sweepService.sweepBatch(startCursor, 250).photoScheduled());
+                return template.execute(status -> sweep(0, 2, 250).photoScheduled());
             });
             Future<Integer> second = executor.submit(() -> {
                 start.await();
-                return template.execute(status -> sweepService.sweepBatch(startCursor, 250).photoScheduled());
+                return template.execute(status -> sweep(1, 2, 250).photoScheduled());
             });
             start.countDown();
             assertThat(first.get() + second.get()).isEqualTo(1);
@@ -301,6 +293,78 @@ class TimelineOrphanItemSweepIntegrationTest {
 
         assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId).containsExactly(orphan);
         assertThat(timelineItemRepository.existsById(orphan)).isTrue();
+    }
+
+    @Test
+    void observationSurvivesProcessingRollbackAndIsWrittenOnlyOnce() {
+        Long itemId = savePhoto("raw-observe", filename(91));
+        var before = timelineItemRepository.findById(itemId).orElseThrow().getCreatedAt();
+        List<Long> candidates = sweepService.observeBatch(0, 1, 250);
+        var first = timelineItemRepository.findById(itemId).orElseThrow();
+        assertThat(first.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
+        assertThat(first.getCreatedAt()).isEqualTo(before);
+        org.mockito.Mockito.doThrow(new IllegalStateException("synthetic processing failure"))
+                .when(itemService).deleteByIds(org.mockito.ArgumentMatchers.anyCollection());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> sweepService.sweepBatch(candidates))
+                .isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.reset(itemService);
+        assertThat(jobsOfFixture()).isEmpty(); // job insert preceding the failure also rolled back
+        sweepService.observeBatch(0, 1, 250);
+        var retried = timelineItemRepository.findById(itemId).orElseThrow();
+        assertThat(retried.getUpdatedAt()).isEqualTo(first.getUpdatedAt());
+        assertThat(retried.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
+        assertThat(sweepService.sweepBatch(candidates).photoScheduled()).isEqualTo(1);
+    }
+
+    @Test
+    void staleCountIncludesBoundaryAndObservedRowsBeyondCurrentBatchOnly() {
+        var now = java.time.LocalDateTime.of(2026, 9, 12, 3, 30);
+        Long exact = saveCalendar("raw-exact");
+        Long recent = saveCalendar("raw-recent");
+        Long unobserved = saveCalendar("raw-unobserved");
+        Long outsideBatch = saveCalendar("raw-outside");
+        Long linked = saveCalendar("raw-linked-old", saveEvent("linked", 9));
+        Long withJob = savePhoto("raw-with-job", filename(92));
+        for (Long id : List.of(exact, outsideBatch, linked, withJob)) {
+            jdbcTemplate.update("UPDATE timeline_items SET modified_by='ORPHAN_SWEEPER', updated_at=? "
+                    + "WHERE timeline_item_id=?", now.minusHours(72), id);
+        }
+        jdbcTemplate.update("UPDATE timeline_items SET modified_by='ORPHAN_SWEEPER', updated_at=? "
+                + "WHERE timeline_item_id=?", now.minusHours(72).plusNanos(1000), recent);
+        jdbcTemplate.update("UPDATE timeline_items SET updated_at=? WHERE timeline_item_id=?", now.minusDays(8), unobserved);
+        timelinePhotoDeleteJobService.insertIfAbsent(withJob, PhotoObjectKeys.subjectFullKey(filename(92), subjectId));
+        assertThat(sweepService.observeBatch(0, 1, 1)).containsExactly(exact);
+        assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(2);
+        assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72).minusNanos(1000))).isZero();
+        assertThat(itemService.countStaleObservedOrphans(0, 2, now.minusHours(72))
+                + itemService.countStaleObservedOrphans(1, 2, now.minusHours(72))).isEqualTo(2);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> itemService.deleteByIds(List.of(exact)));
+        assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(1);
+    }
+
+    @Test
+    void relinkClearsObservationAndLaterOrphanStartsANewPeriod() {
+        Long itemId = savePhoto("raw-relink", filename(93));
+        List<Long> candidates = sweepService.observeBatch(0, 1, 250);
+        jdbcTemplate.update("UPDATE timeline_items SET updated_at='2000-01-01' WHERE timeline_item_id=?", itemId);
+        sweepService.sweepBatch(candidates);
+        Long eventId = saveEvent("relinked", 9);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            assertThat(timelinePhotoDeleteJobService.cancelPendingForRelink(
+                    PhotoObjectKeys.subjectFullKey(filename(93), subjectId), "raw-relink")).contains(itemId);
+            photoAddService.link(subjectId, eventId,
+                    new TimelineEventPhotoAddService.PhotoChanges(List.of(itemId), List.of()));
+        });
+        assertThat(timelineItemRepository.findById(itemId).orElseThrow().getModifiedBy()).isNull();
+        jdbcTemplate.update("DELETE FROM timeline_event_items WHERE timeline_item_id=?", itemId);
+        sweepService.observeBatch(0, 1, 250);
+        var observedAgain = timelineItemRepository.findById(itemId).orElseThrow();
+        assertThat(observedAgain.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
+        assertThat(observedAgain.getUpdatedAt()).isAfter(java.time.LocalDateTime.of(2000, 1, 1, 0, 0));
+    }
+
+    private TimelineOrphanItemSweepService.SweepBatchResult sweep(int workerIndex, int total, int limit) {
+        return sweepService.sweepBatch(sweepService.observeBatch(workerIndex, total, limit));
     }
 
     private List<TimelinePhotoDeleteJob> jobsOfFixture() {

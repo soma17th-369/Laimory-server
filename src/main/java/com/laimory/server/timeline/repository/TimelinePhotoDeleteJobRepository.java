@@ -99,17 +99,9 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     List<TimelinePhotoDeleteJob> findByObjectKeyNamespace(
             @Param("namespacePrefix") String namespacePrefix, @Param("limit") int limit);
 
-    /**
-     * 주어진 Item 중 job을 가진 Item ID를 <b>current read</b>로 조회한다(orphan 스위퍼 전용).
-     *
-     * <p>일반 SELECT는 {@code REPEATABLE READ}에서 transaction의 첫 consistent read가 고정한 snapshot을
-     * 계속 읽는다. 스위퍼는 무잠금 탐색으로 transaction을 시작하므로, 그 뒤 다른 transaction이 commit한
-     * job이 일반 SELECT에는 보이지 않는다. 반면 {@code insert ignore}는 write라 최신 상태를 보고 UNIQUE
-     * 충돌로 0을 돌려준다 — 두 결과가 어긋나면 job 있는 Item을 지워 FK 위반으로 batch가 rollback된다.
-     * {@code FOR SHARE}가 그 어긋남을 없앤다.
-     */
+    /** 고아 처리 transaction에서 job 존재를 일반 조회한다. 잠금 읽기로 빈 인덱스 갭을 잠그지 않는다. */
     @Query(value = "select timeline_item_id from timeline_photo_delete_jobs "
-            + "where timeline_item_id in (:itemIds) for share",
+            + "where timeline_item_id in (:itemIds)",
             nativeQuery = true)
-    List<Long> findItemIdsWithJobForShare(@Param("itemIds") Collection<Long> itemIds);
+    List<Long> findItemIdsWithJob(@Param("itemIds") Collection<Long> itemIds);
 }

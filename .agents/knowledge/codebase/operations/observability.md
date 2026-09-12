@@ -289,6 +289,12 @@ Spring JSON stdout
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
 
+- 고아 Item 스위퍼는 처리 commit/rollback 뒤 담당 전체의 `ORPHAN_SWEEPER` 표시가 있고
+  최초 관측 후 72시간 이상이며 junction·사진 job이 모두 없는 Item을 집계한다. 양수이면
+  workerIndex·count만 ERROR로 남겨 기존 application ERROR 경보를 사용한다. 이번 후보 밖의 기존
+  관측 Item도 포함하지만 LIMIT/워커 장애로 미관측인 Item이나 실제 고아 전환 시각은 측정하지 않는다.
+  서버 장애는 기존 `laimory_target_down` 경보로 수동 복구하며 자동 인수는 없다.
+
 ## Metrics Assets
 
 repository에는 Prometheus, Grafana, blackbox와 central MySQL/Redis exporter의 구성 자산이 있다.

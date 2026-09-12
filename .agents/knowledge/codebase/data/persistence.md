@@ -447,11 +447,19 @@ linked Item job을 취소하며, `Deleted`로 확인된 orphan job과 그 PHOTO 
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
 
-세 번째 경로는 orphan 스위퍼(03:30 KST)다. junction·delete job이 모두 없는 `timeline_items` 행을 PK
-커서로 훑어(무잠금 anti-join) 후보를 고르고, 그 PK만 `FOR UPDATE SKIP LOCKED`로 claim한 뒤 잠금 하에서
-junction·job을 재검증한다(job 재검증은 `FOR SHARE` current read — 무잠금 탐색이 고정한 snapshot으로는
-동시 생성 job을 못 본다). 유효 PHOTO는 `insertIfAbsent`로 delete job에 넘기고, non-PHOTO와 object key를
-복원할 수 없는 손상 PHOTO만 즉시 hard delete한다. 스위퍼는 S3를 직접 호출하지 않는다.
+orphan 스위퍼(03:30 KST)는 junction·delete job이 모두 없는 자기 PK MOD 담당 Item을 최대 250개
+한 번 조회한다. 선택한 PK 중 미표시 고아에만 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST
+`updated_at`을 기록해 먼저 commit하고, 새 처리 transaction에서 같은 PK를 일반 조회·재검증한다.
+후보의 PK 선점 락과 job 존재 확인의 `FOR SHARE`는 없다. 쓰기 SQL의 InnoDB 잠금은 남는다.
+유효 PHOTO는 `insertIfAbsent`로 delete job에 넘기고 non-PHOTO·복원 불가 PHOTO는 즉시 삭제한다.
+스위퍼는 S3를 직접 호출하지 않는다.
+
+관측 표시가 있는 Item의 `updated_at`은 최초 관측 시각이다. 재시도와 처리 rollback은 이 시각을 바꾸지
+않는다. `TimelineItem`에는 기존 행 필드 수정 writer가 없으며, 기존 Item을 재연결하는
+`TimelineEventPhotoAddService.link`만 연결 transaction에서 junction 저장 전에 표시를 해제한다.
+부모 Item의 UPDATE를 먼저 수행해 junction FK 공유 잠금의 승격 경합을 피한다. 공통 감사 동작은 유지한다.
+처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 별도 transaction에서 집계해 ERROR로 알린다.
+job으로 넘긴 Item은 제외하며 미관측 Item의 과거 고아 전환 시각을 추정하지 않는다.
 
 object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는 행은 subject를 잃었으므로 저장된
 `photoUrl`의 path가 유일한 경로이고, junction이 살아 있는 행은 `SHA2(UNHEX(REPLACE(subject_id,'-','')),

@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -54,17 +55,24 @@ public class TimelineItemService {
         return timelineItemRepository.findByTimelineItemIdInAndRawIdIn(itemIds, rawIds);
     }
 
-    /** orphan 스위퍼 탐색 — junction·delete job이 모두 없는 Item을 PK 커서로 훑는다(무잠금). */
-    public List<TimelineItem> findOrphanCandidates(long cursor, int limit) {
-        return timelineItemRepository.findOrphanCandidates(cursor, limit);
+    public List<TimelineItem> findOrphanCandidates(int workerIndex, int totalWorkerCount, int limit) {
+        return timelineItemRepository.findOrphanCandidates(workerIndex, totalWorkerCount, limit);
     }
 
-    /** 탐색이 고른 후보를 PK로 좁게 배타 claim한다. 다른 process가 잠근 행은 결과에서 빠진다. */
-    public List<TimelineItem> claimOrphanCandidates(Collection<Long> timelineItemIds) {
-        if (timelineItemIds.isEmpty()) {
-            return List.of();
+    public void markOrphanObserved(Collection<Long> itemIds, LocalDateTime observedAt) {
+        if (!itemIds.isEmpty()) {
+            timelineItemRepository.markOrphanObserved(itemIds, observedAt);
         }
-        return timelineItemRepository.claimOrphanCandidatesForUpdateSkipLocked(timelineItemIds);
+    }
+
+    public long countStaleObservedOrphans(int workerIndex, int totalWorkerCount, LocalDateTime staleBefore) {
+        return timelineItemRepository.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
+    }
+
+    public void clearOrphanObservation(Collection<Long> itemIds, LocalDateTime linkedAt) {
+        if (!itemIds.isEmpty()) {
+            timelineItemRepository.clearOrphanObservation(itemIds, linkedAt);
+        }
     }
 
     /** 주어진 filename을 참조하면서 junction이 살아 있는 PHOTO Item의 full object key(소유 subject 기준). */

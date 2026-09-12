@@ -163,6 +163,12 @@ application 배포·health gate 의존성이 아니다.
   15분마다 도는 정지 pass가 통합 테스트 job을 가로채지 않게 한다. `QUIESCE_DELAY`는 살아 있는
   draft/User Memory task TTL과 presign TTL을 넘겨야 하고 `STALE_AFTER`는 그 이하여야 하며, 둘 다
   기동 시 검증해 fail-fast한다 — `PHOTO_UPLOAD_PRESIGN_TTL`을 올리면 `QUIESCE_DELAY`도 함께 올려야 한다)
+- `TIMELINE_ORPHAN_SWEEP_WORKER_ENABLED`, `TIMELINE_ORPHAN_SWEEP_CRON`, `TIMELINE_ORPHAN_SWEEP_ZONE`,
+  `TIMELINE_ORPHAN_SWEEP_BATCH_SIZE`, `TIMELINE_ORPHAN_SWEEP_WORKER_ID`, `TIMELINE_ORPHAN_SWEEP_SERVER_COUNT`,
+  `TIMELINE_ORPHAN_SWEEP_WORKER_COUNT` (기본 매일 03:30 KST, 서버 2대 × 서버당 slot 1, 단일 batch 250).
+  고아 스위퍼의 worker-id는 서버별 0·1로 명시하고 server-count·worker-count는 전체 서버에서 맞춘다.
+  docker profile만 server-count 기본값이 1이며 test는 기존대로 비활성화한다. 변경·원복은 전체 중지 후
+  적용하며 [전환 절차](../../../../docs/database/474-orphan-sweep-rollout.md)를 따른다.
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
   `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
   `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는

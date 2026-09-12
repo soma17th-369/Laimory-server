@@ -84,15 +84,12 @@ public class TimelinePhotoDeleteJobService {
         return List.copyOf(jobs);
     }
 
-    /**
-     * 주어진 Item 중 job을 가진 Item ID를 current read로 조회한다(orphan 스위퍼 전용 — 자세한 근거는
-     * repository javadoc). 호출자의 transaction 안에서 실행돼야 의미가 있다.
-     */
+    /** 고아 처리 transaction에서 job 존재를 일반 조회한다. 잠금 읽기로 빈 인덱스 갭을 잠그지 않는다. */
     public Set<Long> findItemIdsWithJob(Collection<Long> timelineItemIds) {
         if (timelineItemIds == null || timelineItemIds.isEmpty()) {
             return Set.of();
         }
-        return Set.copyOf(timelinePhotoDeleteJobRepository.findItemIdsWithJobForShare(timelineItemIds));
+        return Set.copyOf(timelinePhotoDeleteJobRepository.findItemIdsWithJob(timelineItemIds));
     }
 
     /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
