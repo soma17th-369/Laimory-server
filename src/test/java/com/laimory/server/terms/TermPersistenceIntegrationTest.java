@@ -86,7 +86,7 @@ class TermPersistenceIntegrationTest {
         assertThat(columnNames("term_agreements")).containsExactlyInAnyOrder(
                 "user_id", "term_type", "version", "accepted_at", "created_at", "updated_at", "modified_by");
         assertThat(indexNames("term_agreements")).containsExactlyInAnyOrder(
-                "PRIMARY", "idx_term_agreements_user_history", "idx_term_agreements_document");
+                "PRIMARY", "idx_term_agreements_v2_432_history", "idx_term_agreements_v2_432_document");
         assertThat(foreignKeyColumns()).containsExactly("term_type->term_type", "version->version");
         assertThat(checkClause()).contains("regexp").contains("[1-9]");
     }
@@ -351,7 +351,7 @@ class TermPersistenceIntegrationTest {
                 "SELECT CONCAT(COLUMN_NAME, '->', REFERENCED_COLUMN_NAME)"
                         + " FROM information_schema.KEY_COLUMN_USAGE"
                         + " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'term_agreements'"
-                        + " AND CONSTRAINT_NAME = 'fk_term_agreements_document' ORDER BY ORDINAL_POSITION",
+                        + " AND CONSTRAINT_NAME = 'fk_term_agreements_v2_432_document' ORDER BY ORDINAL_POSITION",
                 String.class);
     }
 
@@ -359,7 +359,7 @@ class TermPersistenceIntegrationTest {
         return jdbcTemplate.queryForObject(
                 "SELECT LOWER(CHECK_CLAUSE) FROM information_schema.CHECK_CONSTRAINTS"
                         + " WHERE CONSTRAINT_SCHEMA = DATABASE()"
-                        + " AND CONSTRAINT_NAME = 'chk_term_documents_version_canonical'",
+                        + " AND CONSTRAINT_NAME = 'chk_term_documents_v2_432_version'",
                 String.class);
     }
 

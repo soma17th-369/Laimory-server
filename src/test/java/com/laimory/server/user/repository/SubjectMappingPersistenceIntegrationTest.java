@@ -44,7 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
  * - repository·deriver 직접 접근은 테스트 한정 예외다(arch rule은 main 코드만 검사).
  *
  * 실행: docker compose down -v && docker compose up -d --wait 후 ./gradlew integrationTest
- * (schema.sql은 빈 데이터 볼륨 첫 기동에만 적용 — user_subject_links DDL 반영에 볼륨 재생성 필요)
+ * (스키마는 Flyway가 적용한다. 이력 없는 기존 volume은 구조 확인 후 명시적으로 baseline 등록)
  */
 @SpringBootTest
 @ActiveProfiles("docker")

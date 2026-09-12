@@ -13,8 +13,7 @@ services:
       MYSQL_PASSWORD: laimory
       MYSQL_ROOT_PASSWORD: root
     volumes:
-      # schema.sql은 빈 데이터 볼륨 첫 기동 시에만 자동 적용된다(스키마 변경 시 볼륨 재생성 필요).
-      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      # 스키마와 필수 seed는 docker profile의 Flyway가 앱 시작 시 적용한다.
       - laimory-mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"]

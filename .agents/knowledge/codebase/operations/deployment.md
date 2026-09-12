@@ -64,7 +64,8 @@ Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
 9. 기존 `laimory` container를 stop/remove한다.
 10. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
     rotated `json-file` logging; firebase면 read-only credential mount만 추가).
-11. `/api/v1/intro`를 최대 90초 polling한다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
+11. 앱 시작 시 Flyway가 migration·이력을 확인하고 JPA가 검증한다. `/api/v1/intro`를 최대 90초 polling한다.
+    migration/잠금 대기도 이 시간에 포함된다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
 12. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
     어떤 container도 참조하지 않는 tagged/dangling image가 제거되고, prune 실패는 고정 경고만 남기며
     원래 배포 status를 바꾸지 않는다.
@@ -250,6 +251,12 @@ flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생�
 단독 삭제하지 않는다.
 
 ## Manual Operations
+
+Flyway는 모든 환경의 앱 시작 시 실행한다. [Flyway 운영 절차](../../../../docs/database/flyway-adoption.md)에
+따라 기존 DB는 최초 구조 대조와 명시 baseline, 빈 운영 DB는 최초 CLI bootstrap을 subject schema와
+`app_config` preflight 전에 완료한다. 이후 일반 migration은 앱이 자동 실행한다. 기존 DB의 실제 편입 여부와
+앱 DataSource의 DDL 권한은 live 조회로 확인한다. 검사 대상 테이블을 바꾸는 PR은 preflight가 배포 중
+구/신 schema 양쪽에 맞도록 함께 조정한다. 긴 SQL/비호환 변경은 별도 maintenance로 다룬다.
 
 - 저장소는 전체 AWS topology와 신규 host 초기화를 자동화하지 않는다.
 - live AWS, GitHub repository Variables/Secrets와 실제 host 상태가 운영 구성의 권위 원천이다.

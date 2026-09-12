@@ -10,7 +10,8 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 
 ## Authoritative Sources
 
-- `src/main/resources/db/schema.sql`
+- `src/main/resources/db/migration/*.sql`
+- `docs/database/flyway-adoption.md`
 - `src/main/resources/application*.properties`
 - `src/main/java/com/laimory/server/**/entity/*.java`, repositories
 - `BaseEntity`, `JpaAuditingConfig`, `RedisGateway`
@@ -22,7 +23,10 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 ### MySQL
 
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
-애플리케이션은 schema를 생성·변경하지 않는다.
+Flyway 11.7.2가 모든 환경에서 앱 시작 시 schema를 관리한다. 기존 DataSource를 사용하며
+migration 실행·이력 검증에 실패하면 JPA 초기화와 앱 기동도 실패한다.
+약관 index/FK/CHECK는 #432 cutover의 `*_v2_432_*` 이름을 V1에서도 유지한다. baseline을 위한
+legacy rollback 테이블 삭제는 하지 않으며, 활성 업무 구조와 보관 테이블을 구분해 대조한다.
 
 이 저장소의 `DATETIME` 컬럼은 **애플리케이션이 바인딩해 쓰는 값 기준으로** `Asia/Seoul` 벽시계
 계약(offset 없는 `LocalDateTime`, `Instant` 매핑 금지)이다. 이 계약의 전제로 JVM 기본 timezone을
@@ -65,15 +69,19 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 
-`schema.sql`은 빈 Docker MySQL volume의 최초 초기화에 쓰인다.
-`CREATE TABLE IF NOT EXISTS`라 기존 table을 변경하지 않으며 migration framework는 없다.
-기존 dev/prod DB 변경은 애플리케이션 배포 전에 수동 DDL과 검증이 필요하다.
+`db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
+Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.
+baseline은 V1 SQL이나 seed를 재실행하지 않는다. 이미 적용한 SQL은 수정하지 않고 새 버전을 추가한다.
+일반 변경은 앱 시작 시 이력을 확인하고 미적용 SQL을 실행한다. 여러 서버는 같은 DB/history와 native
+MySQL 잠금으로 중복 실행을 방지한다. CLI는 최초 편입/빈 운영 DB bootstrap/승인된 maintenance에 사용한다.
+실제 편입·후속 변경 절차는 [Flyway runbook](../../../../docs/database/flyway-adoption.md)이 소유한다.
 dev는 `dev` 브랜치 push가 자동 배포를 트리거하므로(`.github/workflows/deploy.yml` — 구 컨테이너
-중단 후 새 컨테이너 기동), 스키마 변경 PR의 live DDL은 **머지 전에** dev DB에 적용해야 한다.
-미적용 상태로 머지하면 새 앱이 `ddl-auto=validate` 기동 실패로 dev가 다운된다.
-테이블 rename은 구 컨테이너를 즉시 깨뜨리므로(옛 이름 매핑이 table not found) 선적용이 아니라 구 컨테이너
-중단~신 컨테이너 기동 사이에 실행해야 한다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
-**제약 이름은 옛 이름 그대로 남기므로**, `schema.sql`의 제약 이름을 함께 바꿨다면 `ALTER TABLE ... DROP
+중단 후 새 컨테이너 기동), 최초 편입과 maintenance는 **머지 전에** `DEPLOY_PAUSED`와 진행 중인 배포
+없음을 확인한다. 이후 호환 가능한 일반 migration은 기존 자동 배포에서 실행한다.
+구조/권한 불일치나 SQL 실패는 기동 실패로 이어진다. 첫 host가 실패하면 다음 host는 교체하지 않는다.
+테이블 rename은 DB를 공유하는 구 앱을 깨뜨리므로 단계적으로 전환하거나 해당 DB를 사용하는 구 앱을
+모두 중단하는 maintenance가 필요하다. `RENAME TABLE`은 자식 FK의 참조 테이블만 자동 승계하고
+**제약 이름은 옛 이름 그대로 남기므로**, 신규 DB의 제약 이름과 맞추려면 후속 migration의 `ALTER TABLE ... DROP
 FOREIGN KEY ... ADD CONSTRAINT ...` 한 문장을 따로 실행해야 신규 DB와 기존 DB가 같아진다(이 ALTER는
 애플리케이션이 제약 이름을 읽지 않으므로 cutover 창 밖에서 실행해도 안전하다).
 
@@ -370,7 +378,7 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 `term_agreements`(#303/#432)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(users FK 없음 —
 `refresh_tokens` 선례)이고 `(user_id, term_type, version)`이 복합 PK다. `(term_type, version)` 복합 FK는
 `term_documents`를 `ON DELETE RESTRICT`로 참조하며, PK가 child FK의 leftmost가 아니므로
-`idx_term_agreements_document(term_type, version)`를 별도로 둔다. 이력 index는
+`idx_term_agreements_v2_432_document(term_type, version)`를 별도로 둔다. 이력 index는
 `(user_id, accepted_at, term_type, version)`이다. 쓰기는 repository의 native
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
 (`modified_by` NULL), 재전송·동시 동일 batch가 PK 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
@@ -456,7 +464,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
 
 ## Invariants
 
-- entity와 `schema.sql`을 함께 변경하고 running DB rollout을 별도로 계획한다.
+- entity 변경에는 새 버전 migration SQL을 함께 추가하고 running DB rollout을 별도로 계획한다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
   연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 같은 record의 기존 PHOTO Item을 대상
@@ -493,7 +501,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
 
 ## Known Gaps
 
-- Flyway/Liquibase와 자동 schema rollout이 없다.
+- 비호환 schema의 자동 전환/복구는 없다. 실제 DB 최초 편입 여부는 live 이력으로 확인한다.
 - finalized photo와 presign 후 staging이 없는 orphan object는 cleanup 대상이 아니다.
 - authenticated auditor propagation이 없다.
 - 같은 날짜 draft·수동 PHOTO 추가·삭제 사이의 공통 admission과 경합 정합성 보장은 미구현이다.

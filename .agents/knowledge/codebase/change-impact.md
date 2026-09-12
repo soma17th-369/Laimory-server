@@ -16,8 +16,8 @@
 
 | Change | Check together | Minimum validation |
 |---|---|---|
-| Entity, column, index, FK | Entity, `schema.sql`, repository, running DB rollout, persistence knowledge | unit + integration |
-| `schema.sql` | Compose first-init, running DB rollout, manual DDL | fresh-volume integration when needed |
+| Entity, column, index, FK | Entity, 새 버전 migration SQL, repository, running DB rollout, persistence knowledge | unit + integration |
+| `db/migration/*.sql` | Flyway 최초 생성/기존 DB 업그레이드, 운영 CLI 실행, 불변 migration 이력 | migration 검증 + integration |
 | Redis key, value, TTL | store/service, `RedisGateway`, live compatibility, session namespace | Redis unit + integration |
 | property or env name | both properties, deploy env/preflight, host `.env`, environments knowledge | context boot + targeted tests |
 | auth secret name | properties, deploy preflight, host secret placement | build + workflow review |
