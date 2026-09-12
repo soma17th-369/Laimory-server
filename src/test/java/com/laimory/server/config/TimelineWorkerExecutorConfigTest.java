@@ -18,13 +18,23 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 /** 전용 worker executor가 Boot 기본 applicationTaskExecutor와 기존 무지정 @Async를 가로채지 않는지 검증한다. */
 class TimelineWorkerExecutorConfigTest {
 
+    @Test
+    void draftExecutorCapacityEqualsWorkerCount() {
+        var config = new TimelineWorkerExecutorConfig();
+        for (int count : new int[] {1, 2}) {
+            var executor = config.timelineDraftCleanupWorkerExecutor(new TimelineDraftCleanupWorkerProperties(true, 7, 250, 1, 2, count));
+            assertThat(executor.getCorePoolSize()).isEqualTo(count);
+            assertThat(executor.getMaxPoolSize()).isEqualTo(count);
+        }
+    }
+
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
             .withUserConfiguration(AsyncConfig.class, TimelineWorkerExecutorConfig.class, AsyncProbeConfig.class)
             .withBean(TimelinePhotoDeleteWorkerProperties.class, () ->
                     new TimelinePhotoDeleteWorkerProperties(true, 250, 1, 4, Duration.ofSeconds(60)))
             .withBean(TimelineDraftCleanupWorkerProperties.class, () ->
-                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 1, 4, Duration.ofSeconds(60)));
+                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 0, 2, 1));
 
     @Test
     void workerExecutorsCoexistWithBootDefaultAndAsyncUsesBootExecutor() {

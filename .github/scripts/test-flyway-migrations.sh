@@ -198,3 +198,27 @@ wait_for_migrations
 dump flyway_fresh --no-create-info --ignore-table=flyway_fresh.migration_execution_probe >"$WORK/concurrent-after.sql"
 cmp -s "$WORK/fresh-before.sql" "$WORK/concurrent-after.sql" || fail 'concurrent migration changed existing data'
 ok 'overlapping migrations wait for the native lock and apply V2 exactly once'
+
+# #474: V1의 대표 초안 행을 보존하면서 선점 컬럼/인덱스만 제거한다.
+# 위 잠금 시험의 임시 V2와 독립된 DB에서 실제 앱 migration을 검증한다.
+mysql -e 'CREATE DATABASE flyway_scheduler_upgrade;'
+flyway flyway_scheduler_upgrade "$MIGRATIONS" -target=1 migrate >"$WORK/scheduler-v1.log" 2>&1
+mysql flyway_scheduler_upgrade <<'SQL'
+INSERT INTO user_subject_links VALUES
+  (UNHEX(REPEAT('1',64)), '00000000-0000-4000-8000-000000000001', 1);
+INSERT INTO timeline_draft_source_items
+  (timeline_draft_source_item_id, task_id, subject_id, item_type, raw_id, payload,
+   created_at, updated_at, cleanup_available_at)
+VALUES (1, '474-fixture', '00000000-0000-4000-8000-000000000001', 'CALENDAR',
+        '00000000-0000-4000-8000-000000000002', JSON_OBJECT('title', 'fixture'),
+        '2026-01-01 00:00:00', '2026-01-01 00:00:00', '2026-01-02 00:00:00');
+SQL
+mysql flyway_scheduler_upgrade -e 'SELECT timeline_draft_source_item_id, task_id, subject_id, item_type, raw_id, payload, created_at, updated_at, modified_by FROM timeline_draft_source_items' >"$WORK/scheduler-before.tsv"
+flyway flyway_scheduler_upgrade "$MIGRATIONS" -target=2 migrate >"$WORK/scheduler-v2.log" 2>&1
+mysql flyway_scheduler_upgrade -e 'SELECT timeline_draft_source_item_id, task_id, subject_id, item_type, raw_id, payload, created_at, updated_at, modified_by FROM timeline_draft_source_items' >"$WORK/scheduler-after.tsv"
+cmp -s "$WORK/scheduler-before.tsv" "$WORK/scheduler-after.tsv" || fail 'V2 changed source data'
+[ "$(mysql flyway_scheduler_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='timeline_draft_source_items' AND COLUMN_NAME='cleanup_available_at'")" = 0 ] || fail 'cleanup column remains'
+[ "$(mysql flyway_scheduler_upgrade -e "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='timeline_draft_source_items' AND INDEX_NAME='idx_draft_source_cleanup'")" = 0 ] || fail 'cleanup index remains'
+[ "$(mysql flyway_scheduler_upgrade -e "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='timeline_draft_source_items' AND INDEX_NAME='idx_draft_source_created'")" = 1 ] || fail 'created_at index missing'
+flyway flyway_scheduler_upgrade "$MIGRATIONS" -target=2 validate >"$WORK/scheduler-validate.log" 2>&1
+ok 'V1 to V2 preserves source data and drops only the draft claim column and index'

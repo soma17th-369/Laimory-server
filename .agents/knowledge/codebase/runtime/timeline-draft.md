@@ -325,7 +325,10 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   member가 누적될 수 있다(수용된 MVP trade-off).
 - cleanup 대상은 만료된 source 행(omitted·FAILED task 잔여)이다. 채택된 source는 결과 저장 transaction에서
   이미 삭제돼 final Item이 참조하는 S3 객체를 지울 일이 없다.
-- 만료된 PHOTO source는 S3 object 삭제가 성공한 뒤 row를 삭제한다. 실패하면 row를 남겨 재시도한다.
+- 초안 정리는 `created_at < cutoff`와 PK MOD 담당 조건으로 최대 250개 한 번 일반 조회한다.
+  cleanup_available_at·선점 UPDATE·내부 반복은 없다. 만료된 PHOTO source는 transaction 밖의
+  S3 삭제 성공 뒤 row를 삭제하며 실패 행은 다음 일일 실행에서 재조회한다. 같은 날 재선택을 막는
+  DB 시각 조건이나 초안 적체 전용 알림은 없다.
 
 ## Invariants
 

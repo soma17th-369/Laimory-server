@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.ScheduledWorkerRunBudget;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -67,21 +66,16 @@ public class TimelineDraftCleanupScheduler {
 
         // created_at을 쓰는 JPA auditing/JDBC batch와 같은 application local clock 계약으로 보관기간을 계산한다.
         LocalDateTime cutoff = LocalDateTime.now(clock).minusDays(properties.getRetentionDays());
-        ScheduledWorkerRunBudget budget = new ScheduledWorkerRunBudget(
-                properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
+
         RunSummary summary = new RunSummary();
-        AtomicInteger remainingSlots = new AtomicInteger(properties.getConcurrency());
-        log.info("draft cleanup run 시작: cutoff={}, retentionDays={}, batchSize={}, concurrency={}, "
-                        + "maxBatches={}, maxRunDurationMs={}",
-                cutoff,
-                properties.getRetentionDays(),
-                properties.getBatchSize(),
-                properties.getConcurrency(),
-                properties.getMaxBatchesPerRun(),
-                properties.getMaxRunDuration().toMillis());
-        for (int slot = 0; slot < properties.getConcurrency(); slot++) {
+        AtomicInteger remainingSlots = new AtomicInteger(properties.getWorkerCount());
+        log.info("draft cleanup run 시작: batchSize={} workerIndexStart={} workerCount={} totalWorkerCount={}",
+                properties.getBatchSize(), properties.getWorkerIndex(0), properties.getWorkerCount(),
+                properties.getTotalWorkerCount());
+        for (int slot = 0; slot < properties.getWorkerCount(); slot++) {
+            int workerIndex = properties.getWorkerIndex(slot);
             try {
-                workerExecutor.execute(() -> runWorkerSlot(cutoff, budget, remainingSlots, summary));
+                workerExecutor.execute(() -> runWorkerSlot(cutoff, workerIndex, remainingSlots, summary));
             } catch (RuntimeException exception) {
                 summary.recordWorkerError();
                 log.warn("draft cleanup worker task 제출 실패: exceptionType={}",
@@ -93,24 +87,23 @@ public class TimelineDraftCleanupScheduler {
 
     private void runWorkerSlot(
             LocalDateTime cutoff,
-            ScheduledWorkerRunBudget budget,
+            int workerIndex,
             AtomicInteger remainingSlots,
             RunSummary summary) {
         try {
-            while (budget.tryAcquireBatch()) {
-                List<TimelineDraftSourceItem> rows;
-                try {
-                    rows = timelineDraftSourceItemService.claimExpired(cutoff, properties.getBatchSize());
-                } catch (RuntimeException exception) {
-                    summary.recordWorkerError();
-                    log.warn("draft cleanup claim 실패: exceptionType={}", exception.getClass().getSimpleName());
-                    return;
-                }
-                if (rows.isEmpty()) {
-                    return;
-                }
-                summary.record(processClaimedBatch(rows));
+            List<TimelineDraftSourceItem> rows;
+            try {
+                rows = timelineDraftSourceItemService.findExpired(
+                        cutoff, workerIndex, properties.getTotalWorkerCount(), properties.getBatchSize());
+            } catch (RuntimeException exception) {
+                summary.recordWorkerError();
+                log.warn("draft cleanup 후보 조회 실패: exceptionType={}", exception.getClass().getSimpleName());
+                return;
             }
+            if (rows.isEmpty()) {
+                return;
+            }
+            summary.record(processBatch(rows));
         } finally {
             workerSlotFinished(remainingSlots, summary);
         }
@@ -123,7 +116,7 @@ public class TimelineDraftCleanupScheduler {
         }
     }
 
-    private BatchResult processClaimedBatch(List<TimelineDraftSourceItem> rows) {
+    private BatchResult processBatch(List<TimelineDraftSourceItem> rows) {
         long startedAtNanos = System.nanoTime();
         Set<Long> deletableIds = new LinkedHashSet<>();
         Map<Long, String> photoKeyByRowId = new LinkedHashMap<>();
@@ -165,7 +158,7 @@ public class TimelineDraftCleanupScheduler {
         int completed = 0;
         boolean databaseDeleteFailed = false;
         try {
-            completed = timelineDraftSourceItemService.deleteClaimed(deletableIds);
+            completed = timelineDraftSourceItemService.deleteExpired(deletableIds);
         } catch (RuntimeException exception) {
             databaseDeleteFailed = true;
             log.warn("draft cleanup DB 삭제 실패(행 유지): requested={} exceptionType={}",
@@ -189,10 +182,10 @@ public class TimelineDraftCleanupScheduler {
                 photoDeleteSkipped,
                 databaseDeleteFailed,
                 durationMs);
-        log.info("draft cleanup batch 완료: claimed={}, succeeded={}, failed={}, deleted={}, "
+        log.info("draft cleanup batch 완료: selected={}, succeeded={}, failed={}, deleted={}, "
                         + "alreadyAbsent={}, photoDeleteRequested={}, photoDeleteSucceeded={}, "
                         + "photoDeleteFailed={}, photoDeleteSkipped={}, dbDeleteFailed={}, durationMs={}",
-                result.claimed(),
+                result.selected(),
                 result.succeeded(),
                 result.failed(),
                 result.deleted(),
@@ -229,7 +222,7 @@ public class TimelineDraftCleanupScheduler {
     }
 
     private record BatchResult(
-            int claimed,
+            int selected,
             int succeeded,
             int failed,
             int deleted,
@@ -246,7 +239,7 @@ public class TimelineDraftCleanupScheduler {
 
         private final long startedAtNanos = System.nanoTime();
         private int batches;
-        private int claimed;
+        private int selected;
         private int succeeded;
         private int failed;
         private int deleted;
@@ -260,7 +253,7 @@ public class TimelineDraftCleanupScheduler {
 
         private synchronized void record(BatchResult result) {
             batches++;
-            claimed += result.claimed();
+            selected += result.selected();
             succeeded += result.succeeded();
             failed += result.failed();
             deleted += result.deleted();
@@ -279,12 +272,12 @@ public class TimelineDraftCleanupScheduler {
         }
 
         private synchronized void logCompleted() {
-            log.info("draft cleanup run 완료: batches={}, claimed={}, succeeded={}, failed={}, deleted={}, "
+            log.info("draft cleanup run 완료: batches={}, selected={}, succeeded={}, failed={}, deleted={}, "
                             + "alreadyAbsent={}, photoDeleteRequested={}, photoDeleteSucceeded={}, "
                             + "photoDeleteFailed={}, photoDeleteSkipped={}, databaseErrors={}, "
                             + "workerErrors={}, durationMs={}",
                     batches,
-                    claimed,
+                    selected,
                     succeeded,
                     failed,
                     deleted,
