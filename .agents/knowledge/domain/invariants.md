@@ -129,7 +129,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
   03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
   D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
-  처리하지 않은(`updated_at < 오늘 00:00`) job 최대 250개를 `FOR UPDATE SKIP LOCKED`로 claim하고
+  처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
   `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
   commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
   원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 처리 창

@@ -34,7 +34,7 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
                        @Param("auditAt") LocalDateTime auditAt);
 
     /**
-     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 job을 claim 후보로 잠근다.
+     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 job을 자기 담당 후보로 조회한다.
      * {@code updated_at < todayStart}가 PENDING의 같은 날 재선택과 활성 PROCESSING을 함께 거르므로,
      * 남는 PROCESSING은 전날 이전 claim이 남긴 stale 행이다.
      */
@@ -42,12 +42,15 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
             + "where created_at >= :windowStart and created_at < :todayStart "
             + "and updated_at < :todayStart "
             + "and status in ('PENDING', 'PROCESSING') "
+            + "and mod(timeline_photo_delete_job_id - 1, :totalWorkerCount) = :workerIndex "
             + "order by created_at, timeline_photo_delete_job_id "
-            + "limit :limit for update skip locked",
+            + "limit :limit",
             nativeQuery = true)
-    List<TimelinePhotoDeleteJob> findClaimableForUpdateSkipLocked(
+    List<TimelinePhotoDeleteJob> findClaimable(
             @Param("windowStart") LocalDateTime windowStart,
             @Param("todayStart") LocalDateTime todayStart,
+            @Param("workerIndex") int workerIndex,
+            @Param("totalWorkerCount") int totalWorkerCount,
             @Param("limit") int limit);
 
     /** claim한 행을 PROCESSING으로 바꾸고 같은 날 재선택을 막는 {@code updated_at}을 함께 갱신한다. */
@@ -86,11 +89,12 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
      * <p><b>{@code object_key}가 이 job들의 유일한 owner 단서다.</b> job이 존재한다는 것은 마지막 Event
      * 참조가 사라졌다는 뜻이라 junction graph로는 subject를 해석할 수 없는데, key가
      * {@code {sha256(subject)}/photos/…}라 prefix로 귀속할 수 있다. 컬럼이 {@code ascii_bin}이고
-     * prefix가 64자 hex라 UNIQUE index의 leftmost prefix range scan을 탄다.
+     * prefix는 64자 hex와 {@code /photos/}로 구성되어 UNIQUE index의 range scan을 사용할 수 있다.
+     * 정렬도 {@code object_key}에 맞춰 같은 index로 필터와 정렬을 처리할 수 있게 한다.
      */
     @Query(value = "select * from timeline_photo_delete_jobs "
             + "where object_key like concat(:namespacePrefix, '%') "
-            + "order by timeline_photo_delete_job_id limit :limit",
+            + "order by object_key limit :limit",
             nativeQuery = true)
     List<TimelinePhotoDeleteJob> findByObjectKeyNamespace(
             @Param("namespacePrefix") String namespacePrefix, @Param("limit") int limit);

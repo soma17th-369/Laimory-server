@@ -272,8 +272,8 @@ Spring JSON stdout
 - management child context에는 application의 `TransactionIdFilter`가 등록되지 않는다. 방어적으로
   health/prometheus exact path도 정상 access log 제외 목록에 유지한다.
 - 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
-- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, process당 concurrency 1,
-  batch 250, 최대 4 batch/60초다. 정상 job도 최대 약 24시간 대기하며 missed run을 catch-up하지 않고
+- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, 기본 서버 2대 × 서버당 worker-count 1,
+  slot당 단일 batch 250이다. 정상 job도 최대 약 24시간 대기하며 missed run을 catch-up하지 않고
   다음 실행까지 MySQL에 보존한다. 처리 기회는 KST 생성일 기준 D+1~D+3 일일 실행뿐이고, 창을 벗어난
   미완료 job은 재시도 없이 보존하며 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존
   `service=laimory AND level=ERROR` 경보를 발화시킨다(job ID·Item ID·object key 미포함).

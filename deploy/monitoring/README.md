@@ -1046,16 +1046,17 @@ target alert가 원인을 알린다. index는 관측 전용이므로 task 상태
 
 ### Timeline PHOTO delete worker
 
-모든 process의 worker는 매일 03:00 KST에 250개 단위 `SKIP LOCKED` claim으로 서로 다른 job을 처리한다.
-checked-in 기본은 process당 concurrency 1, 최대 4 batch/60초이므로 process 하나가 약 1,000건, 계획된
-두 process가 약 2,000건까지 한 run에서 claim할 수 있다. 정상 job도 다음 실행까지 최대 약 24시간 대기할
-수 있고 S3 실패·crash·process 전체 run budget 초과분은 다음 날 실행으로 이월된다. 처리 기회는 KST
+각 slot은 매일 03:00 KST에 자기 PK MOD 담당 job을 최대 250개 한 번 조회·처리한다.
+기본 서버 2대 × 서버당 worker-count 1이므로 두 서버 합계 후보 상한은 500개다. 후보 PK의 쏠림과
+실패가 있어 실제 성공 건수는 더 작을 수 있다. 정상 job도 다음 실행까지 최대 약 24시간 대기할
+수 있고 S3 실패·crash·단일 배치 상한 초과분은 다음 날 실행으로 이월된다. 처리 기회는 KST
 생성일 기준 D+1~D+3 세 번의 일일 실행뿐이다 — 창을 벗어난 미완료 job은 더 이월되지 않고 보존되며,
 worker가 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존 application ERROR 경보가 발화한다
 (job ID·object key 미포함). dev WAS에서는 전체
 환경을 출력하지 말고 각 container의
-`TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CONCURRENCY`,
-`TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN` 값만 확인한다.
+`TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_WORKER_ID`,
+`TIMELINE_PHOTO_DELETE_SERVER_COUNT`, `TIMELINE_PHOTO_DELETE_WORKER_COUNT` 값을 확인한다.
+번호 변경·증설은 [전체 중지·적용·재개 절차](../../docs/database/474-photo-delete-rollout.md)를 따른다.
 
 worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를
 다시 실행하거나 기존 container를 stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야

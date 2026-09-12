@@ -144,7 +144,7 @@ INSERT는 상태를 명시하지 않고 default `PENDING`을 쓴다. 처리 기�
 영구 실패 job 하나가 매일 외부 I/O를 반복하는 것을 막는다. worker는 checked-in default인 매일 03:00
 `Asia/Seoul`(cron/zone 환경 override 가능)에 모든 process에서 발화한다. 각 bounded worker는 짧은
 transaction으로 처리 창 안이면서 `updated_at < 오늘 00:00`인 행을 `(created_at, PK)` 순서로 최대 250개
-`FOR UPDATE SKIP LOCKED` claim하고, 같은 transaction에서 `status=PROCESSING`과 `updated_at=claim 시각`을
+PK MOD 담당에서 일반 조회하고, 같은 transaction에서 `status=PROCESSING`과 `updated_at=claim 시각`을
 기록한 뒤 commit한다. 창 경계와 claim 시각은 같은 application Clock instant를 KST로 변환해 parameter로
 바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. 그 뒤 현재 junction을 재확인해 다시 연결된 Item의 job을
 취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을
@@ -443,8 +443,7 @@ orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
 `DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
 apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 S3 직전 현재 association을 재확인해
 linked Item job을 취소하며, `Deleted`로 확인된 orphan job과 그 PHOTO Item만 별도 transaction에서 지운다.
-process당 기본 concurrency 1, batch 250, 최대 4 batch/60초로 유계이고
-여러 process가 같은 claim protocol에 참여한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
+기본 서버 2대 × 서버당 worker-count 1이며 각 slot은 PK MOD 담당에서 최대 250개 한 배치만 처리한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
 

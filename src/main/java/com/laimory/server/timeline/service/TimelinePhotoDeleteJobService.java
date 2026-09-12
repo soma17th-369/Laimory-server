@@ -54,12 +54,12 @@ public class TimelinePhotoDeleteJobService {
     }
 
     /**
-     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 작업을 row lock으로 분리하고
+     * KST 생성일 D 기준 D+1~D+3 처리 창 안에서 오늘 아직 처리하지 않은 자기 담당 작업을 일반 조회하고
      * {@code updated_at}을 claim 시각으로 갱신해 같은 날 재선택을 막는다. 반환 시 transaction과 row
      * lock은 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
      */
     @Transactional
-    public List<TimelinePhotoDeleteJob> claimEligible(int limit) {
+    public List<TimelinePhotoDeleteJob> claimEligible(int workerIndex, int totalWorkerCount, int limit) {
         if (limit < 1 || limit > MAX_BATCH_SIZE) {
             throw new IllegalArgumentException("limit must be between 1 and " + MAX_BATCH_SIZE);
         }
@@ -68,7 +68,7 @@ public class TimelinePhotoDeleteJobService {
         LocalDateTime windowStart = todayStart.minusDays(3);
         LocalDateTime claimedAt = now.toLocalDateTime();
         List<TimelinePhotoDeleteJob> jobs = timelinePhotoDeleteJobRepository
-                .findClaimableForUpdateSkipLocked(windowStart, todayStart, limit);
+                .findClaimable(windowStart, todayStart, workerIndex, totalWorkerCount, limit);
         if (jobs.isEmpty()) {
             return List.of();
         }
