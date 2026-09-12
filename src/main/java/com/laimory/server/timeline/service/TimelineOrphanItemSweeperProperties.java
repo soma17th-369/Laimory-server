@@ -1,44 +1,37 @@
 package com.laimory.server.timeline.service;
 
-import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/** orphan Item 스위퍼의 runtime 설정과 기동 시 불변식 검증. */
+/** 고정 담당 워커의 단일 배치 설정. workerId는 서버 번호, workerCount는 서버 내 실행 slot 수다. */
 @Component
 public class TimelineOrphanItemSweeperProperties {
 
-    private static final int MAX_BATCH_SIZE = 1_000;
-    private static final int MAX_BATCHES_PER_RUN = 1_000;
-    private static final Duration MAX_RUN_DURATION = Duration.ofMinutes(10);
-
     private final boolean workerEnabled;
     private final int batchSize;
-    private final int maxBatchesPerRun;
-    private final Duration maxRunDuration;
+    private final int workerId;
+    private final int serverCount;
+    private final int workerCount;
 
     public TimelineOrphanItemSweeperProperties(
             @Value("${app.timeline.orphan-sweep.worker-enabled:true}") boolean workerEnabled,
             @Value("${app.timeline.orphan-sweep.batch-size:250}") int batchSize,
-            @Value("${app.timeline.orphan-sweep.max-batches-per-run:4}") int maxBatchesPerRun,
-            @Value("${app.timeline.orphan-sweep.max-run-duration:60s}") Duration maxRunDuration) {
-        if (batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
-            throw new IllegalStateException(
-                    "app.timeline.orphan-sweep.batch-size must be between 1 and " + MAX_BATCH_SIZE);
+            @Value("${app.timeline.orphan-sweep.worker-id:0}") int workerId,
+            @Value("${app.timeline.orphan-sweep.server-count:2}") int serverCount,
+            @Value("${app.timeline.orphan-sweep.worker-count:1}") int workerCount) {
+        if (batchSize < 1 || batchSize > 1_000) {
+            throw new IllegalStateException("app.timeline.orphan-sweep.batch-size must be between 1 and 1000");
         }
-        if (maxBatchesPerRun < 1 || maxBatchesPerRun > MAX_BATCHES_PER_RUN) {
-            throw new IllegalStateException("app.timeline.orphan-sweep.max-batches-per-run must be between 1 and "
-                    + MAX_BATCHES_PER_RUN);
+        if (serverCount < 1 || workerCount < 1 || workerId < 0 || workerId >= serverCount) {
+            throw new IllegalStateException("app.timeline.orphan-sweep: server-count and worker-count must be positive; "
+                    + "worker-id must be between 0 (inclusive) and server-count (exclusive)");
         }
-        if (maxRunDuration.isZero() || maxRunDuration.isNegative()
-                || maxRunDuration.compareTo(MAX_RUN_DURATION) > 0) {
-            throw new IllegalStateException("app.timeline.orphan-sweep.max-run-duration must be positive and at most "
-                    + MAX_RUN_DURATION);
-        }
+        Math.multiplyExact(serverCount, workerCount);
         this.workerEnabled = workerEnabled;
         this.batchSize = batchSize;
-        this.maxBatchesPerRun = maxBatchesPerRun;
-        this.maxRunDuration = maxRunDuration;
+        this.workerId = workerId;
+        this.serverCount = serverCount;
+        this.workerCount = workerCount;
     }
 
     public boolean isWorkerEnabled() {
@@ -49,11 +42,18 @@ public class TimelineOrphanItemSweeperProperties {
         return batchSize;
     }
 
-    public int getMaxBatchesPerRun() {
-        return maxBatchesPerRun;
+    public int getWorkerCount() {
+        return workerCount;
     }
 
-    public Duration getMaxRunDuration() {
-        return maxRunDuration;
+    public int getTotalWorkerCount() {
+        return serverCount * workerCount;
+    }
+
+    public int getWorkerIndex(int localIndex) {
+        if (localIndex < 0 || localIndex >= workerCount) {
+            throw new IllegalArgumentException("localIndex must identify a worker slot");
+        }
+        return workerId * workerCount + localIndex;
     }
 }

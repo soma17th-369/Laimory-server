@@ -161,7 +161,7 @@ flyway info
 history에는 `BASELINE` 버전 1이 기록되어야 한다. V1의 CREATE/INSERT는 실행하지 않는다.
 `baseline`은 빠진 컬럼을 보정하거나 기존 데이터가 올바른지 검증하는 기능이 아니다.
 변경 전후 데이터·운영 설정 보존과 이력을 확인한 뒤 앱을 배포한다. 현재 V1 도입 release에는 후속 SQL이 없어
-앱의 migrate는 변경 없이 끝난다. 이후 버전은 앱이 자동 실행한다. `target=1`은 최초 편입 확인에만 사용한다.
+앱의 migrate는 변경 없이 끝난다. 이후 버전은 앱이 자동 실행한다. `target=1`은 최초 편입 확인과 [#474 단계적 컬럼 제거](474-scheduler-rollout.md)의 임시 코드 전환 단계에만 사용한다.
 
 기존 local volume도 동일하다. `docker compose up -d`로 기존 DB를 기동하고 구조 대조 후 명시 baseline한다.
 데이터를 버려도 된다는 사용자 선택이 있을 때만 별도로 초기화한다. 테스트 script는 기존 volume을 사용하지 않는다.

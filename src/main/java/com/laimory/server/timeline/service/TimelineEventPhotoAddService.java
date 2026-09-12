@@ -246,6 +246,8 @@ class TimelineEventPhotoAddService {
         }
         if (!links.isEmpty()) {
             timelineEventItemService.saveAll(links);
+            timelineItemService.clearOrphanObservation(photoChanges.existingItemIdsToLink(),
+                    LocalDateTime.now());
         }
         return List.copyOf(linkedItemIds);
     }

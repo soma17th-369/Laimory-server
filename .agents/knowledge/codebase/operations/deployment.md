@@ -331,3 +331,10 @@ docker build -t laimory:local .
 .github/scripts/test-monitoring-deploy-contract.sh
 git diff --check
 ```
+
+## 정리 스케줄러 전환 (#474)
+
+초안 선점 컬럼 제거 V2는 구 앱과 호환되지 않는다. 최초 전환은 자동 배포를 pause하고 대상 worker를
+전체 중지한 뒤 Flyway target=1로 새 코드를 먼저 전체 적용한다(dev DB 공유 test 포함). 구 컬럼 참조가
+모두 사라진 뒤 target override를 제거하여 V2를 적용하고, 담당 번호와 공통 worker-count를 확인한 뒤
+worker를 재개한다. 상세 적용·복구·증설은 [전환 절차](../../../../docs/database/474-scheduler-rollout.md)를 따른다.

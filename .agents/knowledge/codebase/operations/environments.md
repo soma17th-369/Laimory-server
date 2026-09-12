@@ -147,9 +147,9 @@ application 배포·health gate 의존성이 아니다.
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CRON`,
   `TIMELINE_PHOTO_DELETE_ZONE`, `TIMELINE_PHOTO_DELETE_BATCH_SIZE`,
-  `TIMELINE_PHOTO_DELETE_CONCURRENCY`, `TIMELINE_PHOTO_DELETE_MAX_BATCHES_PER_RUN`,
-  `TIMELINE_PHOTO_DELETE_MAX_RUN_DURATION` (checked-in default는 worker on, 매일 `03:00`
-  `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
+  `TIMELINE_PHOTO_DELETE_WORKER_ID`, `TIMELINE_PHOTO_DELETE_SERVER_COUNT`,
+  `TIMELINE_PHOTO_DELETE_WORKER_COUNT` (checked-in default는 worker on, 매일 `03:00`
+  `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
 - `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_QUIESCE_CRON`, `ACCOUNT_ERASURE_DELETE_CRON`,
   `ACCOUNT_ERASURE_ZONE`, `ACCOUNT_ERASURE_QUIESCE_DELAY`, `ACCOUNT_ERASURE_STALE_AFTER`,
   `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,
@@ -172,9 +172,15 @@ application 배포·health gate 의존성이 아니다.
   잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
   로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
-  `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_CONCURRENCY`,
-  `DRAFT_CLEANUP_MAX_BATCHES_PER_RUN`, `DRAFT_CLEANUP_MAX_RUN_DURATION` (checked-in default는 worker on,
-  7일 retention, 매일 `04:00` `Asia/Seoul`, process당 concurrency 1, batch 250, 최대 4 batch/60초)
+  `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_WORKER_ID`,
+  `DRAFT_CLEANUP_SERVER_COUNT`, `DRAFT_CLEANUP_WORKER_COUNT` (checked-in default는 worker on,
+  7일 retention, 매일 `04:00` `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
+- `TIMELINE_ORPHAN_SWEEP_WORKER_ENABLED`, `TIMELINE_ORPHAN_SWEEP_CRON`, `TIMELINE_ORPHAN_SWEEP_ZONE`,
+  `TIMELINE_ORPHAN_SWEEP_BATCH_SIZE`, `TIMELINE_ORPHAN_SWEEP_WORKER_ID`, `TIMELINE_ORPHAN_SWEEP_SERVER_COUNT`,
+  `TIMELINE_ORPHAN_SWEEP_WORKER_COUNT` (기본 매일 03:30 KST, 서버 2대 × 서버당 slot 1, 단일 batch 250).
+  세 정리 스케줄러의 worker-id는 서버별 0·1로 명시하고 server-count·worker-count는 전체 서버에서 맞춘다.
+  docker profile만 server-count 기본값이 1이며 test는 기존대로 비활성화한다. 변경·원복은 전체 중지 후
+  적용하며 [전환 절차](../../../../docs/database/474-scheduler-rollout.md)를 따른다.
 - `USER_MEMORY_UPDATE_CRON`, `USER_MEMORY_UPDATE_ZONE`, `USER_MEMORY_UPDATE_RETENTION`
 - `APP_ENV`
 

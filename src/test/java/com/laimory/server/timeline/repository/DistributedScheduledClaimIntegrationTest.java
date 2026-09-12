@@ -34,7 +34,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
-/** 실제 MySQL에서 두 transaction의 SKIP LOCKED claim 결과가 겹치지 않는지 검증한다. */
+/** 실제 MySQL에서 두 transaction의 고정 PK 분배 결과가 겹치지 않는지 검증한다. */
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
@@ -94,12 +94,14 @@ class DistributedScheduledClaimIntegrationTest {
         jdbcTemplate.update("update timeline_photo_delete_jobs set created_at = ?, updated_at = ?",
                 withinWindow, withinWindow);
 
+        java.util.concurrent.atomic.AtomicInteger owner = new java.util.concurrent.atomic.AtomicInteger();
         List<List<TimelinePhotoDeleteJob>> claims = claimConcurrently(
-                () -> photoJobService.claimEligible(ROW_COUNT / 2));
-        assertDisjointAndEventuallyDrained(
-                claims,
-                () -> photoJobService.claimEligible(ROW_COUNT),
-                TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
+                () -> photoJobService.claimEligible(owner.getAndIncrement(), 2, ROW_COUNT));
+        Set<Long> selected = new HashSet<>();
+        claims.forEach(batch -> addDisjoint(selected, batch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId));
+        assertThat(selected).hasSize(ROW_COUNT);
+        assertThat(photoJobService.claimEligible(0, 2, ROW_COUNT)).isEmpty();
+        assertThat(photoJobService.claimEligible(1, 2, ROW_COUNT)).isEmpty();
         assertThat(photoJobRepository.findAll())
                 .extracting(TimelinePhotoDeleteJob::getStatus)
                 .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
@@ -120,7 +122,7 @@ class DistributedScheduledClaimIntegrationTest {
     }
 
     @Test
-    void draftWorkersClaimDisjointBoundedBatchesAndDoNotReclaimThemSameDay() throws Exception {
+    void draftWorkersSelectDisjointBatchesAndRetryRemainingRows() throws Exception {
         for (int index = 0; index < ROW_COUNT; index++) {
             draftSourceItemRepository.save(TimelineDraftSourceItem.of(
                     UUID.randomUUID().toString(),
@@ -132,15 +134,56 @@ class DistributedScheduledClaimIntegrationTest {
                     objectMapper.valueToTree(new CalendarPayload("event-" + index, null, null, false))));
         }
         jdbcTemplate.update("update timeline_draft_source_items "
-                + "set created_at = '2000-01-01 00:00:00', cleanup_available_at = '2000-01-01 00:00:00'");
+                + "set created_at = '2000-01-01 00:00:00'");
         LocalDateTime cutoff = LocalDateTime.of(2000, 1, 2, 0, 0);
 
-        List<List<TimelineDraftSourceItem>> claims = claimConcurrently(
-                () -> draftSourceItemService.claimExpired(cutoff, ROW_COUNT / 2));
-        assertDisjointAndEventuallyDrained(
-                claims,
-                () -> draftSourceItemService.claimExpired(cutoff, ROW_COUNT),
-                TimelineDraftSourceItem::getTimelineDraftSourceItemId);
+        java.util.concurrent.atomic.AtomicInteger owner = new java.util.concurrent.atomic.AtomicInteger();
+        List<List<TimelineDraftSourceItem>> selections = claimConcurrently(
+                () -> draftSourceItemService.findExpired(cutoff, owner.getAndIncrement(), 2, ROW_COUNT));
+        Set<Long> selected = new HashSet<>();
+        selections.forEach(batch -> addDisjoint(selected, batch, TimelineDraftSourceItem::getTimelineDraftSourceItemId));
+        assertThat(selected).hasSize(ROW_COUNT);
+        assertThat(draftSourceItemService.findExpired(cutoff, 0, 2, ROW_COUNT)).hasSize(ROW_COUNT / 2);
+        assertThat(draftSourceItemService.findExpired(cutoff, 1, 2, ROW_COUNT)).hasSize(ROW_COUNT / 2);
+    }
+
+    @Test
+    void sparseAndSkewedPrimaryKeysHaveOneOwnerForTwoAndFourWorkers() {
+        photoItemIds = java.util.stream.IntStream.range(0, 24).mapToObj(this::savePhotoItem).toList();
+        for (int index = 0; index < photoItemIds.size(); index++) {
+            photoJobService.insertIfAbsent(photoItemIds.get(index), "partition/photos/" + index + ".jpg");
+            draftSourceItemRepository.save(TimelineDraftSourceItem.of(UUID.randomUUID().toString(), SUBJECT_ID,
+                    ItemType.CALENDAR, "partition-" + index, null, null,
+                    objectMapper.valueToTree(new CalendarPayload("fixture", null, null, false))));
+        }
+        jdbcTemplate.update("DELETE FROM timeline_photo_delete_jobs "
+                + "WHERE MOD(timeline_photo_delete_job_id, 4)=1 OR MOD(timeline_photo_delete_job_id, 7)=0");
+        jdbcTemplate.update("DELETE FROM timeline_draft_source_items "
+                + "WHERE MOD(timeline_draft_source_item_id, 4)=1 OR MOD(timeline_draft_source_item_id, 7)=0");
+        jdbcTemplate.update("UPDATE timeline_draft_source_items SET created_at='2000-01-01'");
+        var expectedPhotoIds = photoJobRepository.findAll().stream()
+                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId).toList();
+        var expectedDraftIds = draftSourceItemRepository.findAll().stream()
+                .map(TimelineDraftSourceItem::getTimelineDraftSourceItemId).toList();
+        for (int total : List.of(2, 4)) {
+            var yesterday = LocalDateTime.now().toLocalDate().atStartOfDay().minusHours(12);
+            jdbcTemplate.update("UPDATE timeline_photo_delete_jobs SET created_at=?, updated_at=?, status='PENDING'",
+                    yesterday, yesterday);
+            Set<Long> photos = new HashSet<>();
+            Set<Long> drafts = new HashSet<>();
+            for (int worker = 0; worker < total; worker++) {
+                var photoBatch = photoJobService.claimEligible(worker, total, 250);
+                var draftBatch = draftSourceItemService.findExpired(
+                        LocalDateTime.of(2000, 1, 2, 0, 0), worker, total, 250);
+                final int owner = worker;
+                assertThat(photoBatch).allMatch(job -> (job.getTimelinePhotoDeleteJobId() - 1) % total == owner);
+                assertThat(draftBatch).allMatch(row -> (row.getTimelineDraftSourceItemId() - 1) % total == owner);
+                addDisjoint(photos, photoBatch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
+                addDisjoint(drafts, draftBatch, TimelineDraftSourceItem::getTimelineDraftSourceItemId);
+            }
+            assertThat(photos).containsExactlyInAnyOrderElementsOf(expectedPhotoIds);
+            assertThat(drafts).containsExactlyInAnyOrderElementsOf(expectedDraftIds);
+        }
     }
 
     private long savePhotoItem(int index) {
@@ -179,27 +222,6 @@ class DistributedScheduledClaimIntegrationTest {
             start.countDown();
             return List.of(first.get(), second.get());
         }
-    }
-
-    /**
-     * SKIP LOCKED는 겹치지 않는 claim을 보장하지만 경합 중인 한 호출이 LIMIT를 모두 채우지는 않을 수 있다.
-     * 최초 동시 claim과 후속 drain 전체에서 각 ID가 한 번만 나오고 같은 날 queue가 비는지를 검증한다.
-     */
-    private <T> void assertDisjointAndEventuallyDrained(
-            List<List<T>> initialClaims,
-            Supplier<List<T>> nextClaim,
-            Function<T, Long> idExtractor) {
-        Set<Long> claimedIds = new HashSet<>();
-        initialClaims.forEach(batch -> addDisjoint(claimedIds, batch, idExtractor));
-
-        int followUpClaims = 0;
-        List<T> batch = nextClaim.get();
-        while (!batch.isEmpty()) {
-            assertThat(followUpClaims++).isLessThan(ROW_COUNT);
-            addDisjoint(claimedIds, batch, idExtractor);
-            batch = nextClaim.get();
-        }
-        assertThat(claimedIds).hasSize(ROW_COUNT);
     }
 
     private <T> void addDisjoint(Set<Long> claimedIds, List<T> batch, Function<T, Long> idExtractor) {

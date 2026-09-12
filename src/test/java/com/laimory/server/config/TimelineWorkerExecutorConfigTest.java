@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.timeline.service.TimelineDraftCleanupWorkerProperties;
 import com.laimory.server.timeline.service.TimelinePhotoDeleteWorkerProperties;
-import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -22,9 +21,9 @@ class TimelineWorkerExecutorConfigTest {
             .withConfiguration(AutoConfigurations.of(TaskExecutionAutoConfiguration.class))
             .withUserConfiguration(AsyncConfig.class, TimelineWorkerExecutorConfig.class, AsyncProbeConfig.class)
             .withBean(TimelinePhotoDeleteWorkerProperties.class, () ->
-                    new TimelinePhotoDeleteWorkerProperties(true, 250, 1, 4, Duration.ofSeconds(60)))
+                    new TimelinePhotoDeleteWorkerProperties(true, 250, 0, 2, 1))
             .withBean(TimelineDraftCleanupWorkerProperties.class, () ->
-                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 1, 4, Duration.ofSeconds(60)));
+                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 0, 2, 1));
 
     @Test
     void workerExecutorsCoexistWithBootDefaultAndAsyncUsesBootExecutor() {
@@ -49,6 +48,21 @@ class TimelineWorkerExecutorConfigTest {
             assertThat(CompletableFuture.supplyAsync(() -> Thread.currentThread().getName(), draft).join())
                     .startsWith("draft-cleanup-");
         });
+    }
+
+    @Test
+    void executorCapacityEqualsWorkerCount() {
+        var config = new TimelineWorkerExecutorConfig();
+        for (int count : new int[] {1, 2}) {
+            var photo = config.timelinePhotoDeleteWorkerExecutor(
+                    new TimelinePhotoDeleteWorkerProperties(true, 250, 1, 2, count));
+            var draft = config.timelineDraftCleanupWorkerExecutor(
+                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 1, 2, count));
+            assertThat(photo.getCorePoolSize()).isEqualTo(count);
+            assertThat(photo.getMaxPoolSize()).isEqualTo(count);
+            assertThat(draft.getCorePoolSize()).isEqualTo(count);
+            assertThat(draft.getMaxPoolSize()).isEqualTo(count);
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
