@@ -51,14 +51,14 @@ public class OAuth2LoginSecurityConfig {
                 .addFilterBefore(appChallengeFilter, OAuth2AuthorizationRequestRedirectFilter.class)
                 .oauth2Login(login -> login
                         .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(
-                                pkceAuthorizationRequestResolver(clientRegistrationRepository)))
+                                oauth2AuthorizationRequestResolver(clientRegistrationRepository)))
                         .successHandler(successHandler)
                         .failureHandler(failureHandler));
         return http.build();
     }
 
     /** confidential 클라이언트에도 PKCE(S256)를 강제하고, Google 로그인에는 계정 선택을 요청한다. */
-    private static OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver(
+    private static OAuth2AuthorizationRequestResolver oauth2AuthorizationRequestResolver(
             ClientRegistrationRepository clientRegistrationRepository) {
         DefaultOAuth2AuthorizationRequestResolver resolver = new DefaultOAuth2AuthorizationRequestResolver(
                 clientRegistrationRepository,
