@@ -115,8 +115,8 @@ UPDATE daily_notification_preferences
 DB 호스트 시간대가 UTC이므로 "지금"은 `CONVERT_TZ`로 KST 벽시계를 만들어 쓴다(이 저장소의 `DATETIME`
 공통 계약). 검증은 갱신 행 수와 `enabled=TRUE`·`next_due_at`이 전부 미래인지로 한다.
 
-저장소는 신규 AWS MySQL 초기화를 자동화하지 않는다. live MySQL schema는 저장소 변경만으로 바뀌지
-않으며, 애플리케이션 배포 전에 실제 DB 상태를 확인하고 수동 DDL을 적용해야 한다.
+신규 AWS MySQL 서버·DB/사용자 준비는 자동화하지 않는다. 스키마 초기화·기존 DB 편입은 위 Flyway 절차를
+따르며, 편입 후 호환 가능한 스키마 변경은 앱 시작 시 미적용 migration으로 실행한다.
 
 JPA auditing이 created/updated time을 채우지만 authenticated auditor가 없어 `modified_by`는 NULL이다.
 final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나뿐이다 — AI 결과도 서버 결과 저장
@@ -261,9 +261,9 @@ NULL). 감정 수정은 비트랜잭션 사전 조회 → update-first 트랜잭
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
-없는 `String`(Hibernate 기본 255)이라 nullable 컬럼을 앱 배포 전에 먼저 추가해야 `ddl-auto=validate`가
-통과한다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 — AI 결과 저장 transaction만
-쓰고, 조회 조건이 아닌 표시 데이터라 index를 두지 않으며, 배포 전 DDL 요구도 같다.
+없는 `String`(Hibernate 기본 255)이다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 —
+AI 결과 저장 transaction만 쓰고, 조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에
+포함되어 있으며, 이후 구조 변경은 후속 migration으로 JPA 검증 전에 반영한다.
 
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
@@ -370,8 +370,8 @@ quiesce-delay`를 기동 검증으로 강제해 정지가 조용히 늦어지는
 **운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
 수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
 runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은
-`(status, created_at)` index를 타는 수동 SELECT다. live dev/prod 반영은 앱 배포 전
-수동 DDL(users ALTER + job CREATE)이 필요하다(`ddl-auto=validate`).
+`(status, created_at)` index를 타는 수동 SELECT다. users 탈퇴 필드와 `account_erasure_jobs` 구조는 V1에
+포함되어 있으며, Flyway 최초 편입 시 다른 V1 구조와 함께 대조한다.
 
 `term_agreements`(#303/#432)는 회원 동의 이력이다. owner는 인증 회원 raw `user_id`(users FK 없음 —
 `refresh_tokens` 선례)이고 `(user_id, term_type, version)`이 복합 PK다. `(term_type, version)` 복합 FK는

@@ -35,6 +35,7 @@ Laimory는 Android 앱이 사용하는 Spring Boot REST 백엔드다.
 ## Knowledge Workflow
 
 1. 구현 전에 [knowledge index](.agents/knowledge/README.md)에서 변경과 관련된 문서만 찾고 읽는다.
+   Entity 매핑·DB 스키마·데이터 마이그레이션 변경은 [Flyway 절차](docs/database/flyway-adoption.md)를 먼저 읽고 따른다.
 2. 도메인 개념·상태·필드·클래스 이름을 만들거나 바꿀 때는
    [ubiquitous language](.agents/knowledge/domain/ubiquitous-language.md)를 따른다.
 3. 현재 구현, 의도된 계약, 알려진 미구현을 섞지 않는다.

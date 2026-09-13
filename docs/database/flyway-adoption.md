@@ -160,8 +160,8 @@ flyway info
 
 history에는 `BASELINE` 버전 1이 기록되어야 한다. V1의 CREATE/INSERT는 실행하지 않는다.
 `baseline`은 빠진 컬럼을 보정하거나 기존 데이터가 올바른지 검증하는 기능이 아니다.
-변경 전후 데이터·운영 설정 보존과 이력을 확인한 뒤 앱을 배포한다. 현재 V1 도입 release에는 후속 SQL이 없어
-앱의 migrate는 변경 없이 끝난다. 이후 버전은 앱이 자동 실행한다. `target=1`은 최초 편입 확인과 [#474 단계적 컬럼 제거](474-draft-cleanup-rollout.md)의 임시 코드 전환 단계에만 사용한다.
+변경 전후 데이터·운영 설정 보존과 이력을 확인한다. baseline은 V1만 건너뛰고 이후 버전은 앱이 자동 실행하므로,
+배포할 migration 집합과 구 앱 호환성을 확인한 뒤 앱을 배포한다. `target=1`은 최초 편입 확인과 [#474 단계적 컬럼 제거](474-draft-cleanup-rollout.md)의 임시 코드 전환 단계에만 사용한다.
 
 기존 local volume도 동일하다. `docker compose up -d`로 기존 DB를 기동하고 구조 대조 후 명시 baseline한다.
 데이터를 버려도 된다는 사용자 선택이 있을 때만 별도로 초기화한다. 테스트 script는 기존 volume을 사용하지 않는다.
@@ -180,7 +180,7 @@ flyway info
 
 이후 일반 변경은 다음 순서다.
 
-1. `V2__description.sql`, `V3__description.sql`을 추가하고 구 앱과 호환되는지 확인한다.
+1. 기존 버전을 확인해 다음 `V<version>__description.sql`을 추가하고 구 앱과 호환되는지 확인한다.
 2. CI에서 빈 DB와 이전 버전 + 대표 데이터의 업그레이드를 검증한다.
 3. 기존 배포로 새 앱을 기동한다. Flyway가 checksum 검증과 미적용 SQL을 실행하고 JPA가 검증한다.
 4. health 성공 후 다음 host로 진행하고, 모든 host의 성공 및 migration 이력을 확인한다.
@@ -210,10 +210,13 @@ docker compose up -d --wait
 명시 baseline과 데이터 보존, 자동 baseline 거부, checksum 불일치를 검증한다. 최초 편입 검증은 V1에 고정한다.
 동결한 이전 SQL fixture의 약관 이름 네 개만 위 기준으로 치환한 사본을 사용하며, 이외 DDL은 전체 비교한다.
 임시 V2에서는 첫 migration의 실행과 둘째의 native lock 대기를 겹치게 한 뒤, 이력/결과 한 건과 양쪽 성공을
-확인한다. 테스트용 V2는 앱에 포함되지 않는다. 만든 컨테이너/네트워크만 정리한다.
+확인한다. 테스트용 V2는 앱에 포함되지 않는다. 별도 DB에서는 실제 `V2__remove_draft_cleanup_claim.sql`을
+V1의 대표 초안 데이터에 적용해 행 보존, 선점 컬럼·인덱스 제거와 `created_at` 인덱스 유지를 검증한다.
+만든 컨테이너/네트워크만 정리한다.
 `src/test/resources/db/legacy/pre-flyway-schema.sql`은 도입 직전 스냅샷으로 동결한다. 운영 초기화에 쓰거나
-이후 스키마에 맞춰 갱신하지 않는다. 실제 V2부터는 해당 변경에 이전 버전과 대표 데이터를 최신으로 올리는
-업그레이드 검증을 추가한다. CI의 앱 DB는 Spring Flyway가 생성하고 기존 `/intro`·JPA 통합 테스트가 검증한다.
+이후 스키마에 맞춰 갱신하지 않는다. 이후 migration마다 해당 변경에 이전 버전과 대표 데이터를 새 버전으로
+올리는 업그레이드 검증을 추가한다. 기존 V1 편입·동시 실행·V2 업그레이드 검증이 후속 SQL까지 검증하지는
+않는다. CI의 앱 DB는 Spring Flyway가 생성하고 기존 `/intro`·JPA 통합 테스트가 검증한다.
 
 ## 근거
 
