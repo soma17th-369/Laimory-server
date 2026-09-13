@@ -34,9 +34,11 @@ import org.springframework.security.oauth2.client.registration.ClientRegistratio
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * 두 필터체인의 계약 고정: 로그인 시작의 PKCE 강제·app_challenge 필수(400 envelope), API 체인의
@@ -85,7 +87,7 @@ class SecurityConfigTest {
     static class DummyClientRegistrations {
         @Bean
         ClientRegistrationRepository clientRegistrationRepository() {
-            return new InMemoryClientRegistrationRepository(ClientRegistration.withRegistrationId("google")
+            ClientRegistration google = ClientRegistration.withRegistrationId("google")
                     .clientId("test-client")
                     .clientSecret("test-secret")
                     .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
@@ -96,18 +98,50 @@ class SecurityConfigTest {
                     .jwkSetUri("https://www.googleapis.com/oauth2/v3/certs")
                     .userNameAttributeName("sub")
                     .clientName("google")
-                    .build());
+                    .build();
+            ClientRegistration kakao = ClientRegistration.withRegistrationId("kakao")
+                    .clientId("test-kakao-client")
+                    .clientSecret("test-kakao-secret")
+                    .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
+                    .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                    .redirectUri("{baseUrl}/login/oauth2/code/kakao")
+                    .scope("openid", "profile_nickname")
+                    .authorizationUri("https://kauth.kakao.com/oauth/authorize")
+                    .tokenUri("https://kauth.kakao.com/oauth/token")
+                    .jwkSetUri("https://kauth.kakao.com/.well-known/jwks.json")
+                    .userNameAttributeName("sub")
+                    .clientName("kakao")
+                    .build();
+            return new InMemoryClientRegistrationRepository(google, kakao);
         }
     }
 
     @Test
-    void authorizationStart_forcesPkceAndStateAndNonce() throws Exception {
+    void googleAuthorizationStart_selectsAccountAndForcesPkceAndStateAndNonce() throws Exception {
         MvcResult result = mockMvc.perform(get("/oauth2/authorization/google")
                         .queryParam("app_challenge", VALID_CHALLENGE))
                 .andExpect(status().is3xxRedirection())
                 .andReturn();
 
         String location = result.getResponse().getRedirectedUrl();
+        assertThat(UriComponentsBuilder.fromUriString(location).build().getQueryParams().get("prompt"))
+                .containsExactly("select_account");
+        assertThat(location).contains("code_challenge=");
+        assertThat(location).contains("code_challenge_method=S256");
+        assertThat(location).contains("state=");
+        assertThat(location).contains("nonce=");
+    }
+
+    @Test
+    void kakaoAuthorizationStart_omitsPromptAndForcesPkceAndStateAndNonce() throws Exception {
+        MvcResult result = mockMvc.perform(get("/oauth2/authorization/kakao")
+                        .queryParam("app_challenge", VALID_CHALLENGE))
+                .andExpect(status().is3xxRedirection())
+                .andReturn();
+
+        String location = result.getResponse().getRedirectedUrl();
+        assertThat(UriComponentsBuilder.fromUriString(location).build().getQueryParams())
+                .doesNotContainKey("prompt");
         assertThat(location).contains("code_challenge=");
         assertThat(location).contains("code_challenge_method=S256");
         assertThat(location).contains("state=");
