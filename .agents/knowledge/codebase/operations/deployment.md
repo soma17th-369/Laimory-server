@@ -38,37 +38,43 @@ dispatch로 한다 — test ref에서 `environment=test`를 고르고, 직전 de
 SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회). 이후 image 입력 경로에
 닿는 실변경 push부터는 자동 배포가 정상 동작한다.
 
-환경별로 갈리는 것은 대상 instance 목록, preflight 기대값(application environment·Redis prefix·
-Swagger·geo mode), OTel service name뿐이다. 그 외 절차는 동일하다.
+환경별 instance 목록과 runtime 기대값은 Resolve 단계가 정한다. prod는 두 WAS를 ALB에서 한 대씩
+제외·복귀시키며, dev/test는 단일 host에서 기존 SSM 배포를 수행한다.
 
-1. `dev`/`main` branch push 중 Docker image 입력(`src/main`, Gradle build/wrapper, Dockerfile/dockerignore)이나
-   `deploy.yml` 자체가 바뀐 경우에만 workflow를 시작한다. test·문서·monitoring-only 변경은
-   application을 재배포하지 않는다.
-2. 환경별 concurrency group으로 배포를 직렬화한다. group 식은 YAML 키라 step 출력을 읽지 못하므로
-   Resolve step과 같은 매핑을 식으로 다시 쓴다 — 두 곳이 갈리면 직렬화가 깨지므로 함께 고친다.
-3. GitHub OIDC로 AWS deploy role을 assume한다.
-4. commit SHA tag Docker image를 ECR에 push한다.
-5. 해당 환경의 host에 SSM으로 remote script를 보낸다. host가 여러 대면 **한 대씩 순차**로 보내고,
-   그 host의 SSM status가 성공이어야 다음으로 넘어간다 — 실패하면 남은 host는 건드리지 않아
-   최소 한 대가 직전 image로 남는다. script는 첫 실패 가능 명령보다 앞에서 EXIT cleanup trap을 설치한다.
-   ⚠️ ALB target deregister/register는 아직 없다. container를 내린 host는 health check가 unhealthy로
-   판정할 때까지 트래픽을 계속 받으므로 **무중단 배포가 아니다**.
-6. 기존 container를 내리기 전에 `.env` 계약을 preflight한다(secret presence + 환경 고정값·mode
-   exact-one, 값 비출력 — 아래 Preflight).
-7. ECR login 후 새 image를 pull하고, firebase 모드면 runtime UID 1001 가독성까지 검사한다.
-   이어서 subject mapping preflight(#282 — mode·ARN, runtime secret read + secret 내용 계약 검증,
-   `user_subject_links` schema 검사, 아래 Preflight)를 수행한다. harness가 pull → subject preflight →
-   upsert 순서를 강제한다.
-8. 모든 pre-stop 검사·pull이 성공한 뒤에만 `APP_COMMIT_SHA`를 같은 디렉터리 temp+rename으로 `.env`에
-   원자 upsert한다(첫 stop 직전 commit point — 이전 실패는 기존 `.env` bytes·SHA를 보존한다).
-9. 기존 `laimory` container를 stop/remove한다.
-10. `-e`/`--env` 없이 `--env-file /home/ubuntu/app/.env`만으로 새 container를 실행한다(host network,
-    rotated `json-file` logging; firebase면 read-only credential mount만 추가).
-11. 앱 시작 시 Flyway가 migration·이력을 확인하고 JPA가 검증한다. `/api/v1/intro`를 최대 90초 polling한다.
-    migration/잠금 대기도 이 시간에 포함된다. 실패하면 새 container log를 출력하고 workflow를 실패시킨다.
-12. 성공·실패 어느 종료 경로에서도 EXIT cleanup이 `docker image prune -af`를 정확히 1회 실행한다 —
-    어떤 container도 참조하지 않는 tagged/dangling image가 제거되고, prune 실패는 고정 경고만 남기며
-    원래 배포 status를 바꾸지 않는다.
+1. `dev`/`main`/`test` push 중 Docker image 입력이나 `deploy.yml` 자체가 바뀌면 자동 배포한다.
+   test code·문서·monitoring-only 변경은 application을 재배포하지 않는다.
+2. 환경별 concurrency group으로 직렬화하고 `cancel-in-progress: false`를 유지한다. 기본 대기 슬롯은
+   한 개이며 추가 실행으로 대체될 수 있다. 수동 host 선택도 같은 환경 group을 쓰므로 prod 전체 배포와
+   단독 복구가 동시에 진행되지 않는다. 이 제한은 AWS 콘솔 조작이나 workflow 종료 후 남은 SSM 작업까지
+   잠그지 않는다.
+3. OIDC로 환경별 deploy role을 assume한다. push는 commit SHA image를 build/push하고,
+   deploy-existing은 입력 SHA tag와 digest가 일치하는지 ECR에서 확인한 뒤 digest로 배포한다.
+4. prod는 `PROD_TARGET_GROUP_ARN` Secret을 사용한다. instance/HTTP/8080, `/readyz` HTTP 200 healthcheck,
+   연결된 ALB와 등록 대상이 prod 목록에 속하는지 확인한다. host 목록은 서로 다른 두 대여야 한다.
+5. prod는 host별로 **prepare → peer healthy → deregister/drain → replace → register/healthy → cleanup**
+   순서로 진행한다. ALB healthy까지 성공해야 다음 host로 가며, cleanup은 아래의 경고 처리 예외를 따른다.
+   dev/test는 `deploy` 한 단계로 준비·교체·정리를 수행한다.
+6. prepare는 기존 container를 유지하며 `.env`·credential·환경/mode 검증, ECR pull, runtime UID 권한,
+   subject secret/schema와 `app_config` preflight를 실행한다. 준비 성공 시 새 image를 prune하지 않는다.
+7. prod peer가 ALB에 healthy로 등록돼 있어야 현재 host의 신규 요청을 제외한다. ALB deregistration
+   완료까지 기다린 뒤에만 replace를 시작한다. 조회·제외·대기 실패 시 앱을 교체하지 않는다.
+8. replace는 준비 image를 확인하고 runtime mount를 구성한다. 모든 준비 검사 후 첫 stop 직전에만
+   `APP_COMMIT_SHA`를 temp+rename으로 원자 upsert한다. `.env`의 나머지 값·0600·owner를 보존한다.
+9. 실행 중인 container는 `docker stop --time 120`으로 종료한다. Docker 오류나 SIGKILL 종료 코드 137은
+   무시하지 않으며 remove/run을 이어가지 않는다. 이미 종료됐거나 생성에 실패해 없는 container는
+   단독 재배포로 복구할 수 있다. `--pull=never`, `--env-file`로 새 container를 실행한다.
+10. Flyway 시작 migration과 JPA 검증을 포함해 `/readyz`와 `/api/v1/intro`를 확인한다. prod는 이어서
+    ALB에 재등록하고 healthy까지 기다린다. 실패하면 다음 host를 교체하지 않으며 자동 재등록/rollback은 없다.
+11. 임시 `.env` 제거와 원래 종료 상태 보존은 각 원격 script의 EXIT에서 수행한다. prod image prune은
+    준비 실패 시 prepare EXIT에서, 준비 성공 뒤에는 해당 host 작업 종료 시 별도 cleanup SSM에서 1회 수행한다.
+    peer/drain 실패로 교체하지 못한 경우도 정리한다. replace EXIT에서는 image를 prune하지 않는다.
+    dev/test는 deploy EXIT에서 1회 prune한다. prune 실패는 배포 성공·실패를 바꾸지 않는다.
+12. prepare/replace/dev·test deploy의 원격 실행이 종료됐는지 불명확하면 추가 cleanup/배포를 보내지 않는다.
+    SSM send 오류·취소·timeout 때는 command와 host 상태를 수동 확인한다. GitHub polling 종료가 EC2의
+    실행 취소를 뜻하지 않는다. 별도 cleanup 단계는 예외다. 앱 교체와 ALB 복귀가 성공했다면 cleanup 실패나
+    종료 여부 미확인은 경고만 남기고 다음 host로 진행하며, 기존 배포 성공·실패 결과를 유지한다.
+    운영자는 경고가 난 host의 SSM 명령 종료 여부와 디스크 사용량을 확인하고, 해당 host의 다음 배포 전에
+    남은 정리 명령이 실행 중인지 확인한다.
 
 ## Monitoring Alert Rule Deployment
 
@@ -228,9 +234,10 @@ image 재배포다. 새 workflow는 dev/prod key 부재를 거절하므로 제�
 
 ### Existing health gates
 
-- deploy gate는 `/api/v1/intro`다. DB 연결과 `app_config` row를 사용한다.
-- `/status`는 DB connection probe지만 deploy gate가 아니다.
-- 두 endpoint 모두 Redis, Kakao, S3 전체 준비 상태를 검증하지 않는다.
+- 앱 deploy gate는 메인 포트 `/readyz`(readinessState·DB·Redis)와 `/api/v1/intro`(DB·app_config)다.
+  prod는 ALB target healthy 복귀도 확인해야 성공이다.
+- `/status`는 DB connection probe지만 deploy gate가 아니다. readiness가 Kakao·S3·AI 전체의 정상 동작을
+  보장하는 것은 아니다.
 - Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
 - health failure 시 이전 image로 자동 rollback하지 않는다. 이전 image의 host-local cache는 cleanup이
   prune하므로 없을 수 있다 — rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해
@@ -249,6 +256,25 @@ UTC 프레임; 0건이면 생략) → ⑤ 새 binary 배포(worker off 유지) �
 flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생성한다. pending job row는 수동 삭제하지
 않는다. job은 보존 중인 원문 PHOTO Item을 FK로 참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만
 단독 삭제하지 않는다.
+
+### Rolling deployment time budgets (#484)
+
+| 단계 | 기준 | 제한 |
+|---|---|---|
+| ALB drain | live prod deregistration delay 30초 | AWS waiter 15초 간격, 40회 후 실패. 완료 전에 앱을 내리지 않음 |
+| 앱 종료 | Boot 3.5.8 기본 graceful, lifecycle phase당 기본 30초 | Docker stop 최대 120초. SIGKILL(137)이면 배포 실패 |
+| 앱 준비 | 90초 마감까지 readiness/intro polling | 요청별 connect 1초·전체 2초, 재시도 간격 2초. 마지막 검사/간격은 최대 6초 추가 가능 |
+| ALB 복귀 | live healthcheck 15초, healthy threshold 2 | AWS waiter 15초 간격, 40회 후 실패 |
+| SSM | 원격 command executionTimeout 900초, runner polling 900초 | delivery 지연 등으로 원격 상태가 불명확하면 수동 확인 |
+
+2026-09-14 조회에서 prod 두 host는 healthy였고 `/readyz`·intro는 200, Docker stop timeout과 Spring
+shutdown override는 없었다. ALB/host 설정은 live가 권위다. 30초 drain보다 오래 걸리는 요청이나 배포 중
+남은 WAS까지 장애 나는 상황의 무중단을 보장하지 않는다. 실제 적용 검증에서 요청 종류·부하·지속시간을 기록한다.
+Boot 기본 graceful을 사용하므로 application.properties에 같은 설정을 중복 추가하지 않는다.
+
+HTTP drain과 background 작업 완료는 별개다. 기존 `DailyReminderWorker`는 claim commit 후 process가
+종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, PHOTO 삭제 등 다른 worker도 각자의 DB 재시도
+계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
 
 ## Manual Operations
 
@@ -269,11 +295,12 @@ Flyway는 모든 환경의 앱 시작 시 실행한다. [Flyway 운영 절차](.
   대상 Runtime 한정 `bedrock-agentcore:InvokeAgentRuntime` 부여(대상·영향·rollback 설명 후 별도 승인)
   ③ `.env`에 `APP_AI_MODE=agentcore`와 Runtime ARN·endpoint를 넣고 재배포다. rollback은 `.env`를 이전
   mode로 되돌리고 다시 재생성하는 것뿐이며, 이미 접수된 task는 AI 결과 또는 TTL이 종결한다.
-- prod 배포는 `deploy.yml`의 환경 분기가 담당하지만, **live 선행 조건 두 가지가 저장소 밖에 있다**:
-  prod host 목록 repository Secret(`PROD_INSTANCE_IDS`)과, deploy role의 `ssm:SendCommand` Resource에 prod host를
-  추가하는 IAM 변경. 둘 중 하나라도 없으면 워크플로가 맞아도 배포가 실패한다.
-  IAM을 넓히면 "workflow도 IAM도 dev host만 안다"는 기존 이중 잠금이 사라지고 Resolve step의
-  환경 분기가 유일한 방어선이 된다.
+- prod 배포의 live 선행 조건은 repository Secrets `PROD_INSTANCE_IDS`·`PROD_TARGET_GROUP_ARN`,
+  해당 host에 대한 SSM 배포 권한, ALB 조회·등록·해제 권한이다. deploy role에
+  `elasticloadbalancing:DescribeTargetGroups`·`DescribeTargetHealth` 조회 권한과 **prod target group ARN에
+  한정된** `RegisterTargets`·`DeregisterTargets` 권한이 필요하다. ALB 설정 변경 권한은 필요하지 않다.
+  두 Describe API는 Resource `*`가 필요하다([AWS 권한 표](https://docs.aws.amazon.com/service-authorization/latest/reference/list_elbv2.html)).
+  권한·Secret의 실제 반영 여부와 live 배포 검증 여부는 저장소 코드만으로 보장되지 않는다.
 
 maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실행은 build·SSM 전송 없이 skip되어 기존 container와
 `.env`를 유지하며, manual dispatch는 pause를 무시한다. `build-only.yml`은 입력받은 exact
@@ -283,6 +310,14 @@ maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실
 SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ecr:BatchGetImage`를 사용한다.
 `ecr:DescribeImages` 추가 권한은 요구하지 않는다. 자동 rollback은 없으며 운영자가 승인한 exact image를
 수동 재배포하는 경로다.
+
+수동 prod 배포의 `deploy_target`은 `all`(기본값), `host-1`, `host-2`이며 Secret의 instance 목록 순서로
+해석한다. 전체 두 host 구성을 검증한 뒤 선택한 host만 배포하고, 다른 host의 healthy 확인은 유지한다.
+A 성공 후 B 실패 시 원인을 해결하고 `host-2`에 **A와 같은 신버전 SHA/digest**를 재배포하는 것이 기본이다.
+A에는 교체 명령을 보내지 않는다. 신버전 자체 문제로 이전 image를 선택한다면 ECR 사용 가능성과 적용된 DB
+schema의 구 앱 호환성을 먼저 확인한다. 비정상 host부터 복구하고 필요한 나머지 host를 순차 rollback한다.
+앱 rollback은 Flyway가 적용한 DB 변경을 되돌리지 않는다. 자동 배포/Flyway 중단은 별도 명시 동의가 필요하다.
+
 `DEPLOY_PAUSED`는 이미 pause gate를 통과한 run에 소급되지 않으므로 maintenance 시작 전 진행 중인
 application deploy run이 0건인지 확인한다.
 
@@ -292,12 +327,14 @@ application deploy run이 0건인지 확인한다.
   `APP_COMMIT_SHA` 원자 upsert는 모든 pre-stop 검사·pull 성공 뒤, 첫 stop 직전에만 수행한다.
 - 장기 실행 `docker run`에 `-e`/`--env`를 추가하지 않는다 — runtime env는 host `.env`가 SSOT다.
   일회성 preflight `docker run --rm`은 이 제한 대상이 아니다.
-- EXIT cleanup(`docker image prune -af`)은 종료 경로마다 정확히 1회 실행하고 원래 배포 status를
-  바꾸지 않는다.
+- 준비 성공과 replace 종료 사이에는 image를 보존한다. image prune은 종료가 확인된 host 배포 작업당
+  1회 시도하고 원래 배포 status를 바꾸지 않는다. prepare/replace의 원격 상태 불명확 시 자동 정리를
+  추가하지 않는다. 별도 cleanup의 실패·상태 미확인은 경고로 처리하며, 그 전에 배포가 성공했다면 다음
+  host로 진행한다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow가 읽는 이름과 GitHub repository 설정을 맞춘다. instance 목록
-  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`)과 monitoring instance/bucket
+  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`·`TEST_INSTANCE_ID`), prod target group(`PROD_TARGET_GROUP_ARN`)과 monitoring instance/bucket
   (`MONITORING_INSTANCE_ID`·`MONITORING_BACKUP_BUCKET`)은 Secrets, 나머지
   (`AWS_DEPLOY_ROLE_ARN`·`DEPLOY_PAUSED`)는 Variables다. Actions가 step의 `env:` 블록을
   로그에 그대로 echo하는데 Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, host 식별자를
@@ -312,10 +349,9 @@ application deploy run이 0건인지 확인한다.
 
 ## Known Gaps
 
-- application의 incomplete preflight, automatic rollback, dependency-complete readiness check가 없다.
-- **무중단 배포가 아니다.** ALB target deregister/register가 없어 container를 내린 host는 health check가
-  unhealthy로 판정할 때까지 트래픽을 받는다. 순차 배포로 전체 중단만 막을 뿐이다.
-- `server.shutdown=graceful`이 설정돼 있지 않아 `docker stop` 시 진행 중 요청이 즉시 절단된다.
+- prod 롤링은 한 WAS가 전체 부하를 감당한다는 전제다. 배포 중 다른 WAS의 독립 장애까지 보장하지 않는다.
+- 단일 host dev/test는 무중단 구성이 아니다. automatic rollback과 전체 외부 의존성 readiness check는 없다.
+- HTTP drain은 background 작업의 완료/재시도 계약을 대신하지 않는다.
 
 ## Update When
 

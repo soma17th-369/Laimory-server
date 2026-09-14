@@ -26,6 +26,11 @@ on:
         required: true
         type: choice
         options: [dev, prod, test]
+      deploy_target:
+        description: "배포 대상 (host-1/host-2는 prod 단독 복구용, instance 목록 순서)"
+        type: choice
+        default: all
+        options: [all, host-1, host-2]
       image_sha:
         description: "배포할 기존 ECR image의 40자 commit SHA (build 없이 재배포)"
         required: true
@@ -40,7 +45,7 @@ permissions:
   contents: read
 
 # 환경별 배포 직렬화: 동시 실행 시 옛 SHA가 최신을 덮는 레이스 차단.
-# cancel-in-progress=false → 진행 중 배포는 끊지 않고 큐잉(최신이 마지막에 실행되어 승리).
+# cancel-in-progress=false → 진행 중 배포는 유지한다. 기본 대기 슬롯 1개는 새 실행으로 대체될 수 있다.
 # group은 step 출력을 못 읽으므로 아래 Resolve 단계와 같은 매핑을 식으로 다시 쓴다 —
 # 두 곳이 갈리면 서로 다른 환경이 같은 group을 쓰거나 같은 환경이 두 group으로 갈리므로 함께 고친다.
 concurrency:
@@ -54,6 +59,7 @@ env:
   # 필수 Secrets: DEV_INSTANCE_ID, PROD_INSTANCE_IDS, TEST_INSTANCE_ID — Actions는 step의 env: 블록을
   #   로그에 그대로 echo하는데 repository Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라 instance id가
   #   공개 워크플로 로그에 남는다. Secret은 Actions가 ***로 마스킹한다.
+  # prod ALB target group ARN도 PROD_TARGET_GROUP_ARN Secret으로 주입한다.
   # 필수 Variables: AWS_DEPLOY_ROLE_ARN, AWS_TEST_DEPLOY_ROLE_ARN, DEPLOY_PAUSED
   #   (비밀이 아니고 로그에 보여야 진단이 된다)
 
@@ -71,6 +77,8 @@ jobs:
         id: env
         env:
           DISPATCH_ENVIRONMENT: ${{ inputs.environment }}
+          DISPATCH_TARGET: ${{ inputs.deploy_target }}
+          PROD_TARGET_GROUP_ARN: ${{ secrets.PROD_TARGET_GROUP_ARN }}
           # instance 목록만 Secrets에서 읽는다 — Actions가 이 env: 블록을 공개 로그에 그대로 echo하므로
           # Variable로 두면 매 실행마다 instance id가 남는다(Secret은 ***로 마스킹된다).
           DEV_INSTANCE_ID: ${{ secrets.DEV_INSTANCE_ID }}
@@ -143,7 +151,27 @@ jobs:
           set -- ${INSTANCE_IDS//,/ }
           [ "$#" = "$EXPECT_HOST_COUNT" ] \
             || { echo "environment $ENVIRONMENT expects $EXPECT_HOST_COUNT host(s) but the repository secret lists $#" >&2; exit 1; }
+          INSTANCE_IDS="$*"
+          # 전체 환경 구성을 검증한 뒤 수동 선택을 적용한다. peer 확인용 목록은 두 대를 유지한다.
+          TARGET_GROUP_ARN=""
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            [ "$1" != "$2" ] || { echo "prod hosts must be distinct" >&2; exit 1; }
+            TARGET_GROUP_ARN="$PROD_TARGET_GROUP_ARN"
+            [ -n "$TARGET_GROUP_ARN" ] || { echo "PROD_TARGET_GROUP_ARN secret is required" >&2; exit 1; }
+          fi
+          DEPLOY_TARGET=all
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            DEPLOY_TARGET="${DISPATCH_TARGET:-all}"
+          fi
+          case "$DEPLOY_TARGET" in
+            all) ;;
+            host-1|host-2)
+              [ "$ENVIRONMENT" = "prod" ] || { echo "single-host deployment requires prod" >&2; exit 1; } ;;
+            *) echo "unknown deploy target" >&2; exit 1 ;;
+          esac
           {
+            echo "deploy_target=$DEPLOY_TARGET"
+            echo "target_group_arn=$TARGET_GROUP_ARN"
             echo "environment=$ENVIRONMENT"
             echo "instance_ids=$INSTANCE_IDS"
             echo "role_arn=$ROLE_ARN"
@@ -234,36 +262,43 @@ jobs:
           ENVIRONMENT: ${{ steps.env.outputs.environment }}
           INSTANCE_IDS: ${{ steps.env.outputs.instance_ids }}
           HOST_COUNT: ${{ steps.env.outputs.host_count }}
+          DEPLOY_TARGET: ${{ steps.env.outputs.deploy_target }}
+          TARGET_GROUP_ARN: ${{ steps.env.outputs.target_group_arn }}
           EXPECT_APP_ENV: ${{ steps.env.outputs.expect_app_env }}
           EXPECT_REDIS_KEY_PREFIX: ${{ steps.env.outputs.expect_redis_key_prefix }}
           EXPECT_SWAGGER_ENABLED: ${{ steps.env.outputs.expect_swagger_enabled }}
           EXPECT_APP_GEO_MODE: ${{ steps.env.outputs.expect_app_geo_mode }}
         run: |
+          set -e
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             IMG="$REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST"
           else
             IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           fi
-          # 원격 배포 스크립트: docker run 뒤 /api/v1/intro 헬스체크(최대 90s). 미기동 시 로그 덤프 후 실패.
-          # \$ 로 이스케이프한 변수($ok,$i,$(seq))는 러너가 아니라 EC2 호스트에서 평가됨.
-          # 이 heredoc 본문은 .github/scripts/test-deploy-contract.sh가 그대로 추출·실행해 검증한다.
+          # 같은 원격 본문을 prepare / replace / cleanup 단계로 실행한다.
+          # dev/test는 deploy 한 단계로 기존 preflight·교체·정리를 수행한다.
+          # \$는 EC2에서 평가된다. harness는 이 production heredoc 자체를 실행한다.
           read -r -d '' SCRIPT <<EOF || true
           set -e
-          # EXIT cleanup: 성공·실패 어느 종료 경로에서도 임시 .env 제거와 미사용 image 정리(prune -af)를
-          # 수행한다. 진입 즉시 원래 exit status를 저장해 그대로 반환하므로 prune 실패가 배포 성공을
-          # 실패로, 실패를 성공으로 바꾸지 않는다(고정 경고만 남김). 다른 container가 참조하는 image는
-          # Docker가 보존하고, 미참조 tagged/dangling image만 삭제된다(rollback은 ECR 재pull).
+          DEPLOY_PHASE=\${DEPLOY_PHASE:-deploy}
+          PRUNE_ON_EXIT=1
+          case "\$DEPLOY_PHASE" in
+            deploy|prepare|cleanup) ;;
+            replace) PRUNE_ON_EXIT=0 ;;
+            *) echo "unknown remote deploy phase" >&2; exit 1 ;;
+          esac
           TMP_ENV=""
           cleanup() {
             STATUS=\$?
             trap - EXIT
             { [ -n "\$TMP_ENV" ] && rm -f "\$TMP_ENV"; } 2>/dev/null || true
-            if ! docker image prune -af >/dev/null 2>&1; then
+            if [ "\$PRUNE_ON_EXIT" = "1" ] && ! docker image prune -af >/dev/null 2>&1; then
               echo "WARNING: docker image prune failed (deploy status unchanged)"
             fi
             exit \$STATUS
           }
           trap cleanup EXIT
+          [ "\$DEPLOY_PHASE" != "cleanup" ] || exit 0
           # 경로 상수(기본이 운영 경로). LAIMORY_* override는 test-deploy-contract.sh harness가 동일한
           # script 본문을 다른 host에서 실행하기 위한 seam이며 SSM 운영 실행에서는 설정되지 않는다.
           ENV_FILE="\${LAIMORY_ENV_FILE:-/home/ubuntu/app/.env}"
@@ -276,6 +311,7 @@ jobs:
             [ "\$REQ_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$REQ_KEY must appear exactly once (found \$REQ_COUNT)"; exit 1; }
             grep -qxF "\$REQ_LINE" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$REQ_KEY has unexpected value"; exit 1; }
           }
+          if [ "\$DEPLOY_PHASE" != "replace" ]; then
           # pre-flight 1 — secret presence: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를
           # 내리기 전에 실패시켜 "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다.
           # (JWT_SECRET은 HS256 최소 32자)
@@ -479,6 +515,19 @@ jobs:
           # /intro와 admin이 같은 exact-one 계약을 사용한다. 데이터 수정은 자동화하지 않는다.
           APP_CONFIG_COUNT=\$(MYSQL_PWD="\$DB_PASS_VAL" docker run --rm --network host -e MYSQL_PWD mysql:8.0 mysql -h"\$DB_HOST_VAL" -P3306 -u"\$DB_USER_VAL" -N -B -e 'SELECT COUNT(*) FROM app_config' laimory 2>/dev/null) || { echo "PREFLIGHT FAILED: app_config count query failed"; exit 1; }
           [ "\$APP_CONFIG_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: app_config must contain exactly one row"; exit 1; }
+          if [ "\$DEPLOY_PHASE" = "prepare" ]; then
+            # 다음 SSM 교체 단계가 사용할 image는 아직 container가 참조하지 않는다.
+            PRUNE_ON_EXIT=0
+            exit 0
+          fi
+          else
+            # prepare가 검증한 runtime mount만 재구성한다. 여기서는 image를 다시 받지 않는다.
+            PUSH_ARGS=""
+            if grep -qxF 'APP_PUSH_MODE=firebase' "\$ENV_FILE"; then
+              PUSH_ARGS="-v \$CRED_FILE:/run/secrets/firebase-service-account.json:ro"
+            fi
+            docker image inspect ${IMG} >/dev/null 2>&1 || { echo "prepared image is missing" >&2; exit 1; }
+          fi
           # APP_COMMIT_SHA 원자 upsert(commit point): 모든 pre-stop 검사·ECR login·pull·UID 검사가 성공한
           # 뒤, 첫 docker stop 직전에만 수행한다 — 그 이전 실패는 기존 .env bytes와 실행 중 SHA를 보존한다.
           # 같은 디렉터리 temp + rename(같은 filesystem이라 원자적)으로 부분 쓰기를 막고 0600·owner를
@@ -490,59 +539,128 @@ jobs:
           chown --reference="\$ENV_FILE" "\$TMP_ENV"
           mv -f "\$TMP_ENV" "\$ENV_FILE"
           TMP_ENV=""
-          docker stop laimory 2>/dev/null || true
-          docker rm laimory 2>/dev/null || true
+          # 실패한 최초 기동처럼 container가 없는 경우도 단독 재배포할 수 있다.
+          # daemon/stop/remove 오류는 숨기지 않는다. SIGKILL(137)이면 교체를 중단한다.
+          CONTAINER_ID=\$(docker container ls -aq --filter 'name=^/laimory$')
+          if [ -n "\$CONTAINER_ID" ]; then
+            if [ "\$(docker inspect --format '{{.State.Running}}' laimory)" = "true" ]; then
+              # Boot의 phase별 기본 30초 종료 대기에 HTTP/worker 종료 여유를 준다.
+              docker stop --time 120 laimory >/dev/null
+              [ "\$(docker inspect --format '{{.State.ExitCode}}' laimory)" != "137" ] \
+                || { echo "container required SIGKILL; inspect before retrying" >&2; exit 1; }
+            fi
+            docker rm laimory >/dev/null
+          fi
           # 장기 실행 컨테이너의 runtime env source는 --env-file(.env) 하나다 — -e/--env 없음(.env가 SSOT).
           # 환경 고정값(REDIS_KEY_PREFIX·APP_ENV·APP_GEO_MODE·SWAGGER_ENABLED)과 AI/push mode는
           # 위 pre-flight가 exact-one으로 fail-closed 보장한다 — 기대값은 환경별로 주입된다.
           # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
           # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount(ADC 경로는 .env가 소유).
-          docker run -d --name laimory --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}
-          echo "waiting for /api/v1/intro ..."
+          docker run -d --name laimory --pull=never --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}
+          echo "waiting for /readyz and /api/v1/intro ..."
           ok=0
-          for i in \$(seq 1 45); do if curl -fsS http://localhost:8080/api/v1/intro >/dev/null 2>&1; then ok=1; echo "healthy after \$i tries"; break; fi; sleep 2; done
+          HEALTH_DEADLINE=\$((\$(date +%s) + 90))
+          while [ "\$(date +%s)" -lt "\$HEALTH_DEADLINE" ]; do
+            if curl -fsS --connect-timeout 1 --max-time 2 http://localhost:8080/readyz >/dev/null 2>&1 \
+              && curl -fsS --connect-timeout 1 --max-time 2 http://localhost:8080/api/v1/intro >/dev/null 2>&1; then
+              ok=1; echo "application ready"; break
+            fi
+            sleep 2
+          done
           if [ "\$ok" != "1" ]; then echo "HEALTH CHECK FAILED"; docker logs --tail 80 laimory 2>&1 || true; exit 1; fi
           EOF
-          jq -n --arg s "$SCRIPT" '{commands: [$s]}' > params.json
-          # host가 여러 대인 환경은 한 대씩 순차 배포한다 — 동시에 보내면 두 대가 같은 순간 컨테이너를
-          # 내려 완전 중단이 된다. 각 host의 health gate를 통과한 뒤에만 다음으로 넘어가고, 실패하면
-          # 남은 host는 건드리지 않아 최소 한 대는 직전 이미지로 남는다.
-          # ⚠️ ALB deregister/register는 이번 범위 밖이다(#337) — 컨테이너를 내린 host는 헬스체크가
-          # unhealthy로 판정할 때까지 트래픽을 계속 받아 5xx를 낸다. 무중단이 아니다.
+          # EC2 식별자를 출력하지 않고 phase와 host 순번만 진단한다.
+          # SSM 상태 불명확 시 새 원격 명령(정리 포함)을 보내지 않는다.
+          REMOTE_TERMINAL=true
+          run_ssm() {
+            local phase="$1" cmd_id status
+            REMOTE_TERMINAL=false
+            jq -n --arg s "DEPLOY_PHASE=$phase
+          $SCRIPT" '{commands: [$s], executionTimeout: ["900"]}' > params.json \
+              || { echo "cannot prepare SSM parameters" >&2; return 1; }
+            cmd_id=$(aws ssm send-command \
+              --document-name "AWS-RunShellScript" --instance-ids "$IID" \
+              --comment "Deploy ${IMAGE_TAG} $phase to $ENVIRONMENT" \
+              --parameters file://params.json --query 'Command.CommandId' --output text 2>/dev/null) \
+              || { echo "SSM $phase send failed; confirm remote state before retry" >&2; return 1; }
+            echo "$HOST_LABEL: $phase sent"
+            # AWS 기본 command-executed waiter(100초) 대신 명시적 상한으로 기다린다.
+            local POLL_DEADLINE=$((SECONDS + 900))
+            while : ; do
+              status=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$IID" \
+                --query Status --output text 2>/dev/null || echo Pending)
+              case "$status" in
+                Success|Failed) REMOTE_TERMINAL=true; break ;;
+                Cancelled|TimedOut) break ;;
+              esac
+              [ "$SECONDS" -lt "$POLL_DEADLINE" ] || { status=WorkflowPollTimeout; break; }
+              sleep 5
+            done
+            aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$IID" --query StandardOutputContent --output text 2>/dev/null || true
+            aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$IID" --query StandardErrorContent --output text 2>/dev/null || true
+            echo "$HOST_LABEL: $phase status=$status"
+            [ "$status" = "Success" ]
+          }
+          cleanup_host() {
+            local result=$?
+            trap - EXIT
+            if [ "$REMOTE_TERMINAL" = "true" ]; then
+              if ! run_ssm cleanup; then
+                echo "WARNING: host cleanup failed (deploy status unchanged)" >&2
+              fi
+            else
+              echo "WARNING: remote state is uncertain; inspect before cleanup or retry" >&2
+            fi
+            return "$result"
+          }
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            # 지정된 TG가 실제 애플리케이션 포트와 readiness 계약을 사용하는지 확인한다.
+            group=$(aws elbv2 describe-target-groups --target-group-arns "$TARGET_GROUP_ARN" --output json 2>/dev/null) \
+              || { echo "cannot read prod target group" >&2; exit 1; }
+            jq -e '.TargetGroups | length == 1 and (.[0] |
+              .TargetType == "instance" and .Protocol == "HTTP" and .Port == 8080 and
+              .HealthCheckEnabled == true and .HealthCheckProtocol == "HTTP" and
+              .HealthCheckPort == "traffic-port" and .HealthCheckPath == "/readyz" and
+              .Matcher.HttpCode == "200" and (.LoadBalancerArns | length == 1))' <<< "$group" >/dev/null \
+              || { echo "prod target group does not match the readiness/port contract" >&2; exit 1; }
+            targets=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --output json 2>/dev/null) \
+              || { echo "cannot read prod target health" >&2; exit 1; }
+            # 실패 host가 이미 미등록인 단독 복구는 허용하되, 다른 환경 target/port는 거부한다.
+            jq -e --arg ids "${INSTANCE_IDS//,/ }" '
+              ($ids | split(" ") | map(select(length > 0))) as $hosts |
+              all(.TargetHealthDescriptions[]; .Target as $t |
+                ($hosts | index($t.Id)) != null and $t.Port == 8080)' <<< "$targets" >/dev/null \
+              || { echo "prod target group contains unexpected targets" >&2; exit 1; }
+          fi
           HOST_INDEX=0
           for IID in ${INSTANCE_IDS//,/ }; do
             HOST_INDEX=$((HOST_INDEX + 1))
-            # 로그에는 순번만 쓴다 — instance id는 공개 Actions 로그에 남기지 않는다(위 Resolve 참조).
+            [ "$DEPLOY_TARGET" = "all" ] || [ "$DEPLOY_TARGET" = "host-$HOST_INDEX" ] || continue
             HOST_LABEL="host $HOST_INDEX/$HOST_COUNT"
             echo "::group::deploy $ENVIRONMENT $HOST_LABEL"
-            CMD_ID=$(aws ssm send-command \
-              --document-name "AWS-RunShellScript" \
-              --instance-ids "$IID" \
-              --comment "Deploy ${IMAGE_TAG} to $ENVIRONMENT" \
-              --parameters file://params.json \
-              --query "Command.CommandId" --output text)
-            echo "Sent SSM command: $CMD_ID"
-            sleep 5   # invocation 등록 레이스 방지
-            # `aws ssm wait command-executed`를 쓰지 않는다: 그 waiter는 delay 5 × maxAttempts 20 =
-            # 100초가 상한인데, 원격 script는 ECR pull + health gate(최대 90초)만으로 그 근처까지 간다.
-            # 상한에 걸리면 배포가 성공하는 중에도 InProgress로 읽혀 실패 처리되고, 루프가 남은 host를
-            # 건너뛰어 환경에 서로 다른 image가 남는다. 그래서 종료 상태가 나올 때까지 직접 폴링한다.
-            POLL_DEADLINE=$((SECONDS + 900))
-            while : ; do
-              STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" \
-                --query Status --output text 2>/dev/null || echo Pending)
-              case "$STATUS" in
-                Success|Failed|Cancelled|TimedOut) break ;;
-              esac
-              [ "$SECONDS" -lt "$POLL_DEADLINE" ] || { STATUS=WorkflowPollTimeout; break; }
-              sleep 5
-            done
-            echo "----- stdout -----"
-            aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query StandardOutputContent --output text || true
-            echo "----- stderr -----"
-            aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query StandardErrorContent --output text || true
-            echo "Status: $STATUS"
+            if [ "$ENVIRONMENT" = "prod" ]; then
+              run_ssm prepare || { echo "prepare failed - remaining hosts are left untouched" >&2; exit 1; }
+              trap cleanup_host EXIT
+              for PEER in ${INSTANCE_IDS//,/ }; do
+                [ "$PEER" != "$IID" ] || continue
+                peer_state=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" \
+                  --targets "Id=$PEER,Port=8080" --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null) \
+                  || { echo "peer health lookup failed" >&2; exit 1; }
+                [ "$peer_state" = "healthy" ] || { echo "peer is not healthy - remaining hosts are left untouched" >&2; exit 1; }
+              done
+              aws elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
+                || { echo "target deregistration failed" >&2; exit 1; }
+              # ALB waiter는 15초 × 40회. draining 완료 전에 stop하지 않는다(현재 prod 설정 30초).
+              aws elbv2 wait target-deregistered --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
+                || { echo "target drain failed or timed out" >&2; exit 1; }
+              run_ssm replace || { echo "replace failed - remaining hosts are left untouched" >&2; exit 1; }
+              aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
+                || { echo "target registration failed" >&2; exit 1; }
+              aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
+                || { echo "target did not become healthy" >&2; exit 1; }
+              cleanup_host
+            else
+              run_ssm deploy || { echo "deploy failed - remaining hosts are left untouched" >&2; exit 1; }
+            fi
             echo "::endgroup::"
-            [ "$STATUS" = "Success" ] \
-              || { echo "deploy failed on $HOST_LABEL ($STATUS) - remaining hosts are left untouched" >&2; exit 1; }
           done
