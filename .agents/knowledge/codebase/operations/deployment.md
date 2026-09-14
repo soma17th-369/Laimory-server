@@ -51,8 +51,9 @@ SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회)
    deploy-existing은 입력 SHA tag와 digest가 일치하는지 ECR에서 확인한 뒤 digest로 배포한다.
 4. prod는 `PROD_TARGET_GROUP_ARN` Secret을 사용한다. instance/HTTP/8080, `/readyz` HTTP 200 healthcheck,
    연결된 ALB와 등록 대상이 prod 목록에 속하는지 확인한다. host 목록은 서로 다른 두 대여야 한다.
-5. prod는 host별로 **prepare → peer healthy → deregister/drain → replace → register/healthy → cleanup**을
-   완료한 뒤 다음 host로 간다. dev/test는 `deploy` 한 단계로 준비·교체·정리를 수행한다.
+5. prod는 host별로 **prepare → peer healthy → deregister/drain → replace → register/healthy → cleanup**
+   순서로 진행한다. ALB healthy까지 성공해야 다음 host로 가며, cleanup은 아래의 경고 처리 예외를 따른다.
+   dev/test는 `deploy` 한 단계로 준비·교체·정리를 수행한다.
 6. prepare는 기존 container를 유지하며 `.env`·credential·환경/mode 검증, ECR pull, runtime UID 권한,
    subject secret/schema와 `app_config` preflight를 실행한다. 준비 성공 시 새 image를 prune하지 않는다.
 7. prod peer가 ALB에 healthy로 등록돼 있어야 현재 host의 신규 요청을 제외한다. ALB deregistration
@@ -68,8 +69,12 @@ SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회)
     준비 실패 시 prepare EXIT에서, 준비 성공 뒤에는 해당 host 작업 종료 시 별도 cleanup SSM에서 1회 수행한다.
     peer/drain 실패로 교체하지 못한 경우도 정리한다. replace EXIT에서는 image를 prune하지 않는다.
     dev/test는 deploy EXIT에서 1회 prune한다. prune 실패는 배포 성공·실패를 바꾸지 않는다.
-12. 원격 실행이 종료됐는지 불명확하면 추가 cleanup/배포를 보내지 않는다. SSM send 오류·취소·timeout 때는
-    command와 host 상태를 수동 확인한다. GitHub polling 종료가 EC2의 실행 취소를 뜻하지 않는다.
+12. prepare/replace/dev·test deploy의 원격 실행이 종료됐는지 불명확하면 추가 cleanup/배포를 보내지 않는다.
+    SSM send 오류·취소·timeout 때는 command와 host 상태를 수동 확인한다. GitHub polling 종료가 EC2의
+    실행 취소를 뜻하지 않는다. 별도 cleanup 단계는 예외다. 앱 교체와 ALB 복귀가 성공했다면 cleanup 실패나
+    종료 여부 미확인은 경고만 남기고 다음 host로 진행하며, 기존 배포 성공·실패 결과를 유지한다.
+    운영자는 경고가 난 host의 SSM 명령 종료 여부와 디스크 사용량을 확인하고, 해당 host의 다음 배포 전에
+    남은 정리 명령이 실행 중인지 확인한다.
 
 ## Monitoring Alert Rule Deployment
 
@@ -323,7 +328,9 @@ application deploy run이 0건인지 확인한다.
 - 장기 실행 `docker run`에 `-e`/`--env`를 추가하지 않는다 — runtime env는 host `.env`가 SSOT다.
   일회성 preflight `docker run --rm`은 이 제한 대상이 아니다.
 - 준비 성공과 replace 종료 사이에는 image를 보존한다. image prune은 종료가 확인된 host 배포 작업당
-  1회 수행하고 원래 배포 status를 바꾸지 않는다. 원격 상태 불명확 시 자동 정리를 추가하지 않는다.
+  1회 시도하고 원래 배포 status를 바꾸지 않는다. prepare/replace의 원격 상태 불명확 시 자동 정리를
+  추가하지 않는다. 별도 cleanup의 실패·상태 미확인은 경고로 처리하며, 그 전에 배포가 성공했다면 다음
+  host로 진행한다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow가 읽는 이름과 GitHub repository 설정을 맞춘다. instance 목록
