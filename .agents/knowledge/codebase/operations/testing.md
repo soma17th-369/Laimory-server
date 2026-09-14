@@ -51,7 +51,10 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - 앱 배포 계약은 `.github/scripts/test-deploy-contract.sh`가 production YAML의 Resolve·SSM runner·remote
   본문을 그대로 실행해 검증한다. fake ALB/SSM과 image/container 참조를 기억하는 Docker fixture로 prod
   순서, peer/drain/기동/readiness/등록 실패, B 단독 복구, 준비 image 보존·host당 cleanup과 replace의 SSM
-  상태 불명확 시 추가 원격 명령 금지를 검사한다. 실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
+  상태 불명확 시 추가 원격 명령 금지를 검사한다. prod 자동 rollback은 실제 runner/remote를 실행하고,
+  보관 container의 image·runtime env·mount 및 APP_COMMIT_SHA 복원, 원래 workflow 실패 유지,
+  다음 host 미진행, 복구 자체 실패·SSM 상태 불명확·후보 부재·후보 잔존을 검증한다.
+  실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
   검증되지 않는다.
 - 관리자 SSM target 선택은
   `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱 배포 harness는 PR CI에서 실행한다.
