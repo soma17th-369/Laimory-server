@@ -17,6 +17,7 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.savedrequest.NullRequestCache;
 
@@ -50,19 +51,24 @@ public class OAuth2LoginSecurityConfig {
                 .addFilterBefore(appChallengeFilter, OAuth2AuthorizationRequestRedirectFilter.class)
                 .oauth2Login(login -> login
                         .authorizationEndpoint(endpoint -> endpoint.authorizationRequestResolver(
-                                pkceAuthorizationRequestResolver(clientRegistrationRepository)))
+                                oauth2AuthorizationRequestResolver(clientRegistrationRepository)))
                         .successHandler(successHandler)
                         .failureHandler(failureHandler));
         return http.build();
     }
 
-    /** confidential 클라이언트에도 PKCE(S256)를 강제한다(OAuth 2.1 — 기본은 public 클라이언트만 적용). */
-    private static OAuth2AuthorizationRequestResolver pkceAuthorizationRequestResolver(
+    /** confidential 클라이언트에도 PKCE(S256)를 강제하고, Google 로그인에는 계정 선택을 요청한다. */
+    private static OAuth2AuthorizationRequestResolver oauth2AuthorizationRequestResolver(
             ClientRegistrationRepository clientRegistrationRepository) {
         DefaultOAuth2AuthorizationRequestResolver resolver = new DefaultOAuth2AuthorizationRequestResolver(
                 clientRegistrationRepository,
                 OAuth2AuthorizationRequestRedirectFilter.DEFAULT_AUTHORIZATION_REQUEST_BASE_URI);
-        resolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
+        resolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce()
+                .andThen(builder -> builder.attributes(attributes -> {
+                    if ("google".equals(attributes.get(OAuth2ParameterNames.REGISTRATION_ID))) {
+                        builder.additionalParameters(params -> params.put("prompt", "select_account"));
+                    }
+                })));
         return resolver;
     }
 

@@ -23,9 +23,19 @@ Laimory는 Android 앱이 사용하는 Spring Boot REST 백엔드다.
 - AWS 작업은 먼저 `sandbox` SSO 로그인을 요청·확인하고, 1차 조사는 AWS 조회와 SSM 비변경 진단으로 제한한다.
 - AWS·host 수정은 대상·영향·rollback을 설명한 뒤 사용자의 명시적 승인을 받아 실행한다. 인증·조회 승인은 수정 승인이 아니다.
 
+## Deployment Approval
+
+- 자동 배포 또는 Flyway 자동 마이그레이션을 중단·비활성화·보류하려면 적용 전에 대상·영향·재개 방법을
+  설명하고 사용자의 명시적 동의를 받아야 한다.
+- `DEPLOY_PAUSED=true`, 배포 workflow 비활성화·자동 trigger 제거·진행 중 배포 취소,
+  `SPRING_FLYWAY_ENABLED=false`, `SPRING_FLYWAY_TARGET`으로 마이그레이션 적용 범위를 제한하는 조치도 포함한다.
+- 구현·머지·릴리즈·배포 승인은 자동 배포나 Flyway 자동 마이그레이션 중단에 대한 동의가 아니다.
+  안전을 위한 임시 조치라는 이유로 동의를 생략하지 않는다.
+
 ## Knowledge Workflow
 
 1. 구현 전에 [knowledge index](.agents/knowledge/README.md)에서 변경과 관련된 문서만 찾고 읽는다.
+   Entity 매핑·DB 스키마·데이터 마이그레이션 변경은 [Flyway 절차](docs/database/flyway-adoption.md)를 먼저 읽고 따른다.
 2. 도메인 개념·상태·필드·클래스 이름을 만들거나 바꿀 때는
    [ubiquitous language](.agents/knowledge/domain/ubiquitous-language.md)를 따른다.
 3. 현재 구현, 의도된 계약, 알려진 미구현을 섞지 않는다.

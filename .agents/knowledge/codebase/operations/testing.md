@@ -35,6 +35,9 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   전체 DDL을 비교하고 baseline의 데이터 보존·재실행·checksum
   실패를 검증한다. 두 독립 프로세스의 최초 생성과, 임시 V2를 실행 중 native lock 대기가 겹친 뒤
   두 프로세스가 성공하고 이력/결과는 한 번만 기록되는 것도 검증한다. 임시 V2는 앱에 포함되지 않는다.
+  별도 DB의 실제 V1→V2 업그레이드는 대표 초안 행 보존, 선점 컬럼·인덱스 제거와 `created_at` 인덱스 유지를
+  검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
+  이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름
   (dispatch→입력→결과→콜백)의 실제 MySQL·Redis 계약은 `TimelineAiTaskFlowIntegrationTest`(integration)가
@@ -45,8 +48,13 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - `dev`, `main` 대상 PR CI는 alert rule shell 배포·monitoring workflow 계약을 먼저 검사한 뒤
   Compose의 MySQL·Redis healthcheck를 기다리고
   `./gradlew build integrationTest jacocoAllTestReport`를 실행한다.
-- 앱 배포 pre-stop 계약은 `.github/scripts/test-deploy-contract.sh`, 관리자 SSM target 선택은
-  `bash .github/scripts/test-admin-tunnel.sh`가 검증하며 둘 다 PR CI에서 실행한다.
+- 앱 배포 계약은 `.github/scripts/test-deploy-contract.sh`가 production YAML의 Resolve·SSM runner·remote
+  본문을 그대로 실행해 검증한다. fake ALB/SSM과 image/container 참조를 기억하는 Docker fixture로 prod
+  순서, peer/drain/기동/readiness/등록 실패, B 단독 복구, 준비 image 보존·host당 cleanup과 replace의 SSM
+  상태 불명확 시 추가 원격 명령 금지를 검사한다. 실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
+  검증되지 않는다.
+- 관리자 SSM target 선택은
+  `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱 배포 harness는 PR CI에서 실행한다.
 - 관리자 connector/Host/Origin/CSRF/OpenAPI는 `AdminHttpTest`·`AdminDisabledHttpTest`의 실 Tomcat
   HTTP 테스트(인프라 없음), INSERT 불변성은 `TermPersistenceIntegrationTest`, Redis CSRF 세션과
   저장 후 `/intro` 반영은 `AdminPersistenceIntegrationTest`가 검증한다.

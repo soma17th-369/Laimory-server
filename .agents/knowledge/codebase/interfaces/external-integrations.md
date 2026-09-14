@@ -22,6 +22,8 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
 ### Google and Kakao OIDC
 
 - Google/Kakao login을 지원하고 provider `sub`로 user를 식별한다.
+- Google 인가 요청에만 `prompt=select_account`를 추가해 계정 선택을 요청한다(#480).
+  두 provider의 PKCE(S256), state, OIDC nonce는 유지하며 Kakao 인가 요청에는 `prompt`를 보내지 않는다.
 - Kakao는 issuer claim을 의도적으로 요구하지 않고 JWK signature, audience와 nonce를 검증한다.
 - Kakao scope는 `openid,profile_nickname`이며 콘솔 동의항목(닉네임) 활성화가 선행 조건이다
   (미설정 상태로 요청하면 KOE 에러). 닉네임은 id_token claim으로 받고 UserInfo endpoint는 호출하지 않는다.
