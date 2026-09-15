@@ -25,7 +25,13 @@ blackbox 9115, mysqld exporter 9104, redis exporter 9121은 Docker network에만
 `/status`는 DB 중심 health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
 
 resource limit은 Prometheus 1GiB(초기 2GiB에서 #277이 회수 — 실사용 135MiB·active series 14,761
-기준 7.5배 여유), Tempo 768MiB, Grafana 768MiB, central exporter 각각 192MiB다. dashboard
+기준 7.5배 여유), Tempo 1GiB(초기 768MiB에서 #492가 상향 — 2026-09-14 cgroup OOM 2회 대응,
+`GOMEMLIMIT=600MiB` soft 상한 동반. 한도 합 3,328MiB vs RAM 3,834MiB로 1g까지가 host 예산 안이고
+1.25g는 t3.large와 함께 검토), Grafana 768MiB, central exporter 각각 192MiB다. host에는 swap 파일
+2GB가 있다(#492 — dev-was 2026-07 장애 후와 같은 패턴, `/etc/fstab` 등재. `mem_limit`만 지정한
+컨테이너는 한도만큼 swap을 추가로 쓸 수 있어 한도 도달이 OOM kill 대신 완충된다. 안전망일 뿐이라
+Infrastructure dashboard의 Swap Usage에서 평시 사용 ~0을 유지해야 하며, swap 상주가 보이면
+컨테이너·설정 상한을 먼저 조인다). dashboard
 refresh는 30초다. 24시간 관찰에서 host memory 75% 초과가 15분 이상 반복되거나 OOM/restart가
 생기면 collector와 label을 먼저 줄인다. active series 10,000 초과, root disk 70% 초과, scrape
 duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 뒤에도 해소되지 않을 때 t3.large를
@@ -74,6 +80,12 @@ aws ssm start-session --profile sandbox --target <elk-instance-id> \
 Tempo는 monolithic 모드로 `tempo/tempo.yml`을 사용한다. OTLP gRPC 4317 receiver만 열고
 (`0.0.0.0:4317` 명시 — 2.7+ 기본 bind가 localhost), 로컬 스토리지 `tempo-data` 볼륨에
 `block_retention: 48h`로 보관한다. S3 backend와 metrics generator는 쓰지 않는다.
+
+`tempo.yml`은 ingester(block 100MB/10m)·querier·query_frontend·storage search 상한을 명시한다
+(#492 — 기본값이 컨테이너 한도보다 커서 유입 block 완료와 넓은 범위 TraceQL 검색 두 경로로
+OOM이 실증됐다. 값 조정 시 `-config.verify`로 검사한다). Tempo `/metrics`는 Prometheus `tempo`
+job이 scrape하고 Infrastructure dashboard의 `Tempo Memory` 패널이 RSS를 mem_limit 기준선과 함께
+보여준다 — 한도 근접 추세가 반복되면 상향 전에 이 상한들을 먼저 조인다.
 
 **tempo 서비스는 compose healthcheck를 정의하지 않는다(규율의 명시적 예외)** — 공식 이미지가
 distroless(shell/wget 부재)이고 native `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너
@@ -514,6 +526,7 @@ while IFS= read -r asset; do
 done <<'ASSETS'
 docker-compose.yml
 tempo/tempo.yml
+prometheus/prometheus.yml
 grafana/provisioning/datasources/elasticsearch.yml
 grafana/provisioning/datasources/tempo.yml
 node-exporter/install.sh

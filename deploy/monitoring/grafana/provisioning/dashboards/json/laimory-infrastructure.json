@@ -1874,6 +1874,76 @@
       ],
       "title": "Monitoring Root EBS",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1073741824
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "id": 28,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "process_resident_memory_bytes{job=\"tempo\"}",
+          "instant": false,
+          "legendFormat": "tempo RSS",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Tempo Memory",
+      "type": "timeseries",
+      "description": "Tempo 컨테이너 프로세스 RSS입니다. 기준선은 compose mem_limit(1GiB) — 근접 추세가 반복되면 tempo.yml의 ingester/querier 상한을 먼저 조입니다(#492)."
     }
   ],
   "refresh": "30s",
