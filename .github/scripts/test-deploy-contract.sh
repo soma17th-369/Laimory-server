@@ -349,7 +349,7 @@ PULL_LN=$(ln_of '^docker pull ')
 SUBJECT_LN=$(ln_of 'APP_SUBJECT_MODE')
 SCHEMA_LN=$(ln_of 'mysql:8.0')
 MKTEMP_LN=$(ln_of 'mktemp')
-STOP_LN=$(ln_of 'docker stop --time 120 laimory')
+STOP_LN=$(ln_of 'docker stop --time 120 ')
 { [ -n "$TRAP_LN" ] && [ -n "$FIRST_CHECK_LN" ] && [ -n "$PULL_LN" ] && [ -n "$SUBJECT_LN" ] \
   && [ -n "$SCHEMA_LN" ] && [ -n "$MKTEMP_LN" ] && [ -n "$STOP_LN" ]; } \
   || fail "order: expected markers not found in expanded script"
@@ -368,6 +368,9 @@ mkdir -p "$STUB"
 cat > "$STUB/docker" <<'STUBEOF'
 #!/usr/bin/env bash
 echo "docker $*" >> "${DOCKER_LOG:?}"
+if [ -n "${FAKE_DOCKER_STATE:-}" ]; then
+  exec python3 "$REMOTE_DOCKER_MODEL" "$@"
+fi
 case "$1" in
   login) cat >/dev/null 2>&1 || true; exit "${FAKE_LOGIN_EXIT:-0}" ;;
   pull)
@@ -1199,6 +1202,98 @@ ok "T9/T10: prune result never masks the deploy status (0 stays 0, 3 stays 3)"
 # --- 16. #484: 실제 runner + remote 본문을 연결해 ALB/SSM 순서와 복구를 검증한다 ---
 # AWS만 모사하고 send-command가 production remote script를 실제 실행한다.
 # Docker fixture는 image/container 참조를 기억하므로 prepare의 잘못된 prune도 검출한다.
+# 두 컨테이너의 실제 runtime env/image/mount를 별도로 보존하여 rollback의 복원 대상을 검증한다.
+cat > "$WORK/docker-model.py" <<'PYEOF'
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+root = Path(os.environ['FAKE_DOCKER_STATE'])
+path = root / 'containers.json'
+containers = json.loads(path.read_text())
+
+def injected(key):
+    code = int(os.environ.get(key, '0'))
+    if code:
+        sys.exit(code)
+
+def save():
+    path.write_text(json.dumps(containers))
+
+op = args[0]
+if op == 'login':
+    sys.stdin.read()
+    injected('FAKE_LOGIN_EXIT')
+elif op == 'pull':
+    injected('FAKE_PULL_EXIT')
+    (root / 'image').touch()
+elif op == 'container':
+    injected('FAKE_DOCKER_LIST_EXIT')
+    name = args[-1].removeprefix('name=^/').removesuffix('$')
+    if name in containers:
+        print(containers[name]['id'])
+elif op == 'inspect':
+    item = containers[args[-1]]
+    fmt = args[args.index('--format') + 1]
+    if '.State.Running' in fmt:
+        print(str(item['running']).lower())
+    elif '.State.ExitCode' in fmt:
+        print(item.get('exitCode', 0))
+    elif '.Config.Env' in fmt:
+        print(json.dumps(item['env']))
+    else:
+        raise AssertionError('unexpected inspect format')
+elif op == 'rename':
+    old, new = args[1:]
+    assert new not in containers, 'container name already exists'
+    containers[new] = containers.pop(old)
+    save()
+elif op == 'stop':
+    injected('FAKE_STOP_EXIT')
+    containers[args[-1]]['running'] = False
+    containers[args[-1]]['exitCode'] = int(os.environ.get('FAKE_CONTAINER_EXIT', '0'))
+    save()
+elif op == 'rm':
+    injected('FAKE_REMOVE_EXIT')
+    assert not containers[args[-1]]['running'], 'cannot remove a running container'
+    del containers[args[-1]]
+    save()
+elif op == 'start':
+    injected('FAKE_START_EXIT')
+    containers[args[-1]]['running'] = True
+    containers[args[-1]]['exitCode'] = 0
+    save()
+elif op == 'run':
+    if 'mysql:8.0' in args:
+        if 'SELECT COUNT(*) FROM app_config' in args:
+            injected('FAKE_APP_CONFIG_EXIT')
+            print(os.environ.get('FAKE_APP_CONFIG_COUNT', '1'))
+        else:
+            injected('FAKE_MYSQL_EXIT')
+            print(os.environ.get('FAKE_MYSQL_OUTPUT', '1'))
+    elif '--rm' in args:
+        injected('FAKE_UID_CHECK_EXIT')
+    else:
+        assert (root / 'image').exists(), 'prepared image missing'
+        injected('FAKE_RUN_EXIT')
+        assert 'laimory' not in containers, 'container name already exists'
+        env_file = Path(args[args.index('--env-file') + 1])
+        containers['laimory'] = dict(id='new-container', image=args[-1], running=True,
+            env=[line for line in env_file.read_text().splitlines() if line and not line.startswith('#')],
+            mounts=[args[i+1] for i, a in enumerate(args) if a == '-v'])
+        save()
+elif op == 'image':
+    if args[1] == 'inspect':
+        sys.exit(0 if (root / 'image').exists() else 1)
+    injected('FAKE_PRUNE_EXIT')
+    if not any(item['id'] == 'new-container' for item in containers.values()):
+        (root / 'image').unlink(missing_ok=True)
+else:
+    assert op == 'logs', 'unexpected Docker operation'
+PYEOF
+
 RUNNER_STUB="$WORK/runner-stub"; mkdir -p "$RUNNER_STUB"
 cat > "$RUNNER_STUB/aws" <<'PYEOF'
 #!/usr/bin/env python3
@@ -1239,7 +1334,7 @@ if args[:2] == ['ssm', 'send-command']:
     script = params['commands'][0]
     phase = script.splitlines()[0].split('=', 1)[1]
     event(phase, host)
-    if failure == f'send-{phase}-{host}':
+    if failure == f'send-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-send'):
         sys.exit(1)
     directory = root / f'host-{host}'
     env = dict(os.environ, PATH=os.environ['REMOTE_STUB']+':'+os.environ['PATH'],
@@ -1248,17 +1343,30 @@ if args[:2] == ['ssm', 'send-command']:
                FAKE_DOCKER_STATE=str(directory))
     injected = {'prepare': ('FAKE_PULL_EXIT','7'), 'replace': ('FAKE_RUN_EXIT','7'),
                 'readiness': ('FAKE_READINESS_EXIT','22'), 'stop': ('FAKE_STOP_EXIT','7'),
-                'killed': ('FAKE_CONTAINER_EXIT','137'), 'cleanup': ('FAKE_PRUNE_EXIT','7')}
+                'killed': ('FAKE_CONTAINER_EXIT','137'), 'upsert': ('FAKE_MV_FAIL','1'),
+                'cleanup': ('FAKE_PRUNE_EXIT','7')}
     for label, (key, value) in injected.items():
-        expected_phase = 'replace' if label in ('readiness','stop','killed') else label
+        expected_phase = 'replace' if label in ('readiness','stop','killed','upsert') else label
         if phase == expected_phase and failure == f'{label}-{host}':
             env[key] = value
+    if failure.startswith('rollback-') and host == '1':
+        if phase == 'replace':
+            if failure == 'rollback-stop':
+                env['FAKE_READINESS_EXIT'] = '22'
+            else:
+                env['FAKE_RUN_EXIT'] = '7'
+        if phase == 'rollback' and failure == 'rollback-start':
+            env['FAKE_START_EXIT'] = '7'
+        if phase == 'rollback' and failure == 'rollback-readiness':
+            env['FAKE_READINESS_EXIT'] = '22'
+        if phase == 'rollback' and failure == 'rollback-stop':
+            env['FAKE_STOP_EXIT'] = '7'
     result = subprocess.run(['/bin/bash', '-c', script], env=env, text=True, capture_output=True)
     status = 'Success' if result.returncode == 0 else 'Failed'
-    if failure == f'uncertain-{phase}-{host}':
+    if failure == f'uncertain-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-uncertain'):
         status = 'TimedOut'
     cmd_id = f'command-{len(state["commands"])+1}'
-    state['commands'][cmd_id] = {'Status': status, 'StandardOutputContent': result.stdout,
+    state['commands'][cmd_id] = {'phase': phase, 'Status': status, 'StandardOutputContent': result.stdout,
                                   'StandardErrorContent': result.stderr}
     save()
     print(cmd_id)
@@ -1275,7 +1383,8 @@ elif args[:2] == ['elbv2', 'describe-target-health']:
     if '--targets' in args:
         host = target_host()
         event('peer', host)
-        print('unhealthy' if failure == f'peer-{host}' else state['health'][host])
+        prior_replace = any('replace' in c.get('phase', '') for c in state['commands'].values())
+        print('unhealthy' if failure == f'peer-{host}' or (failure == 'rollback-peer' and prior_replace) else state['health'][host])
     else:
         targets = [{'Target':{'Id':iid, 'Port':8080}, 'TargetHealth':{'State':state['health'][str(i+1)]}}
                    for i, iid in enumerate(ids) if state['health'][str(i+1)] != 'unused']
@@ -1288,8 +1397,20 @@ elif args[0] == 'elbv2':
     action = {'deregister-targets':'deregister', 'target-deregistered':'drain',
               'register-targets':'register', 'target-in-service':'healthy'}[operation]
     event(action, host)
-    if failure == f'{action}-{host}':
+    # 일반 ALB 실패는 첫 호출만 실패시켜 이후 자동 복구의 등록/healthy까지 검증한다.
+    failed_action = f'{action}-{host}'
+    already_failed = failed_action in state.setdefault('failed', [])
+    if failure == failed_action and not already_failed:
+        state['failed'].append(failed_action)
+        save()
         sys.exit(1)
+    if failure == 'rollback-alb' and action == 'register':
+        sys.exit(1)
+    containers = json.loads((root / f'host-{host}' / 'containers.json').read_text())
+    if action in ('register', 'healthy') and containers.get('laimory', {}).get('id') == 'new-container':
+        # 기존 컨테이너가 없는 단독 복구 외에는 ALB 복귀까지 보관 후보를 유지해야 한다.
+        if os.environ.get('DEPLOY_TARGET') != 'host-2':
+            assert containers['laimory-rollback']['id'] == 'previous-container'
     state['health'][host] = {'deregister':'draining','drain':'unused',
                              'register':'initial','healthy':'healthy'}[action]
     save()
@@ -1309,17 +1430,37 @@ run_rolling() {
       -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=/' -e 's/^SWAGGER_ENABLED=true$/SWAGGER_ENABLED=false/' "$CASE_DIR/.env"
     rm "$CASE_DIR/.env.bak"
     cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
-    touch "$CASE_DIR/container" "$CASE_DIR/running" "$CASE_DIR/docker.log" "$CASE_DIR/chown.log"
+    python3 - "$CASE_DIR" <<'PYEOF'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+previous = dict(id='previous-container', image='sha256:'+'b'*64, running=True,
+    env=['APP_COMMIT_SHA='+'a'*40, 'JWT_SECRET=SENTINEL_SECRET_XYZZY_previous'],
+    mounts=['/fixture/previous-credential:/run/secrets/firebase-service-account.json:ro'])
+(root / 'containers.json').write_text(json.dumps({'laimory':previous}))
+(root / 'previous.json').write_text(json.dumps(previous))
+PYEOF
+    touch "$CASE_DIR/docker.log" "$CASE_DIR/chown.log"
   done
   if [ "${2:-all}" = "host-2" ]; then
-    rm "$ROLL_DIR/host-2/container" "$ROLL_DIR/host-2/running"
+    echo '{}' > "$ROLL_DIR/host-2/containers.json"
     echo '{"health":{"1":"healthy","2":"unused"},"commands":{}}' > "$ROLL_DIR/state.json"
   else
     echo '{"health":{"1":"healthy","2":"healthy"},"commands":{}}' > "$ROLL_DIR/state.json"
   fi
+  if [ "$1" = "stale-previous" ]; then
+    python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+items = json.loads(p.read_text())
+items['laimory-rollback'] = dict(items['laimory'], id='stale-candidate', running=False)
+p.write_text(json.dumps(items))
+PYEOF
+  fi
   (
     cd "$ROLL_DIR" || exit 1
-    env "PATH=$RUNNER_STUB:$STUB:$PATH" "REMOTE_STUB=$STUB" "ROLL_DIR=$ROLL_DIR" "ROLL_FAIL=$1" \
+    env "PATH=$RUNNER_STUB:$STUB:$PATH" "REMOTE_STUB=$STUB" "REMOTE_DOCKER_MODEL=$WORK/docker-model.py" "ROLL_DIR=$ROLL_DIR" "ROLL_FAIL=$1" \
       "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
       "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" "GITHUB_EVENT_NAME=workflow_dispatch" \
       "ENVIRONMENT=prod" "EXPECT_APP_ENV=prod" "EXPECT_REDIS_KEY_PREFIX=" \
@@ -1358,6 +1499,12 @@ for host in 1 2; do
   CASE_DIR="$ROLL_DIR/host-$host"; CHOWN_LOG="$CASE_DIR/chown.log"
   assert_prune_once "rolling success host $host"; assert_sha_line "rolling success host $host"
   [ -f "$CASE_DIR/image" ] || fail "running image must survive final cleanup"
+  python3 - "$CASE_DIR/containers.json" <<'PYEOF' || fail "success must remove only the previous container"
+import json, sys
+items = json.load(open(sys.argv[1]))
+assert list(items) == ['laimory']
+assert items['laimory']['id'] == 'new-container' and items['laimory']['running']
+PYEOF
   [ "$(grep -c '^docker pull' "$CASE_DIR/docker.log")" = "1" ] || fail "image must be pulled only during preparation"
 done
 ok "T11: production ALB/SSM flow orders two hosts and preserves prepared/running images"
@@ -1372,7 +1519,27 @@ assert_prune_once "single-host recovery"; assert_sha_line "single-host recovery"
 ! grep -q '^docker stop' "$CASE_DIR/docker.log" || fail "missing container must not require stop"
 ok "T12: missing host 2 is recovered to the exact new image while host 1 keeps serving"
 
-for failure in prepare-1 peer-2 deregister-1 drain-1 replace-1 readiness-1 stop-1 killed-1 register-1 healthy-1; do
+assert_previous_restored() {
+  python3 - "$ROLL_DIR/host-$1" <<'PYEOF' || fail "previous container/runtime must be restored exactly"
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+items = json.loads((root / 'containers.json').read_text())
+previous = json.loads((root / 'previous.json').read_text())
+assert list(items) == ['laimory']
+actual = items['laimory']
+assert actual['running']
+for key in ('id', 'image', 'env', 'mounts'):
+    assert actual[key] == previous[key], key
+lines = (root / '.env').read_text().splitlines()
+assert [line for line in lines if line.startswith('APP_COMMIT_SHA=')] == ['APP_COMMIT_SHA='+'a'*40]
+assert [line for line in lines if not line.startswith('APP_COMMIT_SHA=')] == (root / '.env.orig').read_text().splitlines()
+PYEOF
+  grep -q 'ROLLBACK SUCCEEDED:.*deployment remains failed' "$ROLL_DIR/out.log" || fail "rollback result must be explicit"
+  [ "$(grep -c "^rollback $1$" "$ROLL_DIR/events")" = "1" ] || fail "rollback must run exactly once"
+}
+
+for failure in prepare-1 peer-2 deregister-1 drain-1 replace-1 readiness-1 stop-1 killed-1 upsert-1 register-1 healthy-1; do
   run_rolling "$failure"
   [ "$ROLL_RC" != "0" ] || fail "$failure must fail workflow"
   [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must preserve the next host"
@@ -1382,23 +1549,26 @@ for failure in prepare-1 peer-2 deregister-1 drain-1 replace-1 readiness-1 stop-
     stop-*|killed-*) ! grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "$failure must stop replacement" ;;
   esac
   case "$failure" in
-    prepare-*|peer-*|deregister-*|drain-*|replace-*|readiness-*|stop-*|killed-*)
+    prepare-*|peer-*|deregister-*|drain-*)
       ! grep -q '^register ' "$ROLL_DIR/events" || fail "$failure must not blindly register the target" ;;
+    *) assert_previous_restored 1 ;;
   esac
 done
-ok "T13: preparation/peer/drain/stop/start/readiness/ALB failures preserve the serving host and clean up once"
+ok "T13: pre-stop failures preserve the app; replace/readiness/ALB failures restore the previous runtime once"
 
 run_rolling replace-2
 [ "$ROLL_RC" != "0" ] || fail "second host failure must fail workflow"
 grep -qx 'healthy 1' "$ROLL_DIR/events" || fail "host 1 must be restored before starting host 2"
 [ "$(grep -c '^docker stop' "$ROLL_DIR/host-1/docker.log")" = "1" ] || fail "host 1 must not be redeployed after host 2 failure"
 CASE_DIR="$ROLL_DIR/host-2"; assert_prune_once "host 2 failure"
-ok "T14: host 2 failure leaves the successfully deployed host 1 serving"
+assert_previous_restored 2
+ok "T14: host 2 rolls back while the successfully deployed host 1 keeps serving"
 
 for failure in send-replace-1 uncertain-replace-1; do
   run_rolling "$failure"
   [ "$ROLL_RC" != "0" ] || fail "$failure must fail workflow"
   ! grep -q '^cleanup ' "$ROLL_DIR/events" || fail "$failure must not send cleanup while remote state is uncertain"
+  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must not send rollback while remote state is uncertain"
   [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must not advance"
 done
 run_rolling cleanup-1
@@ -1426,5 +1596,48 @@ run_resolve workflow_dispatch main prod "$FAKE_PROD_IDS" "$FAKE_TEST_ID" arbitra
 run_resolve workflow_dispatch main prod 'i-prod0000000000001 i-prod0000000000001'
 [ "$RESOLVE_RC" != "0" ] || fail "duplicate prod hosts must fail"
 ok "T16: topology and manual selection fail closed; push and peer checks keep the full prod host list"
+
+# #489: 복구 자체 실패/연결 유실은 두 번째 복구나 다음 host로 진행하지 않는다.
+for failure in rollback-start rollback-readiness rollback-stop rollback-send rollback-uncertain rollback-peer rollback-alb; do
+  run_rolling "$failure"
+  [ "$ROLL_RC" != "0" ] || fail "$failure must retain failed workflow status"
+  [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must leave host 2 untouched"
+  [ "$(grep -c '^rollback ' "$ROLL_DIR/events" || true)" -le 1 ] || fail "$failure must not retry rollback"
+  grep -q 'ROLLBACK FAILED' "$ROLL_DIR/out.log" || fail "$failure must report rollback failure"
+  case "$failure" in
+    rollback-start|rollback-readiness|rollback-stop|rollback-send|rollback-uncertain|rollback-peer)
+      ! grep -q '^register ' "$ROLL_DIR/events" || fail "$failure must not register an unverified app" ;;
+  esac
+  case "$failure" in
+    rollback-send|rollback-uncertain)
+      ! grep -q '^cleanup ' "$ROLL_DIR/events" || fail "$failure must not clean up uncertain remote work" ;;
+  esac
+  python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF' || fail "$failure must retain the previous container/image"
+import json, sys
+items = json.load(open(sys.argv[1]))
+assert any(item['id'] == 'previous-container' for item in items.values())
+PYEOF
+done
+ok "T17: failed or uncertain rollback preserves its candidate and never advances or retries"
+
+run_rolling replace-2 host-2
+[ "$ROLL_RC" != "0" ] || fail "missing previous container must fail after new app failure"
+grep -q 'no previous container is available' "$ROLL_DIR/out.log" || fail "missing rollback candidate must be explained"
+[ ! -s "$ROLL_DIR/host-1/docker.log" ] || fail "missing candidate must not touch the serving host"
+! grep -q '^register ' "$ROLL_DIR/events" || fail "missing candidate must not be registered"
+ok "T18: initial/single-host recovery reports a missing rollback candidate without inventing an image"
+
+run_rolling stale-previous
+[ "$ROLL_RC" != "0" ] || fail "stale rollback candidate must block a new deployment"
+CASE_DIR="$ROLL_DIR/host-1"
+assert_env_untouched 'stale previous'; assert_no_stop_no_run 'stale previous'
+! grep -q '^deregister ' "$ROLL_DIR/events" || fail "stale candidate must fail before changing traffic"
+python3 - "$CASE_DIR/containers.json" <<'PYEOF' || fail "stale candidate must not be deleted"
+import json, sys
+items = json.load(open(sys.argv[1]))
+assert items['laimory']['running']
+assert items['laimory-rollback']['id'] == 'stale-candidate'
+PYEOF
+ok "T19: a retained rollback candidate blocks replacement without losing the running app or candidate"
 
 echo "PASS: deploy contract harness ($PASS groups)"

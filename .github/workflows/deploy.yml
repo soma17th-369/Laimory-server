@@ -16,7 +16,7 @@ on:
       - settings.gradle
       - src/main/**
   # deploy-existing: build-only가 기록한 commit SHA + digest image를 build 없이 재배포한다.
-  # 자동 rollback은 아니며, pause gate(DEPLOY_PAUSED)와 무관하게 운영자가 승인한 exact image를 기동한다.
+  # 수동 복구 진입점이며, pause gate(DEPLOY_PAUSED)와 무관하게 운영자가 승인한 exact image를 기동한다.
   workflow_dispatch:
     inputs:
       # push는 브랜치로 환경이 정해지지만 수동 실행은 정할 근거가 없어 명시 입력을 받는다.
@@ -275,7 +275,7 @@ jobs:
           else
             IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           fi
-          # 같은 원격 본문을 prepare / replace / cleanup 단계로 실행한다.
+          # prod는 prepare / replace / rollback / cleanup 단계를 사용한다.
           # dev/test는 deploy 한 단계로 기존 preflight·교체·정리를 수행한다.
           # \$는 EC2에서 평가된다. harness는 이 production heredoc 자체를 실행한다.
           read -r -d '' SCRIPT <<EOF || true
@@ -284,7 +284,7 @@ jobs:
           PRUNE_ON_EXIT=1
           case "\$DEPLOY_PHASE" in
             deploy|prepare|cleanup) ;;
-            replace) PRUNE_ON_EXIT=0 ;;
+            replace|rollback) PRUNE_ON_EXIT=0 ;;
             *) echo "unknown remote deploy phase" >&2; exit 1 ;;
           esac
           TMP_ENV=""
@@ -298,11 +298,42 @@ jobs:
             exit \$STATUS
           }
           trap cleanup EXIT
-          [ "\$DEPLOY_PHASE" != "cleanup" ] || exit 0
+          if [ "\$DEPLOY_PHASE" = "cleanup" ]; then
+            # 신버전 ALB healthy까지 성공한 경우에만 직전 컨테이너를 버린다.
+            if [ "\${DISCARD_PREVIOUS:-false}" = "true" ]; then
+              PREVIOUS_ID=\$(docker container ls -aq --filter 'name=^/laimory-rollback$')
+              [ -z "\$PREVIOUS_ID" ] || docker rm laimory-rollback >/dev/null
+            fi
+            exit 0
+          fi
           # 경로 상수(기본이 운영 경로). LAIMORY_* override는 test-deploy-contract.sh harness가 동일한
           # script 본문을 다른 host에서 실행하기 위한 seam이며 SSM 운영 실행에서는 설정되지 않는다.
           ENV_FILE="\${LAIMORY_ENV_FILE:-/home/ubuntu/app/.env}"
           CRED_FILE="\${LAIMORY_FCM_CRED_FILE:-/home/ubuntu/app/secrets/firebase-service-account.json}"
+          APP_SHA="${IMAGE_TAG}"
+          CONTAINER_NAME=laimory
+          if [ "\$DEPLOY_PHASE" = "prepare" ]; then
+            PREVIOUS_ID=\$(docker container ls -aq --filter 'name=^/laimory-rollback$')
+            [ -z "\$PREVIOUS_ID" ] || { echo "previous rollback container remains; inspect before retrying" >&2; exit 1; }
+          elif [ "\$DEPLOY_PHASE" = "replace" ]; then
+            # replace의 첫 변경에서 보존한다. env 갱신/stop 실패도 같은 후보로 복구할 수 있다.
+            CURRENT_ID=\$(docker container ls -aq --filter 'name=^/laimory$')
+            if [ -n "\$CURRENT_ID" ]; then
+              docker rename laimory laimory-rollback
+              CONTAINER_NAME=laimory-rollback
+            fi
+          elif [ "\$DEPLOY_PHASE" = "rollback" ]; then
+            PREVIOUS_ID=\$(docker container ls -aq --filter 'name=^/laimory-rollback$')
+            [ -n "\$PREVIOUS_ID" ] || { echo "no previous container is available for automatic rollback" >&2; exit 1; }
+            # 실제 이전 runtime의 SHA만 추출한다. 전체 environment는 로그에 출력하지 않는다.
+            APP_SHA=\$(docker inspect --format '{{json .Config.Env}}' laimory-rollback | python3 -c '
+          import json, re, sys
+          values = [v.split("=", 1)[1] for v in json.load(sys.stdin) if v.startswith("APP_COMMIT_SHA=")]
+          if len(values) != 1 or not re.fullmatch("[0-9a-f]{40}", values[0]):
+              sys.exit(1)
+          print(values[0])
+          ' 2>/dev/null) || { echo "previous container commit SHA is invalid" >&2; exit 1; }
+          fi
           # .env 검증 헬퍼(값 비출력): key가 정확히 한 줄 존재하고 기대 줄과 byte 일치해야 한다.
           # 실패 메시지는 key 이름·개수까지만 — 값은 SSM/Actions 로그에 출력하지 않는다(로그 장기 보존).
           require_exact_line() {
@@ -311,7 +342,7 @@ jobs:
             [ "\$REQ_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$REQ_KEY must appear exactly once (found \$REQ_COUNT)"; exit 1; }
             grep -qxF "\$REQ_LINE" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$REQ_KEY has unexpected value"; exit 1; }
           }
-          if [ "\$DEPLOY_PHASE" != "replace" ]; then
+          if [ "\$DEPLOY_PHASE" != "replace" ] && [ "\$DEPLOY_PHASE" != "rollback" ]; then
           # pre-flight 1 — secret presence: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를
           # 내리기 전에 실패시켜 "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다.
           # (JWT_SECRET은 HS256 최소 32자)
@@ -449,7 +480,7 @@ jobs:
           # 검증한다 — JSON object · currentVersion 정수 1~32767 · currentKey base64 정확히 32바이트 ·
           # previousVersion/previousKey 동반 존재·version 상이·key 상이·previousKey도 32바이트 ·
           # SecretString 부재(SecretBinary 전용)면 실패. 이 계약을 어긴 secret은 새 앱이 기동 실패
-          # (자동 rollback 없음)하므로 구 컨테이너 중지 전에 잡는다. 실패 진단은 항목 이름만 내고
+          # 하므로 구 컨테이너 중지 전에 잡는다. 실패 진단은 항목 이름만 내고
           # python stderr도 버린다 — secret 값은 어떤 경로로도 로그에 닿지 않는다.
           command -v python3 >/dev/null 2>&1 || { echo "PREFLIGHT FAILED: python3 not found on host (required for subject secret validation)"; exit 1; }
           SUBJECT_SECRET_ARN=\$(grep '^APP_SUBJECT_SECRET_ARN=' "\$ENV_FILE" | cut -d= -f2-)
@@ -520,7 +551,7 @@ jobs:
             PRUNE_ON_EXIT=0
             exit 0
           fi
-          else
+          elif [ "\$DEPLOY_PHASE" = "replace" ]; then
             # prepare가 검증한 runtime mount만 재구성한다. 여기서는 image를 다시 받지 않는다.
             PUSH_ARGS=""
             if grep -qxF 'APP_PUSH_MODE=firebase' "\$ENV_FILE"; then
@@ -534,29 +565,36 @@ jobs:
           # 보존한다. 기존 APP_COMMIT_SHA= 줄은 개수와 무관하게 전부 제거하고 정확히 한 줄만 남긴다
           # (줄 시작의 정확한 KEY=만 대상 — 유사 이름 key는 건드리지 않는다).
           TMP_ENV=\$(mktemp "\$ENV_FILE.XXXXXX")
-          awk -v sha="${IMAGE_TAG}" 'index(\$0, "APP_COMMIT_SHA=") == 1 { next } { print } END { print "APP_COMMIT_SHA=" sha }' "\$ENV_FILE" > "\$TMP_ENV"
+          awk -v sha="\$APP_SHA" 'index(\$0, "APP_COMMIT_SHA=") == 1 { next } { print } END { print "APP_COMMIT_SHA=" sha }' "\$ENV_FILE" > "\$TMP_ENV"
           chmod 600 "\$TMP_ENV"
           chown --reference="\$ENV_FILE" "\$TMP_ENV"
           mv -f "\$TMP_ENV" "\$ENV_FILE"
           TMP_ENV=""
           # 실패한 최초 기동처럼 container가 없는 경우도 단독 재배포할 수 있다.
           # daemon/stop/remove 오류는 숨기지 않는다. SIGKILL(137)이면 교체를 중단한다.
-          CONTAINER_ID=\$(docker container ls -aq --filter 'name=^/laimory$')
+          CONTAINER_ID=\$(docker container ls -aq --filter "name=^/\$CONTAINER_NAME\$")
           if [ -n "\$CONTAINER_ID" ]; then
-            if [ "\$(docker inspect --format '{{.State.Running}}' laimory)" = "true" ]; then
+            if [ "\$(docker inspect --format '{{.State.Running}}' "\$CONTAINER_NAME")" = "true" ]; then
               # Boot의 phase별 기본 30초 종료 대기에 HTTP/worker 종료 여유를 준다.
-              docker stop --time 120 laimory >/dev/null
-              [ "\$(docker inspect --format '{{.State.ExitCode}}' laimory)" != "137" ] \
+              docker stop --time 120 "\$CONTAINER_NAME" >/dev/null
+              [ "\$(docker inspect --format '{{.State.ExitCode}}' "\$CONTAINER_NAME")" != "137" ] \
                 || { echo "container required SIGKILL; inspect before retrying" >&2; exit 1; }
             fi
-            docker rm laimory >/dev/null
+            [ "\$DEPLOY_PHASE" = "replace" ] || docker rm laimory >/dev/null
           fi
+          if [ "\$DEPLOY_PHASE" = "rollback" ]; then
+            docker rename laimory-rollback laimory
+            if [ "\$(docker inspect --format '{{.State.Running}}' laimory)" != "true" ]; then
+              docker start laimory >/dev/null
+            fi
+          else
           # 장기 실행 컨테이너의 runtime env source는 --env-file(.env) 하나다 — -e/--env 없음(.env가 SSOT).
           # 환경 고정값(REDIS_KEY_PREFIX·APP_ENV·APP_GEO_MODE·SWAGGER_ENABLED)과 AI/push mode는
           # 위 pre-flight가 exact-one으로 fail-closed 보장한다 — 기대값은 환경별로 주입된다.
           # --log-opt : 앱이 JSON 로그를 stdout으로 뱉으므로 json-file 드라이버 로테이션으로 디스크 폭주 방지.
           # \$PUSH_ARGS : APP_PUSH_MODE=firebase일 때만 credential read-only mount(ADC 경로는 .env가 소유).
           docker run -d --name laimory --pull=never --restart always --network host --log-opt max-size=10m --log-opt max-file=3 --env-file "\$ENV_FILE" \$PUSH_ARGS ${IMG}
+          fi
           echo "waiting for /readyz and /api/v1/intro ..."
           ok=0
           HEALTH_DEADLINE=\$((\$(date +%s) + 90))
@@ -573,9 +611,10 @@ jobs:
           # SSM 상태 불명확 시 새 원격 명령(정리 포함)을 보내지 않는다.
           REMOTE_TERMINAL=true
           run_ssm() {
-            local phase="$1" cmd_id status
+            local phase="$1" discard_previous="${2:-false}" cmd_id status
             REMOTE_TERMINAL=false
             jq -n --arg s "DEPLOY_PHASE=$phase
+          DISCARD_PREVIOUS=$discard_previous
           $SCRIPT" '{commands: [$s], executionTimeout: ["900"]}' > params.json \
               || { echo "cannot prepare SSM parameters" >&2; return 1; }
             cmd_id=$(aws ssm send-command \
@@ -605,13 +644,43 @@ jobs:
             local result=$?
             trap - EXIT
             if [ "$REMOTE_TERMINAL" = "true" ]; then
-              if ! run_ssm cleanup; then
+              if ! run_ssm cleanup "$HOST_DEPLOYED"; then
                 echo "WARNING: host cleanup failed (deploy status unchanged)" >&2
               fi
             else
               echo "WARNING: remote state is uncertain; inspect before cleanup or retry" >&2
             fi
             return "$result"
+          }
+          require_healthy_peer() {
+            local peer peer_state
+            for peer in ${INSTANCE_IDS//,/ }; do
+              [ "$peer" != "$IID" ] || continue
+              peer_state=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" \
+                --targets "Id=$peer,Port=8080" --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null) \
+                || { echo "peer health lookup failed" >&2; return 1; }
+              [ "$peer_state" = "healthy" ] || { echo "peer is not healthy" >&2; return 1; }
+            done
+          }
+          rollback_host() {
+            require_healthy_peer || return 1
+            # 등록 API가 성공했거나 결과가 불명확할 수 있으므로, 복구 전에도 drain을 거친다.
+            aws elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            aws elbv2 wait target-deregistered --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            run_ssm rollback || return 1
+            aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1
+          }
+          fail_rollout() {
+            echo "$HOST_LABEL: $1 - remaining hosts are left untouched" >&2
+            if [ "$REMOTE_TERMINAL" != "true" ]; then
+              echo "ROLLBACK SKIPPED: remote state is uncertain; inspect before retrying" >&2
+            elif rollback_host; then
+              echo "ROLLBACK SUCCEEDED: previous container is healthy; deployment remains failed" >&2
+            else
+              echo "ROLLBACK FAILED: inspect the host and ALB before manual recovery" >&2
+            fi
+            exit 1
           }
           if [ "$ENVIRONMENT" = "prod" ]; then
             # 지정된 TG가 실제 애플리케이션 포트와 readiness 계약을 사용하는지 확인한다.
@@ -637,27 +706,23 @@ jobs:
             HOST_INDEX=$((HOST_INDEX + 1))
             [ "$DEPLOY_TARGET" = "all" ] || [ "$DEPLOY_TARGET" = "host-$HOST_INDEX" ] || continue
             HOST_LABEL="host $HOST_INDEX/$HOST_COUNT"
+            HOST_DEPLOYED=false
             echo "::group::deploy $ENVIRONMENT $HOST_LABEL"
             if [ "$ENVIRONMENT" = "prod" ]; then
               run_ssm prepare || { echo "prepare failed - remaining hosts are left untouched" >&2; exit 1; }
               trap cleanup_host EXIT
-              for PEER in ${INSTANCE_IDS//,/ }; do
-                [ "$PEER" != "$IID" ] || continue
-                peer_state=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" \
-                  --targets "Id=$PEER,Port=8080" --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null) \
-                  || { echo "peer health lookup failed" >&2; exit 1; }
-                [ "$peer_state" = "healthy" ] || { echo "peer is not healthy - remaining hosts are left untouched" >&2; exit 1; }
-              done
+              require_healthy_peer || exit 1
               aws elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
                 || { echo "target deregistration failed" >&2; exit 1; }
               # ALB waiter는 15초 × 40회. draining 완료 전에 stop하지 않는다(현재 prod 설정 30초).
               aws elbv2 wait target-deregistered --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
                 || { echo "target drain failed or timed out" >&2; exit 1; }
-              run_ssm replace || { echo "replace failed - remaining hosts are left untouched" >&2; exit 1; }
+              run_ssm replace || fail_rollout "replace failed"
               aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || { echo "target registration failed" >&2; exit 1; }
+                || fail_rollout "target registration failed"
               aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || { echo "target did not become healthy" >&2; exit 1; }
+                || fail_rollout "target did not become healthy"
+              HOST_DEPLOYED=true
               cleanup_host
             else
               run_ssm deploy || { echo "deploy failed - remaining hosts are left untouched" >&2; exit 1; }
