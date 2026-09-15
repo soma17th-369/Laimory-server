@@ -56,6 +56,14 @@ scrape_configs:
           environment: dev
           host: monitoring
 
+  # #492: 컨테이너 내부 메모리·live traces·flush 관측 — OOM 원인 확정과 재발 감지의 전제.
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+        labels:
+          environment: dev
+          host: monitoring
+
   - job_name: blackbox_https
     scrape_interval: 60s
     metrics_path: /probe

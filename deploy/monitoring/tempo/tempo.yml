@@ -13,9 +13,28 @@ distributor:
           # Tempo 2.7+는 receiver 기본 bind가 localhost라 컨테이너 밖 연결을 못 받는다 — 명시 필수(D5).
           endpoint: "0.0.0.0:4317"
 
+# 유입 측 메모리 상한(#492): 기본 max_block_bytes 500MB는 1g 컨테이너에서 block 완료(WAL→Parquet
+# 인코딩) 시점 자체가 OOM 조건이다. block을 작게·자주 완료해 peak를 구조적으로 제한한다.
+# 50MB 미만은 유지관리자 경고 대상이라 더 줄이지 않는다.
+ingester:
+  max_block_duration: 10m
+  max_block_bytes: 104857600
+  complete_block_timeout: 5m
+
 compactor:
   compaction:
     block_retention: 48h # 디버깅 용도 보관 상한(D6). S3 backend는 쓰지 않는다.
+
+# 조회 측 메모리 상한(#492): 기본값(target_bytes_per_job 100MB × max_concurrent_queries 20)은
+# 모놀리스 1g에 과대 — 48h 범위 TraceQL 검색이 745MiB까지 실측됐다. 검색이 잡는 메모리를
+# ~100MB대로 묶는다. 대가는 넓은 범위 검색의 응답 시간(디버깅 용도 48h 보관이라 허용).
+querier:
+  max_concurrent_queries: 4
+
+query_frontend:
+  search:
+    concurrent_jobs: 50
+    target_bytes_per_job: 20971520
 
 storage:
   trace:
@@ -24,6 +43,9 @@ storage:
       path: /var/tempo/wal
     local:
       path: /var/tempo/blocks
+    search:
+      prefetch_trace_count: 200
+      read_buffer_count: 8
 
 # 익명 usage 리포트 발신 차단(Grafana GF_ANALYTICS_* off와 같은 규율).
 usage_report:

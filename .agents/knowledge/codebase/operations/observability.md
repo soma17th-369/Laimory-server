@@ -161,6 +161,11 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 - dev·test WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
   WebClient/Redis** span으로 분해해 monitoring host의 Tempo(OTLP gRPC 4317)로 push한다.
   보관은 로컬 스토리지 48h, metrics generator는 끈다. 조회는 Grafana Tempo datasource.
+- Tempo는 `tempo.yml`이 ingester block(100MB/10m)·querier·검색 상한을 명시하고 compose가
+  `GOMEMLIMIT=600MiB`·`mem_limit 1g`를 건다(#492 — 기본 상한이 컨테이너 한도보다 커서 유입 block
+  완료·넓은 TraceQL 검색 두 경로로 cgroup OOM 실증). `/metrics`는 Prometheus `tempo` job이
+  scrape하고 Infrastructure dashboard `Tempo Memory` 패널이 RSS를 한도 기준선과 보여준다.
+  넓은 범위(48h) 검색은 의도적으로 느리다 — 상한을 되돌리지 말고 범위를 좁혀 검색한다.
 - agent jar는 배포 이미지에 항상 탑재되고(`/otel/opentelemetry-javaagent.jar`), 활성화는 host
   `.env`의 `JAVA_TOOL_OPTIONS`만이 소유한다 — `APP_TRACING_MODE` pre-flight가 스위치 SSOT다
   (environments.md). env가 없는 local/integration은 agent가 아예 붙지 않아 완전 무영향이다.
