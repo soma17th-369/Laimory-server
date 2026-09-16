@@ -73,7 +73,7 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     @Query(value = "select object_key from timeline_photo_delete_jobs "
             + "where object_key in (:objectKeys)",
             nativeQuery = true)
-    List<String> findObjectKeysIn(@Param("objectKeys") Collection<String> objectKeys);
+    List<String> findObjectKeysWithJob(@Param("objectKeys") Collection<String> objectKeys);
 
     @Modifying
     @Query("update TimelinePhotoDeleteJob j set j.status = :pending "

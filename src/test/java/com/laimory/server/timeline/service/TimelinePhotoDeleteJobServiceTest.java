@@ -149,7 +149,7 @@ class TimelinePhotoDeleteJobServiceTest {
 
     @Test
     void findObjectKeysWithJob_returnsKeysThatHaveAJob() {
-        when(repository.findObjectKeysIn(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
+        when(repository.findObjectKeysWithJob(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
                 .thenReturn(List.of("hash/photos/b.jpg"));
 
         assertThat(service.findObjectKeysWithJob(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
@@ -161,7 +161,7 @@ class TimelinePhotoDeleteJobServiceTest {
         assertThat(service.findObjectKeysWithJob(List.of())).isEmpty();
         assertThat(service.findObjectKeysWithJob(null)).isEmpty();
 
-        verify(repository, never()).findObjectKeysIn(anyCollection());
+        verify(repository, never()).findObjectKeysWithJob(anyCollection());
     }
 
     @Test

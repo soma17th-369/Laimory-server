@@ -96,7 +96,7 @@ public class TimelinePhotoDeleteJobService {
         if (objectKeys == null || objectKeys.isEmpty()) {
             return Set.of();
         }
-        return Set.copyOf(timelinePhotoDeleteJobRepository.findObjectKeysIn(objectKeys));
+        return Set.copyOf(timelinePhotoDeleteJobRepository.findObjectKeysWithJob(objectKeys));
     }
 
     /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
