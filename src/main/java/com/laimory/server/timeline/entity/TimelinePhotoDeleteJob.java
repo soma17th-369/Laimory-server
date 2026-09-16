@@ -17,8 +17,9 @@ import lombok.Getter;
 /**
  * 마지막 TimelineItem 참조가 사라진 PHOTO의 S3 삭제 작업.
  *
- * <p>원 TimelineItem은 job이 있는 동안 보존된다. PENDING은 PATCH가 취소·재연결할 수 있는 대기 상태,
- * PROCESSING은 worker가 S3 삭제를 수행 중인 상태다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일
+ * <p>원 TimelineItem은 job이 있는 동안 보존된다. PENDING은 worker claim을 기다리는 대기 상태이고(수동 PHOTO
+ * 추가는 job이 있는 key를 409로 거절하며 취소·재연결하지 않는다, #495), PROCESSING은 worker가 S3 삭제를
+ * 수행 중인 상태다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일
  * 실행뿐이며(동시 request transaction이 먼저 수렴하도록 생성 당일은 제외), claim은 {@code updated_at}을
  * 갱신해 같은 날 재선택을 막는다. 창을 벗어난 미완료 job은 재시도 없이 보존된다. worker는 현재
  * association을 재확인한 뒤 S3 삭제에 성공한 job과 Item을 한 DB transaction에서 최종 hard delete한다.

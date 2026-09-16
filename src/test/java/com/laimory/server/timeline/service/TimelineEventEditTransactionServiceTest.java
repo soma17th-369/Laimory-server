@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,11 +22,14 @@ import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,8 +91,6 @@ class TimelineEventEditTransactionServiceTest {
                 timelineEventService,
                 dailyRecordService,
                 photoAddService);
-        lenient().when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), any()))
-                .thenReturn(Optional.empty());
     }
 
     @Test
@@ -197,51 +197,13 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
-    void updateEvent_pendingDeleteJob_relinksPreservedItemWithoutCreatingDuplicate() {
-        TimelineEvent event = stubOwnedDraftEvent();
-        stubRecordGraph(List.of(event), List.of(), List.of());
-        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
-                .thenReturn(Optional.of(31L));
-        when(timelineItemService.findById(31L)).thenReturn(Optional.of(item(31L, ItemType.PHOTO, RAW_ID)));
-
-        service.updateEvent(SUBJECT_ID, EVENT_ID,
-                command(false, null, List.of(photo(RAW_ID, FILENAME))));
-
-        verify(timelineItemService, never()).save(any());
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<TimelineEventItem>> linksCaptor = ArgumentCaptor.forClass(List.class);
-        verify(timelineEventItemService).saveAll(linksCaptor.capture());
-        assertThat(linksCaptor.getValue()).singleElement().satisfies(link -> {
-            assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
-            assertThat(link.getTimelineItemId()).isEqualTo(31L);
-        });
-    }
-
-    @Test
-    void updateEvent_pendingDeleteJobInputMismatchFailsBeforeEventMutation() {
+    void updateEvent_deleteJobOnNewPhotoKey_is409BeforeEventMutation() {
         TimelineEvent event = stubOwnedDraftEvent();
         event.updateMemo("기존 메모");
         stubRecordGraph(List.of(event), List.of(), List.of());
-        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
-                .thenReturn(Optional.of(31L));
-        when(timelineItemService.findById(31L)).thenReturn(Optional.of(item(31L, ItemType.PHOTO, RAW_ID)));
-
-        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
-                command(true, "새 메모", List.of(photoWithMismatch("clientPhotoUri")))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("photo input does not match existing rawId");
-
-        assertOriginalState(event, "기존 메모");
-        verifyNoWrites();
-    }
-
-    @Test
-    void updateEvent_processingDeleteJob_is409BeforeEventMutation() {
-        TimelineEvent event = stubOwnedDraftEvent();
-        event.updateMemo("기존 메모");
-        stubRecordGraph(List.of(event), List.of(), List.of());
-        when(timelinePhotoDeleteJobService.cancelPendingForRelink(any(), org.mockito.ArgumentMatchers.eq(RAW_ID)))
-                .thenThrow(new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
+        // 상태 무관 — job이 있다는 사실만으로 거절하며 보존 Item을 조회·재연결하지 않는다(#495).
+        when(timelinePhotoDeleteJobService.findObjectKeysWithJob(anyCollection()))
+                .thenReturn(Set.of(PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID)));
 
         assertThatThrownBy(() -> service.updateEvent(
                 SUBJECT_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
@@ -251,6 +213,31 @@ class TimelineEventEditTransactionServiceTest {
 
         assertOriginalState(event, "기존 메모");
         verifyNoWrites();
+        verify(timelineItemService, never()).findById(any());
+    }
+
+    @Test
+    void updateEvent_newPhotos_checkDeleteJobsOnceWithAllNewKeys() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        String secondFilename = "0190a1b2-0004-7000-8000-000000000004.jpg";
+        stubRecordGraph(List.of(event), List.of(), List.of());
+        when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn(PHOTO_URL);
+        when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
+            TimelineItem item = invocation.getArgument(0);
+            ReflectionTestUtils.setField(item, "timelineItemId", 21L);
+            return item;
+        });
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null,
+                List.of(photo(RAW_ID, FILENAME), photo(RAW_ID_2, secondFilename))));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> keysCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(timelinePhotoDeleteJobService).findObjectKeysWithJob(keysCaptor.capture());
+        assertThat(keysCaptor.getValue()).containsExactlyInAnyOrder(
+                PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID),
+                PhotoObjectKeys.subjectFullKey(secondFilename, SUBJECT_ID));
+        verify(timelineItemService, never()).findById(any());
     }
 
     @Test

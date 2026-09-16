@@ -171,7 +171,7 @@ class TimelineEventPhotoAddServiceTest {
         order.verify(timelineItemService).clearOrphanObservation(org.mockito.ArgumentMatchers.eq(List.of(31L)), any());
         order.verify(timelineEventItemService).saveAll(any());
 
-        // 반환 ID는 기존 재사용·job 재연결·신규를 모두 포함한다 — 생성 응답 조립의 입력이다.
+        // 반환 ID는 기존 재사용·신규를 모두 포함한다 — 생성 응답 조립의 입력이다.
         assertThat(linked).containsExactly(31L, 21L);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineEventItem>> linksCaptor = ArgumentCaptor.forClass(List.class);

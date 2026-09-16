@@ -147,7 +147,8 @@ class TimelineEventPhotoAddService {
 
     /**
      * 같은 DailyRecord의 rawId 후보를 new/reuse/no-op으로 분류한다. 재사용할 PHOTO의 저장된 시간과
-     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 분류와 모든 DB-dependent
+     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 후보가 없는 사진은 신규이되
+     * 그 object key에 삭제 job이 있으면 409로 거절한다(취소·재연결 없음). 분류와 모든 DB-dependent
      * 검증을 entity mutation보다 먼저 끝내 validation 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
      */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -184,18 +185,7 @@ class TimelineEventPhotoAddService {
                 throw new IllegalArgumentException("rawId is already used by a non-PHOTO item");
             }
             if (candidates.isEmpty()) {
-                String objectKey = PhotoObjectKeys.subjectFullKey(requested.filename(), record.getSubjectId());
-                Long pendingItemId = timelinePhotoDeleteJobService
-                        .cancelPendingForRelink(objectKey, requested.rawId())
-                        .orElse(null);
-                if (pendingItemId == null) {
-                    newPhotos.add(requested);
-                } else {
-                    TimelineItem pendingItem = timelineItemService.findById(pendingItemId)
-                            .orElseThrow(() -> new IllegalStateException("relinked PHOTO item not found"));
-                    requireMatchingClientInput(pendingItem, requested);
-                    existingItemIdsToLink.add(pendingItemId);
-                }
+                newPhotos.add(requested);
                 continue;
             }
 
@@ -217,12 +207,31 @@ class TimelineEventPhotoAddService {
                 throw new IllegalArgumentException("filename is duplicated across new photos");
             }
         }
+        requireNoDeleteJob(record.getSubjectId(), newPhotos);
         return new PhotoChanges(existingItemIdsToLink, newPhotos);
     }
 
     /**
+     * 신규로 분류된 사진의 full object key에 삭제 job이 있으면 거절한다. 상태(PENDING·PROCESSING·처리 창
+     * 경과)와 무관하다 — job이 있는 사진은 취소·재연결 대상이 아니며 클라이언트가 새 filename으로 다시
+     * 올려야 한다. 삭제가 완료되어 job과 Item이 모두 사라진 뒤의 과거 요청은 서버가 구별하지 않는다
+     * (클라이언트 계약). 잠금 없는 IN 조회 한 번이라 부재 key의 gap을 잠그지 않는다.
+     */
+    private void requireNoDeleteJob(UUID subjectId, List<PhotoToAdd> newPhotos) {
+        if (newPhotos.isEmpty()) {
+            return;
+        }
+        List<String> objectKeys = newPhotos.stream()
+                .map(photo -> PhotoObjectKeys.subjectFullKey(photo.filename(), subjectId))
+                .toList();
+        if (!timelinePhotoDeleteJobService.findObjectKeysWithJob(objectKeys).isEmpty()) {
+            throw new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
+        }
+    }
+
+    /**
      * 분류 결과를 저장한다 — 기존 Item 재연결과 신규 PHOTO Item/junction insert. 이번 호출로 대상
-     * Event에 연결된 전체 Item ID(기존 재사용·job 재연결·신규)를 반환한다 — 생성 응답 조립의 입력이며
+     * Event에 연결된 전체 Item ID(기존 재사용·신규)를 반환한다 — 생성 응답 조립의 입력이며
      * PATCH는 반환을 무시한다(추가 조회 없음).
      */
     @Transactional(propagation = Propagation.MANDATORY)

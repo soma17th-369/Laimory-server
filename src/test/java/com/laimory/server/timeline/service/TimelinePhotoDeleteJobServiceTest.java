@@ -3,18 +3,15 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineEventItem;
-import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -22,7 +19,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,9 +46,6 @@ class TimelinePhotoDeleteJobServiceTest {
 
     @Mock
     private TimelinePhotoDeleteJob second;
-
-    @Mock
-    private TimelineItem item;
 
     private TimelinePhotoDeleteJobService service;
 
@@ -155,54 +148,20 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void cancelPendingForRelink_deletesJobAndReturnsPreservedPhotoItem() {
-        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
-                .thenReturn(Optional.of(first));
-        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PENDING);
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
-        when(timelineItemService.findById(101L)).thenReturn(Optional.of(item));
-        when(item.getItemType()).thenReturn(ItemType.PHOTO);
-        when(item.getRawId()).thenReturn("raw-photo");
-        when(item.getTimelineItemId()).thenReturn(101L);
-        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(1);
+    void findObjectKeysWithJob_returnsKeysThatHaveAJob() {
+        when(repository.findObjectKeysIn(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
+                .thenReturn(List.of("hash/photos/b.jpg"));
 
-        assertThat(service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
-                .contains(101L);
+        assertThat(service.findObjectKeysWithJob(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
+                .containsExactly("hash/photos/b.jpg");
     }
 
     @Test
-    void cancelPendingForRelink_rejectsProcessingJobClaimedToday() {
-        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
-                .thenReturn(Optional.of(first));
-        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PROCESSING);
-        // 오늘 00:00 경계 포함(>= todayStart)이 active다.
-        when(first.getUpdatedAt()).thenReturn(LocalDateTime.of(2026, 8, 14, 0, 0));
+    void findObjectKeysWithJob_emptyInputSkipsQuery() {
+        assertThat(service.findObjectKeysWithJob(List.of())).isEmpty();
+        assertThat(service.findObjectKeysWithJob(null)).isEmpty();
 
-        assertThatThrownBy(() -> service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
-                .isInstanceOfSatisfying(BusinessException.class, exception ->
-                        assertThat(exception.getExceptionType())
-                                .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
-
-        verify(timelineItemService, never()).findById(org.mockito.ArgumentMatchers.anyLong());
-    }
-
-    @Test
-    void cancelPendingForRelink_cancelsStaleProcessingJobFromPreviousDay() {
-        when(repository.findByObjectKeyForUpdate("hash/photos/photo.jpg"))
-                .thenReturn(Optional.of(first));
-        when(first.getStatus()).thenReturn(TimelinePhotoDeleteJobStatus.PROCESSING);
-        when(first.getUpdatedAt()).thenReturn(LocalDateTime.of(2026, 8, 13, 23, 59));
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
-        when(timelineItemService.findById(101L)).thenReturn(Optional.of(item));
-        when(item.getItemType()).thenReturn(ItemType.PHOTO);
-        when(item.getRawId()).thenReturn("raw-photo");
-        when(item.getTimelineItemId()).thenReturn(101L);
-        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(1);
-
-        assertThat(service.cancelPendingForRelink("hash/photos/photo.jpg", "raw-photo"))
-                .contains(101L);
+        verify(repository, never()).findObjectKeysIn(anyCollection());
     }
 
     @Test
