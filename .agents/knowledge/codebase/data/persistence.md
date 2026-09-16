@@ -148,7 +148,7 @@ PK MOD 담당에서 일반 조회하고, 같은 transaction에서 `status=PROCES
 기록한 뒤 commit한다. 창 경계와 claim 시각은 같은 application Clock instant를 KST로 변환해 parameter로
 바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. 그 뒤 현재 junction을 재확인해 다시 연결된 Item의 job을
 취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을
-같은 completion transaction에서 지운다. job 삭제가 0건이면 재연결 취소나 선행 completion일 수 있으므로
+같은 completion transaction에서 지운다. job 삭제가 0건이면 worker 재검증 취소나 선행 completion일 수 있으므로
 Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다. 명시적 실패·응답 누락·SDK
 예외는 `PENDING`으로 되돌리고(`updated_at`이 claim 시각이라 같은 날 재선택 없음), crash 행은
 `PROCESSING`으로 남는다. 둘 다 처리 창 안이면 `updated_at`이 전날이 된 다음 일일 실행이 재claim하며
@@ -156,10 +156,10 @@ Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 roll
 원문 PHOTO Item을 보존하고, worker가 run 시작에 건수만 조회해 0보다 크면 `expiredCount`만 담은 ERROR
 로그로 기존 application ERROR 경보를 발화시킨다(식별자·object key 미포함, count 조회 실패는 WARN 후
 claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
-않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. Event PATCH는 subject+filename의 full object
-key로 job을 locking read한다. `PENDING` 또는 `updated_at`이 전날 이전인 stale `PROCESSING`이면 job을
-취소하고 보존 Item의 PHOTO/rawId 일치를 확인해 같은 Item을 재연결한다. 오늘 claim된 `PROCESSING`이면
-409 `-1019`로 거절한다. pre-S3 association 재검증은 다른 재연결 경로의 방어선으로
+않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는
+신규로 분류한 사진의 subject+filename full object key로 job 존재를 잠금 없는 IN 조회 한 번으로
+확인하고, 상태와 무관하게 job이 있으면 409 `-1019`로 거절한다 — job 취소·보존 Item 재연결·`FOR UPDATE`
+경로는 없다(#495). pre-S3 association 재검증은 삭제와 살아 있는 Item 공유가 겹친 경합의 방어선으로
 계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
@@ -432,7 +432,8 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
-보존할 수 있다. 서버는 pending delete key를 조회해 대기 job은 취소·재연결하고 처리 중이면 409로 거절한다.
+보존할 수 있다. 서버는 살아 있지 않은 사진의 delete key를 일반 조회해 job이 있으면 상태와 무관하게 409로
+거절한다(취소·재연결 없음, #495). 삭제 완료 후의 과거 요청은 구별하지 않는다(클라이언트 계약).
 
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
