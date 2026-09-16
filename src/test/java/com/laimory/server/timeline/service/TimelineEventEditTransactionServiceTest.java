@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -222,9 +223,10 @@ class TimelineEventEditTransactionServiceTest {
         String secondFilename = "0190a1b2-0004-7000-8000-000000000004.jpg";
         stubRecordGraph(List.of(event), List.of(), List.of());
         when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn(PHOTO_URL);
+        AtomicLong nextItemId = new AtomicLong(21L);
         when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
             TimelineItem item = invocation.getArgument(0);
-            ReflectionTestUtils.setField(item, "timelineItemId", 21L);
+            ReflectionTestUtils.setField(item, "timelineItemId", nextItemId.getAndIncrement());
             return item;
         });
 
