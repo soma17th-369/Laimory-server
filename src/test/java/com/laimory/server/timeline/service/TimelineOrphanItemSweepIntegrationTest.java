@@ -345,16 +345,14 @@ class TimelineOrphanItemSweepIntegrationTest {
     @Test
     void relinkClearsObservationAndLaterOrphanStartsANewPeriod() {
         Long itemId = savePhoto("raw-relink", filename(93));
-        List<Long> candidates = sweepService.observeBatch(0, 1, 250);
+        sweepService.observeBatch(0, 1, 250);
         jdbcTemplate.update("UPDATE timeline_items SET updated_at='2000-01-01' WHERE timeline_item_id=?", itemId);
-        sweepService.sweepBatch(candidates);
+        // 관측 뒤 처리 전에 stale snapshot의 추가가 같은 Item을 재연결하는 경합 — link가 표시를 해제한다.
+        // job이 생긴 뒤의 Item에는 재연결 경로가 없다(#495).
         Long eventId = saveEvent("relinked", 9);
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            assertThat(timelinePhotoDeleteJobService.cancelPendingForRelink(
-                    PhotoObjectKeys.subjectFullKey(filename(93), subjectId), "raw-relink")).contains(itemId);
-            photoAddService.link(subjectId, eventId,
-                    new TimelineEventPhotoAddService.PhotoChanges(List.of(itemId), List.of()));
-        });
+        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                photoAddService.link(subjectId, eventId,
+                        new TimelineEventPhotoAddService.PhotoChanges(List.of(itemId), List.of())));
         assertThat(timelineItemRepository.findById(itemId).orElseThrow().getModifiedBy()).isNull();
         jdbcTemplate.update("DELETE FROM timeline_event_items WHERE timeline_item_id=?", itemId);
         sweepService.observeBatch(0, 1, 250);

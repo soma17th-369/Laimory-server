@@ -159,7 +159,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
 - **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item은 job 취소를 거쳐 재연결할 수 있다. 일일 스위퍼가
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job이 있는 key를 409로 거절, #495). 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
 - **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
@@ -322,9 +322,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. Android는 같은 로컬 사진이어도 presign을
   새로 요청하고 응답의 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거 filename을 재사용하지
   않는다. 이미 S3 업로드를 마친 **동일 pending addition**의 PATCH 재시도만 그 pending filename을
-  보존할 수 있다. 이때 같은 full object key의 `PENDING` delete job은 짧은 locking transaction에서
-  취소하고 job이 보존하던 Item을 재연결한다. 유효한 `PROCESSING`이면 S3 삭제와 경합하지 않게 409
-  `-1019`로 거절하며 같은 object key의 새 Item을 만들지 않는다.
+  보존할 수 있고, 그 사진이 같은 record에 살아 있으면 동일 입력 재시도로 재사용된다. 살아 있지 않은
+  사진의 full object key에 delete job이 **어떤 상태로든**(PENDING·PROCESSING·처리 창 경과) 있으면
+  잠금 없는 IN 조회 한 번으로 확인해 409 `-1019`로 거절한다 — job 취소·보존 Item 재연결·`FOR UPDATE`
+  경로는 없다(#495). 새 Android는 `-1019`를 받으면 사용자에게 알리지 않고 같은 로컬 사진을 새 presign·
+  새 filename으로 다시 올려 같은 요청을 1회 재전송한다(재전송 전 record 재조회로 이미 연결된 rawId는
+  제외). 삭제가 완료되어 job과 Item이 모두 사라진 뒤 도착한 과거 요청은 서버가 새 사진과 구별하지
+  않는다 — "사용자가 제거한 사진의 추가 요청을 재전송하지 않는다"는 클라이언트 계약이 담당한다.
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 

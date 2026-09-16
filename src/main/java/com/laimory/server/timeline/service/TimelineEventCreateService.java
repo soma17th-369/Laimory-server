@@ -45,7 +45,7 @@ public class TimelineEventCreateService {
      * 포함한 Event 표현을 반환한다.
      *
      * @throws BusinessException 해당 날짜 record 없음·비소유 404 {@code -404}(존재를 구분해 주지 않는다),
-     *                           사진 수 초과 400 {@code -1004}, 같은 PHOTO object 삭제 진행 중 409 {@code -1019}
+     *                           사진 수 초과 400 {@code -1004}, 같은 PHOTO object에 삭제 job 존재 409 {@code -1019}
      * @throws IllegalArgumentException 필수·길이·시간 범위·사진 입력 오류(400 {@code -400})
      */
     @Transactional

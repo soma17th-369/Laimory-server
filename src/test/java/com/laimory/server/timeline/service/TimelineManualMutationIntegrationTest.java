@@ -379,43 +379,24 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
-    void PENDING_delete_job은_취소되고_보존_Item이_재연결된다() {
+    void PENDING_delete_job이면_409이고_Event_행이_생기지_않는다() {
         Long preservedItemId = plantOrphanPhotoItemWithJob();
-
-        TimelineEventResponse response = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "재연결", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
-
-        assertThat(response.items())
-                .singleElement()
-                .satisfies(item -> assertThat(item.timelineItemId()).isEqualTo(preservedItemId));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?",
-                Long.class, preservedItemId)).isZero();
-        assertThat(timelineEventItemRepository.findByTimelineEventId(response.timelineEventId()))
-                .extracting(TimelineEventItem::getTimelineItemId)
-                .containsExactly(preservedItemId);
-    }
-
-    @Test
-    void PENDING_delete_job_PHOTO의_입력이_다르면_400이고_job_취소도_롤백된다() {
-        Long preservedItemId = plantOrphanPhotoItemWithJob();
-        UpdateTimelineEventPhotoRequest mismatched = new UpdateTimelineEventPhotoRequest(
-                RAW_ID, DATE.atTime(14, 5), null,
-                new UpdateTimelineEventPhotoPayloadRequest(
-                        FILENAME, "content://photo/changed", 37.5, 127.0));
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "재연결 거절", null,
-                        DATE.atTime(14, 0), null, null, List.of(mismatched))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("photo input does not match existing rawId");
+                new CreateTimelineEventRequest(TimelineEventType.REST, "재추가 시도", null,
+                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)))))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
+                    assertThat(exception.getErrorCode()).isEqualTo(-1019);
+                });
 
+        // 취소·재연결 없음(#495) — Event 행도 junction도 없고 job과 보존 Item은 그대로다.
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?",
                 Long.class, preservedItemId)).isEqualTo(1);
+        assertThat(timelineItemRepository.findById(preservedItemId)).isPresent();
     }
 
     @Test
@@ -429,7 +410,7 @@ class TimelineManualMutationIntegrationTest {
                 LocalDateTime.now(), preservedItemId);
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "재연결 시도", null,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "재추가 시도", null,
                         DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)))))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS);

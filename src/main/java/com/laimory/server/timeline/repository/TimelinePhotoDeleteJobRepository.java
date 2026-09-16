@@ -5,7 +5,6 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -66,10 +65,15 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     @Query("select count(j) from TimelinePhotoDeleteJob j where j.createdAt < :windowStart")
     long countCreatedBefore(@Param("windowStart") LocalDateTime windowStart);
 
-    @Query(value = "select * from timeline_photo_delete_jobs "
-            + "where object_key = :objectKey for update",
+    /**
+     * 수동 PHOTO 추가가 신규로 분류한 사진의 full object key로 job 존재를 한 번에 일반 조회한다. UNIQUE
+     * index의 point lookup이며 잠금 읽기가 아니라 부재 key의 gap을 잠그지 않는다. 상태는 보지 않는다 —
+     * 어떤 상태든 job이 있는 key는 취소·재연결 대상이 아니다.
+     */
+    @Query(value = "select object_key from timeline_photo_delete_jobs "
+            + "where object_key in (:objectKeys)",
             nativeQuery = true)
-    Optional<TimelinePhotoDeleteJob> findByObjectKeyForUpdate(@Param("objectKey") String objectKey);
+    List<String> findObjectKeysWithJob(@Param("objectKeys") Collection<String> objectKeys);
 
     @Modifying
     @Query("update TimelinePhotoDeleteJob j set j.status = :pending "

@@ -1,11 +1,7 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineEventItem;
-import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -16,7 +12,6 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -92,6 +87,18 @@ public class TimelinePhotoDeleteJobService {
         return Set.copyOf(timelinePhotoDeleteJobRepository.findItemIdsWithJob(timelineItemIds));
     }
 
+    /**
+     * 수동 PHOTO 추가가 신규로 분류한 사진의 full object key 중 삭제 job이 있는 key를 일반 조회한다.
+     * 상태와 무관하다 — job이 있는 key는 취소·재연결하지 않고 거절 대상이다. 잠금 읽기가 아니라 부재
+     * key의 gap을 잠그지 않는다.
+     */
+    public Set<String> findObjectKeysWithJob(Collection<String> objectKeys) {
+        if (objectKeys == null || objectKeys.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(timelinePhotoDeleteJobRepository.findObjectKeysWithJob(objectKeys));
+    }
+
     /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
     public long countExpired() {
         LocalDateTime windowStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)
@@ -99,7 +106,7 @@ public class TimelinePhotoDeleteJobService {
         return timelinePhotoDeleteJobRepository.countCreatedBefore(windowStart);
     }
 
-    /** S3 실패·검증 실패 job을 PATCH가 다시 취소할 수 있는 PENDING으로 되돌린다. */
+    /** S3 실패·검증 실패 job을 다음 일일 실행이 다시 claim하는 PENDING으로 되돌린다. */
     @Transactional
     public int markPendingForRetry(Collection<TimelinePhotoDeleteJob> jobs) {
         if (jobs == null || jobs.isEmpty()) {
@@ -113,42 +120,7 @@ public class TimelinePhotoDeleteJobService {
                 jobIds, TimelinePhotoDeleteJobStatus.PENDING, TimelinePhotoDeleteJobStatus.PROCESSING);
     }
 
-    /**
-     * 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 같은 object의 삭제 대기 job을 취소하고 보존 Item을
-     * 재사용한다.
-     * 오늘 claim된 PROCESSING job은 S3 삭제 중이므로 같은 object를 새 Item으로 만들지 않게 409로
-     * 거절한다. {@code updated_at}이 전날 이전인 PROCESSING은 crash가 남긴 stale 행이라 취소를 허용한다.
-     */
-    @Transactional
-    public Optional<Long> cancelPendingForRelink(String objectKey, String rawId) {
-        requireValidObjectKey(objectKey);
-        TimelinePhotoDeleteJob job = timelinePhotoDeleteJobRepository.findByObjectKeyForUpdate(objectKey)
-                .orElse(null);
-        if (job == null) {
-            return Optional.empty();
-        }
-
-        LocalDateTime todayStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)
-                .toLocalDate().atStartOfDay();
-        if (job.getStatus() == TimelinePhotoDeleteJobStatus.PROCESSING
-                && !job.getUpdatedAt().isBefore(todayStart)) {
-            throw new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
-        }
-
-        TimelineItem item = timelineItemService.findById(job.getTimelineItemId())
-                .orElseThrow(() -> new IllegalStateException("PHOTO delete job item not found"));
-        if (item.getItemType() != ItemType.PHOTO || !item.getRawId().equals(rawId)) {
-            throw new IllegalArgumentException("filename is already used by another timeline item");
-        }
-
-        int deleted = deleteByIds(List.of(job.getTimelinePhotoDeleteJobId()));
-        if (deleted != 1) {
-            throw new IllegalStateException("PHOTO delete job cancellation count mismatch");
-        }
-        return Optional.of(item.getTimelineItemId());
-    }
-
-    /** 완료되거나 재연결되어 취소된 작업을 ID로 제거한다. 빈 입력은 no-op이다. */
+    /** 완료되거나 worker 재검증으로 취소된 작업을 ID로 제거한다. 빈 입력은 no-op이다. */
     public int deleteByIds(Collection<Long> jobIds) {
         if (jobIds == null || jobIds.isEmpty()) {
             return 0;

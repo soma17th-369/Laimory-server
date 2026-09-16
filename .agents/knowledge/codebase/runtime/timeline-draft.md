@@ -198,9 +198,11 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   draft POST 소유).
 - 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
   응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 이미 업로드를 마친 **동일
-  pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있다. 서버는 full object key의
-  `PENDING` delete job을 취소하고 job이 보존하던 같은 rawId PHOTO Item을 재연결한다. 유효한
-  `PROCESSING` job이면 새 Item을 만들지 않고 409 `-1019`로 거절한다.
+  pending addition**의 PATCH 재시도만 그 pending filename을 보존할 수 있다. 서버는 같은 record에 살아
+  있지 않은 사진의 full object key에 delete job이 어떤 상태로든 있으면 잠금 없는 IN 조회 한 번으로
+  확인해 409 `-1019`로 거절한다 — job 취소·보존 Item 재연결은 없다(#495). 새 Android는 `-1019`를
+  받으면 사용자에게 알리지 않고 같은 로컬 사진을 새 presign·새 filename으로 다시 올려 1회 재전송한다.
+  삭제 완료 후(job·Item 모두 삭제)의 과거 요청은 서버가 구별하지 않으며 클라이언트 계약이 담당한다.
 
 ### Delete
 
