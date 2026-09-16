@@ -275,7 +275,7 @@ jobs:
           else
             IMG="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           fi
-          # prod는 prepare / replace / rollback / cleanup 단계를 사용한다.
+          # prod는 prepare / replace / retry / rollback / cleanup 단계를 사용한다.
           # dev/test는 deploy 한 단계로 기존 preflight·교체·정리를 수행한다.
           # \$는 EC2에서 평가된다. harness는 이 production heredoc 자체를 실행한다.
           read -r -d '' SCRIPT <<EOF || true
@@ -284,7 +284,7 @@ jobs:
           PRUNE_ON_EXIT=1
           case "\$DEPLOY_PHASE" in
             deploy|prepare|cleanup) ;;
-            replace|rollback) PRUNE_ON_EXIT=0 ;;
+            replace|retry|rollback) PRUNE_ON_EXIT=0 ;;
             *) echo "unknown remote deploy phase" >&2; exit 1 ;;
           esac
           TMP_ENV=""
@@ -322,6 +322,13 @@ jobs:
               docker rename laimory laimory-rollback
               CONTAINER_NAME=laimory-rollback
             fi
+          elif [ "\$DEPLOY_PHASE" = "retry" ]; then
+            # 같은 신버전을 재시도한다. 직전 컨테이너를 새 실패 컨테이너로 덮어쓰지 않는다.
+            CURRENT_ID=\$(docker container ls -aq --filter 'name=^/laimory$')
+            if [ -z "\$CURRENT_ID" ]; then
+              # 첫 교체가 env 갱신/stop에서 실패했다면 보관 컨테이너가 아직 실행 중일 수 있다.
+              CONTAINER_NAME=laimory-rollback
+            fi
           elif [ "\$DEPLOY_PHASE" = "rollback" ]; then
             PREVIOUS_ID=\$(docker container ls -aq --filter 'name=^/laimory-rollback$')
             [ -n "\$PREVIOUS_ID" ] || { echo "no previous container is available for automatic rollback" >&2; exit 1; }
@@ -342,7 +349,7 @@ jobs:
             [ "\$REQ_COUNT" = "1" ] || { echo "PREFLIGHT FAILED: .env \$REQ_KEY must appear exactly once (found \$REQ_COUNT)"; exit 1; }
             grep -qxF "\$REQ_LINE" "\$ENV_FILE" || { echo "PREFLIGHT FAILED: .env \$REQ_KEY has unexpected value"; exit 1; }
           }
-          if [ "\$DEPLOY_PHASE" != "replace" ] && [ "\$DEPLOY_PHASE" != "rollback" ]; then
+          if [ "\$DEPLOY_PHASE" = "deploy" ] || [ "\$DEPLOY_PHASE" = "prepare" ]; then
           # pre-flight 1 — secret presence: 앱이 fail-fast로 요구하는 .env 필수 키 검증 — 구 컨테이너를
           # 내리기 전에 실패시켜 "새 컨테이너 기동 불가 + 구 컨테이너 이미 중지" 다운타임을 막는다.
           # (JWT_SECRET은 HS256 최소 32자)
@@ -551,7 +558,7 @@ jobs:
             PRUNE_ON_EXIT=0
             exit 0
           fi
-          elif [ "\$DEPLOY_PHASE" = "replace" ]; then
+          elif [ "\$DEPLOY_PHASE" = "replace" ] || [ "\$DEPLOY_PHASE" = "retry" ]; then
             # prepare가 검증한 runtime mount만 재구성한다. 여기서는 image를 다시 받지 않는다.
             PUSH_ARGS=""
             if grep -qxF 'APP_PUSH_MODE=firebase' "\$ENV_FILE"; then
@@ -571,16 +578,16 @@ jobs:
           mv -f "\$TMP_ENV" "\$ENV_FILE"
           TMP_ENV=""
           # 실패한 최초 기동처럼 container가 없는 경우도 단독 재배포할 수 있다.
-          # daemon/stop/remove 오류는 숨기지 않는다. SIGKILL(137)이면 교체를 중단한다.
+          # daemon/stop/remove 오류는 숨기지 않는다. SIGKILL(137)이면 해당 시도를 중단한다.
           CONTAINER_ID=\$(docker container ls -aq --filter "name=^/\$CONTAINER_NAME\$")
           if [ -n "\$CONTAINER_ID" ]; then
             if [ "\$(docker inspect --format '{{.State.Running}}' "\$CONTAINER_NAME")" = "true" ]; then
               # Boot의 phase별 기본 30초 종료 대기에 HTTP/worker 종료 여유를 준다.
               docker stop --time 120 "\$CONTAINER_NAME" >/dev/null
               [ "\$(docker inspect --format '{{.State.ExitCode}}' "\$CONTAINER_NAME")" != "137" ] \
-                || { echo "container required SIGKILL; inspect before retrying" >&2; exit 1; }
+                || { echo "container required SIGKILL; stopping this attempt" >&2; exit 1; }
             fi
-            [ "\$DEPLOY_PHASE" = "replace" ] || docker rm laimory >/dev/null
+            [ "\$CONTAINER_NAME" = "laimory-rollback" ] || docker rm laimory >/dev/null
           fi
           if [ "\$DEPLOY_PHASE" = "rollback" ]; then
             docker rename laimory-rollback laimory
@@ -662,6 +669,30 @@ jobs:
               [ "$peer_state" = "healthy" ] || { echo "peer is not healthy" >&2; return 1; }
             done
           }
+          rollout_host() {
+            local phase=replace
+            if [ "$HOST_PREPARED" != "true" ]; then
+              ROLLOUT_FAILURE="prepare failed"
+              run_ssm prepare || return 1
+              HOST_PREPARED=true
+              trap cleanup_host EXIT
+            fi
+            ROLLOUT_FAILURE="peer health check failed"
+            require_healthy_peer || return 1
+            ROLLOUT_FAILURE="target deregistration failed"
+            aws elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            # ALB waiter는 15초 × 40회. draining 완료 전에 stop하지 않는다(현재 prod 설정 30초).
+            ROLLOUT_FAILURE="target drain failed or timed out"
+            aws elbv2 wait target-deregistered --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            [ "$REPLACEMENT_STARTED" != "true" ] || phase=retry
+            REPLACEMENT_STARTED=true
+            ROLLOUT_FAILURE="$phase failed"
+            run_ssm "$phase" || return 1
+            ROLLOUT_FAILURE="target registration failed"
+            aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
+            ROLLOUT_FAILURE="target did not become healthy"
+            aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1
+          }
           rollback_host() {
             require_healthy_peer || return 1
             # 등록 API가 성공했거나 결과가 불명확할 수 있으므로, 복구 전에도 drain을 거친다.
@@ -671,16 +702,26 @@ jobs:
             aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 || return 1
             aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1
           }
-          fail_rollout() {
-            echo "$HOST_LABEL: $1 - remaining hosts are left untouched" >&2
+          recover_host() {
+            echo "$HOST_LABEL: $ROLLOUT_FAILURE" >&2
             if [ "$REMOTE_TERMINAL" != "true" ]; then
-              echo "ROLLBACK SKIPPED: remote state is uncertain; inspect before retrying" >&2
-            elif rollback_host; then
-              echo "ROLLBACK SUCCEEDED: previous container is healthy; deployment remains failed" >&2
-            else
-              echo "ROLLBACK FAILED: inspect the host and ALB before manual recovery" >&2
+              echo "RECOVERY SKIPPED: remote state is uncertain; inspect before retrying" >&2
+            elif [ "$COMPLETED_HOSTS" -gt 0 ]; then
+              # 같은 실행에서 신버전이 healthy까지 검증됐으면 후속 host는 신버전으로 한 번 더 시도한다.
+              echo "RETRY: deploying the same new image once; successful hosts remain untouched"
+              if rollout_host; then
+                echo "RETRY SUCCEEDED: new container is healthy"
+                return 0
+              fi
+              echo "RETRY FAILED: $ROLLOUT_FAILURE; no rollback; inspect the host and ALB before manual recovery" >&2
+            elif [ "$REPLACEMENT_STARTED" = "true" ]; then
+              if rollback_host; then
+                echo "ROLLBACK SUCCEEDED: previous container is healthy; deployment remains failed" >&2
+              else
+                echo "ROLLBACK FAILED: inspect the host and ALB before manual recovery" >&2
+              fi
             fi
-            exit 1
+            return 1
           }
           if [ "$ENVIRONMENT" = "prod" ]; then
             # 지정된 TG가 실제 애플리케이션 포트와 readiness 계약을 사용하는지 확인한다.
@@ -702,27 +743,19 @@ jobs:
               || { echo "prod target group contains unexpected targets" >&2; exit 1; }
           fi
           HOST_INDEX=0
+          COMPLETED_HOSTS=0
           for IID in ${INSTANCE_IDS//,/ }; do
             HOST_INDEX=$((HOST_INDEX + 1))
             [ "$DEPLOY_TARGET" = "all" ] || [ "$DEPLOY_TARGET" = "host-$HOST_INDEX" ] || continue
             HOST_LABEL="host $HOST_INDEX/$HOST_COUNT"
             HOST_DEPLOYED=false
+            HOST_PREPARED=false
+            REPLACEMENT_STARTED=false
             echo "::group::deploy $ENVIRONMENT $HOST_LABEL"
             if [ "$ENVIRONMENT" = "prod" ]; then
-              run_ssm prepare || { echo "prepare failed - remaining hosts are left untouched" >&2; exit 1; }
-              trap cleanup_host EXIT
-              require_healthy_peer || exit 1
-              aws elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || { echo "target deregistration failed" >&2; exit 1; }
-              # ALB waiter는 15초 × 40회. draining 완료 전에 stop하지 않는다(현재 prod 설정 30초).
-              aws elbv2 wait target-deregistered --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || { echo "target drain failed or timed out" >&2; exit 1; }
-              run_ssm replace || fail_rollout "replace failed"
-              aws elbv2 register-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || fail_rollout "target registration failed"
-              aws elbv2 wait target-in-service --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$IID,Port=8080" >/dev/null 2>&1 \
-                || fail_rollout "target did not become healthy"
+              rollout_host || recover_host || exit 1
               HOST_DEPLOYED=true
+              COMPLETED_HOSTS=$((COMPLETED_HOSTS + 1))
               cleanup_host
             else
               run_ssm deploy || { echo "deploy failed - remaining hosts are left untouched" >&2; exit 1; }

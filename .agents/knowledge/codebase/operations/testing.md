@@ -54,6 +54,9 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   상태 불명확 시 추가 원격 명령 금지를 검사한다. prod 자동 rollback은 실제 runner/remote를 실행하고,
   보관 container의 image·runtime env·mount 및 APP_COMMIT_SHA 복원, 원래 workflow 실패 유지,
   다음 host 미진행, 복구 자체 실패·SSM 상태 불명확·후보 부재·후보 잔존을 검증한다.
+  A 성공 후 B 실패는 준비/교체/ALB 단계의 일시 실패 후 같은 신버전으로 1회 재시도하여 최종 image·SHA·
+  ALB healthy가 일치하고 workflow가 성공하는지 검사한다. 재시도 지속 실패·SSM 상태 불명확 시 추가
+  retry/rollback 금지, A와 후보 보존, 수동 단독 host-2의 기존 rollback 정책도 검증한다.
   실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
   검증되지 않는다.
 - 관리자 SSM target 선택은

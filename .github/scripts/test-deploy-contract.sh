@@ -1334,7 +1334,7 @@ if args[:2] == ['ssm', 'send-command']:
     script = params['commands'][0]
     phase = script.splitlines()[0].split('=', 1)[1]
     event(phase, host)
-    if failure == f'send-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-send'):
+    if failure == f'send-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-send') or (phase == 'retry' and failure == 'retry-send'):
         sys.exit(1)
     directory = root / f'host-{host}'
     env = dict(os.environ, PATH=os.environ['REMOTE_STUB']+':'+os.environ['PATH'],
@@ -1347,7 +1347,9 @@ if args[:2] == ['ssm', 'send-command']:
                 'cleanup': ('FAKE_PRUNE_EXIT','7')}
     for label, (key, value) in injected.items():
         expected_phase = 'replace' if label in ('readiness','stop','killed','upsert') else label
-        if phase == expected_phase and failure == f'{label}-{host}':
+        failure_key = f'remote-{label}-{host}'
+        if phase == expected_phase and failure == f'{label}-{host}' and failure_key not in state.setdefault('failed', []):
+            state['failed'].append(failure_key)
             env[key] = value
     if failure.startswith('rollback-') and host == '1':
         if phase == 'replace':
@@ -1361,12 +1363,28 @@ if args[:2] == ['ssm', 'send-command']:
             env['FAKE_READINESS_EXIT'] = '22'
         if phase == 'rollback' and failure == 'rollback-stop':
             env['FAKE_STOP_EXIT'] = '7'
+    if failure.startswith('retry-') and host == '2':
+        if phase == 'prepare' and failure == 'retry-prepare':
+            env['FAKE_PULL_EXIT'] = '7'
+        if phase == 'replace':
+            if failure in ('retry-stop', 'retry-killed'):
+                env['FAKE_READINESS_EXIT'] = '22'
+            else:
+                env['FAKE_RUN_EXIT'] = '7'
+        retry_failures = {'retry-run': ('FAKE_RUN_EXIT', '7'),
+                          'retry-readiness': ('FAKE_READINESS_EXIT', '22'),
+                          'retry-stop': ('FAKE_STOP_EXIT', '7'),
+                          'retry-killed': ('FAKE_CONTAINER_EXIT', '137'),
+                          'retry-upsert': ('FAKE_MV_FAIL', '1')}
+        if phase == 'retry' and failure in retry_failures:
+            key, value = retry_failures[failure]
+            env[key] = value
     result = subprocess.run(['/bin/bash', '-c', script], env=env, text=True, capture_output=True)
     status = 'Success' if result.returncode == 0 else 'Failed'
-    if failure == f'uncertain-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-uncertain'):
+    if failure == f'uncertain-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-uncertain') or (phase == 'retry' and failure == 'retry-uncertain'):
         status = 'TimedOut'
     cmd_id = f'command-{len(state["commands"])+1}'
-    state['commands'][cmd_id] = {'phase': phase, 'Status': status, 'StandardOutputContent': result.stdout,
+    state['commands'][cmd_id] = {'host': host, 'phase': phase, 'Status': status, 'StandardOutputContent': result.stdout,
                                   'StandardErrorContent': result.stderr}
     save()
     print(cmd_id)
@@ -1384,7 +1402,8 @@ elif args[:2] == ['elbv2', 'describe-target-health']:
         host = target_host()
         event('peer', host)
         prior_replace = any('replace' in c.get('phase', '') for c in state['commands'].values())
-        print('unhealthy' if failure == f'peer-{host}' or (failure == 'rollback-peer' and prior_replace) else state['health'][host])
+        retrying_second = any(c['host'] == '2' and c['phase'] == 'replace' for c in state['commands'].values())
+        print('unhealthy' if failure == f'peer-{host}' or (failure == 'rollback-peer' and prior_replace) or (failure == 'retry-peer' and retrying_second) else state['health'][host])
     else:
         targets = [{'Target':{'Id':iid, 'Port':8080}, 'TargetHealth':{'State':state['health'][str(i+1)]}}
                    for i, iid in enumerate(ids) if state['health'][str(i+1)] != 'unused']
@@ -1406,6 +1425,9 @@ elif args[0] == 'elbv2':
         sys.exit(1)
     if failure == 'rollback-alb' and action == 'register':
         sys.exit(1)
+    retrying_second = any(c['host'] == '2' and c['phase'] == 'replace' for c in state['commands'].values())
+    if host == '2' and retrying_second and failure == f'retry-{action}':
+        sys.exit(1)
     containers = json.loads((root / f'host-{host}' / 'containers.json').read_text())
     if action in ('register', 'healthy') and containers.get('laimory', {}).get('id') == 'new-container':
         # 기존 컨테이너가 없는 단독 복구 외에는 ALB 복귀까지 보관 후보를 유지해야 한다.
@@ -1420,7 +1442,7 @@ PYEOF
 chmod +x "$RUNNER_STUB/aws"
 
 run_rolling() {
-  # $1 failure injection, $2 optional manual target; host-2 starts absent for recovery.
+  # $1 failure injection, $2 optional manual target, $3=present keeps host-2's old container.
   ROLL_DIR=$(mktemp -d "$WORK/rolling.XXXXXX")
   : > "$ROLL_DIR/events"
   for host in 1 2; do
@@ -1442,7 +1464,7 @@ previous = dict(id='previous-container', image='sha256:'+'b'*64, running=True,
 PYEOF
     touch "$CASE_DIR/docker.log" "$CASE_DIR/chown.log"
   done
-  if [ "${2:-all}" = "host-2" ]; then
+  if [ "${2:-all}" = "host-2" ] && [ "${3:-absent}" = "absent" ]; then
     echo '{}' > "$ROLL_DIR/host-2/containers.json"
     echo '{"health":{"1":"healthy","2":"unused"},"commands":{}}' > "$ROLL_DIR/state.json"
   else
@@ -1556,13 +1578,54 @@ for failure in prepare-1 peer-2 deregister-1 drain-1 replace-1 readiness-1 stop-
 done
 ok "T13: pre-stop failures preserve the app; replace/readiness/ALB failures restore the previous runtime once"
 
-run_rolling replace-2
-[ "$ROLL_RC" != "0" ] || fail "second host failure must fail workflow"
-grep -qx 'healthy 1' "$ROLL_DIR/events" || fail "host 1 must be restored before starting host 2"
-[ "$(grep -c '^docker stop' "$ROLL_DIR/host-1/docker.log")" = "1" ] || fail "host 1 must not be redeployed after host 2 failure"
-CASE_DIR="$ROLL_DIR/host-2"; assert_prune_once "host 2 failure"
-assert_previous_restored 2
-ok "T14: host 2 rolls back while the successfully deployed host 1 keeps serving"
+assert_first_host_kept() {
+  [ "$(grep -c '^docker stop' "$ROLL_DIR/host-1/docker.log")" = "1" ] || fail "host 1 must not be redeployed after host 2 failure"
+  [ "$(grep -c '^replace 1$' "$ROLL_DIR/events")" = "1" ] || fail "host 1 must be replaced only once"
+  python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF' || fail "successful host 1 must keep the new container"
+import json, sys
+items = json.load(open(sys.argv[1]))
+assert list(items) == ['laimory']
+assert items['laimory']['id'] == 'new-container' and items['laimory']['running']
+PYEOF
+}
+
+for failure in prepare-2 deregister-2 drain-2 replace-2 readiness-2 stop-2 killed-2 upsert-2 register-2 healthy-2; do
+  run_rolling "$failure"
+  [ "$ROLL_RC" = "0" ] || fail "$failure retry should complete the rollout: $(cat "$ROLL_DIR/out.log")"
+  assert_first_host_kept
+  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must retry the new image without rollback"
+  grep -q 'RETRY SUCCEEDED' "$ROLL_DIR/out.log" || fail "$failure must report successful retry"
+  CASE_DIR="$ROLL_DIR/host-2"; CHOWN_LOG="$CASE_DIR/chown.log"
+  assert_sha_line "$failure retry"
+  case "$failure" in
+    prepare-*) [ "$(grep -c '^prepare 2$' "$ROLL_DIR/events")" = "2" ] || fail "failed preparation must be retried once" ;;
+    *) assert_prune_once "$failure retry" ;;
+  esac
+  case "$failure" in
+    prepare-*|deregister-*|drain-*) ! grep -q '^retry 2$' "$ROLL_DIR/events" || fail "first replacement must still preserve the old container" ;;
+    *) [ "$(grep -c '^retry 2$' "$ROLL_DIR/events")" = "1" ] || fail "replacement must retry exactly once" ;;
+  esac
+  [ "$(grep -c '^docker pull' "$CASE_DIR/docker.log")" = "$([ "$failure" = prepare-2 ] && echo 2 || echo 1)" ] \
+    || fail "$failure must reuse the prepared image unless preparation failed"
+  python3 - "$ROLL_DIR" <<'PYEOF' || fail "retry must restore both hosts to the same new image and healthy state"
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+first = json.loads((root/'host-1/containers.json').read_text())
+second = json.loads((root/'host-2/containers.json').read_text())
+assert list(second) == ['laimory']
+assert second['laimory']['id'] == 'new-container' and second['laimory']['running']
+assert second['laimory']['image'] == first['laimory']['image']
+assert json.loads((root/'state.json').read_text())['health'] == {'1':'healthy', '2':'healthy'}
+events = (root/'events').read_text().splitlines()
+assert events.index('healthy 1') < events.index('prepare 2')
+if 'retry 2' in events:
+    n = events.index('retry 2')
+    assert events[n-3:n] == ['peer 1', 'deregister 2', 'drain 2']
+    assert events[n+1:] == ['register 2', 'healthy 2', 'cleanup 2']
+PYEOF
+done
+ok "T14: after host 1 succeeds, host 2 retries the same new image once and can complete the rollout"
 
 for failure in send-replace-1 uncertain-replace-1; do
   run_rolling "$failure"
@@ -1639,5 +1702,45 @@ assert items['laimory']['running']
 assert items['laimory-rollback']['id'] == 'stale-candidate'
 PYEOF
 ok "T19: a retained rollback candidate blocks replacement without losing the running app or candidate"
+
+for failure in retry-prepare retry-run retry-readiness retry-stop retry-killed retry-upsert retry-send retry-uncertain retry-peer retry-deregister retry-drain retry-register retry-healthy; do
+  run_rolling "$failure"
+  [ "$ROLL_RC" != "0" ] || fail "$failure must fail the rollout after one retry"
+  assert_first_host_kept
+  grep -q 'RETRY FAILED:.*no rollback' "$ROLL_DIR/out.log" || fail "$failure must report retry failure without rollback"
+  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must never roll back after host 1 succeeds"
+  [ "$(grep -c '^retry 2$' "$ROLL_DIR/events" || true)" -le 1 ] || fail "$failure must not loop retries"
+  case "$failure" in
+    retry-send|retry-uncertain)
+      ! grep -q '^cleanup 2$' "$ROLL_DIR/events" || fail "$failure must not clean up uncertain retry work" ;;
+    retry-prepare)
+      [ "$(grep -c '^prepare 2$' "$ROLL_DIR/events")" = "2" ] || fail "preparation must stop after one retry"
+      CASE_DIR="$ROLL_DIR/host-2"; assert_env_untouched "$failure"; assert_no_stop_no_run "$failure" ;;
+  esac
+  python3 - "$ROLL_DIR/host-2/containers.json" <<'PYEOF' || fail "$failure must retain the previous container without restarting it"
+import json, sys
+items = json.load(open(sys.argv[1]))
+assert any(item['id'] == 'previous-container' for item in items.values())
+PYEOF
+  ! grep -q '^docker start ' "$ROLL_DIR/host-2/docker.log" || fail "$failure must not restart the previous version"
+done
+ok "T20: a failed second-host retry stops once, keeps host 1 and the backup, and never rolls back"
+
+for failure in send-prepare-2 uncertain-prepare-2 send-replace-2 uncertain-replace-2; do
+  run_rolling "$failure"
+  [ "$ROLL_RC" != "0" ] || fail "$failure must fail without retrying uncertain work"
+  assert_first_host_kept
+  ! grep -qE '^(retry|rollback|cleanup) 2$' "$ROLL_DIR/events" || fail "$failure must not send more remote work"
+  ! grep -q '^RETRY:' "$ROLL_DIR/out.log" || fail "$failure must not start a retry"
+  grep -q 'RECOVERY SKIPPED: remote state is uncertain' "$ROLL_DIR/out.log" || fail "$failure must explain skipped recovery"
+done
+ok "T21: uncertain preparation/replacement on host 2 does not trigger retry or rollback"
+
+run_rolling replace-2 host-2 present
+[ "$ROLL_RC" != "0" ] || fail "manual single-host rollback must retain failure status"
+[ ! -s "$ROLL_DIR/host-1/docker.log" ] || fail "manual host-2 must leave host 1 untouched"
+! grep -q '^retry ' "$ROLL_DIR/events" || fail "manual host-2 must not assume a new image succeeded earlier in this run"
+assert_previous_restored 2
+ok "T22: manual host-2 keeps rollback policy without a successful first host in the same rollout"
 
 echo "PASS: deploy contract harness ($PASS groups)"

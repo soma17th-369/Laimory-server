@@ -64,21 +64,29 @@ SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회)
    모든 준비 검사 후 첫 stop 직전에만
    `APP_COMMIT_SHA`를 temp+rename으로 원자 upsert한다. `.env`의 나머지 값·0600·owner를 보존한다.
 9. 실행 중인 container는 `docker stop --time 120`으로 종료한다. Docker 오류나 SIGKILL 종료 코드 137은
-   무시하지 않으며 remove/run을 이어가지 않는다. 이미 종료됐거나 생성에 실패해 없는 container는
+   무시하지 않으며 해당 시도에서 remove/run을 이어가지 않는다. 이미 종료됐거나 생성에 실패해 없는 container는
    단독 재배포로 복구할 수 있다. prod는 이전 container를 남기고 dev/test는 제거한다.
    `--pull=never`, `--env-file`로 새 container를 실행한다.
 10. Flyway 시작 migration과 JPA 검증을 포함해 `/readyz`와 `/api/v1/intro`를 확인한다. prod는 이어서
-    ALB에 재등록하고 healthy까지 기다린다. prod replace가 확정 실패하거나 ALB 복귀에 실패하면 해당 host만
-    이전 container로 한 번 자동 복구한다. peer healthy → deregister/drain → rollback → register/healthy 순서다.
+    ALB에 재등록하고 healthy까지 기다린다. 같은 실행에서 먼저 성공한 host가 없으면 replace의 확정 실패나
+    ALB 복귀 실패 시 해당 host만 이전 container로 한 번 rollback한다.
+    peer healthy → deregister/drain → rollback → register/healthy 순서다.
     rollback은 실패한 새 container를 정상 종료·제거하고 이전 container를 원래 이름으로 복원·시작하며,
     실제 이전 runtime의 SHA로 `.env`의 `APP_COMMIT_SHA`만 원자 복원한다. 동일 readiness/intro 검사를 거친다.
-    복구 성공도 원래 workflow 실패를 유지하며 다음 host를 교체하지 않는다.
+    rollback 성공도 원래 workflow 실패를 유지하며 다음 host를 교체하지 않는다.
+    A가 ALB healthy까지 성공한 뒤 B에서 확정 실패하면 B만 같은 신버전으로 한 번 재시도한다.
+    준비 실패는 prepare부터 반복하고, 준비 완료 뒤에는 image를 다시 pull하지 않는다. 매 시도에서
+    peer healthy와 deregister/drain을 확인한다. 이미 교체를 시작했으면 retry phase가 실패 container를
+    제거·재생성하며, stop 이전 실패로 보관 container만 남았으면 그것을 정상 종료한 뒤 새 앱을 생성한다.
+    기존 보관 후보는 덮어쓰지 않는다. 재시도 후 앱·ALB healthy까지 성공하면 workflow도 성공한다.
+    재시도 실패는 추가 retry나 구버전 rollback 없이 종료하고 정상 A와 보관 후보를 유지한다.
 11. 임시 `.env` 제거와 원래 종료 상태 보존은 각 원격 script의 EXIT에서 수행한다. prod image prune은
-    준비 실패 시 prepare EXIT에서, 준비 성공 뒤에는 해당 host 작업 종료 시 별도 cleanup SSM에서 1회 수행한다.
-    peer/drain 실패로 교체하지 못한 경우도 정리한다. replace/rollback EXIT에서는 image를 prune하지 않는다.
+    각 준비 실패의 prepare EXIT에서, 준비 성공 뒤에는 해당 host의 복구 판단까지 끝난 후 별도 cleanup SSM에서
+    1회 수행한다. 준비 실패 후 재준비한 host는 prepare 실패 정리와 최종 cleanup이 각각 있을 수 있다.
+    peer/drain 실패로 교체하지 못한 경우도 정리한다. replace/retry/rollback EXIT에서는 image를 prune하지 않는다.
     신버전 ALB healthy가 성공한 경우에만 cleanup이 보관 container를 삭제한다. 복구 실패 시 후보를 보존한다.
     dev/test는 deploy EXIT에서 1회 prune한다. prune 실패는 배포 성공·실패를 바꾸지 않는다.
-12. prepare/replace/rollback/dev·test deploy의 원격 실행이 종료됐는지 불명확하면 추가 rollback/cleanup/배포를 보내지 않는다.
+12. prepare/replace/retry/rollback/dev·test deploy의 원격 실행이 종료됐는지 불명확하면 추가 retry/rollback/cleanup/배포를 보내지 않는다.
     SSM send 오류·취소·timeout 때는 command와 host 상태를 수동 확인한다. GitHub polling 종료가 EC2의
     실행 취소를 뜻하지 않는다. 별도 cleanup 단계는 예외다. 앱 교체와 ALB 복귀가 성공했다면 cleanup 실패나
     종료 여부 미확인은 경고만 남기고 다음 host로 진행하며, 기존 배포 성공·실패 결과를 유지한다.
@@ -113,7 +121,7 @@ exact-one으로 검증만 하며, `APP_COMMIT_SHA`가 workflow가 `.env`에 쓰�
 host `.env`는 container 생성 시 `docker run --env-file`로 읽힌다. 값을 바꾼 뒤 `docker restart`만 하면
 기존 container environment가 유지되므로 새 값이 반영되지 않는다. runtime flag 활성화·롤백은 deploy
 workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재생성이 필요하다.
-prod 자동 복구는 예외로 배포 직전 container 자체를 재시작하므로 당시의 environment와 mount를 유지한다.
+prod 자동 rollback은 예외로 배포 직전 container 자체를 재시작하므로 당시의 environment와 mount를 유지한다.
 host `.env`에서는 `APP_COMMIT_SHA`만 복구하며, 수동으로 바꾼 다른 설정이나 외부 credential 파일을 되돌리지는 않는다.
 
 ### Preflight
@@ -250,7 +258,8 @@ image 재배포다. 새 workflow는 dev/prod key 부재를 거절하므로 제�
 - `/status`는 DB connection probe지만 deploy gate가 아니다. readiness가 Kakao·S3·AI 전체의 정상 동작을
   보장하는 것은 아니다.
 - Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
-- prod 배포 중 health failure는 해당 host의 보관 container로 자동 복구를 한 번 시도한다. dev/test와
+- prod 배포 중 health failure는 같은 실행에서 앞선 host의 신버전 배포 성공 여부에 따라 처리한다.
+  앞선 성공이 없으면 보관 container로 rollback, 있으면 같은 신버전으로 한 번 재시도한다. dev/test와
   배포 완료 후 장애는 수동 복구한다. 성공한 배포의 이전 image는 cleanup이 prune할 수 있으므로 이후 수동
   rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해 재배포한다.
 
@@ -324,9 +333,12 @@ SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ec
 
 수동 prod 배포의 `deploy_target`은 `all`(기본값), `host-1`, `host-2`이며 Secret의 instance 목록 순서로
 해석한다. 전체 두 host 구성을 검증한 뒤 선택한 host만 배포하고, 다른 host의 healthy 확인은 유지한다.
-A 성공 후 B 실패 시 B는 배포 직전 container로 자동 복구를 한 번 시도하고 A를 유지한다. 이후 원인을 해결하고
-`host-2`에 **A와 같은 신버전 SHA/digest**를 재배포하여 버전을 맞춘다. A에는 교체 명령을 보내지 않는다.
-자동 복구의 후보가 없거나 복구 자체가 실패하면 host/SSM/ALB와 보관 container를 확인해 수동 복구한다.
+전체 배포에서 A 성공 후 B 실패 시 B는 **같은 신버전**으로 자동 재시도를 한 번 수행하고 A를 유지한다.
+재시도 성공은 전체 배포 성공이다. 재시도 실패는 B를 구버전으로 rollback하지 않고 workflow를 실패로 끝낸다.
+원인을 해결한 뒤 `host-2`에 **A와 같은 신버전 SHA/digest**를 수동 재배포한다. A에는 교체 명령을 보내지 않는다.
+수동 단독 배포는 같은 실행에서 먼저 성공한 host가 없으므로 첫 host와 같은 rollback 정책이다.
+host 번호가 2이거나 peer가 healthy라는 사실만으로 그 peer의 신버전 배포 성공을 추정하지 않는다.
+자동 rollback 후보 부재나 rollback/retry 자체 실패 시 host/SSM/ALB와 보관 container를 확인해 수동 복구한다.
 남아 있는 `laimory-rollback`은 다음 prepare를 막는다. 상태 확인 없이 삭제하지 않는다.
 신버전 자체 문제로 이전 image를 선택한다면 ECR 사용 가능성과 적용된 DB
 schema의 구 앱 호환성을 먼저 확인한다. 비정상 host부터 복구하고 필요한 나머지 host를 순차 rollback한다.
@@ -342,9 +354,10 @@ application deploy run이 0건인지 확인한다.
 - preflight와 health gate를 기존 container stop보다 앞뒤 어느 위치에서 수행하는지 정확히 유지한다.
   `APP_COMMIT_SHA` 원자 upsert는 모든 pre-stop 검사·pull 성공 뒤, 첫 stop 직전에만 수행한다.
 - 장기 실행 `docker run`에 `-e`/`--env`를 추가하지 않는다 — runtime env는 host `.env`가 SSOT다.
-  일회성 preflight `docker run --rm`은 이 제한 대상이 아니다. 자동 복구는 기존 container runtime을 보존한다.
-- 준비 성공과 replace 종료 사이에는 image를 보존한다. image prune은 종료가 확인된 host 배포 작업당
-  1회 시도하고 원래 배포 status를 바꾸지 않는다. prepare/replace/rollback의 원격 상태 불명확 시 자동 정리를
+  일회성 preflight `docker run --rm`은 이 제한 대상이 아니다. 자동 rollback은 기존 container runtime을 보존한다.
+- 준비 성공과 replace/retry/rollback 종료 사이에는 image를 보존한다. 준비 실패 시마다 prune하고, 준비 성공 뒤에는
+  host 복구 판단이 끝난 후 1회 cleanup한다. prune은 배포 status를 바꾸지 않는다.
+  prepare/replace/retry/rollback의 원격 상태 불명확 시 자동 정리를
   추가하지 않는다. 별도 cleanup의 실패·상태 미확인은 경고로 처리하며, 그 전에 배포가 성공했다면 다음
   host로 진행한다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
@@ -357,7 +370,7 @@ application deploy run이 0건인지 확인한다.
   Variable로 되돌리지 않는다 — 두 deploy harness가 `vars.` 회귀를 검사한다.
 - 배포 환경 판단은 Resolve step 한 곳에만 둔다. 다른 step이 branch·event를 다시 보고 환경을
   정하지 않는다 — harness가 이 단일 지점 계약을 검사한다.
-- host가 여러 대인 환경은 순차 배포하고, 실패 시 남은 host로 진행하지 않는다.
+- host가 여러 대인 환경은 순차 배포한다. 첫 host의 실패 또는 후속 host의 1회 재시도 실패 시 남은 host로 진행하지 않는다.
 - application deploy trigger는 Docker image와 remote deploy 계약에 영향을 주는 path로만 제한한다.
 - monitoring alert workflow는 관련 path로만 trigger하고 credential을 host 밖으로 전달하지 않는다.
 - 저장소 변경만으로 live AWS나 host가 바뀐다고 설명하지 않는다.
@@ -368,7 +381,7 @@ application deploy run이 0건인지 확인한다.
 - prod 롤링은 한 WAS가 전체 부하를 감당한다는 전제다. 배포 중 다른 WAS의 독립 장애까지 보장하지 않는다.
 - 단일 host dev/test는 무중단 구성이 아니며 automatic rollback도 없다. 전체 외부 의존성 readiness check는 없다.
 - prod 자동 복구는 배포 중 실패만 처리한다. 완료 후 비즈니스 오류, 보관 후보 부재, peer 장애,
-  SSM 상태 불명확, DB 비호환 또는 복구 자체 실패에서는 자동으로 정상 복귀함을 보장하지 않는다.
+  SSM 상태 불명확, DB 비호환 또는 rollback/retry 자체 실패에서는 자동으로 정상 복귀함을 보장하지 않는다.
 - HTTP drain은 background 작업의 완료/재시도 계약을 대신하지 않는다.
 
 ## Update When
