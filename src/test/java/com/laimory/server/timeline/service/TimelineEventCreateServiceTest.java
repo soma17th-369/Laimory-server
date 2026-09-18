@@ -195,14 +195,14 @@ class TimelineEventCreateServiceTest {
 
     @Test
     void 유효_사진은_저장된_Event_ID로_resolve와_link를_순서대로_호출하고_응답_items를_정렬해_조립한다() {
-        DailyRecord record = stubOwnedRecord(DailyRecordStatus.DRAFT);
+        stubOwnedRecord(DailyRecordStatus.DRAFT);
         stubSaveAssignsId();
         List<UpdateTimelineEventPhotoRequest> requestPhotos = List.of(photoRequest());
         List<TimelineEventPhotoAddService.PhotoToAdd> validated = List.of(validatedPhoto());
         TimelineEventPhotoAddService.PhotoChanges changes =
-                new TimelineEventPhotoAddService.PhotoChanges(List.of(31L), validated);
+                new TimelineEventPhotoAddService.PhotoChanges(validated);
         when(timelineEventPhotoAddService.requireValidPhotos(requestPhotos)).thenReturn(validated);
-        when(timelineEventPhotoAddService.resolve(eq(record), eq(EVENT_ID), eq(validated))).thenReturn(changes);
+        when(timelineEventPhotoAddService.resolve(eq(EVENT_ID), eq(validated))).thenReturn(changes);
         when(timelineEventPhotoAddService.link(SUBJECT_ID, EVENT_ID, changes)).thenReturn(List.of(31L, 21L));
         // 조회 경로와 같은 정렬(startAt null 먼저·ID 오름차순)을 검증하기 위해 역순·null startAt을 섞는다.
         when(timelineItemService.findByIds(List.of(31L, 21L)))
@@ -213,7 +213,7 @@ class TimelineEventCreateServiceTest {
 
         InOrder inOrder = inOrder(timelineEventService, timelineEventPhotoAddService);
         inOrder.verify(timelineEventService).save(any());
-        inOrder.verify(timelineEventPhotoAddService).resolve(eq(record), eq(EVENT_ID), eq(validated));
+        inOrder.verify(timelineEventPhotoAddService).resolve(eq(EVENT_ID), eq(validated));
         inOrder.verify(timelineEventPhotoAddService).link(SUBJECT_ID, EVENT_ID, changes);
         assertThat(response.items())
                 .extracting(TimelineItemResponse::timelineItemId)
@@ -230,7 +230,7 @@ class TimelineEventCreateServiceTest {
                 request(TimelineEventType.REST, "제목", null, START, null, null));
 
         assertThat(response.items()).isEmpty();
-        verify(timelineEventPhotoAddService, never()).resolve(any(), any(), anyList());
+        verify(timelineEventPhotoAddService, never()).resolve(any(), anyList());
         verify(timelineEventPhotoAddService, never()).link(any(), any(), any());
         verifyNoInteractions(timelineItemService);
     }

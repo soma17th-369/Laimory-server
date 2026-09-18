@@ -1,6 +1,5 @@
 package com.laimory.server.timeline.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
@@ -8,8 +7,6 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
-import com.laimory.server.timeline.entity.DailyRecord;
-import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -17,13 +14,9 @@ import com.laimory.server.timeline.photo.PhotoFilenames;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -48,7 +41,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 class TimelineEventPhotoAddService {
 
-    private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
     private final PhotoUrlService photoUrlService;
@@ -56,13 +48,11 @@ class TimelineEventPhotoAddService {
     private final int maxPhotoCount;
 
     TimelineEventPhotoAddService(
-            TimelineEventService timelineEventService,
             TimelineEventItemService timelineEventItemService,
             TimelineItemService timelineItemService,
             PhotoUrlService photoUrlService,
             ObjectMapper objectMapper,
             @Value("${photo.upload.max-count}") int maxPhotoCount) {
-        this.timelineEventService = timelineEventService;
         this.timelineEventItemService = timelineEventItemService;
         this.timelineItemService = timelineItemService;
         this.photoUrlService = photoUrlService;
@@ -82,13 +72,10 @@ class TimelineEventPhotoAddService {
     ) {
     }
 
-    /** {@link #resolve} 결과 — 재사용할 기존 Item ID와 새로 만들 사진. */
-    record PhotoChanges(
-            List<Long> existingItemIdsToLink,
-            List<PhotoToAdd> newPhotos
-    ) {
+    /** {@link #resolve} 결과 — 새로 만들 사진. 대상 Event에 같은 rawId가 이미 연결된 사진은 빠진다(no-op). */
+    record PhotoChanges(List<PhotoToAdd> newPhotos) {
         static PhotoChanges empty() {
-            return new PhotoChanges(List.of(), List.of());
+            return new PhotoChanges(List.of());
         }
     }
 
@@ -142,82 +129,46 @@ class TimelineEventPhotoAddService {
     }
 
     /**
-     * 같은 DailyRecord의 rawId 후보를 new/reuse/no-op으로 분류한다. 재사용할 PHOTO의 저장된 시간과
-     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 후보가 없는 사진은 신규다 —
-     * filename은 presign마다 새로 발급되므로 삭제 job과의 대조는 하지 않는다. 분류와 모든 DB-dependent
-     * 검증을 entity mutation보다 먼저 끝내 validation 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
+     * 대상 Event에 이미 연결된 Item의 rawId와 대조해 no-op/new로 분류한다. 같은 rawId가 있으면 비교 없이
+     * 건너뛴다 — 이 분기에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다. Android는 사진 선택마다
+     * 새 rawId·새 filename을 발급하므로 record의 다른 Event에 있는 사진을 같은 rawId로 다시 보내는 경로가 없고,
+     * 서버도 record 전체를 조회하지 않는다(#502). 분류와 DB-dependent 검증을 entity mutation보다 먼저 끝내
+     * 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
      */
     @Transactional(propagation = Propagation.MANDATORY)
-    PhotoChanges resolve(DailyRecord record, Long targetEventId, List<PhotoToAdd> requestedPhotos) {
+    PhotoChanges resolve(Long targetEventId, List<PhotoToAdd> requestedPhotos) {
         if (requestedPhotos.isEmpty()) {
             return PhotoChanges.empty();
         }
 
-        List<Long> recordEventIds = timelineEventService.findByDailyRecordId(record.getDailyRecordId()).stream()
-                .map(TimelineEvent::getTimelineEventId)
-                .toList();
-        List<TimelineEventItem> recordLinks = timelineEventItemService.findByTimelineEventIds(recordEventIds);
-        List<Long> recordItemIds = recordLinks.stream()
+        List<Long> targetItemIds = timelineEventItemService.findByTimelineEventId(targetEventId).stream()
                 .map(TimelineEventItem::getTimelineItemId)
-                .distinct()
                 .toList();
         Set<String> requestedRawIds = requestedPhotos.stream()
                 .map(PhotoToAdd::rawId)
                 .collect(Collectors.toSet());
-        List<TimelineItem> matchingItems = timelineItemService.findByIdsAndRawIds(recordItemIds, requestedRawIds);
+        Set<String> linkedRawIds = timelineItemService.findSavedRawIds(targetItemIds, requestedRawIds);
 
-        Map<String, List<TimelineItem>> itemsByRawId = matchingItems.stream()
-                .collect(Collectors.groupingBy(TimelineItem::getRawId, HashMap::new, Collectors.toList()));
-        Set<Long> targetItemIds = recordLinks.stream()
-                .filter(link -> targetEventId.equals(link.getTimelineEventId()))
-                .map(TimelineEventItem::getTimelineItemId)
-                .collect(Collectors.toSet());
-
-        List<Long> existingItemIdsToLink = new ArrayList<>();
-        List<PhotoToAdd> newPhotos = new ArrayList<>();
-        for (PhotoToAdd requested : requestedPhotos) {
-            List<TimelineItem> candidates = itemsByRawId.getOrDefault(requested.rawId(), List.of());
-            if (candidates.stream().anyMatch(item -> item.getItemType() != ItemType.PHOTO)) {
-                throw new IllegalArgumentException("rawId is already used by a non-PHOTO item");
-            }
-            if (candidates.isEmpty()) {
-                newPhotos.add(requested);
-                continue;
-            }
-
-            TimelineItem reusable = candidates.stream()
-                    .filter(item -> targetItemIds.contains(item.getTimelineItemId()))
-                    .min(Comparator.comparing(TimelineItem::getTimelineItemId))
-                    .orElseGet(() -> candidates.stream()
-                            .min(Comparator.comparing(TimelineItem::getTimelineItemId))
-                            .orElseThrow());
-            requireMatchingClientInput(reusable, requested);
-            if (!targetItemIds.contains(reusable.getTimelineItemId())) {
-                existingItemIdsToLink.add(reusable.getTimelineItemId());
-            }
-        }
-
+        List<PhotoToAdd> newPhotos = requestedPhotos.stream()
+                .filter(photo -> !linkedRawIds.contains(photo.rawId()))
+                .toList();
         Set<String> newFilenames = new HashSet<>();
         for (PhotoToAdd newPhoto : newPhotos) {
             if (!newFilenames.add(newPhoto.filename())) {
                 throw new IllegalArgumentException("filename is duplicated across new photos");
             }
         }
-        return new PhotoChanges(existingItemIdsToLink, newPhotos);
+        return new PhotoChanges(newPhotos);
     }
 
     /**
-     * 분류 결과를 저장한다 — 기존 Item 재연결과 신규 PHOTO Item/junction insert. 이번 호출로 대상
-     * Event에 연결된 전체 Item ID(기존 재사용·신규)를 반환한다 — 생성 응답 조립의 입력이며
-     * PATCH는 반환을 무시한다(추가 조회 없음).
+     * 신규 PHOTO Item/junction을 insert하고 이번 호출로 대상 Event에 연결된 Item ID를 반환한다 — 생성 응답
+     * 조립의 입력이며 PATCH는 반환을 무시한다(추가 조회 없음).
      */
     @Transactional(propagation = Propagation.MANDATORY)
     List<Long> link(UUID subjectId, Long timelineEventId, PhotoChanges photoChanges) {
         List<TimelineEventItem> links = new ArrayList<>();
-        List<Long> linkedItemIds = new ArrayList<>(photoChanges.existingItemIdsToLink());
-        for (Long itemId : photoChanges.existingItemIdsToLink()) {
-            links.add(TimelineEventItem.of(timelineEventId, itemId));
-        }
+        List<Long> linkedItemIds = new ArrayList<>();
         for (PhotoToAdd photo : photoChanges.newPhotos()) {
             // address/places는 draft enrich 전용이라 수동 추가 경로에서는 채우지 않는다(#324) —
             // 이 경로는 지오코딩을 타지 않으므로 같은 타입에 주소가 있는 사진과 없는 사진이 공존한다.
@@ -231,41 +182,16 @@ class TimelineEventPhotoAddService {
             linkedItemIds.add(item.getTimelineItemId());
         }
         if (!links.isEmpty()) {
-            // junction INSERT의 FK 공유 잠금 뒤 Item UPDATE로 승격하면 동시 재사용이 교착된다.
-            timelineItemService.clearOrphanObservation(photoChanges.existingItemIdsToLink(),
-                    LocalDateTime.now());
             timelineEventItemService.saveAll(links);
         }
         return List.copyOf(linkedItemIds);
-    }
-
-    /** 같은 rawId Item 재사용은 요청 값을 버리는 update가 아니다. 클라이언트 입력 저장본이 다르면 400으로 거절한다. */
-    private void requireMatchingClientInput(TimelineItem storedItem, PhotoToAdd requested) {
-        PhotoPayload storedPayload;
-        try {
-            storedPayload = objectMapper.treeToValue(storedItem.getPayload(), PhotoPayload.class);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("existing PHOTO payload cannot be parsed", exception);
-        }
-        if (storedPayload == null) {
-            throw new IllegalStateException("existing PHOTO payload is null");
-        }
-
-        if (!Objects.equals(storedItem.getStartAt(), requested.startAt())
-                || !Objects.equals(storedItem.getEndAt(), requested.endAt())
-                || !Objects.equals(storedPayload.filename(), requested.filename())
-                || !Objects.equals(storedPayload.clientPhotoUri(), requested.clientPhotoUri())
-                || !Objects.equals(storedPayload.latitude(), requested.latitude())
-                || !Objects.equals(storedPayload.longitude(), requested.longitude())) {
-            throw new IllegalArgumentException("photo input does not match existing rawId");
-        }
     }
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
 
-    /** MySQL timeline_items DATETIME 정밀도와 재사용 비교를 맞춰 소수 초가 조용히 손실되지 않게 한다. */
+    /** MySQL timeline_items DATETIME 정밀도에 맞춰 소수 초가 조용히 손실되지 않게 한다. */
     private void requireSecondPrecision(LocalDateTime value, String field, int index) {
         if (value != null && value.getNano() != 0) {
             throw new IllegalArgumentException("photo " + field + " must use second precision: index=" + index);

@@ -71,7 +71,6 @@ class TimelineEventEditServiceTest {
         // 리팩터 전후 동일하게 고정한다(규칙 자체는 TimelineEventPhotoAddServiceTest 소유). leaf 의존은
         // requireValidPhotos가 쓰지 않으므로 mock으로 충분하다.
         TimelineEventPhotoAddService photoAddService = new TimelineEventPhotoAddService(
-                timelineEventService,
                 org.mockito.Mockito.mock(TimelineEventItemService.class),
                 org.mockito.Mockito.mock(TimelineItemService.class),
                 org.mockito.Mockito.mock(com.laimory.server.timeline.photo.PhotoUrlService.class),

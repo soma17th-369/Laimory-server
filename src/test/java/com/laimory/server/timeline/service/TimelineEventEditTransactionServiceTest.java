@@ -28,6 +28,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,7 +78,6 @@ class TimelineEventEditTransactionServiceTest {
         // 사진 분류·저장은 실제 공유 컴포넌트(mock leaf 주입)를 태워 "PATCH 동작이 리팩터 전후 동일"을
         // 기존 시나리오 단언 무수정으로 고정한다(개수 상한은 이 writer 시나리오와 무관).
         TimelineEventPhotoAddService photoAddService = new TimelineEventPhotoAddService(
-                timelineEventService,
                 timelineEventItemService,
                 timelineItemService,
                 photoUrlService,
@@ -93,7 +93,7 @@ class TimelineEventEditTransactionServiceTest {
     void updateEvent_createsPhotoWithServerPayloadAndAppliesPresentMemo() {
         TimelineEvent event = stubOwnedDraftEvent();
         TimelineEventEditCommand command = command(true, " 새 메모 ", List.of(photo(RAW_ID, FILENAME)));
-        stubRecordGraph(List.of(event), List.of(), List.of());
+        stubTargetLinks(List.of(), Set.of());
         when(photoUrlService.buildSubjectUrl(FILENAME, SUBJECT_ID)).thenReturn(PHOTO_URL);
         when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
             TimelineItem item = invocation.getArgument(0);
@@ -137,66 +137,22 @@ class TimelineEventEditTransactionServiceTest {
     void updateEvent_targetAlreadyHasRawId_isPhotoNoOpAndOmittedMemoIsPreserved() {
         TimelineEvent event = stubOwnedDraftEvent();
         event.updateMemo("기존 메모");
-        TimelineItem existing = item(21L, ItemType.PHOTO, RAW_ID);
-        TimelineEventItem targetLink = TimelineEventItem.of(EVENT_ID, 21L);
-        stubRecordGraph(List.of(event), List.of(targetLink), List.of(existing));
+        // 커밋 뒤 응답을 잃은 같은 PATCH의 재시도 — 대상 Event에 같은 rawId가 있으면 비교 없이 건너뛴다.
+        stubTargetLinks(List.of(TimelineEventItem.of(EVENT_ID, 21L)), Set.of(RAW_ID));
         service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
 
         assertThat(event.getMemo()).isEqualTo("기존 메모");
+        verify(timelineItemService).findSavedRawIds(List.of(21L), Set.of(RAW_ID));
         verify(timelineItemService, never()).save(any());
         verify(timelineEventItemService, never()).saveAll(anyList());
         verify(photoUrlService, never()).buildSubjectUrl(any(), any());
     }
 
     @Test
-    void updateEvent_otherEventHasLegacyDuplicateRawId_reusesLowestItemId() {
-        TimelineEvent event = stubOwnedDraftEvent();
-        TimelineEvent other = event(OTHER_EVENT_ID);
-        TimelineItem higherId = item(30L, ItemType.PHOTO, RAW_ID);
-        TimelineItem lowerId = item(20L, ItemType.PHOTO, RAW_ID);
-        stubRecordGraph(
-                List.of(event, other),
-                List.of(TimelineEventItem.of(OTHER_EVENT_ID, 30L), TimelineEventItem.of(OTHER_EVENT_ID, 20L)),
-                List.of(higherId, lowerId));
-        service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null, List.of(photo(RAW_ID, FILENAME))));
-
-        verify(timelineItemService, never()).save(any());
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<TimelineEventItem>> linksCaptor = ArgumentCaptor.forClass(List.class);
-        verify(timelineEventItemService).saveAll(linksCaptor.capture());
-        assertThat(linksCaptor.getValue()).singleElement().satisfies(link -> {
-            assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
-            assertThat(link.getTimelineItemId()).isEqualTo(20L);
-        });
-        verify(photoUrlService, never()).buildSubjectUrl(any(), any());
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"startAt", "endAt", "filename", "clientPhotoUri", "latitude", "longitude"})
-    void updateEvent_existingPhotoInputMismatchFailsBeforeEventMutation(String mismatchedField) {
-        TimelineEvent event = stubOwnedDraftEvent();
-        event.updateMemo("기존 메모");
-        TimelineEvent other = event(OTHER_EVENT_ID);
-        TimelineItem existing = item(21L, ItemType.PHOTO, RAW_ID);
-        stubRecordGraph(
-                List.of(event, other),
-                List.of(TimelineEventItem.of(OTHER_EVENT_ID, 21L)),
-                List.of(existing));
-
-        assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
-                command(true, "새 메모", List.of(photoWithMismatch(mismatchedField)))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("photo input does not match existing rawId");
-
-        assertOriginalState(event, "기존 메모");
-        verifyNoWrites();
-    }
-
-    @Test
     void updateEvent_multipleNewPhotos_saveEachAsNewItem() {
         TimelineEvent event = stubOwnedDraftEvent();
         String secondFilename = "0190a1b2-0004-7000-8000-000000000004.jpg";
-        stubRecordGraph(List.of(event), List.of(), List.of());
+        stubTargetLinks(List.of(), Set.of());
         when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn(PHOTO_URL);
         AtomicLong nextItemId = new AtomicLong(21L);
         when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
@@ -213,30 +169,10 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
-    void updateEvent_nonPhotoRawIdConflictFailsBeforeEventMutation() {
-        TimelineEvent event = stubOwnedDraftEvent();
-        event.updateMemo("기존 메모");
-        TimelineEvent other = event(OTHER_EVENT_ID);
-        TimelineItem conflicting = item(21L, ItemType.HEALTH, RAW_ID);
-        stubRecordGraph(
-                List.of(event, other),
-                List.of(TimelineEventItem.of(OTHER_EVENT_ID, 21L)),
-                List.of(conflicting));
-
-        assertThatThrownBy(() -> service.updateEvent(
-                SUBJECT_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("rawId is already used by a non-PHOTO item");
-
-        assertOriginalState(event, "기존 메모");
-        verifyNoWrites();
-    }
-
-    @Test
     void updateEvent_duplicateFilenameAmongNewPhotosFailsBeforeEventMutation() {
         TimelineEvent event = stubOwnedDraftEvent();
         event.updateMemo("기존 메모");
-        stubRecordGraph(List.of(event), List.of(), List.of());
+        stubTargetLinks(List.of(), Set.of());
 
         assertThatThrownBy(() -> service.updateEvent(SUBJECT_ID, EVENT_ID,
                 command(true, "새 메모", List.of(photo(RAW_ID, FILENAME), photo(RAW_ID_2, FILENAME)))))
@@ -344,12 +280,10 @@ class TimelineEventEditTransactionServiceTest {
         return event;
     }
 
-    private void stubRecordGraph(List<TimelineEvent> events, List<TimelineEventItem> links,
-                                 List<TimelineItem> matchingItems) {
-        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(events);
-        when(timelineEventItemService.findByTimelineEventIds(
-                events.stream().map(TimelineEvent::getTimelineEventId).toList())).thenReturn(links);
-        when(timelineItemService.findByIdsAndRawIds(anyCollection(), anyCollection())).thenReturn(matchingItems);
+    /** 대상 Event의 junction과, 그 Item 중 요청 rawId와 겹치는 rawId 집합을 stub한다(record 전체 조회는 없다). */
+    private void stubTargetLinks(List<TimelineEventItem> targetLinks, Set<String> linkedRawIds) {
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID)).thenReturn(targetLinks);
+        when(timelineItemService.findSavedRawIds(anyCollection(), anyCollection())).thenReturn(linkedRawIds);
     }
 
     private TimelineEvent event(Long eventId) {
@@ -406,20 +340,6 @@ class TimelineEventEditTransactionServiceTest {
                 "content://photo/1",
                 37.5665,
                 126.9780);
-    }
-
-    private TimelineEventPhotoAddService.PhotoToAdd photoWithMismatch(String field) {
-        TimelineEventPhotoAddService.PhotoToAdd matching = photo(RAW_ID, FILENAME);
-        return new TimelineEventPhotoAddService.PhotoToAdd(
-                matching.rawId(),
-                field.equals("startAt") ? matching.startAt().plusMinutes(1) : matching.startAt(),
-                field.equals("endAt") ? matching.startAt().plusMinutes(1) : matching.endAt(),
-                field.equals("filename")
-                        ? "0190a1b2-0004-7000-8000-000000000004.jpg"
-                        : matching.filename(),
-                field.equals("clientPhotoUri") ? "content://photo/changed" : matching.clientPhotoUri(),
-                field.equals("latitude") ? 37.0 : matching.latitude(),
-                field.equals("longitude") ? 127.0 : matching.longitude());
     }
 
     private void assertOriginalState(TimelineEvent event, String memo) {

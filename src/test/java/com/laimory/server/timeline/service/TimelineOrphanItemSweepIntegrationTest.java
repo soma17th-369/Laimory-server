@@ -74,8 +74,6 @@ class TimelineOrphanItemSweepIntegrationTest {
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private TimelineItemService itemService;
     @Autowired
-    private TimelineEventPhotoAddService photoAddService;
-    @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -340,25 +338,6 @@ class TimelineOrphanItemSweepIntegrationTest {
                 + itemService.countStaleObservedOrphans(1, 2, now.minusHours(72))).isEqualTo(2);
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> itemService.deleteByIds(List.of(exact)));
         assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(1);
-    }
-
-    @Test
-    void relinkClearsObservationAndLaterOrphanStartsANewPeriod() {
-        Long itemId = savePhoto("raw-relink", filename(93));
-        sweepService.observeBatch(0, 1, 250);
-        jdbcTemplate.update("UPDATE timeline_items SET updated_at='2000-01-01' WHERE timeline_item_id=?", itemId);
-        // 관측 뒤 처리 전에 stale snapshot의 추가가 같은 Item을 재연결하는 경합 — link가 표시를 해제한다.
-        // job이 생긴 뒤의 Item에는 재연결 경로가 없다(#495).
-        Long eventId = saveEvent("relinked", 9);
-        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                photoAddService.link(subjectId, eventId,
-                        new TimelineEventPhotoAddService.PhotoChanges(List.of(itemId), List.of())));
-        assertThat(timelineItemRepository.findById(itemId).orElseThrow().getModifiedBy()).isNull();
-        jdbcTemplate.update("DELETE FROM timeline_event_items WHERE timeline_item_id=?", itemId);
-        sweepService.observeBatch(0, 1, 250);
-        var observedAgain = timelineItemRepository.findById(itemId).orElseThrow();
-        assertThat(observedAgain.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
-        assertThat(observedAgain.getUpdatedAt()).isAfter(java.time.LocalDateTime.of(2000, 1, 1, 0, 0));
     }
 
     private TimelineOrphanItemSweepService.SweepBatchResult sweep(int workerIndex, int total, int limit) {

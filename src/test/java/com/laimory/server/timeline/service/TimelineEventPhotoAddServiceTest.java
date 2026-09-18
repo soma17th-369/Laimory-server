@@ -19,6 +19,7 @@ import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,12 +46,11 @@ class TimelineEventPhotoAddServiceTest {
     private static final int MAX_PHOTO_COUNT = 2;
     private static final LocalDateTime START = LocalDateTime.of(2026, 7, 8, 14, 0);
     private static final String RAW_ID_1 = "0190a1b2-0001-7000-8000-000000000001";
+    private static final String RAW_ID_2 = "0190a1b2-0002-7000-8000-000000000002";
     private static final String FILENAME_1 = "0190a1b2-0001-7000-8000-000000000001.jpg";
     private static final String FILENAME_2 = "0190a1b2-0002-7000-8000-000000000002.png";
     private static final String PHOTO_URL = "https://cdn.example/user/photos/" + FILENAME_1;
 
-    @Mock
-    private TimelineEventService timelineEventService;
     @Mock
     private TimelineEventItemService timelineEventItemService;
     @Mock
@@ -63,7 +63,6 @@ class TimelineEventPhotoAddServiceTest {
     @BeforeEach
     void setUp() {
         service = new TimelineEventPhotoAddService(
-                timelineEventService,
                 timelineEventItemService,
                 timelineItemService,
                 photoUrlService,
@@ -146,10 +145,34 @@ class TimelineEventPhotoAddServiceTest {
                 RAW_ID_1, START, null, FILENAME_1, "content://first", 37.1, 127.1));
     }
 
+    // --- resolve ---
+
+    @Test
+    void resolve_skipsRawIdsAlreadyLinkedToTargetEventWithoutComparingInput() {
+        when(timelineEventItemService.findByTimelineEventId(EVENT_ID))
+                .thenReturn(List.of(TimelineEventItem.of(EVENT_ID, 21L)));
+        when(timelineItemService.findSavedRawIds(List.of(21L), Set.of(RAW_ID_1, RAW_ID_2)))
+                .thenReturn(Set.of(RAW_ID_1));
+        TimelineEventPhotoAddService.PhotoToAdd retried = new TimelineEventPhotoAddService.PhotoToAdd(
+                RAW_ID_1, START, null, FILENAME_1, "content://first", 37.5665, 126.978);
+        TimelineEventPhotoAddService.PhotoToAdd fresh = new TimelineEventPhotoAddService.PhotoToAdd(
+                RAW_ID_2, START, null, FILENAME_2, "content://second", 38.2, 128.2);
+
+        TimelineEventPhotoAddService.PhotoChanges changes = service.resolve(EVENT_ID, List.of(retried, fresh));
+
+        assertThat(changes.newPhotos()).containsExactly(fresh);
+    }
+
+    @Test
+    void resolve_emptyInputSkipsLookup() {
+        assertThat(service.resolve(EVENT_ID, List.of())).isEqualTo(TimelineEventPhotoAddService.PhotoChanges.empty());
+        verify(timelineEventItemService, never()).findByTimelineEventId(any());
+    }
+
     // --- link ---
 
     @Test
-    void link_returnsExistingAndNewLinkedItemIdsAndSavesJunctions() {
+    void link_savesNewItemsAndJunctionsAndReturnsTheirIds() {
         when(photoUrlService.buildSubjectUrl(FILENAME_1, SUBJECT_ID)).thenReturn(PHOTO_URL);
         when(timelineItemService.save(any(TimelineItem.class))).thenAnswer(invocation -> {
             TimelineItem item = invocation.getArgument(0);
@@ -157,27 +180,19 @@ class TimelineEventPhotoAddServiceTest {
             return item;
         });
         TimelineEventPhotoAddService.PhotoChanges changes = new TimelineEventPhotoAddService.PhotoChanges(
-                List.of(31L),
                 List.of(new TimelineEventPhotoAddService.PhotoToAdd(
                         RAW_ID_1, START, null, FILENAME_1, "content://first", 37.5665, 126.978)));
 
         List<Long> linked = service.link(SUBJECT_ID, EVENT_ID, changes);
 
-        // Item UPDATE가 junction FK 공유 잠금보다 먼저 실행돼 동시 재사용의 S→X 교착을 피한다.
-        var order = org.mockito.Mockito.inOrder(timelineItemService, timelineEventItemService);
-        order.verify(timelineItemService).clearOrphanObservation(org.mockito.ArgumentMatchers.eq(List.of(31L)), any());
-        order.verify(timelineEventItemService).saveAll(any());
-
-        // 반환 ID는 기존 재사용·신규를 모두 포함한다 — 생성 응답 조립의 입력이다.
-        assertThat(linked).containsExactly(31L, 21L);
+        assertThat(linked).containsExactly(21L);
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineEventItem>> linksCaptor = ArgumentCaptor.forClass(List.class);
         verify(timelineEventItemService).saveAll(linksCaptor.capture());
-        assertThat(linksCaptor.getValue())
-                .extracting(TimelineEventItem::getTimelineItemId)
-                .containsExactly(31L, 21L);
-        assertThat(linksCaptor.getValue())
-                .allSatisfy(link -> assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID));
+        assertThat(linksCaptor.getValue()).singleElement().satisfies(link -> {
+            assertThat(link.getTimelineEventId()).isEqualTo(EVENT_ID);
+            assertThat(link.getTimelineItemId()).isEqualTo(21L);
+        });
         ArgumentCaptor<TimelineItem> itemCaptor = ArgumentCaptor.forClass(TimelineItem.class);
         verify(timelineItemService).save(itemCaptor.capture());
         assertThat(itemCaptor.getValue().getItemType()).isEqualTo(ItemType.PHOTO);
