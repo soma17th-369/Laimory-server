@@ -431,8 +431,7 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
-보존할 수 있다. 서버는 살아 있지 않은 사진의 delete key를 일반 조회해 job이 있으면 상태와 무관하게 409로
-거절한다(취소·재연결 없음, #495). 삭제 완료 후의 과거 요청은 구별하지 않는다(클라이언트 계약).
+보존할 수 있다. 서버는 수동 추가에서 delete job을 조회하지 않는다(#500).
 
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk

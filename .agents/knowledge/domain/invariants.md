@@ -159,7 +159,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
 - **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job이 있는 key를 409로 거절, #495). 일일 스위퍼가
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
 - **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
