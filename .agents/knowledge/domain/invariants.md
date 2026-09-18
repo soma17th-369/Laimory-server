@@ -66,14 +66,15 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
   중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
   race/legacy 중복 행 허용). 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request rawId 중복을 첫
-  항목 우선으로 접고, 같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op
-  처리한다. 재사용 PHOTO의 저장된 startAt/endAt과 클라이언트 입력 payload가 요청과 다르거나 같은 rawId의
-  non-PHOTO Item이 있으면 입력 전체를 거절한다.
+  항목 우선으로 접고, **대상 Event에 같은 rawId가 이미 연결돼 있으면 no-op, 아니면 새 Item**이다(#502).
+  record의 다른 Event는 조회하지 않고 저장본과 요청을 비교하지 않는다 — Android는 사진 선택마다 새
+  rawId·filename을 발급하므로 이 no-op에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
 - same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
-  Event에만 연결하고, 수동 PHOTO 추가는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
+  Event에만 연결하고(여러 Event가 채택한 source는 1행을 공유), 수동 PHOTO 추가는 항상 새 Item을 대상
+  Event에만 연결한다. 기존 Item을 다른 Event에 재연결하는 writer는 없다(#502).
 - draft 결과 저장(Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
   transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가와 수동
   Event 생성의 Event + optional PHOTO Item/junction 추가도 각각 서버의 하나의 DB transaction으로
@@ -175,8 +176,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 스위퍼는 선택한 PK 안의 미표시 고아에만 `ORPHAN_SWEEPER`와 KST 최초 관측 시각을 기록해 먼저
   commit한다. 같은 PK를 새 transaction에서 일반 조회·재검증하며, 처리 rollback은 최초 기록을
   되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
-- 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 기존 Item 재연결 transaction은 junction 저장 전에
-  표시를 해제하며 다시 고아가 되면 새 최초 시각을 쓴다. BaseEntity·공통 AuditorAware는 변경하지 않는다.
+- 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 관측된 Item에 junction을 다시 만드는 writer가 없으므로
+  표시를 해제하는 경로도 없다(#502). BaseEntity·공통 AuditorAware는 변경하지 않는다.
   처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job 모두 없는 건수를 집계한다.
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
@@ -323,8 +324,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   UUIDv7이라 Android는 같은 로컬 사진이어도 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거
   filename이 추가 요청에 다시 오는 경로는 없다. 그래서 수동 PHOTO 추가는 delete job을 조회하지 않는다 —
   job 존재 거절·취소·보존 Item 재연결·`FOR UPDATE` 어느 것도 없다(#495·#500). 이미 S3 업로드를 마친
-  **동일 pending addition**의 PATCH 재시도는 그 사진이 같은 record에 살아 있으면 동일 입력 재시도로
-  재사용된다.
+  **동일 pending addition**의 PATCH 재시도는 같은 rawId가 대상 Event에 이미 연결돼 있어 no-op이다(#502).
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 
