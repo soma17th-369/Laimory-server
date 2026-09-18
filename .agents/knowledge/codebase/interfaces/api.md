@@ -117,9 +117,8 @@ nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추�
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. memo PUT은 필드 부재·null·blank 모두 제거라 PATCH의 null=유지와 다르다.
-`photosToAdd` 중 같은 record에 살아 있지 않은 사진의 full object key에 PHOTO delete job이 어떤 상태로든
-있으면 409 `-1019`를 반환한다(job 취소·보존 Item 재연결 없음, #495). 클라이언트는 그 사진을 새 presign·새
-filename으로 다시 올려 재요청한다. 삭제 완료 후의 과거 요청은 서버가 구별하지 않는다(클라이언트 계약).
+`photosToAdd`는 PHOTO delete job과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
+삭제된 사진을 다시 넣는 것은 새 presign·새 filename의 새 사진이다(#500).
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}`와 날짜 기반
@@ -163,11 +162,10 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 `eventType`은 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 누락·null 모두 비움이고,
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
 `photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). 사진 입력·개수·
-rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400)·delete job이 있는
-key의 409 거절 규칙은 Event PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO
-Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
-S3 object 존재를 확인하지 않는다. 어떤 상태든 delete job이 있는 key는 409 `-1019`, 사진 수 초과는 400
-`-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
+rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400) 규칙은 Event
+PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO Item·junction은 한 transaction으로
+commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는 S3 object 존재를 확인하지 않는다.
+사진 수 초과는 400 `-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
 Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
 `200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
 `question`/`place`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면

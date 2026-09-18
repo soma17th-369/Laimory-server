@@ -157,10 +157,9 @@ Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 roll
 로그로 기존 application ERROR 경보를 발화시킨다(식별자·object key 미포함, count 조회 실패는 WARN 후
 claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
 않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는
-신규로 분류한 사진의 subject+filename full object key로 job 존재를 잠금 없는 IN 조회 한 번으로
-확인하고, 상태와 무관하게 job이 있으면 409 `-1019`로 거절한다 — job 취소·보존 Item 재연결·`FOR UPDATE`
-경로는 없다(#495). pre-S3 association 재검증은 삭제와 살아 있는 Item 공유가 겹친 경합의 방어선으로
-계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
+이 테이블을 읽지 않는다 — job 존재 검사·취소·보존 Item 재연결·`FOR UPDATE` 경로 모두 없다(#495·#500).
+같은 key를 참조하는 살아 있는 Item의 보호는 worker의 pre-S3 association 재검증 한 곳이 담당한다.
+별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
