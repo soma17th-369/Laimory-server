@@ -145,20 +145,6 @@ class TimelinePhotoDeleteJobPersistenceIntegrationTest {
     }
 
     @Test
-    void findObjectKeysWithJob_returnsOnlyKeysWithAJob_regardlessOfStatus() {
-        long pendingItemId = savePhotoItem("pending");
-        long processingItemId = savePhotoItem("processing");
-        service.insertIfAbsent(pendingItemId, "user-hash/photos/pending.jpg");
-        service.insertIfAbsent(processingItemId, "user-hash/photos/processing.jpg");
-        setStatus(idForItem(repository.findAll(), processingItemId), TimelinePhotoDeleteJobStatus.PROCESSING);
-
-        assertThat(service.findObjectKeysWithJob(List.of(
-                "user-hash/photos/pending.jpg", "user-hash/photos/processing.jpg", "user-hash/photos/absent.jpg")))
-                .containsExactlyInAnyOrder("user-hash/photos/pending.jpg", "user-hash/photos/processing.jpg");
-        assertThat(service.findObjectKeysWithJob(List.of("user-hash/photos/absent.jpg"))).isEmpty();
-    }
-
-    @Test
     void claimEligible_ordersByCreatedAtThenId() {
         long thirdItemId = savePhotoItem("three");
         long firstItemId = savePhotoItem("oldest-first");

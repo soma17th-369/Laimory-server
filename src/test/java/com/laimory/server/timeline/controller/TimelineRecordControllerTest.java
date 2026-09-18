@@ -1571,17 +1571,6 @@ class TimelineRecordControllerTest {
     }
 
     @Test
-    void createTimelineEvent_mapsPhotoDeleteInProgressTo409With1019() throws Exception {
-        doThrow(new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS))
-                .when(timelineEventCreateService).createEvent(any(), any(), any(LocalDate.class), any());
-
-        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
-                        .contentType(MediaType.APPLICATION_JSON).content(CREATE_EVENT_BODY))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.header.code").value(-1019));
-    }
-
-    @Test
     void createTimelineEvent_exposesServiceReturnedItemsInResponse() throws Exception {
         TimelineItemResponse createdPhoto = new TimelineItemResponse(
                 21L, ItemType.PHOTO, "0190a1b2-0001-7000-8000-000000000001",

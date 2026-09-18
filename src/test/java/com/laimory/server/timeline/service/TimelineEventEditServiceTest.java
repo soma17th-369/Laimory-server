@@ -74,7 +74,6 @@ class TimelineEventEditServiceTest {
                 timelineEventService,
                 org.mockito.Mockito.mock(TimelineEventItemService.class),
                 org.mockito.Mockito.mock(TimelineItemService.class),
-                org.mockito.Mockito.mock(TimelinePhotoDeleteJobService.class),
                 org.mockito.Mockito.mock(com.laimory.server.timeline.photo.PhotoUrlService.class),
                 new com.fasterxml.jackson.databind.ObjectMapper(),
                 MAX_PHOTO_COUNT);

@@ -169,9 +169,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1019` — 같은 PHOTO object에 삭제 job이 있어 이 filename으로는 다시 추가할 수 없음(새 presign·새 filename으로 재업로드)")
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
@@ -390,8 +388,6 @@ public interface TimelineRecordApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 해당 날짜의 내 하루 기록이 없음(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1019` — 같은 PHOTO object에 삭제 job이 있어 이 filename으로는 다시 추가할 수 없음(새 presign·새 filename으로 재업로드)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "415",
                     description = "`-415` — body는 있는데 Content-Type이 없거나 JSON이 아님")
     })

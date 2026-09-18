@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -145,23 +144,6 @@ class TimelinePhotoDeleteJobServiceTest {
                 TimelinePhotoDeleteJobStatus.PROCESSING)).thenReturn(2);
 
         assertThat(service.markPendingForRetry(List.of(first, second))).isEqualTo(2);
-    }
-
-    @Test
-    void findObjectKeysWithJob_returnsKeysThatHaveAJob() {
-        when(repository.findObjectKeysWithJob(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
-                .thenReturn(List.of("hash/photos/b.jpg"));
-
-        assertThat(service.findObjectKeysWithJob(List.of("hash/photos/a.jpg", "hash/photos/b.jpg")))
-                .containsExactly("hash/photos/b.jpg");
-    }
-
-    @Test
-    void findObjectKeysWithJob_emptyInputSkipsQuery() {
-        assertThat(service.findObjectKeysWithJob(List.of())).isEmpty();
-        assertThat(service.findObjectKeysWithJob(null)).isEmpty();
-
-        verify(repository, never()).findObjectKeysWithJob(anyCollection());
     }
 
     @Test
