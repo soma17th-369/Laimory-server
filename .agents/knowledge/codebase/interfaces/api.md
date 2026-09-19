@@ -108,10 +108,11 @@ memo는 trim 없이 원문 최대 500자). **endAt만 누락·null 모두 비움
 유지하려면 현재 값을 보내야 한다. 시간 범위는 transaction 안에서 기존 startAt과 병합한 뒤 검증한다.
 `photosToAdd`는 누락·null·빈 배열 모두 Item 변경 없음이며 비배열은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
-nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추기 위해 초 단위만 허용하며 소수 초는 400이다.
+nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
-규칙이며 위반은 400이다. 같은 record의 기존 PHOTO를 rawId로 재사용할 때 저장된 startAt/endAt과
-클라이언트 입력 payload가 요청과 다르면 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+규칙이며 위반은 400이다. 대상 Event에 같은 rawId가 이미 연결된 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며
+(같은 PATCH의 재시도 — 나머지 항목은 정상 처리, 응답 200) 그 외는 새 Item이다 — record의 다른 Event나 저장본과
+비교하지 않는다(#502). non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
@@ -162,8 +163,8 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 `eventType`은 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 누락·null 모두 비움이고,
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
 `photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). 사진 입력·개수·
-rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400) 규칙은 Event
-PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO Item·junction은 한 transaction으로
+rawId 중복 규칙은 Event PATCH와 같으며(새 Event라 사진은 항상 새 Item) PHOTO startAt/endAt의 소수 초도
+400이다. Event·PHOTO Item·junction은 한 transaction으로
 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는 S3 object 존재를 확인하지 않는다.
 사진 수 초과는 400 `-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
 Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은

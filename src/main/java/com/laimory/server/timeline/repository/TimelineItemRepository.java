@@ -17,7 +17,6 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     List<String> findRawIdsByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);
 
-    /** 수동 PHOTO 추가(Event PATCH·Event 생성 POST)의 rawId type/reuse/no-op 분류용 full entity 조회. */
     /**
      * 계정 삭제(#302)의 Item 일괄 제거 — junction은 FK CASCADE로 함께 사라진다.
      * record 삭제와 <b>같은 transaction</b>에서 호출해야 한다: record가 먼저 사라지면 junction도 함께
@@ -26,10 +25,6 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     @Modifying
     @Query("delete from TimelineItem ti where ti.timelineItemId in :itemIds")
     int deleteAllByIdIn(@Param("itemIds") Collection<Long> itemIds);
-
-    @Query("select ti from TimelineItem ti where ti.timelineItemId in :itemIds and ti.rawId in :rawIds")
-    List<TimelineItem> findByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
-                                                        @Param("rawIds") Collection<String> rawIds);
 
     /** 담당 PK에서 한 배치만 일반 조회한다. 관측 표시는 후보 제외 조건이 아니다. */
     @Query(value = "select * from timeline_items i "
@@ -66,13 +61,6 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     long countStaleObservedOrphans(@Param("workerIndex") int workerIndex,
                                    @Param("totalWorkerCount") int totalWorkerCount,
                                    @Param("staleBefore") LocalDateTime staleBefore);
-
-    /** 재연결 transaction에서 관측을 끝낸다. 공통 감사나 다른 modified_by 값은 바꾸지 않는다. */
-    @Modifying
-    @Query(value = "update timeline_items set modified_by = null, updated_at = :linkedAt "
-            + "where timeline_item_id in (:itemIds) and modified_by = 'ORPHAN_SWEEPER'", nativeQuery = true)
-    int clearOrphanObservation(@Param("itemIds") Collection<Long> itemIds,
-                               @Param("linkedAt") LocalDateTime linkedAt);
 
     /**
      * 주어진 filename을 참조하면서 <b>junction이 살아 있는</b> PHOTO Item의 full object key 집합.

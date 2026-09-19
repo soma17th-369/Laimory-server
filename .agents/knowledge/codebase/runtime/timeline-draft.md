@@ -178,13 +178,13 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   취득하지 않는다.
 - `photosToAdd`의 rawId는 draft source와 같은 canonical lowercase UUID 규칙(`RawIds`)으로 검증하고
   위반은 400이다(오류 메시지에 원문 없음).
-- nullable PHOTO startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 저장 정밀도와 재사용 비교를 맞추기
-  위해 초 단위만 허용하며 소수 초는 최초 저장 전에 400이다.
-- request rawId는 입력 순서의 첫 항목을 사용한다. 같은 record의 같은 rawId가 non-PHOTO면 400, PHOTO면
-  기존 Item을 재사용하고 대상 Event에 이미 연결됐으면 no-op이다. legacy PHOTO 중복은 대상 Event 연결 행을
-  우선하고 없으면 가장 작은 Item ID를 고른다. 기존 PHOTO를 재사용할 때 요청의 startAt/endAt과 클라이언트
-  입력 payload(filename/clientPhotoUri/latitude/longitude)는 저장본과 모두 같아야 하며, 하나라도 다르면
-  요청 값을 조용히 버리지 않고 400이다. 신규 후보끼리 filename이 중복되면 400이다.
+- nullable PHOTO startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 저장 정밀도에 맞춰 초 단위만 허용하며
+  소수 초는 최초 저장 전에 400이다.
+- request rawId는 입력 순서의 첫 항목을 사용한다. 대상 Event에 같은 rawId의 사진이 이미 연결돼 있으면 그 항목은
+  이미 추가된 것으로 보고 오류 없이 건너뛰고(나머지는 정상 처리, 응답 200), 없으면 새 Item이다(#502) — record의
+  다른 Event는 조회하지 않고 저장본과 요청을 비교하지 않는다. 건너뛰기에 도달하는 것은 커밋 뒤 응답을 잃은 같은
+  PATCH의 재시도뿐이다(Android는 사진 선택마다 새 rawId·filename을 발급).
+  신규 후보끼리 filename이 중복되면 400이다.
 - 수동 PHOTO는 client가 S3 업로드를 완료한 뒤 Event PATCH 또는 Event 생성 POST의 `photosToAdd`로
   전달한다. 서버는 S3 object 존재 여부를 조회하지 않으며, payload는 `filename`·`clientPhotoUri`·좌표만
   받아 `description=null`과 server-derived `photoUrl`로 저장한다. 두 API는 같은 검증·분류·저장
@@ -198,8 +198,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   draft POST 소유).
 - 삭제된 PHOTO 재추가는 새 upload identity다. Android는 같은 로컬 사진을 다시 선택해도 새 presign
   응답의 filename을 PATCH에 사용하고 과거 filename을 재사용하지 않는다. 서버는 수동 추가에서 delete
-  job을 조회하지 않는다(#500). 이미 업로드를 마친 **동일 pending addition**의 PATCH 재시도는 그 사진이
-  같은 record에 살아 있으면 동일 입력 재시도로 재사용되고, 아니면 새 Item으로 저장된다.
+  job을 조회하지 않는다(#500). 이미 업로드를 마친 **동일 pending addition**의 PATCH 재시도는 같은 rawId가
+  대상 Event에 있으면 오류 없이 건너뛰고, 아니면(첫 요청이 롤백됐으면) 새 Item으로 저장된다.
 
 ### Delete
 

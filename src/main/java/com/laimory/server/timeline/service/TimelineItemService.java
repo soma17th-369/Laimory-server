@@ -37,7 +37,8 @@ public class TimelineItemService {
 
     /**
      * 후보 Item ID들 중 rawId가 후보 rawIds에 속하는 것들의 rawId 집합을 반환한다.
-     * append 시 이미 타임라인에 반영된 source item을 rawId로 제외하는 데 쓴다(Item ID 축은 junction 조회가 공급).
+     * append 시 이미 타임라인에 반영된 source item을 rawId로 제외하고, 수동 PHOTO 추가가 대상 Event에 이미 연결된
+     * rawId를 오류 없이 건너뛰는 데 쓴다(Item ID 축은 junction 조회가 공급).
      * itemIds 또는 rawIds가 비면 빈 집합을 반환한다(불필요한 빈 IN 쿼리 회피).
      */
     public Set<String> findSavedRawIds(Collection<Long> itemIds, Collection<String> rawIds) {
@@ -45,14 +46,6 @@ public class TimelineItemService {
             return Set.of();
         }
         return new HashSet<>(timelineItemRepository.findRawIdsByTimelineItemIdInAndRawIdIn(itemIds, rawIds));
-    }
-
-    /** 후보 Item ID와 rawId가 모두 일치하는 final Item을 반환한다(PHOTO append 분류용). */
-    public List<TimelineItem> findByIdsAndRawIds(Collection<Long> itemIds, Collection<String> rawIds) {
-        if (itemIds.isEmpty() || rawIds.isEmpty()) {
-            return List.of();
-        }
-        return timelineItemRepository.findByTimelineItemIdInAndRawIdIn(itemIds, rawIds);
     }
 
     public List<TimelineItem> findOrphanCandidates(int workerIndex, int totalWorkerCount, int limit) {
@@ -67,12 +60,6 @@ public class TimelineItemService {
 
     public long countStaleObservedOrphans(int workerIndex, int totalWorkerCount, LocalDateTime staleBefore) {
         return timelineItemRepository.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
-    }
-
-    public void clearOrphanObservation(Collection<Long> itemIds, LocalDateTime linkedAt) {
-        if (!itemIds.isEmpty()) {
-            timelineItemRepository.clearOrphanObservation(itemIds, linkedAt);
-        }
     }
 
     /** 주어진 filename을 참조하면서 junction이 살아 있는 PHOTO Item의 full object key(소유 subject 기준). */

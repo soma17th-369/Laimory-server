@@ -73,7 +73,7 @@ class TimelineManualMutationIntegrationTest {
     private static final String ZONE = "Asia/Seoul";
     private static final String RAW_ID = "0190c1d2-0001-7000-8000-000000000001";
     private static final String FILENAME = "0190c1d2-0002-7000-8000-000000000002.jpg";
-    private static final String OTHER_FILENAME = "0190c1d2-0003-7000-8000-000000000003.jpg";
+    private static final String RAW_ID_2 = "0190c1d2-0004-7000-8000-000000000004";
 
     @Autowired
     private TimelineSaveService timelineSaveService;
@@ -85,6 +85,8 @@ class TimelineManualMutationIntegrationTest {
     private TimelineEventCreateService timelineEventCreateService;
     @Autowired
     private DailyTimelineService dailyTimelineService;
+    @Autowired
+    private TimelineEventEditTransactionService timelineEventEditTransactionService;
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
     @Autowired
@@ -333,69 +335,40 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
-    void 같은_record의_기존_PHOTO_rawId는_신규_Item_없이_junction만_추가된다() {
-        TimelineEventResponse first = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "첫 이벤트", null,
+    void 같은_PATCH_재시도는_대상_Event에_이미_있는_rawId를_오류_없이_건너뛴다() {
+        // 커밋 뒤 응답을 잃은 저장 재탭 — Android는 pending 목록을 유지해 같은 rawId·filename을 다시 보낸다.
+        TimelineEventResponse created = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "사진 있는 이벤트", null,
                         DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
-        trackItems(first);
-        Long existingItemId = first.items().get(0).timelineItemId();
+        trackItems(created);
         long itemCountBefore = timelineItemRepository.count();
+        TimelineEventEditCommand retry = new TimelineEventEditCommand(
+                null, null, false, null, null, null, false, null,
+                List.of(new TimelineEventPhotoAddService.PhotoToAdd(
+                        RAW_ID, DATE.atTime(14, 5), null, FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0)));
 
-        TimelineEventResponse second = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.MEAL, "둘째 이벤트", null,
-                        DATE.atTime(16, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
+        timelineEventEditTransactionService.updateEvent(subjectId, created.timelineEventId(), retry);
 
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
-        assertThat(second.items())
-                .singleElement()
-                .satisfies(item -> assertThat(item.timelineItemId()).isEqualTo(existingItemId));
-        assertThat(timelineEventItemRepository.findByTimelineEventId(second.timelineEventId()))
+        assertThat(timelineEventItemRepository.findByTimelineEventId(created.timelineEventId()))
                 .extracting(TimelineEventItem::getTimelineItemId)
-                .containsExactly(existingItemId);
-    }
-
-    @Test
-    void 기존_PHOTO_rawId의_입력이_다르면_400이고_새_Event도_롤백된다() {
-        TimelineEventResponse first = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "첫 이벤트", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
-        trackItems(first);
-        long eventCountBefore = timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId).size();
-        long itemCountBefore = timelineItemRepository.count();
-
-        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.MEAL, "롤백할 이벤트", null,
-                        DATE.atTime(16, 0), null, null, List.of(photoInput(RAW_ID, OTHER_FILENAME)))))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("photo input does not match existing rawId");
-
-        assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId))
-                .hasSize((int) eventCountBefore);
-        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
+                .containsExactly(created.items().getFirst().timelineItemId());
     }
 
     @Test
     void 사진_해석_실패는_Event_insert까지_전체_롤백된다() {
-        // 같은 record에 같은 rawId의 non-PHOTO Item을 연결해 두면 resolve가 400으로 거절한다 —
-        // Event를 먼저 insert한 뒤의 실패라 rollback이 실제로 일어나야 사진 없는 Event가 남지 않는다.
-        Long holderEventId = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.MEAL, "기존 이벤트", null,
-                        DATE.atTime(9, 0), null, null, List.of())).timelineEventId();
-        TimelineItem nonPhoto = timelineItemRepository.save(TimelineItem.of(
-                ItemType.HEALTH, RAW_ID, DATE.atTime(8, 0), null,
-                objectMapper.createObjectNode().put("metric", "STEPS")));
-        trackedItemIds.add(nonPhoto.getTimelineItemId());
-        timelineEventItemRepository.save(TimelineEventItem.of(holderEventId, nonPhoto.getTimelineItemId()));
+        // 신규 사진끼리 filename이 겹치면 resolve가 400으로 거절한다 — Event를 먼저 insert한 뒤의 실패라
+        // rollback이 실제로 일어나야 사진 없는 Event가 남지 않는다.
         long eventCountBefore = timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId).size();
         long itemCountBefore = timelineItemRepository.count();
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "사진 충돌", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)))))
-                .isInstanceOf(IllegalArgumentException.class);
+                        DATE.atTime(14, 0), null, null,
+                        List.of(photoInput(RAW_ID, FILENAME), photoInput(RAW_ID_2, FILENAME)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("filename is duplicated across new photos");
 
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId))
