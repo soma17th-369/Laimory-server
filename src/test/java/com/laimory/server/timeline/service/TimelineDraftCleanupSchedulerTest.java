@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -20,6 +21,7 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -129,11 +131,12 @@ class TimelineDraftCleanupSchedulerTest {
         scheduler().cleanupExpiredDrafts();
 
         verify(timelineDraftSourceItemService).deleteExpired(Set.of(22L, 20L));
-        assertThat(output)
+        // 운영 logback 설정이 로드된 JVM에서는 로그가 AsyncAppender 워커 스레드로 써지므로(#497) 캡처는 eventual이다.
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(output)
                 .contains("draft cleanup batch 완료: selected=3, succeeded=2, failed=1, deleted=2")
                 .contains("photoDeleteRequested=2, photoDeleteSucceeded=1, photoDeleteFailed=1")
                 .contains("draft cleanup run 완료: batches=1, selected=3, succeeded=2, failed=1, deleted=2")
-                .contains("workerErrors=0, durationMs=");
+                .contains("workerErrors=0, durationMs="));
     }
 
     @Test

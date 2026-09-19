@@ -1,10 +1,12 @@
 package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import org.junit.jupiter.api.Test;
@@ -58,7 +60,9 @@ class TimelineOrphanItemSweeperSchedulingTest {
         var sweeper = new TimelineOrphanItemSweeper(service,
                 new TimelineOrphanItemSweeperProperties(true, 250, 1, 2, 1));
         sweeper.sweepOrphanItems();
-        assertThat(output).contains("orphan Item 최초 관측 후 72시간 잔존: workerIndex=1 count=3");
+        // 운영 logback 설정이 로드된 JVM에서는 로그가 AsyncAppender 워커 스레드로 써지므로(#497) 캡처는 eventual이다.
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(output).contains("orphan Item 최초 관측 후 72시간 잔존: workerIndex=1 count=3"));
         org.mockito.Mockito.verify(service, org.mockito.Mockito.never())
                 .sweepBatch(org.mockito.ArgumentMatchers.anyList());
     }

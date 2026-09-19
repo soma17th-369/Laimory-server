@@ -189,8 +189,14 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 
 ## Output by Environment
 
-- `docker` profile은 사람이 읽는 text console log를 사용한다.
-- 그 외 profile은 JSON stdout을 사용한다.
+- `docker` profile은 사람이 읽는 text console log를 사용한다(동기 ConsoleAppender).
+- 그 외 profile은 JSON stdout을 사용한다. stdout 쓰기는 `AsyncAppender`(`ASYNC_JSON_CONSOLE`, #497)
+  워커 1개가 맡고 요청 스레드는 큐(1024)에 넣고 돌아온다 — 동기 appender의 stdout 락이 600~1,000 rps에서
+  http 스레드 80~90%를 묶던 병목 대응. `neverBlock=true`라 큐가 차도 요청은 막히지 않고 초과 이벤트가
+  유실되며, 큐 80%부터는 INFO(액세스 로그)만 먼저 버리고 WARN/ERROR는 가득 찰 때까지 보존한다.
+  종료 시 큐 flush 대기 상한은 5초다. MDC(`transactionId`, agent의 `trace_id`)는 enqueue 시점에
+  캡처된다(`TransactionIdFilterAsyncAppenderTest`). Logback에 드롭 카운터는 없다 — 유실은
+  `logback_events_total`(emitted)과 실제 stdout 줄 수의 차이로만 본다.
 - JSON 공통 field는 `service=laimory`, `environment`다.
 - dev workflow가 application environment 값을 주입한다.
 - default profile은 JSON stream 순도를 위해 banner와 Hibernate `show-sql`을 끈다.
