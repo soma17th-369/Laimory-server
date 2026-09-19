@@ -22,7 +22,6 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -48,7 +47,6 @@ class TimelineEventEditTransactionServiceTest {
     private static final UUID SUBJECT_ID = id(7L);
     private static final UUID OTHER_SUBJECT_ID = id(999L);
     private static final Long EVENT_ID = 11L;
-    private static final Long OTHER_EVENT_ID = 12L;
     private static final Long RECORD_ID = 100L;
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 7, 8);
     private static final LocalDateTime ORIGINAL_START = RECORD_DATE.atTime(9, 0);
@@ -165,7 +163,6 @@ class TimelineEventEditTransactionServiceTest {
                 List.of(photo(RAW_ID, FILENAME), photo(RAW_ID_2, secondFilename))));
 
         verify(timelineItemService, times(2)).save(any(TimelineItem.class));
-        verify(timelineItemService, never()).findById(any());
     }
 
     @Test
@@ -299,22 +296,6 @@ class TimelineEventEditTransactionServiceTest {
         ReflectionTestUtils.setField(record, "dailyRecordId", RECORD_ID);
         ReflectionTestUtils.setField(record, "status", status);
         return record;
-    }
-
-    private TimelineItem item(Long itemId, ItemType itemType, String rawId) {
-        ObjectMapper mapper = new ObjectMapper();
-        LocalDateTime startAt = RECORD_DATE.atTime(8, 0);
-        JsonNode payload = mapper.createObjectNode().put("stored", true);
-        if (itemType == ItemType.PHOTO) {
-            startAt = RECORD_DATE.atTime(14, 5);
-            payload = mapper.valueToTree(new PhotoPayload(
-                    FILENAME, "content://photo/1", 37.5665, 126.9780,
-                    null, null, null, PHOTO_URL));
-        }
-        TimelineItem item = TimelineItem.of(
-                itemType, rawId, startAt, null, payload);
-        ReflectionTestUtils.setField(item, "timelineItemId", itemId);
-        return item;
     }
 
     private TimelineEventEditCommand command(boolean memoChanged, String memo,

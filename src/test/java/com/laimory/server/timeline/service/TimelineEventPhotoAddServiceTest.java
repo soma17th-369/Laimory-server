@@ -148,7 +148,7 @@ class TimelineEventPhotoAddServiceTest {
     // --- resolve ---
 
     @Test
-    void resolve_skipsRawIdsAlreadyLinkedToTargetEventWithoutComparingInput() {
+    void resolve_skipsRawIdsAlreadyLinkedToTargetEvent() {
         when(timelineEventItemService.findByTimelineEventId(EVENT_ID))
                 .thenReturn(List.of(TimelineEventItem.of(EVENT_ID, 21L)));
         when(timelineItemService.findSavedRawIds(List.of(21L), Set.of(RAW_ID_1, RAW_ID_2)))

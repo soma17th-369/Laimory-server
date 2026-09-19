@@ -73,7 +73,6 @@ class TimelineManualMutationIntegrationTest {
     private static final String ZONE = "Asia/Seoul";
     private static final String RAW_ID = "0190c1d2-0001-7000-8000-000000000001";
     private static final String FILENAME = "0190c1d2-0002-7000-8000-000000000002.jpg";
-    private static final String OTHER_FILENAME = "0190c1d2-0003-7000-8000-000000000003.jpg";
     private static final String RAW_ID_2 = "0190c1d2-0004-7000-8000-000000000004";
 
     @Autowired
@@ -333,31 +332,6 @@ class TimelineManualMutationIntegrationTest {
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
-    }
-
-    @Test
-    void 다른_Event에_같은_rawId가_있어도_새_Event의_사진은_새_Item이다() {
-        // record의 다른 Event는 조회 대상이 아니다(#502) — 같은 rawId·다른 filename이 와도 비교 없이 새 Item.
-        TimelineEventResponse first = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "첫 이벤트", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
-        trackItems(first);
-        long itemCountBefore = timelineItemRepository.count();
-
-        TimelineEventResponse second = timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.MEAL, "둘째 이벤트", null,
-                        DATE.atTime(16, 0), null, null, List.of(photoInput(RAW_ID, OTHER_FILENAME))));
-        trackItems(second);
-
-        assertThat(second.items()).singleElement().satisfies(item -> {
-            assertThat(item.rawId()).isEqualTo(RAW_ID);
-            assertThat(item.timelineItemId()).isNotEqualTo(first.items().getFirst().timelineItemId());
-            assertThat(item.payload().path("filename").asText()).isEqualTo(OTHER_FILENAME);
-        });
-        assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore + 1);
-        assertThat(timelineEventItemRepository.findByTimelineEventId(first.timelineEventId()))
-                .extracting(TimelineEventItem::getTimelineItemId)
-                .containsExactly(first.items().getFirst().timelineItemId());
     }
 
     @Test

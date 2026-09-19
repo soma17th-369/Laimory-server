@@ -69,6 +69,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   항목 우선으로 접고, **대상 Event에 같은 rawId가 이미 연결돼 있으면 no-op, 아니면 새 Item**이다(#502).
   record의 다른 Event는 조회하지 않고 저장본과 요청을 비교하지 않는다 — Android는 사진 선택마다 새
   rawId·filename을 발급하므로 이 no-op에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다.
+- **수동 입력 방어의 경계** — 다른 요청이 남긴 상태나 클라이언트의 시간적 행동을 가정하는 방어는 두지 않는다
+  (#495·#500·#502에서 제거한 삭제 job 409·교차 Event 재사용·저장본 비교 400이 그 예). 지금 받은 요청 하나의
+  형식·일관성 검증(개수 상한·UUID 형식·소수 초·filename 형식·요청 내 filename 중복)은 둔다 — 클라이언트를
+  의심해서가 아니라 서버가 자기 데이터 모델을 지키는 경계 단언이다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
