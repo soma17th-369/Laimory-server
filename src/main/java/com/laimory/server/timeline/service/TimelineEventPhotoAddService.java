@@ -14,7 +14,6 @@ import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
-import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -52,7 +51,6 @@ class TimelineEventPhotoAddService {
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
-    private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     private final PhotoUrlService photoUrlService;
     private final ObjectMapper objectMapper;
     private final int maxPhotoCount;
@@ -61,14 +59,12 @@ class TimelineEventPhotoAddService {
             TimelineEventService timelineEventService,
             TimelineEventItemService timelineEventItemService,
             TimelineItemService timelineItemService,
-            TimelinePhotoDeleteJobService timelinePhotoDeleteJobService,
             PhotoUrlService photoUrlService,
             ObjectMapper objectMapper,
             @Value("${photo.upload.max-count}") int maxPhotoCount) {
         this.timelineEventService = timelineEventService;
         this.timelineEventItemService = timelineEventItemService;
         this.timelineItemService = timelineItemService;
-        this.timelinePhotoDeleteJobService = timelinePhotoDeleteJobService;
         this.photoUrlService = photoUrlService;
         this.objectMapper = objectMapper;
         this.maxPhotoCount = maxPhotoCount;
@@ -147,8 +143,8 @@ class TimelineEventPhotoAddService {
 
     /**
      * 같은 DailyRecord의 rawId 후보를 new/reuse/no-op으로 분류한다. 재사용할 PHOTO의 저장된 시간과
-     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 후보가 없는 사진은 신규이되
-     * 그 object key에 삭제 job이 있으면 409로 거절한다(취소·재연결 없음). 분류와 모든 DB-dependent
+     * 클라이언트 입력 payload가 요청과 다르면 값을 조용히 버리지 않고 거절한다. 후보가 없는 사진은 신규다 —
+     * filename은 presign마다 새로 발급되므로 삭제 job과의 대조는 하지 않는다. 분류와 모든 DB-dependent
      * 검증을 entity mutation보다 먼저 끝내 validation 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.
      */
     @Transactional(propagation = Propagation.MANDATORY)
@@ -207,26 +203,7 @@ class TimelineEventPhotoAddService {
                 throw new IllegalArgumentException("filename is duplicated across new photos");
             }
         }
-        requireNoDeleteJob(record.getSubjectId(), newPhotos);
         return new PhotoChanges(existingItemIdsToLink, newPhotos);
-    }
-
-    /**
-     * 신규로 분류된 사진의 full object key에 삭제 job이 있으면 거절한다. 상태(PENDING·PROCESSING·처리 창
-     * 경과)와 무관하다 — job이 있는 사진은 취소·재연결 대상이 아니며 클라이언트가 새 filename으로 다시
-     * 올려야 한다. 삭제가 완료되어 job과 Item이 모두 사라진 뒤의 과거 요청은 서버가 구별하지 않는다
-     * (클라이언트 계약). 잠금 없는 IN 조회 한 번이라 부재 key의 gap을 잠그지 않는다.
-     */
-    private void requireNoDeleteJob(UUID subjectId, List<PhotoToAdd> newPhotos) {
-        if (newPhotos.isEmpty()) {
-            return;
-        }
-        List<String> objectKeys = newPhotos.stream()
-                .map(photo -> PhotoObjectKeys.subjectFullKey(photo.filename(), subjectId))
-                .toList();
-        if (!timelinePhotoDeleteJobService.findObjectKeysWithJob(objectKeys).isEmpty()) {
-            throw new BusinessException(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
-        }
     }
 
     /**

@@ -7,11 +7,8 @@ import static org.mockito.Mockito.doThrow;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.laimory.server.common.error.BusinessException;
-import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -27,7 +24,6 @@ import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -80,8 +76,6 @@ class TimelineDeletionCascadeIntegrationTest {
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    @Autowired
-    private TimelineEventEditTransactionService timelineEventEditTransactionService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -299,103 +293,6 @@ class TimelineDeletionCascadeIntegrationTest {
 
         assertThat(timelinePhotoDeleteJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isPresent();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
-    }
-
-    @Test
-    void eventPatch_pendingDeleteJob_is409AndKeepsJobItemUnlinked() {
-        Long deletedEventId = saveEvent("삭제 대상", 9);
-        Long relinkEventId = saveEvent("재추가 대상", 10);
-        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b63";
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b64.jpg";
-        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
-        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
-        assertThat(findFixturePhotoDeleteJobs())
-                .singleElement()
-                .extracting(TimelinePhotoDeleteJob::getStatus)
-                .isEqualTo(TimelinePhotoDeleteJobStatus.PENDING);
-
-        assertRejectedByDeleteJob(relinkEventId, itemId, rawId, filename);
-    }
-
-    @Test
-    void eventPatch_staleProcessingDeleteJob_is409AndDoesNotRelink() {
-        Long deletedEventId = saveEvent("삭제 대상", 9);
-        Long relinkEventId = saveEvent("재추가 대상", 10);
-        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b67";
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b68.jpg";
-        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
-        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
-        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
-        // 전날 claim 뒤 crash가 남긴 stale PROCESSING — 이전에는 취소·재연결 대상이었다(#495 전).
-        jdbcTemplate.update(
-                "update timeline_photo_delete_jobs set status = 'PROCESSING', updated_at = ? "
-                        + "where timeline_photo_delete_job_id = ?",
-                LocalDateTime.now().minusDays(1), job.getTimelinePhotoDeleteJobId());
-
-        assertRejectedByDeleteJob(relinkEventId, itemId, rawId, filename);
-    }
-
-    @Test
-    void eventPatch_deleteJobPastRetryWindow_is409AndDoesNotRelink() {
-        Long deletedEventId = saveEvent("삭제 대상", 9);
-        Long relinkEventId = saveEvent("재추가 대상", 10);
-        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b69";
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b6a.jpg";
-        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
-        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
-        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
-        // D+1~D+3 처리 창을 지나 재시도 없이 보존된 job도 같은 key의 재추가를 막는다.
-        jdbcTemplate.update(
-                "update timeline_photo_delete_jobs set created_at = ?, updated_at = ? "
-                        + "where timeline_photo_delete_job_id = ?",
-                LocalDateTime.now().minusDays(5), LocalDateTime.now().minusDays(5),
-                job.getTimelinePhotoDeleteJobId());
-
-        assertRejectedByDeleteJob(relinkEventId, itemId, rawId, filename);
-    }
-
-    /** job 상태와 무관하게 409이며 job·보존 Item은 그대로이고 대상 Event에 junction이 생기지 않는다. */
-    private void assertRejectedByDeleteJob(Long relinkEventId, Long itemId, String rawId, String filename) {
-        TimelineEventPhotoAddService.PhotoToAdd photo = new TimelineEventPhotoAddService.PhotoToAdd(
-                rawId, DATE.atTime(9, 0), null, filename, "content://fixture/" + rawId,
-                null, null);
-        TimelineEventEditCommand command = new TimelineEventEditCommand(
-                TimelineEventType.UNKNOWN,
-                "재추가 대상",
-                false,
-                null,
-                DATE.atTime(10, 0),
-                null,
-                false,
-                null,
-                List.of(photo));
-
-        assertThatThrownBy(() -> timelineEventEditTransactionService.updateEvent(
-                subjectId, relinkEventId, command))
-                .isInstanceOfSatisfying(BusinessException.class, exception ->
-                        assertThat(exception.getExceptionType())
-                                .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
-
-        assertThat(findFixturePhotoDeleteJobs()).hasSize(1);
-        assertThat(timelineItemRepository.findById(itemId)).isPresent();
-        assertThat(timelineEventItemRepository.findByTimelineEventId(relinkEventId)).isEmpty();
-    }
-
-    @Test
-    void eventPatch_activeProcessingDeleteJob_is409AndDoesNotRelink() {
-        Long deletedEventId = saveEvent("삭제 대상", 9);
-        Long relinkEventId = saveEvent("재추가 대상", 10);
-        String rawId = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b65";
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b66.jpg";
-        Long itemId = savePhotoLinkedTo(rawId, filename, 9, deletedEventId);
-        timelineDeletionTransactionService.deleteEvent(subjectId, deletedEventId);
-        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
-        jdbcTemplate.update(
-                "update timeline_photo_delete_jobs set status = 'PROCESSING', updated_at = ? "
-                        + "where timeline_photo_delete_job_id = ?",
-                LocalDateTime.now(), job.getTimelinePhotoDeleteJobId());
-
-        assertRejectedByDeleteJob(relinkEventId, itemId, rawId, filename);
     }
 
     @Test

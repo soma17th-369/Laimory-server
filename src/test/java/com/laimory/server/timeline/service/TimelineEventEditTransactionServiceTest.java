@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
@@ -22,14 +23,11 @@ import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
-import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.PhotoUrlService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,8 +68,6 @@ class TimelineEventEditTransactionServiceTest {
     @Mock
     private TimelineItemService timelineItemService;
     @Mock
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    @Mock
     private PhotoUrlService photoUrlService;
 
     private TimelineEventEditTransactionService service;
@@ -84,7 +80,6 @@ class TimelineEventEditTransactionServiceTest {
                 timelineEventService,
                 timelineEventItemService,
                 timelineItemService,
-                timelinePhotoDeleteJobService,
                 photoUrlService,
                 new ObjectMapper(),
                 20);
@@ -198,27 +193,7 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
-    void updateEvent_deleteJobOnNewPhotoKey_is409BeforeEventMutation() {
-        TimelineEvent event = stubOwnedDraftEvent();
-        event.updateMemo("기존 메모");
-        stubRecordGraph(List.of(event), List.of(), List.of());
-        // 상태 무관 — job이 있다는 사실만으로 거절하며 보존 Item을 조회·재연결하지 않는다(#495).
-        when(timelinePhotoDeleteJobService.findObjectKeysWithJob(anyCollection()))
-                .thenReturn(Set.of(PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID)));
-
-        assertThatThrownBy(() -> service.updateEvent(
-                SUBJECT_ID, EVENT_ID, command(true, "새 메모", List.of(photo(RAW_ID, FILENAME)))))
-                .isInstanceOfSatisfying(BusinessException.class, exception ->
-                        assertThat(exception.getExceptionType())
-                                .isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS));
-
-        assertOriginalState(event, "기존 메모");
-        verifyNoWrites();
-        verify(timelineItemService, never()).findById(any());
-    }
-
-    @Test
-    void updateEvent_newPhotos_checkDeleteJobsOnceWithAllNewKeys() {
+    void updateEvent_multipleNewPhotos_saveEachAsNewItem() {
         TimelineEvent event = stubOwnedDraftEvent();
         String secondFilename = "0190a1b2-0004-7000-8000-000000000004.jpg";
         stubRecordGraph(List.of(event), List.of(), List.of());
@@ -233,12 +208,7 @@ class TimelineEventEditTransactionServiceTest {
         service.updateEvent(SUBJECT_ID, EVENT_ID, command(false, null,
                 List.of(photo(RAW_ID, FILENAME), photo(RAW_ID_2, secondFilename))));
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Collection<String>> keysCaptor = ArgumentCaptor.forClass(Collection.class);
-        verify(timelinePhotoDeleteJobService).findObjectKeysWithJob(keysCaptor.capture());
-        assertThat(keysCaptor.getValue()).containsExactlyInAnyOrder(
-                PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID),
-                PhotoObjectKeys.subjectFullKey(secondFilename, SUBJECT_ID));
+        verify(timelineItemService, times(2)).save(any(TimelineItem.class));
         verify(timelineItemService, never()).findById(any());
     }
 

@@ -157,10 +157,9 @@ Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 roll
 로그로 기존 application ERROR 경보를 발화시킨다(식별자·object key 미포함, count 조회 실패는 WARN 후
 claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
 않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는
-신규로 분류한 사진의 subject+filename full object key로 job 존재를 잠금 없는 IN 조회 한 번으로
-확인하고, 상태와 무관하게 job이 있으면 409 `-1019`로 거절한다 — job 취소·보존 Item 재연결·`FOR UPDATE`
-경로는 없다(#495). pre-S3 association 재검증은 삭제와 살아 있는 Item 공유가 겹친 경합의 방어선으로
-계속 유지한다. 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
+이 테이블을 읽지 않는다 — job 존재 검사·취소·보존 Item 재연결·`FOR UPDATE` 경로 모두 없다(#495·#500).
+같은 key를 참조하는 살아 있는 Item의 보호는 worker의 pre-S3 association 재검증 한 곳이 담당한다.
+별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -432,8 +431,7 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
-보존할 수 있다. 서버는 살아 있지 않은 사진의 delete key를 일반 조회해 job이 있으면 상태와 무관하게 409로
-거절한다(취소·재연결 없음, #495). 삭제 완료 후의 과거 요청은 구별하지 않는다(클라이언트 계약).
+보존할 수 있다. 서버는 수동 추가에서 delete job을 조회하지 않는다(#500).
 
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk

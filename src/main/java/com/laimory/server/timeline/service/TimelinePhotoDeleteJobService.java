@@ -87,18 +87,6 @@ public class TimelinePhotoDeleteJobService {
         return Set.copyOf(timelinePhotoDeleteJobRepository.findItemIdsWithJob(timelineItemIds));
     }
 
-    /**
-     * 수동 PHOTO 추가가 신규로 분류한 사진의 full object key 중 삭제 job이 있는 key를 일반 조회한다.
-     * 상태와 무관하다 — job이 있는 key는 취소·재연결하지 않고 거절 대상이다. 잠금 읽기가 아니라 부재
-     * key의 gap을 잠그지 않는다.
-     */
-    public Set<String> findObjectKeysWithJob(Collection<String> objectKeys) {
-        if (objectKeys == null || objectKeys.isEmpty()) {
-            return Set.of();
-        }
-        return Set.copyOf(timelinePhotoDeleteJobRepository.findObjectKeysWithJob(objectKeys));
-    }
-
     /** 처리 창을 벗어나 재시도에서 제외된 미완료 작업 수. 경계는 claim과 같은 KST 규칙으로 계산한다. */
     public long countExpired() {
         LocalDateTime windowStart = ZonedDateTime.ofInstant(clock.instant(), WORKER_ZONE)

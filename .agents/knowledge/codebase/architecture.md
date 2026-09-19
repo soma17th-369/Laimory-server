@@ -106,8 +106,8 @@ PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 co
 PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
 request transaction에 포함하지 않는다. 모든 REST 프로세스의 bounded worker가 eligible MySQL job을
 `FOR UPDATE SKIP LOCKED`로 나눠 `PROCESSING` claim하고, 성공 job과 원문 PHOTO Item을 별도 transaction에서
-함께 제거한다. Event PATCH·Event 생성 POST는 같은 object key에 job이 있으면 상태와 무관하게 409로
-거절하며 job 취소·보존 Item 재연결은 하지 않는다(#495).
+함께 제거한다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을
+저장하며 job을 조회·취소·재연결하지 않는다(#500).
 
 orphan 스위퍼도 같은 2계층이다 — `TimelineOrphanItemSweeper`(스케줄 trigger, run 예산·요약 로그)와
 `TimelineOrphanItemSweepService`(batch 하나의 `@Transactional` 경계)로 나뉜다. batch에 외부 I/O가 없어

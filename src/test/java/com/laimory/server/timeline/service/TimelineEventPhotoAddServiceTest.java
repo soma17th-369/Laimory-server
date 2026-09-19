@@ -56,8 +56,6 @@ class TimelineEventPhotoAddServiceTest {
     @Mock
     private TimelineItemService timelineItemService;
     @Mock
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    @Mock
     private PhotoUrlService photoUrlService;
 
     private TimelineEventPhotoAddService service;
@@ -68,7 +66,6 @@ class TimelineEventPhotoAddServiceTest {
                 timelineEventService,
                 timelineEventItemService,
                 timelineItemService,
-                timelinePhotoDeleteJobService,
                 photoUrlService,
                 new ObjectMapper(),
                 MAX_PHOTO_COUNT);

@@ -86,8 +86,6 @@ class TimelineManualMutationIntegrationTest {
     @Autowired
     private DailyTimelineService dailyTimelineService;
     @Autowired
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    @Autowired
     private DailyRecordRepository dailyRecordRepository;
     @Autowired
     private TimelineEventRepository timelineEventRepository;
@@ -379,53 +377,6 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
-    void PENDING_delete_job이면_409이고_Event_행이_생기지_않는다() {
-        Long preservedItemId = plantOrphanPhotoItemWithJob();
-
-        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "재추가 시도", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)))))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1019);
-                });
-
-        // 취소·재연결 없음(#495) — Event 행도 junction도 없고 job과 보존 Item은 그대로다.
-        assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?",
-                Long.class, preservedItemId)).isEqualTo(1);
-        assertThat(timelineItemRepository.findById(preservedItemId)).isPresent();
-    }
-
-    @Test
-    void 유효한_PROCESSING_delete_job은_409이고_Event_행이_생기지_않는다() {
-        Long preservedItemId = plantOrphanPhotoItemWithJob();
-        // 오늘 claim된 active PROCESSING을 재현한다. DB NOW()는 세션 tz(UTC) 프레임이라 쓰지 않고
-        // KST 벽시계를 Java에서 바인딩한다.
-        jdbcTemplate.update(
-                "UPDATE timeline_photo_delete_jobs SET status = 'PROCESSING', updated_at = ? "
-                        + "WHERE timeline_item_id = ?",
-                LocalDateTime.now(), preservedItemId);
-
-        assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
-                new CreateTimelineEventRequest(TimelineEventType.REST, "재추가 시도", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)))))
-                .isInstanceOfSatisfying(BusinessException.class, exception -> {
-                    assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.PHOTO_DELETE_IN_PROGRESS);
-                    assertThat(exception.getErrorCode()).isEqualTo(-1019);
-                });
-
-        // 전체 롤백 — Event 행도, 새 junction도 없고 job은 그대로 남는다.
-        assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?",
-                Long.class, preservedItemId)).isEqualTo(1);
-    }
-
-    @Test
     void 사진_해석_실패는_Event_insert까지_전체_롤백된다() {
         // 같은 record에 같은 rawId의 non-PHOTO Item을 연결해 두면 resolve가 400으로 거절한다 —
         // Event를 먼저 insert한 뒤의 실패라 rollback이 실제로 일어나야 사진 없는 Event가 남지 않는다.
@@ -450,20 +401,6 @@ class TimelineManualMutationIntegrationTest {
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId))
                 .hasSize((int) eventCountBefore);
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
-    }
-
-    /** 삭제 대기 중 보존된 orphan PHOTO Item과 그 PENDING delete job을 심는다. */
-    private Long plantOrphanPhotoItemWithJob() {
-        TimelineItem preserved = timelineItemRepository.save(TimelineItem.of(
-                ItemType.PHOTO, RAW_ID, DATE.atTime(14, 5), null,
-                objectMapper.valueToTree(new PhotoPayload(
-                        FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0,
-                        null, null, null, null))));
-        trackedItemIds.add(preserved.getTimelineItemId());
-        String objectKey = PhotoObjectKeys.subjectFullKey(FILENAME, subjectId);
-        assertThat(timelinePhotoDeleteJobService.insertIfAbsent(preserved.getTimelineItemId(), objectKey))
-                .isTrue();
-        return preserved.getTimelineItemId();
     }
 
     private void trackItems(TimelineEventResponse response) {
