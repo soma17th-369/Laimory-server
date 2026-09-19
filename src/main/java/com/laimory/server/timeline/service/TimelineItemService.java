@@ -38,7 +38,7 @@ public class TimelineItemService {
     /**
      * 후보 Item ID들 중 rawId가 후보 rawIds에 속하는 것들의 rawId 집합을 반환한다.
      * append 시 이미 타임라인에 반영된 source item을 rawId로 제외하고, 수동 PHOTO 추가가 대상 Event에 이미 연결된
-     * rawId를 no-op으로 접는 데 쓴다(Item ID 축은 junction 조회가 공급).
+     * rawId를 오류 없이 건너뛰는 데 쓴다(Item ID 축은 junction 조회가 공급).
      * itemIds 또는 rawIds가 비면 빈 집합을 반환한다(불필요한 빈 IN 쿼리 회피).
      */
     public Set<String> findSavedRawIds(Collection<Long> itemIds, Collection<String> rawIds) {

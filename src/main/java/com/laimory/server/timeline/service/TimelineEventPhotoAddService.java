@@ -72,7 +72,7 @@ class TimelineEventPhotoAddService {
     ) {
     }
 
-    /** {@link #resolve} 결과 — 새로 만들 사진. 대상 Event에 같은 rawId가 이미 연결된 사진은 빠진다(no-op). */
+    /** {@link #resolve} 결과 — 새로 만들 사진. 대상 Event에 같은 rawId가 이미 연결된 사진은 오류 없이 건너뛰어 빠진다. */
     record PhotoChanges(List<PhotoToAdd> newPhotos) {
         static PhotoChanges empty() {
             return new PhotoChanges(List.of());
@@ -129,8 +129,8 @@ class TimelineEventPhotoAddService {
     }
 
     /**
-     * 대상 Event에 이미 연결된 Item의 rawId와 대조해 no-op/new로 분류한다. 같은 rawId가 있으면 비교 없이
-     * 건너뛴다 — 이 분기에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다. Android는 사진 선택마다
+     * 대상 Event에 이미 연결된 Item의 rawId와 대조해 건너뛸 사진과 새로 만들 사진을 가른다. 같은 rawId가 있으면
+     * 비교 없이, 오류 없이 건너뛴다(나머지 항목은 정상 처리) — 이 분기에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다. Android는 사진 선택마다
      * 새 rawId·새 filename을 발급하므로 record의 다른 Event에 있는 사진을 같은 rawId로 다시 보내는 경로가 없고,
      * 서버도 record 전체를 조회하지 않는다(#502). 분류와 DB-dependent 검증을 entity mutation보다 먼저 끝내
      * 실패 시 호출자의 Event 변경까지 함께 롤백·보류된다.

@@ -473,7 +473,7 @@ object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는
   연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 항상 새 Item을 대상 Event에만 연결한다(#502).
 - `timeline_items.raw_id`는 DB UNIQUE가 없다 — draft는 API 사전 제외 + AI write 직전 재검사로 방어하고,
   수동 PHOTO 추가는 request rawId를 첫 항목 우선으로 dedupe한 뒤 대상 Event의 junction Item 중 같은 rawId가
-  있으면 no-op, 없으면 새 Item이다(#502) — record의 다른 Event나 저장본은 보지 않는다. race/legacy 중복 행은
+  있으면 오류 없이 건너뛰고, 없으면 새 Item이다(#502) — record의 다른 Event나 저장본은 보지 않는다. race/legacy 중복 행은
   허용하며 조회·삭제는 `timeline_item_id` 기준이다.
 - 수동 PHOTO의 nullable startAt/endAt은 `timeline_items.start_at/end_at`의 `DATETIME` 초 단위 정밀도에 맞춰
   소수 초를 입력 경계에서 거절한다.

@@ -74,7 +74,7 @@ public class TimelineEventCreateService {
         }
 
         // Event를 먼저 저장하고 실제 생성 ID를 target으로 넘겨 PATCH와 같은 계약을 탄다 — 신규 Event는
-        // 연결 junction이 없어 "대상 Event 기연결 no-op" 분기가 비활성이고 모든 사진이 새 Item이다.
+        // 연결 junction이 없어 "이미 연결된 rawId 건너뛰기" 분기가 비활성이고 모든 사진이 새 Item이다.
         TimelineEventPhotoAddService.PhotoChanges changes =
                 timelineEventPhotoAddService.resolve(saved.getTimelineEventId(), photos);
         List<Long> linkedItemIds =

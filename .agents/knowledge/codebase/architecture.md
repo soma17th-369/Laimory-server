@@ -88,7 +88,7 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 메서드 하나가 소유 record 재확인·입력 검증·Event insert·optional PHOTO Item/junction 추가를 소유한다.
 Event 상세 필드 공통 규칙은 package-private `TimelineEventInputRules`, 수동 PHOTO 검증·분류·저장 규칙은
 package-private Spring bean `TimelineEventPhotoAddService`가 소유해 PATCH/생성이 공유한다(대상 Event에 같은
-rawId가 있으면 no-op, 아니면 새 Item — 기존 Item 재연결 없음, #502). 사진의
+rawId가 있으면 오류 없이 건너뛰고, 아니면 새 Item — 기존 Item 재연결 없음, #502). 사진의
 DB-dependent `resolve`/`link`는 `MANDATORY`로 호출자 transaction 합류를 강제하고 트랜잭션 안에서 S3를
 호출하지 않는다.
 

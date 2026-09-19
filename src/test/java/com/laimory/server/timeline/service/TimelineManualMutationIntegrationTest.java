@@ -335,7 +335,7 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
-    void 같은_PATCH_재시도는_대상_Event에_이미_있는_rawId를_no_op으로_접는다() {
+    void 같은_PATCH_재시도는_대상_Event에_이미_있는_rawId를_오류_없이_건너뛴다() {
         // 커밋 뒤 응답을 잃은 저장 재탭 — Android는 pending 목록을 유지해 같은 rawId·filename을 다시 보낸다.
         TimelineEventResponse created = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "사진 있는 이벤트", null,

@@ -154,8 +154,8 @@ public interface TimelineRecordApi {
                     + "PHOTO startAt/endAt은 nullable이지만 값이 있으면 초 단위만 허용한다(소수 초는 400). "
                     + "클라이언트가 S3 업로드 성공을 확인한 뒤 호출해야 한다. 서버는 S3 존재 여부를 확인하지 않고, "
                     + "description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 생성한다. "
-                    + "같은 rawId가 이 Event에 이미 연결돼 있으면 그 사진은 no-op(같은 요청의 재시도)이고, "
-                    + "아니면 새 Item이다 — 저장본과 비교하지 않는다. "
+                    + "같은 rawId가 이 Event에 이미 연결돼 있으면 그 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며"
+                    + "(같은 요청의 재시도 — 나머지 항목은 정상 처리), 아니면 새 Item이다 — 저장본과 비교하지 않는다. "
                     + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",

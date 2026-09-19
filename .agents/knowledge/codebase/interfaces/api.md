@@ -110,8 +110,9 @@ memo는 trim 없이 원문 최대 500자). **endAt만 누락·null 모두 비움
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
-규칙이며 위반은 400이다. 대상 Event에 같은 rawId가 이미 연결된 사진은 no-op(같은 PATCH의 재시도)이고 그 외는
-새 Item이다 — record의 다른 Event나 저장본과 비교하지 않는다(#502). non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+규칙이며 위반은 400이다. 대상 Event에 같은 rawId가 이미 연결된 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며
+(같은 PATCH의 재시도 — 나머지 항목은 정상 처리, 응답 200) 그 외는 새 Item이다 — record의 다른 Event나 저장본과
+비교하지 않는다(#502). non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고

@@ -66,9 +66,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
   중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
   race/legacy 중복 행 허용). 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request rawId 중복을 첫
-  항목 우선으로 접고, **대상 Event에 같은 rawId가 이미 연결돼 있으면 no-op, 아니면 새 Item**이다(#502).
+  항목 우선으로 접고, **대상 Event에 같은 rawId의 사진이 이미 연결돼 있으면 그 항목은 이미 추가된 것으로 보고
+  오류 없이 건너뛴다(나머지 항목과 Event 변경은 정상 처리, 응답 200). 없으면 새 Item으로 저장한다**(#502).
   record의 다른 Event는 조회하지 않고 저장본과 요청을 비교하지 않는다 — Android는 사진 선택마다 새
-  rawId·filename을 발급하므로 이 no-op에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다.
+  rawId·filename을 발급하므로 이 건너뛰기에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다.
 - **수동 입력 방어의 경계** — 다른 요청이 남긴 상태나 클라이언트의 시간적 행동을 가정하는 방어는 두지 않는다
   (#495·#500·#502에서 제거한 삭제 job 409·교차 Event 재사용·저장본 비교 400이 그 예). 지금 받은 요청 하나의
   형식·일관성 검증(개수 상한·UUID 형식·소수 초·filename 형식·요청 내 filename 중복)은 둔다 — 클라이언트를
@@ -328,7 +329,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   UUIDv7이라 Android는 같은 로컬 사진이어도 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거
   filename이 추가 요청에 다시 오는 경로는 없다. 그래서 수동 PHOTO 추가는 delete job을 조회하지 않는다 —
   job 존재 거절·취소·보존 Item 재연결·`FOR UPDATE` 어느 것도 없다(#495·#500). 이미 S3 업로드를 마친
-  **동일 pending addition**의 PATCH 재시도는 같은 rawId가 대상 Event에 이미 연결돼 있어 no-op이다(#502).
+  **동일 pending addition**의 PATCH 재시도는 같은 rawId가 대상 Event에 이미 연결돼 있어 오류 없이 건너뛴다(#502).
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 

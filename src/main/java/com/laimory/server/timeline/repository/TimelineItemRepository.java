@@ -17,7 +17,6 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     List<String> findRawIdsByTimelineItemIdInAndRawIdIn(@Param("itemIds") Collection<Long> itemIds,
                                                         @Param("rawIds") Collection<String> rawIds);
 
-    /** 수동 PHOTO 추가(Event PATCH·Event 생성 POST)의 rawId type/reuse/no-op 분류용 full entity 조회. */
     /**
      * 계정 삭제(#302)의 Item 일괄 제거 — junction은 FK CASCADE로 함께 사라진다.
      * record 삭제와 <b>같은 transaction</b>에서 호출해야 한다: record가 먼저 사라지면 junction도 함께

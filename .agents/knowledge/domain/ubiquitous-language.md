@@ -58,7 +58,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. 서버 내부 행 식별자이며 AI에는 노출하지 않는다(AI는 `rawId`로만 식별한다). |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 대상 Event에 같은 rawId가 이미 연결돼 있으면 no-op, 아니면 새 Item이다(record의 다른 Event·저장본 비교 없음, #502). |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 대상 Event에 같은 rawId가 이미 연결돼 있으면 그 항목을 오류 없이 건너뛰고(응답 200), 아니면 새 Item이다(record의 다른 Event·저장본 비교 없음, #502). |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 결과에서 Event에 연결한 staging source item이다. 서버 결과 저장 transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -125,7 +125,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(일일 orphan 스위퍼가 수렴시킨다), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | retry receipt에 선점 표식(`claimedAt`)을 남긴 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit하고, commit 뒤 한 번의 native write로 callback token hash와 Redis `CALLBACK_PENDING`으로 회전한다. 저장 실패는 가능한 경우 최초 `RESULT_PENDING` snapshot으로 복구한다. |
-| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 대상 Event에 같은 rawId가 있으면 no-op, 아니면 새 Item이다(#502). |
+| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 대상 Event에 같은 rawId가 있으면 오류 없이 건너뛰고, 아니면 새 Item이다(#502). |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
 | rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, 결과 저장 transaction이 write 직전 재검사한다. |

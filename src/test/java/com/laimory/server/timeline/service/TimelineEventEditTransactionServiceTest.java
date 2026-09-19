@@ -132,7 +132,7 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
-    void updateEvent_targetAlreadyHasRawId_isPhotoNoOpAndOmittedMemoIsPreserved() {
+    void updateEvent_targetAlreadyHasRawId_skipsPhotoAndPreservesOmittedMemo() {
         TimelineEvent event = stubOwnedDraftEvent();
         event.updateMemo("기존 메모");
         // 커밋 뒤 응답을 잃은 같은 PATCH의 재시도 — 대상 Event에 같은 rawId가 있으면 비교 없이 건너뛴다.
