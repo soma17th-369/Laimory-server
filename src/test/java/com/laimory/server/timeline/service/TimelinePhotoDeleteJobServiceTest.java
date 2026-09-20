@@ -142,13 +142,6 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void deleteByIds_skipsEmptyInput() {
-        assertThat(service.deleteByIds(List.of())).isZero();
-
-        verify(repository, never()).deleteAllByJobIdIn(List.of());
-    }
-
-    @Test
     void completeSucceeded_deletesJobsBeforeOriginalItemsWithoutPreLockRead() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
         when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);

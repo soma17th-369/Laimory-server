@@ -101,14 +101,6 @@ public class TimelinePhotoDeleteJobService {
                 jobIds, TimelinePhotoDeleteJobStatus.PENDING, TimelinePhotoDeleteJobStatus.PROCESSING);
     }
 
-    /** 완료된 작업을 ID로 제거한다. 빈 입력은 오류 없이 0을 돌려준다. */
-    public int deleteByIds(Collection<Long> jobIds) {
-        if (jobIds == null || jobIds.isEmpty()) {
-            return 0;
-        }
-        return timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(jobIds);
-    }
-
     /**
      * S3 삭제가 확인된 job과 원문 PHOTO Item을 같은 transaction에서 완료한다. job FK가 Item의 선삭제를
      * 막으므로 job을 먼저 지우고 Item을 지운다. 늦은 중복 completion은 job 삭제 0건으로 수렴한다.
@@ -127,7 +119,7 @@ public class TimelinePhotoDeleteJobService {
                 .map(TimelinePhotoDeleteJob::getTimelineItemId)
                 .distinct()
                 .toList();
-        int deletedJobs = deleteByIds(jobIds);
+        int deletedJobs = timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(jobIds);
         if (deletedJobs == 0) {
             return 0;
         }
