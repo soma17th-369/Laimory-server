@@ -71,7 +71,7 @@ class SubjectMappingServiceTest {
     void getRequired_currentHit_returnsSubjectWithoutRekey() {
         UUID subject = UUID.randomUUID();
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
-        when(userSubjectLinkRepository.findById(lookupKey(1)))
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(1)))
                 .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(1), subject, CURRENT_VERSION)));
 
         UUID result = subjectMappingService.getRequired(USER_ID);
@@ -89,7 +89,7 @@ class SubjectMappingServiceTest {
     void getRequired_currentHitWithInvalidSubjectUuid_failsClosedWithoutIdentifiers(String rawSubject) {
         UUID invalidSubject = UUID.fromString(rawSubject);
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
-        when(userSubjectLinkRepository.findById(lookupKey(1)))
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(1)))
                 .thenReturn(Optional.of(UserSubjectLink.of(
                         lookupKey(1), invalidSubject, CURRENT_VERSION)));
 
@@ -103,7 +103,7 @@ class SubjectMappingServiceTest {
     @Test
     void getRequired_missWithoutPreviousKey_failsClosedWithoutIdentifiers() {
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
-        when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(1))).thenReturn(Optional.empty());
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> subjectMappingService.getRequired(USER_ID))
@@ -119,8 +119,8 @@ class SubjectMappingServiceTest {
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
         when(subjectLookupKeyDeriver.currentVersion()).thenReturn(CURRENT_VERSION);
-        when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
-        when(userSubjectLinkRepository.findById(lookupKey(2)))
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(1))).thenReturn(Optional.empty());
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(2)))
                 .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject, (short) 1)));
         when(userSubjectLinkRepository.rekey(lookupKey(2), lookupKey(1), CURRENT_VERSION)).thenReturn(1);
 
@@ -137,8 +137,8 @@ class SubjectMappingServiceTest {
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
         when(subjectLookupKeyDeriver.currentVersion()).thenReturn(CURRENT_VERSION);
-        when(userSubjectLinkRepository.findById(lookupKey(1))).thenReturn(Optional.empty());
-        when(userSubjectLinkRepository.findById(lookupKey(2)))
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(1))).thenReturn(Optional.empty());
+        when(userSubjectLinkRepository.findByUserLookupKey(lookupKey(2)))
                 .thenReturn(Optional.of(UserSubjectLink.of(lookupKey(2), subject, (short) 1)));
         when(userSubjectLinkRepository.rekey(lookupKey(2), lookupKey(1), CURRENT_VERSION)).thenReturn(0);
 
@@ -150,7 +150,7 @@ class SubjectMappingServiceTest {
     void getRequired_currentAndPreviousMiss_failsClosed() {
         when(subjectLookupKeyDeriver.deriveCurrent(USER_ID)).thenReturn(lookupKey(1));
         when(subjectLookupKeyDeriver.derivePrevious(USER_ID)).thenReturn(Optional.of(lookupKey(2)));
-        when(userSubjectLinkRepository.findById(any(byte[].class))).thenReturn(Optional.empty());
+        when(userSubjectLinkRepository.findByUserLookupKey(any(byte[].class))).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> subjectMappingService.getRequired(USER_ID))
                 .isInstanceOf(IllegalStateException.class)

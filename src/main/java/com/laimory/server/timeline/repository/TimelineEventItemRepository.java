@@ -21,6 +21,11 @@ public interface TimelineEventItemRepository extends JpaRepository<TimelineEvent
     @Query("select l from TimelineEventItem l where l.id.timelineEventId = :eventId")
     List<TimelineEventItem> findByTimelineEventId(@Param("eventId") Long timelineEventId);
 
+    /** 단건 연결 존재 여부 — 상속 {@code existsById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    @Query("select count(l) > 0 from TimelineEventItem l "
+            + "where l.id.timelineEventId = :eventId and l.id.timelineItemId = :itemId")
+    boolean existsByEventIdAndItemId(@Param("eventId") Long timelineEventId, @Param("itemId") Long timelineItemId);
+
     @Query("select l from TimelineEventItem l where l.id.timelineEventId in :eventIds")
     List<TimelineEventItem> findByTimelineEventIdIn(@Param("eventIds") Collection<Long> timelineEventIds);
 

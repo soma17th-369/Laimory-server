@@ -253,9 +253,9 @@ runtime repository/entity도 subject만 읽고 쓴다.
 `markSaved`(감정과 `status=SAVED`를 함께 최초 확정, `WHERE status='DRAFT'`)와 SAVED 전용 감정 수정
 `updateSavedEmotion`(감정만 교체, `WHERE status='SAVED'` — #325). 둘 다 영향 행 수가 판정 기준이고
 bulk UPDATE라 JPA auditing을 우회하므로 `updated_at`을 app Clock 파라미터로 직접 채운다(`modified_by`
-NULL). 감정 수정은 비트랜잭션 사전 조회 → update-first 트랜잭션 writer 경계를 쓴다 — MySQL 기본
-`REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에 묶으면 첫 조회가 고정한 snapshot이 동시
-삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
+NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우선(리포지토리 tx 한 문장) → 0행일 때만
+재조회 분류 경계를 쓴다(#499) — MySQL 기본 `REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에
+묶으면 첫 조회가 고정한 snapshot이 동시 삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
 `daily_records`·`timeline_events` 컬럼만 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라

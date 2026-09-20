@@ -66,6 +66,7 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     long countCreatedBefore(@Param("windowStart") LocalDateTime windowStart);
 
     @Modifying
+    @Transactional
     @Query("update TimelinePhotoDeleteJob j set j.status = :pending "
             + "where j.timelinePhotoDeleteJobId in :jobIds and j.status = :processing")
     int markPending(@Param("jobIds") Collection<Long> jobIds,

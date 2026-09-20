@@ -4,12 +4,19 @@ import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long> {
+
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<TimelineItem> findByTimelineItemId(Long timelineItemId);
+
+    /** PK IN 조회 — 상속 {@code findAllById}와 같은 이유로 인터페이스 선언이다(#499). 정렬 미보장. */
+    List<TimelineItem> findByTimelineItemIdIn(Collection<Long> timelineItemIds);
 
     // append 시 이미 저장된 source item을 rawId로 제외하기 위한 projection 조회.
     // rawId만 select 한다(JSON payload를 든 전체 엔티티 로드 회피). 후보 itemIds·rawIds로 좁혀 전체 스캔을 막는다.

@@ -66,7 +66,7 @@ public class DailyNotificationPreferenceService {
     }
 
     public Optional<DailyNotificationPreference> find(UUID subjectId) {
-        return dailyNotificationPreferenceRepository.findById(subjectId);
+        return dailyNotificationPreferenceRepository.findBySubjectId(subjectId);
     }
 
     /**

@@ -7,12 +7,11 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 하루 기록 저장의 DB 트랜잭션 경계 전담 빈. 오케스트레이터({@link TimelineSaveService})가 Spring
- * 프록시를 통해 호출한다 — 오케스트레이터 안에 {@code @Transactional} 메서드를 두면 self-invocation으로
- * 트랜잭션이 조용히 무효화되므로 분리한다({@link TimelineDeletionTransactionService}와 같은 형태).
+ * 하루 기록 저장의 writer 전담 빈. 오케스트레이터({@link TimelineSaveService})가 전이를 위임한다.
+ * 서비스 transaction은 없다(#499) — 전이 조건부 UPDATE는 리포지토리 tx 한 문장으로 실행되고,
+ * 이 빈은 0행의 원인 분류를 소유한다({@link DailyRecordEmotionUpdateTransactionService}와 같은 형태).
  *
  * <p><b>User Memory는 여기서 건드리지 않는다.</b> 전이와 memory 교체는 서로 다른 API가 담당하는 서로
  * 다른 트랜잭션이다 — 이 경계는 사용자의 저장을 즉시 확정하고, memory 교체는 10초+ 뒤 AI가 결과를
@@ -37,7 +36,6 @@ public class TimelineSaveTransactionService {
      * @throws BusinessException 전이 실패 — 이미 SAVED면 409 {@code -1003},
      *                           record가 사라졌거나 비소유면 404 {@code -404}
      */
-    @Transactional
     public void save(UUID subjectId, Long dailyRecordId, EmotionType emotionType) {
         if (dailyRecordService.markSaved(dailyRecordId, subjectId, emotionType) == 0) {
             throw new BusinessException(classifyTransitionFailure(subjectId, dailyRecordId));

@@ -27,12 +27,12 @@ public class TimelineItemService {
         if (timelineItemIds.isEmpty()) {
             return List.of();
         }
-        return timelineItemRepository.findAllById(timelineItemIds);
+        return timelineItemRepository.findByTimelineItemIdIn(timelineItemIds);
     }
 
     /** 단건 Item 로드 — 연결 해제의 타입 검사·orphan 처리 입력용. */
     public Optional<TimelineItem> findById(Long timelineItemId) {
-        return timelineItemRepository.findById(timelineItemId);
+        return timelineItemRepository.findByTimelineItemId(timelineItemId);
     }
 
     /**

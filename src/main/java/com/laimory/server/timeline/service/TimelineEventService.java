@@ -20,7 +20,7 @@ public class TimelineEventService {
     }
 
     public Optional<TimelineEvent> findById(Long timelineEventId) {
-        return timelineEventRepository.findById(timelineEventId);
+        return timelineEventRepository.findByTimelineEventId(timelineEventId);
     }
 
     /** 해당 일자 이벤트를 start_at, timeline_event_id 오름차순으로 반환(표시 순서 고정). */

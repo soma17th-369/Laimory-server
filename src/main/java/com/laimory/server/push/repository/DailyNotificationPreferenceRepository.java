@@ -4,6 +4,7 @@ import com.laimory.server.push.entity.DailyNotificationPreference;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -14,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 /** daily_notification_preferences 레포 — 설정과 worker의 occurrence claim을 함께 소유한다. */
 public interface DailyNotificationPreferenceRepository
         extends JpaRepository<DailyNotificationPreference, UUID> {
+
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<DailyNotificationPreference> findBySubjectId(UUID subjectId);
 
     /**
      * 신규 행 쓰기는 native insert-if-absent 한 문장이라 read-then-insert 경합이 UNIQUE 예외로 새지

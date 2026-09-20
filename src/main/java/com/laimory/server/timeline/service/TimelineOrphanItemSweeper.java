@@ -53,7 +53,7 @@ public class TimelineOrphanItemSweeper {
             log.warn("orphan 스위퍼 batch 실패(다음 실행에서 재시도): workerIndex={} exceptionType={}",
                     workerIndex, exception.getClass().getSimpleName());
         } finally {
-            // 처리 commit/rollback 뒤 새 transaction에서 담당 전체를 센다. 다음 배치를 처리하지 않는다.
+            // 처리 commit/rollback 뒤 transaction 없이 담당 전체를 센다. 다음 배치를 처리하지 않는다.
             try {
                 long count = sweepService.countStaleObservedOrphans(workerIndex, properties.getTotalWorkerCount());
                 if (count > 0) {

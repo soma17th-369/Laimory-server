@@ -52,7 +52,7 @@ public class UserService {
      */
     public User getProfile(String applicationVersion, Long userId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return userRepository.findById(userId)
+        return userRepository.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED));
     }
 

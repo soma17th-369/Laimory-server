@@ -139,8 +139,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   외부 하루 단건의 날짜 기반 공개 경로는
   `GET /a/api/{version}/timeline/daily-records/{recordDate}`이며 `(subjectId, recordDate)`가 일치하는
   한 건만 반환한다. 기존 `GET .../daily-records/by-id/{dailyRecordId}`는 같은 응답을 반환하는 deprecated 호환
-  경로다. 없음·비소유는 두 경로 모두 404 `-404`로 은닉하며, record→Event→junction→Item을 한 read-only
-  transaction에서 읽어 Event별 `items`까지 조립한다.
+  경로다. 없음·비소유는 두 경로 모두 404 `-404`로 은닉하며, record→Event→junction→Item을 Spring
+  transaction 없이 순차 SELECT로 읽어 Event별 `items`까지 조립한다(#499 — 스냅샷 계약 없음, 조회 사이에
+  커밋된 삭제가 끼는 드문 경합은 미대응으로 수용).
 - `GET /a/api/{version}/timeline/events/{timelineEventId}`는 Event의 부모 record를 통해 principal 소유권을
   확인하고 DRAFT/SAVED Event와 연결 Item을 반환한다. Event·부모 record 없음과 부모 비소유는 Event 404로
   은닉하며 Item이 없으면 `items=[]`다.
