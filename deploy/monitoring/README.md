@@ -1099,7 +1099,7 @@ worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.en
 
 flag가 true인데 job이 줄지 않으면 직전 03:00 KST에 두 app process가 가용했는지 확인하고 application
 log의 `PHOTO 삭제 worker run 시작`, `PHOTO 삭제 batch 완료`, `PHOTO 삭제 worker run 완료`를 조회한다.
-`claimed`, `relinkedCancelled`, `requested`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
+`claimed`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
 `deferred`, 단계별 오류 수와 `durationMs`를 process-wide run budget, MySQL/Hikari 상태, S3/IAM 오류와
 함께 확인한다. 실패
 job과 그 FK가 가리키는 원문 PHOTO Item은 처리 창 안에서 재시도되는 복구 권위이므로 둘 중 하나를 수동

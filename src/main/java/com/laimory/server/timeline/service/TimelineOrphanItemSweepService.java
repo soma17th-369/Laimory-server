@@ -101,9 +101,10 @@ public class TimelineOrphanItemSweepService {
     /**
      * 유효한 orphan PHOTO를 delete job으로 넘기고, job을 만들 수 없는 행은 삭제 대상에 넣는다.
      *
-     * <p>서로 다른 Item이 같은 object key를 갖는 상태를 서버가 만들지 않으므로(filename은 presign마다
-     * 서버 발급 UUIDv7, 기존 Item 재연결 writer 없음 — #503) key 단위 사전 분류는 두지 않는다. 남는
-     * 충돌 처리는 insert 실패의 사후 분기 하나다.
+     * <p>단일·순차 writer의 정상 경로는 서로 다른 Item이 같은 object key를 갖는 상태를 만들지 않으므로
+     * (filename은 presign마다 서버 발급 UUIDv7, 기존 Item 재연결 writer 없음 — #503) key 단위 사전
+     * 분류는 두지 않는다. 수용된 race/legacy 중복(invariants "race/legacy 중복 행 허용")이 실재하면
+     * 아래 insert 실패 사후 분기가 UNIQUE 충돌로 수렴시킨다 — 이 분기는 그 수용 계약과 함께만 제거할 수 있다.
      */
     private void schedulePhotoDeletions(List<KeyedPhoto> keyedPhotos, Counters counters,
                                         List<Long> immediateDeleteIds) {

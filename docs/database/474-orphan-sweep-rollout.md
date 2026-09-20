@@ -36,8 +36,8 @@ AWS·host 변경은 대상·영향·복구 방법을 제시하고 별도 승인�
 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST 최초 관측 시각을 기록해 먼저 commit한다.
 같은 PK는 새 처리 transaction에서 재검증한다. 처리 rollback·재조회가 최초 시각을 덮어쓰지 않는다.
 
-기존 Item 재연결은 같은 transaction에서 junction 저장 전에 관측 표시를 해제한다.
-Item UPDATE를 먼저 수행하여 junction FK 공유 잠금의 S→X 승격 교착을 피한다. 공통 감사 동작은 유지한다.
+공통 감사 동작은 유지한다(당시 있던 기존 Item 재연결의 관측 표시 해제 경로는 이후 #502에서 재연결
+writer와 함께 제거됨).
 
 각 slot의 처리 commit/rollback 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job이 모두 없는
 Item 수가 양수이면 workerIndex·count만 ERROR로 남긴다. 기존 application ERROR 경보를 사용한다.
