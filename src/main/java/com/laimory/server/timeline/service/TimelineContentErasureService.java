@@ -103,7 +103,6 @@ public class TimelineContentErasureService {
     }
 
     /** AI 입력 staging 한 batch. subject FK가 {@code RESTRICT}라 mapping 삭제 전에 0이 되어야 한다. */
-    @Transactional
     public int deleteDraftSourceBatch(UUID subjectId, int batchSize) {
         return timelineDraftSourceItemRepository.deleteBySubjectId(subjectId.toString(), batchSize);
     }

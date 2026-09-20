@@ -48,7 +48,6 @@ public class TimelineOrphanItemSweepService {
         return ids;
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public long countStaleObservedOrphans(int workerIndex, int totalWorkerCount) {
         LocalDateTime staleBefore = LocalDateTime.ofInstant(clock.instant(), OBSERVATION_ZONE).minusHours(72);
         return timelineItemService.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);

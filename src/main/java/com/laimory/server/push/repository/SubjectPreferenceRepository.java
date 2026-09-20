@@ -4,6 +4,7 @@ import com.laimory.server.push.entity.SubjectPreference;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -29,6 +30,9 @@ public interface SubjectPreferenceRepository extends JpaRepository<SubjectPrefer
                        @Param("pushEnabled") boolean pushEnabled,
                        @Param("onboardingCompleted") boolean onboardingCompleted,
                        @Param("now") LocalDateTime now);
+
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<SubjectPreference> findBySubjectId(UUID subjectId);
 
     /** worker가 claim한 subject들의 마스터 상태 batch 조회 — 행이 없는 subject는 결과에서 빠진다. */
     @Query("select p from SubjectPreference p where p.subjectId in :subjectIds")

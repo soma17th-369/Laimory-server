@@ -95,7 +95,6 @@ public class TimelinePhotoDeleteJobService {
     }
 
     /** S3 실패·검증 실패 job을 다음 일일 실행이 다시 claim하는 PENDING으로 되돌린다. */
-    @Transactional
     public int markPendingForRetry(Collection<TimelinePhotoDeleteJob> jobs) {
         if (jobs == null || jobs.isEmpty()) {
             return 0;

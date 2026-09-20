@@ -25,7 +25,7 @@ public class UserMemoryService {
 
     /** 사용자의 User Memory 문서. 행이 없으면(=아직 메모리 없음) 빈 Optional이다. */
     public Optional<JsonNode> find(UUID subjectId) {
-        return userMemoryRepository.findById(subjectId).map(UserMemory::getMemory);
+        return userMemoryRepository.findBySubjectId(subjectId).map(UserMemory::getMemory);
     }
 
     /**

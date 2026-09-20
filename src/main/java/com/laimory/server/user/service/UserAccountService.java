@@ -81,7 +81,7 @@ public class UserAccountService {
 
     /** 전이 실패(영향 0행) 뒤 멱등 202와 401을 가르는 fresh 상태 조회. */
     public Optional<UserStatus> findStatus(long userId) {
-        return userRepository.findById(userId).map(User::getStatus);
+        return userRepository.findByUserId(userId).map(User::getStatus);
     }
 
     /**

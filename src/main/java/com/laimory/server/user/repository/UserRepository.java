@@ -23,6 +23,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByProviderAndProviderUserId(Provider provider, String providerUserId);
 
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<User> findByUserId(Long userId);
+
     /** {@code /a/api} 인증·token 발급·회전의 활성 확인(캐시 miss 적재 — #429·#441) — 회원 없음과 탈퇴를 구분하지 않는다. */
     boolean existsByUserIdAndStatus(Long userId, UserStatus status);
 

@@ -1,7 +1,6 @@
 package com.laimory.server.timeline.service;
 
 import com.laimory.server.timeline.entity.TimelineEventItem;
-import com.laimory.server.timeline.entity.TimelineEventItemId;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import java.util.Collection;
 import java.util.List;
@@ -41,7 +40,7 @@ public class TimelineEventItemService {
 
     /** 해당 Event-Item 연결 존재 여부(일반 읽기) — 연결 해제의 404 은닉/타입 거절 순서 판정용. */
     public boolean isLinked(Long timelineEventId, Long timelineItemId) {
-        return timelineEventItemRepository.existsById(new TimelineEventItemId(timelineEventId, timelineItemId));
+        return timelineEventItemRepository.existsByEventIdAndItemId(timelineEventId, timelineItemId);
     }
 
     /**

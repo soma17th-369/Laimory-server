@@ -162,7 +162,7 @@ class UserServiceTest {
     @Test
     void getProfile_existingUser_returnsRow() {
         User existing = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
-        when(userRepository.findById(7L)).thenReturn(Optional.of(existing));
+        when(userRepository.findByUserId(7L)).thenReturn(Optional.of(existing));
 
         User result = userService.getProfile("v1", 7L);
 
@@ -171,7 +171,7 @@ class UserServiceTest {
 
     @Test
     void getProfile_missingUserRow_throwsAuthenticationRequiredWithoutUserId() {
-        when(userRepository.findById(7L)).thenReturn(Optional.empty());
+        when(userRepository.findByUserId(7L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> userService.getProfile("v1", 7L))
                 .isInstanceOfSatisfying(BusinessException.class, e -> {

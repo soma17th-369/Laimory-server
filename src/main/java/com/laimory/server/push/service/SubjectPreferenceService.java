@@ -51,7 +51,7 @@ public class SubjectPreferenceService {
     }
 
     public boolean findPushEnabled(UUID subjectId) {
-        return subjectPreferenceRepository.findById(subjectId)
+        return subjectPreferenceRepository.findBySubjectId(subjectId)
                 .map(SubjectPreference::isPushEnabled)
                 .orElseThrow(() -> new IllegalStateException("subject preference row is missing"));
     }
@@ -62,7 +62,7 @@ public class SubjectPreferenceService {
      * {@link #findPushEnabled}와 같은 이유로 던진다.
      */
     public boolean findOnboardingCompleted(UUID subjectId) {
-        return subjectPreferenceRepository.findById(subjectId)
+        return subjectPreferenceRepository.findBySubjectId(subjectId)
                 .map(SubjectPreference::isOnboardingCompleted)
                 .orElseThrow(() -> new IllegalStateException("subject preference row is missing"));
     }

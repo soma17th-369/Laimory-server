@@ -92,6 +92,7 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
      * 뜻이다. 호출자는 0행을 정상 종료로 다룬다.
      */
     @Modifying
+    @Transactional
     @Query("update AccountErasureJob j set j.status = :next, j.updatedAt = :at "
             + "where j.accountErasureJobId = :jobId and j.status = :expected")
     int transition(@Param("jobId") Long jobId,
@@ -104,6 +105,7 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
      * transaction 안에서 user 행 삭제보다 <b>먼저</b> 호출한다. 0행 = 다른 worker가 이미 완료.
      */
     @Modifying
+    @Transactional // REQUIRED — finalization transaction에 합류한다
     @Query("delete from AccountErasureJob j "
             + "where j.accountErasureJobId = :jobId and j.status = :expected")
     int deleteByIdAndStatus(@Param("jobId") Long jobId,

@@ -11,7 +11,6 @@ public class AppConfigService {
 
     private final AppConfigRepository appConfigRepository;
 
-    @Transactional(readOnly = true)
     public AppConfigResponse getAppConfig(String applicationVersion) {
         // applicationVersion: 버전별 config 분기 지점(현재 단일 버전이라 분기 없음).
         return AppConfigResponse.from(requireSingleConfig());

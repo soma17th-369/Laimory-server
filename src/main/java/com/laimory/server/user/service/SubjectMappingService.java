@@ -24,8 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>캐시 계약(#429)</b>: {@link #getRequired(long)}는 per-host Caffeine 캐시를 탄다. 값이 생성 후
  * 불변이라(rotation의 rekey도 subject는 유지 — 계획 §2.9) 인스턴스 간 무효화가 원천적으로 불필요해
- * 로컬 저장소로 충분하고, 요청당 네트워크가 0이다. 캐시 인터셉터가 {@code @Transactional}보다
- * 바깥이라({@code CacheConfig}의 order) 적중 시 transaction 진입과 repository 호출이 둘 다 생략된다.
+ * 로컬 저장소로 충분하고, 요청당 네트워크가 0이다. 적중 시 repository 호출이 생략된다.
  * 우회해야 하는 호출자가 없어 wrapper 없이 여기 직접 단다 — 탈퇴·erasure의 해석도 캐시를 타도
  * 되고, rotation 중 lookup key를 current로 옮기는 최종 보장은 {@code AccountErasureService}의
  * 대상 해석이 한다(유예가 캐시 TTL을 압도해 그 시점엔 사실상 miss다). raw userId를 캐시 키로
@@ -92,13 +91,12 @@ public class SubjectMappingService {
      *                               메시지에 userId·lookup key·subject를 담지 않는다.
      */
     @Cacheable(cacheNames = CACHE_NAME, cacheManager = CACHE_MANAGER, sync = true)
-    @Transactional
     public UUID getRequired(long userId) {
         var sample = subjectMappingMetrics.start();
         String result = "failed";
         try {
             byte[] currentLookupKey = subjectLookupKeyDeriver.deriveCurrent(userId);
-            Optional<UserSubjectLink> current = userSubjectLinkRepository.findById(currentLookupKey);
+            Optional<UserSubjectLink> current = userSubjectLinkRepository.findByUserLookupKey(currentLookupKey);
             if (current.isPresent()) {
                 UUID subjectId = requireUuidV4(current.get().getSubjectId());
                 result = "success";
@@ -107,7 +105,7 @@ public class SubjectMappingService {
             Optional<byte[]> previousLookupKey = subjectLookupKeyDeriver.derivePrevious(userId);
             if (previousLookupKey.isPresent()) {
                 Optional<UserSubjectLink> previous =
-                        userSubjectLinkRepository.findById(previousLookupKey.get());
+                        userSubjectLinkRepository.findByUserLookupKey(previousLookupKey.get());
                 if (previous.isPresent()) {
                     // 영향 행 0 = 동시 getRequired가 먼저 교체 — subject는 어느 쪽이든 같으므로 멱등이다.
                     userSubjectLinkRepository.rekey(previousLookupKey.get(), currentLookupKey,
