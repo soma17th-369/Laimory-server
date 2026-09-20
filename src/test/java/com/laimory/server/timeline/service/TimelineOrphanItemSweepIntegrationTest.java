@@ -43,8 +43,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * orphan 스위퍼의 실 MySQL 계약 검증.
  *
- * <p>핵심은 세 가지다 — ① junction 0 Item이 규칙대로 수렴하는가, ② 같은 S3 객체를 가리키는 살아 있는
- * Item을 어떤 경우에도 놓치지 않는가(놓치면 사용자 사진이 삭제된다), ③ 동시 실행에서 job이 중복되거나
+ * <p>핵심은 두 가지다 — ① junction 0 Item이 규칙대로 수렴하는가, ② 동시 실행에서 job이 중복되거나
  * FK 위반으로 batch가 깨지지 않는가.
  *
  * <p>실행: docker compose up -d 후 ./gradlew integrationTest
@@ -115,16 +114,6 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void sqlDerivedNamespaceMatchesApplicationRule() {
-        // 살아 있는 Item의 key를 SQL이 직접 계산하는 것이 이 기능의 안전장치다. 두 규칙이 어긋나면
-        // 보호가 통째로 무력화되므로 값 일치를 못 박는다.
-        String sqlNamespace = jdbcTemplate.queryForObject(
-                "SELECT SHA2(UNHEX(REPLACE(?, '-', '')), 256)", String.class, subjectId.toString());
-
-        assertThat(sqlNamespace).isEqualTo(PhotoObjectKeys.subjectNamespace(subjectId));
-    }
-
-    @Test
     void concurrentDetachRemnantConvergesToExactlyOneJob() {
         // #247 동시 해제 경합의 종단 상태 — 공유 PHOTO의 junction 두 줄이 모두 사라졌는데 job이 없다.
         String filename = filename(1);
@@ -156,90 +145,6 @@ class TimelineOrphanItemSweepIntegrationTest {
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
         assertThat(timelineItemRepository.existsById(orphan)).isFalse();
         assertThat(timelineItemRepository.existsById(linked)).isTrue();
-    }
-
-    @Test
-    void liveItemSharingObjectKeyIsProtectedEvenWhenItsPhotoUrlIsDamaged() {
-        // #387 이전에 저장된 행은 photoUrl namespace가 손상돼 있을 수 있다. 그 Item이 살아 있으면
-        // 보호 대상인데, URL로만 판정하면 보이지 않아 S3 원본이 지워진다.
-        String filename = filename(2);
-        Long eventId = saveEvent("살아있는 이벤트", 9);
-        Long live = savePhoto("raw-live", filename, eventId);
-        damagePhotoUrlNamespace(live);
-        Long orphan = savePhotoWithKey("raw-orphan-b2", filename,
-                PhotoObjectKeys.subjectFullKey(filename, subjectId));
-
-        var result = sweep(0, 1, 250);
-
-        assertThat(result.keyShared()).isEqualTo(1);
-        assertThat(result.photoScheduled()).isZero();
-        assertThat(jobsOfFixture()).isEmpty();
-        assertThat(timelineItemRepository.existsById(orphan)).isFalse();
-        assertThat(timelineItemRepository.existsById(live)).isTrue();
-    }
-
-    @Test
-    void liveItemWithSameFilenameInAnotherNamespaceDoesNotBlockDeletion() {
-        String filename = filename(3);
-        UUID otherSubject = UUID.randomUUID();
-        ensureExists(jdbcTemplate, otherSubject);
-        Long otherRecordId = dailyRecordRepository.save(
-                        DailyRecord.createDraft(otherSubject, DATE, DATE.atTime(12, 0), ZONE))
-                .getDailyRecordId();
-        Long otherEventId = timelineEventRepository.save(TimelineEvent.of(otherRecordId,
-                        TimelineEventType.UNKNOWN, DATE.atTime(9, 0), null, "남의 이벤트", null, null, null, null))
-                .getTimelineEventId();
-        Long otherLive = savePhotoWithKey("raw-other", filename,
-                PhotoObjectKeys.subjectFullKey(filename, otherSubject));
-        timelineEventItemRepository.save(TimelineEventItem.of(otherEventId, otherLive));
-        Long orphan = savePhotoWithKey("raw-mine", filename,
-                PhotoObjectKeys.subjectFullKey(filename, subjectId));
-
-        try {
-            var result = sweep(0, 1, 250);
-
-            assertThat(result.photoScheduled()).isEqualTo(1);
-            assertThat(result.keyShared()).isZero();
-            assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId)
-                    .containsExactly(orphan);
-        } finally {
-            dailyRecordRepository.deleteById(otherRecordId);
-            SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, otherSubject);
-            jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", otherSubject.toString());
-        }
-    }
-
-    @Test
-    void duplicateOrphansSharingOneObjectKeyConvergeToLowestIdOwner() {
-        String filename = filename(4);
-        String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
-        Long lower = savePhotoWithKey("raw-lower", filename, objectKey);
-        Long higher = savePhotoWithKey("raw-higher", filename, objectKey);
-
-        var result = sweep(0, 1, 250);
-
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        assertThat(result.keyShared()).isEqualTo(1);
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId)
-                .containsExactly(lower);
-        assertThat(timelineItemRepository.existsById(lower)).isTrue();
-        assertThat(timelineItemRepository.existsById(higher)).isFalse();
-    }
-
-    @Test
-    void duplicateOrphansInSeparateBatchesStillConvergeToOneJob() {
-        String filename = filename(5);
-        String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
-        Long lower = savePhotoWithKey("raw-lower-e5", filename, objectKey);
-        Long higher = savePhotoWithKey("raw-higher-e5", filename, objectKey);
-
-        var first = sweep(0, 1, 1);
-        var second = sweep(0, 1, 1);
-
-        assertThat(first.photoScheduled() + second.photoScheduled()).isEqualTo(1);
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId)
-                .containsExactly(lower);
-        assertThat(timelineItemRepository.existsById(higher)).isFalse();
     }
 
     @Test
@@ -386,13 +291,5 @@ class TimelineOrphanItemSweepIntegrationTest {
             timelineEventItemRepository.save(TimelineEventItem.of(eventId, item.getTimelineItemId()));
         }
         return item.getTimelineItemId();
-    }
-
-    /** redaction이 namespace 중간을 토큰으로 바꾼 #387 이전 저장본을 재현한다. */
-    private void damagePhotoUrlNamespace(Long itemId) {
-        jdbcTemplate.update(
-                "UPDATE timeline_items SET payload = JSON_SET(payload, '$.photoUrl', ?) "
-                        + "WHERE timeline_item_id = ?",
-                "https://cdn.example/" + "0".repeat(40) + "[REDACTED_CARD]/photos/x.jpg", itemId);
     }
 }

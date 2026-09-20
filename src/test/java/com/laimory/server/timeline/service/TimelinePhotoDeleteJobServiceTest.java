@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
-import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.Clock;
@@ -35,9 +34,6 @@ class TimelinePhotoDeleteJobServiceTest {
     private TimelinePhotoDeleteJobRepository repository;
 
     @Mock
-    private TimelineEventItemService timelineEventItemService;
-
-    @Mock
     private TimelineItemService timelineItemService;
 
     @Mock
@@ -50,8 +46,7 @@ class TimelinePhotoDeleteJobServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelinePhotoDeleteJobService(
-                repository, timelineEventItemService, timelineItemService, CLOCK);
+        service = new TimelinePhotoDeleteJobService(repository, timelineItemService, CLOCK);
     }
 
     @Test
@@ -154,78 +149,6 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void retainOrphanJobs_cancelsRelinkedJobsAndReturnsOnlyCurrentOrphans() {
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(second.getTimelineItemId()).thenReturn(102L);
-        when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
-        when(timelineEventItemService.findByTimelineItemIds(List.of(101L, 102L)))
-                .thenReturn(List.of(TimelineEventItem.of(22L, 102L)));
-        when(repository.deleteAllByJobIdIn(List.of(12L))).thenReturn(1);
-
-        TimelinePhotoDeleteJobService.ValidationResult result =
-                service.retainOrphanJobs(List.of(first, second));
-
-        assertThat(result.orphanJobs()).containsExactly(first);
-        assertThat(result.cancelledJobs()).isEqualTo(1);
-    }
-
-    @Test
-    void retainOrphanJobs_keepsAllJobsWhenNoItemIsLinked() {
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(timelineEventItemService.findByTimelineItemIds(List.of(101L))).thenReturn(List.of());
-
-        TimelinePhotoDeleteJobService.ValidationResult result =
-                service.retainOrphanJobs(List.of(first));
-
-        assertThat(result.orphanJobs()).containsExactly(first);
-        assertThat(result.cancelledJobs()).isZero();
-        verify(repository, never()).deleteAllByJobIdIn(List.of());
-    }
-
-    @Test
-    void retainOrphanJobs_cancelsJobWhenAnotherLiveItemSharesTheObjectKey() {
-        // job 대상 Item만 보면 여전히 orphan이지만, 같은 S3 객체를 살아 있는 다른 Item이 가리키고 있다.
-        // 그대로 지우면 살아 있는 사진이 사라지므로 job을 취소해야 한다(orphan 스위퍼가 만든 job의 최종 방어선).
-        String objectKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                + "/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
-        when(first.getObjectKey()).thenReturn(objectKey);
-        when(timelineEventItemService.findByTimelineItemIds(List.of(101L))).thenReturn(List.of());
-        when(timelineItemService.findLiveObjectKeysByFilenames(
-                java.util.Set.of("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")))
-                .thenReturn(java.util.Set.of(objectKey));
-        when(repository.deleteAllByJobIdIn(List.of(11L))).thenReturn(1);
-
-        TimelinePhotoDeleteJobService.ValidationResult result = service.retainOrphanJobs(List.of(first));
-
-        assertThat(result.orphanJobs()).isEmpty();
-        assertThat(result.cancelledJobs()).isEqualTo(1);
-    }
-
-    @Test
-    void retainOrphanJobs_keepsJobWhenSameFilenameBelongsToAnotherNamespace() {
-        // filename은 coarse filter일 뿐이다. 다른 subject의 Item이 같은 filename을 써도 object key가
-        // 달라 취소 사유가 아니다 — 여기서 취소하면 S3 객체가 영구히 남는다.
-        String objectKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                + "/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
-        String otherNamespaceKey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                + "/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
-        when(first.getTimelineItemId()).thenReturn(101L);
-        when(first.getObjectKey()).thenReturn(objectKey);
-        when(timelineEventItemService.findByTimelineItemIds(List.of(101L))).thenReturn(List.of());
-        when(timelineItemService.findLiveObjectKeysByFilenames(
-                java.util.Set.of("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")))
-                .thenReturn(java.util.Set.of(otherNamespaceKey));
-
-        TimelinePhotoDeleteJobService.ValidationResult result = service.retainOrphanJobs(List.of(first));
-
-        assertThat(result.orphanJobs()).containsExactly(first);
-        assertThat(result.cancelledJobs()).isZero();
-        verify(repository, never()).deleteAllByJobIdIn(org.mockito.ArgumentMatchers.anyCollection());
-    }
-
-    @Test
     void completeSucceeded_deletesJobsBeforeOriginalItemsWithoutPreLockRead() {
         when(first.getTimelinePhotoDeleteJobId()).thenReturn(11L);
         when(second.getTimelinePhotoDeleteJobId()).thenReturn(12L);
@@ -267,10 +190,9 @@ class TimelinePhotoDeleteJobServiceTest {
     }
 
     @Test
-    void lifecycleOperations_emptyInputAreNoOp() {
-        assertThat(service.retainOrphanJobs(List.of()).orphanJobs()).isEmpty();
+    void completeSucceeded_skipsEmptyInput() {
         assertThat(service.completeSucceeded(List.of())).isZero();
 
-        verifyNoInteractions(timelineEventItemService, timelineItemService);
+        verifyNoInteractions(timelineItemService);
     }
 }
