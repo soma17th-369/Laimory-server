@@ -23,6 +23,7 @@
 | [Domain invariants](domain/invariants.md) | timeline·auth·저장 흐름을 바꿀 때 | domain services, entities, schema, tests | 반드시 보존할 규칙이 추가·변경될 때 | 코드·스키마·테스트 | 관련 unit/integration tests |
 | [Branch convention](conventions/branch.md) | 브랜치 생성·병합·PR 흐름을 다룰 때 | repository workflow | 브랜치 전략이 바뀔 때 | 팀 브랜치 정책 | 현재 branch·PR target 확인 |
 | [Commit convention](conventions/commit.md) | 커밋을 만들거나 메시지를 작성할 때 | commit history | type·형식 정책이 바뀔 때 | 팀 커밋 정책 | `git log` 확인 |
+| [Test writing](conventions/test-writing.md) | 테스트를 작성·수정·삭제하거나 구현 변경 후 테스트가 실패할 때 | `src/test/` | 판정 절차·레이어 기준·결정성·네이밍 규칙이 바뀔 때 | 팀 테스트 정책과 현재 테스트 자산 | `./gradlew test` 결과 판정 |
 
 ## 포함하지 않는 것
 
