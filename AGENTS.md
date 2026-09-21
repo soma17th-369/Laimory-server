@@ -74,3 +74,5 @@ Laimory는 Android 앱이 사용하는 Spring Boot REST 백엔드다.
 - 존재하지 않는 lint·format task를 만들어내지 않는다.
 - 구체적인 실행법과 CI 범위는
   [testing knowledge](.agents/knowledge/codebase/operations/testing.md)를 따른다.
+- 테스트를 작성·수정하기 전 [test writing convention](.agents/knowledge/conventions/test-writing.md)을 읽는다.
+  실패한 테스트를 통과시키기 위한 테스트 수정·약화·비활성화는 금지이며, 허용 예외와 입증 요건은 그 문서를 따른다.

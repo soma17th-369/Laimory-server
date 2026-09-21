@@ -7,6 +7,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 ## Read When
 
 구현 검증 범위를 정하거나 test tag/task, CI 또는 Docker build를 바꿀 때 읽는다.
+무엇을 어떤 품질로 테스트할지는 [test writing convention](../../conventions/test-writing.md)이 소유한다.
 
 ## Authoritative Sources
 
@@ -88,6 +89,8 @@ focused 예:
 
 ## Invariants
 
+- `./gradlew test | tail` 같은 파이프 실행은 테스트가 실패해도 exit 0이다. 성공 판정은
+  파일 리다이렉트 후 `$?`로 한다(예: `./gradlew test > /tmp/test.log 2>&1; echo $?`).
 - `./gradlew build`가 integration test까지 실행한다고 설명하지 않는다.
 - coverage report 생성 실패는 CI 실패지만 coverage 비율은 merge gate가 아니다.
 - 새 test category는 Gradle task, CI scope와 이 문서를 함께 검토한다.
