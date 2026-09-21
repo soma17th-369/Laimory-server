@@ -26,7 +26,7 @@ public class UserController implements UserApi {
     @Override
     public ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(String applicationVersion, Long userId) {
         User user = userService.getProfile(applicationVersion, userId);
-        return ResponseEntity.ok(ApiResponse.success(new UserProfileResponse(user.getNickname())));
+        return ResponseEntity.ok(ApiResponse.success(new UserProfileResponse(user.getUserId(), user.getNickname())));
     }
 
     @Override

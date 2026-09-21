@@ -252,8 +252,9 @@ userId 누락·형식 오류·0·음수는 400, subject 매핑·설정 행 부�
 제거하려면 main/test의 `onboarding/temporary` 패키지를 삭제하고 이 문단과 관련 임시 예외 설명을
 정리한다. 일반 온보딩 완료 API·SecurityConfig·스키마의 기능 수정은 필요 없다.
 
-`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
-nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
+`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는 `userId`(회원 행
+PK = access token의 `sub`, 항상 존재하는 JSON number — 가명화 subjectId가 아님)와 nullable `nickname`이며,
+nickname 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 

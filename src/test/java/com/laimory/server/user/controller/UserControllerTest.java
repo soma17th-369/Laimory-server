@@ -27,12 +27,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * 내 회원 정보 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/DELETE /user)·인증 게이트(401)·envelope·
- * nullable nickname의 명시적 JSON null·탈퇴 202(body=null)와 "userId는 인증 principal에서 서비스로 전달"
+ * userId(회원 행 PK) 노출·nullable nickname의 명시적 JSON null·탈퇴 202(body=null)와 "userId는 인증 principal에서
+ * 서비스로 전달"
  * 계약을 검증한다. 인프라 0. (hidden principal·bearerAuth 문서 계약은
  * {@code arch.ApiAuthenticationContractTest} 소유.)
  */
@@ -102,13 +104,15 @@ class UserControllerTest {
     }
 
     @Test
-    void getMyProfile_returns200WithNickname_andPassesPrincipalUserId() throws Exception {
+    void getMyProfile_returns200WithUserIdAndNickname_andPassesPrincipalUserId() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(User.of(Provider.KAKAO, "sub-123", null, "라이머"));
+                .thenReturn(persistedUser(User.of(Provider.KAKAO, "sub-123", null, "라이머")));
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
+                // userId는 회원 행 PK(= 토큰 sub)를 JSON number로 그대로 노출한다.
+                .andExpect(jsonPath("$.body.userId").value(USER_ID))
                 .andExpect(jsonPath("$.body.nickname").value("라이머"))
                 .andExpect(header().exists("Transaction-Id"));
 
@@ -119,7 +123,7 @@ class UserControllerTest {
     @Test
     void getMyProfile_nullNickname_keepsExplicitNullKey() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(User.of(Provider.GOOGLE, "sub-123", "e@x.com", null));
+                .thenReturn(persistedUser(User.of(Provider.GOOGLE, "sub-123", "e@x.com", null)));
 
         MvcResult result = mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -142,5 +146,10 @@ class UserControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    private static User persistedUser(User user) {
+        ReflectionTestUtils.setField(user, "userId", USER_ID); // IDENTITY 채번 결과 재현
+        return user;
     }
 }
