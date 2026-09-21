@@ -7,15 +7,11 @@ import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
-import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -103,48 +99,24 @@ public class TimelineOrphanItemSweepService {
     }
 
     /**
-     * object key 그룹 규칙으로 job 소유자를 정하고 나머지 행은 삭제 대상에 넣는다.
+     * 유효한 orphan PHOTO를 delete job으로 넘기고, job을 만들 수 없는 행은 삭제 대상에 넣는다.
      *
-     * <ul>
-     *   <li>같은 key를 <b>junction이 살아 있는</b> Item이 참조하면 job을 만들지 않는다 — S3 객체는 그
-     *       Item의 생애주기가 계속 소유한다. 살아 있는 쪽의 key는 저장된 URL이 아니라 소유 subject에서
-     *       계산하므로 그 Item의 {@code photoUrl}이 손상돼 있어도 놓치지 않는다.</li>
-     *   <li>전부 orphan이면 같은 key를 참조하는 orphan 중 <b>최소 id</b>가 job 소유자다. 삭제 순서에
-     *       의존하지 않아 같은 batch 안이든 밖이든 같은 결과로 수렴한다.</li>
-     * </ul>
+     * <p>단일·순차 writer의 정상 경로는 서로 다른 Item이 같은 object key를 갖는 상태를 만들지 않으므로
+     * (filename은 presign마다 서버 발급 UUIDv7, 기존 Item 재연결 writer 없음 — #503) key 단위 사전
+     * 분류는 두지 않는다. 수용된 race/legacy 중복(invariants "race/legacy 중복 행 허용")이 실재하면
+     * 아래 insert 실패 사후 분기가 UNIQUE 충돌로 수렴시킨다 — 이 분기는 그 수용 계약과 함께만 제거할 수 있다.
      */
     private void schedulePhotoDeletions(List<KeyedPhoto> keyedPhotos, Counters counters,
                                         List<Long> immediateDeleteIds) {
-        if (keyedPhotos.isEmpty()) {
-            return;
-        }
-        Set<String> filenames = keyedPhotos.stream()
-                .map(KeyedPhoto::filename)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        Set<String> liveObjectKeys = timelineItemService.findLiveObjectKeysByFilenames(filenames);
-        Map<String, Long> ownerIdByObjectKey = ownerIdByObjectKey(filenames);
-
         for (KeyedPhoto photo : keyedPhotos) {
             long itemId = photo.item().getTimelineItemId();
-            if (liveObjectKeys.contains(photo.objectKey())) {
-                counters.keyShared++;
-                immediateDeleteIds.add(itemId);
-                continue;
-            }
-            // equals로 비교한다 — Long vs long은 unboxing이라 지금도 값 비교지만, 한쪽 타입이 바뀌면
-            // 조용히 참조 비교가 되어 소유자 판정이 뒤집힌다(같은 key의 orphan이 전부 job 없이 삭제).
-            Long ownerId = ownerIdByObjectKey.get(photo.objectKey());
-            if (ownerId != null && !ownerId.equals(itemId)) {
-                counters.keyShared++;
-                immediateDeleteIds.add(itemId);
-                continue;
-            }
             if (timelinePhotoDeleteJobService.insertIfAbsent(itemId, photo.objectKey())) {
                 counters.photoScheduled++;
                 continue;
             }
             // insert ignore는 item UNIQUE와 object UNIQUE 어느 쪽으로 막혀도 실패를 구분하지 않는다.
-            // 자기 job이 보이면 행을 보존하고, 아니면 다른 Item이 같은 object key를 소유한 것으로 처리한다.
+            // 자기 job이 보이면 행을 보존하고, 아니면 다른 Item의 job이 같은 object key를 이미 소유한
+            // 것이니(race/legacy 중복 — 수용된 상태) 행만 지워 그 job의 완료를 막지 않는다.
             // 처리 snapshot 뒤 동시 생성된 자기 job은 안 보일 수 있다. 그 경우 FK가 삭제를 거절하고
             // 처리 transaction 전체를 rollback하며, 이미 commit한 관측 기록은 남는다.
             if (timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(itemId)).contains(itemId)) {
@@ -154,17 +126,6 @@ public class TimelineOrphanItemSweepService {
                 immediateDeleteIds.add(itemId);
             }
         }
-    }
-
-    /** 같은 object key를 참조하는 orphan 중 최소 id. 복원 불가한 행은 소유자 후보에서 빠진다. */
-    private Map<String, Long> ownerIdByObjectKey(Set<String> filenames) {
-        Map<String, Long> ownerIdByObjectKey = new HashMap<>();
-        for (TimelineItemRepository.OrphanPhotoKeyRow row
-                : timelineItemService.findUnlinkedPhotoKeysByFilenames(filenames)) {
-            PhotoObjectKeys.objectKeyFromServingUrl(row.getPhotoUrl()).ifPresent(objectKey ->
-                    ownerIdByObjectKey.merge(objectKey, row.getTimelineItemId(), Math::min));
-        }
-        return ownerIdByObjectKey;
     }
 
     /**
@@ -195,10 +156,6 @@ public class TimelineOrphanItemSweepService {
     }
 
     private record KeyedPhoto(TimelineItem item, String objectKey) {
-
-        String filename() {
-            return objectKey.substring(objectKey.lastIndexOf('/') + 1);
-        }
     }
 
     private static final class Counters {

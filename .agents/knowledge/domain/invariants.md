@@ -168,13 +168,15 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
-- **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
-  스위퍼는 enqueue 전에, worker는 S3 호출 직전에 같은 key를 참조하는 junction 있는 Item을 확인하고,
-  있으면 job을 만들지 않거나(스위퍼) 이미 만든 job을 취소한다(worker). 판정은 filename을 coarse filter로
-  쓰되 full object key 일치로 확정한다. 살아 있는 쪽의 key는 저장된 `photoUrl`이 아니라 소유 subject에서
-  계산해(`SHA2(UNHEX(REPLACE(subject_id,'-','')),256)` = `PhotoObjectKeys.subjectNamespace`) 저장본이
-  손상돼 있어도 보호가 유지된다. 같은 key의 orphan만 여럿이면 최소 `timeline_item_id`가 job 소유자이고
-  나머지 행은 삭제된다(삭제 순서에 의존하지 않는 규칙).
+- **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
+  전제 위에서 job을 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
+  발급하는 UUIDv7이고, 기존 Item을 다른 Event에 재연결하는 writer가 없으며(#502), dev·prod 전수 집계
+  실측 0건(2026-09-20). 과거에 있던 두 방어(스위퍼 enqueue 전 live-key 확인, worker S3 직전 key 공유
+  재검증)와 같은 key orphan 그룹의 최소 id 소유자 규칙은 #503에서 제거됐다 — 재연결·재사용 writer를
+  되살리는 변경은 이 전제를 깨뜨리므로 가드 재도입을 함께 설계해야 한다. **수용된 잔여**: AI 결과
+  저장의 same-token 완전 동시 실행 race는 같은 key Item 2행을 만들 수 있고(위 "race/legacy 중복 행
+  허용"), 그 중복의 한쪽이 고아·삭제되면 살아 있는 Item의 S3 객체가 지워질 수 있다 — 현재 AI writer가
+  단일·순차라 트리거가 없고 실측 0건이라는 빈도 근거로 수용한다(#503).
 - 고아 스위퍼는 `MOD(id - 1, serverCount * workerCount)`로 담당을 나누고 slot당 후보 최대
   batch-size(기본 250) 한 배치만 처리한다. workerIndex는 workerId * workerCount + localIndex다.
   선점용 잠금 읽기·내부 반복·cursor는 없다. DML 잠금은 남는다.
@@ -187,8 +189,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
   서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.
-- `filename` 자체가 손상된 살아 있는 Item은 coarse filter에 잡히지 않아 두 방어를 모두 통과한다.
-  #387 배포 이전 저장분에만 존재하는 상태이며 복구하지 않고 수용한다.
+- `filename`·`photoUrl`이 손상된 저장분(#387 배포 이전)은 복구하지 않고 수용한다 — orphan이 되면
+  key 복원 불가로 job 없이 행만 삭제된다(S3 orphan 허용).
 
 ### AI 서버간 계약
 

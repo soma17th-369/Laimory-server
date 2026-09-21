@@ -62,23 +62,6 @@ public class TimelineItemService {
         return timelineItemRepository.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
     }
 
-    /** 주어진 filename을 참조하면서 junction이 살아 있는 PHOTO Item의 full object key(소유 subject 기준). */
-    public Set<String> findLiveObjectKeysByFilenames(Collection<String> filenames) {
-        if (filenames.isEmpty()) {
-            return Set.of();
-        }
-        return new HashSet<>(timelineItemRepository.findLiveObjectKeysByFilenames(filenames));
-    }
-
-    /** 주어진 filename을 참조하는 junction 없는 PHOTO Item의 (id, photoUrl) — orphan 그룹 소유자 판정용. */
-    public List<TimelineItemRepository.OrphanPhotoKeyRow> findUnlinkedPhotoKeysByFilenames(
-            Collection<String> filenames) {
-        if (filenames.isEmpty()) {
-            return List.of();
-        }
-        return timelineItemRepository.findUnlinkedPhotoKeysByFilenames(filenames);
-    }
-
     /** Item 행들을 삭제한다(association 0 orphan 정리 전용 — 자기 junction 행은 DB FK cascade가 지운다). */
     public void deleteByIds(Collection<Long> timelineItemIds) {
         if (timelineItemIds.isEmpty()) {

@@ -69,8 +69,8 @@ public class TimelineContentErasureService {
                 .map(TimelinePhotoDeleteJob::getTimelineItemId)
                 .distinct()
                 .toList();
-        // object_key prefix는 "발급 당시 subject"일 뿐 현재 소유의 증거가 아니다. 재연결된 Item이 다른
-        // subject의 Event에 걸려 있으면 지우지 않는다(기존 worker도 S3 직전 association을 재검증한다).
+        // object_key prefix는 "발급 당시 subject"일 뿐 현재 소유의 증거가 아니다. 다른 subject의
+        // Event에 걸린 Item이 섞여 있으면 지우지 않는다(하드 삭제 전 경계 단언).
         requireSoleOwner(subjectId, itemIds);
 
         timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(jobs.stream()

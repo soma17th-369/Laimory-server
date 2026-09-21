@@ -289,7 +289,7 @@ Spring JSON stdout
   미완료 job은 재시도 없이 보존하며 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존
   `service=laimory AND level=ERROR` 경보를 발화시킨다(job ID·Item ID·object key 미포함).
   이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
-  각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
+  각 process가 run 시작 설정과 batch/run 종료의 claimed, S3 성공·실패·응답 누락,
   DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
 - draft retention cleanup은 custom meter나 적체 전용 알림을 등록하지 않는다. run 시작 설정과
   batch/run 종료의 selected/succeeded/failed/deleted, PHOTO 결과와 DB 오류 수를 로그로 남긴다.

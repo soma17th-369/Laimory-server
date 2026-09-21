@@ -140,15 +140,16 @@ S3 성공 또는 S3가 불필요한 행만 최종 transaction에서 삭제한다
 KST 시각 하나를 `created_at`/`updated_at`에 직접 채운다 — `created_at`은 처리 창, `updated_at`은 같은
 날 재선택 방지의 기준이라 두 컬럼이 같은 프레임이어야 한다. `status`는 `PENDING`/`PROCESSING` 두 값이고
 INSERT는 상태를 명시하지 않고 default `PENDING`을 쓴다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일
-실행뿐이다 — 생성 당일 제외는 삭제 transaction과 경합한 Event PATCH가 먼저 수렴하게 하고, 창 제한은
+실행뿐이다 — 생성 당일 제외는 처리 창의 시작 경계이고, 창 제한은
 영구 실패 job 하나가 매일 외부 I/O를 반복하는 것을 막는다. worker는 checked-in default인 매일 03:00
 `Asia/Seoul`(cron/zone 환경 override 가능)에 모든 process에서 발화한다. 각 bounded worker는 짧은
 transaction으로 처리 창 안이면서 `updated_at < 오늘 00:00`인 행을 `(created_at, PK)` 순서로 최대 250개
 PK MOD 담당에서 일반 조회하고, 같은 transaction에서 `status=PROCESSING`과 `updated_at=claim 시각`을
 기록한 뒤 commit한다. 창 경계와 claim 시각은 같은 application Clock instant를 KST로 변환해 parameter로
-바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. 그 뒤 현재 junction을 재확인해 다시 연결된 Item의 job을
-취소하고 S3 대상에서 제외한다. transaction 밖에서 S3를 호출하고 성공 job을 먼저 지운 뒤 해당 Item을
-같은 completion transaction에서 지운다. job 삭제가 0건이면 worker 재검증 취소나 선행 completion일 수 있으므로
+바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. claim한 job은 재검증 없이 그대로 S3 삭제 대상이다 —
+job이 가리키는 상태를 바꾸는 writer가 없다(#503, 근거는 invariants.md). transaction 밖에서 S3를
+호출하고 성공 job을 먼저 지운 뒤 해당 Item을
+같은 completion transaction에서 지운다. job 삭제가 0건이면 선행 completion일 수 있으므로
 Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다. 명시적 실패·응답 누락·SDK
 예외는 `PENDING`으로 되돌리고(`updated_at`이 claim 시각이라 같은 날 재선택 없음), crash 행은
 `PROCESSING`으로 남는다. 둘 다 처리 창 안이면 `updated_at`이 전날이 된 다음 일일 실행이 재claim하며
@@ -158,7 +159,6 @@ Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 roll
 claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
 않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는
 이 테이블을 읽지 않는다 — job 존재 검사·취소·보존 Item 재연결·`FOR UPDATE` 경로 모두 없다(#495·#500).
-같은 key를 참조하는 살아 있는 Item의 보호는 worker의 pre-S3 association 재검증 한 곳이 담당한다.
 별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
@@ -440,8 +440,8 @@ delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orph
 Event/DailyRecord 삭제는 root/junction/non-PHOTO orphan hard delete와 함께 MySQL job을 만들고 유효한
 orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
 `DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
-apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 S3 직전 현재 association을 재확인해
-linked Item job을 취소하며, `Deleted`로 확인된 orphan job과 그 PHOTO Item만 별도 transaction에서 지운다.
+apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 claim한 job의 object key를 그대로
+삭제 요청하고, `Deleted`로 확인된 job과 그 PHOTO Item만 별도 transaction에서 지운다.
 기본 서버 2대 × 서버당 worker-count 1이며 각 slot은 PK MOD 담당에서 최대 250개 한 배치만 처리한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
@@ -459,11 +459,11 @@ orphan 스위퍼(03:30 KST)는 junction·delete job이 모두 없는 자기 PK M
 처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 별도 transaction에서 집계해 ERROR로 알린다.
 job으로 넘긴 Item은 제외하며 미관측 Item의 과거 고아 전환 시각을 추정하지 않는다.
 
-object key 복원 경로는 소유권 유무로 갈린다 — junction이 없는 행은 subject를 잃었으므로 저장된
-`photoUrl`의 path가 유일한 경로이고, junction이 살아 있는 행은 `SHA2(UNHEX(REPLACE(subject_id,'-','')),
-256)`로 SQL이 직접 계산한다(= `PhotoObjectKeys.subjectNamespace`). 후자 덕에 살아 있는 Item의
-`photoUrl`이 손상돼 있어도 같은 key의 S3 객체가 보호된다. 같은 key의 orphan이 여럿이면 최소
-`timeline_item_id`가 job 소유자이고 나머지 행은 삭제된다.
+object key 복원 경로는 저장된 `photoUrl`의 path 하나다 — junction 0 행은 subject를 잃어 다른 경로가
+없고, 복원 불가 행은 job 없이 삭제된다(S3 orphan 허용). 같은 object key를 공유하는 Item 상태에 대한
+key 단위 사전 분류·소유자 규칙은 없다(#503 — 그런 상태를 만드는 writer가 없다는 전제와 수용 잔여는
+invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 수렴 장치다 — 자기 job이 보이면 행을
+보존하고, 아니면 행만 지운다.
 
 ## Invariants
 

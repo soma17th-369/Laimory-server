@@ -208,7 +208,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   PK MOD 담당에서 slot당 한 배치(기본 250)만 조회해 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
   0-junction Item의 수렴을 담당하며 S3는 호출하지 않는다.
   후보 최초 관측을 먼저 commit하고 별도 transaction에서 처리한다. 처리 실패에도 최초 시각은 유지하며,
-  재연결은 표시를 해제한다. 처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 ERROR로 알린다.
+  표시를 해제하는 경로는 없다(관측된 Item에 junction을 다시 만드는 writer 없음, #502).
+  처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 ERROR로 알린다.
 - Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
   판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
   non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
