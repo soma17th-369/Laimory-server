@@ -8,7 +8,7 @@ services:
       - ./mappings:/home/wiremock/mappings:ro
       - ./__files:/home/wiremock/__files:ro
     command:
-      - --async-response-enabled
+      - --async-response-enabled=true
       - --async-response-threads=64
       - --container-threads=32
       - --disable-request-logging
