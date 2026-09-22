@@ -20,13 +20,13 @@ description:
 이 스킬의 대상 조직은 `soma17th-369`이고, 그 안에 레포가 여러 개다. 이슈를 만들 **레포는 매번
 정한다**(5단계 참고). 다른 조직에서 쓰려면 환경변수 `CREATE_ISSUE_ORG`로 바꾼다.
 
-## 실행 방식: Opus 5 서브에이전트
+## 실행 방식: Sonnet 5 서브에이전트
 
 이 스킬의 본 작업(조사·본문 작성·필드 결정·이슈 생성)은 **메인 세션에서 직접 하지 않고 서브에이전트에
 위임한다.** 이슈 본문을 제대로 쓰려면 코드·knowledge·대화 맥락을 많이 읽어야 하는데, 정작 메인 세션에
 남아야 할 결과물은 이슈 번호와 URL뿐이다.
 
-- `Agent` 도구로 `model: "opus"`(Opus 5, 모델 ID `claude-opus-5`), `subagent_type: "general-purpose"`,
+- `Agent` 도구로 `model: "sonnet"`(Sonnet 5, 모델 ID `claude-sonnet-5`), `subagent_type: "general-purpose"`,
   `run_in_background: false`로 띄운다. 사용자 답변을 곧바로 이어받아야 하므로 백그라운드로 두지 않는다.
 - 프롬프트에는 (a) 사용자의 원래 요청 원문, (b) `.agents/skills/create-issue/SKILL.md`를 읽고 그 절차를
   그대로 따르라는 지시, (c) 아래 질문 왕복 규칙을 넣는다. 스킬 내용을 프롬프트에 요약해 옮기지 말 것.
