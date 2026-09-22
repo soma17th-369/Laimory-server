@@ -86,6 +86,14 @@ dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나�
 스풀 0700이 전제이며, 관측 host 접근 통제(#368)와 함께 평가한다. rollback은 prod MySQL SG의
 3306 규칙 1건 삭제다.
 
+운영자의 prod DB 수동 조회·DML(DataGrip)은 **prod WAS를 경유하는 SSM
+`AWS-StartPortForwardingSessionToRemoteHost` 포트포워딩**으로만 한다(로컬 포트 규약 13306). prod WAS SG가
+이미 가진 3306 경로를 재사용하므로 SG·host·sshd 변경이 없고 새 네트워크 노출이 생기지 않는다. 계정
+`laimory_ops`는 prod WAS private IP별 host 고정 + 계정 단위 `REQUIRE SSL` + `laimory.*` DML만
+(DDL 권위는 Flyway) + `MAX_USER_CONNECTIONS 5`이며, 비밀번호는 send-command로 보내지 않고 SSM 셸에서
+직접 넣는다. dev WAS SSH bastion을 prod로 넓히는 방식은 SG가 host 단위라 dev WAS 전체를 prod 인증
+표면에 닿게 하므로 채택하지 않는다. 회수는 `DROP USER`뿐이다.
+
 유일한 인바운드 예외는 trace 수집이다 — Tempo의
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
 전용 마커 SG `laimory-monitoring-proxy-source-sg`로 제한한다.
