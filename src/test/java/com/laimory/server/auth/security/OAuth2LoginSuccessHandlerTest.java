@@ -95,7 +95,7 @@ class OAuth2LoginSuccessHandlerTest {
         session.setAttribute(AppChallengeFilter.APP_CHALLENGE_SESSION_ATTRIBUTE, "challenge-43");
         request.setSession(session);
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(socialLoginService.completeLogin(Provider.GOOGLE, "google-sub", null, "이름", "challenge-43"))
+        when(socialLoginService.completeLogin(Provider.GOOGLE, "google-sub", "e@x.com", "이름", "challenge-43"))
                 .thenReturn("raw-app-code");
 
         new OAuth2LoginSuccessHandler(socialLoginService)
@@ -103,6 +103,20 @@ class OAuth2LoginSuccessHandlerTest {
 
         assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?code=raw-app-code");
         assertThat(session.isInvalid()).isTrue();
+    }
+
+    @Test
+    void success_google_passesIdTokenEmail() throws Exception {
+        MockHttpServletRequest request = requestWithChallenge();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        // Google은 email scope로 받은 id_token email claim을 서비스 안내 목적으로 저장한다.
+        when(socialLoginService.completeLogin(Provider.GOOGLE, "google-sub", "e@x.com", "이름", "challenge-43"))
+                .thenReturn("raw-app-code");
+
+        new OAuth2LoginSuccessHandler(socialLoginService)
+                .onAuthenticationSuccess(request, response, googleToken(oidcUser()));
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("http://localhost/auth/app?code=raw-app-code");
     }
 
     @Test
