@@ -3,6 +3,7 @@ package com.laimory.server.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.appconfig.AppConfigRepository;
+import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermDocumentService;
 import org.junit.jupiter.api.Test;
@@ -25,12 +26,14 @@ class AdminDisabledHttpTest {
     @MockitoBean TermDocumentService documents;
     @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
+    @MockitoBean NoticeRepository notices;
 
     @Test
     void allAdminResourcesAreClosedWithoutPortProperty() throws Exception {
         assertThat(server.boundPort()).isNegative();
         for (int port : new int[] {mainPort, managementPort}) {
-            for (String path : new String[] {"/admin", "/admin/", "/admin/admin.js", "/admin/admin.css", "/admin/api/csrf", "/admin/api/terms"}) {
+            for (String path : new String[] {"/admin", "/admin/", "/admin/admin.js", "/admin/admin.css", "/admin/api/csrf", "/admin/api/terms",
+                    "/admin/api/notices"}) {
                 assertThat(AdminHttpTest.raw(port, path, "Host: localhost:8081")).as(path).startsWith("HTTP/1.1 404");
             }
         }

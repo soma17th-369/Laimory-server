@@ -276,6 +276,18 @@ userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소�
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
 
+`GET /api/{version}/notices`와 `GET /api/{version}/notices/{noticeId}`(#517)는 로그인 전 화면에서도
+쓸 수 있는 public 공지사항 조회다(`PublicNoticeApi` — 보호 operation 목록 밖, bearer 문서 없음). 목록은
+숨김이 아닌 공지 전체를 최신 순(`noticeId DESC`)으로 `notices[]`에 담고 각 원소는
+`noticeId`·`title`·`publishedAt`이다 — 본문은 싣지 않고 페이지네이션도 없다. 공지가 없으면 404가 아니라
+200과 `notices=[]`다. 상세는 `noticeId`·`title`·`body`(줄바꿈 포함 원문 텍스트 — 약관과 달리 WebView
+URL이 아니다)·`publishedAt`이며 없음과 숨김은 구분 없이 404 `-404`다. 비숫자 `noticeId`는 400 `-400`이다.
+`publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다. 등록·수정·숨김은
+앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·`PUT /{id}` 제목·본문
+전체 교체·`PUT /{id}/visibility` 숨김/재노출)가 소유하며, 숨김이 삭제 역할이라 hard delete 경로는 없다.
+관리자 입력 규칙은 title strip 후 1~255자, body 공백 아님·최대 10,000자이며 위반은 400이다.
+**새 error code는 추가하지 않았다.**
+
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
 `termTypes`는 같은 query key를 반복하는 필수 비어 있지 않은 enum 배열이고 누락·빈 값·중복·미지원 값은

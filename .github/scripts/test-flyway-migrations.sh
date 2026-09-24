@@ -222,3 +222,16 @@ cmp -s "$WORK/scheduler-before.tsv" "$WORK/scheduler-after.tsv" || fail 'V2 chan
 [ "$(mysql flyway_scheduler_upgrade -e "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='timeline_draft_source_items' AND INDEX_NAME='idx_draft_source_created'")" = 1 ] || fail 'created_at index missing'
 flyway flyway_scheduler_upgrade "$MIGRATIONS" -target=2 validate >"$WORK/scheduler-validate.log" 2>&1
 ok 'V1 to V2 preserves source data and drops only the draft claim column and index'
+
+# V2→V3(#517): notices 테이블 추가. 기존 행 보존과 신규 테이블의 컬럼·hidden 기본값을 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_upgrade;'
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=2 migrate >"$WORK/notice-v2.log" 2>&1
+mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend_app_version FROM app_config' >"$WORK/notice-before.tsv"
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 migrate >"$WORK/notice-v3.log" 2>&1
+mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend_app_version FROM app_config' >"$WORK/notice-after.tsv"
+cmp -s "$WORK/notice-before.tsv" "$WORK/notice-after.tsv" || fail 'V3 changed app_config data'
+[ "$(mysql flyway_notice_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='notices' AND COLUMN_NAME IN ('notice_id','title','body','hidden','created_at','updated_at','modified_by')")" = 7 ] || fail 'notices columns missing'
+mysql flyway_notice_upgrade -e "INSERT INTO notices (title, body, created_at, updated_at) VALUES ('probe', 'body', NOW(6), NOW(6))"
+[ "$(mysql flyway_notice_upgrade -e "SELECT hidden FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.hidden default is not false'
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 validate >"$WORK/notice-validate.log" 2>&1
+ok 'V2 to V3 adds notices with hidden defaulting to false and preserves existing rows'
