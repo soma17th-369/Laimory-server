@@ -53,12 +53,12 @@ public class Notice extends BaseEntity {
 
     /** 즉시 노출되는 새 공지를 만든다(예약 게시 없음). */
     public static Notice of(String title, String contentUrl) {
-        return new Notice(normalizeTitle(title), requireHttpsUrl(contentUrl));
+        return new Notice(requireValidTitle(title), requireHttpsUrl(contentUrl));
     }
 
     /** 제목·원문 URL을 통째로 교체한다(부분 갱신 아님). 노출 상태는 건드리지 않는다. */
     public void edit(String title, String contentUrl) {
-        this.title = normalizeTitle(title);
+        this.title = requireValidTitle(title);
         this.contentUrl = requireHttpsUrl(contentUrl);
     }
 
@@ -66,7 +66,8 @@ public class Notice extends BaseEntity {
         this.hidden = hidden;
     }
 
-    private static String normalizeTitle(String title) {
+    /** null·공백뿐은 거절, 그 외 strip 후 최대 255자({@code TimelineEventInputRules.requireValidTitle} 선례). */
+    private static String requireValidTitle(String title) {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("title is required");
         }
