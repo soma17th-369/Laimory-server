@@ -242,14 +242,14 @@ flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=3 migrate >"$WORK/inquiry-v3
 mysql flyway_inquiry_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('kept', 'https://example.com/n', NOW(6), NOW(6))"
 flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=4 migrate >"$WORK/inquiry-v4.log" 2>&1
 [ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='kept'")" = 1 ] || fail 'V4 changed notices data'
-[ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiries' AND COLUMN_NAME IN ('inquiry_id','subject_id','channel','category','email','body','answered_at','created_at','updated_at','modified_by')")" = 10 ] || fail 'inquiries columns missing'
+[ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiries' AND COLUMN_NAME IN ('inquiry_id','subject_id','email','body','answered_at','created_at','updated_at','modified_by')")" = 8 ] || fail 'inquiries columns missing'
 [ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiry_attachments' AND COLUMN_NAME IN ('inquiry_attachment_id','inquiry_id','filename','position')")" = 4 ] || fail 'inquiry_attachments columns missing'
 # 존재하지 않는 subject를 가리키는 문의는 FK가 거절해야 한다(탈퇴 fail-closed의 전제).
-if mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, channel, category, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'APP', 'BUG', 'x@example.com', 'b', NOW(6), NOW(6))" >/dev/null 2>&1; then
+if mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'b', NOW(6), NOW(6))" >/dev/null 2>&1; then
   fail 'inquiries.subject_id FK is not enforced'
 fi
 mysql flyway_inquiry_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1)"
-mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, channel, category, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'APP', 'BUG', 'x@example.com', 'b', NOW(6), NOW(6))"
+mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'b', NOW(6), NOW(6))"
 mysql flyway_inquiry_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename, position) SELECT inquiry_id, 'a.jpg', 0 FROM inquiries"
 if mysql flyway_inquiry_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='00000000-0000-4000-8000-000000000001'" >/dev/null 2>&1; then
   fail 'subject mapping delete succeeded while an inquiry still references it'

@@ -76,13 +76,11 @@ class InquiryPersistenceIntegrationTest {
     void registeredInquiryBlocksSubjectMappingDeletionUntilErasedInAttachmentThenInquiryOrder() {
         provisionUser();
 
-        Inquiry inquiry = inquiryService.register("v1", subjectId, InquiryCategory.BUG, "it@example.com",
+        Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
                 "첫 줄\n둘째 줄", List.of(FILENAME_A, FILENAME_B));
 
         Inquiry stored = inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow();
         assertThat(stored.getSubjectId()).isEqualTo(subjectId);
-        assertThat(stored.getChannel()).isEqualTo(InquiryChannel.APP);
-        assertThat(stored.getCategory()).isEqualTo(InquiryCategory.BUG);
         assertThat(stored.getEmail()).isEqualTo("it@example.com");
         assertThat(stored.getBody()).isEqualTo("첫 줄\n둘째 줄");
         assertThat(stored.getAnsweredAt()).isNull();
@@ -105,7 +103,7 @@ class InquiryPersistenceIntegrationTest {
     @Test
     void answeredMarkIsPersistedAndClearable() {
         provisionUser();
-        Inquiry inquiry = inquiryService.register("v1", subjectId, InquiryCategory.SUGGESTION, "it@example.com",
+        Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
                 "제안", null);
 
         inquiryService.changeAnswered(inquiry.getInquiryId(), true);

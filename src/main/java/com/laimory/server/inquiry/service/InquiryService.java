@@ -2,7 +2,6 @@ package com.laimory.server.inquiry.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.inquiry.InquiryCategory;
 import com.laimory.server.inquiry.InquiryObjectKeys;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.entity.InquiryAttachment;
@@ -43,11 +42,11 @@ public class InquiryService {
      * 확인하지 않는다(계획의 승인된 결정 — 요청 body 밖 상태에 의존하지 않는다).
      */
     @Transactional
-    public Inquiry register(String applicationVersion, UUID subjectId, InquiryCategory category, String email,
-                            String body, List<String> attachmentFilenames) {
+    public Inquiry register(String applicationVersion, UUID subjectId, String email, String body,
+                            List<String> attachmentFilenames) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         List<String> filenames = validateAttachmentFilenames(attachmentFilenames);
-        Inquiry inquiry = inquiryRepository.save(Inquiry.of(subjectId, category, email, body));
+        Inquiry inquiry = inquiryRepository.save(Inquiry.of(subjectId, email, body));
         List<InquiryAttachment> attachments = new ArrayList<>(filenames.size());
         for (int position = 0; position < filenames.size(); position++) {
             attachments.add(InquiryAttachment.of(inquiry.getInquiryId(), filenames.get(position), position));

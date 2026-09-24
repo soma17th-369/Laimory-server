@@ -92,7 +92,7 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
   response 11개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
-  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 분류·ID·처리 시각만 남긴다,
+  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다,
   draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든

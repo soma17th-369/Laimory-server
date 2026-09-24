@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.appconfig.AppConfigResponse;
 import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.common.ApiResponse;
-import com.laimory.server.inquiry.InquiryCategory;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.service.InquiryAttachmentService;
 import com.laimory.server.inquiry.service.InquiryService;
@@ -183,11 +182,11 @@ public class AdminApiController {
 
     record AnsweredRequest(@NotNull Boolean answered) { }
 
-    /** subject·channel은 싣지 않는다 — 관리자가 회신에 필요한 것은 분류·주소·본문·처리 여부뿐이다. */
-    record AdminInquiry(Long inquiryId, InquiryCategory category, String email, String body, int attachmentCount,
+    /** subject는 싣지 않는다 — 관리자가 회신에 필요한 것은 주소·본문·처리 여부뿐이다. */
+    record AdminInquiry(Long inquiryId, String email, String body, int attachmentCount,
                         LocalDateTime answeredAt, LocalDateTime createdAt) {
         static AdminInquiry from(Inquiry inquiry, int attachmentCount) {
-            return new AdminInquiry(inquiry.getInquiryId(), inquiry.getCategory(), inquiry.getEmail(),
+            return new AdminInquiry(inquiry.getInquiryId(), inquiry.getEmail(),
                     inquiry.getBody(), attachmentCount, inquiry.getAnsweredAt(), inquiry.getCreatedAt());
         }
     }

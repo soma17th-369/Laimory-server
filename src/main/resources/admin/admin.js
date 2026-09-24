@@ -149,7 +149,7 @@ async function loadInquiries() {
     if (unansweredOnly && inquiry.answeredAt) continue;
     const row = document.createElement("tr");
     const preview = inquiry.body.length > 60 ? inquiry.body.slice(0, 60) + "…" : inquiry.body;
-    for (const value of [String(inquiry.inquiryId), inquiry.category, inquiry.email, preview, String(inquiry.attachmentCount),
+    for (const value of [String(inquiry.inquiryId), inquiry.email, preview, String(inquiry.attachmentCount),
       shortDate(inquiry.createdAt), inquiry.answeredAt ? `처리됨 ${shortDate(inquiry.answeredAt)}` : "미처리"]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }
@@ -166,7 +166,7 @@ async function loadInquiries() {
 async function showInquiry(inquiryId) {
   try {
     const detail = await api(`/admin/api/inquiries/${encodeURIComponent(inquiryId)}`);
-    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.category} · ${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
+    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
     $("inquiry-detail-body").textContent = detail.inquiry.body;
     $("inquiry-detail-attachments").replaceChildren(...detail.attachments.map(attachment => {
       const link = document.createElement("a"); link.href = attachment.viewUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
@@ -182,7 +182,7 @@ async function changeInquiryAnswered(inquiry) {
   $("inquiry-fields").disabled = true;
   try {
     const answered = !inquiry.answeredAt;
-    if (!await confirmChange(`#${inquiry.inquiryId} ${inquiry.category} · ${inquiry.email}\n${inquiry.answeredAt ? "처리됨" : "미처리"} → ${answered ? "처리됨" : "미처리"}`,
+    if (!await confirmChange(`#${inquiry.inquiryId} ${inquiry.email}\n${inquiry.answeredAt ? "처리됨" : "미처리"} → ${answered ? "처리됨" : "미처리"}`,
       answered ? "이메일로 답장을 보낸 뒤에만 처리됨으로 표시하세요. 서버는 메일을 보내지 않습니다." : "처리 표시를 해제하면 미처리 목록에 다시 나타납니다.")) return;
     await api(`/admin/api/inquiries/${encodeURIComponent(inquiry.inquiryId)}/answered`, writeOptions("PUT", JSON.stringify({answered})));
     status(`#${inquiry.inquiryId} ${answered ? "처리됨" : "미처리"}로 표시했습니다.`);

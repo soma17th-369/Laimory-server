@@ -14,7 +14,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
-import com.laimory.server.inquiry.InquiryCategory;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadCreateResponse;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadItem;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadResponse;
@@ -47,7 +46,7 @@ class InquiryControllerTest {
     private static final String INQUIRIES = "/a/api/v1/inquiries";
     private static final String UPLOADS = INQUIRIES + "/attachment-uploads";
     private static final String FILENAME = "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg";
-    private static final String VALID_BODY = "{\"category\":\"BUG\",\"email\":\"user@example.com\","
+    private static final String VALID_BODY = "{\"email\":\"user@example.com\","
             + "\"body\":\"앱이 멈춰요\",\"attachmentFilenames\":[\"" + FILENAME + "\"]}";
 
     @Autowired
@@ -87,7 +86,7 @@ class InquiryControllerTest {
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body").doesNotExist());
 
-        verify(inquiryService).register("v1", SUBJECT_ID, InquiryCategory.BUG, "user@example.com", "앱이 멈춰요",
+        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", "앱이 멈춰요",
                 List.of(FILENAME));
     }
 
@@ -95,21 +94,20 @@ class InquiryControllerTest {
     void createInquiryWithoutAttachmentsPassesNullList() throws Exception {
         mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"category\":\"OTHER\",\"email\":\"user@example.com\",\"body\":\"문의\"}"))
+                        .content("{\"email\":\"user@example.com\",\"body\":\"문의\"}"))
                 .andExpect(status().isCreated());
 
-        verify(inquiryService).register("v1", SUBJECT_ID, InquiryCategory.OTHER, "user@example.com", "문의", null);
+        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", "문의", null);
     }
 
     @Test
-    void createInquiryRejectsMissingCategoryInvalidEmailBlankBodyAndTooManyAttachments() throws Exception {
+    void createInquiryRejectsInvalidEmailBlankBodyAndTooManyAttachments() throws Exception {
         for (String bad : List.of(
-                "{\"email\":\"user@example.com\",\"body\":\"문의\"}",
-                "{\"category\":\"BUG\",\"email\":\"not-an-email\",\"body\":\"문의\"}",
-                "{\"category\":\"BUG\",\"email\":\"user@example.com\",\"body\":\"   \"}",
-                "{\"category\":\"BUG\",\"email\":\"user@example.com\",\"body\":\"문의\","
-                        + "\"attachmentFilenames\":[\"a.jpg\",\"b.jpg\",\"c.jpg\",\"d.jpg\"]}",
-                "{\"category\":\"URGENT\",\"email\":\"user@example.com\",\"body\":\"문의\"}")) {
+                "{\"body\":\"문의\"}",
+                "{\"email\":\"not-an-email\",\"body\":\"문의\"}",
+                "{\"email\":\"user@example.com\",\"body\":\"   \"}",
+                "{\"email\":\"user@example.com\",\"body\":\"문의\","
+                        + "\"attachmentFilenames\":[\"a.jpg\",\"b.jpg\",\"c.jpg\",\"d.jpg\"]}")) {
             mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                             .contentType(MediaType.APPLICATION_JSON).content(bad))
                     .andExpect(status().isBadRequest())
@@ -121,7 +119,7 @@ class InquiryControllerTest {
 
     @Test
     void createInquiryMapsServiceValidationFailuresToErrorCodes() throws Exception {
-        when(inquiryService.register(any(), any(), any(), any(), any(), any()))
+        when(inquiryService.register(any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("attachmentFilenames[0] must be a presigned filename"))
                 .thenThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 3));
 

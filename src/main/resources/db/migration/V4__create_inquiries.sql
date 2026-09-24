@@ -3,9 +3,6 @@
 CREATE TABLE inquiries (
     inquiry_id BIGINT NOT NULL AUTO_INCREMENT,
     subject_id VARCHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- 콘텐츠 owner authority
-    -- 접수 채널 literal(InquiryChannel). 현재 앱 인증 접수(APP)뿐이며 비인증 랜딩 접수는 범위 밖이다.
-    channel VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-    category VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, -- InquiryCategory literal
     -- 답장 받을 주소(사용자 입력, 회원 정보에 email이 없다). 탈퇴 삭제(#302)가 행째 지운다.
     email VARCHAR(255) NOT NULL,
     body TEXT NOT NULL,

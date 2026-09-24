@@ -121,16 +121,15 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
-    void inquiryRequestAndAdminResponsesMaskEmailBodyAndFilenamesButKeepCategory() throws Exception {
-        // #518 접수 body는 답장 email과 문의 원문이다 — 분류 enum만 남고 나머지는 allowlist 밖이라 마스크다.
+    void inquiryRequestAndAdminResponsesMaskEmailBodyAndFilenames() throws Exception {
+        // #518 접수 body는 답장 email과 문의 원문이다 — 구조 필드(ID·처리 시각)만 남고 나머지는 allowlist 밖이라 마스크다.
         String rawEmail = "RAW_EMAIL_518_NEVER_LOG@example.com";
         String rawBody = "RAW_INQUIRY_518_NEVER_LOG";
-        String requestBody = "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
+        String requestBody = "{\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
                 + "\"attachmentFilenames\":[\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"]}";
 
         JsonNode maskedRequest = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries", requestBody));
 
-        assertThat(maskedRequest.get("category").asText()).isEqualTo("BUG");
         assertThat(maskedRequest.get("email").asText()).isEqualTo("***");
         assertThat(maskedRequest.get("body").asText()).isEqualTo("***");
         assertThat(maskedRequest.get("attachmentFilenames").asText()).isEqualTo("***");
@@ -138,24 +137,23 @@ class AccessLogBodyMaskerTest {
 
         // body는 타입 무관 마스크다 — JSON number/boolean로 보낸 원문(전화번호 등)도 남지 않는다.
         JsonNode maskedNumberBody = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries",
-                "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":821012345678}"));
+                "{\"email\":\"" + rawEmail + "\",\"body\":821012345678}"));
         assertThat(maskedNumberBody.get("body").asText()).isEqualTo("***");
         assertThat(maskedNumberBody.toString()).doesNotContain("821012345678");
         JsonNode maskedBooleanBody = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries",
-                "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":true}"));
+                "{\"email\":\"" + rawEmail + "\",\"body\":true}"));
         assertThat(maskedBooleanBody.get("body").asText()).isEqualTo("***");
         // presign 발급은 메타(contentType·size)뿐이라 skeleton 대상이 아니다 — 기존 field-level 규칙 유지.
         assertThat(maskRequest("POST", "/a/api/v1/inquiries/attachment-uploads",
                 "{\"attachments\":[{\"contentType\":\"image/jpeg\",\"size\":1024}]}"))
                 .contains("\"contentType\":\"image/jpeg\"").contains("\"size\":1024");
 
-        String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":[{\"inquiryId\":5,\"category\":\"OTHER\","
+        String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":[{\"inquiryId\":5,"
                 + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\",\"attachmentCount\":1,"
                 + "\"answeredAt\":\"2026-09-24T10:00:00\",\"createdAt\":\"2026-09-23T09:00:00\"}]}";
         JsonNode maskedList = objectMapper.readTree(masker.maskResponse(
                 new MockHttpServletRequest("GET", "/admin/api/inquiries"), jsonResponse(), bytes(listBody), false));
         assertThat(maskedList.at("/body/0/inquiryId").asLong()).isEqualTo(5);
-        assertThat(maskedList.at("/body/0/category").asText()).isEqualTo("OTHER");
         assertThat(maskedList.at("/body/0/answeredAt").asText()).isEqualTo("2026-09-24T10:00:00");
         assertThat(maskedList.at("/body/0/email").asText()).isEqualTo("***");
         assertThat(maskedList.at("/body/0/body").asText()).isEqualTo("***");

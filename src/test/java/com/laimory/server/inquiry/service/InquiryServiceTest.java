@@ -11,8 +11,6 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.inquiry.InquiryCategory;
-import com.laimory.server.inquiry.InquiryChannel;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.entity.InquiryAttachment;
 import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
@@ -60,11 +58,10 @@ class InquiryServiceTest {
             return saved;
         });
 
-        Inquiry inquiry = service().register("v1", SUBJECT_ID, InquiryCategory.BUG, " user@example.com ",
+        Inquiry inquiry = service().register("v1", SUBJECT_ID, " user@example.com ",
                 "앱이 멈춰요", List.of(FILENAME_A, FILENAME_B));
 
         assertThat(inquiry.getSubjectId()).isEqualTo(SUBJECT_ID);
-        assertThat(inquiry.getChannel()).isEqualTo(InquiryChannel.APP);
         assertThat(inquiry.getEmail()).isEqualTo("user@example.com");
         assertThat(inquiry.getBody()).isEqualTo("앱이 멈춰요");
         assertThat(inquiry.isAnswered()).isFalse();
@@ -81,7 +78,7 @@ class InquiryServiceTest {
     void registerWithoutAttachmentsSavesNoAttachmentRows() {
         when(inquiryRepository.save(any(Inquiry.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service().register("v1", SUBJECT_ID, InquiryCategory.OTHER, "u@example.com", "본문", null);
+        service().register("v1", SUBJECT_ID, "u@example.com", "본문", null);
 
         verify(inquiryAttachmentRepository).saveAll(List.of());
     }
@@ -90,13 +87,13 @@ class InquiryServiceTest {
     void registerRejectsInvalidDuplicateOrTooManyFilenamesBeforeSaving() {
         InquiryService service = service();
 
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, InquiryCategory.BUG, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
                 List.of("../etc/passwd")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, InquiryCategory.BUG, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
                 List.of(FILENAME_A, FILENAME_A)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, InquiryCategory.BUG, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
                 List.of(FILENAME_A, FILENAME_B, FILENAME_A.replace("a6.jpg", "a8.webp"),
                         FILENAME_A.replace("a6.jpg", "a9.jpg"))))
                 .isInstanceOf(BusinessException.class)
@@ -110,9 +107,9 @@ class InquiryServiceTest {
     void registerRejectsBlankBodyAndOverlongEmailBeforeSaving() {
         InquiryService service = service();
 
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, InquiryCategory.BUG, "u@example.com", "  ", null))
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "  ", null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, InquiryCategory.BUG,
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID,
                 "u".repeat(Inquiry.EMAIL_MAX_LENGTH) + "@example.com", "본문", null))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(inquiryRepository, never()).save(any());
@@ -171,7 +168,7 @@ class InquiryServiceTest {
     }
 
     private static Inquiry inquiry(long inquiryId) {
-        Inquiry inquiry = Inquiry.of(SUBJECT_ID, InquiryCategory.SUGGESTION, "u@example.com", "본문");
+        Inquiry inquiry = Inquiry.of(SUBJECT_ID, "u@example.com", "본문");
         ReflectionTestUtils.setField(inquiry, "inquiryId", inquiryId);
         return inquiry;
     }

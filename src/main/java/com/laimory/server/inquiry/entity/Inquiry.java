@@ -1,8 +1,6 @@
 package com.laimory.server.inquiry.entity;
 
 import com.laimory.server.common.BaseEntity;
-import com.laimory.server.inquiry.InquiryCategory;
-import com.laimory.server.inquiry.InquiryChannel;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -18,7 +16,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * 문의 한 건. 사용자가 앱에서 접수한 분류·답장 주소·본문을 담고 첨부 filename은
+ * 문의 한 건. 사용자가 앱에서 접수한 답장 주소·본문을 담고 첨부 filename은
  * {@link InquiryAttachment}가 소유한다.
  *
  * <p>답변은 이 행에 저장하지 않는다 — 관리자가 {@code email}로 직접 회신하고 {@code answeredAt}만 표시한다.
@@ -42,14 +40,6 @@ public class Inquiry extends BaseEntity {
     @Column(name = "subject_id", nullable = false, updatable = false, length = 36)
     private UUID subjectId;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "channel", nullable = false, updatable = false, length = 16)
-    private InquiryChannel channel;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "category", nullable = false, updatable = false, length = 32)
-    private InquiryCategory category;
-
     @Column(name = "email", nullable = false, updatable = false, length = EMAIL_MAX_LENGTH)
     private String email;
 
@@ -63,23 +53,18 @@ public class Inquiry extends BaseEntity {
     protected Inquiry() {
     }
 
-    private Inquiry(UUID subjectId, InquiryCategory category, String email, String body) {
+    private Inquiry(UUID subjectId, String email, String body) {
         this.subjectId = subjectId;
-        this.channel = InquiryChannel.APP;
-        this.category = category;
         this.email = email;
         this.body = body;
     }
 
     /** 앱 인증 접수 한 건. 접수 후 분류·주소·본문은 바뀌지 않는다(수정 API 없음). */
-    public static Inquiry of(UUID subjectId, InquiryCategory category, String email, String body) {
+    public static Inquiry of(UUID subjectId, String email, String body) {
         if (subjectId == null) {
             throw new IllegalArgumentException("subjectId is required");
         }
-        if (category == null) {
-            throw new IllegalArgumentException("category is required");
-        }
-        return new Inquiry(subjectId, category, requireValidEmail(email), requireBody(body));
+        return new Inquiry(subjectId, requireValidEmail(email), requireBody(body));
     }
 
     /** 처리됨 표시·해제. 표시 시각은 호출자가 캡처한 KST 벽시계다(해제는 null). */

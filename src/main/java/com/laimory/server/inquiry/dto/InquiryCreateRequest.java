@@ -1,6 +1,5 @@
 package com.laimory.server.inquiry.dto;
 
-import com.laimory.server.inquiry.InquiryCategory;
 import com.laimory.server.inquiry.InquiryObjectKeys;
 import com.laimory.server.inquiry.entity.Inquiry;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -15,9 +14,6 @@ import java.util.List;
  * 첨부 filename의 형식·중복은 서비스가 검사한다.
  */
 public record InquiryCreateRequest(
-        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "BUG",
-                description = "문의 분류 — BUG(오류 신고)·SUGGESTION(제안)·OTHER(기타)")
-        @NotNull InquiryCategory category,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "user@example.com",
                 description = "답장 받을 이메일. 회원 정보에 이메일이 없어 문의마다 입력받는다. 최대 255자")
         @NotBlank @Email @Size(max = Inquiry.EMAIL_MAX_LENGTH) String email,

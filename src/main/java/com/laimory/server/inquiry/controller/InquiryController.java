@@ -30,8 +30,8 @@ public class InquiryController implements InquiryApi {
     @Override
     public ResponseEntity<ApiResponse<Void>> createInquiry(String applicationVersion, UUID subjectId,
                                                            InquiryCreateRequest request) {
-        inquiryService.register(applicationVersion, subjectId, request.category(), request.email(),
-                request.body(), request.attachmentFilenames());
+        inquiryService.register(applicationVersion, subjectId, request.email(), request.body(),
+                request.attachmentFilenames());
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(null));
     }
 }

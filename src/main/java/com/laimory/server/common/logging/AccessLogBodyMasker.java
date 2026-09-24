@@ -99,9 +99,9 @@ final class AccessLogBodyMasker {
             "timelineeventid", "items", "timelineitemid",
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
             "terms", "agreements", "termtype", "version", "acceptedat",
-            // 문의(#518) 구조 — 분류 enum·ID·처리 시각만. email·첨부 filename은 allowlist 밖이라 마스크되고,
+            // 문의(#518) 구조 — ID·처리 시각만. email·첨부 filename은 allowlist 밖이라 마스크되고,
             // 문의 원문 body는 envelope body와 이름이 같아 아래 container-only 규칙이 scalar 값을 마스크한다.
-            "category", "inquiryid", "answeredat");
+            "inquiryid", "answeredat");
 
     /** allowlist에 있어도 scalar 값(null 제외)이면 타입 무관 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
     private static final Set<String> SKELETON_CONTAINER_ONLY_FIELDS = Set.of("body");

@@ -51,14 +51,14 @@ public interface InquiryApi {
             @RequestBody InquiryAttachmentUploadCreateRequest request);
 
     @Operation(summary = "문의 접수",
-            description = "분류·답장 이메일·본문·첨부 filename(0~3개)을 받아 문의를 접수한다. 201이 곧 접수 완료다. "
+            description = "답장 이메일·본문·첨부 filename(0~3개)을 받아 문의를 접수한다. 201이 곧 접수 완료다. "
                     + "답변은 이 API로 조회할 수 없다 — 관리자가 입력한 이메일로 직접 회신한다. 서버는 첨부의 "
                     + "S3 업로드 완료를 확인하지 않으며, 같은 내용의 재요청은 새 문의로 접수된다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",
                     description = "접수 완료(body 없음)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400`(category/email/body 누락·형식·길이 위반, 첨부 filename 형식 오류·중복) · "
+                    description = "`-400`(email/body 누락·형식·길이 위반, 첨부 filename 형식 오류·중복) · "
                             + "`-1004`(첨부 3장 초과)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
