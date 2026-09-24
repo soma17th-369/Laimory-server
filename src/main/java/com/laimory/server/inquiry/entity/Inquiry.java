@@ -79,7 +79,7 @@ public class Inquiry extends BaseEntity {
         if (category == null) {
             throw new IllegalArgumentException("category is required");
         }
-        return new Inquiry(subjectId, category, normalizeEmail(email), requireBody(body));
+        return new Inquiry(subjectId, category, requireValidEmail(email), requireBody(body));
     }
 
     /** 처리됨 표시·해제. 표시 시각은 호출자가 캡처한 KST 벽시계다(해제는 null). */
@@ -91,7 +91,8 @@ public class Inquiry extends BaseEntity {
         return answeredAt != null;
     }
 
-    private static String normalizeEmail(String email) {
+    /** null·공백뿐은 거절, 그 외 strip 후 최대 255자({@code TimelineEventInputRules.requireValidTitle} 선례). */
+    private static String requireValidEmail(String email) {
         if (email == null || email.isBlank()) {
             throw new IllegalArgumentException("email is required");
         }
