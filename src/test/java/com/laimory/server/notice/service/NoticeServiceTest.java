@@ -18,17 +18,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 공지 leaf service — 공개 404 은닉·입력 규칙·관리자 수정/노출 전환 결과를 실 엔티티로 검증한다. */
+/** 공지 leaf service — 입력 규칙(제목·HTTPS URL)과 관리자 수정/노출 전환 결과를 실 엔티티로 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class NoticeServiceTest {
+
+    private static final String URL = "https://www.laimory.app/notices/12";
 
     @Mock
     private NoticeRepository noticeRepository;
 
     @Test
-    void findVisibleNoticesReturnsRepositoryOrderWithoutHiddenFilteringInService() {
-        Notice newer = Notice.of("둘째", "본문");
-        Notice older = Notice.of("첫째", "본문");
+    void findVisibleNoticesReturnsRepositoryOrder() {
+        Notice newer = Notice.of("둘째", URL);
+        Notice older = Notice.of("첫째", URL);
         when(noticeRepository.findByHiddenFalseOrderByNoticeIdDesc()).thenReturn(List.of(newer, older));
         NoticeService service = new NoticeService(noticeRepository);
 
@@ -38,25 +40,14 @@ class NoticeServiceTest {
     }
 
     @Test
-    void getVisibleNoticeHidesMissingAndHiddenAsNotFound() {
-        when(noticeRepository.findByNoticeIdAndHiddenFalse(7L)).thenReturn(Optional.empty());
-        NoticeService service = new NoticeService(noticeRepository);
-
-        assertThatThrownBy(() -> service.getVisibleNotice("v1", 7L))
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getExceptionType())
-                .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);
-    }
-
-    @Test
-    void registerStripsTitleAndStartsVisible() {
+    void registerStripsTitleKeepsUrlAndStartsVisible() {
         when(noticeRepository.save(any(Notice.class))).thenAnswer(invocation -> invocation.getArgument(0));
         NoticeService service = new NoticeService(noticeRepository);
 
-        Notice saved = service.register("  점검 안내  ", "내일 새벽 점검\n두 줄째");
+        Notice saved = service.register("  점검 안내  ", URL);
 
         assertThat(saved.getTitle()).isEqualTo("점검 안내");
-        assertThat(saved.getBody()).isEqualTo("내일 새벽 점검\n두 줄째");
+        assertThat(saved.getContentUrl()).isEqualTo(URL);
         assertThat(saved.isHidden()).isFalse();
     }
 
@@ -64,32 +55,40 @@ class NoticeServiceTest {
     void registerRejectsBlankTitleBeforeSaving() {
         NoticeService service = new NoticeService(noticeRepository);
 
-        assertThatThrownBy(() -> service.register("   ", "본문"))
+        assertThatThrownBy(() -> service.register("   ", URL))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(noticeRepository, never()).save(any());
     }
 
     @Test
-    void registerRejectsBodyOverLimitBeforeSaving() {
+    void registerRejectsNonHttpsHostlessOrOverlongUrlBeforeSaving() {
         NoticeService service = new NoticeService(noticeRepository);
 
-        assertThatThrownBy(() -> service.register("제목", "가".repeat(Notice.BODY_MAX_LENGTH + 1)))
+        // 약관 등록과 같은 기준 — host가 있는 절대 HTTPS만 게시 주소로 인정한다.
+        assertThatThrownBy(() -> service.register("제목", "http://www.laimory.app/notices/12"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.register("제목", "https:///notices/12"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.register("제목", "/notices/12"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.register("제목",
+                "https://www.laimory.app/" + "a".repeat(Notice.CONTENT_URL_MAX_LENGTH)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(noticeRepository, never()).save(any());
     }
 
     @Test
-    void editReplacesTitleAndBodyKeepingVisibility() {
-        Notice notice = Notice.of("이전 제목", "이전 본문");
+    void editReplacesTitleAndUrlKeepingVisibility() {
+        Notice notice = Notice.of("이전 제목", URL);
         notice.changeVisibility(true);
         when(noticeRepository.findByNoticeId(3L)).thenReturn(Optional.of(notice));
         NoticeService service = new NoticeService(noticeRepository);
 
-        Notice edited = service.edit(3L, " 새 제목 ", "새 본문");
+        Notice edited = service.edit(3L, " 새 제목 ", "https://www.laimory.app/notices/12-r2");
 
         assertThat(edited).isSameAs(notice);
         assertThat(notice.getTitle()).isEqualTo("새 제목");
-        assertThat(notice.getBody()).isEqualTo("새 본문");
+        assertThat(notice.getContentUrl()).isEqualTo("https://www.laimory.app/notices/12-r2");
         assertThat(notice.isHidden()).isTrue();
     }
 
@@ -98,7 +97,7 @@ class NoticeServiceTest {
         when(noticeRepository.findByNoticeId(9L)).thenReturn(Optional.empty());
         NoticeService service = new NoticeService(noticeRepository);
 
-        assertThatThrownBy(() -> service.edit(9L, "제목", "본문"))
+        assertThatThrownBy(() -> service.edit(9L, "제목", URL))
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getExceptionType())
                 .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);
@@ -106,7 +105,7 @@ class NoticeServiceTest {
 
     @Test
     void changeVisibilityHidesAndRestoresTheSameRow() {
-        Notice notice = Notice.of("제목", "본문");
+        Notice notice = Notice.of("제목", URL);
         when(noticeRepository.findByNoticeId(3L)).thenReturn(Optional.of(notice));
         NoticeService service = new NoticeService(noticeRepository);
 

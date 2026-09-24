@@ -176,7 +176,7 @@ class AdminHttpTest {
 
     @Test
     void noticeEndpointsValidateInputAndMapNotFoundAndSuccessToHttpStatus() throws Exception {
-        Notice notice = Notice.of("점검 안내", "본문");
+        Notice notice = Notice.of("점검 안내", "https://example.com/notices/5");
         ReflectionTestUtils.setField(notice, "noticeId", 5L);
         when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(notice));
         when(notices.save(any(Notice.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -185,20 +185,25 @@ class AdminHttpTest {
 
         HttpResponse<String> list = request("GET", "/admin/api/notices", null, null, false);
         assertThat(list.statusCode()).isEqualTo(200);
-        assertThat(list.body()).contains("\"noticeId\":5").contains("\"title\":\"점검 안내\"").contains("\"hidden\":false");
+        assertThat(list.body()).contains("\"noticeId\":5").contains("\"title\":\"점검 안내\"")
+                .contains("\"contentUrl\":\"https://example.com/notices/5\"").contains("\"hidden\":false");
 
-        for (String bad : List.of("{}", "{\"title\":\"  \",\"body\":\"b\"}", "{\"title\":\"t\",\"body\":\" \"}",
-                "{\"title\":\"" + "x".repeat(256) + "\",\"body\":\"b\"}")) {
+        for (String bad : List.of("{}", "{\"title\":\"  \",\"contentUrl\":\"https://example.com/n\"}",
+                "{\"title\":\"t\",\"contentUrl\":\" \"}",
+                "{\"title\":\"t\",\"contentUrl\":\"http://example.com/n\"}",
+                "{\"title\":\"" + "x".repeat(256) + "\",\"contentUrl\":\"https://example.com/n\"}")) {
             assertThat(request("POST", "/admin/api/notices", bad, origin(), true).statusCode()).as(bad).isEqualTo(400);
         }
         verify(notices, never()).save(any());
-        HttpResponse<String> created = request("POST", "/admin/api/notices", "{\"title\":\" 새 공지 \",\"body\":\"본문\"}", origin(), true);
+        HttpResponse<String> created = request("POST", "/admin/api/notices",
+                "{\"title\":\" 새 공지 \",\"contentUrl\":\"https://example.com/notices/6\"}", origin(), true);
         assertThat(created.statusCode()).isEqualTo(201);
         assertThat(created.body()).contains("\"title\":\"새 공지\"").contains("\"hidden\":false");
 
-        assertThat(request("PUT", "/admin/api/notices/5", "{\"title\":\"수정\",\"body\":\"본문2\"}", origin(), true).statusCode()).isEqualTo(200);
+        assertThat(request("PUT", "/admin/api/notices/5",
+                "{\"title\":\"수정\",\"contentUrl\":\"https://example.com/notices/5-r2\"}", origin(), true).statusCode()).isEqualTo(200);
         assertThat(notice.getTitle()).isEqualTo("수정");
-        assertThat(notice.getBody()).isEqualTo("본문2");
+        assertThat(notice.getContentUrl()).isEqualTo("https://example.com/notices/5-r2");
         assertThat(request("PUT", "/admin/api/notices/5/visibility", "{}", origin(), true).statusCode()).isEqualTo(400);
         assertThat(notice.isHidden()).isFalse();
         HttpResponse<String> hidden = request("PUT", "/admin/api/notices/5/visibility", "{\"hidden\":true}", origin(), true);

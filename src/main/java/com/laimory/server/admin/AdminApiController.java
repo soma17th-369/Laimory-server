@@ -86,13 +86,13 @@ public class AdminApiController {
     @PostMapping(value = "/notices", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     ApiResponse<AdminNotice> registerNotice(@Valid @RequestBody NoticeRequest request) {
-        return ApiResponse.success(AdminNotice.from(notices.register(request.title(), request.body())));
+        return ApiResponse.success(AdminNotice.from(notices.register(request.title(), request.contentUrl())));
     }
 
-    /** 제목·본문 전체 교체. 노출 상태는 visibility 경로가 따로 바꾼다. */
+    /** 제목·원문 URL 전체 교체. 노출 상태는 visibility 경로가 따로 바꾼다. */
     @PutMapping(value = "/notices/{noticeId}", consumes = MediaType.APPLICATION_JSON_VALUE)
     ApiResponse<AdminNotice> editNotice(@PathVariable long noticeId, @Valid @RequestBody NoticeRequest request) {
-        return ApiResponse.success(AdminNotice.from(notices.edit(noticeId, request.title(), request.body())));
+        return ApiResponse.success(AdminNotice.from(notices.edit(noticeId, request.title(), request.contentUrl())));
     }
 
     /** 숨김(hidden=true)이 삭제 역할이다 — hard delete 경로는 두지 않는다. */
@@ -136,15 +136,15 @@ public class AdminApiController {
     record Publication(Document saved, Document current) { }
 
     record NoticeRequest(@NotBlank @Size(max = Notice.TITLE_MAX_LENGTH) String title,
-                         @NotBlank @Size(max = Notice.BODY_MAX_LENGTH) String body) { }
+                         @NotBlank @Size(max = Notice.CONTENT_URL_MAX_LENGTH) String contentUrl) { }
 
     record VisibilityRequest(@NotNull Boolean hidden) { }
 
-    record AdminNotice(Long noticeId, String title, String body, boolean hidden,
+    record AdminNotice(Long noticeId, String title, String contentUrl, boolean hidden,
                        LocalDateTime createdAt, LocalDateTime updatedAt) {
         static AdminNotice from(Notice notice) {
-            return new AdminNotice(notice.getNoticeId(), notice.getTitle(), notice.getBody(), notice.isHidden(),
-                    notice.getCreatedAt(), notice.getUpdatedAt());
+            return new AdminNotice(notice.getNoticeId(), notice.getTitle(), notice.getContentUrl(),
+                    notice.isHidden(), notice.getCreatedAt(), notice.getUpdatedAt());
         }
     }
 }

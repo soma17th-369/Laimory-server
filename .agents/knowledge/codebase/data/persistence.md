@@ -66,8 +66,9 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
-- `notices` (#517 — 관리자가 등록하는 공지 본문 텍스트. owner 없음. `hidden` flag 하나가 노출을
-  제어하고 hard delete는 없다. 공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가)
+- `notices` (#517 — 관리자가 등록하는 공지 제목 + 게시 URL(`content_url`, 원문은 게시 page 소유 —
+  `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
+  공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가)
 
 `db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
 Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.

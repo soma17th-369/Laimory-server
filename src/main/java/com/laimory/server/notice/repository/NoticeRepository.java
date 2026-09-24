@@ -15,9 +15,6 @@ public interface NoticeRepository extends JpaRepository<Notice, Long> {
     /** 공개 목록 — 숨김이 아닌 공지, 최신(큰 PK) 순. */
     List<Notice> findByHiddenFalseOrderByNoticeIdDesc();
 
-    /** 공개 상세 — 숨김 행은 없는 것과 같다. */
-    Optional<Notice> findByNoticeIdAndHiddenFalse(Long noticeId);
-
     /** 관리자 목록 — 숨김 포함 전체, 최신 순. */
     List<Notice> findAllByOrderByNoticeIdDesc();
 

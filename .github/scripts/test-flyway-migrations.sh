@@ -230,8 +230,8 @@ mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend
 flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 migrate >"$WORK/notice-v3.log" 2>&1
 mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend_app_version FROM app_config' >"$WORK/notice-after.tsv"
 cmp -s "$WORK/notice-before.tsv" "$WORK/notice-after.tsv" || fail 'V3 changed app_config data'
-[ "$(mysql flyway_notice_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='notices' AND COLUMN_NAME IN ('notice_id','title','body','hidden','created_at','updated_at','modified_by')")" = 7 ] || fail 'notices columns missing'
-mysql flyway_notice_upgrade -e "INSERT INTO notices (title, body, created_at, updated_at) VALUES ('probe', 'body', NOW(6), NOW(6))"
+[ "$(mysql flyway_notice_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='notices' AND COLUMN_NAME IN ('notice_id','title','content_url','hidden','created_at','updated_at','modified_by')")" = 7 ] || fail 'notices columns missing'
+mysql flyway_notice_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('probe', 'https://example.com/n', NOW(6), NOW(6))"
 [ "$(mysql flyway_notice_upgrade -e "SELECT hidden FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.hidden default is not false'
 flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 validate >"$WORK/notice-validate.log" 2>&1
 ok 'V2 to V3 adds notices with hidden defaulting to false and preserves existing rows'

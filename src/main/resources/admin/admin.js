@@ -92,7 +92,16 @@ async function loadNotices() {
   $("notices").replaceChildren();
   for (const notice of notices) {
     const row = document.createElement("tr");
-    for (const value of [String(notice.noticeId), notice.title, noticeState(notice), (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
+    for (const value of [String(notice.noticeId), notice.title]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    const urlCell = document.createElement("td");
+    try {
+      const link = document.createElement("a"); link.href = httpsUrl(notice.contentUrl).href;
+      link.textContent = "원문 ↗"; link.target = "_blank"; link.rel = "noopener noreferrer"; urlCell.append(link);
+    } catch { urlCell.textContent = notice.contentUrl; }
+    row.append(urlCell);
+    for (const value of [noticeState(notice), (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }
     const actions = document.createElement("td");
@@ -106,7 +115,7 @@ async function loadNotices() {
 }
 
 function startNoticeEdit(notice) {
-  $("notice-id").value = notice.noticeId; $("notice-title").value = notice.title; $("notice-body").value = notice.body;
+  $("notice-id").value = notice.noticeId; $("notice-title").value = notice.title; $("notice-url").value = notice.contentUrl;
   $("notice-submit").textContent = "수정 내용 확인"; $("notice-cancel").hidden = false; $("notice-title").focus();
 }
 
@@ -120,7 +129,7 @@ async function changeNoticeVisibility(notice) {
   try {
     const hidden = !notice.hidden;
     if (!await confirmChange(`#${notice.noticeId} ${notice.title}\n${noticeState(notice)} → ${hidden ? "숨김" : "노출"}`,
-      hidden ? "숨기면 앱 목록·상세에서 즉시 사라집니다(상세는 404). 다시 노출할 수 있습니다." : "다시 노출하면 앱 목록에 즉시 나타납니다.")) return;
+      hidden ? "숨기면 앱 공지 목록에서 즉시 사라집니다. 다시 노출할 수 있습니다." : "다시 노출하면 앱 목록에 즉시 나타납니다.")) return;
     const result = await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/visibility`, writeOptions("PUT", JSON.stringify({hidden})));
     status(`#${result.noticeId} ${noticeState(result)} 처리 완료`);
     await loadNotices();
@@ -160,18 +169,23 @@ $("term-form").addEventListener("submit", async event => {
 });
 
 $("notice-cancel").addEventListener("click", resetNoticeForm);
+$("open-notice").addEventListener("click", () => {
+  try { window.open(httpsUrl($("notice-url").value).href, "_blank", "noopener,noreferrer"); }
+  catch (error) { status(error.message, true); }
+});
 
 $("notice-form").addEventListener("submit", async event => {
   event.preventDefault(); $("notice-fields").disabled = true;
   try {
     const id = $("notice-id").value;
-    const proposal = {title: $("notice-title").value.trim(), body: $("notice-body").value};
-    if (!proposal.title || !proposal.body.trim()) throw new Error("제목과 본문을 입력해주세요.");
+    const proposal = {title: $("notice-title").value.trim(), contentUrl: $("notice-url").value};
+    if (!proposal.title) throw new Error("제목을 입력해주세요.");
+    httpsUrl(proposal.contentUrl);
     const current = id ? notices.find(notice => String(notice.noticeId) === id) : null;
     if (id && !current) throw new Error("수정 대상 공지를 목록에서 찾을 수 없습니다. 새로고침 후 다시 시도하세요.");
     const details = current
-      ? `수정 전\n${current.title}\n\n${current.body}\n\n수정 후\n${proposal.title}\n\n${proposal.body}`
-      : `${proposal.title}\n\n${proposal.body}`;
+      ? `수정 전\n${current.title}\n${current.contentUrl}\n\n수정 후\n${proposal.title}\n${proposal.contentUrl}`
+      : `${proposal.title}\n${proposal.contentUrl}`;
     if (!await confirmChange(details, current ? "저장 즉시 앱에 수정된 내용이 노출됩니다." : "저장 즉시 앱 공지 목록에 노출됩니다.")) return;
     const result = current
       ? await api(`/admin/api/notices/${encodeURIComponent(id)}`, writeOptions("PUT", JSON.stringify(proposal)))

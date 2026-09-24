@@ -97,27 +97,24 @@ class AdminPersistenceIntegrationTest {
     }
 
     @Test
-    void registeredNoticeIsPublicUntilHiddenAndDetailBecomes404AfterHiding() throws Exception {
+    void registeredNoticeIsPublicWithContentUrlUntilHidden() throws Exception {
         Long noticeId = null;
         try {
-            var created = request("POST", "/admin/api/notices",
-                    mapper.writeValueAsString(Map.of("title", "admin integration notice", "body", "첫 줄\n둘째 줄")));
+            var created = request("POST", "/admin/api/notices", mapper.writeValueAsString(Map.of(
+                    "title", "admin integration notice", "contentUrl", "https://example.com/admin-notice-fixture")));
             assertThat(created.statusCode()).isEqualTo(201);
             noticeId = mapper.readTree(created.body()).path("body").path("noticeId").asLong();
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().getCreatedAt()).isNotNull();
 
             JsonNode listed = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
-            // 최신 순 목록이라 방금 등록한 공지가 첫 항목이고 본문은 실리지 않는다.
+            // 최신 순 목록이라 방금 등록한 공지가 첫 항목이고, 원문 대신 page URL만 실린다.
             assertThat(listed.get(0).path("noticeId").asLong()).isEqualTo(noticeId);
+            assertThat(listed.get(0).path("contentUrl").asText()).isEqualTo("https://example.com/admin-notice-fixture");
             assertThat(listed.get(0).has("body")).isFalse();
             assertThat(listed.get(0).path("publishedAt").asText()).isNotBlank();
-            var detail = request("GET", "/api/v1/notices/" + noticeId, null);
-            assertThat(detail.statusCode()).isEqualTo(200);
-            assertThat(mapper.readTree(detail.body()).path("body").path("body").asText()).isEqualTo("첫 줄\n둘째 줄");
 
             assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":true}").statusCode())
                     .isEqualTo(200);
-            assertThat(request("GET", "/api/v1/notices/" + noticeId, null).statusCode()).isEqualTo(404);
             JsonNode afterHiding = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
             assertThat(afterHiding.findValues("noticeId")).extracting(JsonNode::asLong).doesNotContain(noticeId);
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().isHidden()).isTrue();
