@@ -135,6 +135,15 @@ class AccessLogBodyMaskerTest {
         assertThat(maskedRequest.get("body").asText()).isEqualTo("***");
         assertThat(maskedRequest.get("attachmentFilenames").asText()).isEqualTo("***");
         assertThat(maskedRequest.toString()).doesNotContain(rawEmail).doesNotContain(rawBody);
+
+        // body는 타입 무관 마스크다 — JSON number/boolean로 보낸 원문(전화번호 등)도 남지 않는다.
+        JsonNode maskedNumberBody = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries",
+                "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":821012345678}"));
+        assertThat(maskedNumberBody.get("body").asText()).isEqualTo("***");
+        assertThat(maskedNumberBody.toString()).doesNotContain("821012345678");
+        JsonNode maskedBooleanBody = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries",
+                "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":true}"));
+        assertThat(maskedBooleanBody.get("body").asText()).isEqualTo("***");
         // presign 발급은 메타(contentType·size)뿐이라 skeleton 대상이 아니다 — 기존 field-level 규칙 유지.
         assertThat(maskRequest("POST", "/a/api/v1/inquiries/attachment-uploads",
                 "{\"attachments\":[{\"contentType\":\"image/jpeg\",\"size\":1024}]}"))

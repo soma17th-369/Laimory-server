@@ -100,10 +100,10 @@ final class AccessLogBodyMasker {
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
             "terms", "agreements", "termtype", "version", "acceptedat",
             // 문의(#518) 구조 — 분류 enum·ID·처리 시각만. email·첨부 filename은 allowlist 밖이라 마스크되고,
-            // 문의 원문 body는 envelope body와 이름이 같아 아래 container-only 규칙이 텍스트 값을 마스크한다.
+            // 문의 원문 body는 envelope body와 이름이 같아 아래 container-only 규칙이 scalar 값을 마스크한다.
             "category", "inquiryid", "answeredat");
 
-    /** allowlist에 있어도 텍스트 값이면 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
+    /** allowlist에 있어도 scalar 값(null 제외)이면 타입 무관 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
     private static final Set<String> SKELETON_CONTAINER_ONLY_FIELDS = Set.of("body");
 
     // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는
@@ -220,8 +220,9 @@ final class AccessLogBodyMasker {
         if (!SKELETON_SAFE_FIELDS.contains(normalized)) {
             return TextNode.valueOf(MASK);
         }
-        if (SKELETON_CONTAINER_ONLY_FIELDS.contains(normalized) && value.isTextual()) {
-            // envelope의 body(object/array/null)와 이름이 같은 사용자 원문 필드(문의 body, #518)는 텍스트로만 온다.
+        if (SKELETON_CONTAINER_ONLY_FIELDS.contains(normalized) && value.isValueNode() && !value.isNull()) {
+            // envelope의 body는 object/array/null로만 온다 — 같은 이름의 사용자 원문 필드(문의 body, #518)는
+            // scalar이며, 타입 무관 마스크한다(숫자 body로 보낸 전화번호 등이 shape guard를 우회하지 않게).
             return TextNode.valueOf(MASK);
         }
         return skeletonNode(value);
