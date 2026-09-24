@@ -101,13 +101,12 @@ class InquiryControllerTest {
     }
 
     @Test
-    void createInquiryRejectsInvalidEmailBlankBodyAndTooManyAttachments() throws Exception {
+    void createInquiryRejectsInvalidEmailAndBlankBody() throws Exception {
+        // 첨부 개수 초과는 경계가 아니라 서비스 검증(-1004)이다 — 아래 service 매핑 테스트가 소유한다.
         for (String bad : List.of(
                 "{\"body\":\"문의\"}",
                 "{\"email\":\"not-an-email\",\"body\":\"문의\"}",
-                "{\"email\":\"user@example.com\",\"body\":\"   \"}",
-                "{\"email\":\"user@example.com\",\"body\":\"문의\","
-                        + "\"attachmentFilenames\":[\"a.jpg\",\"b.jpg\",\"c.jpg\",\"d.jpg\"]}")) {
+                "{\"email\":\"user@example.com\",\"body\":\"   \"}")) {
             mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                             .contentType(MediaType.APPLICATION_JSON).content(bad))
                     .andExpect(status().isBadRequest())
