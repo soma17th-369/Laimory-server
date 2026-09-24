@@ -37,7 +37,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   실패를 검증한다. 두 독립 프로세스의 최초 생성과, 임시 V2를 실행 중 native lock 대기가 겹친 뒤
   두 프로세스가 성공하고 이력/결과는 한 번만 기록되는 것도 검증한다. 임시 V2는 앱에 포함되지 않는다.
   별도 DB의 실제 V1→V2 업그레이드는 대표 초안 행 보존, 선점 컬럼·인덱스 제거와 `created_at` 인덱스 유지를
-  검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
+  검증하고, V2→V3(#517)는 `app_config` 행 보존과 `notices` 컬럼·`hidden` 기본값 false를 검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름

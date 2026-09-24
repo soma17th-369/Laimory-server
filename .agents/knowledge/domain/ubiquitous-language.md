@@ -168,6 +168,14 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 동의 필요 약관 | Agreement Required Terms | 현재 구현 | 지금 현재 버전 동의가 없는 동의 대상 약관이다(#434). 대상은 고지 전용 `PRIVACY_POLICY`를 제외한 5종 전부이고 그 분류는 `TermAgreementService`의 상수 한 곳이 소유한다(`TermType`에 속성 없음). 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open). 앱 초기화 응답이 `(termType, version)` 목록으로 알려주고 진행 차단은 클라이언트 책임이다 — 서버는 이 판정으로 요청을 막지 않는다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | `TermCatalogReadiness`가 기동 시 raw catalog를 한 번 조회해 전체 `TermType`의 seed 존재·종류 literal·HTTPS URL 형식을 검사한다. 버전 형식은 쓰기 경계와 DB CHECK가 보장하므로 재검증하지 않는다. 빈 catalog는 WARN, 잘못된 seed나 조회 실패는 ERROR, 정상은 INFO 로그로 알리되 기동·공개 조회는 막지 않는다. 별도 metric·단계별 준비 상태·상태 전이 관리는 없다. |
 
+## 공지사항
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록 조회만 하고(목록이 URL을 직접 실어 상세 조회가 없다) 등록·수정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. |
+| 노출 상태 | Hidden | 현재 구현 | `hidden` boolean 하나가 노출을 제어한다. 등록 즉시 노출(false)이고 예약 게시·고정(핀)은 없다. 숨김(true)이 삭제 역할이라 hard delete 경로가 없으며 다시 노출할 수 있다. 공개 API는 숨김 행을 없는 것과 같이 다룬다(목록 제외, 상세 404). |
+| 게시 시각 | Published At | 현재 구현 | 공개 응답의 `publishedAt`이며 값은 행의 `created_at`(Asia/Seoul 벽시계)이다. 별도 게시 시각 컬럼을 두지 않는다. |
+
 ## 푸시 알림
 
 | 한글명 | 영문명 | 상태 | 설명 |

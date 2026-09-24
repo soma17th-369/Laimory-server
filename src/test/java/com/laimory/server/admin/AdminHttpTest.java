@@ -13,6 +13,9 @@ import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.common.error.GlobalExceptionHandler;
 import com.laimory.server.common.logging.TrustedEdgeRequestFilter;
+import com.laimory.server.notice.entity.Notice;
+import com.laimory.server.notice.repository.NoticeRepository;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
@@ -29,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +55,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /** DB를 mock하되 실제 Tomcat connector·filter·CSRF session·MVC 경계는 모두 실 HTTP로 검증한다. */
 @SpringBootTest(classes = AdminHttpTest.TestApplication.class,
@@ -66,6 +71,7 @@ class AdminHttpTest {
     @MockitoBean TermDocumentService documents;
     @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
+    @MockitoBean NoticeRepository notices;
     private HttpClient client;
     private JsonNode csrf;
 
@@ -86,7 +92,8 @@ class AdminHttpTest {
     @Test
     void onlyActualAdminPortServesPage_andPublicManagementContinue() throws Exception {
         assertThat(server.boundPort()).isPositive().isNotEqualTo(mainPort).isNotEqualTo(managementPort);
-        for (String path : List.of("/admin", "/admin/", "/admin/index.html", "/admin/admin.js", "/admin/admin.css", "/admin/api/terms")) {
+        for (String path : List.of("/admin", "/admin/", "/admin/index.html", "/admin/admin.js", "/admin/admin.css", "/admin/api/terms",
+                "/admin/api/notices")) {
             assertThat(request("GET", path, null, null, false).statusCode()).as(path).isEqualTo(200);
             assertThat(raw(mainPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
             assertThat(raw(managementPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
@@ -167,6 +174,47 @@ class AdminHttpTest {
         }
     }
 
+    @Test
+    void noticeEndpointsValidateInputAndMapNotFoundAndSuccessToHttpStatus() throws Exception {
+        Notice notice = Notice.of("점검 안내", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(notice, "noticeId", 5L);
+        when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(notice));
+        when(notices.save(any(Notice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(notice));
+        when(notices.findByNoticeId(404L)).thenReturn(Optional.empty());
+
+        HttpResponse<String> list = request("GET", "/admin/api/notices", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"noticeId\":5").contains("\"title\":\"점검 안내\"")
+                .contains("\"contentUrl\":\"https://example.com/notices/5\"").contains("\"hidden\":false");
+
+        for (String bad : List.of("{}", "{\"title\":\"  \",\"contentUrl\":\"https://example.com/n\"}",
+                "{\"title\":\"t\",\"contentUrl\":\" \"}",
+                "{\"title\":\"t\",\"contentUrl\":\"http://example.com/n\"}",
+                "{\"title\":\"" + "x".repeat(256) + "\",\"contentUrl\":\"https://example.com/n\"}")) {
+            assertThat(request("POST", "/admin/api/notices", bad, origin(), true).statusCode()).as(bad).isEqualTo(400);
+        }
+        verify(notices, never()).save(any());
+        HttpResponse<String> created = request("POST", "/admin/api/notices",
+                "{\"title\":\" 새 공지 \",\"contentUrl\":\"https://example.com/notices/6\"}", origin(), true);
+        assertThat(created.statusCode()).isEqualTo(201);
+        assertThat(created.body()).contains("\"title\":\"새 공지\"").contains("\"hidden\":false");
+
+        assertThat(request("PUT", "/admin/api/notices/5",
+                "{\"title\":\"수정\",\"contentUrl\":\"https://example.com/notices/5-r2\"}", origin(), true).statusCode()).isEqualTo(200);
+        assertThat(notice.getTitle()).isEqualTo("수정");
+        assertThat(notice.getContentUrl()).isEqualTo("https://example.com/notices/5-r2");
+        assertThat(request("PUT", "/admin/api/notices/5/visibility", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(notice.isHidden()).isFalse();
+        HttpResponse<String> hidden = request("PUT", "/admin/api/notices/5/visibility", "{\"hidden\":true}", origin(), true);
+        assertThat(hidden.statusCode()).isEqualTo(200);
+        assertThat(hidden.body()).contains("\"hidden\":true");
+        assertThat(notice.isHidden()).isTrue();
+        HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/visibility", "{\"hidden\":true}", origin(), true);
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("-404");
+    }
+
     private String origin() { return "http://localhost:" + server.boundPort(); }
 
     private HttpResponse<String> request(String method, String path, String body, String origin, boolean token) throws Exception {
@@ -198,7 +246,7 @@ class AdminHttpTest {
             excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({AdminWebConfiguration.class, AdminPageController.class, AdminApiController.class,
             TermDocumentRegistrationService.class, AppConfigService.class, AppConfigController.class,
-            GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
+            NoticeService.class, GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
     static class TestApplication {
         @Bean ApiErrorResponseWriter errors(MessageSource messages, ObjectMapper mapper) {
             return new ApiErrorResponseWriter(messages, mapper);
