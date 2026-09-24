@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 public record InquiryAttachmentUploadResponse(
         @Schema(description = "접수 요청 attachmentFilenames에 그대로 회신할 파일명",
                 example = "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg") String filename,
-        @Schema(description = "첨부를 PUT할 presigned URL(유효시간 내 1회 업로드)") String uploadUrl
+        @Schema(description = "첨부를 PUT할 presigned URL — 유효시간 안에 사용한다(서명은 사용 횟수를 제한하지 않는다)")
+        String uploadUrl
 ) {
 }
