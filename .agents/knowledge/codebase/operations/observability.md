@@ -85,12 +85,15 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 17개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 20개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394) — request 8개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518) — request 9개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
-  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`),
-  response 9개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
+  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
+  `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
+  response 11개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
+  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다,
+  draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든
   Event 제목·부제·질문·장소를 그대로 돌려주므로 request와 함께 대상).

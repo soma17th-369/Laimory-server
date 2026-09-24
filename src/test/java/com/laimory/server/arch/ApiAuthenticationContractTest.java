@@ -3,6 +3,8 @@ package com.laimory.server.arch;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.initializer.controller.AppInitializerApi;
+import com.laimory.server.inquiry.controller.InquiryApi;
+import com.laimory.server.notice.controller.PublicNoticeApi;
 import com.laimory.server.onboarding.controller.OnboardingApi;
 import com.laimory.server.push.controller.PushRegistrationApi;
 import com.laimory.server.push.controller.PushSettingApi;
@@ -62,7 +64,8 @@ class ApiAuthenticationContractTest {
             UserApi.class, PrincipalKind.ACCOUNT_USER_ID,
             TermAgreementApi.class, PrincipalKind.ACCOUNT_USER_ID,
             AppInitializerApi.class, PrincipalKind.CONTENT_SUBJECT_WITH_ACCOUNT_USER_ID,
-            OnboardingApi.class, PrincipalKind.CONTENT_SUBJECT);
+            OnboardingApi.class, PrincipalKind.CONTENT_SUBJECT,
+            InquiryApi.class, PrincipalKind.CONTENT_SUBJECT);
 
     static Stream<Method> protectedOperations() {
         return EXPECTED_PRINCIPALS.keySet().stream()
@@ -149,19 +152,21 @@ class ApiAuthenticationContractTest {
     }
 
     @Test
-    void protectedOperationCount_isTwentyNine() {
+    void protectedOperationCount_isThirtyOne() {
         // timeline 18개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
         // Event Item 연결 해제·월별 GET 포함)
         // + push-registrations PUT/DELETE 2개 + push-settings GET/PUT/PUT 3개
         // + user GET/DELETE 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개
-        // + initializer GET 1개 + onboarding complete POST 1개(#382).
-        assertThat(protectedOperations().count()).isEqualTo(29);
+        // + initializer GET 1개 + onboarding complete POST 1개(#382)
+        // + inquiries attachment-uploads POST·접수 POST 2개(#518).
+        assertThat(protectedOperations().count()).isEqualTo(31);
     }
 
     @Test
-    void publicTermApi_staysOutsideBearerContract() {
-        // 공개 약관 조회는 보호 operation 목록 밖이다 — class-level bearer 문서가 없어야
+    void publicApis_stayOutsideBearerContract() {
+        // 공개 약관·공지 조회는 보호 operation 목록 밖이다 — class-level bearer 문서가 없어야
         // public prefix(/api)와 문서·실제 enforcement가 어긋나지 않는다.
         assertThat(PublicTermApi.class.getAnnotation(SecurityRequirement.class)).isNull();
+        assertThat(PublicNoticeApi.class.getAnnotation(SecurityRequirement.class)).isNull();
     }
 }

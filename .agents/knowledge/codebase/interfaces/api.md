@@ -38,8 +38,9 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 29개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST)는
+보호 operation 31개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
+inquiries attachment-uploads POST·접수 POST)는
 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -287,6 +288,21 @@ page가 소유하며 Server에는 공지 원문 route가 없다). 목록이 URL�
 `PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출)가 소유하며, 숨김이 삭제 역할이라
 hard delete 경로는 없다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
 HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
+
+`POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
+사용자의 문의 접수 계약이다(`InquiryApi` — hidden `@CurrentSubject UUID subjectId`, 보호 operation 2개).
+접수 body는 `email`·`body`가 필수이고 `attachmentFilenames`는
+optional(누락·null·빈 배열 = 첨부 없음, 최대 3개)이다(분류·채널 필드는 두지 않는다). 누락·형식(`@Email`)·
+길이(email 255자, body 2,000자) 위반은 Bean Validation 400 `-400`, 첨부 filename이 presign 형식(`{uuidv7}.{jpg|png|webp}`)이 아니거나
+중복이면 400 `-400`, 3개 초과는 400 `-1004`다. 성공은 `201 + body=null` — 201이 곧 접수 완료이며 응답에
+문의 ID를 싣지 않는다(앱에 "내 문의" 조회가 없고 답변은 입력한 이메일로 관리자가 직접 회신한다).
+서버는 첨부의 S3 업로드 완료를 확인하지 않고, 같은 내용의 재요청은 새 문의로 접수된다(중복 차단 없음 —
+승인된 결정). 첨부 presign은 사진 업로드와 같은 계약(`contentType`·`size` 필수, `size`가 서명의
+Content-Length에 바인딩, `-1004`/`-1005`/`-1007`)이되 요청당 최대 3장이고 key prefix가
+`{sha256(subject)}/inquiries/`다. 접수 request와 관리자 조회 response는 access log에서 privacy skeleton으로
+마스킹된다(ID·처리 시각만 남는다). 관리자 열람·처리는 `/admin/api/inquiries`(목록 GET·상세 GET —
+첨부는 presigned GET `viewUrl`·`PUT /{id}/answered` 처리됨 표시/해제)가 소유한다. **새 error code는
+추가하지 않았다.**
 
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).

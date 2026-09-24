@@ -211,7 +211,7 @@ public class AccountErasureWorker {
         try {
             erasureService.deleteContentGraph(subjectId);
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
-            erasureService.deletePhotoObjects(subjectId);
+            erasureService.deleteStoredObjects(subjectId);
             erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
             // 위 대상 해석이 subject 캐시에 이 회원을 적재해 뒀다(#429). 그대로 두면 TTL까지 이미
             // 삭제된 mapping의 해석이 남으므로, 적재한 host 자신이 finalization commit 뒤에 걷어낸다

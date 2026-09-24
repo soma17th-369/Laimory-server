@@ -13,6 +13,12 @@ import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.common.error.GlobalExceptionHandler;
 import com.laimory.server.common.logging.TrustedEdgeRequestFilter;
+import com.laimory.server.inquiry.entity.Inquiry;
+import com.laimory.server.inquiry.entity.InquiryAttachment;
+import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
+import com.laimory.server.inquiry.repository.InquiryRepository;
+import com.laimory.server.inquiry.service.InquiryAttachmentService;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.notice.service.NoticeService;
@@ -21,6 +27,8 @@ import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermDocumentRegistrationService;
 import com.laimory.server.terms.service.TermDocumentService;
+import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.net.CookieManager;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -30,6 +38,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -72,6 +81,9 @@ class AdminHttpTest {
     @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
     @MockitoBean NoticeRepository notices;
+    @MockitoBean InquiryRepository inquiries;
+    @MockitoBean InquiryAttachmentRepository inquiryAttachments;
+    @MockitoBean S3PhotoStorageService storage;
     private HttpClient client;
     private JsonNode csrf;
 
@@ -93,7 +105,7 @@ class AdminHttpTest {
     void onlyActualAdminPortServesPage_andPublicManagementContinue() throws Exception {
         assertThat(server.boundPort()).isPositive().isNotEqualTo(mainPort).isNotEqualTo(managementPort);
         for (String path : List.of("/admin", "/admin/", "/admin/index.html", "/admin/admin.js", "/admin/admin.css", "/admin/api/terms",
-                "/admin/api/notices")) {
+                "/admin/api/notices", "/admin/api/inquiries")) {
             assertThat(request("GET", path, null, null, false).statusCode()).as(path).isEqualTo(200);
             assertThat(raw(mainPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
             assertThat(raw(managementPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
@@ -215,6 +227,41 @@ class AdminHttpTest {
         assertThat(missing.body()).contains("-404");
     }
 
+    @Test
+    void inquiryEndpointsListDetailWithViewUrlsAndToggleAnswered() throws Exception {
+        Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요");
+        ReflectionTestUtils.setField(inquiry, "inquiryId", 9L);
+        InquiryAttachment attachment = InquiryAttachment.of(9L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg", 0);
+        when(inquiries.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(inquiry));
+        when(inquiries.findByInquiryId(9L)).thenReturn(Optional.of(inquiry));
+        when(inquiries.findByInquiryId(404L)).thenReturn(Optional.empty());
+        when(inquiryAttachments.findByInquiryIdIn(List.of(9L))).thenReturn(List.of(attachment));
+        when(inquiryAttachments.findByInquiryIdOrderByPositionAsc(9L)).thenReturn(List.of(attachment));
+        when(storage.generatePresignedGetUrl(any())).thenReturn("https://s3.example/view?X-Amz-Signature=abc");
+
+        HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"inquiryId\":9")
+                .contains("\"email\":\"user@example.com\"").contains("\"attachmentCount\":1").contains("\"answeredAt\":null");
+
+        HttpResponse<String> detail = request("GET", "/admin/api/inquiries/9", null, null, false);
+        assertThat(detail.statusCode()).isEqualTo(200);
+        assertThat(detail.body()).contains("\"body\":\"앱이 멈춰요\"")
+                .contains("\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
+                .contains("\"viewUrl\":\"https://s3.example/view?X-Amz-Signature=abc\"");
+        assertThat(request("GET", "/admin/api/inquiries/404", null, null, false).statusCode()).isEqualTo(404);
+
+        assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(inquiry.isAnswered()).isFalse();
+        HttpResponse<String> answered = request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":true}", origin(), true);
+        assertThat(answered.statusCode()).isEqualTo(200);
+        assertThat(inquiry.isAnswered()).isTrue();
+        assertThat(answered.body()).doesNotContain("\"answeredAt\":null");
+        assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":false}", origin(), true).statusCode()).isEqualTo(200);
+        assertThat(inquiry.isAnswered()).isFalse();
+        assertThat(request("PUT", "/admin/api/inquiries/404/answered", "{\"answered\":true}", origin(), true).statusCode()).isEqualTo(404);
+    }
+
     private String origin() { return "http://localhost:" + server.boundPort(); }
 
     private HttpResponse<String> request(String method, String path, String body, String origin, boolean token) throws Exception {
@@ -246,10 +293,14 @@ class AdminHttpTest {
             excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({AdminWebConfiguration.class, AdminPageController.class, AdminApiController.class,
             TermDocumentRegistrationService.class, AppConfigService.class, AppConfigController.class,
-            NoticeService.class, GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
+            NoticeService.class, InquiryService.class, InquiryAttachmentService.class,
+            GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
     static class TestApplication {
         @Bean ApiErrorResponseWriter errors(MessageSource messages, ObjectMapper mapper) {
             return new ApiErrorResponseWriter(messages, mapper);
+        }
+        @Bean Clock clock() {
+            return Clock.systemUTC();
         }
         @Bean @Order(200) SecurityFilterChain otherRequests(HttpSecurity http) throws Exception {
             return http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll()).build();
