@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.appconfig.AppConfigResponse;
 import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.inquiry.InquiryCategory;
+import com.laimory.server.inquiry.entity.Inquiry;
+import com.laimory.server.inquiry.service.InquiryAttachmentService;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
@@ -47,6 +51,8 @@ public class AdminApiController {
     private final TermDocumentRegistrationService registrations;
     private final AppConfigService appConfig;
     private final NoticeService notices;
+    private final InquiryService inquiries;
+    private final InquiryAttachmentService inquiryAttachments;
 
     @GetMapping("/terms")
     ApiResponse<List<TermGroup>> terms() {
@@ -102,6 +108,33 @@ public class AdminApiController {
         return ApiResponse.success(AdminNotice.from(notices.changeVisibility(noticeId, request.hidden())));
     }
 
+    /** 전체 문의, 최신 순. 본문·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
+    @GetMapping("/inquiries")
+    ApiResponse<List<AdminInquiry>> inquiries() {
+        return ApiResponse.success(inquiries.findAll().stream()
+                .map(item -> AdminInquiry.from(item.inquiry(), item.attachmentFilenames().size())).toList());
+    }
+
+    /** 상세 + 첨부 열람 URL(presigned GET, 유효시간 내). */
+    @GetMapping("/inquiries/{inquiryId}")
+    ApiResponse<AdminInquiryDetail> inquiry(@PathVariable long inquiryId) {
+        InquiryService.InquiryWithAttachments item = inquiries.get(inquiryId);
+        List<AdminInquiryAttachment> attachments = item.attachmentFilenames().stream()
+                .map(filename -> new AdminInquiryAttachment(filename,
+                        inquiryAttachments.viewUrl(item.inquiry().getSubjectId(), filename)))
+                .toList();
+        return ApiResponse.success(new AdminInquiryDetail(AdminInquiry.from(item.inquiry(), attachments.size()),
+                attachments));
+    }
+
+    /** 답장을 보낸 뒤 처리됨 표시(true) 또는 해제(false). 서버는 email을 보내지 않는다. */
+    @PutMapping(value = "/inquiries/{inquiryId}/answered", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<AdminInquiry> changeInquiryAnswered(@PathVariable long inquiryId,
+                                                    @Valid @RequestBody AnsweredRequest request) {
+        Inquiry inquiry = inquiries.changeAnswered(inquiryId, request.answered());
+        return ApiResponse.success(AdminInquiry.from(inquiry, inquiries.get(inquiryId).attachmentFilenames().size()));
+    }
+
     record PublishRequest(@NotNull TermType termType,
                           @NotBlank @Size(max = TermDocumentId.VERSION_MAX_LENGTH) String version,
                           @NotBlank @Size(max = 255) String title,
@@ -147,4 +180,18 @@ public class AdminApiController {
                     notice.isHidden(), notice.getCreatedAt(), notice.getUpdatedAt());
         }
     }
+
+    record AnsweredRequest(@NotNull Boolean answered) { }
+
+    /** subject·channel은 싣지 않는다 — 관리자가 회신에 필요한 것은 분류·주소·본문·처리 여부뿐이다. */
+    record AdminInquiry(Long inquiryId, InquiryCategory category, String email, String body, int attachmentCount,
+                        LocalDateTime answeredAt, LocalDateTime createdAt) {
+        static AdminInquiry from(Inquiry inquiry, int attachmentCount) {
+            return new AdminInquiry(inquiry.getInquiryId(), inquiry.getCategory(), inquiry.getEmail(),
+                    inquiry.getBody(), attachmentCount, inquiry.getAnsweredAt(), inquiry.getCreatedAt());
+        }
+    }
+
+    record AdminInquiryAttachment(String filename, String viewUrl) { }
+    record AdminInquiryDetail(AdminInquiry inquiry, List<AdminInquiryAttachment> attachments) { }
 }

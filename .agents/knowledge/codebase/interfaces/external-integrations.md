@@ -112,6 +112,12 @@ versionId를 지정해 지운다**. `ListObjectsV2`는 versioning이 켜진 상�
 `s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·`s3:DeleteObjectVersion`(객체)다.
 **`s3:ListBucket`은 없다**(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2`
 경로를 되살리려면 그 권한을 먼저 추가해야 한다.
+
+같은 bucket의 `{sha256(subject)}/inquiries/{filename}` prefix는 문의 첨부(#518)가 쓴다 — presigned PUT
+발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작하지만, 관리자 상세의 첨부 열람은
+`S3PhotoStorageService.generatePresignedGetUrl`(presigned GET)이라 **서명 role에 `s3:GetObject`가 필요하다.**
+위 기록 기준 그 권한은 없으므로, 열람이 403이면 실제 IAM을 조회해 `inquiries` 객체 범위의 `s3:GetObject`
+추가를 별도 AWS 변경 승인으로 진행한다(발급 자체는 권한과 무관하게 성공한다).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)

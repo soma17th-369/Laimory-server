@@ -1,6 +1,8 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.auth.service.RefreshTokenService;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
@@ -69,6 +71,7 @@ public class AccountErasureService {
     private final PushRegistrationService pushRegistrationService;
     private final RefreshTokenService refreshTokenService;
     private final TermAgreementService termAgreementService;
+    private final InquiryService inquiryService;
 
     /**
      * 처리 대상이 맞는지 확인하고 subject를 해석한다. 탈퇴 회원은 일반 요청 경로를 다시 타지 않으므로
@@ -151,6 +154,8 @@ public class AccountErasureService {
      */
     @Transactional
     public void deleteOwnerRows(long userId, UUID subjectId) {
+        // 문의(#518)는 subject FK RESTRICT라 mapping 삭제 전에 0이어야 한다 — 첨부 행 → 문의 행(email PII) 순.
+        inquiryService.deleteAllBySubjectId(subjectId);
         userMemoryService.delete(subjectId);
         dailyNotificationPreferenceService.delete(subjectId);
         subjectPreferenceService.delete(subjectId);
@@ -160,7 +165,8 @@ public class AccountErasureService {
     }
 
     /**
-     * subject 전용 S3 namespace를 통째로 비운다 — {@code {sha256(subject)}/photos/} prefix가 권위 범위다.
+     * subject 전용 S3 namespace를 통째로 비운다 — 사진 {@code {sha256(subject)}/photos/}와 문의 첨부
+     * {@code {sha256(subject)}/inquiries/}(#518) 두 prefix가 권위 범위다.
      *
      * <p>DB payload의 filename만 모아 지우면 <b>presign 후 DB 행이 생기지 않은 orphan</b>과 손상 payload를
      * 놓친다. prefix 삭제는 그것들까지 포함하고 다른 subject namespace는 건드리지 않는다.
@@ -173,8 +179,12 @@ public class AccountErasureService {
      *
      * @throws IllegalStateException 삭제가 확인되지 않은 key가 남아 있을 때
      */
-    public void deletePhotoObjects(UUID subjectId) {
-        String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
+    public void deleteStoredObjects(UUID subjectId) {
+        deleteObjectsUnder(PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/");
+        deleteObjectsUnder(InquiryObjectKeys.subjectPrefix(subjectId));
+    }
+
+    private void deleteObjectsUnder(String prefix) {
         while (true) {
             List<S3PhotoStorageService.ObjectVersion> versions =
                     s3PhotoStorageService.listObjectVersions(prefix, S3_PAGE_SIZE);

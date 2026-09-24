@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
-let bootstrap, catalog = [], config, notices = [];
+let bootstrap, catalog = [], config, notices = [], inquiries = [];
 
 function status(message, error = false) {
   $("status").textContent = message;
@@ -137,6 +137,62 @@ async function changeNoticeVisibility(notice) {
   finally { $("notice-fields").disabled = false; }
 }
 
+function shortDate(value) {
+  return (value ?? "").replace("T", " ").slice(0, 16);
+}
+
+async function loadInquiries() {
+  inquiries = await api("/admin/api/inquiries");
+  $("inquiries").replaceChildren();
+  const unansweredOnly = $("inquiry-unanswered-only").checked;
+  for (const inquiry of inquiries) {
+    if (unansweredOnly && inquiry.answeredAt) continue;
+    const row = document.createElement("tr");
+    const preview = inquiry.body.length > 60 ? inquiry.body.slice(0, 60) + "…" : inquiry.body;
+    for (const value of [String(inquiry.inquiryId), inquiry.category, inquiry.email, preview, String(inquiry.attachmentCount),
+      shortDate(inquiry.createdAt), inquiry.answeredAt ? `처리됨 ${shortDate(inquiry.answeredAt)}` : "미처리"]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    const actions = document.createElement("td");
+    const detail = document.createElement("button"); detail.type = "button"; detail.className = "secondary"; detail.textContent = "상세";
+    detail.addEventListener("click", () => showInquiry(inquiry.inquiryId));
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "secondary";
+    toggle.textContent = inquiry.answeredAt ? "처리 해제" : "처리됨";
+    toggle.addEventListener("click", () => changeInquiryAnswered(inquiry));
+    actions.append(detail, " ", toggle); row.append(actions); $("inquiries").append(row);
+  }
+}
+
+async function showInquiry(inquiryId) {
+  try {
+    const detail = await api(`/admin/api/inquiries/${encodeURIComponent(inquiryId)}`);
+    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.category} · ${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
+    $("inquiry-detail-body").textContent = detail.inquiry.body;
+    $("inquiry-detail-attachments").replaceChildren(...detail.attachments.map(attachment => {
+      const link = document.createElement("a"); link.href = attachment.viewUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
+      const image = document.createElement("img"); image.src = attachment.viewUrl; image.alt = attachment.filename; image.loading = "lazy";
+      link.append(image); return link;
+    }));
+    $("inquiry-detail").hidden = false;
+    $("inquiry-detail").scrollIntoView({block: "nearest"});
+  } catch (error) { status(error.message, true); }
+}
+
+async function changeInquiryAnswered(inquiry) {
+  $("inquiry-fields").disabled = true;
+  try {
+    const answered = !inquiry.answeredAt;
+    if (!await confirmChange(`#${inquiry.inquiryId} ${inquiry.category} · ${inquiry.email}\n${inquiry.answeredAt ? "처리됨" : "미처리"} → ${answered ? "처리됨" : "미처리"}`,
+      answered ? "이메일로 답장을 보낸 뒤에만 처리됨으로 표시하세요. 서버는 메일을 보내지 않습니다." : "처리 표시를 해제하면 미처리 목록에 다시 나타납니다.")) return;
+    await api(`/admin/api/inquiries/${encodeURIComponent(inquiry.inquiryId)}/answered`, writeOptions("PUT", JSON.stringify({answered})));
+    status(`#${inquiry.inquiryId} ${answered ? "처리됨" : "미처리"}로 표시했습니다.`);
+    await loadInquiries();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
+  finally { $("inquiry-fields").disabled = false; }
+}
+
+$("inquiry-unanswered-only").addEventListener("change", () => loadInquiries().catch(error => status(error.message, true)));
+
 function confirmChange(details, warning) {
   $("confirm-environment").textContent = bootstrap.environment.toUpperCase();
   $("confirm-details").textContent = details;
@@ -226,6 +282,7 @@ $("config-form").addEventListener("submit", async event => {
     const results = await Promise.allSettled([
       loadTerms().then(() => $("term-fields").disabled = false),
       loadNotices().then(() => $("notice-fields").disabled = false),
+      loadInquiries().then(() => $("inquiry-fields").disabled = false),
       loadConfig().then(() => $("config-fields").disabled = false)
     ]);
     const failures = results.filter(result => result.status === "rejected");

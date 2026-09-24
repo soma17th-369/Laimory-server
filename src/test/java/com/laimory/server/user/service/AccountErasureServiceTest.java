@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.auth.service.RefreshTokenService;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
@@ -75,6 +77,8 @@ class AccountErasureServiceTest {
     private RefreshTokenService refreshTokenService;
     @Mock
     private TermAgreementService termAgreementService;
+    @Mock
+    private InquiryService inquiryService;
 
     @InjectMocks
     private AccountErasureService accountErasureService;
@@ -188,15 +192,37 @@ class AccountErasureServiceTest {
                 List.of(new S3PhotoStorageService.ObjectVersion("c", "null"));
         when(s3PhotoStorageService.listObjectVersions(eq(prefix), anyInt()))
                 .thenReturn(page1).thenReturn(page2).thenReturn(List.of());
+        when(s3PhotoStorageService.listObjectVersions(eq(InquiryObjectKeys.subjectPrefix(SUBJECT_ID)), anyInt()))
+                .thenReturn(List.of());
         when(s3PhotoStorageService.deleteVersions(page1)).thenReturn(
                 new S3PhotoStorageService.BatchDeleteResult(Set.of("a@null", "b@null"), Map.of(), Set.of()));
         when(s3PhotoStorageService.deleteVersions(page2)).thenReturn(
                 new S3PhotoStorageService.BatchDeleteResult(Set.of("c@null"), Map.of(), Set.of()));
 
-        accountErasureService.deletePhotoObjects(SUBJECT_ID);
+        accountErasureService.deleteStoredObjects(SUBJECT_ID);
 
         // 마지막 재조회가 비었을 때만 끝난다 — 3회 조회.
         verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectVersions(eq(prefix), anyInt());
+    }
+
+    @Test
+    void inquiryAttachmentPrefixIsEmptiedAfterPhotoPrefix() {
+        String photoPrefix = PhotoObjectKeys.subjectNamespace(SUBJECT_ID) + "/photos/";
+        String inquiryPrefix = InquiryObjectKeys.subjectPrefix(SUBJECT_ID);
+        List<S3PhotoStorageService.ObjectVersion> attachments =
+                List.of(new S3PhotoStorageService.ObjectVersion(inquiryPrefix + "x.jpg", "null"));
+        when(s3PhotoStorageService.listObjectVersions(eq(photoPrefix), anyInt())).thenReturn(List.of());
+        when(s3PhotoStorageService.listObjectVersions(eq(inquiryPrefix), anyInt()))
+                .thenReturn(attachments).thenReturn(List.of());
+        when(s3PhotoStorageService.deleteVersions(attachments)).thenReturn(
+                new S3PhotoStorageService.BatchDeleteResult(Set.of(inquiryPrefix + "x.jpg@null"), Map.of(), Set.of()));
+
+        accountErasureService.deleteStoredObjects(SUBJECT_ID);
+
+        InOrder order = inOrder(s3PhotoStorageService);
+        order.verify(s3PhotoStorageService).listObjectVersions(eq(photoPrefix), anyInt());
+        order.verify(s3PhotoStorageService).deleteVersions(attachments);
+        order.verify(s3PhotoStorageService).listObjectVersions(eq(inquiryPrefix), anyInt());
     }
 
     @Test
@@ -209,8 +235,17 @@ class AccountErasureServiceTest {
                 .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
                         Set.of("a@null"), Map.of("b", "AccessDenied"), Set.of()));
 
-        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.deleteStoredObjects(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void ownerRowDeletionRemovesInquiriesBeforeOtherOwnerRows() {
+        accountErasureService.deleteOwnerRows(USER_ID, SUBJECT_ID);
+
+        InOrder order = inOrder(inquiryService, userMemoryService);
+        order.verify(inquiryService).deleteAllBySubjectId(SUBJECT_ID);
+        order.verify(userMemoryService).delete(SUBJECT_ID);
     }
 
     @Test

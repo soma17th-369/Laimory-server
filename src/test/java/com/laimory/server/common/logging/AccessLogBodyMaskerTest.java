@@ -116,7 +116,51 @@ class AccessLogBodyMaskerTest {
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),
                 Arguments.of("POST", "/s/api/v2/user-memory/updates/task-281/result"),
-                Arguments.of("POST", "/t/api/v1/timeline/test"));
+                Arguments.of("POST", "/t/api/v1/timeline/test"),
+                Arguments.of("POST", "/a/api/v1/inquiries"));
+    }
+
+    @Test
+    void inquiryRequestAndAdminResponsesMaskEmailBodyAndFilenamesButKeepCategory() throws Exception {
+        // #518 접수 body는 답장 email과 문의 원문이다 — 분류 enum만 남고 나머지는 allowlist 밖이라 마스크다.
+        String rawEmail = "RAW_EMAIL_518_NEVER_LOG@example.com";
+        String rawBody = "RAW_INQUIRY_518_NEVER_LOG";
+        String requestBody = "{\"category\":\"BUG\",\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
+                + "\"attachmentFilenames\":[\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"]}";
+
+        JsonNode maskedRequest = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries", requestBody));
+
+        assertThat(maskedRequest.get("category").asText()).isEqualTo("BUG");
+        assertThat(maskedRequest.get("email").asText()).isEqualTo("***");
+        assertThat(maskedRequest.get("body").asText()).isEqualTo("***");
+        assertThat(maskedRequest.get("attachmentFilenames").asText()).isEqualTo("***");
+        assertThat(maskedRequest.toString()).doesNotContain(rawEmail).doesNotContain(rawBody);
+        // presign 발급은 메타(contentType·size)뿐이라 skeleton 대상이 아니다 — 기존 field-level 규칙 유지.
+        assertThat(maskRequest("POST", "/a/api/v1/inquiries/attachment-uploads",
+                "{\"attachments\":[{\"contentType\":\"image/jpeg\",\"size\":1024}]}"))
+                .contains("\"contentType\":\"image/jpeg\"").contains("\"size\":1024");
+
+        String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":[{\"inquiryId\":5,\"category\":\"OTHER\","
+                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\",\"attachmentCount\":1,"
+                + "\"answeredAt\":\"2026-09-24T10:00:00\",\"createdAt\":\"2026-09-23T09:00:00\"}]}";
+        JsonNode maskedList = objectMapper.readTree(masker.maskResponse(
+                new MockHttpServletRequest("GET", "/admin/api/inquiries"), jsonResponse(), bytes(listBody), false));
+        assertThat(maskedList.at("/body/0/inquiryId").asLong()).isEqualTo(5);
+        assertThat(maskedList.at("/body/0/category").asText()).isEqualTo("OTHER");
+        assertThat(maskedList.at("/body/0/answeredAt").asText()).isEqualTo("2026-09-24T10:00:00");
+        assertThat(maskedList.at("/body/0/email").asText()).isEqualTo("***");
+        assertThat(maskedList.at("/body/0/body").asText()).isEqualTo("***");
+        assertThat(maskedList.toString()).doesNotContain(rawEmail).doesNotContain(rawBody);
+
+        String detailBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"inquiry\":{\"inquiryId\":5,"
+                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\"},"
+                + "\"attachments\":[{\"filename\":\"a.jpg\",\"viewUrl\":\"https://s3/x?X-Amz-Signature=RAW_SIG\"}]}}";
+        String maskedDetail = masker.maskResponse(
+                new MockHttpServletRequest("GET", "/admin/api/inquiries/5"), jsonResponse(), bytes(detailBody), false);
+        assertThat(maskedDetail).doesNotContain(rawEmail).doesNotContain(rawBody).doesNotContain("RAW_SIG");
+        // 처리됨 토글 PUT은 시각·boolean뿐이라 대상이 아니다.
+        assertThat(maskRequest("PUT", "/admin/api/inquiries/5/answered", "{\"answered\":true}"))
+                .isEqualTo("{\"answered\":true}");
     }
 
     @Test
@@ -188,7 +232,9 @@ class AccessLogBodyMaskerTest {
                 "/a/api/v1/timeline/daily-records/by-id/42",
                 "/a/api/v1/timeline/events/42",
                 "/api/v1/terms",                               // 약관 목록(공개 조회)
-                "/a/api/v1/terms/agreements");                 // 약관 동의 이력
+                "/a/api/v1/terms/agreements",                  // 약관 동의 이력
+                "/admin/api/inquiries",                        // 관리자 문의 목록(#518)
+                "/admin/api/inquiries/42");                    // 관리자 문의 상세(#518)
     }
 
     @Test

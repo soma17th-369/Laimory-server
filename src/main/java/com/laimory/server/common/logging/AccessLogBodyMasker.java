@@ -51,7 +51,9 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")),
             // dev 전용 AI 동기 테스트(#394) — 호출자가 AI Timeline Input 원문(source payload·userMemory)을
             // 그대로 싣는다. staging을 거치지 않아 저장 시점 치환도 없으므로 여기서 반드시 마스킹한다.
-            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")));
+            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")),
+            // 문의 접수(#518) — 답장 email과 문의 원문. presign 발급(attachment-uploads)은 메타뿐이라 제외.
+            new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/inquiries$")));
 
     // 사용자 원문을 echo하는 response body — draft polling(전체 상태)·daily-record 조회·Event 단건·
     // 약관 두 GET. 약관 응답은 #320 이후 법률 원문 대신 page URL만 담지만 skeleton을 해제하지 않는다 —
@@ -70,7 +72,11 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("GET", Pattern.compile("^/api/v\\d+/terms$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/terms/agreements$")),
             // dev 전용 AI 동기 테스트(#394) 응답 — AI가 방금 만든 Event 제목·부제·질문·장소가 실린다.
-            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")));
+            new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")),
+            // 관리자 문의 열람(#518) — 목록·상세 모두 email과 문의 원문을 echo한다. 관리자 경로도
+            // 같은 access log를 타므로 여기서 마스킹한다(처리됨 토글 PUT은 시각·boolean뿐이라 제외).
+            new PrivacyBodyPath("GET", Pattern.compile("^/admin/api/inquiries$")),
+            new PrivacyBodyPath("GET", Pattern.compile("^/admin/api/inquiries/\\d+$")));
     private static final Set<String> EXACT_SECRET_NAMES =
             Set.of("appcode", "appverifier", "uploadurl", "firebaseinstallationid");
     private static final List<String> CONTAINED_SECRET_NAMES =
@@ -92,7 +98,13 @@ final class AccessLogBodyMasker {
             "header", "code", "body", "result", "timelines", "dailyrecordid", "emotiontype",
             "timelineeventid", "items", "timelineitemid",
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
-            "terms", "agreements", "termtype", "version", "acceptedat");
+            "terms", "agreements", "termtype", "version", "acceptedat",
+            // 문의(#518) 구조 — 분류 enum·ID·처리 시각만. email·첨부 filename은 allowlist 밖이라 마스크되고,
+            // 문의 원문 body는 envelope body와 이름이 같아 아래 container-only 규칙이 텍스트 값을 마스크한다.
+            "category", "inquiryid", "answeredat");
+
+    /** allowlist에 있어도 텍스트 값이면 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
+    private static final Set<String> SKELETON_CONTAINER_ONLY_FIELDS = Set.of("body");
 
     // 폴링 response의 error는 numeric code지만 callback request의 error는 사용자 원문이 섞일 수 있는
     // 자유 텍스트다(수신 후 폐기 계약) — 같은 이름의 이중 의미라 숫자·null만 남긴다. errorCode는
@@ -206,6 +218,10 @@ final class AccessLogBodyMasker {
             return value.isNumber() || value.isNull() ? value : TextNode.valueOf(MASK);
         }
         if (!SKELETON_SAFE_FIELDS.contains(normalized)) {
+            return TextNode.valueOf(MASK);
+        }
+        if (SKELETON_CONTAINER_ONLY_FIELDS.contains(normalized) && value.isTextual()) {
+            // envelope의 body(object/array/null)와 이름이 같은 사용자 원문 필드(문의 body, #518)는 텍스트로만 온다.
             return TextNode.valueOf(MASK);
         }
         return skeletonNode(value);

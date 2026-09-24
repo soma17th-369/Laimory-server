@@ -14,11 +14,13 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Delete;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectVersionsRequest;
 import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
@@ -81,6 +83,19 @@ public class S3PhotoStorageService {
                 .putObjectRequest(por)
                 .build();
         return s3Presigner.presignPutObject(req).url().toString();
+    }
+
+    /**
+     * objectKey에 대한 presigned GET URL을 발급한다 — 관리자가 문의 첨부(#518)를 보는 경로다. CDN 서빙
+     * 규칙({@code /photos/} key) 밖의 객체를 공개 서빙 없이 읽기 위한 것이며 유효시간은 PUT과 같다.
+     * 서명자(런타임 role)에게 {@code s3:GetObject}가 없으면 발급은 되지만 열람은 403이다.
+     */
+    public String generatePresignedGetUrl(String objectKey) {
+        GetObjectPresignRequest req = GetObjectPresignRequest.builder()
+                .signatureDuration(presignTtl)
+                .getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(objectKey).build())
+                .build();
+        return s3Presigner.presignGetObject(req).url().toString();
     }
 
     /**

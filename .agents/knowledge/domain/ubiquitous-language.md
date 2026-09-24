@@ -176,6 +176,17 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 노출 상태 | Hidden | 현재 구현 | `hidden` boolean 하나가 노출을 제어한다. 등록 즉시 노출(false)이고 예약 게시·고정(핀)은 없다. 숨김(true)이 삭제 역할이라 hard delete 경로가 없으며 다시 노출할 수 있다. 공개 API는 숨김 행을 없는 것과 같이 다룬다(목록 제외, 상세 404). |
 | 게시 시각 | Published At | 현재 구현 | 공개 응답의 `publishedAt`이며 값은 행의 `created_at`(Asia/Seoul 벽시계)이다. 별도 게시 시각 컬럼을 두지 않는다. |
 
+## 문의사항
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 문의 | Inquiry | 현재 구현 | 로그인 사용자가 앱에서 접수한 한 건(`inquiries`, PK `inquiry_id`)이다. owner는 콘텐츠 subject이고 분류·답장 이메일·본문을 담는다. 접수 후 수정 API는 없고 앱에는 "내 문의" 조회도 없다(#518). 답변은 서버에 저장하지 않는다 — 관리자가 이메일로 직접 회신한다. 탈퇴 삭제(#302)가 email PII를 포함해 행째 지운다. |
+| 문의 분류 | Inquiry Category | 현재 구현 | `InquiryCategory` enum 3종 — `BUG`(오류 신고)·`SUGGESTION`(제안)·`OTHER`(기타). 사용자가 접수 폼에서 고르며 access log에도 남는 유일한 문의 필드다. |
+| 접수 채널 | Inquiry Channel | 현재 구현 | `InquiryChannel` enum — 현재 앱 인증 접수 `APP`뿐이다. 비인증 랜딩 접수는 범위 밖이며 추가되면 이 enum의 다음 literal이다. |
+| 답장 이메일 | Reply Email | 현재 구현 | 문의마다 사용자가 입력하는 답장 주소(`email`, 최대 255자)다. 회원 정보에는 이메일이 없어 문의가 자체 소유한다. 형식은 HTTP 경계 Bean Validation(`@Email`)이 검사한다. |
+| 문의 첨부 | Inquiry Attachment | 현재 구현 | 문의 한 건의 첨부 사진(`inquiry_attachments`, 최대 3장, 요청 순서 `position`)이다. 사진과 같은 presigned PUT 흐름·타입·크기 규칙을 쓰되 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 사진 prefix와 분리된다. 관리자만 presigned GET으로 열람하며 CDN 서빙 대상이 아니다. 접수 시 S3 실존은 확인하지 않는다(승인된 결정). |
+| 처리됨 | Answered | 현재 구현 | 관리자가 이메일 답장을 보낸 뒤 표시하는 `answered_at`(KST 벽시계, null=미처리)이다. 답장 발송 여부의 유일한 기록이며 서버는 이메일을 보내지 않는다. 해제할 수 있다. |
+
 ## 푸시 알림
 
 | 한글명 | 영문명 | 상태 | 설명 |
