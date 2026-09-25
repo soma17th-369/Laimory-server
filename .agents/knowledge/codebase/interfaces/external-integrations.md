@@ -122,11 +122,12 @@ versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작
 같은 bucket의 `{sha256(subject)}/inquiries/{filename}` prefix는 문의 첨부(#518)가 쓴다 — presigned PUT
 발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작하지만, 관리자 상세의 첨부 열람은
 `S3PhotoStorageService.generatePresignedGetUrl`(presigned GET)이라 **서명 role에 `s3:GetObject`가 필요하다**
-(발급 자체는 권한과 무관하게 성공하므로, 권한이 없으면 이미지 요청만 403이다). dev role에는
-`LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`)가 2026-09-25에 추가돼 열람이
-동작하고 — SSM `head-object`로 inquiries key 허용·photos key 403 확인 — **prod role에는 아직 없다.**
-prod 릴리스 전에 같은 statement를 별도 AWS 변경 승인으로 추가해야 한다. 사진 객체(`*/photos/*`)는 두
-환경 모두 GetObject가 없으며 이 범위 제한은 의도된 것이다(CDN 서빙 경로를 건드리지 않는다).
+(발급 자체는 권한과 무관하게 성공하므로, 권한이 없으면 이미지 요청만 403이다). **두 role 모두**
+`LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`)를 2026-09-25에 추가해 열람이
+동작한다 — dev·prod 각각의 WAS에서 SSM `head-object`로 확인했다. 사진 객체(`*/photos/*`)는 두 환경 모두
+GetObject가 없으며 이 범위 제한은 의도된 것이다(CDN 서빙 경로를 건드리지 않는다).
+⚠️ 권한을 `head-object`로 판정할 때는 **실재하는 객체**를 써야 한다 — `s3:ListBucket`이 없으면 없는 key는
+404가 아니라 403으로 돌아와서, 권한이 있어도 거부처럼 보인다.
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)
