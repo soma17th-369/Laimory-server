@@ -108,16 +108,25 @@ versionId를 지정해 지운다**. `ListObjectsV2`는 versioning이 켜진 상�
 **빈 목록**으로 보고해 "다 지웠다"는 오판을 만들기 때문이다 — bucket 설정을 문서 계약에만 맡기지 않고
 코드가 확인하게 한 것이다. unversioned bucket에서는 versionId가 `"null"`이라 동작·호출 횟수가 같다.
 
-런타임 role `laimory-ec2-role`의 인라인 정책 `laimory-ec2-s3`가 갖는 사진 bucket 권한은
-`s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·`s3:DeleteObjectVersion`(객체)다.
-**`s3:ListBucket`은 없다**(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2`
-경로를 되살리려면 그 권한을 먼저 추가해야 한다.
+런타임 role은 **환경별로 다른 role이다**(2026-09-25 실측) — dev WAS는 `laimory-ec2-role`(인라인
+`laimory-ec2-s3`), prod WAS 2대는 `laimory-prod-was-role`(인라인 `laimory-prod-was-permissions`)이다.
+한쪽에 권한을 넣어도 다른 쪽은 그대로이므로 **IAM 변경은 환경마다 따로 적용한다.**
+
+사진 bucket 권한은 dev role이 `s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·
+`s3:DeleteObjectVersion`(객체)이고, prod role은 `s3:PutObject`·`s3:DeleteObject`뿐이다. bucket은 현재
+versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작하므로 이 차이는 지금은 드러나지 않는다 —
+**versioning을 켜는 순간 prod 삭제가 권한 부족으로 깨진다.** 두 role 모두 **`s3:ListBucket`은 없다**
+(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2` 경로를 되살리려면 그
+권한을 먼저 추가해야 한다.
 
 같은 bucket의 `{sha256(subject)}/inquiries/{filename}` prefix는 문의 첨부(#518)가 쓴다 — presigned PUT
 발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작하지만, 관리자 상세의 첨부 열람은
-`S3PhotoStorageService.generatePresignedGetUrl`(presigned GET)이라 **서명 role에 `s3:GetObject`가 필요하다.**
-위 기록 기준 그 권한은 없으므로, 열람이 403이면 실제 IAM을 조회해 `inquiries` 객체 범위의 `s3:GetObject`
-추가를 별도 AWS 변경 승인으로 진행한다(발급 자체는 권한과 무관하게 성공한다).
+`S3PhotoStorageService.generatePresignedGetUrl`(presigned GET)이라 **서명 role에 `s3:GetObject`가 필요하다**
+(발급 자체는 권한과 무관하게 성공하므로, 권한이 없으면 이미지 요청만 403이다). dev role에는
+`LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`)가 2026-09-25에 추가돼 열람이
+동작하고 — SSM `head-object`로 inquiries key 허용·photos key 403 확인 — **prod role에는 아직 없다.**
+prod 릴리스 전에 같은 statement를 별도 AWS 변경 승인으로 추가해야 한다. 사진 객체(`*/photos/*`)는 두
+환경 모두 GetObject가 없으며 이 범위 제한은 의도된 것이다(CDN 서빙 경로를 건드리지 않는다).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)
