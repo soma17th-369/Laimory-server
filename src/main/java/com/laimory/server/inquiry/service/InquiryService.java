@@ -12,10 +12,8 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +32,7 @@ public class InquiryService {
     private final InquiryAttachmentRepository inquiryAttachmentRepository;
     private final Clock clock;
 
-    /** 관리자 목록 항목 — 문의 행과 첨부 filename(요청 순서). */
+    /** 관리자 상세 항목 — 문의 행과 첨부 filename(요청 순서). */
     public record InquiryWithAttachments(Inquiry inquiry, List<String> attachmentFilenames) { }
 
     /**
@@ -55,21 +53,9 @@ public class InquiryService {
         return inquiry;
     }
 
-    /** 관리자 목록 — 전체, 최신 순, 첨부 filename 포함. */
-    public List<InquiryWithAttachments> findAll() {
-        List<Inquiry> inquiries = inquiryRepository.findAllByOrderByInquiryIdDesc();
-        if (inquiries.isEmpty()) {
-            return List.of();
-        }
-        Map<Long, List<String>> filenamesByInquiryId = inquiryAttachmentRepository
-                .findByInquiryIdIn(inquiries.stream().map(Inquiry::getInquiryId).toList()).stream()
-                .sorted((left, right) -> Integer.compare(left.getPosition(), right.getPosition()))
-                .collect(Collectors.groupingBy(InquiryAttachment::getInquiryId,
-                        Collectors.mapping(InquiryAttachment::getFilename, Collectors.toList())));
-        return inquiries.stream()
-                .map(inquiry -> new InquiryWithAttachments(inquiry,
-                        filenamesByInquiryId.getOrDefault(inquiry.getInquiryId(), List.of())))
-                .toList();
+    /** 관리자 목록 — 전체, 최신 순. 첨부는 상세에서만 필요하다. */
+    public List<Inquiry> findAll() {
+        return inquiryRepository.findAllByOrderByInquiryIdDesc();
     }
 
     /** 관리자 상세 — 없으면 404. */

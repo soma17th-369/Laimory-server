@@ -110,8 +110,7 @@ public class AdminApiController {
     /** 전체 문의, 최신 순. 본문·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
     @GetMapping("/inquiries")
     ApiResponse<List<AdminInquiry>> inquiries() {
-        return ApiResponse.success(inquiries.findAll().stream()
-                .map(item -> AdminInquiry.from(item.inquiry(), item.attachmentFilenames().size())).toList());
+        return ApiResponse.success(inquiries.findAll().stream().map(AdminInquiry::from).toList());
     }
 
     /** 상세 + 첨부 열람 URL(presigned GET, 유효시간 내). */
@@ -122,16 +121,14 @@ public class AdminApiController {
                 .map(filename -> new AdminInquiryAttachment(filename,
                         inquiryAttachments.viewUrl(item.inquiry().getSubjectId(), filename)))
                 .toList();
-        return ApiResponse.success(new AdminInquiryDetail(AdminInquiry.from(item.inquiry(), attachments.size()),
-                attachments));
+        return ApiResponse.success(new AdminInquiryDetail(AdminInquiry.from(item.inquiry()), attachments));
     }
 
     /** 답장을 보낸 뒤 처리됨 표시(true) 또는 해제(false). 서버는 email을 보내지 않는다. */
     @PutMapping(value = "/inquiries/{inquiryId}/answered", consumes = MediaType.APPLICATION_JSON_VALUE)
     ApiResponse<AdminInquiry> changeInquiryAnswered(@PathVariable long inquiryId,
                                                     @Valid @RequestBody AnsweredRequest request) {
-        Inquiry inquiry = inquiries.changeAnswered(inquiryId, request.answered());
-        return ApiResponse.success(AdminInquiry.from(inquiry, inquiries.get(inquiryId).attachmentFilenames().size()));
+        return ApiResponse.success(AdminInquiry.from(inquiries.changeAnswered(inquiryId, request.answered())));
     }
 
     record PublishRequest(@NotNull TermType termType,
@@ -183,11 +180,11 @@ public class AdminApiController {
     record AnsweredRequest(@NotNull Boolean answered) { }
 
     /** subject는 싣지 않는다 — 관리자가 회신에 필요한 것은 주소·본문·처리 여부뿐이다. */
-    record AdminInquiry(Long inquiryId, String email, String body, int attachmentCount,
+    record AdminInquiry(Long inquiryId, String email, String body,
                         LocalDateTime answeredAt, LocalDateTime createdAt) {
-        static AdminInquiry from(Inquiry inquiry, int attachmentCount) {
+        static AdminInquiry from(Inquiry inquiry) {
             return new AdminInquiry(inquiry.getInquiryId(), inquiry.getEmail(),
-                    inquiry.getBody(), attachmentCount, inquiry.getAnsweredAt(), inquiry.getCreatedAt());
+                    inquiry.getBody(), inquiry.getAnsweredAt(), inquiry.getCreatedAt());
         }
     }
 

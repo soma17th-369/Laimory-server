@@ -235,14 +235,14 @@ class AdminHttpTest {
         when(inquiries.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(inquiry));
         when(inquiries.findByInquiryId(9L)).thenReturn(Optional.of(inquiry));
         when(inquiries.findByInquiryId(404L)).thenReturn(Optional.empty());
-        when(inquiryAttachments.findByInquiryIdIn(List.of(9L))).thenReturn(List.of(attachment));
         when(inquiryAttachments.findByInquiryIdOrderByPositionAsc(9L)).thenReturn(List.of(attachment));
         when(storage.generatePresignedGetUrl(any())).thenReturn("https://s3.example/view?X-Amz-Signature=abc");
 
         HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);
         assertThat(list.statusCode()).isEqualTo(200);
         assertThat(list.body()).contains("\"inquiryId\":9")
-                .contains("\"email\":\"user@example.com\"").contains("\"attachmentCount\":1").contains("\"answeredAt\":null");
+                .contains("\"email\":\"user@example.com\"").contains("\"answeredAt\":null")
+                .doesNotContain("attachmentCount");
 
         HttpResponse<String> detail = request("GET", "/admin/api/inquiries/9", null, null, false);
         assertThat(detail.statusCode()).isEqualTo(200);
