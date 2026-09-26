@@ -149,7 +149,7 @@ class AccessLogBodyMaskerTest {
                 .contains("\"contentType\":\"image/jpeg\"").contains("\"size\":1024");
 
         String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":[{\"inquiryId\":5,"
-                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\",\"attachmentCount\":1,"
+                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
                 + "\"answeredAt\":\"2026-09-24T10:00:00\",\"createdAt\":\"2026-09-23T09:00:00\"}]}";
         JsonNode maskedList = objectMapper.readTree(masker.maskResponse(
                 new MockHttpServletRequest("GET", "/admin/api/inquiries"), jsonResponse(), bytes(listBody), false));

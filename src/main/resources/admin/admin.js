@@ -149,7 +149,7 @@ async function loadInquiries() {
     if (unansweredOnly && inquiry.answeredAt) continue;
     const row = document.createElement("tr");
     const preview = inquiry.body.length > 60 ? inquiry.body.slice(0, 60) + "…" : inquiry.body;
-    for (const value of [String(inquiry.inquiryId), inquiry.email, preview, String(inquiry.attachmentCount),
+    for (const value of [String(inquiry.inquiryId), inquiry.email, preview,
       shortDate(inquiry.createdAt), inquiry.answeredAt ? `처리됨 ${shortDate(inquiry.answeredAt)}` : "미처리"]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }

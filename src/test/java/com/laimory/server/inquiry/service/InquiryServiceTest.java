@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
@@ -116,21 +117,27 @@ class InquiryServiceTest {
     }
 
     @Test
-    void findAllPairsEachInquiryWithItsAttachmentFilenamesInPositionOrder() {
+    void findAllReturnsInquiriesNewestFirstWithoutReadingAttachments() {
         Inquiry newer = inquiry(12L);
         Inquiry older = inquiry(7L);
         when(inquiryRepository.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(newer, older));
-        when(inquiryAttachmentRepository.findByInquiryIdIn(List.of(12L, 7L))).thenReturn(List.of(
-                InquiryAttachment.of(12L, FILENAME_B, 1),
-                InquiryAttachment.of(12L, FILENAME_A, 0)));
 
-        List<InquiryService.InquiryWithAttachments> items = service().findAll();
+        assertThat(service().findAll()).containsExactly(newer, older);
+        verifyNoInteractions(inquiryAttachmentRepository);
+    }
 
-        assertThat(items).hasSize(2);
-        assertThat(items.get(0).inquiry()).isSameAs(newer);
-        assertThat(items.get(0).attachmentFilenames()).containsExactly(FILENAME_A, FILENAME_B);
-        assertThat(items.get(1).inquiry()).isSameAs(older);
-        assertThat(items.get(1).attachmentFilenames()).isEmpty();
+    @Test
+    void getPairsInquiryWithItsAttachmentFilenamesInPositionOrder() {
+        Inquiry inquiry = inquiry(12L);
+        when(inquiryRepository.findByInquiryId(12L)).thenReturn(Optional.of(inquiry));
+        when(inquiryAttachmentRepository.findByInquiryIdOrderByPositionAsc(12L)).thenReturn(List.of(
+                InquiryAttachment.of(12L, FILENAME_A, 0),
+                InquiryAttachment.of(12L, FILENAME_B, 1)));
+
+        InquiryService.InquiryWithAttachments item = service().get(12L);
+
+        assertThat(item.inquiry()).isSameAs(inquiry);
+        assertThat(item.attachmentFilenames()).containsExactly(FILENAME_A, FILENAME_B);
     }
 
     @Test
