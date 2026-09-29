@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.unit.DataSize;
 
 /**
- * 문의 첨부의 S3 경계 — presigned PUT 발급(앱), 소유자 열람용 CDN URL(앱), presigned GET 발급(관리자 열람).
+ * 문의 첨부의 S3 경계 — presigned PUT 발급(앱)과 열람용 CDN URL(앱 소유자·관리자).
  *
  * <p>사진 업로드({@code PhotoUploadService})와 같은 규칙을 쓴다: 허용 타입은 jpg/png/webp, {@code size}는
  * 서명의 Content-Length에 바인딩해 S3가 업로드 시점에 크기를 강제하고, 장당 상한은 사진과 같은 property를
@@ -85,7 +85,8 @@ public class InquiryAttachmentService {
     }
 
     /**
-     * 소유자 열람용 URL(#529) — 사진({@code PhotoUrlService})과 같은 무서명·만료 없는 CloudFront 고정 URL이다.
+     * 열람용 URL(#529 — 앱 소유자 상세와 관리자 상세 공용) — 사진({@code PhotoUrlService})과 같은 무서명·만료 없는
+     * CloudFront 고정 URL이다.
      * 사진 bucket의 OAC 읽기 정책이 bucket 전체 범위라 {@code inquiries/} prefix도 CDN이 서빙한다 — 정책을
      * {@code photos/}로 좁히면 이 URL은 서버 에러 없이 403이 된다.
      */
@@ -93,8 +94,4 @@ public class InquiryAttachmentService {
         return "https://" + cdnDomain + "/" + InquiryObjectKeys.fullKey(filename, subjectId);
     }
 
-    /** 관리자 열람용 presigned GET URL(유효시간 {@code photo.upload.presign-ttl}). */
-    public String viewUrl(UUID subjectId, String filename) {
-        return s3PhotoStorageService.generatePresignedGetUrl(InquiryObjectKeys.fullKey(filename, subjectId));
-    }
 }

@@ -95,14 +95,6 @@ class InquiryAttachmentServiceTest {
     }
 
     @Test
-    void viewUrlSignsGetForTheInquiryObjectKey() {
-        when(s3PhotoStorageService.generatePresignedGetUrl(InquiryObjectKeys.fullKey("a.jpg", SUBJECT_ID)))
-                .thenReturn("https://s3.example/view");
-
-        assertThat(service().viewUrl(SUBJECT_ID, "a.jpg")).isEqualTo("https://s3.example/view");
-    }
-
-    @Test
     void cdnUrlIsUnsignedStableUrlUnderTheSubjectInquiryPrefix() {
         String url = service().cdnUrl(SUBJECT_ID, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg");
 

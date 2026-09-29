@@ -13,6 +13,7 @@ import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.common.error.GlobalExceptionHandler;
 import com.laimory.server.common.logging.TrustedEdgeRequestFilter;
+import com.laimory.server.inquiry.InquiryObjectKeys;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.entity.InquiryAttachment;
 import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
@@ -70,7 +71,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @SpringBootTest(classes = AdminHttpTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"APP_ENV=local", "APP_ADMIN_PORT=0", "management.server.port=0",
-                "management.endpoint.health.group.readiness.include=readinessState", "SWAGGER_ENABLED=true"})
+                "management.endpoint.health.group.readiness.include=readinessState", "SWAGGER_ENABLED=true",
+                "photo.cdn.domain=cdn.example"})
 @DirtiesContext
 class AdminHttpTest {
     @LocalServerPort int mainPort;
@@ -228,7 +230,7 @@ class AdminHttpTest {
     }
 
     @Test
-    void inquiryEndpointsListDetailWithViewUrlsAndToggleAnswered() throws Exception {
+    void inquiryEndpointsListDetailWithCdnViewUrlsAndToggleAnswered() throws Exception {
         Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
                 "사진 올리면 멈춰요");
         ReflectionTestUtils.setField(inquiry, "inquiryId", 9L);
@@ -237,7 +239,6 @@ class AdminHttpTest {
         when(inquiries.findByInquiryId(9L)).thenReturn(Optional.of(inquiry));
         when(inquiries.findByInquiryId(404L)).thenReturn(Optional.empty());
         when(inquiryAttachments.findByInquiryIdOrderByInquiryAttachmentIdAsc(9L)).thenReturn(List.of(attachment));
-        when(storage.generatePresignedGetUrl(any())).thenReturn("https://s3.example/view?X-Amz-Signature=abc");
 
         HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);
         assertThat(list.statusCode()).isEqualTo(200);
@@ -251,7 +252,10 @@ class AdminHttpTest {
         assertThat(detail.body()).contains("\"title\":\"앱이 멈춰요\"")
                 .contains("\"description\":\"사진 올리면 멈춰요\"")
                 .contains("\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
-                .contains("\"viewUrl\":\"https://s3.example/view?X-Amz-Signature=abc\"");
+                // 앱 소유자 상세와 같은 무서명 CDN URL(#529) — presigned GET 서명이 없다.
+                .contains("\"viewUrl\":\"https://cdn.example/" + InquiryObjectKeys.subjectPrefix(TestSubjects.id(3L))
+                        + "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
+                .doesNotContain("X-Amz-");
         assertThat(request("GET", "/admin/api/inquiries/404", null, null, false).statusCode()).isEqualTo(404);
 
         assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{}", origin(), true).statusCode()).isEqualTo(400);

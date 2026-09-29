@@ -113,13 +113,13 @@ public class AdminApiController {
         return ApiResponse.success(inquiries.findAll().stream().map(AdminInquiry::from).toList());
     }
 
-    /** 상세 + 첨부 열람 URL(presigned GET, 유효시간 내). */
+    /** 상세 + 첨부 열람 URL(앱 소유자와 같은 무서명 CDN URL, #529). */
     @GetMapping("/inquiries/{inquiryId}")
     ApiResponse<AdminInquiryDetail> inquiry(@PathVariable long inquiryId) {
         InquiryService.InquiryWithAttachments item = inquiries.get(inquiryId);
         List<AdminInquiryAttachment> attachments = item.attachmentFilenames().stream()
                 .map(filename -> new AdminInquiryAttachment(filename,
-                        inquiryAttachments.viewUrl(item.inquiry().getSubjectId(), filename)))
+                        inquiryAttachments.cdnUrl(item.inquiry().getSubjectId(), filename)))
                 .toList();
         return ApiResponse.success(new AdminInquiryDetail(AdminInquiry.from(item.inquiry()), attachments));
     }

@@ -302,7 +302,7 @@ optional(누락·null·빈 배열 = 첨부 없음, 최대 3개)이다(분류·�
 Content-Length에 바인딩, `-1004`/`-1005`/`-1007`)이되 요청당 최대 3장이고 key prefix가
 `{sha256(subject)}/inquiries/`다. 접수 request와 관리자 조회 response는 access log에서 privacy skeleton으로
 마스킹된다(ID·처리 시각만 남는다). 관리자 열람·처리는 `/admin/api/inquiries`(목록 GET·상세 GET —
-첨부는 presigned GET `viewUrl`·`PUT /{id}/answered` 처리됨 표시/해제)가 소유한다. **새 error code는
+첨부 `viewUrl`은 앱 상세와 같은 무서명 CDN URL(#529)·`PUT /{id}/answered` 처리됨 표시/해제)가 소유한다. **새 error code는
 추가하지 않았다.**
 
 `GET /a/api/{version}/inquiries`와 `GET /a/api/{version}/inquiries/{inquiryId}`(#529)는 같은 `InquiryApi`의
