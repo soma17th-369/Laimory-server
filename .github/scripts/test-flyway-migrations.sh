@@ -260,3 +260,20 @@ fi
 mysql flyway_inquiry_upgrade -e "DELETE FROM inquiry_attachments; DELETE FROM inquiries; DELETE FROM user_subject_links"
 flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=4 validate >"$WORK/inquiry-validate.log" 2>&1
 ok 'V3 to V4 adds inquiries with enforced subject and attachment FKs and preserves existing rows'
+
+# V4→V5(#530): inquiries.body를 description으로 rename하고 title을 추가한다. 기존 행의 원문 보존과
+# title backfill, 기본값 제거(이후 title 누락 INSERT 거절)를 확인한다.
+mysql -e 'CREATE DATABASE flyway_inquiry_title_upgrade;'
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=4 migrate >"$WORK/inquiry-title-v4.log" 2>&1
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1)"
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'kept body', NOW(6), NOW(6))"
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 migrate >"$WORK/inquiry-title-v5.log" 2>&1
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiries' AND COLUMN_NAME='body'")" = 0 ] || fail 'inquiries.body still exists'
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT description FROM inquiries WHERE email='x@example.com'")" = 'kept body' ] || fail 'V5 did not keep body as description'
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT title FROM inquiries WHERE email='x@example.com'")" = '(제목 없음)' ] || fail 'V5 did not backfill existing title'
+if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, description, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'y@example.com', 'd', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'inquiry insert without title succeeded'
+fi
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, title, description, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'y@example.com', 't', 'd', NOW(6), NOW(6))"
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 validate >"$WORK/inquiry-title-validate.log" 2>&1
+ok 'V4 to V5 renames inquiry body to description, backfills title and requires it afterwards'

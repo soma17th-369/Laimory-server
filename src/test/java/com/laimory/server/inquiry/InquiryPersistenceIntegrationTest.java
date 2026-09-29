@@ -77,12 +77,13 @@ class InquiryPersistenceIntegrationTest {
         provisionUser();
 
         Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
-                "첫 줄\n둘째 줄", List.of(FILENAME_A, FILENAME_B));
+                "사진이 안 올라가요", "첫 줄\n둘째 줄", List.of(FILENAME_A, FILENAME_B));
 
         Inquiry stored = inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow();
         assertThat(stored.getSubjectId()).isEqualTo(subjectId);
         assertThat(stored.getEmail()).isEqualTo("it@example.com");
-        assertThat(stored.getBody()).isEqualTo("첫 줄\n둘째 줄");
+        assertThat(stored.getTitle()).isEqualTo("사진이 안 올라가요");
+        assertThat(stored.getDescription()).isEqualTo("첫 줄\n둘째 줄");
         assertThat(stored.getAnsweredAt()).isNull();
         assertThat(stored.getCreatedAt()).isNotNull();
         assertThat(inquiryAttachmentRepository.findByInquiryIdOrderByPositionAsc(inquiry.getInquiryId()))
@@ -104,7 +105,7 @@ class InquiryPersistenceIntegrationTest {
     void answeredMarkIsPersistedAndClearable() {
         provisionUser();
         Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
-                "제안", null);
+                "제안", "기능 제안", null);
 
         inquiryService.changeAnswered(inquiry.getInquiryId(), true);
         assertThat(inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow().getAnsweredAt())

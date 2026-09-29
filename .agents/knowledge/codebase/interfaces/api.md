@@ -291,9 +291,9 @@ HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. 
 
 `POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
 사용자의 문의 접수 계약이다(`InquiryApi` — hidden `@CurrentSubject UUID subjectId`, 보호 operation 2개).
-접수 body는 `email`·`body`가 필수이고 `attachmentFilenames`는
+접수 body는 `email`·`title`·`description`이 필수이고(#530 — 구 `body` 필드는 받지 않는다) `attachmentFilenames`는
 optional(누락·null·빈 배열 = 첨부 없음, 최대 3개)이다(분류·채널 필드는 두지 않는다). 누락·형식(`@Email`)·
-길이(email 255자, body 2,000자) 위반은 Bean Validation 400 `-400`, 첨부 filename이 presign 형식(`{uuidv7}.{jpg|png|webp}`)이 아니거나
+길이(email 255자, title 100자, description 2,000자) 위반은 Bean Validation 400 `-400`, 첨부 filename이 presign 형식(`{uuidv7}.{jpg|png|webp}`)이 아니거나
 중복이면 400 `-400`, 3개 초과는 400 `-1004`다. 성공은 `201 + body=null` — 201이 곧 접수 완료이며 응답에
 문의 ID를 싣지 않는다(앱에 "내 문의" 조회가 없고 답변은 입력한 이메일로 관리자가 직접 회신한다).
 서버는 첨부의 S3 업로드 완료를 확인하지 않고, 같은 내용의 재요청은 새 문의로 접수된다(중복 차단 없음 —

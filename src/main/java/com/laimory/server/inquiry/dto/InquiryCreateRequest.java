@@ -16,9 +16,12 @@ public record InquiryCreateRequest(
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "user@example.com",
                 description = "답장 받을 이메일. 회원 정보에 이메일이 없어 문의마다 입력받는다. 최대 255자")
         @NotBlank @Email @Size(max = Inquiry.EMAIL_MAX_LENGTH) String email,
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "앱이 멈춰요",
+                description = "문의 제목. 공백만은 불가, 앞뒤 공백 제거 후 저장, 최대 100자")
+        @NotBlank @Size(max = Inquiry.TITLE_MAX_LENGTH) String title,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
-                description = "문의 본문(줄바꿈 포함 원문). 공백만은 불가, 최대 2,000자")
-        @NotBlank @Size(max = Inquiry.BODY_MAX_LENGTH) String body,
+                description = "문의 내용(줄바꿈 포함 원문). 공백만은 불가, 최대 2,000자")
+        @NotBlank @Size(max = Inquiry.DESCRIPTION_MAX_LENGTH) String description,
         @Schema(description = "첨부 presign 응답의 filename 목록(요청 순서 유지). 누락·null·빈 배열은 첨부 없음, "
                 + "최대 3개 — 초과 시 -1004, presign 형식이 아니거나 중복이면 -400")
         List<String> attachmentFilenames

@@ -107,7 +107,7 @@ public class AdminApiController {
         return ApiResponse.success(AdminNotice.from(notices.changeVisibility(noticeId, request.hidden())));
     }
 
-    /** 전체 문의, 최신 순. 본문·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
+    /** 전체 문의, 최신 순. 제목·내용·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
     @GetMapping("/inquiries")
     ApiResponse<List<AdminInquiry>> inquiries() {
         return ApiResponse.success(inquiries.findAll().stream().map(AdminInquiry::from).toList());
@@ -179,12 +179,12 @@ public class AdminApiController {
 
     record AnsweredRequest(@NotNull Boolean answered) { }
 
-    /** subject는 싣지 않는다 — 관리자가 회신에 필요한 것은 주소·본문·처리 여부뿐이다. */
-    record AdminInquiry(Long inquiryId, String email, String body,
+    /** subject는 싣지 않는다 — 관리자가 회신에 필요한 것은 주소·제목·내용·처리 여부뿐이다. */
+    record AdminInquiry(Long inquiryId, String email, String title, String description,
                         LocalDateTime answeredAt, LocalDateTime createdAt) {
         static AdminInquiry from(Inquiry inquiry) {
-            return new AdminInquiry(inquiry.getInquiryId(), inquiry.getEmail(),
-                    inquiry.getBody(), inquiry.getAnsweredAt(), inquiry.getCreatedAt());
+            return new AdminInquiry(inquiry.getInquiryId(), inquiry.getEmail(), inquiry.getTitle(),
+                    inquiry.getDescription(), inquiry.getAnsweredAt(), inquiry.getCreatedAt());
         }
     }
 

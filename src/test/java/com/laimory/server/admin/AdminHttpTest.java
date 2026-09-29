@@ -229,7 +229,8 @@ class AdminHttpTest {
 
     @Test
     void inquiryEndpointsListDetailWithViewUrlsAndToggleAnswered() throws Exception {
-        Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요");
+        Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
+                "사진 올리면 멈춰요");
         ReflectionTestUtils.setField(inquiry, "inquiryId", 9L);
         InquiryAttachment attachment = InquiryAttachment.of(9L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg", 0);
         when(inquiries.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(inquiry));
@@ -241,12 +242,14 @@ class AdminHttpTest {
         HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);
         assertThat(list.statusCode()).isEqualTo(200);
         assertThat(list.body()).contains("\"inquiryId\":9")
-                .contains("\"email\":\"user@example.com\"").contains("\"answeredAt\":null")
+                .contains("\"email\":\"user@example.com\"").contains("\"title\":\"앱이 멈춰요\"")
+                .contains("\"answeredAt\":null")
                 .doesNotContain("attachmentCount");
 
         HttpResponse<String> detail = request("GET", "/admin/api/inquiries/9", null, null, false);
         assertThat(detail.statusCode()).isEqualTo(200);
-        assertThat(detail.body()).contains("\"body\":\"앱이 멈춰요\"")
+        assertThat(detail.body()).contains("\"title\":\"앱이 멈춰요\"")
+                .contains("\"description\":\"사진 올리면 멈춰요\"")
                 .contains("\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
                 .contains("\"viewUrl\":\"https://s3.example/view?X-Amz-Signature=abc\"");
         assertThat(request("GET", "/admin/api/inquiries/404", null, null, false).statusCode()).isEqualTo(404);

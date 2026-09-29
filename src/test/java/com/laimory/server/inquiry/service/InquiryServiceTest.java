@@ -60,11 +60,12 @@ class InquiryServiceTest {
         });
 
         Inquiry inquiry = service().register("v1", SUBJECT_ID, " user@example.com ",
-                "앱이 멈춰요", List.of(FILENAME_A, FILENAME_B));
+                " 앱이 멈춰요 ", "사진 올리면 멈춰요", List.of(FILENAME_A, FILENAME_B));
 
         assertThat(inquiry.getSubjectId()).isEqualTo(SUBJECT_ID);
         assertThat(inquiry.getEmail()).isEqualTo("user@example.com");
-        assertThat(inquiry.getBody()).isEqualTo("앱이 멈춰요");
+        assertThat(inquiry.getTitle()).isEqualTo("앱이 멈춰요");
+        assertThat(inquiry.getDescription()).isEqualTo("사진 올리면 멈춰요");
         assertThat(inquiry.isAnswered()).isFalse();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<InquiryAttachment>> attachments = ArgumentCaptor.forClass(List.class);
@@ -79,7 +80,7 @@ class InquiryServiceTest {
     void registerWithoutAttachmentsSavesNoAttachmentRows() {
         when(inquiryRepository.save(any(Inquiry.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service().register("v1", SUBJECT_ID, "u@example.com", "본문", null);
+        service().register("v1", SUBJECT_ID, "u@example.com", "제목", "내용", null);
 
         verify(inquiryAttachmentRepository).saveAll(List.of());
     }
@@ -88,13 +89,13 @@ class InquiryServiceTest {
     void registerRejectsInvalidDuplicateOrTooManyFilenamesBeforeSaving() {
         InquiryService service = service();
 
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "제목", "내용",
                 List.of("../etc/passwd")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "제목", "내용",
                 List.of(FILENAME_A, FILENAME_A)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "본문",
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "제목", "내용",
                 List.of(FILENAME_A, FILENAME_B, FILENAME_A.replace("a6.jpg", "a8.webp"),
                         FILENAME_A.replace("a6.jpg", "a9.jpg"))))
                 .isInstanceOf(BusinessException.class)
@@ -105,13 +106,18 @@ class InquiryServiceTest {
     }
 
     @Test
-    void registerRejectsBlankBodyAndOverlongEmailBeforeSaving() {
+    void registerRejectsBlankOrOverlongTitleBlankDescriptionAndOverlongEmailBeforeSaving() {
         InquiryService service = service();
 
-        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "  ", null))
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "  ", "내용", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com",
+                "제".repeat(Inquiry.TITLE_MAX_LENGTH + 1), "내용", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.register("v1", SUBJECT_ID, "u@example.com", "제목", "  ", null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.register("v1", SUBJECT_ID,
-                "u".repeat(Inquiry.EMAIL_MAX_LENGTH) + "@example.com", "본문", null))
+                "u".repeat(Inquiry.EMAIL_MAX_LENGTH) + "@example.com", "제목", "내용", null))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(inquiryRepository, never()).save(any());
     }
@@ -175,7 +181,7 @@ class InquiryServiceTest {
     }
 
     private static Inquiry inquiry(long inquiryId) {
-        Inquiry inquiry = Inquiry.of(SUBJECT_ID, "u@example.com", "본문");
+        Inquiry inquiry = Inquiry.of(SUBJECT_ID, "u@example.com", "제목", "내용");
         ReflectionTestUtils.setField(inquiry, "inquiryId", inquiryId);
         return inquiry;
     }
