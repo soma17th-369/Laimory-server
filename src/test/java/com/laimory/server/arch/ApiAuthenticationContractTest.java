@@ -30,7 +30,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
- * {@code /a/api} 보호 API 29개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
+ * {@code /a/api} 보호 API 33개의 인증 문서 계약을 어노테이션 수준에서 고정한다:
  * class-level {@code bearerAuth} security requirement, 401 {@code -2001} 응답 문서,
  * principal parameter의 OpenAPI 비노출({@code hidden = true} — 클라 입력 아님).
  *
