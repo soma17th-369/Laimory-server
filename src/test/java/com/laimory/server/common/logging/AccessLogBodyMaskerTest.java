@@ -181,6 +181,38 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
+    void myInquiryResponsesKeepIdStatusAndAnsweredAtOnly() throws Exception {
+        // #529 앱 목록은 inquiries wrapper 아래 원소의 ID·상태·처리 시각만 남고, 상세는 답장 email·제목·내용·
+        // 첨부 CDN URL(subject hash 포함)이 마스크다.
+        String rawEmail = "RAW_EMAIL_529_NEVER_LOG@example.com";
+        String rawTitle = "RAW_INQUIRY_TITLE_529_NEVER_LOG";
+        String rawDescription = "RAW_INQUIRY_DESCRIPTION_529_NEVER_LOG";
+        String rawUrl = "https://cdn.example/RAW_SUBJECT_HASH_529/inquiries/a.jpg";
+
+        String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"inquiries\":[{\"inquiryId\":5,"
+                + "\"title\":\"" + rawTitle + "\",\"status\":\"ANSWERED\","
+                + "\"createdAt\":\"2026-09-23T09:00:00\",\"answeredAt\":\"2026-09-24T10:00:00\"}]}}";
+        JsonNode maskedList = objectMapper.readTree(masker.maskResponse(
+                new MockHttpServletRequest("GET", "/a/api/v1/inquiries"), jsonResponse(), bytes(listBody), false));
+        assertThat(maskedList.at("/body/inquiries/0/inquiryId").asLong()).isEqualTo(5);
+        assertThat(maskedList.at("/body/inquiries/0/status").asText()).isEqualTo("ANSWERED");
+        assertThat(maskedList.at("/body/inquiries/0/answeredAt").asText()).isEqualTo("2026-09-24T10:00:00");
+        assertThat(maskedList.at("/body/inquiries/0/title").asText()).isEqualTo("***");
+        assertThat(maskedList.toString()).doesNotContain(rawTitle);
+
+        String detailBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"inquiryId\":5,"
+                + "\"title\":\"" + rawTitle + "\",\"status\":\"RECEIVED\",\"email\":\"" + rawEmail + "\","
+                + "\"description\":\"" + rawDescription + "\",\"attachmentUrls\":[\"" + rawUrl + "\"],"
+                + "\"createdAt\":\"2026-09-23T09:00:00\",\"answeredAt\":null}}";
+        JsonNode maskedDetail = objectMapper.readTree(masker.maskResponse(
+                new MockHttpServletRequest("GET", "/a/api/v1/inquiries/5"), jsonResponse(), bytes(detailBody), false));
+        assertThat(maskedDetail.at("/body/inquiryId").asLong()).isEqualTo(5);
+        assertThat(maskedDetail.at("/body/status").asText()).isEqualTo("RECEIVED");
+        assertThat(maskedDetail.toString()).doesNotContain(rawEmail).doesNotContain(rawTitle)
+                .doesNotContain(rawDescription).doesNotContain("RAW_SUBJECT_HASH_529");
+    }
+
+    @Test
     void aiTestPathMasksInputAndResultOnBothDirections() throws Exception {
         // #394 dev 테스트 경로는 staging을 거치지 않아 request에 사용자 원문이 그대로 실린다 —
         // 구조 필드(window·taskId·recordDate 등)만 남고 payload·userMemory·Event 텍스트는 마스크여야 한다.
@@ -251,7 +283,9 @@ class AccessLogBodyMaskerTest {
                 "/api/v1/terms",                               // 약관 목록(공개 조회)
                 "/a/api/v1/terms/agreements",                  // 약관 동의 이력
                 "/admin/api/inquiries",                        // 관리자 문의 목록(#518)
-                "/admin/api/inquiries/42");                    // 관리자 문의 상세(#518)
+                "/admin/api/inquiries/42",                     // 관리자 문의 상세(#518)
+                "/a/api/v1/inquiries",                         // 앱 내 문의 목록(#529)
+                "/a/api/v1/inquiries/42");                     // 앱 내 문의 상세(#529)
     }
 
     @Test

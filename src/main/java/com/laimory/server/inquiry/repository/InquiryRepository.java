@@ -4,6 +4,7 @@ import com.laimory.server.inquiry.entity.Inquiry;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -17,6 +18,12 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
     List<Inquiry> findAllByOrderByInquiryIdDesc();
 
     Optional<Inquiry> findByInquiryId(Long inquiryId);
+
+    /** 앱 "내 문의" 목록(#529) — owner subject만, 최신(큰 PK) 순. 건수 상한은 호출자가 {@link Pageable}로 건다. */
+    List<Inquiry> findBySubjectIdOrderByInquiryIdDesc(UUID subjectId, Pageable pageable);
+
+    /** 앱 "내 문의" 상세(#529) — 없음과 비소유를 한 query로 묶어 둘 다 빈 결과가 된다(존재 은닉). */
+    Optional<Inquiry> findByInquiryIdAndSubjectId(Long inquiryId, UUID subjectId);
 
     /**
      * 계정 삭제(#302)의 owner 문의 전량 제거 — email PII를 포함한 행째 지운다. 첨부 행이 먼저 지워져

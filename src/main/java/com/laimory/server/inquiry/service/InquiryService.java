@@ -14,11 +14,12 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 문의 leaf service — 접수(문의 행 + 첨부 행 한 transaction), 관리자 열람·처리됨 표시, 탈퇴 삭제를 소유한다.
+ * 문의 leaf service — 접수(문의 행 + 첨부 행 한 transaction), 소유자·관리자 열람, 처리됨 표시, 탈퇴 삭제를 소유한다.
  *
  * <p>문의와 첨부는 한 owner의 두 테이블이라 이 service가 두 repository를 함께 감싼다(연관 매핑 없이
  * plain FK). 읽기 경로는 SELECT만이라 Spring transaction 없이 autocommit으로 실행한다(#499).
@@ -31,7 +32,10 @@ public class InquiryService {
     private final InquiryAttachmentRepository inquiryAttachmentRepository;
     private final Clock clock;
 
-    /** 관리자 상세 항목 — 문의 행과 첨부 filename(요청 순서). */
+    /** 앱 "내 문의" 목록 상한(#529) — 최신 순이라 넘치면 가장 오래된 문의부터 빠진다. 페이지네이션은 없다. */
+    static final int MY_INQUIRIES_LIMIT = 50;
+
+    /** 상세 항목(관리자·소유자) — 문의 행과 첨부 filename(요청 순서). */
     public record InquiryWithAttachments(Inquiry inquiry, List<String> attachmentFilenames) { }
 
     /**
@@ -50,6 +54,21 @@ public class InquiryService {
         return inquiry;
     }
 
+    /** 앱 "내 문의" 목록 — owner subject의 문의만, 최신 순 최대 {@value #MY_INQUIRIES_LIMIT}건. 첨부는 읽지 않는다. */
+    public List<Inquiry> findMine(String applicationVersion, UUID subjectId) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        return inquiryRepository.findBySubjectIdOrderByInquiryIdDesc(subjectId,
+                PageRequest.of(0, MY_INQUIRIES_LIMIT));
+    }
+
+    /** 앱 "내 문의" 상세 — 없음과 비소유 모두 404로 존재를 숨긴다. */
+    public InquiryWithAttachments getMine(String applicationVersion, UUID subjectId, long inquiryId) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        Inquiry inquiry = inquiryRepository.findByInquiryIdAndSubjectId(inquiryId, subjectId)
+                .orElseThrow(() -> new BusinessException(ExceptionType.RESOURCE_NOT_FOUND));
+        return new InquiryWithAttachments(inquiry, attachmentFilenames(inquiryId));
+    }
+
     /** 관리자 목록 — 전체, 최신 순. 첨부는 상세에서만 필요하다. */
     public List<Inquiry> findAll() {
         return inquiryRepository.findAllByOrderByInquiryIdDesc();
@@ -58,10 +77,7 @@ public class InquiryService {
     /** 관리자 상세 — 없으면 404. */
     public InquiryWithAttachments get(long inquiryId) {
         Inquiry inquiry = requireInquiry(inquiryId);
-        List<String> filenames = inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiryId).stream()
-                .map(InquiryAttachment::getFilename)
-                .toList();
-        return new InquiryWithAttachments(inquiry, filenames);
+        return new InquiryWithAttachments(inquiry, attachmentFilenames(inquiryId));
     }
 
     /** 처리됨 표시(답장 발송 후)·해제. 표시 시각은 서버가 캡처한 KST 벽시계다. */
@@ -79,6 +95,12 @@ public class InquiryService {
     public void deleteAllBySubjectId(UUID subjectId) {
         inquiryAttachmentRepository.deleteAllBySubjectId(subjectId);
         inquiryRepository.deleteAllBySubjectId(subjectId);
+    }
+
+    private List<String> attachmentFilenames(long inquiryId) {
+        return inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiryId).stream()
+                .map(InquiryAttachment::getFilename)
+                .toList();
     }
 
     private Inquiry requireInquiry(long inquiryId) {

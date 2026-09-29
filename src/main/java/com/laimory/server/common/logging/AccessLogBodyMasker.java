@@ -76,7 +76,11 @@ final class AccessLogBodyMasker {
             // 관리자 문의 열람(#518) — 목록·상세 모두 email과 문의 원문을 echo한다. 관리자 경로도
             // 같은 access log를 타므로 여기서 마스킹한다(처리됨 토글 PUT은 시각·boolean뿐이라 제외).
             new PrivacyBodyPath("GET", Pattern.compile("^/admin/api/inquiries$")),
-            new PrivacyBodyPath("GET", Pattern.compile("^/admin/api/inquiries/\\d+$")));
+            new PrivacyBodyPath("GET", Pattern.compile("^/admin/api/inquiries/\\d+$")),
+            // 앱 "내 문의" 조회(#529) — 목록은 제목, 상세는 답장 email·제목·내용·첨부 CDN URL(subject hash 포함)을
+            // echo한다. 관리자 경로와 같은 이유로 마스킹한다.
+            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/inquiries$")),
+            new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/inquiries/\\d+$")));
     private static final Set<String> EXACT_SECRET_NAMES =
             Set.of("appcode", "appverifier", "uploadurl", "firebaseinstallationid");
     private static final List<String> CONTAINED_SECRET_NAMES =
@@ -99,10 +103,11 @@ final class AccessLogBodyMasker {
             "timelineeventid", "items", "timelineitemid",
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
             "terms", "agreements", "termtype", "version", "acceptedat",
-            // 문의(#518) 구조 — ID·처리 시각만. email·title·description·첨부 filename은 allowlist 밖이라
-            // 마스크되고, 구 필드명 body로 보낸 원문은 envelope body와 이름이 같아 아래 container-only 규칙이
-            // scalar 값을 마스크한다.
-            "inquiryid", "answeredat");
+            // 문의(#518) 구조 — ID·처리 시각만. email·title·description·첨부 filename·attachmentUrls는
+            // allowlist 밖이라 마스크되고, 구 필드명 body로 보낸 원문은 envelope body와 이름이 같아 아래
+            // container-only 규칙이 scalar 값을 마스크한다. inquiries는 앱 목록(#529)의 wrapper — 없으면 목록이
+            // subtree째 마스크되어 원소의 ID·상태(status)도 남지 않는다.
+            "inquiries", "inquiryid", "answeredat");
 
     /** allowlist에 있어도 scalar 값(null 제외)이면 타입 무관 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
     private static final Set<String> SKELETON_CONTAINER_ONLY_FIELDS = Set.of("body");

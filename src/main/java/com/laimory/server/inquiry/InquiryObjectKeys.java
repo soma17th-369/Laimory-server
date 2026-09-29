@@ -8,8 +8,8 @@ import java.util.UUID;
  * 문의 첨부 객체의 S3 key 규칙 — 사진과 같은 subject namespace 아래 별도 {@code inquiries/} prefix다.
  *
  * <p>사진 namespace를 공유하는 이유는 탈퇴 삭제(#302)가 subject 단위 prefix 삭제로 첨부까지 같은 체계로
- * 지우기 위해서다. prefix를 나누는 이유는 사진 serving key 규칙({@code /photos/})과 CDN 서빙 경로를
- * 건드리지 않기 위해서다 — 첨부는 관리자만 presigned GET으로 본다.
+ * 지우기 위해서다. prefix는 사진({@code /photos/})과 분리한다. 열람은 소유자가 CDN 고정 URL로(#529),
+ * 관리자가 presigned GET으로 한다.
  */
 public final class InquiryObjectKeys {
 
@@ -26,7 +26,7 @@ public final class InquiryObjectKeys {
         return PhotoObjectKeys.subjectNamespace(subjectId) + PREFIX_SEGMENT;
     }
 
-    /** {@code {subjectNamespace}/inquiries/{filename}} — presign PUT·관리자 GET이 쓰는 full key. */
+    /** {@code {subjectNamespace}/inquiries/{filename}} — presign PUT·CDN URL·관리자 GET이 쓰는 full key. */
     public static String fullKey(String filename, UUID subjectId) {
         return subjectPrefix(subjectId) + filename;
     }
