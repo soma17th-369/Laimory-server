@@ -120,14 +120,20 @@ versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작
 권한을 먼저 추가해야 한다.
 
 같은 bucket의 `{sha256(subject)}/inquiries/{filename}` prefix는 문의 첨부(#518)가 쓴다 — presigned PUT
-발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작하지만, 관리자 상세의 첨부 열람은
-`S3PhotoStorageService.generatePresignedGetUrl`(presigned GET)이라 **서명 role에 `s3:GetObject`가 필요하다**
-(발급 자체는 권한과 무관하게 성공하므로, 권한이 없으면 이미지 요청만 403이다). **두 role 모두**
-`LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`)를 2026-09-25에 추가해 열람이
-동작한다 — dev·prod 각각의 WAS에서 SSM `head-object`로 확인했다. 사진 객체(`*/photos/*`)는 두 환경 모두
-GetObject가 없으며 이 범위 제한은 의도된 것이다(CDN 서빙 경로를 건드리지 않는다).
+발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작한다. 열람은 #529부터 앱 소유자·관리자 모두 무서명 CDN URL이라
+**서버 코드는 S3 GetObject를 쓰지 않는다**(presigned GET 발급 코드 제거). 다만 #518 때 관리자 presigned GET용으로
+두 role에 넣은 `LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`, 2026-09-25)는 아직 남아 있다 —
+코드 배포 후 환경별 별도 승인으로 제거할 대상이다. 사진 객체(`*/photos/*`)는 두 환경 모두 role에 GetObject가 없다.
 ⚠️ 권한을 `head-object`로 판정할 때는 **실재하는 객체**를 써야 한다 — `s3:ListBucket`이 없으면 없는 key는
 404가 아니라 403으로 돌아와서, 권한이 있어도 거부처럼 보인다.
+
+문의 첨부 열람(#529 — 앱 소유자 상세·관리자 상세 공용)은 사진과 같은 **무서명 CloudFront 고정 URL**
+(`https://{PHOTO_CDN_DOMAIN}/{sha256(subject)}/inquiries/{filename}`, `InquiryAttachmentService.cdnUrl`)이다.
+2026-09-29 조회로 확인한 전제: distribution은 path별 cache behavior·CloudFront Function·서명(trusted key group)
+없이 bucket 하나를 origin으로 서빙하고, bucket 정책의 OAC `s3:GetObject`는 **bucket 전체(`/*`)** 범위다
+(실재 `inquiries` 객체가 CDN으로 200, S3 직접은 403). dev·prod는 같은 bucket·distribution을 쓴다.
+**제약: OAC 읽기 정책은 `*/inquiries/*`를 포함해야 한다.** `*/photos/*`로 좁히면 서버 에러 없이 앱·관리자의 문의
+첨부가 전부 403으로 깨진다. CDN 캐시는 탈퇴 삭제 뒤에도 TTL 동안 사본을 낼 수 있다(사진과 같은 조건).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)

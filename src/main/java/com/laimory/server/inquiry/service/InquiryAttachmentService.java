@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.unit.DataSize;
 
 /**
- * 문의 첨부의 S3 경계 — presigned PUT 발급(앱)과 presigned GET 발급(관리자 열람).
+ * 문의 첨부의 S3 경계 — presigned PUT 발급(앱)과 열람용 CDN URL(앱 소유자·관리자).
  *
  * <p>사진 업로드({@code PhotoUploadService})와 같은 규칙을 쓴다: 허용 타입은 jpg/png/webp, {@code size}는
  * 서명의 Content-Length에 바인딩해 S3가 업로드 시점에 크기를 강제하고, 장당 상한은 사진과 같은 property를
@@ -32,12 +32,15 @@ public class InquiryAttachmentService {
     private final S3PhotoStorageService s3PhotoStorageService;
     private final long maxSizePerPhotoBytes;
     private final long maxSizePerPhotoMb;
+    private final String cdnDomain;
 
     public InquiryAttachmentService(S3PhotoStorageService s3PhotoStorageService,
-                                    @Value("${photo.upload.max-size-per-photo}") DataSize maxSizePerPhoto) {
+                                    @Value("${photo.upload.max-size-per-photo}") DataSize maxSizePerPhoto,
+                                    @Value("${photo.cdn.domain}") String cdnDomain) {
         this.s3PhotoStorageService = s3PhotoStorageService;
         this.maxSizePerPhotoBytes = maxSizePerPhoto.toBytes();
         this.maxSizePerPhotoMb = maxSizePerPhoto.toMegabytes();
+        this.cdnDomain = cdnDomain;
     }
 
     /** 요청 attachments를 검증한 뒤 같은 순서로 filename + presigned PUT URL을 발급한다. */
@@ -81,8 +84,14 @@ public class InquiryAttachmentService {
         return new InquiryAttachmentUploadCreateResponse(uploads);
     }
 
-    /** 관리자 열람용 presigned GET URL — CDN 서빙 경로를 쓰지 않는다(첨부는 공개 서빙 대상이 아니다). */
-    public String viewUrl(UUID subjectId, String filename) {
-        return s3PhotoStorageService.generatePresignedGetUrl(InquiryObjectKeys.fullKey(filename, subjectId));
+    /**
+     * 열람용 URL(#529 — 앱 소유자 상세와 관리자 상세 공용) — 사진({@code PhotoUrlService})과 같은 무서명·만료 없는
+     * CloudFront 고정 URL이다.
+     * 사진 bucket의 OAC 읽기 정책이 bucket 전체 범위라 {@code inquiries/} prefix도 CDN이 서빙한다 — 정책을
+     * {@code photos/}로 좁히면 이 URL은 서버 에러 없이 403이 된다.
+     */
+    public String cdnUrl(UUID subjectId, String filename) {
+        return "https://" + cdnDomain + "/" + InquiryObjectKeys.fullKey(filename, subjectId);
     }
+
 }

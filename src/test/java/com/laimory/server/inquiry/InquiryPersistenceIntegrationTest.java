@@ -3,6 +3,8 @@ package com.laimory.server.inquiry;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
 import com.laimory.server.inquiry.repository.InquiryRepository;
@@ -13,6 +15,8 @@ import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.UserRepository;
 import com.laimory.server.user.repository.UserSubjectLinkRepository;
 import com.laimory.server.user.service.NewUserProvisioner;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -27,7 +31,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * 문의 ↔ 실 MySQL 왕복(#518) — V4 migration·엔티티 매핑(validate)·subject FK RESTRICT의 fail-closed 성질·
- * 탈퇴 삭제 순서(첨부 → 문의)를 검증한다.
+ * 탈퇴 삭제 순서(첨부 → 문의)와, 앱 "내 문의" 조회(#529)의 owner 격리·최신 순·50건 상한을 검증한다.
  *
  * 실행: docker compose up -d --wait 후 ./gradlew integrationTest
  */
@@ -58,18 +62,67 @@ class InquiryPersistenceIntegrationTest {
 
     private Long userId;
     private UUID subjectId;
+    private Long otherUserId;
+    private UUID otherSubjectId;
 
     @AfterEach
     void cleanUp() {
-        if (userId == null) {
-            return;
+        if (userId != null) {
+            erase(userId, subjectId);
+            userId = null;
         }
+        if (otherUserId != null) {
+            erase(otherUserId, otherSubjectId);
+            otherUserId = null;
+        }
+    }
+
+    private void erase(Long userId, UUID subjectId) {
         inquiryService.deleteAllBySubjectId(subjectId);
         jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());
         userRepository.deleteById(userId);
         userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(userId));
-        userId = null;
+    }
+
+    @Test
+    void myInquiriesAreScopedToTheOwnerSubjectForBothListAndDetail() {
+        provisionUser();
+        provisionOtherUser();
+        Inquiry mine = inquiryService.register("v1", subjectId, "me@example.com", "내 문의", "내용",
+                List.of(FILENAME_B, FILENAME_A));
+        Inquiry others = inquiryService.register("v1", otherSubjectId, "other@example.com", "남의 문의", "내용", null);
+
+        assertThat(inquiryService.findMine("v1", subjectId)).extracting(Inquiry::getInquiryId)
+                .containsExactly(mine.getInquiryId());
+        assertThat(inquiryService.findMine("v1", otherSubjectId)).extracting(Inquiry::getInquiryId)
+                .containsExactly(others.getInquiryId());
+
+        InquiryService.InquiryWithAttachments detail = inquiryService.getMine("v1", subjectId, mine.getInquiryId());
+        assertThat(detail.inquiry().getTitle()).isEqualTo("내 문의");
+        assertThat(detail.attachmentFilenames()).containsExactly(FILENAME_B, FILENAME_A); // 요청(PK) 순서
+        // 실재하는 남의 문의 id도 없는 문의와 같은 404다.
+        assertThatThrownBy(() -> inquiryService.getMine("v1", subjectId, others.getInquiryId()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getExceptionType())
+                .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    void myInquiriesListIsNewestFirstAndCappedAtFifty() {
+        provisionUser();
+        List<Long> registeredIds = new ArrayList<>();
+        for (int i = 0; i < 51; i++) {
+            registeredIds.add(inquiryService.register("v1", subjectId, "me@example.com", "문의 " + i, "내용", null)
+                    .getInquiryId());
+        }
+
+        List<Long> listedIds = inquiryService.findMine("v1", subjectId).stream().map(Inquiry::getInquiryId).toList();
+
+        // 최신 50건만 — 가장 먼저 접수한 1건이 빠진다.
+        assertThat(listedIds).hasSize(50).doesNotContain(registeredIds.get(0));
+        assertThat(listedIds).isSortedAccordingTo(Comparator.reverseOrder());
+        assertThat(listedIds.get(0)).isEqualTo(registeredIds.get(50));
     }
 
     @Test
@@ -114,6 +167,16 @@ class InquiryPersistenceIntegrationTest {
         inquiryService.changeAnswered(inquiry.getInquiryId(), false);
         assertThat(inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow().getAnsweredAt())
                 .isNull();
+    }
+
+    private void provisionOtherUser() {
+        User user = newUserProvisioner.provision(Provider.KAKAO,
+                "inquiry-it-" + ThreadLocalRandom.current().nextLong(1_000_000_000L, 9_000_000_000L),
+                null, "문의테스트2");
+        otherUserId = user.getUserId();
+        otherSubjectId = UUID.fromString(jdbcTemplate.queryForObject(
+                "SELECT subject_id FROM user_subject_links WHERE user_lookup_key = ?",
+                String.class, (Object) subjectLookupKeyDeriver.deriveCurrent(otherUserId)));
     }
 
     private void provisionUser() {

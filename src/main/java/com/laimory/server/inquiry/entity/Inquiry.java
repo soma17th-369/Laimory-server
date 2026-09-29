@@ -20,7 +20,7 @@ import org.hibernate.type.SqlTypes;
  * {@link InquiryAttachment}가 소유한다.
  *
  * <p>답변은 이 행에 저장하지 않는다 — 관리자가 {@code email}로 직접 회신하고 {@code answeredAt}만 표시한다.
- * 그래서 앱에는 "내 문의" 조회가 없고 이 행을 읽는 곳은 관리자 웹과 탈퇴 삭제뿐이다. owner는 콘텐츠
+ * 앱의 "내 문의" 조회(#529)는 소유자 자신의 입력 내용과 {@code answeredAt}에서 파생한 처리 상태만 읽는다. owner는 콘텐츠
  * subject라 탈퇴 삭제(#302)가 subject FK {@code RESTRICT} 아래에서 행째 지운다(email PII 포함).
  */
 @Entity

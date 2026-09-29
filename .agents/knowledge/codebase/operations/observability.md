@@ -81,18 +81,20 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `appCode`/`appVerifier`/`uploadUrl`/`firebaseInstallationId` alias를 값 타입과 무관하게 마스킹한다
   (FID는 민감 opaque 발송 식별자 — push 등록 body가 URL 대신 body로 FID를 받는 이유이기도 하다).
 - 문자열 값의 대소문자 무관 `X-Amz-` 검사는 필드명 마스킹이 놓친 presigned S3 URL을 위한 denylist
-  백스톱이다. 현재 사진 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
+  백스톱이다. 현재 사진·문의 첨부(#529) 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 20개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 22개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518) — request 9개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529) — request 9개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
   User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
-  response 11개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
-  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다,
+  response 13개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
+  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다, 앱 내 문의 목록 GET
+  `/a/api/v\d+/inquiries`·상세 GET `/a/api/v\d+/inquiries/\d+` — 제목·email·내용·첨부 CDN URL(subject hash 포함)을
+  마스킹하고 ID·상태·처리 시각만 남긴다(목록 wrapper `inquiries`를 allowlist에 둬 원소 구조가 남는다),
   draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든

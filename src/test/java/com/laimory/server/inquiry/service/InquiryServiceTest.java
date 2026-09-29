@@ -30,9 +30,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** 문의 leaf service — 접수 시 첨부 검증·순서, 관리자 열람·처리됨 시각, 탈퇴 삭제 순서를 실 엔티티로 검증한다. */
+/** 문의 leaf service — 접수 시 첨부 검증·순서, 소유자·관리자 열람, 처리됨 시각, 탈퇴 삭제 순서를 실 엔티티로 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class InquiryServiceTest {
 
@@ -129,6 +130,43 @@ class InquiryServiceTest {
                 "u".repeat(Inquiry.EMAIL_MAX_LENGTH) + "@example.com", "제목", "내용", null))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(inquiryRepository, never()).save(any());
+    }
+
+    @Test
+    void findMineReadsOnlyTheCallersInquiriesCappedAtFiftyWithoutReadingAttachments() {
+        Inquiry newer = inquiry(12L);
+        Inquiry older = inquiry(7L);
+        when(inquiryRepository.findBySubjectIdOrderByInquiryIdDesc(SUBJECT_ID, PageRequest.of(0, 50)))
+                .thenReturn(List.of(newer, older));
+
+        assertThat(service().findMine("v1", SUBJECT_ID)).containsExactly(newer, older);
+        verifyNoInteractions(inquiryAttachmentRepository);
+    }
+
+    @Test
+    void getMinePairsOwnedInquiryWithAttachmentFilenamesInRequestOrder() {
+        Inquiry inquiry = inquiry(12L);
+        when(inquiryRepository.findByInquiryIdAndSubjectId(12L, SUBJECT_ID)).thenReturn(Optional.of(inquiry));
+        when(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(12L)).thenReturn(List.of(
+                InquiryAttachment.of(12L, FILENAME_B),
+                InquiryAttachment.of(12L, FILENAME_A)));
+
+        InquiryService.InquiryWithAttachments item = service().getMine("v1", SUBJECT_ID, 12L);
+
+        assertThat(item.inquiry()).isSameAs(inquiry);
+        assertThat(item.attachmentFilenames()).containsExactly(FILENAME_B, FILENAME_A);
+    }
+
+    @Test
+    void getMineHidesMissingOrForeignInquiryAsNotFound() {
+        // 없음과 비소유는 같은 (inquiryId, subjectId) 조회의 빈 결과다 — 같은 404로 존재를 숨긴다.
+        when(inquiryRepository.findByInquiryIdAndSubjectId(12L, SUBJECT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().getMine("v1", SUBJECT_ID, 12L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getExceptionType())
+                .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);
+        verifyNoInteractions(inquiryAttachmentRepository);
     }
 
     @Test
