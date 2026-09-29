@@ -30,7 +30,7 @@ public record InquiryDetailResponse(
 
     public static InquiryDetailResponse of(Inquiry inquiry, List<String> attachmentUrls) {
         return new InquiryDetailResponse(inquiry.getInquiryId(), inquiry.getTitle(),
-                InquiryStatus.of(inquiry.getAnsweredAt()), inquiry.getEmail(), inquiry.getDescription(),
+                InquiryStatus.of(inquiry.isAnswered()), inquiry.getEmail(), inquiry.getDescription(),
                 attachmentUrls, inquiry.getCreatedAt(), inquiry.getAnsweredAt());
     }
 }

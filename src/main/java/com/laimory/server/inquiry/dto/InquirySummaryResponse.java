@@ -23,6 +23,6 @@ public record InquirySummaryResponse(
 
     public static InquirySummaryResponse from(Inquiry inquiry) {
         return new InquirySummaryResponse(inquiry.getInquiryId(), inquiry.getTitle(),
-                InquiryStatus.of(inquiry.getAnsweredAt()), inquiry.getCreatedAt(), inquiry.getAnsweredAt());
+                InquiryStatus.of(inquiry.isAnswered()), inquiry.getCreatedAt(), inquiry.getAnsweredAt());
     }
 }
