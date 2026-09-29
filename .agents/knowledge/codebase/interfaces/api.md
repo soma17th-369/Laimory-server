@@ -38,9 +38,9 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 31개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 33개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
-inquiries attachment-uploads POST·접수 POST)는
+inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET)는
 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -290,19 +290,34 @@ hard delete 경로는 없다. 관리자 입력 규칙은 title strip 후 1~255�
 HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
 
 `POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
-사용자의 문의 접수 계약이다(`InquiryApi` — hidden `@CurrentSubject UUID subjectId`, 보호 operation 2개).
+사용자의 문의 접수 계약이다(`InquiryApi` — hidden `@CurrentSubject UUID subjectId`, 접수 operation 2개).
 접수 body는 `email`·`title`·`description`이 필수이고(#530 — 구 `body` 필드는 받지 않는다) `attachmentFilenames`는
 optional(누락·null·빈 배열 = 첨부 없음, 최대 3개)이다(분류·채널 필드는 두지 않는다). 누락·형식(`@Email`)·
 길이(email 255자, description 2,000자) 위반은 Bean Validation 400 `-400`, title은 앞뒤 공백 제거 후 100자 초과면
 `Inquiry.of`가 거절해 같은 400 `-400`(경계 `@Size`는 제거 전 길이를 세므로 두지 않는다), 첨부 filename이 presign 형식(`{uuidv7}.{jpg|png|webp}`)이 아니거나
 중복이면 400 `-400`, 3개 초과는 400 `-1004`다. 성공은 `201 + body=null` — 201이 곧 접수 완료이며 응답에
-문의 ID를 싣지 않는다(앱에 "내 문의" 조회가 없고 답변은 입력한 이메일로 관리자가 직접 회신한다).
+문의 ID를 싣지 않는다(접수 후 앱은 내 문의 목록을 다시 조회하면 되고, 답변은 입력한 이메일로 관리자가 직접 회신한다).
 서버는 첨부의 S3 업로드 완료를 확인하지 않고, 같은 내용의 재요청은 새 문의로 접수된다(중복 차단 없음 —
 승인된 결정). 첨부 presign은 사진 업로드와 같은 계약(`contentType`·`size` 필수, `size`가 서명의
 Content-Length에 바인딩, `-1004`/`-1005`/`-1007`)이되 요청당 최대 3장이고 key prefix가
 `{sha256(subject)}/inquiries/`다. 접수 request와 관리자 조회 response는 access log에서 privacy skeleton으로
 마스킹된다(ID·처리 시각만 남는다). 관리자 열람·처리는 `/admin/api/inquiries`(목록 GET·상세 GET —
 첨부는 presigned GET `viewUrl`·`PUT /{id}/answered` 처리됨 표시/해제)가 소유한다. **새 error code는
+추가하지 않았다.**
+
+`GET /a/api/{version}/inquiries`와 `GET /a/api/{version}/inquiries/{inquiryId}`(#529)는 같은 `InquiryApi`의
+"내 문의" 조회다(owner는 `@CurrentSubject` — 클라이언트 입력 아님). 목록은
+`{ inquiries: [{ inquiryId, title, status, createdAt, answeredAt }] }`로 **최신 순(`inquiryId DESC`) 최대 50건**
+(페이지네이션 없음 — 넘치면 가장 오래된 문의가 빠진다)이고 없으면 200 + 빈 배열이다. 목록은 제목으로 훑는
+화면이라 `description`·`email`·첨부를 싣지 않는다. 상세는 평면
+`{ inquiryId, title, status, email, description, attachmentUrls, createdAt, answeredAt }`이고, `attachmentUrls`는
+접수 요청(PK) 순서의 문자열 배열(첨부 없음 = `[]`)이다 — 사진과 같은 **무서명 CloudFront 고정 URL**
+(`https://{PHOTO_CDN_DOMAIN}/{sha256(subject)}/inquiries/{filename}`)이라 만료가 없고, filename은 싣지 않는다.
+없는 문의와 다른 사용자의 문의는 `(inquiryId, subjectId)` 한 조회의 빈 결과라 같은 404 `-404`로 존재를
+숨기고, 숫자가 아닌 id는 400 `-400`이다. `status`는 저장 컬럼이 아니라 `answered_at`에서 서버가 파생하는
+`InquiryStatus`(`RECEIVED` = null, `ANSWERED` = not null)이며 관리자가 처리됨을 해제하면 `RECEIVED`로
+되돌아간다(단조 증가 아님). 시각은 Asia/Seoul 벽시계·offset 없음. 두 응답은 access log에서 privacy
+skeleton으로 마스킹된다(ID·상태·처리 시각만 남는다). 답변 본문은 여전히 서버에 없다. **새 error code는
 추가하지 않았다.**
 
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는

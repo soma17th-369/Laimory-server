@@ -128,6 +128,14 @@ versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작
 GetObject가 없으며 이 범위 제한은 의도된 것이다(CDN 서빙 경로를 건드리지 않는다).
 ⚠️ 권한을 `head-object`로 판정할 때는 **실재하는 객체**를 써야 한다 — `s3:ListBucket`이 없으면 없는 key는
 404가 아니라 403으로 돌아와서, 권한이 있어도 거부처럼 보인다.
+
+앱 소유자의 첨부 열람(#529)은 presigned GET이 아니라 사진과 같은 **무서명 CloudFront 고정 URL**
+(`https://{PHOTO_CDN_DOMAIN}/{sha256(subject)}/inquiries/{filename}`, `InquiryAttachmentService.cdnUrl`)이다.
+2026-09-29 조회로 확인한 전제: distribution은 path별 cache behavior·CloudFront Function·서명(trusted key group)
+없이 bucket 하나를 origin으로 서빙하고, bucket 정책의 OAC `s3:GetObject`는 **bucket 전체(`/*`)** 범위다
+(실재 `inquiries` 객체가 CDN으로 200, S3 직접은 403). dev·prod는 같은 bucket·distribution을 쓴다.
+**제약: OAC 읽기 정책은 `*/inquiries/*`를 포함해야 한다.** `*/photos/*`로 좁히면 서버 에러 없이 앱의 문의
+첨부가 전부 403으로 깨진다. CDN 캐시는 탈퇴 삭제 뒤에도 TTL 동안 사본을 낼 수 있다(사진과 같은 조건).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)
