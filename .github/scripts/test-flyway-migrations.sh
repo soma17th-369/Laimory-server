@@ -275,5 +275,13 @@ if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, ema
   fail 'inquiry insert without title succeeded'
 fi
 mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, title, description, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'y@example.com', 't', 'd', NOW(6), NOW(6))"
+# 첨부 position 제거: 컬럼이 없어지고, 한 문의에 첨부 여러 장이 들어가며(UNIQUE(inquiry_id)로 줄어들지 않음),
+# 첨부 FK는 inquiry_id 단독 index 위에서 계속 강제된다.
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiry_attachments' AND COLUMN_NAME='position'")" = 0 ] || fail 'inquiry_attachments.position still exists'
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename) SELECT inquiry_id, 'a.jpg' FROM inquiries WHERE email='y@example.com'; INSERT INTO inquiry_attachments (inquiry_id, filename) SELECT inquiry_id, 'b.jpg' FROM inquiries WHERE email='y@example.com'"
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM inquiry_attachments")" = 2 ] || fail 'inquiry_attachments no longer accepts multiple attachments per inquiry'
+if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename) VALUES (999999, 'c.jpg')" >/dev/null 2>&1; then
+  fail 'inquiry_attachments.inquiry_id FK is not enforced'
+fi
 flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 validate >"$WORK/inquiry-title-validate.log" 2>&1
-ok 'V4 to V5 renames inquiry body to description, backfills title and requires it afterwards'
+ok 'V4 to V5 renames inquiry body to description, backfills title, requires it afterwards and drops attachment position'

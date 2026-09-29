@@ -73,7 +73,6 @@ class InquiryServiceTest {
         assertThat(attachments.getValue()).extracting(InquiryAttachment::getInquiryId).containsOnly(11L);
         assertThat(attachments.getValue()).extracting(InquiryAttachment::getFilename)
                 .containsExactly(FILENAME_A, FILENAME_B);
-        assertThat(attachments.getValue()).extracting(InquiryAttachment::getPosition).containsExactly(0, 1);
     }
 
     @Test
@@ -133,12 +132,12 @@ class InquiryServiceTest {
     }
 
     @Test
-    void getPairsInquiryWithItsAttachmentFilenamesInPositionOrder() {
+    void getPairsInquiryWithItsAttachmentFilenamesInRequestOrder() {
         Inquiry inquiry = inquiry(12L);
         when(inquiryRepository.findByInquiryId(12L)).thenReturn(Optional.of(inquiry));
-        when(inquiryAttachmentRepository.findByInquiryIdOrderByPositionAsc(12L)).thenReturn(List.of(
-                InquiryAttachment.of(12L, FILENAME_A, 0),
-                InquiryAttachment.of(12L, FILENAME_B, 1)));
+        when(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(12L)).thenReturn(List.of(
+                InquiryAttachment.of(12L, FILENAME_A),
+                InquiryAttachment.of(12L, FILENAME_B)));
 
         InquiryService.InquiryWithAttachments item = service().get(12L);
 

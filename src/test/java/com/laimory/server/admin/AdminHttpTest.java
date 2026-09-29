@@ -232,11 +232,11 @@ class AdminHttpTest {
         Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
                 "사진 올리면 멈춰요");
         ReflectionTestUtils.setField(inquiry, "inquiryId", 9L);
-        InquiryAttachment attachment = InquiryAttachment.of(9L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg", 0);
+        InquiryAttachment attachment = InquiryAttachment.of(9L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg");
         when(inquiries.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(inquiry));
         when(inquiries.findByInquiryId(9L)).thenReturn(Optional.of(inquiry));
         when(inquiries.findByInquiryId(404L)).thenReturn(Optional.empty());
-        when(inquiryAttachments.findByInquiryIdOrderByPositionAsc(9L)).thenReturn(List.of(attachment));
+        when(inquiryAttachments.findByInquiryIdOrderByInquiryAttachmentIdAsc(9L)).thenReturn(List.of(attachment));
         when(storage.generatePresignedGetUrl(any())).thenReturn("https://s3.example/view?X-Amz-Signature=abc");
 
         HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);

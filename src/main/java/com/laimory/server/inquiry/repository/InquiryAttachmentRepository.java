@@ -11,7 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface InquiryAttachmentRepository extends JpaRepository<InquiryAttachment, Long> {
 
-    List<InquiryAttachment> findByInquiryIdOrderByPositionAsc(Long inquiryId);
+    /** 요청 순서 — 한 접수의 첨부는 한 transaction에서 요청 순서대로 INSERT되어 PK 순서와 같다. */
+    List<InquiryAttachment> findByInquiryIdOrderByInquiryAttachmentIdAsc(Long inquiryId);
 
     /** 계정 삭제(#302) — 문의 행보다 먼저 지운다(FK RESTRICT). 호출자 transaction에 합류한다. */
     @Modifying
