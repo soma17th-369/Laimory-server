@@ -9,7 +9,6 @@ import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
 import com.laimory.server.inquiry.repository.InquiryRepository;
 import com.laimory.server.terms.TermTimes;
 import java.time.Clock;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,16 +39,14 @@ public class InquiryService {
      * 확인하지 않는다(계획의 승인된 결정 — 요청 body 밖 상태에 의존하지 않는다).
      */
     @Transactional
-    public Inquiry register(String applicationVersion, UUID subjectId, String email, String body,
-                            List<String> attachmentFilenames) {
+    public Inquiry register(String applicationVersion, UUID subjectId, String email, String title,
+                            String description, List<String> attachmentFilenames) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         List<String> filenames = validateAttachmentFilenames(attachmentFilenames);
-        Inquiry inquiry = inquiryRepository.save(Inquiry.of(subjectId, email, body));
-        List<InquiryAttachment> attachments = new ArrayList<>(filenames.size());
-        for (int position = 0; position < filenames.size(); position++) {
-            attachments.add(InquiryAttachment.of(inquiry.getInquiryId(), filenames.get(position), position));
-        }
-        inquiryAttachmentRepository.saveAll(attachments);
+        Inquiry inquiry = inquiryRepository.save(Inquiry.of(subjectId, email, title, description));
+        inquiryAttachmentRepository.saveAll(filenames.stream()
+                .map(filename -> InquiryAttachment.of(inquiry.getInquiryId(), filename))
+                .toList());
         return inquiry;
     }
 
@@ -61,7 +58,7 @@ public class InquiryService {
     /** 관리자 상세 — 없으면 404. */
     public InquiryWithAttachments get(long inquiryId) {
         Inquiry inquiry = requireInquiry(inquiryId);
-        List<String> filenames = inquiryAttachmentRepository.findByInquiryIdOrderByPositionAsc(inquiryId).stream()
+        List<String> filenames = inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiryId).stream()
                 .map(InquiryAttachment::getFilename)
                 .toList();
         return new InquiryWithAttachments(inquiry, filenames);

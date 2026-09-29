@@ -70,9 +70,12 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
   공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가)
 - `inquiries → inquiry_attachments` (#518 — 앱 인증 접수 문의. owner는 콘텐츠 subject(FK `RESTRICT`)이고
-  답장 `email`·`body`·관리자 `answered_at`을 담는다. 첨부는 filename만
+  답장 `email`·`title`(최대 100자)·`description`·관리자 `answered_at`을 담는다. 첨부는 filename만
   plain FK 자식 행으로 저장하고 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 파생한다. 답변은
-  저장하지 않으며 #302 삭제 worker가 owner 행 단계에서 첨부 → 문의 순으로 지운다. V4에서 추가)
+  저장하지 않으며 #302 삭제 worker가 owner 행 단계에서 첨부 → 문의 순으로 지운다. V4에서 추가,
+  V5(#530)에서 `body`를 `description`으로 rename하고 `title`을 추가했다 — 기존 행 title은 `(제목 없음)`.
+  같은 V5에서 첨부 `position`을 제거했다 — 첨부 순서는 한 transaction의 요청 순서 INSERT에 따른 PK 순서다.
+  V5는 구 앱과 호환되지 않는 승인된 예외다(배포 중 구 앱 접수 실패, 구 image rollback 기동 실패))
 
 `db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
 Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.

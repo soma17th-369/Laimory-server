@@ -47,7 +47,8 @@ class InquiryControllerTest {
     private static final String UPLOADS = INQUIRIES + "/attachment-uploads";
     private static final String FILENAME = "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg";
     private static final String VALID_BODY = "{\"email\":\"user@example.com\","
-            + "\"body\":\"앱이 멈춰요\",\"attachmentFilenames\":[\"" + FILENAME + "\"]}";
+            + "\"title\":\"앱이 멈춰요\",\"description\":\"사진 올리면 멈춰요\","
+            + "\"attachmentFilenames\":[\"" + FILENAME + "\"]}";
 
     @Autowired
     private MockMvc mockMvc;
@@ -87,26 +88,29 @@ class InquiryControllerTest {
                 .andExpect(jsonPath("$.body").doesNotExist());
 
         verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", "앱이 멈춰요",
-                List.of(FILENAME));
+                "사진 올리면 멈춰요", List.of(FILENAME));
     }
 
     @Test
     void createInquiryWithoutAttachmentsPassesNullList() throws Exception {
         mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"user@example.com\",\"body\":\"문의\"}"))
+                        .content("{\"email\":\"user@example.com\",\"title\":\"문의\",\"description\":\"내용\"}"))
                 .andExpect(status().isCreated());
 
-        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", "문의", null);
+        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", "문의", "내용", null);
     }
 
     @Test
-    void createInquiryRejectsInvalidEmailAndBlankBody() throws Exception {
+    void createInquiryRejectsInvalidEmailMissingOrBlankTitleAndDescriptionAndLegacyBody() throws Exception {
         // 첨부 개수 초과는 경계가 아니라 서비스 검증(-1004)이다 — 아래 service 매핑 테스트가 소유한다.
         for (String bad : List.of(
-                "{\"body\":\"문의\"}",
-                "{\"email\":\"not-an-email\",\"body\":\"문의\"}",
-                "{\"email\":\"user@example.com\",\"body\":\"   \"}")) {
+                "{\"title\":\"문의\",\"description\":\"내용\"}",
+                "{\"email\":\"not-an-email\",\"title\":\"문의\",\"description\":\"내용\"}",
+                "{\"email\":\"user@example.com\",\"description\":\"내용\"}",
+                "{\"email\":\"user@example.com\",\"title\":\"   \",\"description\":\"내용\"}",
+                "{\"email\":\"user@example.com\",\"title\":\"문의\",\"description\":\"   \"}",
+                "{\"email\":\"user@example.com\",\"body\":\"구 필드\"}")) {
             mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                             .contentType(MediaType.APPLICATION_JSON).content(bad))
                     .andExpect(status().isBadRequest())
@@ -117,8 +121,22 @@ class InquiryControllerTest {
     }
 
     @Test
+    void createInquiryPassesTitleOverLimitOnlyBySurroundingSpacesToService() throws Exception {
+        // 경계는 제목 길이를 세지 않는다 — 앞뒤 공백 제거 후 길이는 Inquiry.of가 검사한다.
+        String paddedTitle = " " + "제".repeat(100) + " ";
+
+        mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"title\":\"" + paddedTitle
+                                + "\",\"description\":\"내용\"}"))
+                .andExpect(status().isCreated());
+
+        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", paddedTitle, "내용", null);
+    }
+
+    @Test
     void createInquiryMapsServiceValidationFailuresToErrorCodes() throws Exception {
-        when(inquiryService.register(any(), any(), any(), any(), any()))
+        when(inquiryService.register(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("attachmentFilenames[0] must be a presigned filename"))
                 .thenThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 3));
 

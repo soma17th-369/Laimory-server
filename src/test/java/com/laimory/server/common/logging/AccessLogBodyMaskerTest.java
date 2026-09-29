@@ -121,21 +121,26 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
-    void inquiryRequestAndAdminResponsesMaskEmailBodyAndFilenames() throws Exception {
-        // #518 접수 body는 답장 email과 문의 원문이다 — 구조 필드(ID·처리 시각)만 남고 나머지는 allowlist 밖이라 마스크다.
+    void inquiryRequestAndAdminResponsesMaskEmailTitleDescriptionAndFilenames() throws Exception {
+        // #518·#530 접수 body는 답장 email과 문의 제목·내용 원문이다 — 구조 필드(ID·처리 시각)만 남고 나머지는
+        // allowlist 밖이라 마스크다.
         String rawEmail = "RAW_EMAIL_518_NEVER_LOG@example.com";
-        String rawBody = "RAW_INQUIRY_518_NEVER_LOG";
-        String requestBody = "{\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
+        String rawTitle = "RAW_INQUIRY_TITLE_530_NEVER_LOG";
+        String rawDescription = "RAW_INQUIRY_DESCRIPTION_530_NEVER_LOG";
+        String requestBody = "{\"email\":\"" + rawEmail + "\",\"title\":\"" + rawTitle + "\","
+                + "\"description\":\"" + rawDescription + "\","
                 + "\"attachmentFilenames\":[\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"]}";
 
         JsonNode maskedRequest = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries", requestBody));
 
         assertThat(maskedRequest.get("email").asText()).isEqualTo("***");
-        assertThat(maskedRequest.get("body").asText()).isEqualTo("***");
+        assertThat(maskedRequest.get("title").asText()).isEqualTo("***");
+        assertThat(maskedRequest.get("description").asText()).isEqualTo("***");
         assertThat(maskedRequest.get("attachmentFilenames").asText()).isEqualTo("***");
-        assertThat(maskedRequest.toString()).doesNotContain(rawEmail).doesNotContain(rawBody);
+        assertThat(maskedRequest.toString()).doesNotContain(rawEmail).doesNotContain(rawTitle)
+                .doesNotContain(rawDescription);
 
-        // body는 타입 무관 마스크다 — JSON number/boolean로 보낸 원문(전화번호 등)도 남지 않는다.
+        // 구 필드명 body는 타입 무관 마스크다 — JSON number/boolean로 보낸 원문(전화번호 등)도 남지 않는다.
         JsonNode maskedNumberBody = objectMapper.readTree(maskRequest("POST", "/a/api/v1/inquiries",
                 "{\"email\":\"" + rawEmail + "\",\"body\":821012345678}"));
         assertThat(maskedNumberBody.get("body").asText()).isEqualTo("***");
@@ -149,22 +154,27 @@ class AccessLogBodyMaskerTest {
                 .contains("\"contentType\":\"image/jpeg\"").contains("\"size\":1024");
 
         String listBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":[{\"inquiryId\":5,"
-                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\","
+                + "\"email\":\"" + rawEmail + "\",\"title\":\"" + rawTitle + "\","
+                + "\"description\":\"" + rawDescription + "\","
                 + "\"answeredAt\":\"2026-09-24T10:00:00\",\"createdAt\":\"2026-09-23T09:00:00\"}]}";
         JsonNode maskedList = objectMapper.readTree(masker.maskResponse(
                 new MockHttpServletRequest("GET", "/admin/api/inquiries"), jsonResponse(), bytes(listBody), false));
         assertThat(maskedList.at("/body/0/inquiryId").asLong()).isEqualTo(5);
         assertThat(maskedList.at("/body/0/answeredAt").asText()).isEqualTo("2026-09-24T10:00:00");
         assertThat(maskedList.at("/body/0/email").asText()).isEqualTo("***");
-        assertThat(maskedList.at("/body/0/body").asText()).isEqualTo("***");
-        assertThat(maskedList.toString()).doesNotContain(rawEmail).doesNotContain(rawBody);
+        assertThat(maskedList.at("/body/0/title").asText()).isEqualTo("***");
+        assertThat(maskedList.at("/body/0/description").asText()).isEqualTo("***");
+        assertThat(maskedList.toString()).doesNotContain(rawEmail).doesNotContain(rawTitle)
+                .doesNotContain(rawDescription);
 
         String detailBody = "{\"header\":{\"code\":0,\"message\":\"\"},\"body\":{\"inquiry\":{\"inquiryId\":5,"
-                + "\"email\":\"" + rawEmail + "\",\"body\":\"" + rawBody + "\"},"
+                + "\"email\":\"" + rawEmail + "\",\"title\":\"" + rawTitle + "\","
+                + "\"description\":\"" + rawDescription + "\"},"
                 + "\"attachments\":[{\"filename\":\"a.jpg\",\"viewUrl\":\"https://s3/x?X-Amz-Signature=RAW_SIG\"}]}}";
         String maskedDetail = masker.maskResponse(
                 new MockHttpServletRequest("GET", "/admin/api/inquiries/5"), jsonResponse(), bytes(detailBody), false);
-        assertThat(maskedDetail).doesNotContain(rawEmail).doesNotContain(rawBody).doesNotContain("RAW_SIG");
+        assertThat(maskedDetail).doesNotContain(rawEmail).doesNotContain(rawTitle)
+                .doesNotContain(rawDescription).doesNotContain("RAW_SIG");
         // 처리됨 토글 PUT은 시각·boolean뿐이라 대상이 아니다.
         assertThat(maskRequest("PUT", "/admin/api/inquiries/5/answered", "{\"answered\":true}"))
                 .isEqualTo("{\"answered\":true}");

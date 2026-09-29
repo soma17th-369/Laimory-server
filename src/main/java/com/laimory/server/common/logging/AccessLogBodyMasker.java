@@ -99,8 +99,9 @@ final class AccessLogBodyMasker {
             "timelineeventid", "items", "timelineitemid",
             // 약관 구조(title·contentUrl은 제외 — 값 자체를 로그에 남기지 않는다)
             "terms", "agreements", "termtype", "version", "acceptedat",
-            // 문의(#518) 구조 — ID·처리 시각만. email·첨부 filename은 allowlist 밖이라 마스크되고,
-            // 문의 원문 body는 envelope body와 이름이 같아 아래 container-only 규칙이 scalar 값을 마스크한다.
+            // 문의(#518) 구조 — ID·처리 시각만. email·title·description·첨부 filename은 allowlist 밖이라
+            // 마스크되고, 구 필드명 body로 보낸 원문은 envelope body와 이름이 같아 아래 container-only 규칙이
+            // scalar 값을 마스크한다.
             "inquiryid", "answeredat");
 
     /** allowlist에 있어도 scalar 값(null 제외)이면 타입 무관 마스크하는 필드 — envelope 구조로만 허용된 이름이다. */
@@ -221,7 +222,7 @@ final class AccessLogBodyMasker {
             return TextNode.valueOf(MASK);
         }
         if (SKELETON_CONTAINER_ONLY_FIELDS.contains(normalized) && value.isValueNode() && !value.isNull()) {
-            // envelope의 body는 object/array/null로만 온다 — 같은 이름의 사용자 원문 필드(문의 body, #518)는
+            // envelope의 body는 object/array/null로만 온다 — 같은 이름의 사용자 원문 필드(구 문의 body, #518)는
             // scalar이며, 타입 무관 마스크한다(숫자 body로 보낸 전화번호 등이 shape guard를 우회하지 않게).
             return TextNode.valueOf(MASK);
         }

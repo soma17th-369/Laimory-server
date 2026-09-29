@@ -11,6 +11,7 @@ import lombok.Getter;
 /**
  * 문의 첨부 사진 하나 — 문의 행에 plain {@code Long} FK로 연결한다(연관 매핑 없음, 다른 엔티티 선례).
  * DB에는 filename만 저장하고 S3 full key는 subject namespace에서 파생한다({@code InquiryObjectKeys}).
+ * 첨부 순서는 PK 순서다 — 한 접수의 첨부는 한 transaction에서 요청 순서대로 저장된다.
  */
 @Entity
 @Table(name = "inquiry_attachments")
@@ -28,20 +29,15 @@ public class InquiryAttachment {
     @Column(name = "filename", nullable = false, updatable = false, length = 64)
     private String filename;
 
-    /** 접수 요청의 순서(0부터) — 관리자 화면이 같은 순서로 보여준다. */
-    @Column(name = "position", nullable = false, updatable = false)
-    private int position;
-
     protected InquiryAttachment() {
     }
 
-    private InquiryAttachment(Long inquiryId, String filename, int position) {
+    private InquiryAttachment(Long inquiryId, String filename) {
         this.inquiryId = inquiryId;
         this.filename = filename;
-        this.position = position;
     }
 
-    public static InquiryAttachment of(Long inquiryId, String filename, int position) {
-        return new InquiryAttachment(inquiryId, filename, position);
+    public static InquiryAttachment of(Long inquiryId, String filename) {
+        return new InquiryAttachment(inquiryId, filename);
     }
 }

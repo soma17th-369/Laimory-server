@@ -148,8 +148,7 @@ async function loadInquiries() {
   for (const inquiry of inquiries) {
     if (unansweredOnly && inquiry.answeredAt) continue;
     const row = document.createElement("tr");
-    const preview = inquiry.body.length > 60 ? inquiry.body.slice(0, 60) + "…" : inquiry.body;
-    for (const value of [String(inquiry.inquiryId), inquiry.email, preview,
+    for (const value of [String(inquiry.inquiryId), inquiry.email, inquiry.title,
       shortDate(inquiry.createdAt), inquiry.answeredAt ? `처리됨 ${shortDate(inquiry.answeredAt)}` : "미처리"]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }
@@ -166,8 +165,9 @@ async function loadInquiries() {
 async function showInquiry(inquiryId) {
   try {
     const detail = await api(`/admin/api/inquiries/${encodeURIComponent(inquiryId)}`);
-    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
-    $("inquiry-detail-body").textContent = detail.inquiry.body;
+    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.title}`;
+    $("inquiry-detail-meta").textContent = `${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
+    $("inquiry-detail-description").textContent = detail.inquiry.description;
     $("inquiry-detail-attachments").replaceChildren(...detail.attachments.map(attachment => {
       const link = document.createElement("a"); link.href = attachment.viewUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
       const image = document.createElement("img"); image.src = attachment.viewUrl; image.alt = attachment.filename; image.loading = "lazy";
