@@ -105,6 +105,16 @@ class InquiryServiceTest {
     }
 
     @Test
+    void registerAcceptsTitleOfMaxLengthAfterStrippingSurroundingSpaces() {
+        when(inquiryRepository.save(any(Inquiry.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        String title = "제".repeat(Inquiry.TITLE_MAX_LENGTH);
+
+        Inquiry inquiry = service().register("v1", SUBJECT_ID, "u@example.com", "  " + title + "  ", "내용", null);
+
+        assertThat(inquiry.getTitle()).isEqualTo(title);
+    }
+
+    @Test
     void registerRejectsBlankOrOverlongTitleBlankDescriptionAndOverlongEmailBeforeSaving() {
         InquiryService service = service();
 

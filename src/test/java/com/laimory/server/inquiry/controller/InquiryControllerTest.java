@@ -109,7 +109,6 @@ class InquiryControllerTest {
                 "{\"email\":\"not-an-email\",\"title\":\"문의\",\"description\":\"내용\"}",
                 "{\"email\":\"user@example.com\",\"description\":\"내용\"}",
                 "{\"email\":\"user@example.com\",\"title\":\"   \",\"description\":\"내용\"}",
-                "{\"email\":\"user@example.com\",\"title\":\"" + "제".repeat(101) + "\",\"description\":\"내용\"}",
                 "{\"email\":\"user@example.com\",\"title\":\"문의\",\"description\":\"   \"}",
                 "{\"email\":\"user@example.com\",\"body\":\"구 필드\"}")) {
             mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
@@ -119,6 +118,20 @@ class InquiryControllerTest {
         }
 
         verifyNoInteractions(inquiryService);
+    }
+
+    @Test
+    void createInquiryPassesTitleOverLimitOnlyBySurroundingSpacesToService() throws Exception {
+        // 경계는 제목 길이를 세지 않는다 — 앞뒤 공백 제거 후 길이는 Inquiry.of가 검사한다.
+        String paddedTitle = " " + "제".repeat(100) + " ";
+
+        mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"title\":\"" + paddedTitle
+                                + "\",\"description\":\"내용\"}"))
+                .andExpect(status().isCreated());
+
+        verify(inquiryService).register("v1", SUBJECT_ID, "user@example.com", paddedTitle, "내용", null);
     }
 
     @Test

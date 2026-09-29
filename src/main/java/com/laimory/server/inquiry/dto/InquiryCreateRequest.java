@@ -17,8 +17,9 @@ public record InquiryCreateRequest(
                 description = "답장 받을 이메일. 회원 정보에 이메일이 없어 문의마다 입력받는다. 최대 255자")
         @NotBlank @Email @Size(max = Inquiry.EMAIL_MAX_LENGTH) String email,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "앱이 멈춰요",
-                description = "문의 제목. 공백만은 불가, 앞뒤 공백 제거 후 저장, 최대 100자")
-        @NotBlank @Size(max = Inquiry.TITLE_MAX_LENGTH) String title,
+                description = "문의 제목. 공백만은 불가, 앞뒤 공백 제거 후 최대 100자")
+        // 길이는 앞뒤 공백 제거 후 Inquiry.of가 검사한다(경계 @Size는 제거 전 길이를 세어 계약과 어긋난다).
+        @NotBlank String title,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED,
                 description = "문의 내용(줄바꿈 포함 원문). 공백만은 불가, 최대 2,000자")
         @NotBlank @Size(max = Inquiry.DESCRIPTION_MAX_LENGTH) String description,
