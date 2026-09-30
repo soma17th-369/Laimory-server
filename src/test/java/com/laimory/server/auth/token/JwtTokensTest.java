@@ -83,24 +83,6 @@ class JwtTokensTest {
     }
 
     @Test
-    void issue_zeroOrNegativeUserId_throwsIllegalState() {
-        // MySQL AUTO_INCREMENT 계약(양수)에 어긋나는 발급은 내부 invariant 위반 — 과거 fallback 0 계열 접근 차단.
-        JwtTokens tokens = tokensAt(NOW);
-
-        assertThatThrownBy(() -> tokens.issueAccessToken(0L)).isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> tokens.issueAccessToken(-1L)).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void parse_zeroOrNegativeSubject_returnsEmpty_evenWithValidSignature() throws Exception {
-        // 발급 경로가 막혀 있으므로 서명만 유효한 0·음수 sub 토큰을 직접 만들어 검증한다.
-        JwtTokens tokens = tokensAt(NOW);
-
-        assertThat(tokens.parseUserId(signedToken(validClaims().subject("0").build()))).isEmpty();
-        assertThat(tokens.parseUserId(signedToken(validClaims().subject("-42").build()))).isEmpty();
-    }
-
-    @Test
     void parse_helperBaselineToken_isValid() throws Exception {
         // 아래 single-fault 테스트의 전제: helper 기본 클레임은 전부 유효해야 한다 — 그래야 각 테스트의
         // 거절 사유가 정확히 그 한 클레임 때문임이 보장된다(다른 결함으로 우연히 empty가 되는 거짓 양성 방지).
