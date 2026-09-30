@@ -36,12 +36,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     @Modifying
     @Transactional // REQUIRED — 탈퇴 transaction(UserWithdrawalTransactionService)에 합류한다
-    @Query("update User u set u.status = com.laimory.server.user.UserStatus.WITHDRAWAL_PENDING, "
+    @Query("update User u set u.status = :pending, "
             + "u.withdrawalRequestedAt = :requestedAt, u.providerUserId = null, "
             + "u.updatedAt = CURRENT_TIMESTAMP "
-            + "where u.userId = :userId and u.status = com.laimory.server.user.UserStatus.ACTIVE")
+            + "where u.userId = :userId and u.status = :active")
     int transitionToWithdrawalPending(@Param("userId") Long userId,
-                                      @Param("requestedAt") LocalDateTime requestedAt);
+                                      @Param("requestedAt") LocalDateTime requestedAt,
+                                      @Param("pending") UserStatus pending,
+                                      @Param("active") UserStatus active);
+
+    default int transitionToWithdrawalPending(Long userId, LocalDateTime requestedAt) {
+        return transitionToWithdrawalPending(userId, requestedAt, UserStatus.WITHDRAWAL_PENDING, UserStatus.ACTIVE);
+    }
 
     /**
      * Kakao 재로그인의 nickname-only 조건부 갱신(#305 §5.4). {@code ACTIVE} 행만 대상이라 탈퇴와 겹친
@@ -53,10 +59,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Transactional
     @Query("update User u set u.nickname = :nickname, u.updatedAt = CURRENT_TIMESTAMP "
             + "where u.provider = :provider and u.providerUserId = :providerUserId "
-            + "and u.status = com.laimory.server.user.UserStatus.ACTIVE")
+            + "and u.status = :active")
     int updateNicknameIfActive(@Param("provider") Provider provider,
                                @Param("providerUserId") String providerUserId,
-                               @Param("nickname") String nickname);
+                               @Param("nickname") String nickname,
+                               @Param("active") UserStatus active);
+
+    default int updateNicknameIfActive(Provider provider, String providerUserId, String nickname) {
+        return updateNicknameIfActive(provider, providerUserId, nickname, UserStatus.ACTIVE);
+    }
 
     /**
      * 계정 삭제 finalization의 회원 행 제거(#302 — 완전 소거 확정, tombstone 없음).
