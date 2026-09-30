@@ -39,25 +39,12 @@ public class AccountErasureJobService {
     }
 
     /**
-     * 정지 대상 claim — 접수 후 유예 대기가 끝난 {@code PENDING} 행을 잠그고 표식을 갱신한다.
-     *
-     * @param eligibleBefore {@code now - quiesce-delay} — 이 시각 이전 접수만 정지 대상이다
-     * @param staleBefore    {@code now - stale-after} — 이보다 최근에 잡힌 행은 건너뛴다
-     */
-    @Transactional
-    public List<AccountErasureJob> claimForQuiesce(
-            LocalDateTime eligibleBefore, LocalDateTime staleBefore, LocalDateTime claimedAt, int limit) {
-        return markClaimed(accountErasureJobRepository
-                .findQuiesceClaimableForUpdateSkipLocked(eligibleBefore, staleBefore, limit), claimedAt);
-    }
-
-    /**
-     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code QUIESCED} 행을 잠그고
+     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code PENDING} 행을 잠그고
      * {@code updated_at}을 오늘로 갱신한다. 같은 날 재선택을 막고, 실패한 행은 {@code updated_at}이
      * 전날이 되는 다음 날 실행이 다시 잡는다(#365와 같은 규칙).
      *
-     * @param windowStart    {@code T-(grace+window) 00:00} — 이보다 오래된 접수는 만료다
-     * @param eligibleBefore {@code T-grace 00:00} — 유예가 지난 접수만 대상이다
+     * @param windowStart    {@code T-5 00:00} — 이보다 오래된 접수는 만료다
+     * @param eligibleBefore {@code T-2 00:00} — 유예가 지난 접수만 대상이다
      * @param todayStart     {@code T 00:00}(KST)
      */
     @Transactional
@@ -76,29 +63,29 @@ public class AccountErasureJobService {
         return claimed;
     }
 
-    /** 조건부 단계 전이. {@code false} = 기대 상태가 아님(다른 worker가 이미 처리) — 실패가 아니다. */
-    public boolean transition(long jobId, AccountErasureJobStatus expected, AccountErasureJobStatus next) {
-        return accountErasureJobRepository.transition(jobId, expected, next, LocalDateTime.now(clock)) == 1;
-    }
-
-    /** 사람이 봐야 하는 실패로 격리한다. 이후 claim 대상에서 빠진다. */
-    public boolean markManualReview(long jobId, AccountErasureJobStatus expected) {
-        return transition(jobId, expected, AccountErasureJobStatus.MANUAL_REVIEW);
+    /**
+     * 사람이 봐야 하는 실패로 격리한다({@code PENDING → MANUAL_REVIEW}). 이후 claim 대상에서 빠진다.
+     * {@code false} = 이미 {@code PENDING}이 아님(다른 worker가 처리) — 실패가 아니다.
+     */
+    public boolean markManualReview(long jobId) {
+        return accountErasureJobRepository.transition(jobId, AccountErasureJobStatus.PENDING,
+                AccountErasureJobStatus.MANUAL_REVIEW, LocalDateTime.now(clock)) == 1;
     }
 
     /**
      * 완료 — job 행을 지워 {@code users}를 향한 {@code ON DELETE RESTRICT}를 푼다.
      * <b>finalization transaction에 합류</b>하며 user 행 삭제보다 먼저 호출해야 한다.
-     * {@code false} = 다른 worker가 이미 완료(0행).
+     * {@code PENDING} 행만 지운다 — 그 사이 {@code MANUAL_REVIEW}로 격리된 job은 지우지 않는다.
+     * {@code false} = 기대 상태가 아니거나 다른 worker가 이미 완료(0행).
      */
-    public boolean deleteCompleted(long jobId, AccountErasureJobStatus expected) {
-        return accountErasureJobRepository.deleteByIdAndStatus(jobId, expected) == 1;
+    public boolean deleteCompleted(long jobId) {
+        return accountErasureJobRepository.deleteByIdAndStatus(jobId, AccountErasureJobStatus.PENDING) == 1;
     }
 
     /**
      * 처리 창을 벗어난 미완료 job 수. {@code MANUAL_REVIEW}는 자체 경보가 있어 제외한다.
      *
-     * @param windowStart {@code T-(grace+window) 00:00}(KST) — 이보다 오래된 접수는 재시도하지 않는다
+     * @param windowStart {@code T-5 00:00}(KST) — 이보다 오래된 접수는 재시도하지 않는다
      */
     public long countExpired(LocalDateTime windowStart) {
         return accountErasureJobRepository.countExpired(windowStart, AccountErasureJobStatus.MANUAL_REVIEW);
