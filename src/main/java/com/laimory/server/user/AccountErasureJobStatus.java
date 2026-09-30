@@ -10,18 +10,21 @@ package com.laimory.server.user;
  * <p><b>완료 상태는 없다.</b> 완료는 행 삭제이며, 그것이 {@code users}를 향한
  * {@code ON DELETE RESTRICT}를 푸는 유일한 신호다.
  *
- * <p>콘텐츠 graph 삭제({@code DATABASE_CLEANED})와 S3 정리({@code S3_CLEANED})는 후속 PR이 이 체인
- * <b>뒤에</b> 끼워 넣는다. 새 단계가 항상 기존 단계 뒤에 들어가므로 중간 단계에 멈춰 있는 job이 있어도
- * 다음 배포가 이어서 처리한다.
+ * <p>삭제 pass는 콘텐츠 graph·owner 행·S3·finalization을 한 job 처리 안에서 모두 끝내므로 중간 단계
+ * 상태를 두지 않는다 — 각 단계가 멱등이라 실패하면 다음 실행이 처음부터 다시 한다.
  */
 public enum AccountErasureJobStatus {
 
-    /** 탈퇴 transaction이 접수한 미처리 삭제 요청(#305). 아직 정지도 삭제도 하지 않았다. */
+    /**
+     * 탈퇴 transaction이 접수한 미처리 삭제 요청(#305). User Memory 미반영 큐는 탈퇴 commit 직후 비웠고
+     * (#397), 데이터는 아직 지우지 않았다. 유예가 지나면 삭제 pass가 여기서 바로 처리한다.
+     */
     PENDING,
 
     /**
-     * 정지 완료 — 이 subject로 새 AI 작업이 발급되지 않는다(User Memory 미반영 큐를 비웠다).
-     * 데이터는 아직 지우지 않았다. 유예가 지나면 여기서 삭제 단계로 넘어간다.
+     * 옛 정지 pass(#302, #397에서 제거)가 남긴 상태 — 큐를 비웠다는 표시였다. 더 이상 새로 만들어지지
+     * 않지만, 배포 전환 중 옛 인스턴스가 남긴 행을 읽을 수 있도록 값을 남긴다. 삭제 pass는
+     * {@link #PENDING}과 똑같이 처리한다.
      */
     QUIESCED,
 

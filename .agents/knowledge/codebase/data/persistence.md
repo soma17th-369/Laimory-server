@@ -358,7 +358,8 @@ nickname 갱신은 모두 `status` 조건부 UPDATE(영향 행 수 판정)이고
 content subject를 평문 join할 수 없다는 `user_subject_links` 보안 속성 유지(#302는 착수 시
 `SubjectMappingService#getRequired`로 해석). `user_id` UNIQUE가 회원당 활성 job 하나를 강제하고 user
 FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE 금지, 삭제 순서는 #302
-finalization 소유). status는 `PENDING → QUIESCED → (행 삭제)`와 격리용 `MANUAL_REVIEW` 셋이며 완료
+finalization 소유). status는 `PENDING → (행 삭제)`와 격리용 `MANUAL_REVIEW`이고, `QUIESCED`는 #397에서
+제거된 옛 정지 pass가 남긴 행을 읽기 위해서만 남아 있다(삭제 pass가 `PENDING`과 똑같이 처리). 완료
 상태는 두지 않는다 — 완료가 곧 행 삭제이고 그것이 user FK RESTRICT를 푸는 유일한 신호다. **#302는
 컬럼을 하나도 추가하지 않았다**: 처리 자격은 `created_at`, claim 표식·재시도 간격은 `updated_at`,
 단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
@@ -370,16 +371,17 @@ NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다
 CASCADE로 사라져 Item을 다시 특정할 경로가 없다) → draft source → owner 행 → S3 prefix → finalization.
 snapshot한 Item이 다른 subject의 Event에도 걸려 있으면 조용히 지우지 않고 수동 확인으로 보낸다.
 
-worker는 두 pass로 돈다. **정지**(짧은 cron)는 접수 후 `quiesce-delay`가 지나면 User Memory 미반영
-큐만 비우고 `QUIESCED`로 전이한다 — 아무것도 지우지 않으며, 이게 없으면 일일 User Memory 배치가 탈퇴
-subject의 기록을 계속 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다). **삭제**(일일 cron)는
-접수일 D 기준 D+8~D+10 세 번만 시도하고, 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로
-경보한다(PHOTO 삭제 job과 같은 규칙). 접수 native insert가 `created_at`/`updated_at`에 같은 값을 넣으므로
-정지 claim의 실효 gate가 `max(quiesce-delay, stale-after)`가 된다 — properties가 `stale-after <=
-quiesce-delay`를 기동 검증으로 강제해 정지가 조용히 늦어지는 것을 막는다.
+User Memory 미반영 큐는 탈퇴 commit 직후 `UserWithdrawalService`가 비운다(#397) — 비우지 않으면 일일
+User Memory 배치가 삭제 전까지 탈퇴 subject의 기록을 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼
+수 없다). 비우기 실패는 로그만 남기고 재시도하지 않는다. **삭제 worker**(일일 cron)는 접수일 D 기준
+D+3·D+4·D+5 세 번만 시도하고(유예 2일 + 창 3일 — 약관 "탈퇴 접수일로부터 5일 이내 파기"에 묶인
+worker 상수, 설정 아님), 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로 경보한다(PHOTO
+삭제 job과 같은 규칙). 유예 덕분에 가장 이른 삭제도 접수 후 이틀 가까이 지난 뒤라 탈퇴 시점의 AI
+task·presigned PUT은 모두 만료돼 있다. 만료·수동 확인 job의 재처리는
+[계정 삭제 수동 재처리](../../../../docs/database/account-erasure-recovery.md)를 따른다.
 
-**운영 제약**: PENDING job이 하나라도 남아 있으면 previous HMAC key retire와 두 번째 rotation을
-수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 PENDING count 확인이
+**운영 제약**: 계정 삭제 job 행이 하나라도 남아 있으면(상태 무관) previous HMAC key retire와 두 번째 rotation을
+수행하지 않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음 — secret 갱신 전 job count 확인이
 runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표 금지 원칙) — gate 확인은
 `(status, created_at)` index를 타는 수동 SELECT다. users 탈퇴 필드와 `account_erasure_jobs` 구조는 V1에
 포함되어 있으며, Flyway 최초 편입 시 다른 V1 구조와 함께 대조한다.

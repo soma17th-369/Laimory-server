@@ -14,10 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * account_erasure_jobs 레포 — #305의 userId-only 접수와 #302 worker의 claim·전이·완료를 소유한다.
  *
- * <p>claim은 두 pass가 서로 다른 축을 쓴다. 정지는 접수 후 {@code quiesce-delay}가 지나면 곧바로
- * 대상이고(짧은 cron), 삭제는 PHOTO 삭제 job(#365)과 같은 <b>날짜 경계 처리 창</b>을 쓴다 —
- * {@code updated_at < todayStart}가 같은 날 재선택을 막으면서 재시도 간격을 겸하므로 삭제 pass에는
- * 별도 stale 기준이 없다.
+ * <p>삭제 claim은 PHOTO 삭제 job(#365)과 같은 <b>날짜 경계 처리 창</b>을 쓴다 —
+ * {@code updated_at < todayStart}가 같은 날 재선택을 막으면서 재시도 간격을 겸하므로 별도 stale 기준이
+ * 없다.
  *
  * <p>모든 전이는 {@code (jobId, expectedStatus)} 조건부 UPDATE다. bulk UPDATE는 JPA auditing을
  * 우회하므로 {@code updated_at}을 직접 갱신한다(refresh_tokens·users 레포 선례).
@@ -31,8 +30,8 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
      * 호출자가 캡처한 app 시각으로 직접 채운다({@code modified_by} NULL).
      *
      * <p>두 감사 컬럼에 같은 값을 넣는다 — {@code created_at}은 유예·처리 창의 기준이고
-     * {@code updated_at}은 claim 표식이라, 한 번도 claim되지 않은 행에서 둘이 같아야 정지 자격이
-     * 오직 {@code created_at + quiesce-delay}로만 결정된다.
+     * {@code updated_at}은 claim 표식이다. 접수일의 {@code updated_at}은 유예(2일)보다 항상 앞서므로
+     * 한 번도 claim되지 않은 행의 자격은 {@code created_at}만으로 결정된다.
      */
     @Modifying
     @Transactional // REQUIRED — 탈퇴 transaction(UserWithdrawalTransactionService)에 합류한다
@@ -43,30 +42,13 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
     int insertIfAbsent(@Param("userId") Long userId, @Param("auditNow") LocalDateTime auditNow);
 
     /**
-     * 정지 대상 claim 후보를 잠근다 — 접수 후 {@code quiesce-delay}가 지났고 이번 stale 창에서 아직
-     * 아무도 잡지 않은 {@code PENDING} 행이다. {@code eligibleBefore}는 {@code now - quiesce-delay},
-     * {@code staleBefore}는 {@code now - stale-after}이며 properties가 {@code stale-after <=
-     * quiesce-delay}를 강제하므로 실효 gate는 항상 {@code quiesce-delay}다.
+     * 삭제 대상 claim 후보를 잠근다 — 접수일 D 기준 처리 창(D+3~D+5) 안에서 오늘 아직 처리하지 않은
+     * {@code PENDING}·{@code QUIESCED} 행이다({@code QUIESCED}는 옛 정지 pass가 남긴 행 — #397).
+     * {@code windowStart}는 {@code T-5 00:00}, {@code eligibleBefore}는 {@code T-2 00:00},
+     * {@code todayStart}는 {@code T 00:00}(KST)다.
      */
     @Query(value = "select * from account_erasure_jobs "
-            + "where status = 'PENDING' "
-            + "and created_at <= :eligibleBefore "
-            + "and updated_at <= :staleBefore "
-            + "order by created_at, account_erasure_job_id "
-            + "limit :limit for update skip locked",
-            nativeQuery = true)
-    List<AccountErasureJob> findQuiesceClaimableForUpdateSkipLocked(
-            @Param("eligibleBefore") LocalDateTime eligibleBefore,
-            @Param("staleBefore") LocalDateTime staleBefore,
-            @Param("limit") int limit);
-
-    /**
-     * 삭제 대상 claim 후보를 잠근다 — 접수일 D 기준 처리 창(기본 D+8~D+10) 안에서 오늘 아직 처리하지
-     * 않은 {@code QUIESCED} 행이다. {@code windowStart}는 {@code T-(grace+window) 00:00},
-     * {@code eligibleBefore}는 {@code T-grace 00:00}, {@code todayStart}는 {@code T 00:00}(KST)다.
-     */
-    @Query(value = "select * from account_erasure_jobs "
-            + "where status = 'QUIESCED' "
+            + "where status in ('PENDING', 'QUIESCED') "
             + "and created_at >= :windowStart and created_at < :eligibleBefore "
             + "and updated_at < :todayStart "
             + "order by created_at, account_erasure_job_id "

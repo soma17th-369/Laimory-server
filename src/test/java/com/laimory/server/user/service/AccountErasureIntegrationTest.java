@@ -3,6 +3,8 @@ package com.laimory.server.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
+import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
@@ -11,11 +13,18 @@ import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.AccountErasureJobRepository;
 import com.laimory.server.user.repository.UserRepository;
 import com.laimory.server.user.repository.UserSubjectLinkRepository;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -27,16 +36,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * 계정 삭제 worker ↔ 실 MySQL 왕복 검증(#302 PR1).
+ * 계정 삭제 worker ↔ 실 MySQL·Redis 왕복 검증(#302·#397).
  *
  * <p>검증하는 것은 claim 경계와 삭제 순서다.
  * <ul>
- *   <li>처리 창 — 접수일 D 기준 D+8~D+10만 claim되고, D+7은 이르고 D+11은 만료다(PHOTO 삭제 #365와 동일).</li>
- *   <li>같은 날 재선택 방지와 다음 날 재claim.</li>
- *   <li>정지 자격이 {@code quiesce-delay}로만 결정된다 — 접수 insert가 두 감사 컬럼에 같은 값을 넣으므로
- *       {@code stale-after}를 크게 잡으면 실효 gate가 밀린다(그래서 properties가 부등식을 강제한다).</li>
+ *   <li>처리 창 — 접수일 D 기준 D+3~D+5만 claim되고, D+2는 이르고 D+6은 만료다(#397, 약관 "5일 이내").</li>
+ *   <li>같은 날 재선택 방지와 다음 날 재claim, 두 인스턴스 동시 claim의 {@code SKIP LOCKED} 분배.</li>
+ *   <li>옛 정지 pass가 남긴 {@code QUIESCED} 행도 {@code PENDING}과 똑같이 처리된다.</li>
+ *   <li>탈퇴 commit 직후 User Memory 미반영 큐가 비워진다.</li>
  *   <li>{@code account_erasure_jobs}가 남은 회원 행은 지울 수 없다(FK RESTRICT).</li>
- *   <li>콘텐츠가 없는 회원의 접수 → 정지 → 삭제 E2E.</li>
+ *   <li>콘텐츠가 없는/있는 회원의 접수 → 삭제 E2E.</li>
  * </ul>
  *
  * 실행: docker compose up -d --wait 후 ./gradlew integrationTest
@@ -46,7 +55,7 @@ import org.springframework.test.context.ActiveProfiles;
 @Tag("integration")
 class AccountErasureIntegrationTest {
 
-    private static final int GRACE_DAYS = 7;
+    private static final int GRACE_DAYS = 2;
     private static final int WINDOW_DAYS = 3;
     private static final int LIMIT = 50;
 
@@ -69,7 +78,7 @@ class AccountErasureIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
-    private com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
+    private UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
 
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<UUID> createdSubjectIds = new ArrayList<>();
@@ -90,14 +99,19 @@ class AccountErasureIntegrationTest {
         createdSubjectIds.clear();
     }
 
-    private long withdrawnUser() {
+    private long provisionedUser() {
         User user = newUserProvisioner.provision(Provider.KAKAO,
                 "erasure-it-" + ThreadLocalRandom.current().nextLong(1_000_000_000L, 9_000_000_000L),
                 null, "탈퇴예정");
         createdUserIds.add(user.getUserId());
         createdSubjectIds.add(subjectOf(user.getUserId()));
-        userWithdrawalService.withdraw("1", user.getUserId());
         return user.getUserId();
+    }
+
+    private long withdrawnUser() {
+        long userId = provisionedUser();
+        userWithdrawalService.withdraw("1", userId);
+        return userId;
     }
 
     /** subject_id는 VARCHAR(36)이라 String으로 읽어 파싱한다 — UUID로 바로 받으면 바이트가 그대로 해석된다. */
@@ -130,9 +144,7 @@ class AccountErasureIntegrationTest {
     void 유예가_지나지_않은_접수는_삭제_대상이_아니다() {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        backdate(userId, todayStart.minusDays(GRACE_DAYS).plusHours(1)); // D+7 — 아직 이르다
-        accountErasureJobService.transition(jobIdOf(userId),
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+        backdate(userId, todayStart.minusDays(GRACE_DAYS).plusHours(1)); // D+2 — 아직 이르다
 
         assertThat(claimed(claimForDelete(todayStart), userId)).isFalse();
     }
@@ -141,15 +153,24 @@ class AccountErasureIntegrationTest {
     void 처리_창_안의_접수만_claim된다() {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        accountErasureJobService.transition(jobIdOf(userId),
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
 
-        // D+8(창의 첫날)
+        // D+3(창의 첫날)
         backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
         assertThat(claimed(claimForDelete(todayStart), userId)).isTrue();
 
-        // D+10(창의 마지막 날)
+        // D+5(창의 마지막 날)
         backdate(userId, todayStart.minusDays((long) GRACE_DAYS + WINDOW_DAYS).plusHours(3));
+        assertThat(claimed(claimForDelete(todayStart), userId)).isTrue();
+    }
+
+    @Test
+    void 옛_정지_pass가_남긴_QUIESCED_행도_claim된다() {
+        long userId = withdrawnUser();
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        accountErasureJobService.transition(jobIdOf(userId),
+                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
+        backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
+
         assertThat(claimed(claimForDelete(todayStart), userId)).isTrue();
     }
 
@@ -157,9 +178,7 @@ class AccountErasureIntegrationTest {
     void 창을_벗어난_접수는_재시도하지_않고_만료로_집계된다() {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        accountErasureJobService.transition(jobIdOf(userId),
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
-        backdate(userId, todayStart.minusDays((long) GRACE_DAYS + WINDOW_DAYS + 1).minusHours(1));
+        backdate(userId, todayStart.minusDays((long) GRACE_DAYS + WINDOW_DAYS + 1).minusHours(1)); // D+6
 
         assertThat(claimed(claimForDelete(todayStart), userId)).isFalse();
         assertThat(accountErasureJobService.countExpired(
@@ -170,8 +189,6 @@ class AccountErasureIntegrationTest {
     void 같은_날_두_번_claim되지_않고_다음_날_다시_잡힌다() {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        accountErasureJobService.transition(jobIdOf(userId),
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
         backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
 
         assertThat(claimed(claimForDelete(todayStart), userId)).isTrue();
@@ -192,20 +209,43 @@ class AccountErasureIntegrationTest {
         assertThat(accountErasureJobService.countManualReview()).isPositive();
     }
 
+    /** 두 인스턴스가 같은 cron으로 동시에 claim해도 한 job은 한 번만 잡히고, 같은 날 다시 잡히지 않는다. */
     @Test
-    void 정지_자격은_접수_시각과_quiesce_delay로만_결정된다() {
-        long userId = withdrawnUser();
-        LocalDateTime now = LocalDateTime.now();
-        backdate(userId, now.minusMinutes(30));
+    void 동시_claim은_겹치지_않고_같은_날_다시_잡지_않는다() throws Exception {
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        Set<Long> ours = new HashSet<>();
+        for (int i = 0; i < 4; i++) {
+            long userId = withdrawnUser();
+            backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
+            ours.add(jobIdOf(userId));
+        }
 
-        // quiesce-delay 20m 경과 · stale-after 15m 경과 → 대상
-        List<AccountErasureJob> claimed = accountErasureJobService.claimForQuiesce(
-                now.minusMinutes(20), now.minusMinutes(15), now, LIMIT);
-        assertThat(claimed(claimed, userId)).isTrue();
+        Set<Long> claimedIds = new HashSet<>();
+        claimConcurrently(todayStart).forEach(batch -> addDisjoint(claimedIds, batch));
+        List<AccountErasureJob> next = claimOne(todayStart);
+        while (!next.isEmpty()) {
+            addDisjoint(claimedIds, next);
+            next = claimOne(todayStart);
+        }
 
-        // 방금 claim했으므로 stale 창 안에서는 다시 잡히지 않는다
-        assertThat(claimed(accountErasureJobService.claimForQuiesce(
-                now.minusMinutes(20), now.minusMinutes(15), now, LIMIT), userId)).isFalse();
+        assertThat(claimedIds).containsAll(ours);
+        assertThat(claimForDelete(todayStart))
+                .extracting(AccountErasureJob::getAccountErasureJobId)
+                .doesNotContainAnyElementsOf(ours);
+    }
+
+    @Test
+    void 탈퇴하면_User_Memory_미반영_큐가_비워진다() {
+        long userId = provisionedUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long recordId = insertSavedRecord(subjectId, "2026-01-04");
+        userMemoryUpdatePendingStore.enqueue(new UserMemoryUpdatePending(subjectId, recordId), Instant.now());
+        assertThat(pendingRecordIds(subjectId)).containsExactly(recordId);
+
+        userWithdrawalService.withdraw("1", userId);
+
+        assertThat(pendingRecordIds(subjectId)).isEmpty();
+        jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", subjectId.toString());
     }
 
     @Test
@@ -226,12 +266,8 @@ class AccountErasureIntegrationTest {
         UUID resolved = accountErasureService.resolveTarget(userId);
         assertThat(resolved).isEqualTo(subjectId);
 
-        accountErasureService.quiesce(resolved);
-        assertThat(accountErasureJobService.transition(
-                jobId, AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED)).isTrue();
-
         accountErasureService.deleteOwnerRows(userId, resolved);
-        accountErasureService.finalizeErasure(jobId, userId, resolved);
+        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, resolved);
 
         assertThat(userRepository.findById(userId)).isEmpty();
         assertThat(accountErasureJobRepository.findById(jobId)).isEmpty();
@@ -251,13 +287,12 @@ class AccountErasureIntegrationTest {
         long userId = withdrawnUser();
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
         long jobId = jobIdOf(userId);
-        accountErasureJobService.transition(jobId,
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
         accountErasureService.deleteOwnerRows(userId, subjectId);
 
-        accountErasureService.finalizeErasure(jobId, userId, subjectId);
+        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, subjectId);
         // 두 번째 호출은 mapping이 이미 없어 0행 — 예외로 rollback되고 남은 행을 건드리지 않는다.
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
+                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         createdUserIds.clear();
@@ -276,10 +311,12 @@ class AccountErasureIntegrationTest {
         long jobId = jobIdOf(userId);
         // mapping 삭제가 subject FK에 막히지 않도록 owner 행을 먼저 정리한다(운영 순서와 동일).
         accountErasureService.deleteOwnerRows(userId, subjectId);
-        // status가 QUIESCED가 아니라 job 삭제가 0행이 된다(mapping 삭제는 성공한 뒤다).
+        // claim 뒤 다른 worker가 MANUAL_REVIEW로 격리해 기대 상태(PENDING)가 아니다 — job 삭제가 0행이 된다
+        // (mapping 삭제는 성공한 뒤다).
         accountErasureJobService.markManualReview(jobId, AccountErasureJobStatus.PENDING);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
+                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(mappingCount(subjectId)).isOne();
@@ -292,13 +329,12 @@ class AccountErasureIntegrationTest {
         long userId = withdrawnUser();
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
         long jobId = jobIdOf(userId);
-        accountErasureJobService.transition(jobId,
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
         accountErasureService.deleteOwnerRows(userId, subjectId);
         // 회원 상태를 되돌려 마지막 단계만 0행으로 만든다.
         jdbcTemplate.update("UPDATE users SET status = 'ACTIVE' WHERE user_id = ?", userId);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
+                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(mappingCount(subjectId)).isOne();
@@ -310,10 +346,9 @@ class AccountErasureIntegrationTest {
     void mapping_단계가_0행이면_job과_회원_행이_남는다() {
         long userId = withdrawnUser();
         long jobId = jobIdOf(userId);
-        accountErasureJobService.transition(jobId,
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, UUID.randomUUID()))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
+                jobId, AccountErasureJobStatus.PENDING, userId, UUID.randomUUID()))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
@@ -355,13 +390,10 @@ class AccountErasureIntegrationTest {
                 + "VALUES (?, ?)", eventId, itemId);
 
         UUID resolved = accountErasureService.resolveTarget(userId);
-        accountErasureService.quiesce(resolved);
-        accountErasureJobService.transition(jobId,
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
 
         accountErasureService.deleteContentGraph(resolved);
         accountErasureService.deleteOwnerRows(userId, resolved);
-        accountErasureService.finalizeErasure(jobId, userId, resolved);
+        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, resolved);
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM daily_records WHERE subject_id = ?", Integer.class,
@@ -386,11 +418,10 @@ class AccountErasureIntegrationTest {
                         + "record_timezone, status, created_at, updated_at) "
                         + "VALUES (?, '2026-01-03', '2026-01-03 10:00:00', 'Asia/Seoul', 'SAVED', now(6), now(6))",
                 subjectId.toString());
-        accountErasureJobService.transition(jobId,
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
         accountErasureService.deleteOwnerRows(userId, subjectId);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
+                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
 
         assertThat(mappingCount(subjectId)).isOne();
@@ -411,5 +442,57 @@ class AccountErasureIntegrationTest {
     private int countBySubject(String table, UUID subjectId) {
         return jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM " + table + " WHERE subject_id = ?", Integer.class, subjectId.toString());
+    }
+
+    private long insertSavedRecord(UUID subjectId, String recordDate) {
+        jdbcTemplate.update("INSERT INTO daily_records (subject_id, record_date, record_at, "
+                        + "record_timezone, status, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, 'Asia/Seoul', 'SAVED', now(6), now(6))",
+                subjectId.toString(), recordDate, recordDate + " 10:00:00");
+        return jdbcTemplate.queryForObject(
+                "SELECT daily_record_id FROM daily_records WHERE subject_id = ? AND record_date = ?",
+                Long.class, subjectId.toString(), recordDate);
+    }
+
+    private List<Long> pendingRecordIds(UUID subjectId) {
+        return userMemoryUpdatePendingStore.findPending(Instant.now(), 10_000).scanned().stream()
+                .filter(pending -> pending.subjectId().equals(subjectId))
+                .map(UserMemoryUpdatePending::dailyRecordId)
+                .toList();
+    }
+
+    /** worker와 같이 한 건씩 잡는다(claim 크기 1). */
+    private List<AccountErasureJob> claimOne(LocalDateTime todayStart) {
+        return accountErasureJobService.claimForDelete(
+                todayStart.minusDays((long) GRACE_DAYS + WINDOW_DAYS),
+                todayStart.minusDays(GRACE_DAYS),
+                todayStart,
+                todayStart.plusHours(2),
+                1);
+    }
+
+    private List<List<AccountErasureJob>> claimConcurrently(LocalDateTime todayStart) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<List<AccountErasureJob>> first = executor.submit(() -> {
+                start.await();
+                return claimOne(todayStart);
+            });
+            Future<List<AccountErasureJob>> second = executor.submit(() -> {
+                start.await();
+                return claimOne(todayStart);
+            });
+            start.countDown();
+            return List.of(first.get(), second.get());
+        }
+    }
+
+    private void addDisjoint(Set<Long> claimedIds, List<AccountErasureJob> batch) {
+        if (batch.isEmpty()) {
+            return; // SKIP LOCKED로 경합에서 밀린 호출은 빈 결과를 받을 수 있다.
+        }
+        List<Long> batchIds = batch.stream().map(AccountErasureJob::getAccountErasureJobId).toList();
+        assertThat(claimedIds).doesNotContainAnyElementsOf(batchIds);
+        claimedIds.addAll(batchIds);
     }
 }

@@ -1,12 +1,14 @@
 package com.laimory.server.user.service;
 
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
  * 회원 탈퇴 오케스트레이터(#305). HTTP 경계에서 받은 applicationVersion/userId로
  * {@link UserWithdrawalTransactionService}의 단일 DB transaction을 호출하고, <b>commit이 끝난 뒤</b>
- * 인증 캐시 2종을 evict한다(#429). S3·AI 정리는 이 흐름에 없다(물리 삭제는 #302 worker 몫).
+ * 인증 캐시 2종을 evict하고 User Memory 미반영 큐를 비운다(#429·#397). 물리 삭제는 #302 worker 몫이다.
  *
  * <p>evict가 transaction 바깥(이 클래스)인 이유: transaction 안에서 지우면 commit 전에 다른 요청이
  * DB에서 ACTIVE를 다시 읽어 재적재해 evict가 무효가 된다. 정상 반환 = commit 완료이므로 그 직후가
@@ -14,7 +16,12 @@ import org.springframework.stereotype.Service;
  * transaction 예외 시에는 evict 없이 전파한다(회원이 ACTIVE로 남으므로 지울 것도 없다).
  * evict 실패는 {@code FailSafeCacheErrorHandler}가 삼킨다 — stale은 TTL이 수렴시키고 탈퇴 202를
  * 캐시 장애로 실패시키지 않는다(#429 보안 정책 ⓐ).
+ *
+ * <p>큐 비우기도 같은 이유로 commit 뒤에 한다 — 탈퇴가 확정된 subject만 비워야 하고, 일일 User Memory
+ * 배치는 회원 상태를 볼 수 없어 비우지 않으면 삭제(D+3) 전까지 탈퇴 회원의 기록을 AI로 보낸다.
+ * 실패는 로그만 남기고 202를 그대로 돌려준다(재시도 없음 — #397 결정).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserWithdrawalService {
@@ -22,6 +29,7 @@ public class UserWithdrawalService {
     private final UserWithdrawalTransactionService userWithdrawalTransactionService;
     private final UserAccountService userAccountService;
     private final SubjectMappingService subjectMappingService;
+    private final AccountErasureService accountErasureService;
 
     /**
      * 탈퇴를 접수한다. 정상 반환 = 논리 탈퇴·모든 push 차단(알림 OFF)·삭제 작업 접수가 commit됐고
@@ -36,6 +44,18 @@ public class UserWithdrawalService {
         // ACTIVE gate가 보안 경계라 먼저 지운다(공유 Redis DEL — 전 인스턴스 즉시). subject는 값
         // 불변이라 위생 evict(자기 인스턴스 한정, 타 인스턴스 잔존은 ACTIVE gate가 앞에서 끊음).
         userAccountService.evictActive(userId);
+        // subject 해석이 subject 캐시를 적재하므로 그 evict보다 먼저 비운다.
+        clearUserMemoryPending(userId);
         subjectMappingService.evictCachedMapping(userId);
+    }
+
+    private void clearUserMemoryPending(long userId) {
+        try {
+            UUID subjectId = accountErasureService.resolveTarget(userId);
+            accountErasureService.clearUserMemoryPending(subjectId);
+        } catch (RuntimeException exception) {
+            log.warn("탈퇴 후 User Memory 미반영 큐 비우기 실패(탈퇴는 완료): exceptionType={}",
+                    exception.getClass().getSimpleName());
+        }
     }
 }

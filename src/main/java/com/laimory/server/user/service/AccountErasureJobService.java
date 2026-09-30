@@ -39,25 +39,12 @@ public class AccountErasureJobService {
     }
 
     /**
-     * 정지 대상 claim — 접수 후 유예 대기가 끝난 {@code PENDING} 행을 잠그고 표식을 갱신한다.
-     *
-     * @param eligibleBefore {@code now - quiesce-delay} — 이 시각 이전 접수만 정지 대상이다
-     * @param staleBefore    {@code now - stale-after} — 이보다 최근에 잡힌 행은 건너뛴다
-     */
-    @Transactional
-    public List<AccountErasureJob> claimForQuiesce(
-            LocalDateTime eligibleBefore, LocalDateTime staleBefore, LocalDateTime claimedAt, int limit) {
-        return markClaimed(accountErasureJobRepository
-                .findQuiesceClaimableForUpdateSkipLocked(eligibleBefore, staleBefore, limit), claimedAt);
-    }
-
-    /**
-     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code QUIESCED} 행을 잠그고
+     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code PENDING}·{@code QUIESCED} 행을 잠그고
      * {@code updated_at}을 오늘로 갱신한다. 같은 날 재선택을 막고, 실패한 행은 {@code updated_at}이
      * 전날이 되는 다음 날 실행이 다시 잡는다(#365와 같은 규칙).
      *
-     * @param windowStart    {@code T-(grace+window) 00:00} — 이보다 오래된 접수는 만료다
-     * @param eligibleBefore {@code T-grace 00:00} — 유예가 지난 접수만 대상이다
+     * @param windowStart    {@code T-5 00:00} — 이보다 오래된 접수는 만료다
+     * @param eligibleBefore {@code T-2 00:00} — 유예가 지난 접수만 대상이다
      * @param todayStart     {@code T 00:00}(KST)
      */
     @Transactional
@@ -98,7 +85,7 @@ public class AccountErasureJobService {
     /**
      * 처리 창을 벗어난 미완료 job 수. {@code MANUAL_REVIEW}는 자체 경보가 있어 제외한다.
      *
-     * @param windowStart {@code T-(grace+window) 00:00}(KST) — 이보다 오래된 접수는 재시도하지 않는다
+     * @param windowStart {@code T-5 00:00}(KST) — 이보다 오래된 접수는 재시도하지 않는다
      */
     public long countExpired(LocalDateTime windowStart) {
         return accountErasureJobRepository.countExpired(windowStart, AccountErasureJobStatus.MANUAL_REVIEW);
