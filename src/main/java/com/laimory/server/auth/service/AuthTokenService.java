@@ -47,8 +47,7 @@ public class AuthTokenService {
 
     /** refresh를 회전하고 새 토큰 쌍을 반환한다. 이전 refresh는 이 시점에 무효화된다. */
     public TokenResponse refresh(String applicationVersion, String refreshToken) {
-        RefreshTokenService.Rotation rotation =
-                refreshTokenService.rotate(refreshToken, userAccountService::isActive);
+        RefreshTokenService.Rotation rotation = refreshTokenService.rotate(refreshToken);
         return new TokenResponse(jwtTokens.issueAccessToken(rotation.userId()), rotation.refreshToken());
     }
 
