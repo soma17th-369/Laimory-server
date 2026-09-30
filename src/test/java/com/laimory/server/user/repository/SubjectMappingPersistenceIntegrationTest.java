@@ -12,6 +12,7 @@ import com.laimory.server.user.entity.User;
 import com.laimory.server.user.entity.UserSubjectLink;
 import com.laimory.server.user.service.NewUserProvisioner;
 import com.laimory.server.user.service.SubjectMappingService;
+import com.laimory.server.user.service.UserMemoryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.ArrayList;
@@ -58,6 +59,9 @@ class SubjectMappingPersistenceIntegrationTest {
     @MockitoSpyBean
     private SubjectMappingService subjectMappingService;
 
+    @MockitoSpyBean
+    private UserMemoryService userMemoryService;
+
     @Autowired
     private SubjectLookupKeyDeriver subjectLookupKeyDeriver;
 
@@ -79,8 +83,10 @@ class SubjectMappingPersistenceIntegrationTest {
     @AfterEach
     void cleanUp() {
         // 가입 transaction이 subject 축 기본 설정 행도 만든다(#314) — FK RESTRICT라 mapping보다 먼저 지운다.
-        createdLookupKeys.forEach(key -> userSubjectLinkRepository.findById(key).ifPresent(link ->
-                SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, link.getSubjectId())));
+        createdLookupKeys.forEach(key -> userSubjectLinkRepository.findById(key).ifPresent(link -> {
+            userMemoryService.delete(link.getSubjectId());
+            SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, link.getSubjectId());
+        }));
         createdLookupKeys.forEach(userSubjectLinkRepository::deleteById);
         createdLookupKeys.clear();
         createdUserIds.forEach(userRepository::deleteById);
@@ -132,6 +138,29 @@ class SubjectMappingPersistenceIntegrationTest {
         assertThat(userRepository.findByProviderAndProviderUserId(Provider.GOOGLE, providerUserId))
                 .isEmpty();
         assertThat(userSubjectLinkRepository.count()).isEqualTo(linkCountBefore);
+    }
+
+    @Test
+    void memoryInitializationFailureRollsBackAllSignupRows() {
+        String providerUserId = "sub-" + UUID.randomUUID();
+        long linksBefore = userSubjectLinkRepository.count();
+        Long memoriesBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_memories", Long.class);
+        Long preferencesBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM subject_preferences", Long.class);
+        Long remindersBefore = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM daily_notification_preferences", Long.class);
+        UserMemoryService spy = AopTestUtils.getUltimateTargetObject(userMemoryService);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw new IllegalStateException("injected memory failure");
+        }).when(spy).createEmpty(org.mockito.ArgumentMatchers.any(UUID.class));
+
+        assertThatThrownBy(() -> newUserProvisioner.provision(Provider.GOOGLE, providerUserId, null, "nick"))
+                .isInstanceOf(IllegalStateException.class).hasMessage("injected memory failure");
+
+        assertThat(userRepository.findByProviderAndProviderUserId(Provider.GOOGLE, providerUserId)).isEmpty();
+        assertThat(userSubjectLinkRepository.count()).isEqualTo(linksBefore);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user_memories", Long.class)).isEqualTo(memoriesBefore);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM subject_preferences", Long.class)).isEqualTo(preferencesBefore);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM daily_notification_preferences", Long.class)).isEqualTo(remindersBefore);
     }
 
     @Test

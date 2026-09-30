@@ -106,6 +106,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`는 항상 null이고, 시각은 보낸 값
   그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드 규칙(title·subtitle·시간·memo)과
   사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
+- 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory는 하나의 transaction으로
+  commit/rollback한다(#536). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
