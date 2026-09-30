@@ -3,15 +3,13 @@ package com.laimory.server.user;
 /**
  * 계정 삭제 작업 상태(#305 접수 · #302 처리).
  *
- * <p>단계 이름은 "다음에 할 일"이 아니라 <b>"여기까지 끝났다"</b>를 뜻한다 — 재시작이 항상 다음
- * 단계부터라 crash·경합 뒤에도 같은 단계를 두 번 하지 않는다. 전이는 전부
- * {@code (jobId, expectedStatus)} 조건부 UPDATE라 후발 worker는 0행으로 no-op한다.
+ * <p>진행 단계를 상태로 나누지 않는다. 삭제 pass는 콘텐츠 graph·owner 행·S3·finalization을 한 job
+ * 처리 안에서 모두 끝내고, 각 단계가 멱등이라 실패하면 다음 실행이 처음부터 다시 한다. 상태 전이는
+ * {@code MANUAL_REVIEW} 격리뿐이며 {@code (jobId, expectedStatus)} 조건부 UPDATE라 후발 worker는 0행으로
+ * 끝난다.
  *
  * <p><b>완료 상태는 없다.</b> 완료는 행 삭제이며, 그것이 {@code users}를 향한
  * {@code ON DELETE RESTRICT}를 푸는 유일한 신호다.
- *
- * <p>삭제 pass는 콘텐츠 graph·owner 행·S3·finalization을 한 job 처리 안에서 모두 끝내므로 중간 단계
- * 상태를 두지 않는다 — 각 단계가 멱등이라 실패하면 다음 실행이 처음부터 다시 한다.
  */
 public enum AccountErasureJobStatus {
 

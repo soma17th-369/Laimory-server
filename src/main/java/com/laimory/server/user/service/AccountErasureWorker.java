@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
  * <p><b>처리 창</b>: 접수일 D(KST) 기준 D+3·D+4·D+5 일일 실행에서만 시도한다(유예 2일 + 창 3일, #397).
  * 공개 약관의 "탈퇴 접수일로부터 5일 이내 파기"에 묶인 값이라 설정으로 열지 않는다. 창을 벗어난
  * 미완료 job은 재시도하지 않고 보존한 채 건수만 ERROR로 경보한다(PHOTO 삭제 #365와 같은 규칙).
- * 유예 덕분에 가장 이른 삭제도 접수 후 이틀 가까이 지난 뒤라, 탈퇴 시점에 살아 있던 AI task·presigned
+ * 유예 덕분에 가장 이른 삭제도 접수 후 이틀 넘게 지난 뒤라, 탈퇴 시점에 살아 있던 AI task·presigned
  * PUT은 모두 만료된 뒤다.
  *
  * <p>User Memory 미반영 큐는 여기서 비우지 않는다 — 탈퇴 commit 직후 {@link UserWithdrawalService}가
