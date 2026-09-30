@@ -143,7 +143,7 @@ class AccountErasureServiceTest {
                 .thenReturn(true);
         when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(true);
 
-        accountErasureService.finalizeErasure(JOB_ID, AccountErasureJobStatus.PENDING, USER_ID, SUBJECT_ID);
+        accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID);
 
         InOrder order = inOrder(refreshTokenService, pushRegistrationService, termAgreementService,
                 subjectMappingService, accountErasureJobService, userAccountService);
@@ -163,7 +163,7 @@ class AccountErasureServiceTest {
     void mapping이_기대_subject와_다르면_예외로_rollback시킨다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(false);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, AccountErasureJobStatus.PENDING, USER_ID, SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         verify(accountErasureJobService, never()).deleteCompleted(anyLong(), any());
@@ -176,7 +176,7 @@ class AccountErasureServiceTest {
         when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.PENDING))
                 .thenReturn(false);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, AccountErasureJobStatus.PENDING, USER_ID, SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         verify(userAccountService, never()).deleteWithdrawn(anyLong());
@@ -276,7 +276,7 @@ class AccountErasureServiceTest {
                 .thenReturn(true);
         when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(false);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, AccountErasureJobStatus.PENDING, USER_ID, SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
                 .isInstanceOf(AccountErasureConflictException.class);
     }
 }

@@ -358,9 +358,8 @@ nickname 갱신은 모두 `status` 조건부 UPDATE(영향 행 수 판정)이고
 content subject를 평문 join할 수 없다는 `user_subject_links` 보안 속성 유지(#302는 착수 시
 `SubjectMappingService#getRequired`로 해석). `user_id` UNIQUE가 회원당 활성 job 하나를 강제하고 user
 FK는 `ON DELETE RESTRICT`다(job이 남은 user 행 삭제 금지 — CASCADE 금지, 삭제 순서는 #302
-finalization 소유). status는 `PENDING → (행 삭제)`와 격리용 `MANUAL_REVIEW`이고, `QUIESCED`는 #397에서
-제거된 옛 정지 pass가 남긴 행을 읽기 위해서만 남아 있다(삭제 pass가 `PENDING`과 똑같이 처리). 완료
-상태는 두지 않는다 — 완료가 곧 행 삭제이고 그것이 user FK RESTRICT를 푸는 유일한 신호다. **#302는
+finalization 소유). status는 `PENDING → (행 삭제)`와 격리용 `MANUAL_REVIEW` 둘뿐이며(#397에서 정지 단계의
+`QUIESCED` 제거) 완료 상태는 두지 않는다 — 완료가 곧 행 삭제이고 그것이 user FK RESTRICT를 푸는 유일한 신호다. **#302는
 컬럼을 하나도 추가하지 않았다**: 처리 자격은 `created_at`, claim 표식·재시도 간격은 `updated_at`,
 단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`

@@ -218,12 +218,11 @@ public class AccountErasureService {
      * 남는" 반쪽 상태가 만들어진다. 특히 마지막 회원 행 삭제가 0행이면 job까지 사라진 뒤라 아무도 그
      * 행을 다시 건드리지 않는다 — 개인정보가 영구히 남는다.
      *
-     * @param expectedStatus claim한 job의 현재 상태({@code PENDING}, 또는 옛 정지 pass가 남긴 {@code QUIESCED})
      * @throws AccountErasureConflictException 어느 단계든 영향 0행 — transaction 전체가 rollback되고
      *                                         durable job이 남아 다음 실행이 재시도한다
      */
     @Transactional
-    public void finalizeErasure(long jobId, AccountErasureJobStatus expectedStatus, long userId, UUID subjectId) {
+    public void finalizeErasure(long jobId, long userId, UUID subjectId) {
         refreshTokenService.deleteAllByUserId(userId);
         pushRegistrationService.deleteAll(subjectId);
         termAgreementService.deleteAllByUserId(userId);
@@ -231,7 +230,7 @@ public class AccountErasureService {
         if (!subjectMappingService.deleteMapping(userId, subjectId)) {
             throw new AccountErasureConflictException("mapping");
         }
-        if (!accountErasureJobService.deleteCompleted(jobId, expectedStatus)) {
+        if (!accountErasureJobService.deleteCompleted(jobId, AccountErasureJobStatus.PENDING)) {
             throw new AccountErasureConflictException("job");
         }
         if (!userAccountService.deleteWithdrawn(userId)) {

@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.entity.AccountErasureJob;
 import java.time.Clock;
 import java.time.Instant;
@@ -72,23 +71,8 @@ class AccountErasureWorkerTest {
     }
 
     @Test
-    void deletePass_finalizesWithClaimedStatus() {
-        AccountErasureJob job = job(AccountErasureJobStatus.QUIESCED);
-        UUID subjectId = UUID.randomUUID();
-        when(jobService.claimForDelete(any(), any(), any(), any(), anyInt()))
-                .thenReturn(List.of(job))
-                .thenReturn(List.of());
-        when(erasureService.resolveTarget(USER_ID)).thenReturn(subjectId);
-
-        worker.deletePendingJobs();
-
-        // 옛 정지 pass가 남긴 QUIESCED 행은 그 상태 그대로 조건부 삭제해야 0행이 되지 않는다.
-        verify(erasureService).finalizeErasure(JOB_ID, AccountErasureJobStatus.QUIESCED, USER_ID, subjectId);
-    }
-
-    @Test
     void deletePass_evictsCachedMappingAfterFinalization() {
-        AccountErasureJob job = job(AccountErasureJobStatus.PENDING);
+        AccountErasureJob job = job();
         when(jobService.claimForDelete(any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of(job))
                 .thenReturn(List.of());
@@ -98,19 +82,19 @@ class AccountErasureWorkerTest {
 
         // finalization commit(정상 반환) 뒤에 evict — 그 전에 지우면 이 호출이 다시 적재한다.
         InOrder inOrder = inOrder(erasureService, subjectMappingService);
-        inOrder.verify(erasureService).finalizeErasure(anyLong(), any(), anyLong(), any());
+        inOrder.verify(erasureService).finalizeErasure(anyLong(), anyLong(), any());
         inOrder.verify(subjectMappingService).evictCachedMapping(USER_ID);
     }
 
     @Test
     void deletePass_failedFinalization_leavesCacheAlone() {
-        AccountErasureJob job = job(AccountErasureJobStatus.PENDING);
+        AccountErasureJob job = job();
         when(jobService.claimForDelete(any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of(job))
                 .thenReturn(List.of());
         when(erasureService.resolveTarget(USER_ID)).thenReturn(UUID.randomUUID());
         Mockito.doThrow(new IllegalStateException("rolled back"))
-                .when(erasureService).finalizeErasure(anyLong(), any(), anyLong(), any());
+                .when(erasureService).finalizeErasure(anyLong(), anyLong(), any());
 
         worker.deletePendingJobs();
 
@@ -118,11 +102,10 @@ class AccountErasureWorkerTest {
         verifyNoInteractions(subjectMappingService);
     }
 
-    private static AccountErasureJob job(AccountErasureJobStatus status) {
+    private static AccountErasureJob job() {
         AccountErasureJob job = mock(AccountErasureJob.class);
         when(job.getUserId()).thenReturn(USER_ID);
         when(job.getAccountErasureJobId()).thenReturn(JOB_ID);
-        when(job.getStatus()).thenReturn(status);
         return job;
     }
 }

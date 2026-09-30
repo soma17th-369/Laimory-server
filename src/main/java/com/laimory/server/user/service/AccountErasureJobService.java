@@ -39,7 +39,7 @@ public class AccountErasureJobService {
     }
 
     /**
-     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code PENDING}·{@code QUIESCED} 행을 잠그고
+     * 삭제 대상 claim — 처리 창 안에서 오늘 아직 처리하지 않은 {@code PENDING} 행을 잠그고
      * {@code updated_at}을 오늘로 갱신한다. 같은 날 재선택을 막고, 실패한 행은 {@code updated_at}이
      * 전날이 되는 다음 날 실행이 다시 잡는다(#365와 같은 규칙).
      *

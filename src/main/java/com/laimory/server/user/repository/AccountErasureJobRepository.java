@@ -43,12 +43,12 @@ public interface AccountErasureJobRepository extends JpaRepository<AccountErasur
 
     /**
      * 삭제 대상 claim 후보를 잠근다 — 접수일 D 기준 처리 창(D+3~D+5) 안에서 오늘 아직 처리하지 않은
-     * {@code PENDING}·{@code QUIESCED} 행이다({@code QUIESCED}는 옛 정지 pass가 남긴 행 — #397).
+     * {@code PENDING} 행이다.
      * {@code windowStart}는 {@code T-5 00:00}, {@code eligibleBefore}는 {@code T-2 00:00},
      * {@code todayStart}는 {@code T 00:00}(KST)다.
      */
     @Query(value = "select * from account_erasure_jobs "
-            + "where status in ('PENDING', 'QUIESCED') "
+            + "where status = 'PENDING' "
             + "and created_at >= :windowStart and created_at < :eligibleBefore "
             + "and updated_at < :todayStart "
             + "order by created_at, account_erasure_job_id "

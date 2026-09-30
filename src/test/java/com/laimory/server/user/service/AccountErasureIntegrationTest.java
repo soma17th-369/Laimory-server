@@ -42,7 +42,6 @@ import org.springframework.test.context.ActiveProfiles;
  * <ul>
  *   <li>처리 창 — 접수일 D 기준 D+3~D+5만 claim되고, D+2는 이르고 D+6은 만료다(#397, 약관 "5일 이내").</li>
  *   <li>같은 날 재선택 방지와 다음 날 재claim, 두 인스턴스 동시 claim의 {@code SKIP LOCKED} 분배.</li>
- *   <li>옛 정지 pass가 남긴 {@code QUIESCED} 행도 {@code PENDING}과 똑같이 처리된다.</li>
  *   <li>탈퇴 commit 직후 User Memory 미반영 큐가 비워진다.</li>
  *   <li>{@code account_erasure_jobs}가 남은 회원 행은 지울 수 없다(FK RESTRICT).</li>
  *   <li>콘텐츠가 없는/있는 회원의 접수 → 삭제 E2E.</li>
@@ -164,17 +163,6 @@ class AccountErasureIntegrationTest {
     }
 
     @Test
-    void 옛_정지_pass가_남긴_QUIESCED_행도_claim된다() {
-        long userId = withdrawnUser();
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        accountErasureJobService.transition(jobIdOf(userId),
-                AccountErasureJobStatus.PENDING, AccountErasureJobStatus.QUIESCED);
-        backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
-
-        assertThat(claimed(claimForDelete(todayStart), userId)).isTrue();
-    }
-
-    @Test
     void 창을_벗어난_접수는_재시도하지_않고_만료로_집계된다() {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
@@ -267,7 +255,7 @@ class AccountErasureIntegrationTest {
         assertThat(resolved).isEqualTo(subjectId);
 
         accountErasureService.deleteOwnerRows(userId, resolved);
-        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
 
         assertThat(userRepository.findById(userId)).isEmpty();
         assertThat(accountErasureJobRepository.findById(jobId)).isEmpty();
@@ -289,10 +277,9 @@ class AccountErasureIntegrationTest {
         long jobId = jobIdOf(userId);
         accountErasureService.deleteOwnerRows(userId, subjectId);
 
-        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, subjectId);
+        accountErasureService.finalizeErasure(jobId, userId, subjectId);
         // 두 번째 호출은 mapping이 이미 없어 0행 — 예외로 rollback되고 남은 행을 건드리지 않는다.
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
-                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         createdUserIds.clear();
@@ -315,8 +302,7 @@ class AccountErasureIntegrationTest {
         // (mapping 삭제는 성공한 뒤다).
         accountErasureJobService.markManualReview(jobId, AccountErasureJobStatus.PENDING);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
-                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(mappingCount(subjectId)).isOne();
@@ -333,8 +319,7 @@ class AccountErasureIntegrationTest {
         // 회원 상태를 되돌려 마지막 단계만 0행으로 만든다.
         jdbcTemplate.update("UPDATE users SET status = 'ACTIVE' WHERE user_id = ?", userId);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
-                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(mappingCount(subjectId)).isOne();
@@ -347,8 +332,7 @@ class AccountErasureIntegrationTest {
         long userId = withdrawnUser();
         long jobId = jobIdOf(userId);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
-                jobId, AccountErasureJobStatus.PENDING, userId, UUID.randomUUID()))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, UUID.randomUUID()))
                 .isInstanceOf(AccountErasureConflictException.class);
 
         assertThat(accountErasureJobRepository.findById(jobId)).isPresent();
@@ -393,7 +377,7 @@ class AccountErasureIntegrationTest {
 
         accountErasureService.deleteContentGraph(resolved);
         accountErasureService.deleteOwnerRows(userId, resolved);
-        accountErasureService.finalizeErasure(jobId, AccountErasureJobStatus.PENDING, userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM daily_records WHERE subject_id = ?", Integer.class,
@@ -420,8 +404,7 @@ class AccountErasureIntegrationTest {
                 subjectId.toString());
         accountErasureService.deleteOwnerRows(userId, subjectId);
 
-        assertThatThrownBy(() -> accountErasureService.finalizeErasure(
-                jobId, AccountErasureJobStatus.PENDING, userId, subjectId))
+        assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
 
         assertThat(mappingCount(subjectId)).isOne();

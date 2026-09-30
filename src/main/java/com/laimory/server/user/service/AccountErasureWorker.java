@@ -151,19 +151,18 @@ public class AccountErasureWorker {
 
     /** owner 행을 지우고 finalization으로 마무리한다. 실패는 job을 남겨 다음 날 재시도한다. */
     private void deleteOne(AccountErasureJob job, RunSummary summary) {
-        AccountErasureJobStatus status = job.getStatus();
         UUID subjectId;
         try {
             subjectId = erasureService.resolveTarget(job.getUserId());
         } catch (RuntimeException exception) {
-            recordUnresolvable(job, status, summary, exception);
+            recordUnresolvable(job, summary, exception);
             return;
         }
         try {
             erasureService.deleteContentGraph(subjectId);
             erasureService.deleteOwnerRows(job.getUserId(), subjectId);
             erasureService.deleteStoredObjects(subjectId);
-            erasureService.finalizeErasure(job.getAccountErasureJobId(), status, job.getUserId(), subjectId);
+            erasureService.finalizeErasure(job.getAccountErasureJobId(), job.getUserId(), subjectId);
             // 위 대상 해석이 subject 캐시에 이 회원을 적재해 뒀다(#429). 그대로 두면 TTL까지 이미
             // 삭제된 mapping의 해석이 남으므로, 적재한 host 자신이 finalization commit 뒤에 걷어낸다
             // — 적재 host = 이 worker host라 로컬 evict로 충분하다.
@@ -172,7 +171,7 @@ public class AccountErasureWorker {
         } catch (TimelineContentErasureService.CrossSubjectItemException exception) {
             // 다른 subject가 소유한 Item이 섞여 있다 — 손상 상태이므로 재시도로 풀리지 않는다.
             // 남의 데이터를 지우는 것보다 멈추는 편이 낫다.
-            recordUnresolvable(job, status, summary, exception);
+            recordUnresolvable(job, summary, exception);
         } catch (RuntimeException exception) {
             // MySQL·S3 일시 실패, 또는 finalization 중 예상 밖 0행(AccountErasureConflictException —
             // 다른 worker가 이미 완료). 어느 쪽이든 finalization transaction 전체가 rollback돼 반쪽 상태가
@@ -187,9 +186,8 @@ public class AccountErasureWorker {
      * subject 해석·상태 확인 실패. 경쟁에서 진 worker가 정상 완료된 job을 두고 ERROR를 올리지 않도록
      * <b>전이가 실제로 행에 걸렸을 때만</b> 경보한다 — 0행이면 다른 worker가 이미 처리한 것이다.
      */
-    private void recordUnresolvable(AccountErasureJob job, AccountErasureJobStatus expected,
-                                    RunSummary summary, RuntimeException exception) {
-        if (jobService.markManualReview(job.getAccountErasureJobId(), expected)) {
+    private void recordUnresolvable(AccountErasureJob job, RunSummary summary, RuntimeException exception) {
+        if (jobService.markManualReview(job.getAccountErasureJobId(), AccountErasureJobStatus.PENDING)) {
             summary.recordManualReview();
             log.error("계정 삭제 대상 확인 실패로 수동 확인 필요: exceptionType={}",
                     exception.getClass().getSimpleName());
