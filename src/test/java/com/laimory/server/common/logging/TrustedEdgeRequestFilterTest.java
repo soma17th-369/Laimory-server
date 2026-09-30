@@ -82,7 +82,7 @@ class TrustedEdgeRequestFilterTest {
         MockHttpServletRequest request = proxyRequest();
         request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "::ffff:192.0.2.128");
 
-        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("::ffff:c000:280");
+        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("192.0.2.128");
     }
 
     @ParameterizedTest

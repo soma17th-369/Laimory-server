@@ -1,5 +1,6 @@
 package com.laimory.server.common.logging;
 
+import com.google.common.net.InetAddresses;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +11,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -33,6 +35,10 @@ public class TrustedEdgeRequestFilter extends OncePerRequestFilter {
 
     static final String FORWARDED_FOR_HEADER = "X-Forwarded-For";
     static final String FORWARDED_PROTO_HEADER = "X-Forwarded-Proto";
+
+    // Guava는 scope ID(%1·%eth0 — 인터페이스 이름은 실행 호스트에 따라 수용이 갈린다)와 비ASCII 숫자도 받아들인다.
+    // literal 문자만 먼저 통과시켜 결과가 호스트와 무관하게 한다.
+    private static final Pattern IP_LITERAL_CHARS = Pattern.compile("[0-9A-Fa-f:.]+");
 
     private final List<CidrBlock> trustedProxyCidrs;
 
@@ -72,7 +78,7 @@ public class TrustedEdgeRequestFilter extends OncePerRequestFilter {
      * socket peer로 수렴한다 — 되돌아가면 클라이언트가 심은 값이 채택된다.
      */
     private static String resolveForwardedForClientIp(HttpServletRequest request, String socketPeer) {
-        String normalized = IpLiteralNormalizer.normalize(rightmostForwardedFor(request));
+        String normalized = normalizeIpLiteral(rightmostForwardedFor(request));
         return normalized != null ? normalized : socketPeer;
     }
 
@@ -136,9 +142,22 @@ public class TrustedEdgeRequestFilter extends OncePerRequestFilter {
         return value == ' ' || value == '\t';
     }
 
+    /** DNS 조회 없이 IPv4/IPv6 literal만 RFC 5952 정규형으로 바꾼다. literal이 아니면 null. */
+    private static String normalizeIpLiteral(String rawValue) {
+        String value = trimOptionalWhitespace(rawValue);
+        if (value == null || !IP_LITERAL_CHARS.matcher(value).matches()) {
+            return null;
+        }
+        try {
+            return InetAddresses.toAddrString(InetAddresses.forString(value));
+        } catch (IllegalArgumentException notALiteral) {
+            return null;
+        }
+    }
+
     /** DNS 조회 없이 IP literal만 byte 표현으로 바꾼다. IPv4-mapped IPv6는 4 byte IPv4가 된다. */
     private static byte[] addressBytes(String literal) {
-        String normalized = IpLiteralNormalizer.normalize(literal);
+        String normalized = normalizeIpLiteral(literal);
         if (normalized == null) {
             return null;
         }
