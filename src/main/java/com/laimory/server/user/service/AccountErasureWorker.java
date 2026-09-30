@@ -1,7 +1,6 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.timeline.service.TimelineContentErasureService;
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.entity.AccountErasureJob;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -187,7 +186,7 @@ public class AccountErasureWorker {
      * <b>전이가 실제로 행에 걸렸을 때만</b> 경보한다 — 0행이면 다른 worker가 이미 처리한 것이다.
      */
     private void recordUnresolvable(AccountErasureJob job, RunSummary summary, RuntimeException exception) {
-        if (jobService.markManualReview(job.getAccountErasureJobId(), AccountErasureJobStatus.PENDING)) {
+        if (jobService.markManualReview(job.getAccountErasureJobId())) {
             summary.recordManualReview();
             log.error("계정 삭제 대상 확인 실패로 수동 확인 필요: exceptionType={}",
                     exception.getClass().getSimpleName());

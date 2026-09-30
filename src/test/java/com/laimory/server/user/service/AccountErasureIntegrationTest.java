@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.entity.AccountErasureJob;
@@ -191,7 +190,7 @@ class AccountErasureIntegrationTest {
         long userId = withdrawnUser();
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         backdate(userId, todayStart.minusDays(GRACE_DAYS + 1L).plusHours(3));
-        accountErasureJobService.markManualReview(jobIdOf(userId), AccountErasureJobStatus.PENDING);
+        accountErasureJobService.markManualReview(jobIdOf(userId));
 
         assertThat(claimed(claimForDelete(todayStart), userId)).isFalse();
         assertThat(accountErasureJobService.countManualReview()).isPositive();
@@ -300,7 +299,7 @@ class AccountErasureIntegrationTest {
         accountErasureService.deleteOwnerRows(userId, subjectId);
         // claim 뒤 다른 worker가 MANUAL_REVIEW로 격리해 기대 상태(PENDING)가 아니다 — job 삭제가 0행이 된다
         // (mapping 삭제는 성공한 뒤다).
-        accountErasureJobService.markManualReview(jobId, AccountErasureJobStatus.PENDING);
+        accountErasureJobService.markManualReview(jobId);
 
         assertThatThrownBy(() -> accountErasureService.finalizeErasure(jobId, userId, subjectId))
                 .isInstanceOf(AccountErasureConflictException.class);

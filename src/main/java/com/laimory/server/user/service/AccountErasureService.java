@@ -12,7 +12,6 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.service.DailyRecordService;
 import com.laimory.server.timeline.service.TimelineContentErasureService;
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
 import java.util.UUID;
@@ -230,7 +229,7 @@ public class AccountErasureService {
         if (!subjectMappingService.deleteMapping(userId, subjectId)) {
             throw new AccountErasureConflictException("mapping");
         }
-        if (!accountErasureJobService.deleteCompleted(jobId, AccountErasureJobStatus.PENDING)) {
+        if (!accountErasureJobService.deleteCompleted(jobId)) {
             throw new AccountErasureConflictException("job");
         }
         if (!userAccountService.deleteWithdrawn(userId)) {

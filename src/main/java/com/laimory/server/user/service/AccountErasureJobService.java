@@ -63,23 +63,23 @@ public class AccountErasureJobService {
         return claimed;
     }
 
-    /** 조건부 단계 전이. {@code false} = 기대 상태가 아님(다른 worker가 이미 처리) — 실패가 아니다. */
-    public boolean transition(long jobId, AccountErasureJobStatus expected, AccountErasureJobStatus next) {
-        return accountErasureJobRepository.transition(jobId, expected, next, LocalDateTime.now(clock)) == 1;
-    }
-
-    /** 사람이 봐야 하는 실패로 격리한다. 이후 claim 대상에서 빠진다. */
-    public boolean markManualReview(long jobId, AccountErasureJobStatus expected) {
-        return transition(jobId, expected, AccountErasureJobStatus.MANUAL_REVIEW);
+    /**
+     * 사람이 봐야 하는 실패로 격리한다({@code PENDING → MANUAL_REVIEW}). 이후 claim 대상에서 빠진다.
+     * {@code false} = 이미 {@code PENDING}이 아님(다른 worker가 처리) — 실패가 아니다.
+     */
+    public boolean markManualReview(long jobId) {
+        return accountErasureJobRepository.transition(jobId, AccountErasureJobStatus.PENDING,
+                AccountErasureJobStatus.MANUAL_REVIEW, LocalDateTime.now(clock)) == 1;
     }
 
     /**
      * 완료 — job 행을 지워 {@code users}를 향한 {@code ON DELETE RESTRICT}를 푼다.
      * <b>finalization transaction에 합류</b>하며 user 행 삭제보다 먼저 호출해야 한다.
-     * {@code false} = 다른 worker가 이미 완료(0행).
+     * {@code PENDING} 행만 지운다 — 그 사이 {@code MANUAL_REVIEW}로 격리된 job은 지우지 않는다.
+     * {@code false} = 기대 상태가 아니거나 다른 worker가 이미 완료(0행).
      */
-    public boolean deleteCompleted(long jobId, AccountErasureJobStatus expected) {
-        return accountErasureJobRepository.deleteByIdAndStatus(jobId, expected) == 1;
+    public boolean deleteCompleted(long jobId) {
+        return accountErasureJobRepository.deleteByIdAndStatus(jobId, AccountErasureJobStatus.PENDING) == 1;
     }
 
     /**
