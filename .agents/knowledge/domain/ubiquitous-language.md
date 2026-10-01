@@ -142,7 +142,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 `status=ACTIVE` 조건부 nickname-only UPDATE로 갱신한다(#305 — 탈퇴 행 부활 방지, 영향 0행은 갱신 폐기). Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memories` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. 신규 가입 transaction에서 schemaVersion `"1.0"`의 빈 문서를 생성하고(#536, 초기값은 persistence 문서), AI가 갱신한다. 초기화 이후 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 AI 결과 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memories` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
 | 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |

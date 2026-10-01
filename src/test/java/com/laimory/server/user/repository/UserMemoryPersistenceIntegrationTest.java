@@ -19,6 +19,8 @@ import com.laimory.server.testsupport.SubjectMappingFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -91,11 +93,23 @@ class UserMemoryPersistenceIntegrationTest {
         return userMemoryService.find(subjectId).orElse(null);
     }
 
-    @Test
-    void newUser_hasNoMemoryRow() {
-        TestUser user = newUser();
+    @ParameterizedTest
+    @EnumSource(Provider.class)
+    void newUserHasSpecifiedEmptyMemory(Provider provider) throws Exception {
+        User user = newUserProvisioner.provision(provider, "sub-" + UUID.randomUUID(), null, "nick");
+        createdUserIds.add(user.getUserId());
+        UUID subjectId = subjectMappingService.getRequired(user.getUserId());
+        JsonNode expected = objectMapper.readTree("""
+                {"schemaVersion":"1.0","updatedAt":null,"basicProfile":"","lifeContext":"",
+                 "relationships":"","personality":"","values":"","preferences":"",
+                 "routines":"","currentFocus":"","emotionalPatterns":"","memoryStyle":"",
+                 "customAttributes":{}}
+                """);
 
-        assertThat(userMemoryService.find(user.subjectId())).isEmpty();
+        assertThat(reload(subjectId)).isEqualTo(expected);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_memories WHERE subject_id = ?", Long.class, subjectId.toString()))
+                .isEqualTo(1L);
     }
 
     @Test
@@ -144,6 +158,7 @@ class UserMemoryPersistenceIntegrationTest {
     void replace_onAbsentRow_isIdempotent() {
         TestUser user = newUser();
 
+        userMemoryService.replace(user.subjectId(), null);
         userMemoryService.replace(user.subjectId(), null); // 없는 메모리 제거는 0행 — 예외 없이 멱등이다.
 
         assertThat(userMemoryService.find(user.subjectId())).isEmpty();

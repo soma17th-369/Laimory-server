@@ -114,6 +114,8 @@ class UserWithdrawalIntegrationTest {
                 .filter(token -> createdUserIds.contains(token.getUserId()))
                 .forEach(refreshTokenRepository::delete);
         createdSubjectIds.forEach(pushRegistrationRepository::deleteAllBySubjectId);
+        createdSubjectIds.forEach(subjectId -> jdbcTemplate.update(
+                "DELETE FROM user_memories WHERE subject_id = ?", subjectId.toString()));
         // #367부터 탈퇴는 설정 행을 지우지 않으므로 여기서 항상 정리한다(mapping FK보다 먼저).
         createdSubjectIds.forEach(subjectId ->
                 SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId));
