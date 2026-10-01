@@ -18,7 +18,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 class TrustedEdgeRequestFilterTest {
 
     /**
-     * ALB 전환 후 배선 — ALB ENI가 사는 퍼블릭 서브넷 자리에 문서화용 합성 대역(RFC 5737)을 넣는다.
+     * ALB 엣지 배선 — ALB ENI가 사는 퍼블릭 서브넷 자리에 문서화용 합성 대역(RFC 5737)을 넣는다.
      * 실제 대역은 배포 환경 {@code .env}가 소유한다. 인접한 두 대역을 설정해 대역 경계와 byte 정렬이
      * 아닌 prefix 길이를 함께 고정한다.
      */
@@ -233,6 +233,10 @@ class TrustedEdgeRequestFilterTest {
                 Arguments.of(List.of("example.com")),
                 Arguments.of(List.of("203.0.113.7/32")),
                 Arguments.of(List.of("2001:db8::1%eth0")),
+                // Guava는 숫자 scope와 비ASCII 숫자를 호스트와 무관하게 받아들인다 — 위 %eth0(호스트에 eth0이 있을 때만
+                // 수용)과 달리 문자 사전 확인이 빠지면 어느 호스트에서든 실패한다.
+                Arguments.of(List.of("2001:db8::1%1")),
+                Arguments.of(List.of("\uFF11.\uFF12.\uFF13.\uFF14")),
                 Arguments.of(List.of("203.0.113.007")),
                 Arguments.of(List.of("2001:db8::1::2")),
                 Arguments.of(List.of("2001:db8::g")),
