@@ -61,8 +61,8 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
 3. filter/EntryPoint는 `SecurityConfig`에 빈으로 선언하고 Boot 전역 servlet filter 자동 등록은
    `FilterRegistrationBean#setEnabled(false)`로 끈다.
 
-`JwtTokens`는 양수 userId만 발급·인증한다 — 0·음수 subject는 유효한 서명이 있어도 실패 처리해
-과거 user 0 데이터 접근을 차단한다. access token 자체는 여전히 서버 미저장 stateless다. #305가
+`JwtTokens`의 subject는 DB 행의 userId만 담고, 회원 존재·ACTIVE 판정은 인증 필터의 `isActive`
+검사가 담당한다(#511 — 별도 값 범위 가드 없음). access token 자체는 여전히 서버 미저장 stateless다. #305가
 `/a/api`마다 추가했던 users PK 조회 1회는 #429가 예고대로("실측 후 별도 이슈에서 상태 캐시 설계")
 공유 Redis 상태 캐시로 대체했다 — #441부터 발급·회전도 같은 캐시를 경유하므로 DB 조회는 캐시
 miss에만 남는다.

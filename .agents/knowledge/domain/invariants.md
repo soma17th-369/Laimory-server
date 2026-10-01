@@ -439,7 +439,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 계정 삭제 작업 행이 남아 있는 동안(상태 무관) previous HMAC key retire와 두 번째 rotation을 수행하지
   않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음). 이 gate는 지표가 아니라 secret 갱신 전 runbook의
   수동 SELECT로 확인한다(경보 미부착 지표 금지 원칙 — backlog gauge 없음).
-- access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
+- access JWT의 subject는 DB 행의 userId만 담고, 회원 존재·ACTIVE 판정은 인증 필터의 `isActive` 검사가 담당한다.
 - 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
   `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request UUID subjectId가 draft record 조회·
   enrich photo key·staging row·Redis task owner·polling·DailyRecord/Event 조회·편집·삭제·push 등록 소유권
