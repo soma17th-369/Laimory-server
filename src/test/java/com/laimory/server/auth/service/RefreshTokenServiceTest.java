@@ -13,6 +13,7 @@ import com.laimory.server.auth.repository.RefreshTokenRepository;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.user.service.UserAccountService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,6 +32,8 @@ class RefreshTokenServiceTest {
 
     @Mock
     private RefreshTokenRepository refreshTokenRepository;
+    @Mock
+    private UserAccountService userAccountService;
 
     private static final Duration REFRESH_TTL = Duration.ofDays(30);
     private static final Instant NOW = Instant.parse("2026-07-07T00:00:00Z");
@@ -41,7 +44,7 @@ class RefreshTokenServiceTest {
     private RefreshTokenService newService() {
         // no-op tx manager: TransactionTemplate.execute가 콜백을 그대로 실행하고 값을 돌려준다(getTransaction/commit는 no-op).
         return new RefreshTokenService(
-                refreshTokenRepository, mock(PlatformTransactionManager.class), REFRESH_TTL, CLOCK);
+                refreshTokenRepository, mock(PlatformTransactionManager.class), REFRESH_TTL, CLOCK, userAccountService);
     }
 
     /** refreshTokenId는 @GeneratedValue라 단위 테스트에서 null인 ACTIVE·미만료 엔티티. */
@@ -68,9 +71,10 @@ class RefreshTokenServiceTest {
         String oldRaw = "old-refresh-raw";
         when(refreshTokenRepository.findByTokenHash(AuthTokens.sha256Hex(oldRaw)))
                 .thenReturn(java.util.Optional.of(activeToken()));
+        when(userAccountService.isActive(USER_ID)).thenReturn(true);
         when(refreshTokenRepository.claimRotation(any())).thenReturn(1);
 
-        RefreshTokenService.Rotation rotation = newService().rotate(oldRaw, id -> true);
+        RefreshTokenService.Rotation rotation = newService().rotate(oldRaw);
 
         assertThat(rotation.userId()).isEqualTo(USER_ID);
         assertThat(rotation.refreshToken()).isNotEqualTo(oldRaw);
@@ -86,7 +90,7 @@ class RefreshTokenServiceTest {
     void rotate_unknownToken_throwsError2003_withoutRevokeAll() {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.empty());
 
-        assertThatThrownBy(() -> newService().rotate("unknown-raw", id -> true))
+        assertThatThrownBy(() -> newService().rotate("unknown-raw"))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(ex.getErrorCode()).isEqualTo(-2003);
@@ -99,7 +103,7 @@ class RefreshTokenServiceTest {
         RefreshToken expired = RefreshToken.issue(USER_ID, "hash", LOCAL_NOW.minusSeconds(1), null);
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(expired));
 
-        assertThatThrownBy(() -> newService().rotate("expired-raw", id -> true))
+        assertThatThrownBy(() -> newService().rotate("expired-raw"))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(ex.getErrorCode()).isEqualTo(-2003);
@@ -112,8 +116,9 @@ class RefreshTokenServiceTest {
         // 탈퇴/삭제 회원의 회전(#305): 행 상태와 무관하게 발급 전 ACTIVE 검사에서 credential 무효와
         // 구분 없는 REFRESH_TOKEN_INVALID(INFO)로 수렴한다 — WARN 재사용 경로·전체 폐기에 진입하지 않는다.
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(activeToken()));
+        when(userAccountService.isActive(USER_ID)).thenReturn(false);
 
-        assertThatThrownBy(() -> newService().rotate("withdrawn-raw", id -> false))
+        assertThatThrownBy(() -> newService().rotate("withdrawn-raw"))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_INVALID);
                     assertThat(ex.getErrorCode()).isEqualTo(-2003);
@@ -126,9 +131,10 @@ class RefreshTokenServiceTest {
     @Test
     void rotate_claimLost_revokesAllAndThrowsError2003() {
         when(refreshTokenRepository.findByTokenHash(any())).thenReturn(java.util.Optional.of(activeToken()));
+        when(userAccountService.isActive(USER_ID)).thenReturn(true);
         when(refreshTokenRepository.claimRotation(any())).thenReturn(0); // 이미 ROTATED/REVOKED = 재사용 신호
 
-        assertThatThrownBy(() -> newService().rotate("reused-raw", id -> true))
+        assertThatThrownBy(() -> newService().rotate("reused-raw"))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     // N:1 계약: 내부 타입은 재사용 탐지(WARN 대상)로 구분되지만 클라이언트 코드는 동일하다
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.REFRESH_TOKEN_REUSED);
@@ -142,8 +148,8 @@ class RefreshTokenServiceTest {
     void rotateAndRevoke_blankToken_throwIllegalArgument() {
         RefreshTokenService service = newService();
 
-        assertThatThrownBy(() -> service.rotate(" ", id -> true)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.rotate(null, id -> true)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.rotate(" ")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.rotate(null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.revoke(" ")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.revoke(null)).isInstanceOf(IllegalArgumentException.class);
     }

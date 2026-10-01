@@ -2,9 +2,7 @@ package com.laimory.server.auth.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -15,19 +13,17 @@ import com.laimory.server.auth.token.JwtTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.user.service.UserAccountService;
-import java.util.function.LongPredicate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * 토큰 오케스트레이터 단위 검증: consume/rotate가 결정한 userId 하나가 access/refresh 발급 양쪽에
  * 흐르는지, 실패 시 후속 발급이 호출되지 않는지(short-circuit), 발급 전 회원 ACTIVE 검사(#305 —
- * 탈퇴 회원의 app-code 교환 -2002 수렴, 회전에는 active 검사 전달)를 고정한다. App Code·Refresh
- * 저장소의 자체 계약(원자성·회전 커밋)은 각 leaf 테스트가 소유하므로 여기서 다시 검증하지 않는다. 인프라 0.
+ * 탈퇴 회원의 app-code 교환 -2002 수렴)를 고정한다. App Code·Refresh 저장소의 자체 계약(원자성·회전
+ * 커밋·회전 전 ACTIVE 검사)은 각 leaf 테스트가 소유하므로 여기서 다시 검증하지 않는다. 인프라 0.
  */
 @ExtendWith(MockitoExtension.class)
 class AuthTokenServiceTest {
@@ -98,8 +94,8 @@ class AuthTokenServiceTest {
     }
 
     @Test
-    void refresh_usesRotationUserIdAndReturnsRotatedToken_passingActiveCheckToRotate() {
-        when(refreshTokenService.rotate(eq("old-refresh"), any(LongPredicate.class)))
+    void refresh_usesRotationUserIdAndReturnsRotatedToken() {
+        when(refreshTokenService.rotate("old-refresh"))
                 .thenReturn(new RefreshTokenService.Rotation(USER_ID, "new-refresh"));
         when(jwtTokens.issueAccessToken(USER_ID)).thenReturn("access-42");
 
@@ -110,19 +106,12 @@ class AuthTokenServiceTest {
         assertThat(response.refreshToken()).isEqualTo("new-refresh");
         verify(jwtTokens).issueAccessToken(USER_ID);
         verify(refreshTokenService, never()).issue(anyLong());
-
-        // 회전에 전달한 발급 전 검사는 UserAccountService#isActive 그 자체다(#305 §5.4 — #441부터 캐시 프록시 경유).
-        ArgumentCaptor<LongPredicate> ownerActive = ArgumentCaptor.forClass(LongPredicate.class);
-        verify(refreshTokenService).rotate(eq("old-refresh"), ownerActive.capture());
-        when(userAccountService.isActive(7L)).thenReturn(true).thenReturn(false);
-        assertThat(ownerActive.getValue().test(7L)).isTrue();
-        assertThat(ownerActive.getValue().test(7L)).isFalse();
     }
 
     @Test
     void refresh_rotateFails_issuesNoAccessToken() {
         RuntimeException invalidRefresh = new RuntimeException("invalid refresh token");
-        when(refreshTokenService.rotate(eq("old-refresh"), any(LongPredicate.class))).thenThrow(invalidRefresh);
+        when(refreshTokenService.rotate("old-refresh")).thenThrow(invalidRefresh);
 
         assertThatThrownBy(() -> service.refresh(VERSION, "old-refresh"))
                 .isSameAs(invalidRefresh);
