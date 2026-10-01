@@ -487,6 +487,8 @@ invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 �
 ## Invariants
 
 - entity 변경에는 새 버전 migration SQL을 함께 추가하고 running DB rollout을 별도로 계획한다.
+- JPQL `@Query`에 enum 값을 FQCN 리터럴로 넣지 않는다 — `@Param`으로 받고 고정값은 같은 이름의
+  `default` 메서드가 채운다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
   연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 항상 새 Item을 대상 Event에만 연결한다(#502).
