@@ -75,6 +75,12 @@ dev/prod 배포 계약은 `APP_ADMIN_PORT=8081` exact-one, dev DB를 공유하�
 forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 host 변경과 container 재생성이 필요하다.
 현재 live 활성화 여부는 host `.env`가 권위이며 코드 존재만으로 활성화됐다고 판단하지 않는다.
 
+prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgrades로 자동 설치하지만,
+서비스를 자동으로 재시작하지 않는다. needrestart는 목록만 표시하도록(`'l'`) 설정했고, mysql-01은 `mysql-`
+패키지를 자동 갱신에서 제외했다. 재시작은 계획된 시간에 사람이 한다. prod DB는 단일 인스턴스라
+재시작하면 그동안 모든 요청이 실패하기 때문이다. 설정 파일과 정기 절차는
+[prod host 패치 절차](../../../../docs/operations/prod-host-patching.md)가 소유한다.
+
 monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
 dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
 경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).
