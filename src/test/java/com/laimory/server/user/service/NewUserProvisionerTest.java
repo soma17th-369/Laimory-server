@@ -42,6 +42,9 @@ class NewUserProvisionerTest {
     @Mock
     private DailyNotificationPreferenceService dailyNotificationPreferenceService;
 
+    @Mock
+    private UserMemoryService userMemoryService;
+
     @InjectMocks
     private NewUserProvisioner newUserProvisioner;
 

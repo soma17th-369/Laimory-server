@@ -1,5 +1,6 @@
 package com.laimory.server.timeline.repository;
 
+import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import java.time.LocalDate;
@@ -80,11 +81,16 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     @Transactional
     @Query("update DailyRecord r "
             + "set r.emotionType = :emotionType, "
-            + "r.status = com.laimory.server.timeline.DailyRecordStatus.SAVED, r.updatedAt = :now "
+            + "r.status = :saved, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
-            + "and r.status = com.laimory.server.timeline.DailyRecordStatus.DRAFT")
+            + "and r.status = :draft")
     int markSaved(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
-                  @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now);
+                  @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now,
+                  @Param("saved") DailyRecordStatus saved, @Param("draft") DailyRecordStatus draft);
+
+    default int markSaved(Long dailyRecordId, UUID subjectId, EmotionType emotionType, LocalDateTime now) {
+        return markSaved(dailyRecordId, subjectId, emotionType, now, DailyRecordStatus.SAVED, DailyRecordStatus.DRAFT);
+    }
 
     /**
      * 소유 <b>SAVED</b> record의 확정 감정만 교체하는 조건부 UPDATE. status는 바꾸지 않는다 —
@@ -99,7 +105,12 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     @Query("update DailyRecord r "
             + "set r.emotionType = :emotionType, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
-            + "and r.status = com.laimory.server.timeline.DailyRecordStatus.SAVED")
+            + "and r.status = :saved")
     int updateSavedEmotion(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
-                           @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now);
+                           @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now,
+                           @Param("saved") DailyRecordStatus saved);
+
+    default int updateSavedEmotion(Long dailyRecordId, UUID subjectId, EmotionType emotionType, LocalDateTime now) {
+        return updateSavedEmotion(dailyRecordId, subjectId, emotionType, now, DailyRecordStatus.SAVED);
+    }
 }

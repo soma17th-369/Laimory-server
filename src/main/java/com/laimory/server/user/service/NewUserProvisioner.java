@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@link com.laimory.server.timeline.service.TimelineSaveTransactionService}와 같은 형태).
  *
  * <p>{@code users} insert로 userId(IDENTITY)를 확보한 <b>같은 transaction</b>에서 subject mapping과
- * subject 축 기본 설정 행을 insert한다 — mapping insert·secret/HMAC 처리가 실패하면 user insert까지 함께 rollback되어 부분
+ * subject 축 기본 설정과 빈 User Memory 행을 insert한다 — 어느 저장 단계든 실패하면 user insert까지 함께 rollback되어 부분
  * user나 orphan subject를 남기지 않는다.
  *
  * <p>동시 최초 로그인의 UNIQUE 패배도 이 transaction 전체가 rollback된 뒤
@@ -31,9 +31,10 @@ public class NewUserProvisioner {
     private final SubjectMappingService subjectMappingService;
     private final SubjectPreferenceService subjectPreferenceService;
     private final DailyNotificationPreferenceService dailyNotificationPreferenceService;
+    private final UserMemoryService userMemoryService;
 
     /**
-     * user, subject mapping, subject 축 기본 설정 행을 한 transaction에서 저장한다.
+     * user, subject mapping, subject 축 기본 설정과 빈 User Memory를 한 transaction에서 저장한다.
      * {@code saveAndFlush}로 insert를 즉시 flush해 UNIQUE 위반이 이 메서드 안에서 드러나게 한다
      * (commit 시점으로 미루지 않음).
      *
@@ -47,6 +48,7 @@ public class NewUserProvisioner {
         UUID subjectId = subjectMappingService.createFor(user.getUserId());
         subjectPreferenceService.createDefaultIfAbsent(subjectId);
         dailyNotificationPreferenceService.createDefaultIfAbsent(subjectId);
+        userMemoryService.createEmpty(subjectId);
         return user;
     }
 }

@@ -5,10 +5,10 @@ import com.laimory.server.auth.repository.RefreshTokenRepository;
 import com.laimory.server.auth.token.AuthTokens;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.user.service.UserAccountService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.function.LongPredicate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -16,7 +16,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * refresh token leaf 서비스(발급·회전·폐기·재사용 탐지). 자신과 1:1인 {@link RefreshTokenRepository}에만 접근한다.
+ * refresh token leaf 서비스(발급·회전·폐기·재사용 탐지). 자신과 1:1인 {@link RefreshTokenRepository}와,
+ * 회전 전 소유 회원 ACTIVE 판정을 위한 {@link UserAccountService}에 의존한다.
  *
  * <p>refresh는 일회용이다 — 사용(회전)할 때마다 새 토큰으로 교체되고 이전 것은 ROTATED로 남는다.
  * ROTATED/REVOKED 토큰이 재제시되면(원본·복제본이 같이 돌아다닌다는 확실한 신호) 그 사용자의
@@ -31,15 +32,18 @@ public class RefreshTokenService {
     private final TransactionTemplate transactionTemplate;
     private final Duration refreshTtl;
     private final Clock clock;
+    private final UserAccountService userAccountService;
 
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
                                PlatformTransactionManager transactionManager,
                                @Value("${app.auth.refresh-ttl}") Duration refreshTtl,
-                               Clock clock) {
+                               Clock clock,
+                               UserAccountService userAccountService) {
         this.refreshTokenRepository = refreshTokenRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.refreshTtl = refreshTtl;
         this.clock = clock;
+        this.userAccountService = userAccountService;
     }
 
     /** 회전 결과 — 토큰 소유자와 새 refresh 원문. */
@@ -56,10 +60,9 @@ public class RefreshTokenService {
      * ROTATED/REVOKED)은 사용자 전체 폐기 후 {@code REFRESH_TOKEN_REUSED} — 클라이언트엔 둘 다
      * {@code -2003}(재로그인)으로 나가고, 내부 구분은 access 로그의 exceptionType에 남는다.
      *
-     * <p>{@code ownerActive}는 발급 전에 수행하는 소유 회원의 일반 ACTIVE 검사다(#305 §5.4 —
-     * {@code AuthTokenService}가 {@code UserAccountService#isActive}를 넘긴다). 탈퇴/삭제 회원의
-     * 회전은 — 탈퇴가 보존한 ACTIVE 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN 재사용 경로에
-     * 들어가기 전에 credential 무효와 구분 없는 {@code REFRESH_TOKEN_INVALID}(INFO)로 수렴한다.
+     * <p>발급 전에 소유 회원의 일반 ACTIVE 검사({@link UserAccountService#isActive})를 수행한다(#305 §5.4).
+     * 탈퇴/삭제 회원의 회전은 — 탈퇴가 보존한 ACTIVE 행이든 race로 늦게 저장된 ACTIVE 행이든 — WARN
+     * 재사용 경로에 들어가기 전에 credential 무효와 구분 없는 {@code REFRESH_TOKEN_INVALID}(INFO)로 수렴한다.
      * 탈퇴는 refresh를 폐기하지 않으므로(#367) 이 ACTIVE 검사가 유일한 차단 지점이다 — #441부터
      * 검사가 공유 캐시를 경유하므로 차단은 탈퇴 evict 뒤 miss부터 결정적이고, evict 유실·늦은 적재의
      * stale 창 안 회전은 #429 "보안 정책 개정"이 허용하는 한시적 예외다.
@@ -72,7 +75,7 @@ public class RefreshTokenService {
      * <p>반면 loser의 전체 폐기와 뒤따르는 throw는 트랜잭션 밖이다 — 폐기가 throw와 함께 롤백되면 안 되므로
      * 승자 트랜잭션이 커밋된 뒤 별도 커밋된다.
      */
-    public Rotation rotate(String rawToken, LongPredicate ownerActive) {
+    public Rotation rotate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new IllegalArgumentException("refreshToken must not be blank");
         }
@@ -81,7 +84,7 @@ public class RefreshTokenService {
         if (current.isExpired(LocalDateTime.now(clock))) {
             throw new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID);
         }
-        if (!ownerActive.test(current.getUserId())) {
+        if (!userAccountService.isActive(current.getUserId())) {
             // 회원 없음/탈퇴 — 발급 전에 거절한다. 탈퇴 상태를 노출하지 않고 기존 -2003(INFO)으로 수렴.
             throw new BusinessException(ExceptionType.REFRESH_TOKEN_INVALID);
         }

@@ -10,7 +10,6 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.user.UserStatus;
 import com.laimory.server.user.repository.UserRepository;
-import java.util.function.LongPredicate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,19 +59,6 @@ class UserAccountServiceCachingTest {
         assertThat(userAccountService.isActive(USER_ID)).isTrue();
 
         // 두 번째 호출은 DB를 아예 안 본다 — 요청 고정비 제거의 본체이자 "hit는 캐시 신뢰" 의미론.
-        verify(userRepository, times(1)).existsByUserIdAndStatus(USER_ID, UserStatus.ACTIVE);
-    }
-
-    @Test
-    void isActive_methodReference_sharesTheSameCacheProxy() {
-        when(userRepository.existsByUserIdAndStatus(USER_ID, UserStatus.ACTIVE)).thenReturn(true);
-
-        // 회전 경로의 형태 그대로 — AuthTokenService가 프록시 빈의 method reference를 넘긴다(#441).
-        LongPredicate ownerActive = userAccountService::isActive;
-        assertThat(userAccountService.isActive(USER_ID)).isTrue();
-        assertThat(ownerActive.test(USER_ID)).isTrue();
-
-        // 발급·회전도 같은 프록시를 타므로 필터가 적재한 캐시를 공유한다(DB 재조회 없음).
         verify(userRepository, times(1)).existsByUserIdAndStatus(USER_ID, UserStatus.ACTIVE);
     }
 

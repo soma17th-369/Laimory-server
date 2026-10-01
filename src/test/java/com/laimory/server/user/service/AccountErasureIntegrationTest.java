@@ -86,6 +86,7 @@ class AccountErasureIntegrationTest {
         createdUserIds.forEach(userId -> jdbcTemplate.update(
                 "DELETE FROM account_erasure_jobs WHERE user_id = ?", userId));
         createdSubjectIds.forEach(subjectId -> {
+            jdbcTemplate.update("DELETE FROM user_memories WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?",
                     subjectId.toString());
             jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());

@@ -23,10 +23,15 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
      */
     @Modifying
     @Transactional
-    @Query("update RefreshToken t set t.status = com.laimory.server.auth.RefreshTokenStatus.ROTATED, "
+    @Query("update RefreshToken t set t.status = :rotated, "
             + "t.updatedAt = CURRENT_TIMESTAMP "
-            + "where t.refreshTokenId = :id and t.status = com.laimory.server.auth.RefreshTokenStatus.ACTIVE")
-    int claimRotation(@Param("id") Long refreshTokenId);
+            + "where t.refreshTokenId = :id and t.status = :active")
+    int claimRotation(@Param("id") Long refreshTokenId,
+                      @Param("rotated") RefreshTokenStatus rotated, @Param("active") RefreshTokenStatus active);
+
+    default int claimRotation(Long refreshTokenId) {
+        return claimRotation(refreshTokenId, RefreshTokenStatus.ROTATED, RefreshTokenStatus.ACTIVE);
+    }
 
     /** 재사용 탐지 시 해당 사용자의 refresh 전체(REVOKED 제외)를 폐기한다. 반환 = 폐기 행 수. */
     @Modifying

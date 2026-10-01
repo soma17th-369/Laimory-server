@@ -193,7 +193,7 @@ PK인 subject당 1행이고
 컬럼으로 두면 로그인의 `User` 조회가 매번 blob을 함께 읽는다. 테이블을 나눠 `User`를 읽는 어떤 경로도
 문서에 닿지 않게 한다. 두 entity 사이에 JPA 연관 매핑을 두지 않는 것이 이 분리의 전제다(저장소 전체
 방침과 동일 — `@OneToOne`은 기본 EAGER이고 역방향은 지연 로딩이 불가능해 분리 효과가 사라진다).
-접근은 service가 Java `UUID`를 `UserMemoryRepository.findById(subjectId)`로 전달하는 경로뿐이다.
+조회는 service가 Java `UUID`를 `UserMemoryRepository.findBySubjectId(subjectId)`로 전달한다.
 Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper나 converter를 두지 않는다.
 
 쓰기는 repository의 native `INSERT ... ON DUPLICATE KEY UPDATE` upsert와 조건부 delete뿐이라(같은
@@ -201,6 +201,12 @@ Hibernate UUID JDBC mapping은 `VARCHAR`로 명시하며 별도 subject wrapper�
 감사 컬럼은 upsert SQL이 직접 채운다(`modified_by` NULL). entity는 조회·validate용 read model이다.
 갱신은 문서 전체 교체뿐이고 부분 병합·JSON path 수정은 없다. Java `null`과 JSON `null`은 모두 행
 삭제로 수렴한다.
+
+신규 가입은 `NewUserProvisioner`의 같은 transaction에서 `UserMemoryService.createEmpty(subjectId)`로
+초기 문서를 만든다(#536). `schemaVersion`은 문자열 `"1.0"`, 문서 `updatedAt`은 JSON null,
+`basicProfile`·`lifeContext`·`relationships`·`personality`·`values`·`preferences`·`routines`·
+`currentFocus`·`emotionalPatterns`·`memoryStyle`은 빈 문자열, `customAttributes`는 빈 객체다.
+DB 감사 시각은 기존 upsert가 채운다. 기존 회원 재로그인이나 기존 문서 교체에는 초기 구조를 보충하지 않는다.
 
 `subject_preferences`·`daily_notification_preferences`(#314·#321)는 푸시 수신 설정을 두 축으로 나눈다.
 마스터는 subject PK 한 행(`push_enabled`, 기본 TRUE)이고, 일일 알림 설정도 subject PK 한 행이다.
@@ -481,6 +487,8 @@ invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 �
 ## Invariants
 
 - entity 변경에는 새 버전 migration SQL을 함께 추가하고 running DB rollout을 별도로 계획한다.
+- JPQL `@Query`에 enum 값을 FQCN 리터럴로 넣지 않는다 — `@Param`으로 받고 고정값은 같은 이름의
+  `default` 메서드가 채운다.
 - Event↔Item 연결은 `timeline_event_items` junction이 유일 경로다. 같은 DailyRecord 안에서만 Item을
   공유한다는 규칙은 DB 제약이 아니라 writer 계약이다. AI·fake는 새 Item을 현재 task의 새 Event에만
   연결하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 항상 새 Item을 대상 Event에만 연결한다(#502).
