@@ -132,11 +132,6 @@ class AdminHttpTest {
         for (String path : List.of("/%61dmin/api/csrf", "/admin;ignored/api/csrf", "/a/../admin/api/csrf")) {
             assertThat(raw(mainPort, path, "Host: localhost:" + port)).as(path).startsWith("HTTP/1.1 404");
         }
-        // 기존 trusted-edge wrapper가 serverPort를 443으로 바꿔도 local port 판정은 유지된다.
-        assertThat(raw(port, "/admin/api/csrf", "Host: localhost:" + port, "X-Forwarded-Proto: https"))
-                .startsWith("HTTP/1.1 200");
-        assertThat(raw(mainPort, "/admin/api/csrf", "Host: localhost:" + port, "X-Forwarded-Proto: https"))
-                .startsWith("HTTP/1.1 404");
     }
 
     @Test

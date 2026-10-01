@@ -17,11 +17,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 class TrustedEdgeRequestFilterTest {
 
-    /** 현행 dev와 같은 배선 — ALB 대역이 비어 있어 loopback nginx 엣지만 신뢰한다. */
-    private final TrustedEdgeRequestFilter loopbackEdge = new TrustedEdgeRequestFilter(List.of());
-
     /**
-     * ALB 전환 후 배선 — ALB ENI가 사는 퍼블릭 서브넷 자리에 문서화용 합성 대역(RFC 5737)을 넣는다.
+     * ALB 엣지 배선 — ALB ENI가 사는 퍼블릭 서브넷 자리에 문서화용 합성 대역(RFC 5737)을 넣는다.
      * 실제 대역은 배포 환경 {@code .env}가 소유한다. 인접한 두 대역을 설정해 대역 경계와 byte 정렬이
      * 아닌 prefix 길이를 함께 고정한다.
      */
@@ -29,76 +26,6 @@ class TrustedEdgeRequestFilterTest {
             new TrustedEdgeRequestFilter(List.of("192.0.2.0/25", "192.0.2.128/25"));
 
     private static final String PROXY_PEER = "192.0.2.140";
-
-    @Test
-    void trustedLoopback_usesSingleNormalizedIpv4_andIgnoresXffAndUserAgent() throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, " 203.0.113.7\t");
-        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "198.51.100.9");
-        request.addHeader("User-Agent", "203.0.113.99");
-
-        HttpServletRequest resolved = run(loopbackEdge, request);
-
-        assertThat(resolved.getRemoteAddr()).isEqualTo("203.0.113.7");
-    }
-
-    @Test
-    void trustedLoopback_normalizesCompressedIpv6() throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "2001:0DB8::1");
-
-        assertThat(run(loopbackEdge, request).getRemoteAddr()).isEqualTo("2001:db8::1");
-    }
-
-    @Test
-    void trustedLoopback_acceptsIpv4EmbeddedIpv6() throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "::ffff:192.0.2.128");
-
-        assertThat(run(loopbackEdge, request).getRemoteAddr()).isEqualTo("::ffff:c000:280");
-    }
-
-    @ParameterizedTest
-    @MethodSource("canonicalIpv6")
-    void trustedLoopback_canonicalizesValidIpv6GroupBoundaries(String header, String expected) throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, header);
-
-        assertThat(run(loopbackEdge, request).getRemoteAddr()).isEqualTo(expected);
-    }
-
-    @ParameterizedTest
-    @MethodSource("invalidIpHeaders")
-    void malformedOrMissingClientIp_fallsBackToSocketPeer(List<String> values) throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        values.forEach(value -> request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, value));
-
-        assertThat(run(loopbackEdge, request).getRemoteAddr())
-                .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER);
-    }
-
-    @Test
-    void repeatedIdenticalClientIp_stillFallsBackToSocketPeer() throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "203.0.113.7");
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "203.0.113.7");
-
-        assertThat(run(loopbackEdge, request).getRemoteAddr())
-                .isEqualTo(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER);
-    }
-
-    /** 전환기 계약: ALB 대역을 설정해도 nginx 경유(loopback) 요청은 기존 계약 그대로 동작한다. */
-    @Test
-    void loopbackStillTrusted_whileProxyCidrsAreConfigured() throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "203.0.113.7");
-        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_PROTO_HEADER, "https");
-
-        HttpServletRequest resolved = run(proxyEdge, request);
-
-        assertThat(resolved.getRemoteAddr()).isEqualTo("203.0.113.7");
-        assertThat(resolved.getScheme()).isEqualTo("https");
-    }
 
     @Test
     void trustedProxy_usesRightmostForwardedFor() throws Exception {
@@ -133,24 +60,6 @@ class TrustedEdgeRequestFilterTest {
                 .isNotEqualTo("1.2.3.4");
     }
 
-    /** ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서 Laimory-Client-IP는 값이 없다. */
-    @Test
-    void trustedProxy_ignoresCustomClientIpHeader() throws Exception {
-        MockHttpServletRequest request = proxyRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "1.2.3.4");
-        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "203.0.113.7");
-
-        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("203.0.113.7");
-    }
-
-    @Test
-    void trustedProxy_withoutForwardedFor_ignoresCustomClientIpHeader() throws Exception {
-        MockHttpServletRequest request = proxyRequest();
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "1.2.3.4");
-
-        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo(PROXY_PEER);
-    }
-
     @ParameterizedTest
     @MethodSource("invalidForwardedForHeaders")
     void trustedProxy_malformedRightmostForwardedFor_fallsBackToSocketPeer(List<String> values) throws Exception {
@@ -166,6 +75,23 @@ class TrustedEdgeRequestFilterTest {
         request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "1.2.3.4, 2001:0DB8::1");
 
         assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("2001:db8::1");
+    }
+
+    @Test
+    void trustedProxy_acceptsIpv4EmbeddedIpv6ForwardedFor() throws Exception {
+        MockHttpServletRequest request = proxyRequest();
+        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "::ffff:192.0.2.128");
+
+        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo("192.0.2.128");
+    }
+
+    @ParameterizedTest
+    @MethodSource("canonicalIpv6")
+    void trustedProxy_canonicalizesValidIpv6GroupBoundaries(String header, String expected) throws Exception {
+        MockHttpServletRequest request = proxyRequest();
+        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, header);
+
+        assertThat(run(proxyEdge, request).getRemoteAddr()).isEqualTo(expected);
     }
 
     @ParameterizedTest
@@ -248,7 +174,6 @@ class TrustedEdgeRequestFilterTest {
         request.setRemoteAddr(peer);
         request.setScheme("http");
         request.setServerPort(8080);
-        request.addHeader(TrustedEdgeRequestFilter.CLIENT_IP_HEADER, "203.0.113.7");
         request.addHeader(TrustedEdgeRequestFilter.FORWARDED_FOR_HEADER, "198.51.100.9");
         request.addHeader(TrustedEdgeRequestFilter.FORWARDED_PROTO_HEADER, "https");
 
@@ -261,29 +186,12 @@ class TrustedEdgeRequestFilterTest {
     }
 
     @ParameterizedTest
-    @MethodSource("validProtocols")
-    void trustedSingleProtocol_overridesRequestView(
-            String header, String scheme, boolean secure, int port, String expectedUrl) throws Exception {
-        MockHttpServletRequest request = trustedRequest();
-        request.setServerName("external.example");
-        request.setRequestURI("/oauth2/authorization/google");
-        request.addHeader(TrustedEdgeRequestFilter.FORWARDED_PROTO_HEADER, header);
-
-        HttpServletRequest resolved = run(loopbackEdge, request);
-
-        assertThat(resolved.getScheme()).isEqualTo(scheme);
-        assertThat(resolved.isSecure()).isEqualTo(secure);
-        assertThat(resolved.getServerPort()).isEqualTo(port);
-        assertThat(resolved.getRequestURL().toString()).isEqualTo(expectedUrl);
-    }
-
-    @ParameterizedTest
     @MethodSource("invalidProtocolHeaders")
     void invalidProtocol_keepsRawRequestView(List<String> values) throws Exception {
-        MockHttpServletRequest request = trustedRequest();
+        MockHttpServletRequest request = proxyRequest();
         values.forEach(value -> request.addHeader(TrustedEdgeRequestFilter.FORWARDED_PROTO_HEADER, value));
 
-        HttpServletRequest resolved = run(loopbackEdge, request);
+        HttpServletRequest resolved = run(proxyEdge, request);
 
         assertThat(resolved.getScheme()).isEqualTo("http");
         assertThat(resolved.isSecure()).isFalse();
@@ -295,10 +203,6 @@ class TrustedEdgeRequestFilterTest {
         filter.doFilter(request, new MockHttpServletResponse(),
                 (servletRequest, servletResponse) -> downstream.set((HttpServletRequest) servletRequest));
         return downstream.get();
-    }
-
-    private static MockHttpServletRequest trustedRequest() {
-        return rawRequest(TrustedEdgeRequestFilter.TRUSTED_SOCKET_PEER);
     }
 
     private static MockHttpServletRequest proxyRequest() {
@@ -314,28 +218,6 @@ class TrustedEdgeRequestFilterTest {
         return request;
     }
 
-    private static Stream<Arguments> invalidIpHeaders() {
-        return Stream.of(
-                Arguments.of(List.of()),
-                Arguments.of(List.of("")),
-                Arguments.of(List.of(" \t ")),
-                Arguments.of(List.of("203.0.113.7, 198.51.100.9")),
-                Arguments.of(List.of("example.com")),
-                Arguments.of(List.of("203.0.113.7/32")),
-                Arguments.of(List.of("203.0.113.7:443")),
-                Arguments.of(List.of("[2001:db8::1]")),
-                Arguments.of(List.of("2001:db8::1%eth0")),
-                Arguments.of(List.of("203.0.113.007")),
-                Arguments.of(List.of("256.0.0.1")),
-                Arguments.of(List.of("2001:db8::1::2")),
-                Arguments.of(List.of("2001:db8::g")),
-                Arguments.of(List.of("2001:db8:: 1")),
-                // group 수 경계: 압축 없는 7-group/9-group, ::가 채울 group이 없는 8-group+압축은 전부 무효다.
-                Arguments.of(List.of("1:2:3:4:5:6:7")),
-                Arguments.of(List.of("1:2:3:4:5:6:7:8:9")),
-                Arguments.of(List.of("1:2:3:4:5:6:7:8::")));
-    }
-
     private static Stream<Arguments> invalidForwardedForHeaders() {
         return Stream.of(
                 Arguments.of(List.of()),
@@ -347,7 +229,22 @@ class TrustedEdgeRequestFilterTest {
                 Arguments.of(List.of("203.0.113.7", "")),
                 Arguments.of(List.of("[2001:db8::1]")),
                 Arguments.of(List.of("203.0.113.7:443")),
-                Arguments.of(List.of("256.0.0.1")));
+                Arguments.of(List.of("256.0.0.1")),
+                Arguments.of(List.of("example.com")),
+                Arguments.of(List.of("203.0.113.7/32")),
+                Arguments.of(List.of("2001:db8::1%eth0")),
+                // Guava는 숫자 scope와 비ASCII 숫자를 호스트와 무관하게 받아들인다 — 위 %eth0(호스트에 eth0이 있을 때만
+                // 수용)과 달리 문자 사전 확인이 빠지면 어느 호스트에서든 실패한다.
+                Arguments.of(List.of("2001:db8::1%1")),
+                Arguments.of(List.of("\uFF11.\uFF12.\uFF13.\uFF14")),
+                Arguments.of(List.of("203.0.113.007")),
+                Arguments.of(List.of("2001:db8::1::2")),
+                Arguments.of(List.of("2001:db8::g")),
+                Arguments.of(List.of("2001:db8:: 1")),
+                // group 수 경계: 압축 없는 7-group/9-group, ::가 채울 group이 없는 8-group+압축은 전부 무효다.
+                Arguments.of(List.of("1:2:3:4:5:6:7")),
+                Arguments.of(List.of("1:2:3:4:5:6:7:8:9")),
+                Arguments.of(List.of("1:2:3:4:5:6:7:8::")));
     }
 
     private static Stream<Arguments> proxyCidrBoundaries() {
@@ -373,7 +270,7 @@ class TrustedEdgeRequestFilterTest {
     }
 
     private static Stream<String> untrustedPeers() {
-        return Stream.of("10.0.32.10", "172.16.0.10", "192.168.0.10", "::1");
+        return Stream.of("10.0.32.10", "172.16.0.10", "192.168.0.10", "127.0.0.1", "::1");
     }
 
     private static Stream<Arguments> validProtocols() {
