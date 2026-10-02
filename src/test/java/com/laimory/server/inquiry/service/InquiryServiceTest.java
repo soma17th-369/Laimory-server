@@ -12,11 +12,19 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.InquiryStatus;
+import com.laimory.server.inquiry.dto.AdminInquiryAttachmentResponse;
+import com.laimory.server.inquiry.dto.AdminInquiryDetailResponse;
+import com.laimory.server.inquiry.dto.AdminInquiryResponse;
+import com.laimory.server.inquiry.dto.InquiryDetailResponse;
+import com.laimory.server.inquiry.dto.InquirySummaryResponse;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.entity.InquiryAttachment;
 import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
 import com.laimory.server.inquiry.repository.InquiryRepository;
 import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -32,8 +40,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.unit.DataSize;
 
-/** 문의 leaf service — 접수 시 첨부 검증·순서, 소유자·관리자 열람, 처리됨 시각, 탈퇴 삭제 순서를 실 엔티티로 검증한다. */
+/** 문의 service — 접수 시 첨부 검증·순서, 소유자·관리자 열람 응답(첨부 CDN URL 포함), 처리됨 시각, 탈퇴 삭제 순서를 실 엔티티로 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class InquiryServiceTest {
 
@@ -47,9 +56,13 @@ class InquiryServiceTest {
     private InquiryRepository inquiryRepository;
     @Mock
     private InquiryAttachmentRepository inquiryAttachmentRepository;
+    @Mock
+    private S3PhotoStorageService s3PhotoStorageService;
 
+    /** 열람 URL 조립은 설정값만 쓰는 순수 로직이라 실물을 쓴다(S3 협력자는 호출되지 않는다). */
     private InquiryService service() {
-        return new InquiryService(inquiryRepository, inquiryAttachmentRepository, CLOCK);
+        return new InquiryService(inquiryRepository, inquiryAttachmentRepository,
+                new InquiryAttachmentService(s3PhotoStorageService, DataSize.ofMegabytes(5), "cdn.example"), CLOCK);
     }
 
     @Test
@@ -60,9 +73,10 @@ class InquiryServiceTest {
             return saved;
         });
 
-        Inquiry inquiry = service().register("v1", SUBJECT_ID, " user@example.com ",
+        service().register("v1", SUBJECT_ID, " user@example.com ",
                 " 앱이 멈춰요 ", "사진 올리면 멈춰요", List.of(FILENAME_A, FILENAME_B));
 
+        Inquiry inquiry = savedInquiry();
         assertThat(inquiry.getSubjectId()).isEqualTo(SUBJECT_ID);
         assertThat(inquiry.getEmail()).isEqualTo("user@example.com");
         assertThat(inquiry.getTitle()).isEqualTo("앱이 멈춰요");
@@ -110,9 +124,9 @@ class InquiryServiceTest {
         when(inquiryRepository.save(any(Inquiry.class))).thenAnswer(invocation -> invocation.getArgument(0));
         String title = "제".repeat(Inquiry.TITLE_MAX_LENGTH);
 
-        Inquiry inquiry = service().register("v1", SUBJECT_ID, "u@example.com", "  " + title + "  ", "내용", null);
+        service().register("v1", SUBJECT_ID, "u@example.com", "  " + title + "  ", "내용", null);
 
-        assertThat(inquiry.getTitle()).isEqualTo(title);
+        assertThat(savedInquiry().getTitle()).isEqualTo(title);
     }
 
     @Test
@@ -139,22 +153,27 @@ class InquiryServiceTest {
         when(inquiryRepository.findBySubjectIdOrderByInquiryIdDesc(SUBJECT_ID, PageRequest.of(0, 50)))
                 .thenReturn(List.of(newer, older));
 
-        assertThat(service().findMine("v1", SUBJECT_ID)).containsExactly(newer, older);
+        List<InquirySummaryResponse> mine = service().findMine("v1", SUBJECT_ID);
+
+        assertThat(mine).extracting(InquirySummaryResponse::inquiryId).containsExactly(12L, 7L);
+        assertThat(mine).extracting(InquirySummaryResponse::status).containsOnly(InquiryStatus.RECEIVED);
         verifyNoInteractions(inquiryAttachmentRepository);
     }
 
     @Test
-    void getMinePairsOwnedInquiryWithAttachmentFilenamesInRequestOrder() {
+    void getMineReturnsOwnedInquiryWithAttachmentCdnUrlsInRequestOrder() {
         Inquiry inquiry = inquiry(12L);
         when(inquiryRepository.findByInquiryIdAndSubjectId(12L, SUBJECT_ID)).thenReturn(Optional.of(inquiry));
         when(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(12L)).thenReturn(List.of(
                 InquiryAttachment.of(12L, FILENAME_B),
                 InquiryAttachment.of(12L, FILENAME_A)));
 
-        InquiryService.InquiryWithAttachments item = service().getMine("v1", SUBJECT_ID, 12L);
+        InquiryDetailResponse detail = service().getMine("v1", SUBJECT_ID, 12L);
 
-        assertThat(item.inquiry()).isSameAs(inquiry);
-        assertThat(item.attachmentFilenames()).containsExactly(FILENAME_B, FILENAME_A);
+        assertThat(detail.inquiryId()).isEqualTo(12L);
+        assertThat(detail.email()).isEqualTo("u@example.com");
+        assertThat(detail.description()).isEqualTo("내용");
+        assertThat(detail.attachmentUrls()).containsExactly(cdnUrl(FILENAME_B), cdnUrl(FILENAME_A));
     }
 
     @Test
@@ -175,22 +194,25 @@ class InquiryServiceTest {
         Inquiry older = inquiry(7L);
         when(inquiryRepository.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(newer, older));
 
-        assertThat(service().findAll()).containsExactly(newer, older);
+        assertThat(service().findAll()).extracting(AdminInquiryResponse::inquiryId).containsExactly(12L, 7L);
         verifyNoInteractions(inquiryAttachmentRepository);
     }
 
     @Test
-    void getPairsInquiryWithItsAttachmentFilenamesInRequestOrder() {
+    void getReturnsInquiryWithAttachmentViewUrlsInRequestOrder() {
         Inquiry inquiry = inquiry(12L);
         when(inquiryRepository.findByInquiryId(12L)).thenReturn(Optional.of(inquiry));
         when(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(12L)).thenReturn(List.of(
                 InquiryAttachment.of(12L, FILENAME_A),
                 InquiryAttachment.of(12L, FILENAME_B)));
 
-        InquiryService.InquiryWithAttachments item = service().get(12L);
+        AdminInquiryDetailResponse detail = service().get(12L);
 
-        assertThat(item.inquiry()).isSameAs(inquiry);
-        assertThat(item.attachmentFilenames()).containsExactly(FILENAME_A, FILENAME_B);
+        assertThat(detail.inquiry().inquiryId()).isEqualTo(12L);
+        assertThat(detail.inquiry().email()).isEqualTo("u@example.com");
+        assertThat(detail.attachments()).containsExactly(
+                new AdminInquiryAttachmentResponse(FILENAME_A, cdnUrl(FILENAME_A)),
+                new AdminInquiryAttachmentResponse(FILENAME_B, cdnUrl(FILENAME_B)));
     }
 
     @Test
@@ -225,6 +247,16 @@ class InquiryServiceTest {
         InOrder order = inOrder(inquiryAttachmentRepository, inquiryRepository);
         order.verify(inquiryAttachmentRepository).deleteAllBySubjectId(SUBJECT_ID);
         order.verify(inquiryRepository).deleteAllBySubjectId(SUBJECT_ID);
+    }
+
+    private Inquiry savedInquiry() {
+        ArgumentCaptor<Inquiry> saved = ArgumentCaptor.forClass(Inquiry.class);
+        verify(inquiryRepository).save(saved.capture());
+        return saved.getValue();
+    }
+
+    private static String cdnUrl(String filename) {
+        return "https://cdn.example/" + InquiryObjectKeys.subjectPrefix(SUBJECT_ID) + filename;
     }
 
     private static Inquiry inquiry(long inquiryId) {

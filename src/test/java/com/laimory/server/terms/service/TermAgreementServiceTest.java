@@ -11,6 +11,10 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.TermAgreementResponse;
+import com.laimory.server.terms.entity.TermAgreement;
+import com.laimory.server.terms.entity.TermAgreementId;
+import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
@@ -25,6 +29,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.BeanUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /** 동의 current 검증·복합 key 기록과 initializer의 미동의 current 차집합 계약을 검증한다. */
 @ExtendWith(MockitoExtension.class)
@@ -129,6 +135,19 @@ class TermAgreementServiceTest {
 
         assertThat(service.getHistory("v1", USER_ID)).isEmpty();
         verify(termAgreementRepository).findHistoryByUserId(USER_ID);
+    }
+
+    @Test
+    void history_mapsAgreedVersionRowAndAcceptedAtInRepositoryOrder() {
+        String contentUrl = "https://www.laimory.app/terms/terms-of-service/1.0";
+        TermAgreement agreement = BeanUtils.instantiateClass(TermAgreement.class);
+        ReflectionTestUtils.setField(agreement, "id", new TermAgreementId(USER_ID, TermType.TERMS_OF_SERVICE, "1.0"));
+        ReflectionTestUtils.setField(agreement, "acceptedAt", LocalDateTime.of(2026, 7, 2, 10, 0, 5));
+        when(termAgreementRepository.findHistoryByUserId(USER_ID)).thenReturn(List.of(new TermAgreementHistoryEntry(
+                agreement, TermDocument.of(TermType.TERMS_OF_SERVICE, "1.0", "이용약관", contentUrl))));
+
+        assertThat(service.getHistory("v1", USER_ID)).containsExactly(new TermAgreementResponse(
+                TermType.TERMS_OF_SERVICE, "1.0", "이용약관", contentUrl, LocalDateTime.of(2026, 7, 2, 10, 0, 5)));
     }
 
     @Test

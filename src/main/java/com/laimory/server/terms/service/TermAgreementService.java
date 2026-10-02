@@ -4,6 +4,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermTimes;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.TermAgreementResponse;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermAgreementRepository;
 import java.time.Clock;
@@ -65,9 +66,11 @@ public class TermAgreementService {
     }
 
     /** 회원에게 남아 있는 전체 동의 이력({@code acceptedAt DESC}, 안정 tie-breaker). 없으면 빈 목록이다. */
-    public List<TermAgreementHistoryEntry> getHistory(String applicationVersion, Long userId) {
+    public List<TermAgreementResponse> getHistory(String applicationVersion, Long userId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return termAgreementRepository.findHistoryByUserId(userId);
+        return termAgreementRepository.findHistoryByUserId(userId).stream()
+                .map(TermAgreementResponse::from)
+                .toList();
     }
 
     /**

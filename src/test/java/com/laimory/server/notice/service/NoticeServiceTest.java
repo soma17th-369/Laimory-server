@@ -9,16 +9,19 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.notice.dto.AdminNoticeResponse;
+import com.laimory.server.notice.dto.NoticeResponse;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 공지 leaf service — 입력 규칙(제목·HTTPS URL)과 관리자 수정/노출 전환 결과를 실 엔티티로 검증한다. */
+/** 공지 leaf service — 공개·관리자 목록 응답, 입력 규칙(제목·HTTPS URL)과 관리자 수정/노출 전환 결과를 실 엔티티로 검증한다. */
 @ExtendWith(MockitoExtension.class)
 class NoticeServiceTest {
 
@@ -34,18 +37,35 @@ class NoticeServiceTest {
         when(noticeRepository.findByHiddenFalseOrderByNoticeIdDesc()).thenReturn(List.of(newer, older));
         NoticeService service = new NoticeService(noticeRepository);
 
-        List<Notice> notices = service.findVisibleNotices("v1");
+        List<NoticeResponse> notices = service.findVisibleNotices("v1");
 
-        assertThat(notices).containsExactly(newer, older);
+        assertThat(notices).extracting(NoticeResponse::title).containsExactly("둘째", "첫째");
+        assertThat(notices).extracting(NoticeResponse::contentUrl).containsOnly(URL);
+    }
+
+    @Test
+    void findAllNoticesIncludesHiddenWithVisibilityState() {
+        Notice hidden = Notice.of("숨김 공지", URL);
+        hidden.changeVisibility(true);
+        Notice visible = Notice.of("노출 공지", URL);
+        when(noticeRepository.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(hidden, visible));
+        NoticeService service = new NoticeService(noticeRepository);
+
+        List<AdminNoticeResponse> notices = service.findAllNotices();
+
+        assertThat(notices).extracting(AdminNoticeResponse::title).containsExactly("숨김 공지", "노출 공지");
+        assertThat(notices).extracting(AdminNoticeResponse::hidden).containsExactly(true, false);
     }
 
     @Test
     void registerStripsTitleKeepsUrlAndStartsVisible() {
-        when(noticeRepository.save(any(Notice.class))).thenAnswer(invocation -> invocation.getArgument(0));
         NoticeService service = new NoticeService(noticeRepository);
 
-        Notice saved = service.register("  점검 안내  ", URL);
+        service.register("  점검 안내  ", URL);
 
+        ArgumentCaptor<Notice> captor = ArgumentCaptor.forClass(Notice.class);
+        verify(noticeRepository).save(captor.capture());
+        Notice saved = captor.getValue();
         assertThat(saved.getTitle()).isEqualTo("점검 안내");
         assertThat(saved.getContentUrl()).isEqualTo(URL);
         assertThat(saved.isHidden()).isFalse();
@@ -84,9 +104,8 @@ class NoticeServiceTest {
         when(noticeRepository.findByNoticeId(3L)).thenReturn(Optional.of(notice));
         NoticeService service = new NoticeService(noticeRepository);
 
-        Notice edited = service.edit(3L, " 새 제목 ", "https://www.laimory.app/notices/12-r2");
+        service.edit(3L, " 새 제목 ", "https://www.laimory.app/notices/12-r2");
 
-        assertThat(edited).isSameAs(notice);
         assertThat(notice.getTitle()).isEqualTo("새 제목");
         assertThat(notice.getContentUrl()).isEqualTo("https://www.laimory.app/notices/12-r2");
         assertThat(notice.isHidden()).isTrue();

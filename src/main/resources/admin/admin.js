@@ -130,8 +130,8 @@ async function changeNoticeVisibility(notice) {
     const hidden = !notice.hidden;
     if (!await confirmChange(`#${notice.noticeId} ${notice.title}\n${noticeState(notice)} → ${hidden ? "숨김" : "노출"}`,
       hidden ? "숨기면 앱 공지 목록에서 즉시 사라집니다. 다시 노출할 수 있습니다." : "다시 노출하면 앱 목록에 즉시 나타납니다.")) return;
-    const result = await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/visibility`, writeOptions("PUT", JSON.stringify({hidden})));
-    status(`#${result.noticeId} ${noticeState(result)} 처리 완료`);
+    await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/visibility`, writeOptions("PUT", JSON.stringify({hidden})));
+    status(`#${notice.noticeId} ${noticeState({hidden})} 처리 완료`);
     await loadNotices();
   } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
   finally { $("notice-fields").disabled = false; }
@@ -216,10 +216,11 @@ $("term-form").addEventListener("submit", async event => {
     httpsUrl(proposal.contentUrl);
     const current = catalog.find(group => group.termType === proposal.termType)?.current;
     if (!await confirmChange(`현재\n${describe(current)}\n\n등록 후\n${describe(proposal)}`, "새 문서가 즉시 current가 됩니다. 기존 행으로 되돌리는 기능은 없습니다.")) return;
-    const result = await api("/admin/api/terms", writeOptions("POST", JSON.stringify(proposal)));
-    status(`등록 완료: ${result.saved.termType} ${result.saved.version}. 현재 버전: ${result.current.version}`);
+    await api("/admin/api/terms", writeOptions("POST", JSON.stringify(proposal)));
     $("term-form").reset();
     await loadTerms();
+    const registered = catalog.find(group => group.termType === proposal.termType)?.current;
+    status(`등록 완료: ${proposal.termType} ${proposal.version}. 현재 버전: ${registered?.version ?? "없음"}`);
   } catch (error) { status(`${error.message}\n통신 오류였다면 이력을 확인한 뒤 재시도하세요. 자동 재시도하지 않습니다.`, true); }
   finally { $("term-fields").disabled = false; }
 });
@@ -243,10 +244,9 @@ $("notice-form").addEventListener("submit", async event => {
       ? `수정 전\n${current.title}\n${current.contentUrl}\n\n수정 후\n${proposal.title}\n${proposal.contentUrl}`
       : `${proposal.title}\n${proposal.contentUrl}`;
     if (!await confirmChange(details, current ? "저장 즉시 앱에 수정된 내용이 노출됩니다." : "저장 즉시 앱 공지 목록에 노출됩니다.")) return;
-    const result = current
-      ? await api(`/admin/api/notices/${encodeURIComponent(id)}`, writeOptions("PUT", JSON.stringify(proposal)))
-      : await api("/admin/api/notices", writeOptions("POST", JSON.stringify(proposal)));
-    status(`${current ? "수정" : "등록"} 완료: #${result.noticeId} ${result.title}`);
+    if (current) await api(`/admin/api/notices/${encodeURIComponent(id)}`, writeOptions("PUT", JSON.stringify(proposal)));
+    else await api("/admin/api/notices", writeOptions("POST", JSON.stringify(proposal)));
+    status(`${current ? `수정 완료: #${id}` : "등록 완료:"} ${proposal.title}`);
     resetNoticeForm();
     await loadNotices();
   } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 확인한 뒤 재시도하세요. 자동 재시도하지 않습니다.`, true); }

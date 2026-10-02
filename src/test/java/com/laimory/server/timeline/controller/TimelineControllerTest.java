@@ -22,6 +22,7 @@ import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
+import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
@@ -121,7 +122,7 @@ class TimelineControllerTest {
 
     @Test
     void createDraftTask_returns202WithTaskId() throws Exception {
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn(new CreateDraftTaskResponse("task-123"));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted())
@@ -134,7 +135,7 @@ class TimelineControllerTest {
     void createDraftTask_passesParsedRecordDateAndWindowToService() throws Exception {
         // HTTP 파싱 계약 고정: recordDate는 ISO LocalDate, window는 offset 없는 ISO local datetime으로 파싱돼
         // 값 그대로 서비스에 전달된다(recordAt과 recordDate의 날짜가 달라도 그대로 — 정합성 미검증).
-        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn("task-123");
+        when(timelineDraftTaskService.createDraftTask(any(), any(), any(), any(), any(), any(), any())).thenReturn(new CreateDraftTaskResponse("task-123"));
 
         mockMvc.perform(post(TASKS).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(CREATE_BODY))
                 .andExpect(status().isAccepted());

@@ -22,6 +22,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.TermAgreementResponse;
 import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.entity.TermAgreementId;
 import com.laimory.server.terms.entity.TermDocument;
@@ -177,8 +178,8 @@ class TermAgreementControllerTest {
                 .andExpect(jsonPath("$.body.agreements").isEmpty());
     }
 
-    private static TermAgreementHistoryEntry entry(TermType type, String version, String title,
-                                                   String acceptedAt) {
+    /** repository join 결과 fixture를 서비스와 같은 변환으로 응답 항목으로 만든다. */
+    private static TermAgreementResponse entry(TermType type, String version, String title, String acceptedAt) {
         // 게시 URL은 동의한 그 버전 행에 저장된 값이다 — 현재 규칙으로 다시 만들지 않는다.
         String contentUrl = "https://www.laimory.app/terms/"
                 + type.name().toLowerCase().replace('_', '-') + "/" + version;
@@ -186,6 +187,6 @@ class TermAgreementControllerTest {
         TermAgreement agreement = BeanUtils.instantiateClass(TermAgreement.class);
         ReflectionTestUtils.setField(agreement, "id", new TermAgreementId(USER_ID, type, version));
         ReflectionTestUtils.setField(agreement, "acceptedAt", LocalDateTime.parse(acceptedAt));
-        return new TermAgreementHistoryEntry(agreement, document);
+        return TermAgreementResponse.from(new TermAgreementHistoryEntry(agreement, document));
     }
 }

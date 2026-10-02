@@ -5,7 +5,6 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.dto.TermListResponse;
-import com.laimory.server.terms.dto.TermResponse;
 import com.laimory.server.terms.service.TermDocumentService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -26,8 +25,6 @@ public class PublicTermController implements PublicTermApi {
             throw new BusinessException(ExceptionType.VALIDATION_FAILED);
         }
         return ResponseEntity.ok(ApiResponse.success(new TermListResponse(
-                termDocumentService.findCurrentDocuments(applicationVersion, termTypes).stream()
-                        .map(TermResponse::from)
-                        .toList())));
+                termDocumentService.findCurrentTerms(applicationVersion, termTypes))));
     }
 }

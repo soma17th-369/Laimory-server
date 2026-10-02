@@ -18,8 +18,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
-import com.laimory.server.user.Provider;
-import com.laimory.server.user.entity.User;
+import com.laimory.server.user.dto.UserProfileResponse;
 import com.laimory.server.user.service.UserService;
 import com.laimory.server.user.service.UserWithdrawalService;
 import org.junit.jupiter.api.Test;
@@ -27,7 +26,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -106,7 +104,7 @@ class UserControllerTest {
     @Test
     void getMyProfile_returns200WithUserIdAndNickname_andPassesPrincipalUserId() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(persistedUser(User.of(Provider.KAKAO, "sub-123", null, "라이머")));
+                .thenReturn(new UserProfileResponse(USER_ID, "라이머"));
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -123,7 +121,7 @@ class UserControllerTest {
     @Test
     void getMyProfile_nullNickname_keepsExplicitNullKey() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(persistedUser(User.of(Provider.GOOGLE, "sub-123", "e@x.com", null)));
+                .thenReturn(new UserProfileResponse(USER_ID, null));
 
         MvcResult result = mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -146,10 +144,5 @@ class UserControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
-    }
-
-    private static User persistedUser(User user) {
-        ReflectionTestUtils.setField(user, "userId", USER_ID); // IDENTITY 채번 결과 재현
-        return user;
     }
 }

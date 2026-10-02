@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.user.Provider;
+import com.laimory.server.user.dto.UserProfileResponse;
 import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.UserRepository;
 import java.util.Optional;
@@ -19,6 +20,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * findOrCreate 계약: 기존 조회 우선, 미존재면 NewUserProvisioner로 생성(user+subject mapping 한
@@ -160,13 +162,14 @@ class UserServiceTest {
     }
 
     @Test
-    void getProfile_existingUser_returnsRow() {
+    void getProfile_existingUser_returnsUserIdAndNickname() {
         User existing = User.of(PROVIDER, PROVIDER_USER_ID, "e@x.com", "nick");
+        ReflectionTestUtils.setField(existing, "userId", 7L); // IDENTITY 채번 결과 재현
         when(userRepository.findByUserId(7L)).thenReturn(Optional.of(existing));
 
-        User result = userService.getProfile("v1", 7L);
+        UserProfileResponse result = userService.getProfile("v1", 7L);
 
-        assertThat(result).isSameAs(existing);
+        assertThat(result).isEqualTo(new UserProfileResponse(7L, "nick"));
     }
 
     @Test

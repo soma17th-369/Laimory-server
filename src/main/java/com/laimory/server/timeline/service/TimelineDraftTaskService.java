@@ -11,6 +11,7 @@ import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.RawIds;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
+import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -89,16 +90,16 @@ public class TimelineDraftTaskService {
     private final Clock clock;
 
     /**
-     * 작성 작업을 만들고 taskId를 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
+     * 작성 작업을 만들고 taskId를 담은 응답을 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
      * 이미 SAVED인 daily record면 409(-1003), 기존 final rawId 제외 후 새 item이 없으면
      * 409(-1013)로 거절한다. taskId는 dispatcher가 정상 반환(접수 확인)한 경우에만 반환하며,
      * dispatch 실패는 내부 구분(미접수 확정 4xx → FAILED 종결 시도 / UNKNOWN → PROCESSING 유지)과
      * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
      */
     @WithSpan
-    public String createDraftTask(String applicationVersion, UUID subjectId, LocalDate recordDate,
-                                  LocalDateTime recordAt, String recordTimeZone, TimelineWindowDto timelineWindow,
-                                  List<SourceItemDto> sourceItems) {
+    public CreateDraftTaskResponse createDraftTask(String applicationVersion, UUID subjectId, LocalDate recordDate,
+                                                   LocalDateTime recordAt, String recordTimeZone,
+                                                   TimelineWindowDto timelineWindow, List<SourceItemDto> sourceItems) {
         if (recordDate == null) {
             throw new IllegalArgumentException("recordDate is required");
         }
@@ -218,7 +219,7 @@ public class TimelineDraftTaskService {
             throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         }
 
-        return taskId;
+        return new CreateDraftTaskResponse(taskId);
     }
 
     /**

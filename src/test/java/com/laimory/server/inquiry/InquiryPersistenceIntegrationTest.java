@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.dto.InquiryDetailResponse;
+import com.laimory.server.inquiry.dto.InquirySummaryResponse;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
 import com.laimory.server.inquiry.repository.InquiryRepository;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -90,20 +94,23 @@ class InquiryPersistenceIntegrationTest {
     void myInquiriesAreScopedToTheOwnerSubjectForBothListAndDetail() {
         provisionUser();
         provisionOtherUser();
-        Inquiry mine = inquiryService.register("v1", subjectId, "me@example.com", "내 문의", "내용",
-                List.of(FILENAME_B, FILENAME_A));
-        Inquiry others = inquiryService.register("v1", otherSubjectId, "other@example.com", "남의 문의", "내용", null);
+        inquiryService.register("v1", subjectId, "me@example.com", "내 문의", "내용", List.of(FILENAME_B, FILENAME_A));
+        long mine = latestInquiryId(subjectId);
+        inquiryService.register("v1", otherSubjectId, "other@example.com", "남의 문의", "내용", null);
+        long others = latestInquiryId(otherSubjectId);
 
-        assertThat(inquiryService.findMine("v1", subjectId)).extracting(Inquiry::getInquiryId)
-                .containsExactly(mine.getInquiryId());
-        assertThat(inquiryService.findMine("v1", otherSubjectId)).extracting(Inquiry::getInquiryId)
-                .containsExactly(others.getInquiryId());
+        assertThat(inquiryService.findMine("v1", subjectId)).extracting(InquirySummaryResponse::inquiryId)
+                .containsExactly(mine);
+        assertThat(inquiryService.findMine("v1", otherSubjectId)).extracting(InquirySummaryResponse::inquiryId)
+                .containsExactly(others);
 
-        InquiryService.InquiryWithAttachments detail = inquiryService.getMine("v1", subjectId, mine.getInquiryId());
-        assertThat(detail.inquiry().getTitle()).isEqualTo("내 문의");
-        assertThat(detail.attachmentFilenames()).containsExactly(FILENAME_B, FILENAME_A); // 요청(PK) 순서
+        InquiryDetailResponse detail = inquiryService.getMine("v1", subjectId, mine);
+        assertThat(detail.title()).isEqualTo("내 문의");
+        assertThat(detail.attachmentUrls()).satisfiesExactly( // 요청(PK) 순서
+                url -> assertThat(url).endsWith("/" + InquiryObjectKeys.fullKey(FILENAME_B, subjectId)),
+                url -> assertThat(url).endsWith("/" + InquiryObjectKeys.fullKey(FILENAME_A, subjectId)));
         // 실재하는 남의 문의 id도 없는 문의와 같은 404다.
-        assertThatThrownBy(() -> inquiryService.getMine("v1", subjectId, others.getInquiryId()))
+        assertThatThrownBy(() -> inquiryService.getMine("v1", subjectId, others))
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getExceptionType())
                 .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);
@@ -114,11 +121,12 @@ class InquiryPersistenceIntegrationTest {
         provisionUser();
         List<Long> registeredIds = new ArrayList<>();
         for (int i = 0; i < 51; i++) {
-            registeredIds.add(inquiryService.register("v1", subjectId, "me@example.com", "문의 " + i, "내용", null)
-                    .getInquiryId());
+            inquiryService.register("v1", subjectId, "me@example.com", "문의 " + i, "내용", null);
+            registeredIds.add(latestInquiryId(subjectId));
         }
 
-        List<Long> listedIds = inquiryService.findMine("v1", subjectId).stream().map(Inquiry::getInquiryId).toList();
+        List<Long> listedIds = inquiryService.findMine("v1", subjectId).stream()
+                .map(InquirySummaryResponse::inquiryId).toList();
 
         // 최신 50건만 — 가장 먼저 접수한 1건이 빠진다.
         assertThat(listedIds).hasSize(50).doesNotContain(registeredIds.get(0));
@@ -130,17 +138,18 @@ class InquiryPersistenceIntegrationTest {
     void registeredInquiryBlocksSubjectMappingDeletionUntilErasedInAttachmentThenInquiryOrder() {
         provisionUser();
 
-        Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
+        inquiryService.register("v1", subjectId, "it@example.com",
                 "사진이 안 올라가요", "첫 줄\n둘째 줄", List.of(FILENAME_B, FILENAME_A));
+        long inquiryId = latestInquiryId(subjectId);
 
-        Inquiry stored = inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow();
+        Inquiry stored = inquiryRepository.findByInquiryId(inquiryId).orElseThrow();
         assertThat(stored.getSubjectId()).isEqualTo(subjectId);
         assertThat(stored.getEmail()).isEqualTo("it@example.com");
         assertThat(stored.getTitle()).isEqualTo("사진이 안 올라가요");
         assertThat(stored.getDescription()).isEqualTo("첫 줄\n둘째 줄");
         assertThat(stored.getAnsweredAt()).isNull();
         assertThat(stored.getCreatedAt()).isNotNull();
-        assertThat(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiry.getInquiryId()))
+        assertThat(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiryId))
                 .extracting(attachment -> attachment.getFilename())
                 .containsExactly(FILENAME_B, FILENAME_A); // filename 정렬이 아니라 요청 순서
 
@@ -151,23 +160,27 @@ class InquiryPersistenceIntegrationTest {
 
         inquiryService.deleteAllBySubjectId(subjectId);
 
-        assertThat(inquiryRepository.findByInquiryId(inquiry.getInquiryId())).isEmpty();
-        assertThat(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiry.getInquiryId())).isEmpty();
+        assertThat(inquiryRepository.findByInquiryId(inquiryId)).isEmpty();
+        assertThat(inquiryAttachmentRepository.findByInquiryIdOrderByInquiryAttachmentIdAsc(inquiryId)).isEmpty();
     }
 
     @Test
     void answeredMarkIsPersistedAndClearable() {
         provisionUser();
-        Inquiry inquiry = inquiryService.register("v1", subjectId, "it@example.com",
-                "제안", "기능 제안", null);
+        inquiryService.register("v1", subjectId, "it@example.com", "제안", "기능 제안", null);
+        long inquiryId = latestInquiryId(subjectId);
 
-        inquiryService.changeAnswered(inquiry.getInquiryId(), true);
-        assertThat(inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow().getAnsweredAt())
-                .isNotNull();
+        inquiryService.changeAnswered(inquiryId, true);
+        assertThat(inquiryRepository.findByInquiryId(inquiryId).orElseThrow().getAnsweredAt()).isNotNull();
 
-        inquiryService.changeAnswered(inquiry.getInquiryId(), false);
-        assertThat(inquiryRepository.findByInquiryId(inquiry.getInquiryId()).orElseThrow().getAnsweredAt())
-                .isNull();
+        inquiryService.changeAnswered(inquiryId, false);
+        assertThat(inquiryRepository.findByInquiryId(inquiryId).orElseThrow().getAnsweredAt()).isNull();
+    }
+
+    /** 접수 응답은 ID를 싣지 않는다 — 테스트마다 새로 만든 subject의 최신 문의가 방금 접수한 행이다. */
+    private long latestInquiryId(UUID subject) {
+        return inquiryRepository.findBySubjectIdOrderByInquiryIdDesc(subject, PageRequest.of(0, 1))
+                .getFirst().getInquiryId();
     }
 
     private void provisionOtherUser() {

@@ -2,7 +2,6 @@ package com.laimory.server.user.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.user.dto.UserProfileResponse;
-import com.laimory.server.user.entity.User;
 import com.laimory.server.user.service.UserService;
 import com.laimory.server.user.service.UserWithdrawalService;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +24,7 @@ public class UserController implements UserApi {
 
     @Override
     public ResponseEntity<ApiResponse<UserProfileResponse>> getMyProfile(String applicationVersion, Long userId) {
-        User user = userService.getProfile(applicationVersion, userId);
-        return ResponseEntity.ok(ApiResponse.success(new UserProfileResponse(user.getUserId(), user.getNickname())));
+        return ResponseEntity.ok(ApiResponse.success(userService.getProfile(applicationVersion, userId)));
     }
 
     @Override

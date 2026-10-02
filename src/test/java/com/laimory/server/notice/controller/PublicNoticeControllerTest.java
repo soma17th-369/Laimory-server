@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.laimory.server.config.SecurityConfig;
+import com.laimory.server.notice.dto.NoticeResponse;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.testsupport.AuthTestSupport;
@@ -68,11 +69,11 @@ class PublicNoticeControllerTest {
                 .andExpect(jsonPath("$.body.notices").isEmpty());
     }
 
-    /** ID·게시 시각은 DB가 채우는 값이라 슬라이스 fixture가 직접 심는다. */
-    private static Notice notice(long noticeId, String title, String contentUrl, LocalDateTime createdAt) {
+    /** ID·게시 시각은 DB가 채우는 값이라 슬라이스 fixture가 직접 심고, 서비스와 같은 변환으로 응답을 만든다. */
+    private static NoticeResponse notice(long noticeId, String title, String contentUrl, LocalDateTime createdAt) {
         Notice notice = Notice.of(title, contentUrl);
         ReflectionTestUtils.setField(notice, "noticeId", noticeId);
         ReflectionTestUtils.setField(notice, "createdAt", createdAt);
-        return notice;
+        return NoticeResponse.from(notice);
     }
 }
