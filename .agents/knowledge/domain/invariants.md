@@ -343,9 +343,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   버전을 바꾸는 API는 없다.
 - 관리자 등록은 기존 Repository의 native INSERT로만 수행한다(`save`/`merge` 금지). 같은 PK는 transaction
   rollback 후 409이고 기존 title·contentUrl·감사 값은 바뀌지 않는다.
-- 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
-  `build/terms-site`에 생성한다. 그 HTML을 랜딩페이지가 게시하며 Server는 원문 route를 두지 않는다(#418).
-  약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
+- 약관 원문(본문)의 단일 관리 위치는 랜딩페이지 저장소(`Laimory-landing-page`)의
+  `public/terms/**/*.html`이고, 랜딩페이지가 그 HTML을 버전별로 게시한다(#418·#470). Server 저장소에는
+  원문·HTML 생성기가 없고 원문 route도 두지 않는다 — Server는 catalog(종류·버전·제목·게시 URL)와 동의
+  이력만 소유한다. 약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
   조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
