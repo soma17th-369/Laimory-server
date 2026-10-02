@@ -289,9 +289,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
   보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
 - 설정 쓰기(일일 알림 ON/OFF)는 `next_due_at`을 서버 고정 시각의 다음 미래 occurrence로 재장전한다.
-  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
-  tick이 예정에 없던 알림을 발송한다. 같은 이유로 기존 행을 일괄로 켜는 마이그레이션도 `next_due_at`을
-  같은 문장에서 재장전해야 한다(#318).
+  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면 다음 tick이 지연과 무관하게 그
+  과거 occurrence를 발송 대상으로 잡는다(#318 당시 매분 tick에서는 켠 직후 예정에 없던 알림이 갔다).
+  같은 이유로 기존 행을 일괄로 켜는 마이그레이션도 `next_due_at`을 같은 문장에서 재장전해야 한다(#318).
 - 일일 알림 설정은 **subject당 한 행**이다(#321 — 판별자 없음). 두 번째 일일 알림이 생기면 이 테이블에
   행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
   운영 SQL로도 바뀌지 않는다.
@@ -311,13 +311,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 일일 알림
   OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
-- worker는 한 occurrence를 한 번만 claim한다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후 첫
-  occurrence로 전진). 하루 1회 캡은 없다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 발송될
-  수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
+- worker는 한 occurrence를 한 번만 claim한다(발송 성공·실패와 무관하게 `next_due_at`을 현재 이후 첫
+  occurrence로 전진 — 여러 날 밀린 행도 한 번만 발송된다). 하루 1회 캡은 없다 — 껐다 켜서 오늘 시각이
+  다시 미래가 되면 같은 날 다시 발송될 수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
   claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서 호출하므로 전달 보장은 at-most-once
   best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.
-- 허용 지연(기본 30분)을 넘긴 occurrence는 발송하지 않고 다음 occurrence로 넘긴다 — 장시간 중단 뒤
-  복구가 새벽에 밀린 알림을 쏟아내지 않게 하는 상한이다.
+- 예정 시각보다 늦었다는 이유로 발송을 건너뛰지 않는다(#395) — 장애로 놓친 occurrence도 다음 run이
+  발송한다. 발송이 정상 시간대에만 일어난다는 보장은 cron이 하루 1회 21:00(`0 0 21 * * *`)이라는
+  사실에서 나온다. cron을 바꾸면 이 판단이 무효가 된다.
 
 ### Photos
 

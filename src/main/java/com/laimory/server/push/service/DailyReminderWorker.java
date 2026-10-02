@@ -1,11 +1,7 @@
 package com.laimory.server.push.service;
 
-import com.laimory.server.common.ScheduledWorkerRunBudget;
-import com.laimory.server.push.PushTimes;
 import com.laimory.server.push.entity.DailyNotificationPreference;
 import com.laimory.server.push.service.DailyReminderPushNotifier.BatchOutcome;
-import java.time.Clock;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -24,12 +20,14 @@ import org.springframework.stereotype.Component;
  * 것이 우선이고, 그 대가로 claim commit 뒤 process가 죽으면 그 날 알림은 누락된다(자동 재발송 없음,
  * at-most-once best-effort).
  *
- * <p>하루 1회 trigger는 그날 due를 한 run에서 모두 소화해야 한다 — 남긴 초과분을 받아갈 다음 tick이
- * 없어, 다음 날 run에서 허용 지연을 넘긴 채 발송 없이 skip되며 예산만 먹는다. run 예산
- * ({@code max-batches-per-run}·{@code max-run-duration})은 그래서 전체 due를 덮을 만큼 크게 잡는다.
+ * <p>run 크기는 batch 수({@code max-batches-per-run})로만 제한한다. 하루 1회 trigger는 그날 due를 한
+ * run에서 모두 소화해야 한다 — 남긴 초과분을 받아갈 다음 tick이 없어 다음 날 21:00 run으로 밀린다.
+ * 그래서 상한을 전체 due를 덮을 만큼 크게 잡는다. 시간 상한은 두지 않는다 — 하루 1회라 run이 길어져도
+ * 뒤에 밀리는 trigger가 없다.
  *
- * <p>허용 지연을 넘긴 occurrence는 발송 없이 건너뛴다. 오래 내려가 있던 서버가 복구되면서 새벽에
- * 밀린 알림을 쏟아내지 않게 하는 장치이며, 그래도 claim은 해서 다음 미래 occurrence로 옮긴다.
+ * <p>예정 시각보다 늦었다는 이유로 발송을 건너뛰지 않는다. 발송이 정상 시간대에만 일어난다는 보장은
+ * cron이 하루 1회 21:00({@code 0 0 21 * * *})이라는 사실에서 나온다 — 장애로 놓친 occurrence도 다음
+ * 21:00 run이 받아 한 번 발송하고 다음 미래 occurrence로 옮긴다. cron을 바꾸면 이 판단이 무효가 된다.
  *
  * <p>Redis 전역 lock은 쓰지 않는다 — schedule 행의 PK와 row lock이 중복 방지 권위다.
  */
@@ -41,20 +39,17 @@ public class DailyReminderWorker {
     private final DailyReminderPushNotifier dailyReminderPushNotifier;
     private final DailyReminderWorkerProperties properties;
     private final TaskExecutor workerExecutor;
-    private final Clock clock;
     private final AtomicBoolean runActive = new AtomicBoolean();
 
     public DailyReminderWorker(
             DailyNotificationPreferenceService dailyNotificationPreferenceService,
             DailyReminderPushNotifier dailyReminderPushNotifier,
             DailyReminderWorkerProperties properties,
-            @Qualifier("dailyReminderWorkerExecutor") TaskExecutor workerExecutor,
-            Clock clock) {
+            @Qualifier("dailyReminderWorkerExecutor") TaskExecutor workerExecutor) {
         this.dailyNotificationPreferenceService = dailyNotificationPreferenceService;
         this.dailyReminderPushNotifier = dailyReminderPushNotifier;
         this.properties = properties;
         this.workerExecutor = workerExecutor;
-        this.clock = clock;
     }
 
     @Scheduled(
@@ -69,13 +64,13 @@ public class DailyReminderWorker {
             return;
         }
 
-        ScheduledWorkerRunBudget budget = new ScheduledWorkerRunBudget(
-                properties.getMaxBatchesPerRun(), properties.getMaxRunDuration());
+        // 여러 slot이 한 상한을 나눠 쓴다.
+        AtomicInteger remainingBatches = new AtomicInteger(properties.getMaxBatchesPerRun());
         AtomicInteger remainingSlots = new AtomicInteger(properties.getConcurrency());
         RunSummary summary = new RunSummary();
         for (int slot = 0; slot < properties.getConcurrency(); slot++) {
             try {
-                workerExecutor.execute(() -> runWorkerSlot(budget, remainingSlots, summary));
+                workerExecutor.execute(() -> runWorkerSlot(remainingBatches, remainingSlots, summary));
             } catch (RuntimeException exception) {
                 summary.recordWorkerError();
                 log.warn("일일 리마인더 worker task 제출 실패: exceptionType={}",
@@ -85,9 +80,9 @@ public class DailyReminderWorker {
         }
     }
 
-    private void runWorkerSlot(ScheduledWorkerRunBudget budget, AtomicInteger remainingSlots, RunSummary summary) {
+    private void runWorkerSlot(AtomicInteger remainingBatches, AtomicInteger remainingSlots, RunSummary summary) {
         try {
-            while (budget.tryAcquireBatch()) {
+            while (remainingBatches.getAndDecrement() > 0) {
                 List<DailyNotificationPreference> claimed;
                 try {
                     claimed = dailyNotificationPreferenceService.claimDue(properties.getBatchSize());
@@ -113,32 +108,20 @@ public class DailyReminderWorker {
         }
     }
 
-    /**
-     * claim한 occurrence를 허용 지연 안/밖으로 가르고 안쪽만 발송한다. 지연 초과분은 이미 다음 미래
-     * occurrence로 옮겨져 있으므로 여기서 더 할 일이 없다.
-     */
+    /** claim한 occurrence를 예정 시각과 무관하게 모두 발송한다 — 정상 시간대 보장은 cron이 진다. */
     private BatchResult processClaimedBatch(List<DailyNotificationPreference> claimed) {
-        LocalDateTime nowKst = PushTimes.kstWallClock(clock.instant());
-        List<DailyNotificationPreference> deliverable = claimed.stream()
-                .filter(preference -> !preference.getNextDueAt().plus(properties.getMaxLateness()).isBefore(nowKst))
-                .toList();
-        int lateSkipped = claimed.size() - deliverable.size();
-        if (lateSkipped > 0) {
-            log.info("일일 리마인더 지연 초과 occurrence 건너뜀: claimed={} lateSkipped={} maxLatenessMs={}",
-                    claimed.size(), lateSkipped, properties.getMaxLateness().toMillis());
-        }
         try {
-            BatchOutcome outcome = dailyReminderPushNotifier.notifyAll(deliverable);
-            return new BatchResult(claimed.size(), lateSkipped, outcome.targets(), outcome.accepted(), 0);
+            BatchOutcome outcome = dailyReminderPushNotifier.notifyAll(claimed);
+            return new BatchResult(claimed.size(), outcome.targets(), outcome.accepted(), 0);
         } catch (RuntimeException exception) {
             // occurrence는 이미 전진했으므로 이 batch는 그대로 유실된다(자동 재발송 없음).
             log.warn("일일 리마인더 발송 실패: claimed={} exceptionType={}",
                     claimed.size(), exception.getClass().getSimpleName());
-            return new BatchResult(claimed.size(), lateSkipped, 0, 0, 1);
+            return new BatchResult(claimed.size(), 0, 0, 1);
         }
     }
 
-    private record BatchResult(int claimed, int lateSkipped, int targets, int accepted, int sendErrors) {
+    private record BatchResult(int claimed, int targets, int accepted, int sendErrors) {
     }
 
     private static final class RunSummary {
@@ -146,7 +129,6 @@ public class DailyReminderWorker {
         private final long startedAtNanos = System.nanoTime();
         private int batches;
         private int claimed;
-        private int lateSkipped;
         private int targets;
         private int accepted;
         private int sendErrors;
@@ -156,7 +138,6 @@ public class DailyReminderWorker {
         private synchronized void recordBatch(BatchResult result) {
             batches++;
             claimed += result.claimed();
-            lateSkipped += result.lateSkipped();
             targets += result.targets();
             accepted += result.accepted();
             sendErrors += result.sendErrors();
@@ -172,9 +153,9 @@ public class DailyReminderWorker {
 
         private synchronized void logCompleted() {
             // 하루 1회 trigger라 발송 0건이어도 남긴다 — 그날 run이 실제로 돌았는지 확인할 다른 수단이 없다.
-            log.info("일일 리마인더 worker run 완료: batches={} claimed={} lateSkipped={} targets={} "
+            log.info("일일 리마인더 worker run 완료: batches={} claimed={} targets={} "
                             + "accepted={} sendErrors={} claimErrors={} workerErrors={} durationMs={}",
-                    batches, claimed, lateSkipped, targets, accepted, sendErrors, claimErrors,
+                    batches, claimed, targets, accepted, sendErrors, claimErrors,
                     workerErrors, Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000));
         }
     }

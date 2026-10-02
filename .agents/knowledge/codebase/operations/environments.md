@@ -180,15 +180,16 @@ application 배포·health gate 의존성이 아니다.
   docker profile만 server-count 기본값이 1이며 test는 기존대로 비활성화한다. 변경·원복은 전체 중지 후
   적용하며 [전환 절차](../../../../docs/database/474-orphan-sweep-rollout.md)를 따른다.
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
-  `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
-  `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
-  worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체 사용자 21:00 발송이라
-  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background claim이 통합
-  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385), 허용 지연 30분,
-  process당 concurrency 1, batch 250, 최대 40 batch/5분 — 전원이 같은 21:00을 공유하고 초과분을
-  받아갈 다음 tick이 없으므로, 그날 due를 한 run에서 모두 소화하도록 예산을 process당 10,000행으로
-  잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
-  로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
+  `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`, `DAILY_REMINDER_MAX_BATCHES_PER_RUN`
+  (checked-in default는 worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체
+  사용자 21:00 발송이라 env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background
+  claim이 통합 테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385),
+  process당 concurrency 1, batch 250, 최대 40 batch. run 크기는 batch 수로만 제한하고 시간 상한은 없다
+  (#395) — 전원이 같은 21:00을 공유하고 초과분을 받아갈 다음 tick이 없으므로, 그날 due를 한 run에서
+  모두 소화하도록 상한을 process당 10,000행으로 잡는다. 남은 초과분은 다음 날 21:00 run이 발송하며,
+  run 완료 로그의 `batches`가 상한과 같으면 상한에 닿은 것이다. 늦었다는 이유로 발송을 건너뛰지
+  않는다 — 발송이 정상 시간대에만 일어난다는 보장은 cron이 하루 1회 21:00(`0 0 21 * * *`)이라는
+  사실에서 나온다. cron을 바꾸면 이 판단이 무효가 된다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_WORKER_ID`,
   `DRAFT_CLEANUP_SERVER_COUNT`, `DRAFT_CLEANUP_WORKER_COUNT` (checked-in default는 worker on,

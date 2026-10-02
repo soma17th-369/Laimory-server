@@ -36,7 +36,7 @@ public class DailyReminderPushNotifier {
     private final Clock clock;
 
     /**
-     * 발송 대상 occurrence들을 처리한다. 지연 초과로 건너뛸 occurrence는 호출자가 이미 제외한 뒤 넘긴다.
+     * 발송 대상 occurrence들을 처리한다. worker는 claim한 occurrence를 예정 시각과 무관하게 모두 넘긴다(#395).
      *
      * @return batch 집계(로그·run summary용)
      */
@@ -63,7 +63,7 @@ public class DailyReminderPushNotifier {
 
         PushSendResult result = pushMessageSender.send(PushMessage.dailyReminder(), targets);
         pushMetrics.record(PushMessageType.DAILY_REMINDER, result);
-        // claimed가 아니라 deliverable — worker 로그의 claimed(지연 skip 포함)와 다른 값이라 라벨을 나눈다.
+        // deliverableSubjects는 넘겨받은 occurrence의 subject 수다 — worker 로그의 claimed(행 수)와 라벨을 나눈다.
         log.info("daily reminder push result: deliverableSubjects={} eligibleSubjects={} targets={} accepted={} "
                         + "failed={} invalidTargets={}",
                 subjectIds.size(), eligible.size(), targets.size(), result.successCount(), result.failureCount(),

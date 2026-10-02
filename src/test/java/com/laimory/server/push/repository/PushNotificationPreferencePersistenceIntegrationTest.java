@@ -288,8 +288,8 @@ class PushNotificationPreferencePersistenceIntegrationTest {
 
     @Test
     void enablingReminder_rearmsStaleScheduleToFutureOccurrence() {
-        // 꺼둔 사이 과거로 굳은 예정 시각을 그대로 켜면 허용 지연(30분) 안쪽이라 켠 직후 tick이
-        // 예정에 없던 알림을 보낸다. 켤 때 다음 미래 occurrence로 재장전해야 한다.
+        // 꺼둔 사이 과거로 굳은 예정 시각은 켤 때 다음 미래 occurrence로 재장전해야 한다(근거는
+        // DailyNotificationPreferenceRepository.updateEnabled).
         UUID subjectId = SUBJECTS.get(2);
         givenSubject(subjectId);
         dailyNotificationPreferenceRepository.insertIfAbsent(

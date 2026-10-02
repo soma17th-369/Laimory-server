@@ -111,9 +111,9 @@ backfill이 <b>유일한</b> 복구 권위다. 탈퇴 subject의 `user_subject_l
 
 #318(일일 리마인더 기본 ON 전환)은 스키마를 바꾸지 않지만 **기존 행 일괄 갱신**이 필요하다. #314
 rollout으로 이미 만들어진 행은 `enabled=false`라 코드 기본값만 바꿔서는 켜지지 않는다. `enabled`만
-켜면 안 된다 — 꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 `next_due_at`이 허용 지연(30분)
-안쪽이면 켠 직후 tick이 예정에 없던 알림을 보낸다. 그래서 `next_due_at`을 같은 문장에서 다음 미래
-occurrence로 재장전한다(dev 적용 후 prod 별도):
+켜면 안 된다 — 꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 `next_due_at`은 다음 tick이 지연과
+무관하게 발송 대상으로 잡는다(#318 당시 매분 tick에서는 켠 직후 예정에 없던 알림이 갔다). 그래서
+`next_due_at`을 같은 문장에서 다음 미래 occurrence로 재장전한다(dev 적용 후 prod 별도):
 
 ```sql
 SET @kst_now = CONVERT_TZ(NOW(6), '+00:00', '+09:00');
