@@ -1,13 +1,23 @@
-# 약관 원문 작성 — 진행 관리
+# 약관 — 서버 관리 범위와 1.0 작성 결정
 
-법무 원문이 없어 비어 있는 약관 catalog를 채우는 작업의 단일 관리 문서다.
-초안 원문은 `drafts/`에 있고, 이 문서는 상태·결정·미결만 관리한다.
+약관 **본문**은 랜딩페이지 저장소
+[`soma17th-369/Laimory-landing-page`](https://github.com/soma17th-369/Laimory-landing-page)의
+`public/terms/**/*.html`에서 한 곳으로 관리한다(#470). 본문 수정·개정·게시 절차는 랜딩페이지의
+[약관 문서 운영 가이드](https://github.com/soma17th-369/Laimory-landing-page/blob/main/docs/terms.md)가 소유한다.
+서버는 약관 catalog(종류·버전·제목·게시 URL)와 동의 이력만 다룬다.
 
-- 추적 이슈 #383
-- 최초 작성 2026-08-18, 최종 갱신 2026-09-07
-- 기본틀에서 라이모리 문서로 바뀐 내용: [`COMPARISON.md`](COMPARISON.md)
-- 이 문서는 확정한 공개 정책과 약관 원문을 관리한다. 구현 작업의 진행 여부는 별도 이슈에서 관리한다.
+이 문서는 서버 쪽 catalog 운영 기준과, 1.0 원문을 작성할 때(#383) 확정한 공개 정책·결정의 기록을 둔다.
+1.0 게시 뒤 랜딩페이지에서 보완된 내용(예: Crashlytics 공개사항 — 랜딩 이슈 #22)은 이 문서에 반영돼 있지
+않을 수 있으며, 본문 내용이 이 문서와 다르면 랜딩페이지 HTML이 권위다.
+
+- 추적 이슈 #383(1.0 작성), #470(본문 관리 위치 이관)
+- 최초 작성 2026-08-18, 최종 갱신 2026-10-02
+- 1.0 작성 당시 기본틀에서 라이모리 문서로 바뀐 내용(과거 비교 자료): [`COMPARISON.md`](COMPARISON.md)
 - #432 복합키 DB 전환 절차: [`term-version-composite-key-migration.md`](term-version-composite-key-migration.md)
+
+과거 서버에 있던 Markdown 초안(`docs/terms/drafts/`)과 HTML·manifest·catalog SQL 생성기
+(`docs/terms/scripts/`)는 #470에서 삭제했다. 랜딩페이지의 현재 HTML과 내용이 다르므로 Git 이력에서
+되살려 게시본을 생성하거나 덮어쓰지 않는다.
 
 ## 1. 전달 방식 — #320으로 바뀌었다
 
@@ -21,38 +31,22 @@ Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laim
 | version 형식 | canonical `major.minor` 문자열(`1.0`, `1.10`, `2.0`). **날짜 아님** |
 | current | 같은 종류에서 major, minor를 숫자로 비교한 가장 큰 version. 새 상위 version INSERT 즉시 전환 |
 | seed 컬럼 | `term_type`, `version`, `title`, `content_url` 4개 + 감사 시각 |
-| URL 생성 | 코드가 역산하지 않는다. **운영 seed가 넣는 값**이다 |
+| URL 생성 | 코드가 역산하지 않는다. **catalog 등록(관리자 등록 또는 수동 seed)이 넣는 값**이다 |
 | 게시된 버전 URL | 불변. 개정은 새 version + 새 URL |
 
-`drafts/`의 Markdown이 원문의 source of truth이고, 게시용 HTML은 거기서 렌더한다.
+### 본문 관리와 catalog 등록
 
-### 게시 산출물 만들기
+- **본문·게시**: 랜딩페이지 `public/terms/{term-slug}/{term-version}.html`을 직접 수정하고 랜딩 PR로
+  검토·게시한다. HTML 작성 기준, 확장자 없는 URL rewrite·redirect, `immutable` cache header, 개정
+  절차와 버전을 올리지 않는 예외(출시 전 보완·개인정보 오기·표시 CSS 수정), 배포 후 확인은 모두
+  [랜딩 약관 운영 가이드](https://github.com/soma17th-369/Laimory-landing-page/blob/main/docs/terms.md)를 따른다.
+- **catalog 등록**: 새 version을 개정할 때 서버가 하는 일은 랜딩 게시가 끝나 새 URL의 200 응답과 내용을
+  확인한 **뒤에** 상위 version 행 하나를 추가하는 것뿐이다. 등록 경로(관리자 등록 #461 또는 수동 seed)와
+  감사 시각 규칙은 [persistence knowledge](../../.agents/knowledge/codebase/data/persistence.md)의
+  `term_documents`·관리자 등록 설명이 소유한다. 기존 행의 title·URL은 바꾸지 않는다.
+- 버전을 올리지 않는 랜딩 쪽 예외 수정은 같은 URL을 유지하므로 catalog 변경이 없다.
 
-추가 dependency 없이 Node.js 표준 library만 사용하는 builder가 6종 Markdown을 모바일 대응 HTML로
-변환한다. 결과물은 Git에 넣지 않고 `build/terms-site/`에 만든다.
-
-```bash
-node docs/terms/scripts/build-site.mjs
-```
-
-- `build/terms-site/terms/{term-slug}/1.0`: canonical URL과 같은 S3 object key의 HTML
-- `build/terms-site/publish-manifest.json`: URL·content type·장기 cache 정책·source/HTML SHA-256
-- `build/terms-site/term-documents-1.0.sql`: 빈 catalog에서 URL 200 확인 뒤 실행할 6종 전체 seed
-- `build/terms-site/term-documents-add-privacy-policy-1.0.sql`: 기존 5종 catalog에 개인정보 처리방침만
-  추가하는 1회성 seed
-
-이미 기존 5종 seed를 실행한 DB에는 전체 seed를 다시 실행하지 않는다. 개인정보 처리방침 URL의 200
-응답을 확인한 뒤 1회성 seed만 실행한다. 이 SQL은 중복이나 기존 데이터 불일치를 숨기지 않도록
-`INSERT IGNORE` 없이 단일 행을 추가하며, 이미 처리된 DB에서는 unique constraint 오류가 정상적인
-재실행 방지 신호다.
-
-각 HTML은 script·외부 asset·analytics 없이 self-contained이고, viewport와 가로 표 scroll을 제공한다.
-본문과 표 본문 모두 15px로 두고, Markdown에서 굵게 표시한 중요 내용은 주변과 같은 크기·색으로
-두되 굵기로만 구분한다. 확대를 제한하는 viewport option은 사용하지 않는다.
-
-로컬 확인은 builder 실행 뒤 `node docs/terms/scripts/serve-site.mjs`로 하고, 출력된 URL을 모바일 폭에서
-검사한다. 운영에서는 랜딩페이지가 같은 HTML을 로그인 없이 전달하고 1년 `immutable` cache header를
-붙인다. canonical URL이 공개된 뒤에는 같은 version 문서를 덮어쓰지 않는다.
+1.0 문서의 `termType`과 랜딩 HTML 경로의 대응은 [2. 문서 현황](#2-문서-현황)의 표에 둔다.
 
 **#320이 해결해 준 것** — Markdown 표 확장 문제가 사라졌고(HTML이므로), 표시 방식을 CSS로
 정확히 제어할 수 있게 됐다.
@@ -64,14 +58,16 @@ node docs/terms/scripts/build-site.mjs
 「개인정보 수집·이용 동의」는 서비스 계약 이행에 필요한 일반 개인정보를 형식적인 필수동의로 받지
 않는 방향으로 폐기하고 #8 개인정보 처리방침에 통합했다.
 
-| # | 문서 | 파일 | 시점 | 상태 |
-|---|---|---|---|---|
-| 1 | 이용약관 | `drafts/01-terms-of-service.md` | 신규 가입 완료 | 확정 정책 반영 |
-| 3 | 개인정보 제3자 제공 동의 | `drafts/03-...` | 타임라인 첫 생성 | 확정 정책·유사 서비스 골격 반영 |
-| 4 | 민감정보 처리 동의 | `drafts/04-...` | 타임라인 첫 생성 | 확정 정책·유사 서비스 골격 반영 |
-| 5 | 개인정보 국외 이전 동의 | `drafts/05-...` | 타임라인 첫 생성 | AWS·Langfuse 이전 정책 반영 |
-| 6 | 위치기반서비스 이용약관 | `drafts/06-...` | 위치정보를 포함한 첫 생성 | 확정 정책·신고정보 반영 |
-| 8 | 개인정보 처리방침 | `drafts/08-privacy-policy.md` | — | 일반 개인정보 수집·이용 및 개인위치정보 공개사항 통합 |
+랜딩 HTML 경로는 `public/terms/` 아래이고, 게시 URL은 `https://www.laimory.app/terms/{term-slug}/1.0`이다.
+
+| # | 문서 | `termType` | 랜딩 HTML | 시점 | 1.0 작성 당시 반영 |
+|---|---|---|---|---|---|
+| 1 | 이용약관 | `TERMS_OF_SERVICE` | `terms-of-service/1.0.html` | 신규 가입 완료 | 확정 정책 반영 |
+| 3 | 개인정보 제3자 제공 동의 | `THIRD_PARTY_PROVISION_CONSENT` | `third-party-provision-consent/1.0.html` | 타임라인 첫 생성 | 확정 정책·유사 서비스 골격 반영 |
+| 4 | 민감정보 처리 동의 | `SENSITIVE_INFORMATION_CONSENT` | `sensitive-information-consent/1.0.html` | 타임라인 첫 생성 | 확정 정책·유사 서비스 골격 반영 |
+| 5 | 개인정보 국외 이전 동의 | `CROSS_BORDER_TRANSFER_CONSENT` | `cross-border-transfer-consent/1.0.html` | 타임라인 첫 생성 | AWS·Langfuse 이전 정책 반영 |
+| 6 | 위치기반서비스 이용약관 | `LOCATION_BASED_SERVICE_TERMS` | `location-based-service-terms/1.0.html` | 위치정보를 포함한 첫 생성 | 확정 정책·신고정보 반영 |
+| 8 | 개인정보 처리방침 | `PRIVACY_POLICY` | `privacy-policy/1.0.html` | — | 일반 개인정보 수집·이용 및 개인위치정보 공개사항 통합 |
 
 **개인정보 처리방침도 `term_documents`에 넣어 같은 `termTypes` API로 조회한다.** 다만 동의 대상이
 아닌 상시 공개 문서이며, API 응답에 필수/고지 여부를 나타내는 별도 속성은 두지 않는다. 법정 공개
@@ -114,8 +110,8 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 
 공개 문서의 개인정보처리자·계약 주체는 사업자등록증의 사업자명인 **이동건**으로 통일하고,
 **라이모리**는 서비스명 및 위치기반서비스사업 신고 명칭으로 구분했다. 최초 공개본 6종의 시행일은
-2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 법률 문서의 시행일은 HTML metadata와 원문이
-계속 소유하며, DB catalog의 current 선택에는 시행 시각을 사용하지 않는다.
+2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 법률 문서의 시행일은 랜딩 HTML 본문(부칙)이
+소유하며, DB catalog의 current 선택에는 시행 시각을 사용하지 않는다.
 
 ## 4. 남은 빈칸
 
