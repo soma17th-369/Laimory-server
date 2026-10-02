@@ -361,7 +361,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   URL로 게시한다. 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이므로, 호스팅을
   옮길 때는 **새 행을 만들지 않고 기존 행의 `content_url`만 새 주소로 갱신한다**(#418에서 서버 서빙 →
   랜딩 게시로 이전하며 6행을 그렇게 옮겼다). 조건은 두 가지다: 새 주소의 원문이 옛 주소가 주던 것과
-  동일할 것, 그리고 `(term_type, version)` key가 그대로일 것(key가 바뀌면 전 회원이 재동의를 요구받는다).
+  동일할 것, 그리고 `(term_type, version)` key가 그대로일 것(key가 바뀌면 이력이 다른 문서를 가리키고, major가 바뀌면 전 회원이 재동의를 요구받는다).
   옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
   서버가 하지 못하므로 게시 절차가 소유한다.
 - version은 최대 64자의 canonical `major.minor` 문자열이고 DB CHECK와 키 생성·동의 등록 입력 경계가
@@ -384,6 +384,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 서버는 인증 API에서 약관 동의 여부·최신 버전을 강제하지 않는다(#436 — #303 gate 제거, 403 `-3001`
   미반환). 동의 보장은 가입 flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필요 여부는
   앱 초기화 응답 `terms.agreementRequired`(#434)가 알려준다 — 서버는 그 판정으로도 요청을 막지 않는다.
+- 동의 필요 판정의 경중 축은 버전 번호다(#453): 종류별로 current와 같은 major의 아무 버전에 동의가
+  있으면 통과하고, 없으면 current를 목록에 담는다. major 상향 = 재동의 개정, minor 상향 = 경미 개정이며
+  별도 컬럼으로 복제하지 않는다. major는 canonical 형식이 보장되므로 `.` 앞 문자열 동등으로 비교한다.
 - `TermCatalogReadiness`는 기동 시 raw catalog를 한 번 조회해 종류별 seed 누락·미지 `term_type`
   literal·HTTPS 절대 URI가 아닌 `content_url`을 검사한다. 빈 catalog는 WARN 한 줄, 잘못된 seed는
   ERROR 한 줄, 정상은 INFO 한 줄이다. 조회 실패도 ERROR로 알리되 기동·공개 조회는 막지 않는다.
