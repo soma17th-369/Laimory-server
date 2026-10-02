@@ -201,7 +201,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공한다. 일반 앱 API에는 되돌리는 짝이 없으며, 임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 해당 subject의 값을 false로 되돌린다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송하는 예정 알림이다(#318). 기본 ON/21:00이고 사용자는 끄기만 할 수 있으며 시각은 서버 고정이라 사용자가 고르지 않는다(별도 법정 동의 절차 없음 — 정보성 통지, 수신거부 수단은 일일 알림 OFF). |
-| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |
+| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송 성공·실패와 무관하게 다음 미래 occurrence로 전진 — 예정 시각이 지났다고 건너뛰지 않는다), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |
 
 ## 개인정보 치환
 

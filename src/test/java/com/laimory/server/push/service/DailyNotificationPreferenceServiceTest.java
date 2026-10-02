@@ -130,8 +130,8 @@ class DailyNotificationPreferenceServiceTest {
 
     @Test
     void updateEnabled_rearmsNextDueAtWithoutReadingTheRow() {
-        // 켜는 순간 재장전하지 않으면, 꺼둔 사이 과거로 굳은 next_due_at이 허용 지연 안쪽이라
-        // 켠 직후 tick이 예정에 없던 알림을 보낸다. 시각이 고정이라 그 값을 알아내려 행을 읽지 않는다.
+        // 켜는 순간 꺼둔 사이 과거로 굳은 next_due_at을 다음 미래 occurrence로 재장전한다(근거는
+        // repository). 시각이 고정이라 그 값을 알아내려 행을 읽지 않는다.
         when(repository.updateEnabled(any(), anyBoolean(), any())).thenReturn(1);
 
         service().updateEnabled(SUBJECT_ID, true);
