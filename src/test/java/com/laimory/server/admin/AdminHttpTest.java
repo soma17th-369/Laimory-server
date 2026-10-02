@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -95,7 +96,7 @@ class AdminHttpTest {
         AppConfig config = new AppConfig();
         config.updateVersions(1L, 2L);
         when(configs.findTop2ByOrderByAppConfigIdAsc()).thenReturn(List.of(config));
-        when(documents.findAllDocuments()).thenReturn(List.of());
+        when(documents.findAllTermGroups()).thenReturn(List.of());
         when(documents.findCurrentDocuments(any())).thenReturn(List.of());
         HttpResponse<String> bootstrap = request("GET", "/admin/api/csrf", null, null, false);
         assertThat(bootstrap.statusCode()).isEqualTo(200);
@@ -207,7 +208,12 @@ class AdminHttpTest {
         HttpResponse<String> created = request("POST", "/admin/api/notices",
                 "{\"title\":\" 새 공지 \",\"contentUrl\":\"https://example.com/notices/6\"}", origin(), true);
         assertThat(created.statusCode()).isEqualTo(201);
-        assertThat(created.body()).contains("\"title\":\"새 공지\"").contains("\"hidden\":false");
+        // 관리자 쓰기는 결과를 싣지 않는다(#528) — 저장된 행으로 trim·초기 노출 상태를 확인한다.
+        assertThat(writeBody(created).isNull()).isTrue();
+        ArgumentCaptor<Notice> saved = ArgumentCaptor.forClass(Notice.class);
+        verify(notices).save(saved.capture());
+        assertThat(saved.getValue().getTitle()).isEqualTo("새 공지");
+        assertThat(saved.getValue().isHidden()).isFalse();
 
         assertThat(request("PUT", "/admin/api/notices/5",
                 "{\"title\":\"수정\",\"contentUrl\":\"https://example.com/notices/5-r2\"}", origin(), true).statusCode()).isEqualTo(200);
@@ -217,7 +223,7 @@ class AdminHttpTest {
         assertThat(notice.isHidden()).isFalse();
         HttpResponse<String> hidden = request("PUT", "/admin/api/notices/5/visibility", "{\"hidden\":true}", origin(), true);
         assertThat(hidden.statusCode()).isEqualTo(200);
-        assertThat(hidden.body()).contains("\"hidden\":true");
+        assertThat(writeBody(hidden).isNull()).isTrue();
         assertThat(notice.isHidden()).isTrue();
         HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/visibility", "{\"hidden\":true}", origin(), true);
         assertThat(missing.statusCode()).isEqualTo(404);
@@ -258,13 +264,19 @@ class AdminHttpTest {
         HttpResponse<String> answered = request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":true}", origin(), true);
         assertThat(answered.statusCode()).isEqualTo(200);
         assertThat(inquiry.isAnswered()).isTrue();
-        assertThat(answered.body()).doesNotContain("\"answeredAt\":null");
+        assertThat(writeBody(answered).isNull()).isTrue();
         assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":false}", origin(), true).statusCode()).isEqualTo(200);
         assertThat(inquiry.isAnswered()).isFalse();
         assertThat(request("PUT", "/admin/api/inquiries/404/answered", "{\"answered\":true}", origin(), true).statusCode()).isEqualTo(404);
     }
 
     private String origin() { return "http://localhost:" + server.boundPort(); }
+
+    private JsonNode writeBody(HttpResponse<String> response) throws Exception {
+        JsonNode envelope = mapper.readTree(response.body());
+        assertThat(envelope.has("body")).isTrue();
+        return envelope.get("body");
+    }
 
     private HttpResponse<String> request(String method, String path, String body, String origin, boolean token) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(origin() + path)).timeout(Duration.ofSeconds(10));

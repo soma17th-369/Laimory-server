@@ -3,6 +3,7 @@ package com.laimory.server.user.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.user.Provider;
+import com.laimory.server.user.dto.UserProfileResponse;
 import com.laimory.server.user.entity.User;
 import com.laimory.server.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -46,14 +47,15 @@ public class UserService {
     }
 
     /**
-     * 인증 userId의 회원을 조회한다(내 회원 정보 응답 구성용). 유효하게 서명된 토큰이라도 회원 행이 없으면
+     * 인증 userId의 내 회원 정보 응답을 만든다. 유효하게 서명된 토큰이라도 회원 행이 없으면
      * 기존 401 계약({@code -2001})으로 수렴시켜 탈퇴 여부·내부 식별자 존재를 노출하지 않는다 —
      * userId는 예외 message·log에 넣지 않는다.
      */
-    public User getProfile(String applicationVersion, Long userId) {
+    public UserProfileResponse getProfile(String applicationVersion, Long userId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return userRepository.findByUserId(userId)
+        User user = userRepository.findByUserId(userId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.API_AUTHENTICATION_REQUIRED));
+        return new UserProfileResponse(user.getUserId(), user.getNickname());
     }
 
     private User refreshKakaoNickname(User user, Provider provider, String nickname) {

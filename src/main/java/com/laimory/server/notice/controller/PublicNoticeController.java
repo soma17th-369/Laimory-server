@@ -2,7 +2,6 @@ package com.laimory.server.notice.controller;
 
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.notice.dto.NoticeListResponse;
-import com.laimory.server.notice.dto.NoticeResponse;
 import com.laimory.server.notice.service.NoticeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -18,8 +17,6 @@ public class PublicNoticeController implements PublicNoticeApi {
     @Override
     public ResponseEntity<ApiResponse<NoticeListResponse>> getNotices(String applicationVersion) {
         return ResponseEntity.ok(ApiResponse.success(new NoticeListResponse(
-                noticeService.findVisibleNotices(applicationVersion).stream()
-                        .map(NoticeResponse::from)
-                        .toList())));
+                noticeService.findVisibleNotices(applicationVersion))));
     }
 }

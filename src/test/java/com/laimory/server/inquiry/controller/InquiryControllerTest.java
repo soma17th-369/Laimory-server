@@ -3,6 +3,7 @@ package com.laimory.server.inquiry.controller;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,8 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadCreateResponse;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadItem;
 import com.laimory.server.inquiry.dto.InquiryAttachmentUploadResponse;
+import com.laimory.server.inquiry.dto.InquiryDetailResponse;
+import com.laimory.server.inquiry.dto.InquirySummaryResponse;
 import com.laimory.server.inquiry.entity.Inquiry;
 import com.laimory.server.inquiry.service.InquiryAttachmentService;
 import com.laimory.server.inquiry.service.InquiryService;
@@ -142,9 +145,9 @@ class InquiryControllerTest {
 
     @Test
     void createInquiryMapsServiceValidationFailuresToErrorCodes() throws Exception {
-        when(inquiryService.register(any(), any(), any(), any(), any(), any()))
-                .thenThrow(new IllegalArgumentException("attachmentFilenames[0] must be a presigned filename"))
-                .thenThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 3));
+        doThrow(new IllegalArgumentException("attachmentFilenames[0] must be a presigned filename"))
+                .doThrow(new BusinessException(ExceptionType.PHOTO_COUNT_EXCEEDED, 3))
+                .when(inquiryService).register(any(), any(), any(), any(), any(), any());
 
         mockMvc.perform(post(INQUIRIES).with(authenticatedUser(USER_ID))
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
@@ -201,7 +204,8 @@ class InquiryControllerTest {
     void myInquiriesListCarriesTitleStatusAndTimesOnly() throws Exception {
         Inquiry answered = inquiry(12L, LocalDateTime.of(2026, 9, 30, 14, 0));
         Inquiry received = inquiry(7L, null);
-        when(inquiryService.findMine("v1", SUBJECT_ID)).thenReturn(List.of(answered, received));
+        when(inquiryService.findMine("v1", SUBJECT_ID)).thenReturn(List.of(
+                InquirySummaryResponse.from(answered), InquirySummaryResponse.from(received)));
 
         mockMvc.perform(get(INQUIRIES).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -233,10 +237,8 @@ class InquiryControllerTest {
 
     @Test
     void myInquiryDetailIsFlatWithAttachmentUrlsAsOrderedStrings() throws Exception {
-        when(inquiryService.getMine("v1", SUBJECT_ID, 12L)).thenReturn(new InquiryService.InquiryWithAttachments(
-                inquiry(12L, null), List.of(FILENAME_B, FILENAME)));
-        when(inquiryAttachmentService.cdnUrl(SUBJECT_ID, FILENAME_B)).thenReturn("https://cdn.example/b.png");
-        when(inquiryAttachmentService.cdnUrl(SUBJECT_ID, FILENAME)).thenReturn("https://cdn.example/a.jpg");
+        when(inquiryService.getMine("v1", SUBJECT_ID, 12L)).thenReturn(InquiryDetailResponse.of(
+                inquiry(12L, null), List.of("https://cdn.example/b.png", "https://cdn.example/a.jpg")));
 
         mockMvc.perform(get(INQUIRIES + "/12").with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -259,7 +261,7 @@ class InquiryControllerTest {
 
     @Test
     void myInquiryDetailWithoutAttachmentsHasEmptyUrlArray() throws Exception {
-        when(inquiryService.getMine("v1", SUBJECT_ID, 12L)).thenReturn(new InquiryService.InquiryWithAttachments(
+        when(inquiryService.getMine("v1", SUBJECT_ID, 12L)).thenReturn(InquiryDetailResponse.of(
                 inquiry(12L, LocalDateTime.of(2026, 9, 30, 14, 0)), List.of()));
 
         mockMvc.perform(get(INQUIRIES + "/12").with(authenticatedUser(USER_ID)))

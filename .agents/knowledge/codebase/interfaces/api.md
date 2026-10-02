@@ -362,6 +362,9 @@ flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필�
 - request body는 `...Request`, 외부 response 표현은 `...Response`로 끝낸다.
   service 내부 DTO와 request 안의 domain input element는 domain 이름을 쓸 수 있다.
 - controller는 `ResponseEntity<T>`를 반환하고 JPA Entity를 직접 노출하지 않는다.
+- controller가 호출하는 service는 응답 DTO를 반환하거나 반환값이 없다(void). controller는 엔티티 인스턴스를
+  받지 않고 envelope·wrapper 구성만 한다(관리자 API 포함, 예외 없음, #528). 검증 상수 같은 엔티티 클래스 상수
+  참조는 허용한다. 관리자 쓰기는 void(`body: null`)이고 관리자 웹은 쓰기 직후 목록을 다시 조회한다.
 
 ### Response
 

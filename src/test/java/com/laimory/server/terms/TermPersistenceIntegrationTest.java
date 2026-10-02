@@ -3,6 +3,7 @@ package com.laimory.server.terms;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.terms.dto.TermResponse;
 import com.laimory.server.terms.entity.TermAgreement;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.entity.TermDocumentId;
@@ -98,8 +99,8 @@ class TermPersistenceIntegrationTest {
             saveDocument(type, version);
         }
 
-        assertThat(termDocumentService.findCurrentDocuments("v1", List.of(TermType.values())))
-                .extracting(TermDocument::getTermType)
+        assertThat(termDocumentService.findCurrentTerms("v1", List.of(TermType.values())))
+                .extracting(TermResponse::termType)
                 .containsExactly(TermType.values());
     }
 
@@ -329,7 +330,7 @@ class TermPersistenceIntegrationTest {
     }
 
     private String currentVersion(TermType type) {
-        return termDocumentService.findCurrentDocuments("v1", List.of(type)).getFirst().getVersion();
+        return termDocumentService.findCurrentTerms("v1", List.of(type)).getFirst().version();
     }
 
     private List<String> columnNames(String tableName) {

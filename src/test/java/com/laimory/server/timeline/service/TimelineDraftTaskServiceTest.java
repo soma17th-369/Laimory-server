@@ -147,7 +147,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_happyPath_preparesThenProcessingThenDispatches() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         assertThat(taskId).isNotBlank();
         // 선생성 커밋이 반환한 dailyRecordId가 PROCESSING task에 실린다(recordDate/recordAt/zone은 Redis에 없음).
@@ -175,9 +175,9 @@ class TimelineDraftTaskServiceTest {
                 .thenReturn(Optional.empty(), Optional.of(draft));
 
         String firstTaskId =
-                service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+                service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
         String secondTaskId =
-                service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+                service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         assertThat(firstTaskId).isNotEqualTo(secondTaskId);
         verify(timelineDraftPreparationService, times(2))
@@ -193,7 +193,7 @@ class TimelineDraftTaskServiceTest {
         // AI 접수 body 계약: taskId·원문 token·dailyRecordId·record timezone 기반 offset window.
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         ArgumentCaptor<AiTimelineDispatchRequest> requestCaptor =
                 ArgumentCaptor.forClass(AiTimelineDispatchRequest.class);
@@ -213,7 +213,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_storesOnlyTokenHash_notRawToken() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         // Redis에는 단일 token hash, AI dispatch body에는 원문이 전달돼야 한다.
         ArgumentCaptor<String> hashCaptor = ArgumentCaptor.forClass(String.class);
@@ -234,7 +234,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTask_buildsDraftRowsFromSources_forPreparation() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
@@ -263,7 +263,7 @@ class TimelineDraftTaskServiceTest {
                 ItemType.CALENDAR, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 10, 0), null,
                 new CalendarPayload("회의", null, null, null)));
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources).taskId();
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<TimelineDraftSourceItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
@@ -288,7 +288,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(draft, "dailyRecordId", 3L);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.of(draft));
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         assertThat(taskId).isNotBlank();
         verify(timelineTaskService).createProcessing(eq(taskId), eq(SUBJECT_ID), eq(RECORD_ID), any(), any(),
@@ -425,7 +425,7 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
         String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW,
-                List.of(photoSource(null, null)));
+                List.of(photoSource(null, null))).taskId();
 
         assertThat(taskId).isNotBlank();
     }
@@ -959,7 +959,7 @@ class TimelineDraftTaskServiceTest {
         // 전처리(검증·enrich·선생성) 시간이 polling elapsedSeconds에 포함되면 안 된다.
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
-        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
         verify(clock, times(2)).instant();
         InOrder order = inOrder(clock, timelineDraftPreparationService, timelineTaskService);

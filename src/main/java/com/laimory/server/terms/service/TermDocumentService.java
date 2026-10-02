@@ -1,8 +1,12 @@
 package com.laimory.server.terms.service;
 
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.AdminTermDocumentResponse;
+import com.laimory.server.terms.dto.AdminTermGroupResponse;
+import com.laimory.server.terms.dto.TermResponse;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
@@ -26,9 +30,11 @@ public class TermDocumentService {
     private final TermDocumentRepository termDocumentRepository;
 
     /** 요청 종류의 현재 문서(요청 순서) — 공개 조회용. */
-    public List<TermDocument> findCurrentDocuments(String applicationVersion, List<TermType> termTypes) {
+    public List<TermResponse> findCurrentTerms(String applicationVersion, List<TermType> termTypes) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return findCurrentDocuments(termTypes);
+        return findCurrentDocuments(termTypes).stream()
+                .map(TermResponse::from)
+                .toList();
     }
 
     public List<TermDocument> findCurrentDocuments(Collection<TermType> termTypes) {
@@ -46,15 +52,23 @@ public class TermDocumentService {
                 .toList();
     }
 
-    /** 관리자용 전체 이력: 종류 순서, 같은 종류에서는 숫자 버전 내림차순. */
-    public List<TermDocument> findAllDocuments() {
-        return termDocumentRepository.findDocumentCandidates(List.of(TermType.values())).stream()
+    /**
+     * 관리자용 전체 이력 — 선언된 모든 종류를 enum 순서로, 종류 안에서는 숫자 버전 내림차순으로 묶는다.
+     * 그룹의 첫 문서가 current이며 문서가 없는 종류는 current가 null인 빈 그룹이다.
+     */
+    public List<AdminTermGroupResponse> findAllTermGroups() {
+        List<TermDocument> all = termDocumentRepository.findDocumentCandidates(List.of(TermType.values())).stream()
                 .sorted((left, right) -> {
                     int typeOrder = left.getTermType().compareTo(right.getTermType());
                     if (typeOrder != 0) return typeOrder;
                     if (left.getVersion().equals(right.getVersion())) return 0;
                     return left.isNewerThan(right) ? -1 : 1;
                 }).toList();
+        return Arrays.stream(TermType.values()).map(type -> {
+            List<AdminTermDocumentResponse> history = all.stream().filter(doc -> doc.getTermType() == type)
+                    .map(AdminTermDocumentResponse::from).toList();
+            return new AdminTermGroupResponse(type, history.isEmpty() ? null : history.getFirst(), history);
+        }).toList();
     }
 
     /**

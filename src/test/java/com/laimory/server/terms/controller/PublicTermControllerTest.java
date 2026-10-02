@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.TermResponse;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.testsupport.AuthTestSupport;
@@ -42,7 +43,7 @@ class PublicTermControllerTest {
     @Test
     void getCurrentTerms_withoutBearer_returns200InRequestedOrderWithoutRequiredMetadata() throws Exception {
         // 로그인 전 화면에서 쓰는 public API — bearer 없이 200이어야 한다.
-        when(termDocumentService.findCurrentDocuments("v1", List.of(
+        when(termDocumentService.findCurrentTerms("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.PRIVACY_POLICY,
                 TermType.TERMS_OF_SERVICE)))
@@ -71,7 +72,7 @@ class PublicTermControllerTest {
                 .andExpect(jsonPath("$.body.terms").isArray())
                 .andExpect(jsonPath("$.body.terms.length()").value(3));
 
-        verify(termDocumentService).findCurrentDocuments("v1", List.of(
+        verify(termDocumentService).findCurrentTerms("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.PRIVACY_POLICY,
                 TermType.TERMS_OF_SERVICE));
@@ -80,7 +81,7 @@ class PublicTermControllerTest {
     @Test
     void getCurrentTerms_emptyCatalog_returns200WithEmptyArray() throws Exception {
         // seed 전 rollout 상태 — 404/500이 아니라 200 + 빈 배열이다.
-        when(termDocumentService.findCurrentDocuments("v1", List.of(TermType.CROSS_BORDER_TRANSFER_CONSENT)))
+        when(termDocumentService.findCurrentTerms("v1", List.of(TermType.CROSS_BORDER_TRANSFER_CONSENT)))
                 .thenReturn(List.of());
 
         mockMvc.perform(get(PATH).param("termTypes", "CROSS_BORDER_TRANSFER_CONSENT"))
@@ -92,7 +93,7 @@ class PublicTermControllerTest {
 
     @Test
     void getTimelineTerms_followsRepeatedQueryOrder() throws Exception {
-        when(termDocumentService.findCurrentDocuments("v1", List.of(
+        when(termDocumentService.findCurrentTerms("v1", List.of(
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.CROSS_BORDER_TRANSFER_CONSENT,
                 TermType.THIRD_PARTY_PROVISION_CONSENT,
@@ -154,8 +155,8 @@ class PublicTermControllerTest {
         verifyNoInteractions(termDocumentService);
     }
 
-    private static TermDocument document(TermType type, String title) {
-        return TermDocument.of(type, VERSION, title, url(type));
+    private static TermResponse document(TermType type, String title) {
+        return TermResponse.from(TermDocument.of(type, VERSION, title, url(type)));
     }
 
     /** 게시 URL은 행에 저장된 값이라 fixture가 그대로 정한다(서버가 규칙으로 만들지 않는다). */

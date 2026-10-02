@@ -6,10 +6,8 @@ import com.laimory.server.inquiry.dto.InquiryAttachmentUploadCreateResponse;
 import com.laimory.server.inquiry.dto.InquiryCreateRequest;
 import com.laimory.server.inquiry.dto.InquiryDetailResponse;
 import com.laimory.server.inquiry.dto.InquiryListResponse;
-import com.laimory.server.inquiry.dto.InquirySummaryResponse;
 import com.laimory.server.inquiry.service.InquiryAttachmentService;
 import com.laimory.server.inquiry.service.InquiryService;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -42,18 +40,12 @@ public class InquiryController implements InquiryApi {
     @Override
     public ResponseEntity<ApiResponse<InquiryListResponse>> getMyInquiries(String applicationVersion, UUID subjectId) {
         return ResponseEntity.ok(ApiResponse.success(new InquiryListResponse(
-                inquiryService.findMine(applicationVersion, subjectId).stream()
-                        .map(InquirySummaryResponse::from)
-                        .toList())));
+                inquiryService.findMine(applicationVersion, subjectId))));
     }
 
     @Override
     public ResponseEntity<ApiResponse<InquiryDetailResponse>> getMyInquiry(String applicationVersion, UUID subjectId,
                                                                            long inquiryId) {
-        InquiryService.InquiryWithAttachments item = inquiryService.getMine(applicationVersion, subjectId, inquiryId);
-        List<String> attachmentUrls = item.attachmentFilenames().stream()
-                .map(filename -> inquiryAttachmentService.cdnUrl(subjectId, filename))
-                .toList();
-        return ResponseEntity.ok(ApiResponse.success(InquiryDetailResponse.of(item.inquiry(), attachmentUrls)));
+        return ResponseEntity.ok(ApiResponse.success(inquiryService.getMine(applicationVersion, subjectId, inquiryId)));
     }
 }

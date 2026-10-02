@@ -81,9 +81,14 @@ class AdminPersistenceIntegrationTest {
                     "publicationConfirmed", true));
             var result = request("POST", "/admin/api/terms", json);
             assertThat(result.statusCode()).isEqualTo(201);
-            var body = mapper.readTree(result.body()).path("body");
-            assertThat(body.path("saved").path("version").asText()).isEqualTo(version);
-            assertThat(body.path("current").path("version").asText()).isEqualTo(version);
+            // 관리자 쓰기는 결과를 싣지 않는다(#528) — 이력 조회(단일 원천)로 새 current를 확인한다.
+            assertThat(mapper.readTree(result.body()).get("body").isNull()).isTrue();
+            JsonNode privacy = null;
+            for (JsonNode group : mapper.readTree(request("GET", "/admin/api/terms", null).body()).path("body")) {
+                if (group.path("termType").asText().equals("PRIVACY_POLICY")) privacy = group;
+            }
+            assertThat(privacy).isNotNull();
+            assertThat(privacy.path("current").path("version").asText()).isEqualTo(version);
             var saved = documents.findById(id).orElseThrow();
             assertThat(saved.getTitle()).isEqualTo("admin integration fixture");
             assertThat(saved.getCreatedAt()).isNotNull();
@@ -103,7 +108,11 @@ class AdminPersistenceIntegrationTest {
             var created = request("POST", "/admin/api/notices", mapper.writeValueAsString(Map.of(
                     "title", "admin integration notice", "contentUrl", "https://example.com/admin-notice-fixture")));
             assertThat(created.statusCode()).isEqualTo(201);
-            noticeId = mapper.readTree(created.body()).path("body").path("noticeId").asLong();
+            assertThat(mapper.readTree(created.body()).get("body").isNull()).isTrue();
+            // 등록 응답은 ID를 싣지 않는다(#528) — 관리자 목록(최신 순, 숨김 포함)의 첫 항목이 방금 등록한 공지다.
+            JsonNode adminListed = mapper.readTree(request("GET", "/admin/api/notices", null).body()).path("body");
+            assertThat(adminListed.get(0).path("title").asText()).isEqualTo("admin integration notice");
+            noticeId = adminListed.get(0).path("noticeId").asLong();
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().getCreatedAt()).isNotNull();
 
             JsonNode listed = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
