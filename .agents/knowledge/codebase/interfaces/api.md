@@ -38,8 +38,9 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 29개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
-user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST)는
+보호 operation 33개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
+inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET)는
 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -108,17 +109,18 @@ memo는 trim 없이 원문 최대 500자). **endAt만 누락·null 모두 비움
 유지하려면 현재 값을 보내야 한다. 시간 범위는 transaction 안에서 기존 startAt과 병합한 뒤 검증한다.
 `photosToAdd`는 누락·null·빈 배열 모두 Item 변경 없음이며 비배열은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
-nullable startAt/endAt은 MySQL 저장 정밀도와 재사용 비교를 맞추기 위해 초 단위만 허용하며 소수 초는 400이다.
+nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용하며 소수 초는 400이다.
 `description`과 `photoUrl`은 입력 계약에 없다. `rawId`는 draft source와 같은 canonical lowercase UUID
-규칙이며 위반은 400이다. 같은 record의 기존 PHOTO를 rawId로 재사용할 때 저장된 startAt/endAt과
-클라이언트 입력 payload가 요청과 다르면 400이다. non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
+규칙이며 위반은 400이다. 대상 Event에 같은 rawId가 이미 연결된 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며
+(같은 PATCH의 재시도 — 나머지 항목은 정상 처리, 응답 200) 그 외는 새 Item이다 — record의 다른 Event나 저장본과
+비교하지 않는다(#502). non-empty 추가는 Event/memo 변경과 PHOTO Item/junction 저장을
 한 DB transaction으로 commit한다. 성공 응답은
 `200 + ApiResponse<Void>`이고 `body=null`이다. 신규 PHOTO의 서버 ID가 필요하면 날짜 기반 DailyRecord 단건 GET으로
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. memo PUT은 필드 부재·null·blank 모두 제거라 PATCH의 null=유지와 다르다.
-`photosToAdd`의 full object key에 `PENDING` PHOTO delete job이 있으면 job을 취소하고
-보존 Item을 재연결하며, 유효한 `PROCESSING`이면 같은 object key 생성을 막고 409 `-1019`를 반환한다.
+`photosToAdd`는 PHOTO delete job과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
+삭제된 사진을 다시 넣는 것은 새 presign·새 filename의 새 사진이다(#500).
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}`와 날짜 기반
@@ -162,11 +164,10 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 `eventType`은 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 누락·null 모두 비움이고,
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
 `photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). 사진 입력·개수·
-rawId 중복·같은 record PHOTO 재사용(저장된 시간·클라이언트 입력 payload 불일치 시 400)·pending delete job
-재연결 규칙은 Event PATCH와 같으며 PHOTO startAt/endAt의 소수 초도 400이다. Event·PHOTO
-Item·junction은 한 transaction으로 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는
-S3 object 존재를 확인하지 않는다. 유효한 `PROCESSING` delete job은 409 `-1019`, 사진 수 초과는 400
-`-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
+rawId 중복 규칙은 Event PATCH와 같으며(새 Event라 사진은 항상 새 Item) PHOTO startAt/endAt의 소수 초도
+400이다. Event·PHOTO Item·junction은 한 transaction으로
+commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는 S3 object 존재를 확인하지 않는다.
+사진 수 초과는 400 `-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
 Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
 `200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
 `question`/`place`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면
@@ -252,8 +253,9 @@ userId 누락·형식 오류·0·음수는 400, subject 매핑·설정 행 부�
 제거하려면 main/test의 `onboarding/temporary` 패키지를 삭제하고 이 문단과 관련 임시 예외 설명을
 정리한다. 일반 온보딩 완료 API·SecurityConfig·스키마의 기능 수정은 필요 없다.
 
-`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는
-nullable `nickname` 하나이며 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
+`GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는 `userId`(회원 행
+PK = access token의 `sub`, 항상 존재하는 JSON number — 가명화 subjectId가 아님)와 nullable `nickname`이며,
+nickname 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
 parameter는 없고, 유효하게 서명된 토큰의 userId에 회원 행이 없으면 무토큰과 같은 401 `-2001`로 수렴해
 탈퇴 여부·내부 식별자 존재를 노출하지 않는다. 토큰 response·JWT claim에 회원 정보를 싣지 않는다.
 
@@ -274,6 +276,49 @@ commit 후 evict로 즉시이나, 캐시 정책상 한시적 stale 통과가 가
 userId/subjectId/jobId는 응답·OpenAPI에 노출하지 않는다. 같은 소셜 계정의 다음 로그인은 과거
 데이터·동의와 연결되지 않는 신규 가입으로 진행된다(재가입 차단·전용 오류 코드 없음). **새 error
 code는 추가하지 않았다.**
+
+`GET /api/{version}/notices`(#517)는 로그인 전 화면에서도 쓸 수 있는 public 공지사항 조회다
+(`PublicNoticeApi` — 보호 operation 목록 밖, bearer 문서 없음). 숨김이 아닌 공지 전체를 최신 순
+(`noticeId DESC`)으로 `notices[]`에 담고 각 원소는 `noticeId`·`title`·`contentUrl`·`publishedAt`이다 —
+페이지네이션은 없고, 공지가 없으면 404가 아니라 200과 `notices=[]`다. 원문은 응답에 없다(약관과 같은
+구조) — `contentUrl`은 게시된 공지 page의 절대 HTTPS URL이고 클라이언트가 WebView로 연다(이미지·서식은
+page가 소유하며 Server에는 공지 원문 route가 없다). 목록이 URL을 직접 실으므로 **상세 조회 endpoint는
+없다**. `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
+등록·수정·숨김은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
+`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출)가 소유하며, 숨김이 삭제 역할이라
+hard delete 경로는 없다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
+HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
+
+`POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
+사용자의 문의 접수 계약이다(`InquiryApi` — hidden `@CurrentSubject UUID subjectId`, 접수 operation 2개).
+접수 body는 `email`·`title`·`description`이 필수이고(#530 — 구 `body` 필드는 받지 않는다) `attachmentFilenames`는
+optional(누락·null·빈 배열 = 첨부 없음, 최대 3개)이다(분류·채널 필드는 두지 않는다). 누락·형식(`@Email`)·
+길이(email 255자, description 2,000자) 위반은 Bean Validation 400 `-400`, title은 앞뒤 공백 제거 후 100자 초과면
+`Inquiry.of`가 거절해 같은 400 `-400`(경계 `@Size`는 제거 전 길이를 세므로 두지 않는다), 첨부 filename이 presign 형식(`{uuidv7}.{jpg|png|webp}`)이 아니거나
+중복이면 400 `-400`, 3개 초과는 400 `-1004`다. 성공은 `201 + body=null` — 201이 곧 접수 완료이며 응답에
+문의 ID를 싣지 않는다(접수 후 앱은 내 문의 목록을 다시 조회하면 되고, 답변은 입력한 이메일로 관리자가 직접 회신한다).
+서버는 첨부의 S3 업로드 완료를 확인하지 않고, 같은 내용의 재요청은 새 문의로 접수된다(중복 차단 없음 —
+승인된 결정). 첨부 presign은 사진 업로드와 같은 계약(`contentType`·`size` 필수, `size`가 서명의
+Content-Length에 바인딩, `-1004`/`-1005`/`-1007`)이되 요청당 최대 3장이고 key prefix가
+`{sha256(subject)}/inquiries/`다. 접수 request와 관리자 조회 response는 access log에서 privacy skeleton으로
+마스킹된다(ID·처리 시각만 남는다). 관리자 열람·처리는 `/admin/api/inquiries`(목록 GET·상세 GET —
+첨부 `viewUrl`은 앱 상세와 같은 무서명 CDN URL(#529)·`PUT /{id}/answered` 처리됨 표시/해제)가 소유한다. **새 error code는
+추가하지 않았다.**
+
+`GET /a/api/{version}/inquiries`와 `GET /a/api/{version}/inquiries/{inquiryId}`(#529)는 같은 `InquiryApi`의
+"내 문의" 조회다(owner는 `@CurrentSubject` — 클라이언트 입력 아님). 목록은
+`{ inquiries: [{ inquiryId, title, status, createdAt, answeredAt }] }`로 **최신 순(`inquiryId DESC`) 최대 50건**
+(페이지네이션 없음 — 넘치면 가장 오래된 문의가 빠진다)이고 없으면 200 + 빈 배열이다. 목록은 제목으로 훑는
+화면이라 `description`·`email`·첨부를 싣지 않는다. 상세는 평면
+`{ inquiryId, title, status, email, description, attachmentUrls, createdAt, answeredAt }`이고, `attachmentUrls`는
+접수 요청(PK) 순서의 문자열 배열(첨부 없음 = `[]`)이다 — 사진과 같은 **무서명 CloudFront 고정 URL**
+(`https://{PHOTO_CDN_DOMAIN}/{sha256(subject)}/inquiries/{filename}`)이라 만료가 없고, filename은 싣지 않는다.
+없는 문의와 다른 사용자의 문의는 `(inquiryId, subjectId)` 한 조회의 빈 결과라 같은 404 `-404`로 존재를
+숨기고, 숫자가 아닌 id는 400 `-400`이다. `status`는 저장 컬럼이 아니라 `answered_at`에서 서버가 파생하는
+`InquiryStatus`(`RECEIVED` = null, `ANSWERED` = not null)이며 관리자가 처리됨을 해제하면 `RECEIVED`로
+되돌아간다(단조 증가 아님). 시각은 Asia/Seoul 벽시계·offset 없음. 두 응답은 access log에서 privacy
+skeleton으로 마스킹된다(ID·상태·처리 시각만 남는다). 답변 본문은 여전히 서버에 없다. **새 error code는
+추가하지 않았다.**
 
 `GET /api/{version}/terms?termTypes=TERMS_OF_SERVICE&termTypes=LOCATION_BASED_SERVICE_TERMS`(#409)는
 로그인 전 화면에서도 쓰는 public 약관 조회다(`PublicTermApi` — 보호 operation 목록 밖, bearer 문서 없음).
@@ -317,6 +362,9 @@ flow와 위치정보 사용 시점의 클라이언트 책임이고, 동의 필�
 - request body는 `...Request`, 외부 response 표현은 `...Response`로 끝낸다.
   service 내부 DTO와 request 안의 domain input element는 domain 이름을 쓸 수 있다.
 - controller는 `ResponseEntity<T>`를 반환하고 JPA Entity를 직접 노출하지 않는다.
+- controller가 호출하는 service는 응답 DTO를 반환하거나 반환값이 없다(void). controller는 엔티티 인스턴스를
+  받지 않고 envelope·wrapper 구성만 한다(관리자 API 포함, 예외 없음, #528). 검증 상수 같은 엔티티 클래스 상수
+  참조는 허용한다. 관리자 쓰기는 void(`body: null`)이고 관리자 웹은 쓰기 직후 목록을 다시 조회한다.
 
 ### Response
 

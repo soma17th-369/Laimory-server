@@ -29,11 +29,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface UserApi {
 
     @Operation(summary = "내 회원 정보 조회",
-            description = "인증 사용자 본인의 회원 정보를 조회한다. 현재 필드는 nickname 하나이며 nullable이다 — "
-                    + "값이 없으면 key 생략 없이 JSON null로 반환한다. 다른 회원을 선택하는 parameter는 없다.")
+            description = "인증 사용자 본인의 회원 정보를 조회한다. 필드는 userId(회원 행 PK, access token의 sub와 "
+                    + "같은 값, 항상 존재)와 nullable nickname이다 — nickname 값이 없으면 key 생략 없이 JSON null로 "
+                    + "반환한다. 다른 회원을 선택하는 parameter는 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                    description = "조회 성공 — `body.nickname`은 nullable(값이 없으면 명시적 JSON null)",
+                    description = "조회 성공 — `body.userId`는 항상 존재, `body.nickname`은 nullable(값이 없으면 "
+                            + "명시적 JSON null)",
                     useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료 — 유효 토큰의 회원 행 "

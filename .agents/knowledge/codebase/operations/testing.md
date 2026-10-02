@@ -7,6 +7,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 ## Read When
 
 구현 검증 범위를 정하거나 test tag/task, CI 또는 Docker build를 바꿀 때 읽는다.
+무엇을 어떤 품질로 테스트할지는 [test writing convention](../../conventions/test-writing.md)이 소유한다.
 
 ## Authoritative Sources
 
@@ -36,6 +37,10 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   실패를 검증한다. 두 독립 프로세스의 최초 생성과, 임시 V2를 실행 중 native lock 대기가 겹친 뒤
   두 프로세스가 성공하고 이력/결과는 한 번만 기록되는 것도 검증한다. 임시 V2는 앱에 포함되지 않는다.
   별도 DB의 실제 V1→V2 업그레이드는 대표 초안 행 보존, 선점 컬럼·인덱스 제거와 `created_at` 인덱스 유지를
+  검증하고, V2→V3(#517)는 `app_config` 행 보존과 `notices` 컬럼·`hidden` 기본값 false를, V3→V4(#518)는
+  `notices` 행 보존과 `inquiries`·`inquiry_attachments` 컬럼 및 subject·첨부 FK가 실제로 삭제를 거절하는지를,
+  V4→V5(#530)는 `body` 원문의 `description` 보존·`title` backfill·이후 title 누락 INSERT 거절과
+  첨부 `position` 제거 후 문의당 여러 첨부 허용·첨부 FK 유지를
   검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
@@ -51,7 +56,13 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
 - 앱 배포 계약은 `.github/scripts/test-deploy-contract.sh`가 production YAML의 Resolve·SSM runner·remote
   본문을 그대로 실행해 검증한다. fake ALB/SSM과 image/container 참조를 기억하는 Docker fixture로 prod
   순서, peer/drain/기동/readiness/등록 실패, B 단독 복구, 준비 image 보존·host당 cleanup과 replace의 SSM
-  상태 불명확 시 추가 원격 명령 금지를 검사한다. 실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
+  상태 불명확 시 추가 원격 명령 금지를 검사한다. prod 자동 rollback은 실제 runner/remote를 실행하고,
+  보관 container의 image·runtime env·mount 및 APP_COMMIT_SHA 복원, 원래 workflow 실패 유지,
+  다음 host 미진행, 복구 자체 실패·SSM 상태 불명확·후보 부재·후보 잔존을 검증한다.
+  A 성공 후 B 실패는 준비/교체/ALB 단계의 일시 실패 후 같은 신버전으로 1회 재시도하여 최종 image·SHA·
+  ALB healthy가 일치하고 workflow가 성공하는지 검사한다. 재시도 지속 실패·SSM 상태 불명확 시 추가
+  retry/rollback 금지, A와 후보 보존, 수동 단독 host-2의 기존 rollback 정책도 검증한다.
+  실제 AWS 권한이나 운영 트래픽 무중단은 이 fixture로
   검증되지 않는다.
 - 관리자 SSM target 선택은
   `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱 배포 harness는 PR CI에서 실행한다.
@@ -82,6 +93,8 @@ focused 예:
 
 ## Invariants
 
+- `./gradlew test | tail` 같은 파이프 실행은 테스트가 실패해도 exit 0이다. 성공 판정은
+  파일 리다이렉트 후 `$?`로 한다(예: `./gradlew test > /tmp/test.log 2>&1; echo $?`).
 - `./gradlew build`가 integration test까지 실행한다고 설명하지 않는다.
 - coverage report 생성 실패는 CI 실패지만 coverage 비율은 merge gate가 아니다.
 - 새 test category는 Gradle task, CI scope와 이 문서를 함께 검토한다.

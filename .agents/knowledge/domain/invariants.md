@@ -66,14 +66,20 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 기존 final `rawId`(record의 Event→junction→Item 경로)와 같은 draft source는 제외하고 같은 request 안
   중복도 한 번만 취급한다. 결과 저장 transaction도 write 직전 같은 조건을 재검사한다(이중 방어 — DB UNIQUE 없음,
   race/legacy 중복 행 허용). 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request rawId 중복을 첫
-  항목 우선으로 접고, 같은 record의 기존 PHOTO Item을 재사용하며 대상 Event에 이미 연결됐으면 no-op
-  처리한다. 재사용 PHOTO의 저장된 startAt/endAt과 클라이언트 입력 payload가 요청과 다르거나 같은 rawId의
-  non-PHOTO Item이 있으면 입력 전체를 거절한다.
+  항목 우선으로 접고, **대상 Event에 같은 rawId의 사진이 이미 연결돼 있으면 그 항목은 이미 추가된 것으로 보고
+  오류 없이 건너뛴다(나머지 항목과 Event 변경은 정상 처리, 응답 200). 없으면 새 Item으로 저장한다**(#502).
+  record의 다른 Event는 조회하지 않고 저장본과 요청을 비교하지 않는다 — Android는 사진 선택마다 새
+  rawId·filename을 발급하므로 이 건너뛰기에 도달하는 것은 커밋 뒤 응답을 잃은 같은 PATCH의 재시도뿐이다.
+- **수동 입력 방어의 경계** — 다른 요청이 남긴 상태나 클라이언트의 시간적 행동을 가정하는 방어는 두지 않는다
+  (#495·#500·#502에서 제거한 삭제 job 409·교차 Event 재사용·저장본 비교 400이 그 예). 지금 받은 요청 하나의
+  형식·일관성 검증(개수 상한·UUID 형식·소수 초·filename 형식·요청 내 filename 중복)은 둔다 — 클라이언트를
+  의심해서가 아니라 서버가 자기 데이터 모델을 지키는 경계 단언이다.
 - 같은 날짜 append는 기존 event/item의 그룹·title·subtitle·memo를 바꾸지 않는다(append-only).
 - Event↔Item 연결은 junction(`timeline_event_items`)이 유일 경로다. 한 Item은 같은 DailyRecord의 여러
   Event에 공유될 수 있고, 채택된 source 하나는 정확히 한 final Item이 된다(여러 Event 공유 시에도 1행).
 - same-DailyRecord Item 공유는 DB 제약이 아니라 writer 계약이다 — AI·fake는 새 Item을 현재 task의 새
-  Event에만 연결하고, 수동 PHOTO 추가는 같은 record의 기존 PHOTO를 대상 Event에 재사용할 수 있다.
+  Event에만 연결하고(여러 Event가 채택한 source는 1행을 공유), 수동 PHOTO 추가는 항상 새 Item을 대상
+  Event에만 연결한다. 기존 Item을 다른 Event에 재연결하는 writer는 없다(#502).
 - draft 결과 저장(Event/Item/junction 저장 + accepted source 삭제)은 **서버**가 하나의 DB
   transaction으로 commit한다. Event PATCH의 Event/memo 수정 + 수동 PHOTO Item/junction 추가와 수동
   Event 생성의 Event + optional PHOTO Item/junction 추가도 각각 서버의 하나의 DB transaction으로
@@ -100,6 +106,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`는 항상 null이고, 시각은 보낸 값
   그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드 규칙(title·subtitle·시간·memo)과
   사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
+- 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory는 하나의 transaction으로
+  commit/rollback한다(#536). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
@@ -159,30 +167,32 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
 - **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item은 job 취소를 거쳐 재연결할 수 있다. 일일 스위퍼가
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
-- **같은 object key를 가리키는 살아 있는 Item의 S3 객체는 절대 지우지 않는다.** 방어는 두 지점이다 —
-  스위퍼는 enqueue 전에, worker는 S3 호출 직전에 같은 key를 참조하는 junction 있는 Item을 확인하고,
-  있으면 job을 만들지 않거나(스위퍼) 이미 만든 job을 취소한다(worker). 판정은 filename을 coarse filter로
-  쓰되 full object key 일치로 확정한다. 살아 있는 쪽의 key는 저장된 `photoUrl`이 아니라 소유 subject에서
-  계산해(`SHA2(UNHEX(REPLACE(subject_id,'-','')),256)` = `PhotoObjectKeys.subjectNamespace`) 저장본이
-  손상돼 있어도 보호가 유지된다. 같은 key의 orphan만 여럿이면 최소 `timeline_item_id`가 job 소유자이고
-  나머지 행은 삭제된다(삭제 순서에 의존하지 않는 규칙).
+- **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
+  전제 위에서 job을 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
+  발급하는 UUIDv7이고, 기존 Item을 다른 Event에 재연결하는 writer가 없으며(#502), dev·prod 전수 집계
+  실측 0건(2026-09-20). 과거에 있던 두 방어(스위퍼 enqueue 전 live-key 확인, worker S3 직전 key 공유
+  재검증)와 같은 key orphan 그룹의 최소 id 소유자 규칙은 #503에서 제거됐다 — 재연결·재사용 writer를
+  되살리는 변경은 이 전제를 깨뜨리므로 가드 재도입을 함께 설계해야 한다. **수용된 잔여**: AI 결과
+  저장의 same-token 완전 동시 실행 race는 같은 key Item 2행을 만들 수 있고(위 "race/legacy 중복 행
+  허용"), 그 중복의 한쪽이 고아·삭제되면 살아 있는 Item의 S3 객체가 지워질 수 있다 — 현재 AI writer가
+  단일·순차라 트리거가 없고 실측 0건이라는 빈도 근거로 수용한다(#503).
 - 고아 스위퍼는 `MOD(id - 1, serverCount * workerCount)`로 담당을 나누고 slot당 후보 최대
   batch-size(기본 250) 한 배치만 처리한다. workerIndex는 workerId * workerCount + localIndex다.
   선점용 잠금 읽기·내부 반복·cursor는 없다. DML 잠금은 남는다.
 - 스위퍼는 선택한 PK 안의 미표시 고아에만 `ORPHAN_SWEEPER`와 KST 최초 관측 시각을 기록해 먼저
   commit한다. 같은 PK를 새 transaction에서 일반 조회·재검증하며, 처리 rollback은 최초 기록을
   되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
-- 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 기존 Item 재연결 transaction은 junction 저장 전에
-  표시를 해제하며 다시 고아가 되면 새 최초 시각을 쓴다. BaseEntity·공통 AuditorAware는 변경하지 않는다.
+- 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 관측된 Item에 junction을 다시 만드는 writer가 없으므로
+  표시를 해제하는 경로도 없다(#502). BaseEntity·공통 AuditorAware는 변경하지 않는다.
   처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job 모두 없는 건수를 집계한다.
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
   서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.
-- `filename` 자체가 손상된 살아 있는 Item은 coarse filter에 잡히지 않아 두 방어를 모두 통과한다.
-  #387 배포 이전 저장분에만 존재하는 상태이며 복구하지 않고 수용한다.
+- `filename`·`photoUrl`이 손상된 저장분(#387 배포 이전)은 복구하지 않고 수용한다 — orphan이 되면
+  key 복원 불가로 job 없이 행만 삭제된다(S3 orphan 허용).
 
 ### AI 서버간 계약
 
@@ -279,9 +289,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 설정 행은 가입 transaction과 rollout backfill만 만든다. 쓰기는 행을 만들지 않으며, 0행·행 부재는 그
   보장이 깨진 운영 신호라 조용히 넘기지 않고 던진다(복구는 backfill 재실행).
 - 설정 쓰기(일일 알림 ON/OFF)는 `next_due_at`을 서버 고정 시각의 다음 미래 occurrence로 재장전한다.
-  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면, 허용 지연 안쪽이라 켠 직후
-  tick이 예정에 없던 알림을 발송한다. 같은 이유로 기존 행을 일괄로 켜는 마이그레이션도 `next_due_at`을
-  같은 문장에서 재장전해야 한다(#318).
+  꺼져 있는 동안 worker가 claim하지 않아 과거로 굳은 값을 그대로 켜면 다음 tick이 지연과 무관하게 그
+  과거 occurrence를 발송 대상으로 잡는다(#318 당시 매분 tick에서는 켠 직후 예정에 없던 알림이 갔다).
+  같은 이유로 기존 행을 일괄로 켜는 마이그레이션도 `next_due_at`을 같은 문장에서 재장전해야 한다(#318).
 - 일일 알림 설정은 **subject당 한 행**이다(#321 — 판별자 없음). 두 번째 일일 알림이 생기면 이 테이블에
   행이나 컬럼을 더하지 않고 새 테이블을 만든다. 발송 시각의 권위는 DB가 아니라 애플리케이션 상수라
   운영 SQL로도 바뀌지 않는다.
@@ -301,13 +311,14 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 현재 두 알림 종류 모두 정보성 통지다(일일 리마인더는 기본 ON 일괄 발송이며 수신거부 수단은 일일 알림
   OFF다 — 분류는 제품 결정으로 확정). 영리 목적의 광고성 알림을 추가하려면
   정보통신망법 제50조가 요구하는 수신 동의·야간 전송 제한·표기·무료 수신거부 수단을 함께 도입해야 한다.
-- worker는 한 occurrence를 한 번만 claim한다(발송·지연 skip 어느 쪽이든 `next_due_at`을 현재 이후 첫
-  occurrence로 전진). 하루 1회 캡은 없다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 발송될
-  수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
+- worker는 한 occurrence를 한 번만 claim한다(발송 성공·실패와 무관하게 `next_due_at`을 현재 이후 첫
+  occurrence로 전진 — 여러 날 밀린 행도 한 번만 발송된다). 하루 1회 캡은 없다 — 껐다 켜서 오늘 시각이
+  다시 미래가 되면 같은 날 다시 발송될 수 있고(사용자 행동이므로 허용), 위 수용 edge에서는 같은 occurrence가 최대 한 번 더 갈 수 있다.
   claim transaction이 전진을 먼저 commit하고 FCM은 그 밖에서 호출하므로 전달 보장은 at-most-once
   best-effort다 — claim 뒤 실패한 occurrence는 자동 재발송하지 않는다.
-- 허용 지연(기본 30분)을 넘긴 occurrence는 발송하지 않고 다음 occurrence로 넘긴다 — 장시간 중단 뒤
-  복구가 새벽에 밀린 알림을 쏟아내지 않게 하는 상한이다.
+- 예정 시각보다 늦었다는 이유로 발송을 건너뛰지 않는다(#395) — 장애로 놓친 occurrence도 다음 run이
+  발송한다. 발송이 정상 시간대에만 일어난다는 보장은 cron이 하루 1회 21:00(`0 0 21 * * *`)이라는
+  사실에서 나온다. cron을 바꾸면 이 판단이 무효가 된다.
 
 ### Photos
 
@@ -319,12 +330,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   `description=null`과 서버가 만든 `photoUrl`을 저장한다.
 - 수동 PHOTO의 nullable startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 정밀도에 맞춰 초 단위만
   허용하고 소수 초는 저장 전에 400으로 거절한다.
-- 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. Android는 같은 로컬 사진이어도 presign을
-  새로 요청하고 응답의 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거 filename을 재사용하지
-  않는다. 이미 S3 업로드를 마친 **동일 pending addition**의 PATCH 재시도만 그 pending filename을
-  보존할 수 있다. 이때 같은 full object key의 `PENDING` delete job은 짧은 locking transaction에서
-  취소하고 job이 보존하던 Item을 재연결한다. 유효한 `PROCESSING`이면 S3 삭제와 경합하지 않게 409
-  `-1019`로 거절하며 같은 object key의 새 Item을 만들지 않는다.
+- 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. filename은 presign마다 서버가 새로 발급하는
+  UUIDv7이라 Android는 같은 로컬 사진이어도 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거
+  filename이 추가 요청에 다시 오는 경로는 없다. 그래서 수동 PHOTO 추가는 delete job을 조회하지 않는다 —
+  job 존재 거절·취소·보존 Item 재연결·`FOR UPDATE` 어느 것도 없다(#495·#500). 이미 S3 업로드를 마친
+  **동일 pending addition**의 PATCH 재시도는 같은 rawId가 대상 Event에 이미 연결돼 있어 오류 없이 건너뛴다(#502).
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
 
@@ -334,9 +344,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   버전을 바꾸는 API는 없다.
 - 관리자 등록은 기존 Repository의 native INSERT로만 수행한다(`save`/`merge` 금지). 같은 PK는 transaction
   rollback 후 409이고 기존 title·contentUrl·감사 값은 바뀌지 않는다.
-- 약관 원문의 source of truth는 `docs/terms/drafts`의 Markdown이고, builder가 버전별 불변 HTML을
-  `build/terms-site`에 생성한다. 그 HTML을 랜딩페이지가 게시하며 Server는 원문 route를 두지 않는다(#418).
-  약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
+- 약관 원문(본문)의 단일 관리 위치는 랜딩페이지 저장소(`Laimory-landing-page`)의
+  `public/terms/**/*.html`이고, 랜딩페이지가 그 HTML을 버전별로 게시한다(#418·#470). Server 저장소에는
+  원문·HTML 생성기가 없고 원문 route도 두지 않는다 — Server는 catalog(종류·버전·제목·게시 URL)와 동의
+  이력만 소유한다. 약관 DB·API 응답에는 Markdown/HTML을 담지 않고 `content_url`만 두며, 요청·기동 중 page를 다시 HTTP
   조회하거나 원문을 동적 렌더링하지 않는다.
 - `content_url`은 게시 시점에 확정된 사실이라 저장하고 코드에서 역산하지 않는다 — 역산하면 게시 host·경로
   규칙을 바꾸는 순간 과거 버전 행이 조용히 다른 주소를 가리켜 동의 이력이 소급 변조된다. 서버가 강제하는
@@ -427,10 +438,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   refresh 행은 #302 정리 대상).
   탈퇴-회전 경합의 좁은 창(ACTIVE 검사 통과 후 claim 전에 탈퇴 commit)에서는 스퓨리어스 reuse WARN
   1회가 가능하다(문서화된 제한 예외 — 401 `-2003` 수렴 계약 자체는 동일).
-- PENDING 계정 삭제 작업이 남아 있는 동안 previous HMAC key retire와 두 번째 rotation을 수행하지
+- 계정 삭제 작업 행이 남아 있는 동안(상태 무관) previous HMAC key retire와 두 번째 rotation을 수행하지
   않는다(탈퇴 회원 mapping은 lazy rekey 기회가 없음). 이 gate는 지표가 아니라 secret 갱신 전 runbook의
-  수동 PENDING SELECT로 확인한다(경보 미부착 지표 금지 원칙 — backlog gauge 없음).
-- access JWT의 subject는 양수 userId만 유효하다(0·음수는 발급 거절·인증 실패 — 과거 user 0 데이터 접근 차단).
+  수동 SELECT로 확인한다(경보 미부착 지표 금지 원칙 — backlog gauge 없음).
+- access JWT의 subject는 DB 행의 userId만 담고, 회원 존재·ACTIVE 판정은 인증 필터의 `isActive` 검사가 담당한다.
 - 인증 filter가 만든 raw `Long` principal은 timeline/push controller 경계의 `@CurrentSubject` resolver가
   `SubjectMappingService.getRequired`로 한 번 변환한다. 변환된 request UUID subjectId가 draft record 조회·
   enrich photo key·staging row·Redis task owner·polling·DailyRecord/Event 조회·편집·삭제·push 등록 소유권

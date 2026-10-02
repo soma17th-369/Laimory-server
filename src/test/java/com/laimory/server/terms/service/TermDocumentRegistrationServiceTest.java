@@ -35,13 +35,12 @@ class TermDocumentRegistrationServiceTest {
     @Test
     void higherNumericVersion_usesInsertWithExplicitAuditTime() {
         LocalDateTime before = LocalDateTime.now();
-        TermDocument registered = register("1.10");
+        register("1.10");
         var auditNow = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(repository).insert(eq(type.name()), eq("1.10"), eq("title"), eq("https://example.com/doc"),
                 auditNow.capture());
         assertThat(auditNow.getValue()).isBetween(before, LocalDateTime.now());
         verifyNoMoreInteractions(repository);
-        assertThat(registered.getVersion()).isEqualTo("1.10");
     }
 
     @Test
@@ -102,7 +101,7 @@ class TermDocumentRegistrationServiceTest {
         verifyNoInteractions(repository);
     }
 
-    private TermDocument register(String version) {
-        return service.register(type, version, "title", "https://example.com/doc", true);
+    private void register(String version) {
+        service.register(type, version, "title", "https://example.com/doc", true);
     }
 }

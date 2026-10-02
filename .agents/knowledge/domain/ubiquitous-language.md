@@ -46,7 +46,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 아이템 | Timeline Item | 현재 구현 | 채택된 draft source item을 최종 저장한 독립 행이다. `rawId`를 보존하며 Event와는 junction(`timeline_event_items`)으로만 연결된다 — 한 Item이 여러 Event에 공유될 수 있다(N:M, 같은 Daily Record 안에서만). |
+| 타임라인 아이템 | Timeline Item | 현재 구현 | 채택된 draft source item을 최종 저장한 독립 행이다. `rawId`를 보존하며 Event와는 junction(`timeline_event_items`)으로만 연결된다 — 한 Item이 여러 Event에 공유될 수 있다(N:M, 같은 Daily Record 안에서만). 공유는 AI 결과 저장이 여러 Event가 채택한 source를 1행으로 만들 때만 생기고, 수동 PHOTO 추가는 항상 새 Item을 대상 Event에만 연결한다(#502). |
 | 아이템 타입 | Item Type | 현재 구현 | `PHOTO`, `CALENDAR`, `STAY`, `MOVEMENT`, `HEALTH`, `NOTIFICATION` 중 하나다. DB `item_type`이 권위 필드다. |
 | 아이템 시작 시각 | Start At | 현재 구현 | 아이템이 발생한 시작 시각이다. |
 | 아이템 종료 시각 | End At | 현재 구현 | 기간형 아이템의 종료 시각이며 단일 시점이면 nullable이다. |
@@ -58,7 +58,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 소스 아이템 | Source Item | 현재 구현 | Android가 보낸 draft 입력 개념이다. `SourceItemDto`는 비-entity 입력 표현이고, 서버는 이를 `TimelineDraftSourceItem` staging entity로 저장한다. |
 | 소스 아이템 ID | Source Item ID | 현재 구현 | `timeline_draft_source_items.timeline_draft_source_item_id` PK다. 서버 내부 행 식별자이며 AI에는 노출하지 않는다(AI는 `rawId`로만 식별한다). |
-| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 같은 record의 PHOTO를 재사용하며 대상 Event에 이미 연결됐으면 no-op 처리한다. 재사용 시 저장된 시간·클라이언트 입력 payload가 요청과 다르거나 같은 rawId의 non-PHOTO면 400이다. |
+| 원본 데이터 ID | rawId | 현재 구현 | 클라이언트 원본 식별자다. payload 밖 `raw_id` column에 저장해 dedupe한다. 서버는 canonical lowercase UUID(8-4-4-4-12, version 무관 — 형식 규칙은 `RawIds`가 단일 정의)만 허용하고 그 외는 400이다. Android는 전 itemType에서 lowercase UUIDv4를 발급하고 서버 Swagger 예시는 v7이라 version은 고정하지 않으며, 허용값은 정규화 없이 그대로 저장/echo한다. staging은 `(task_id, raw_id)` UNIQUE, final은 유일 constraint가 없다. Draft는 API 사전 제외 + AI write 직전 재검사로 방어하고, 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 request 첫 항목 우선 dedupe 뒤 대상 Event에 같은 rawId가 이미 연결돼 있으면 그 항목을 오류 없이 건너뛰고(응답 200), 아니면 새 Item이다(record의 다른 Event·저장본 비교 없음, #502). |
 | 채택된 소스 아이템 | Accepted Source Item | 현재 구현 | AI가 결과에서 Event에 연결한 staging source item이다. 서버 결과 저장 transaction에서 Timeline Item이 되며 같은 transaction에서 staging 행이 삭제된다. |
 | 누락된 소스 아이템 | Omitted Source Item | 현재 구현 | AI가 채택하지 않아 staging에 남는 source item이다. 최종 item으로 저장하지 않으며 retention cleanup이 정리한다. |
 
@@ -89,7 +89,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 전체 객체 키 | Full Object Key | 현재 구현 | 서버가 `{hex(SHA-256(subjectId canonical 16 bytes))}/photos/{filename}`으로 파생하는 S3 key다. 활성 PHOTO payload에는 filename만 저장하고, 삭제 의무가 생기면 PHOTO Delete Job에 full key snapshot을 저장한다. |
 | 사진 URL | photoUrl | 현재 구현 | `https://{cdnDomain}/{full object key}` 형태로 materialize해 payload에 저장한다. CDN domain·key 규칙 변경에는 backfill이 필요하다. |
 | presigned 업로드 발급 | Presigned Upload | 현재 구현 | content type과 length를 서명에 묶은 PUT URL과 filename을 발급한다. |
-| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 수동 PHOTO 추가(Event PATCH·Event 생성 POST)가 취소·재연결할 수 있는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일 실행뿐이며 claim이 `updated_at`을 갱신해 같은 날 재선택을 막고, 처리 창을 벗어난 미완료 job은 재시도 없이 보존되며 건수만 ERROR 로그로 경보된다. job은 원 Item을 FK로 참조한다. 여러 worker가 `SKIP LOCKED`로 서로 다른 batch를 가져가고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
+| 사진 삭제 작업 | PHOTO Delete Job | 현재 구현 | 마지막 Event 참조가 사라진 PHOTO Item을 원문 행 그대로 보존하면서 full object key를 MySQL `timeline_photo_delete_jobs`에 기록하는 작업이다. `PENDING`은 worker claim을 기다리는 대기 상태, `PROCESSING`은 worker의 S3 삭제 진행 상태다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 job을 조회하지 않는다 — 거절·취소·재연결 어느 것도 없다(#500). 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일 실행뿐이며 claim이 `updated_at`을 갱신해 같은 날 재선택을 막고, 처리 창을 벗어난 미완료 job은 재시도 없이 보존되며 건수만 ERROR 로그로 경보된다. job은 원 Item을 FK로 참조한다. 여러 worker가 PK MOD 담당으로 나눈 batch를 일반 조회해 claim하고, S3 성공 뒤 job과 Item을 한 transaction에서 최종 hard delete한다. |
 
 ## AI 타임라인 이벤트 생성
 
@@ -125,7 +125,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(일일 orphan 스위퍼가 수렴시킨다), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | retry receipt에 선점 표식(`claimedAt`)을 남긴 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit하고, commit 뒤 한 번의 native write로 callback token hash와 Redis `CALLBACK_PENDING`으로 회전한다. 저장 실패는 가능한 경우 최초 `RESULT_PENDING` snapshot으로 복구한다. |
-| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 기존 같은 record의 PHOTO Item을 재사용할 수 있다. |
+| Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 대상 Event에 같은 rawId가 있으면 오류 없이 건너뛰고, 아니면 새 Item이다(#502). |
 | AI 호출 위치 | 현재 구현 | AI dispatch는 DB transaction 밖이며 접수(202) 확인까지 동기다. |
 | 추가 데이터 처리 | 현재 구현 | 같은 날짜 신규 source item은 기존 event/item/title/subtitle/memo를 재구성하지 않고 새 event로 append한다(append-only). |
 | rawId 중복 제외 | 현재 구현 | 기존 final item(junction 경유 조회)과 request 안의 중복 rawId는 신규 task 대상에서 제외하고, 결과 저장 transaction이 write 직전 재검사한다. |
@@ -138,12 +138,12 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 사용자 | User | 현재 구현 | 소셜 로그인 사용자다. `(provider, provider_user_id)`로 식별하며 email 병합은 하지 않는다. `ACTIVE` 행의 provider identity는 non-null invariant이고, NULL은 탈퇴 행의 identity release뿐이다(#305). |
 | 회원 상태 | User Status | 현재 구현 | `UserStatus` enum — `ACTIVE`, `WITHDRAWAL_PENDING` 두 값이다. `ACTIVE → WITHDRAWAL_PENDING` 단방향 조건부 UPDATE 전이만 있고 되돌리는 경로는 없다(재가입은 새 행). #302는 **완전 소거**로 확정돼 물리 삭제가 끝나면 회원 행 자체를 지운다 — `WITHDRAWN` tombstone 상태는 두지 않는다. |
 | 회원 탈퇴 | Member Withdrawal | 현재 구현 | `DELETE /a/api/{v}/user`(#305) — 단일 DB transaction으로 상태 전이·탈퇴 시각·provider identity release·전체 push 마스터 OFF·일일 알림 OFF·삭제 작업 접수를 commit하고 202를 반환한다. **행은 지우지 않는다**(#367 — refresh·FID·설정 2행 모두 보존, 물리 삭제는 #302 소유). 202는 논리 탈퇴와 접수이지 물리 삭제 완료(#302)가 아니다. 이후 이 회원의 `/a/api` 접근·token/refresh 발급은 ACTIVE 검사로 401에 수렴한다(#429·#441 — 필터·발급·회전 모두 commit 후 캐시 evict부터, in-flight 산물의 한시 잔존은 authentication.md "탈퇴 차단 정책"). |
-| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 소비할 때까지 유지되며, PENDING이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. 상태는 `PENDING → QUIESCED → (행 삭제)`와 `MANUAL_REVIEW`이고 완료 상태는 없다(완료 = 행 삭제). |
+| 계정 삭제 작업 | Account Erasure Job | 현재 구현 | 탈퇴가 `account_erasure_jobs`에 durable하게 남기는 userId-only `PENDING` 행이다(회원당 1행 UNIQUE, users FK RESTRICT, subjectId 미저장). #302 worker가 접수일 D 기준 D+3~D+5에 소비할 때까지 유지되며, 행이 남아 있는 동안 previous HMAC key retire·두 번째 rotation을 금지한다. 상태는 `PENDING → (행 삭제)`와 `MANUAL_REVIEW`이고 완료 상태는 없다(완료 = 행 삭제). |
 | 로그인 제공자 | Provider | 현재 구현 | `GOOGLE` 또는 `KAKAO`다. |
 | 제공자 사용자 ID | Provider User ID | 현재 구현 | OIDC ID token의 `sub`다. provider 안에서 사용자를 식별한다. |
 | 닉네임 | Nickname | 현재 구현 | nullable 프로필 표시용 값이다. 식별자가 아니다. Kakao는 id_token `nickname` claim을 저장하고 재로그인 시 non-null 값만 `status=ACTIVE` 조건부 nickname-only UPDATE로 갱신한다(#305 — 탈퇴 행 부활 방지, 영향 0행은 갱신 폐기). Google은 full name을 저장하는 기존 동작이며 재로그인 갱신은 없다. |
-| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. AI가 생성·갱신하고 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memories` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
-| 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 양수 userId만 유효하다. |
+| 사용자 메모리 | User Memory | 부분 구현 | 사용자별로 누적되는 요약 문서다. 신규 가입 transaction에서 schemaVersion `"1.0"`의 빈 문서를 생성하고(#536, 초기값은 persistence 문서), AI가 갱신한다. 초기화 이후 서버는 내부 구조·필드·버전을 해석하지 않는 opaque JSON으로 보존한다(단 AI 결과 저장 직전 textual leaf만 v1 privacy 치환 — 구조·필드 집합 불변). `user_memories` 테이블의 `subject_id` PK로 subject당 1행을 보존하며 `User` 조회가 문서를 끌고 오지 않는다. 하루 기록 저장과 메모리 교체는 서로 다른 transaction이고, pending/guard/task와 DB 조회·저장은 모두 subjectId 기준이다. 부분 병합과 앱 노출 API는 없다. |
+| 액세스 토큰 | Access Token | 현재 구현 | HS256 JWT(`iss/sub/iat/exp`)다. `/a/api` bearer token으로 request filter가 검증해 `Long` userId principal을 만든다. subject는 DB 행의 userId만 담고, 회원 존재·ACTIVE 판정은 인증 필터의 `isActive` 검사가 담당한다. |
 | 리프레시 토큰 | Refresh Token | 현재 구현 | access 재발급용 opaque random token이다. DB에는 SHA-256 hex hash만 저장한다. |
 | 회전 | Rotation | 현재 구현 | refresh token을 사용할 때 새 token으로 교체하고 이전 token을 `ROTATED`로 만든다. |
 | 재사용 탐지 | Reuse Detection | 현재 구현 | `ROTATED`/`REVOKED` token 재제시 때 사용자의 refresh token 전체를 폐기한다. |
@@ -161,12 +161,30 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 약관 문서 | Term Document | 현재 구현 | 약관 한 버전의 불변 행(`term_documents`, PK `(term_type, version)`)이다. 종류·버전·제목·**게시 URL**을 담고 원문 본문은 담지 않는다 — 본문은 약관 원문 page(Term Content Page)가 소유한다. 개정은 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 버전에 동의한 이력이 소급 변조된다). 게시된 버전·URL을 수정·삭제하는 API는 없고 관리자 등록은 원문 page 게시 확인 후 상위 버전을 기존 Repository의 native INSERT로 등록한다. |
 | 약관 종류 | Term Type | 현재 구현 | `TermType` enum 6종 — `TERMS_OF_SERVICE`(이용약관)·`SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)·`LOCATION_BASED_SERVICE_TERMS`(위치약관)·`PRIVACY_POLICY`(개인정보 처리방침)다. 6종 모두 같은 catalog와 반복 `termTypes` 공개 조회를 쓰며 enum에는 stage·순서·필수/고지 분류 속성이 없다. 공개 응답 순서는 클라이언트 요청 순서이고, 동의 대상 분류는 `TermAgreementService`(#434)의 상수가 소유하며 개인정보 처리방침은 상시 공개만 한다. 기동 seed 검사는 동의 대상과 무관하게 전체 종류를 확인한다. 게시 URL은 정책이 아니라 게시 사실이라 문서 행이 소유한다. |
 | 약관 버전 | Term Version | 현재 구현 | canonical `major.minor` 문자열(`^[1-9][0-9]*[.](0\|[1-9][0-9]*)$`, 최대 64자)이다. 별도 값 객체 없이 DB/API 문자열을 유지한다. `TermDocumentId`가 키 생성·동의 등록 입력의 형식을 검증하고 DB CHECK가 저장 값을 보장한다. 조회 중 형식 재검증 없이 `TermDocument.isNewerThan`이 `BigInteger` segment로 비교한다(`1.9 < 1.10 < 2.0`). 컬럼은 exact-match `utf8mb4_bin`이고 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. |
-| 약관 원문 page | Term Content Page | 현재 구현 | `docs/terms/drafts` Markdown에서 미리 생성한 버전별 불변 HTML이며, 랜딩페이지(Vercel)가 `/terms/{slug}/{version}`에서 1년 `immutable` cache header와 함께 로그인 없이 전달한다(#418 — Server에는 원문 route가 없다). 약관 DB·API는 원문을 저장·동적 렌더링·proxy하지 않고 문서 행의 `content_url`만 다루며 요청·기동 중 HTTP 조회도 하지 않는다(게시 여부는 게시 게이트가 확인). 게시된 버전 page의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이라, 호스팅 이전은 새 행이 아니라 기존 행의 content_url 갱신으로 한다(#418). 현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 catalog가 역산하거나 강제하는 형식이 아니다(catalog readiness는 https 절대 URI인지만 검사). |
+| 약관 원문 page | Term Content Page | 현재 구현 | 랜딩페이지 저장소의 `public/terms/{slug}/{version}.html`에서 직접 관리하는 버전별 HTML이며(#470 — Server 저장소에는 원문·생성기가 없다), 랜딩페이지(Vercel)가 `/terms/{slug}/{version}`에서 1년 `immutable` cache header와 함께 로그인 없이 전달한다(#418 — Server에는 원문 route가 없다). 약관 DB·API는 원문을 저장·동적 렌더링·proxy하지 않고 문서 행의 `content_url`만 다루며 요청·기동 중 HTTP 조회도 하지 않는다(게시 여부는 게시 게이트가 확인). 게시된 버전 page의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이라, 호스팅 이전은 새 행이 아니라 기존 행의 content_url 갱신으로 한다(#418). 현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 catalog가 역산하거나 강제하는 형식이 아니다(catalog readiness는 https 절대 URI인지만 검사). |
 | 현재 문서 | Current Term Document | 현재 구현 | 같은 종류의 canonical 버전 중 major, minor를 숫자로 비교한 가장 큰 행이다. 요청 종류의 엔티티 후보를 한 DB query로 읽고 `TermDocumentService`가 엔티티의 `isNewerThan`으로 종류별 maximum을 선택한다. 요약이 필요하면 선택 후 변환하고 별도 요약 후보 쿼리는 두지 않는다. 새 상위 버전 INSERT는 예약 시각 없이 즉시 current가 된다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, PK `(user_id, term_type, version)`)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). `(term_type, version)` 복합 FK가 불변 문서를 가리키며 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
 | 동의 필요 약관 | Agreement Required Terms | 현재 구현 | 지금 현재 버전 동의가 없는 동의 대상 약관이다(#434). 대상은 고지 전용 `PRIVACY_POLICY`를 제외한 5종 전부이고 그 분류는 `TermAgreementService`의 상수 한 곳이 소유한다(`TermType`에 속성 없음). 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open). 앱 초기화 응답이 `(termType, version)` 목록으로 알려주고 진행 차단은 클라이언트 책임이다 — 서버는 이 판정으로 요청을 막지 않는다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | `TermCatalogReadiness`가 기동 시 raw catalog를 한 번 조회해 전체 `TermType`의 seed 존재·종류 literal·HTTPS URL 형식을 검사한다. 버전 형식은 쓰기 경계와 DB CHECK가 보장하므로 재검증하지 않는다. 빈 catalog는 WARN, 잘못된 seed나 조회 실패는 ERROR, 정상은 INFO 로그로 알리되 기동·공개 조회는 막지 않는다. 별도 metric·단계별 준비 상태·상태 전이 관리는 없다. |
+
+## 공지사항
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록 조회만 하고(목록이 URL을 직접 실어 상세 조회가 없다) 등록·수정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. |
+| 노출 상태 | Hidden | 현재 구현 | `hidden` boolean 하나가 노출을 제어한다. 등록 즉시 노출(false)이고 예약 게시·고정(핀)은 없다. 숨김(true)이 삭제 역할이라 hard delete 경로가 없으며 다시 노출할 수 있다. 공개 API는 숨김 행을 없는 것과 같이 다룬다(목록 제외, 상세 404). |
+| 게시 시각 | Published At | 현재 구현 | 공개 응답의 `publishedAt`이며 값은 행의 `created_at`(Asia/Seoul 벽시계)이다. 별도 게시 시각 컬럼을 두지 않는다. |
+
+## 문의사항
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 문의 | Inquiry | 현재 구현 | 로그인 사용자가 앱에서 접수한 한 건(`inquiries`, PK `inquiry_id`)이다. owner는 콘텐츠 subject이고 답장 이메일·제목(`title`, 최대 100자)·내용(`description`, 최대 2,000자)을 담는다(#530 — 이전의 단일 `body`를 나눴다)(분류·채널 축은 두지 않는다 — 규모 대비 과해서 뺀 결정). 접수 후 수정 API는 없다. 앱은 "내 문의" 목록·상세로 자기 입력 내용과 문의 상태를 조회한다(#529). 답변은 서버에 저장하지 않는다 — 관리자가 이메일로 직접 회신한다. 탈퇴 삭제(#302)가 email PII를 포함해 행째 지운다. |
+| 답장 이메일 | Reply Email | 현재 구현 | 문의마다 사용자가 입력하는 답장 주소(`email`, 최대 255자)다. 회원 이메일(`users.email` — 구글 로그인 회원만, 서비스 운영 안내 전용)과 별개로 문의가 자체 소유한다. 형식은 HTTP 경계 Bean Validation(`@Email`)이 검사한다. |
+| 문의 첨부 | Inquiry Attachment | 현재 구현 | 문의 한 건의 첨부 사진(`inquiry_attachments`, 최대 3장, 요청 순서 = PK 순서 — #530에서 `position` 컬럼 제거)이다. 사진과 같은 presigned PUT 흐름·타입·크기 규칙을 쓰되 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 사진 prefix와 분리된다. 앱 소유자(`attachmentUrls`)와 관리자(`viewUrl`) 모두 사진과 같은 무서명 CloudFront 고정 URL로 열람한다(#529). 접수 시 S3 실존은 확인하지 않는다(승인된 결정). |
+| 처리됨 | Answered | 현재 구현 | 관리자가 이메일 답장을 보낸 뒤 표시하는 `answered_at`(KST 벽시계, null=미처리)이다. 답장 발송 여부의 유일한 기록이며 서버는 이메일을 보내지 않는다. 해제할 수 있다. 앱에는 문의 상태 `ANSWERED`(해제 시 `RECEIVED`)로 그대로 보인다(#529). |
+| 문의 상태 | Inquiry Status | 현재 구현 | 앱에 보이는 문의 처리 상태 `InquiryStatus`(#529)다. 저장 컬럼이 아니라 `answered_at`에서 서버가 파생한다 — `RECEIVED`(접수됨, 미처리)·`ANSWERED`(답변 완료, 입력 이메일 확인). 처리됨 해제 시 `RECEIVED`로 되돌아가며 클라이언트가 `answeredAt`으로 따로 판정하지 않는다. |
 
 ## 푸시 알림
 
@@ -183,7 +201,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공한다. 일반 앱 API에는 되돌리는 짝이 없으며, 임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 해당 subject의 값을 false로 되돌린다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |
 | 일일 리마인더 | Daily Reminder | 현재 구현 | 전체 사용자에게 매일 21:00(`Asia/Seoul`) 일괄 발송하는 예정 알림이다(#318). 기본 ON/21:00이고 사용자는 끄기만 할 수 있으며 시각은 서버 고정이라 사용자가 고르지 않는다(별도 법정 동의 절차 없음 — 정보성 통지, 수신거부 수단은 일일 알림 OFF). |
-| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송·지연 skip 어느 쪽이든 다음 미래 occurrence로 전진), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |
+| occurrence | Occurrence | 현재 구현 | 예정 알림의 발송 기회 하나(`next_due_at`)다. worker는 occurrence당 한 번 claim하며(발송 성공·실패와 무관하게 다음 미래 occurrence로 전진 — 예정 시각이 지났다고 건너뛰지 않는다), 하루 1회 캡은 두지 않는다 — 껐다 켜서 오늘 시각이 다시 미래가 되면 같은 날 다시 올 수 있다. |
 
 ## 개인정보 치환
 

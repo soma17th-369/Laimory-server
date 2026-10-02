@@ -25,7 +25,13 @@ blackbox 9115, mysqld exporter 9104, redis exporter 9121은 Docker network에만
 `/status`는 DB 중심 health이며 Redis와 외부 연동까지 포괄하는 readiness가 아니다.
 
 resource limit은 Prometheus 1GiB(초기 2GiB에서 #277이 회수 — 실사용 135MiB·active series 14,761
-기준 7.5배 여유), Tempo 768MiB, Grafana 768MiB, central exporter 각각 192MiB다. dashboard
+기준 7.5배 여유), Tempo 1GiB(초기 768MiB에서 #492가 상향 — 2026-09-14 cgroup OOM 2회 대응,
+`GOMEMLIMIT=600MiB` soft 상한 동반. 한도 합 3,328MiB vs RAM 3,834MiB로 1g까지가 host 예산 안이고
+1.25g는 t3.large와 함께 검토), Grafana 768MiB, central exporter 각각 192MiB다. host에는 swap 파일
+2GB가 있다(#492 — dev-was 2026-07 장애 후와 같은 패턴, `/etc/fstab` 등재. `mem_limit`만 지정한
+컨테이너는 한도만큼 swap을 추가로 쓸 수 있어 한도 도달이 OOM kill 대신 완충된다. 안전망일 뿐이라
+Infrastructure dashboard의 Swap Usage에서 평시 사용 ~0을 유지해야 하며, swap 상주가 보이면
+컨테이너·설정 상한을 먼저 조인다). dashboard
 refresh는 30초다. 24시간 관찰에서 host memory 75% 초과가 15분 이상 반복되거나 OOM/restart가
 생기면 collector와 label을 먼저 줄인다. active series 10,000 초과, root disk 70% 초과, scrape
 duration이 interval의 50% 이상인 상태가 계속되면 원인을 줄인 뒤에도 해소되지 않을 때 t3.large를
@@ -75,6 +81,13 @@ Tempo는 monolithic 모드로 `tempo/tempo.yml`을 사용한다. OTLP gRPC 4317 
 (`0.0.0.0:4317` 명시 — 2.7+ 기본 bind가 localhost), 로컬 스토리지 `tempo-data` 볼륨에
 `block_retention: 48h`로 보관한다. S3 backend와 metrics generator는 쓰지 않는다.
 
+`tempo.yml`은 ingester(block 100MB/10m)·querier·query_frontend·storage search 상한을 명시한다
+(#492 — 기본값이 컨테이너 한도보다 커서 유입 block 완료와 넓은 범위 TraceQL 검색 두 경로로
+OOM이 실증됐다. 값 조정 시 `-config.verify`로 검사한다). Tempo `/metrics`는 Prometheus `tempo`
+job이 scrape하고(series 실측 669개 — 2026-09-15 반영 직후) Infrastructure dashboard의
+`Tempo Memory` 패널이 RSS를 mem_limit 기준선과 함께 보여준다 — 한도 근접 추세가 반복되면 상향
+전에 이 상한들을 먼저 조인다.
+
 **tempo 서비스는 compose healthcheck를 정의하지 않는다(규율의 명시적 예외)** — 공식 이미지가
 distroless(shell/wget 부재)이고 native `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너
 내부 검사 수단이 없다. 반영·점검 시 아래 대체 확인을 수행한다.
@@ -89,20 +102,34 @@ host 반영은 `Existing live rollout`의 upload 절차로 세 자산(`docker-co
 `grafana/provisioning/datasources/tempo.yml`)을 S3에 올린 뒤, monitoring host SSM 세션에서 아래를
 실행한다. datasource provisioning은 Grafana 시작 시에만 로드되므로 grafana 재시작까지가 반영이다.
 
+**⚠️ 단일 파일 bind mount 대상은 `aws s3 cp`로 직접 덮어쓰지 않는다** — S3 다운로드는 임시파일
+rename이라 inode가 바뀌고, 실행 중인 컨테이너의 file bind mount는 옛 inode를 계속 본다(2026-09-15
+#492 반영에서 prometheus.yml이 reload 후에도 옛 설정으로 남아 실증). 임시 경로로 받은 뒤 `sudo cp`로
+in-place overwrite하거나, 반영을 컨테이너 재생성(`up -d --force-recreate <svc>`)으로 완결한다.
+`restart`는 컨테이너를 재생성하지 않아 mount가 그대로다. 디렉터리 bind mount(datasources·dashboards)는
+새 inode도 보이므로 해당 없다.
+
 ```bash
 BACKUP_BUCKET='<backup bucket>'
 BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
 sudo install -d -m 0755 /opt/laimory-monitoring/tempo
 sudo aws s3 cp "$BASE/docker-compose.yml" /opt/laimory-monitoring/docker-compose.yml \
   --region ap-northeast-2 --only-show-errors
-sudo aws s3 cp "$BASE/tempo/tempo.yml" /opt/laimory-monitoring/tempo/tempo.yml \
+# tempo.yml은 file bind mount — in-place overwrite(위 경고). compose 정의가 함께 바뀌어 tempo가
+# 재생성되는 반영이라면 결과는 같지만, 설정만 바뀌는 반영에서 직접 cp하면 조용히 미반영된다.
+sudo aws s3 cp "$BASE/tempo/tempo.yml" /tmp/laimory-tempo.yml \
   --region ap-northeast-2 --only-show-errors
+sudo cp /tmp/laimory-tempo.yml /opt/laimory-monitoring/tempo/tempo.yml
+sudo rm -f /tmp/laimory-tempo.yml
 sudo aws s3 cp "$BASE/grafana/provisioning/datasources/tempo.yml" \
   /opt/laimory-monitoring/grafana/provisioning/datasources/tempo.yml \
   --region ap-northeast-2 --only-show-errors
 cd /opt/laimory-monitoring
 sudo docker compose config --quiet
 sudo docker compose up -d
+# tempo는 hot reload가 없다 — in-place cp로 mount가 이미 새 내용을 보므로, up -d가 tempo를
+# 재생성하지 않은 반영(설정 파일만 변경)은 재시작으로 재적용한다.
+sudo docker compose restart tempo
 sudo docker compose restart grafana
 ```
 
@@ -514,6 +541,7 @@ while IFS= read -r asset; do
 done <<'ASSETS'
 docker-compose.yml
 tempo/tempo.yml
+prometheus/prometheus.yml
 grafana/provisioning/datasources/elasticsearch.yml
 grafana/provisioning/datasources/tempo.yml
 node-exporter/install.sh
@@ -707,8 +735,15 @@ sudo docker compose ps
 ```
 
 Prometheus config를 바꾼 경우 먼저 promtool로 검사한 뒤 reload한다.
+`prometheus.yml`은 단일 파일 bind mount라 S3에서 받을 때 destination에 직접 `aws s3 cp`하면
+inode가 바뀌어 **reload가 옛 설정을 다시 읽는다**("Tempo trace 수집" 절의 경고와 같은 함정 —
+2026-09-15 #492 반영에서 실증). 임시 경로로 받아 `sudo cp`로 in-place overwrite한 뒤 reload한다.
 
 ```bash
+sudo aws s3 cp "s3://<backup bucket>/bootstrap/monitoring/prometheus/prometheus.yml" \
+  /tmp/laimory-prometheus.yml --region ap-northeast-2 --only-show-errors
+sudo cp /tmp/laimory-prometheus.yml /opt/laimory-monitoring/prometheus/prometheus.yml
+sudo rm -f /tmp/laimory-prometheus.yml
 sudo docker run --rm --entrypoint promtool \
   -v /opt/laimory-monitoring/prometheus:/etc/prometheus:ro \
   prom/prometheus:v3.13.1 check config /etc/prometheus/prometheus.yml
@@ -1000,6 +1035,10 @@ ACM이 재시도한다. 갱신 후 blackbox의 새 만료 시각을 확인한다
 Overview에서 최소 traffic 조건과 status/URI를 확인한 뒤 Logs dashboard에서 같은 시간대를 좁힌다.
 원문·body 심층 분석은 Kibana로 이동한다. alert/Discord에는 원문을 복사하지 않는다.
 
+prod에서 두 WAS의 `/readyz`가 동시에 503이면 공통 의존성(DB·Redis)부터 확인한다. prod MySQL host의
+`/var/log/mysql/error.log`에 `Received SHUTDOWN`이 있으면 재시작이다. 그 원인은
+`/var/log/apt/history.log`와 [prod host 패치 절차](../../docs/operations/prod-host-patching.md)로 확인한다.
+
 `Application ERROR log detected`는 Elasticsearch에 최근 5분 동안 `service=laimory`,
 `environment=dev`, `level=ERROR` 문서가 하나라도 있으면 pending 없이 warning으로 발화한다.
 단일 사용자 요청 실패를 서비스 전체 장애와 동일시하지 않으므로 critical은 기존 target/probe/backend
@@ -1064,7 +1103,7 @@ worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.en
 
 flag가 true인데 job이 줄지 않으면 직전 03:00 KST에 두 app process가 가용했는지 확인하고 application
 log의 `PHOTO 삭제 worker run 시작`, `PHOTO 삭제 batch 완료`, `PHOTO 삭제 worker run 완료`를 조회한다.
-`claimed`, `relinkedCancelled`, `requested`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
+`claimed`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
 `deferred`, 단계별 오류 수와 `durationMs`를 process-wide run budget, MySQL/Hikari 상태, S3/IAM 오류와
 함께 확인한다. 실패
 job과 그 FK가 가리키는 원문 PHOTO Item은 처리 창 안에서 재시도되는 복구 권위이므로 둘 중 하나를 수동

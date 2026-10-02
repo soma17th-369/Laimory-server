@@ -21,7 +21,8 @@ public class TermDocumentRegistrationService {
     private final TermDocumentRepository repository;
 
     // INSERT transaction은 repository proxy가 소유한다. rollback이 끝난 후에만 409로 변환한다.
-    public TermDocument register(TermType type, String version, String title, String contentUrl,
+    // 결과는 반환하지 않는다 — 관리자 웹이 등록 직후 이력을 다시 조회한다(조회가 단일 원천, #528).
+    public void register(TermType type, String version, String title, String contentUrl,
                                  boolean publicationConfirmed) {
         if (type == null || title == null || title.isBlank() || title.length() > 255
                 || contentUrl == null || contentUrl.length() > 512 || !publicationConfirmed) {
@@ -48,6 +49,5 @@ public class TermDocumentRegistrationService {
             }
             throw exception;
         }
-        return proposed;
     }
 }

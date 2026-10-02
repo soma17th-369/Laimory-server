@@ -81,16 +81,21 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   `appCode`/`appVerifier`/`uploadUrl`/`firebaseInstallationId` alias를 값 타입과 무관하게 마스킹한다
   (FID는 민감 opaque 발송 식별자 — push 등록 body가 URL 대신 body로 FID를 받는 이유이기도 하다).
 - 문자열 값의 대소문자 무관 `X-Amz-` 검사는 필드명 마스킹이 놓친 presigned S3 URL을 위한 denylist
-  백스톱이다. 현재 사진 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
+  백스톱이다. 현재 사진·문의 첨부(#529) 조회 CloudFront URL은 unsigned다. 다른 signed URL 유형을 도입하면 해당 서명
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 17개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 22개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394) — request 8개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529) — request 9개(draft 생성 POST, Event PATCH, memo PUT, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
-  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`),
-  response 9개(draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
+  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
+  `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
+  response 13개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
+  경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다, 앱 내 문의 목록 GET
+  `/a/api/v\d+/inquiries`·상세 GET `/a/api/v\d+/inquiries/\d+` — 제목·email·내용·첨부 CDN URL(subject hash 포함)을
+  마스킹하고 ID·상태·처리 시각만 남긴다(목록 wrapper `inquiries`를 allowlist에 둬 원소 구조가 남는다),
+  draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
   `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든
   Event 제목·부제·질문·장소를 그대로 돌려주므로 request와 함께 대상).
@@ -161,6 +166,11 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 - dev·test WAS는 OpenTelemetry javaagent로 요청을 **HTTP → 서비스 메서드 → JDBC(SQL)/Kakao
   WebClient/Redis** span으로 분해해 monitoring host의 Tempo(OTLP gRPC 4317)로 push한다.
   보관은 로컬 스토리지 48h, metrics generator는 끈다. 조회는 Grafana Tempo datasource.
+- Tempo는 `tempo.yml`이 ingester block(100MB/10m)·querier·검색 상한을 명시하고 compose가
+  `GOMEMLIMIT=600MiB`·`mem_limit 1g`를 건다(#492 — 기본 상한이 컨테이너 한도보다 커서 유입 block
+  완료·넓은 TraceQL 검색 두 경로로 cgroup OOM 실증). `/metrics`는 Prometheus `tempo` job이
+  scrape하고 Infrastructure dashboard `Tempo Memory` 패널이 RSS를 한도 기준선과 보여준다.
+  넓은 범위(48h) 검색은 의도적으로 느리다 — 상한을 되돌리지 말고 범위를 좁혀 검색한다.
 - agent jar는 배포 이미지에 항상 탑재되고(`/otel/opentelemetry-javaagent.jar`), 활성화는 host
   `.env`의 `JAVA_TOOL_OPTIONS`만이 소유한다 — `APP_TRACING_MODE` pre-flight가 스위치 SSOT다
   (environments.md). env가 없는 local/integration은 agent가 아예 붙지 않아 완전 무영향이다.
@@ -184,8 +194,14 @@ Lucene 32,766B term 한도를 넘으면 access log 문서 전체가 ES에서 거
 
 ## Output by Environment
 
-- `docker` profile은 사람이 읽는 text console log를 사용한다.
-- 그 외 profile은 JSON stdout을 사용한다.
+- `docker` profile은 사람이 읽는 text console log를 사용한다(동기 ConsoleAppender).
+- 그 외 profile은 JSON stdout을 사용한다. stdout 쓰기는 `AsyncAppender`(`ASYNC_JSON_CONSOLE`, #497)
+  워커 1개가 맡고 요청 스레드는 큐(1024)에 넣고 돌아온다 — 동기 appender의 stdout 락이 600~1,000 rps에서
+  http 스레드 80~90%를 묶던 병목 대응. `neverBlock=true`라 큐가 차도 요청은 막히지 않고 초과 이벤트가
+  유실되며, 큐 80%부터는 INFO(액세스 로그)만 먼저 버리고 WARN/ERROR는 가득 찰 때까지 보존한다.
+  종료 시 큐 flush 대기 상한은 5초다. MDC(`transactionId`, agent의 `trace_id`)는 enqueue 시점에
+  캡처된다(`TransactionIdFilterAsyncAppenderTest`). Logback에 드롭 카운터는 없다 — 유실은
+  `logback_events_total`(emitted)과 실제 stdout 줄 수의 차이로만 본다.
 - JSON 공통 field는 `service=laimory`, `environment`다.
 - dev workflow가 application environment 값을 주입한다.
 - default profile은 JSON stream 순도를 위해 banner와 Hibernate `show-sql`을 끈다.
@@ -278,13 +294,13 @@ Spring JSON stdout
   미완료 job은 재시도 없이 보존하며 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존
   `service=laimory AND level=ERROR` 경보를 발화시킨다(job ID·Item ID·object key 미포함).
   이 worker는 custom meter와 전용 dashboard/alert를 등록하지 않는다.
-  각 process가 run 시작 설정과 batch/run 종료의 claimed/relinked-cancelled/S3 요청·성공·실패·응답 누락,
+  각 process가 run 시작 설정과 batch/run 종료의 claimed, S3 성공·실패·응답 누락,
   DB completion/이월, 단계별 오류 수와 소요 시간을 key=value application log로 남긴다.
 - draft retention cleanup은 custom meter나 적체 전용 알림을 등록하지 않는다. run 시작 설정과
   batch/run 종료의 selected/succeeded/failed/deleted, PHOTO 결과와 DB 오류 수를 로그로 남긴다.
 - **계정 삭제 worker(#302)**: 삭제 pass는 run 시작에 두 건수를 ERROR로 남겨 같은 경보에 태운다 —
-  처리 창(접수일 D 기준 D+8~D+10)을 벗어나 재시도에서 제외된 `expiredCount`와 수동 확인 대기
-  `manualReviewCount`다. 데이터와 job은 보존되며 로그에 userId·subjectId·jobId를 싣지 않는다.
+  처리 창(접수일 D 기준 D+3~D+5)을 벗어나 재시도에서 제외된 `expiredCount`와 수동 확인 대기
+  `manualReviewCount`다. 재처리는 [계정 삭제 수동 재처리](../../../../docs/database/account-erasure-recovery.md). 데이터와 job은 보존되며 로그에 userId·subjectId·jobId를 싣지 않는다.
   이 둘이 #302의 유일한 적체 감지 수단이다(별도 지표 없음 — 경보 미부착 지표 금지 원칙).
   claimed/succeeded/failed/deleted/already-absent, PHOTO 삭제 요청·성공·실패·skip, DB/worker 오류 수와
   소요 시간을 key=value application log로 남긴다.
@@ -411,29 +427,20 @@ curl -sf -u "elastic:$PW" "$ES/laimory-dev-*/_mapping"
 머지 전 Kibana saved query/alert가 `message` 문자열 파싱에 의존하지 않는지 확인한다. access log의
 `message`는 고정값 `http_request_completed`이며 `event` 등 top-level field 쿼리가 계약이다.
 
-`TrustedEdgeRequestFilter`는 socket peer로 엣지를 판정하고, 엣지가 둘인 전환기라 두 계약을 동시에
-지원한다(#327). 신뢰 대역 `app.edge.trusted-proxy-cidrs`(env `APP_EDGE_TRUSTED_PROXY_CIDRS`)를 먼저
-평가하고, 매칭되지 않으면 loopback 분기를 본다 — 운영에서 두 집합은 서로소다. 설정한 CIDR이 malformed면
-기동에 실패한다.
+`TrustedEdgeRequestFilter`는 socket peer로 신뢰 엣지를 판정하며, 신뢰 엣지는 ALB 하나다(#327, #520).
+peer가 신뢰 대역 `app.edge.trusted-proxy-cidrs`(env `APP_EDGE_TRUSTED_PROXY_CIDRS`, ALB ENI가 사는 퍼블릭
+서브넷) 안이면 `X-Forwarded-For` **최우측** 값을 client IP로 쓴다. ALB가 자신이 관찰한 TCP peer를
+오른쪽에 append하므로 클라이언트가 미리 넣은 위조 값은 전부 왼쪽에 쌓인다(최좌측을 쓰면 위조가 그대로
+통과한다). 최우측이 valid literal이 아니면 왼쪽으로 되돌아가지 않고 socket address로 fallback한다.
+header line이 여러 개면 마지막 line의 마지막 element만 본다. 설정한 CIDR이 malformed면 기동에 실패한다.
 
-- **ALB 엣지** — peer가 신뢰 CIDR(ALB ENI가 사는 퍼블릭 서브넷) 안이면 `X-Forwarded-For` **최우측**
-  값을 client IP로 쓴다. ALB가 자신이 관찰한 TCP peer를 오른쪽에 append하므로 클라이언트가 미리 넣은
-  위조 값은 전부 왼쪽에 쌓인다(최좌측을 쓰면 위조가 그대로 통과한다). 최우측이 valid literal이 아니면
-  왼쪽으로 되돌아가지 않고 socket address로 fallback한다. header line이 여러 개면 마지막 line의
-  마지막 element만 본다. ALB는 임의 이름의 custom header를 덮어쓰지 못하므로 이 엣지에서
-  `Laimory-Client-IP`는 신뢰하지 않는다.
-- **loopback 엣지**(#327 nginx 전환기의 잔재 코드 경로 — dev가 ALB 직결로 전환(#369)돼 배포 환경
-  트래픽은 더 이상 타지 않는다. 코드 경로 제거는 후속 정리 후보) — peer가 정확히 `127.0.0.1`이고
-  `Laimory-Client-IP` header가 정확히 하나의 valid IPv4/IPv6 literal일 때만 이를 normalize해
-  downstream `request.getRemoteAddr()`로 노출한다. repeated/comma/malformed/missing
-  header는 socket address로 fallback하며 이 엣지에서는 XFF와 User-Agent를 IP 결정에 쓰지 않는다.
+신뢰 대역 밖 peer(loopback `127.0.0.1` 포함)는 socket address를 그대로 client IP로 쓰며 forwarded
+header를 보지 않는다. rejected 원문은 기록하지 않는다. checked-in 기본 신뢰 대역은 비어 있어 설정이 없는
+환경에는 신뢰 엣지가 없다. 실제 대역은 배포 환경 `.env`가 소유한다.
 
-rejected 원문은 어느 엣지에서도 기록하지 않는다. checked-in 기본 신뢰 대역은 비어 있어(=ALB 엣지 없음)
-설정이 없는 환경은 기존 loopback 계약만 갖는다. 실제 대역은 배포 환경 `.env`가 소유한다.
-
-두 엣지 모두 단일 `X-Forwarded-Proto: https|http`만 scheme/secure/serverPort view를 변환해 OAuth HTTPS
+신뢰 엣지의 단일 `X-Forwarded-Proto: https|http`만 scheme/secure/serverPort view를 변환해 OAuth HTTPS
 redirect와 Secure cookie를 보존한다. AI 서버 등 사설망에서 애플리케이션 8080으로 직접 접근하는 peer가
-보낸 custom IP/XFP/XFF는 신뢰 대역 밖이면 모두 무시한다 — 신뢰 대역을 넓게 잡으면 그 대역의 peer가
+보낸 XFP/XFF는 신뢰 대역 밖이면 모두 무시한다 — 신뢰 대역을 넓게 잡으면 그 대역의 peer가
 XFF를 위조할 수 있으므로 대역은 ALB ENI가 사는 서브넷으로 제한하고 8080 인바운드를 SG로 좁힌다.
 `server.forward-headers-strategy=none`은 유지한다 — Spring `ForwardedHeaderFilter`는 필터 순서가
 충돌하고 XFF **최좌측**(위조 가능)을 remote address로 쓴다. access log `clientIp`는 trusted-edge

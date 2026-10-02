@@ -73,3 +73,6 @@ application-secret.properties
 
 ### Per-PR Digest Comments ###
 /.agents/digest/
+
+# macOS Finder 잔재
+.DS_Store

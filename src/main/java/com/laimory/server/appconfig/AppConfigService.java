@@ -11,17 +11,15 @@ public class AppConfigService {
 
     private final AppConfigRepository appConfigRepository;
 
-    @Transactional(readOnly = true)
     public AppConfigResponse getAppConfig(String applicationVersion) {
         // applicationVersion: 버전별 config 분기 지점(현재 단일 버전이라 분기 없음).
         return AppConfigResponse.from(requireSingleConfig());
     }
 
+    /** 관리자 쓰기 — 결과는 반환하지 않는다. 관리자 웹이 저장 직후 다시 조회한다(조회가 단일 원천, #528). */
     @Transactional
-    public AppConfigResponse updateVersions(Long minimum, Long recommended) {
-        AppConfig config = requireSingleConfig();
-        config.updateVersions(minimum, recommended);
-        return AppConfigResponse.from(config);
+    public void updateVersions(Long minimum, Long recommended) {
+        requireSingleConfig().updateVersions(minimum, recommended);
     }
 
     private AppConfig requireSingleConfig() {

@@ -13,11 +13,23 @@ import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.auth.security.ApiErrorResponseWriter;
 import com.laimory.server.common.error.GlobalExceptionHandler;
 import com.laimory.server.common.logging.TrustedEdgeRequestFilter;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.entity.Inquiry;
+import com.laimory.server.inquiry.entity.InquiryAttachment;
+import com.laimory.server.inquiry.repository.InquiryAttachmentRepository;
+import com.laimory.server.inquiry.repository.InquiryRepository;
+import com.laimory.server.inquiry.service.InquiryAttachmentService;
+import com.laimory.server.inquiry.service.InquiryService;
+import com.laimory.server.notice.entity.Notice;
+import com.laimory.server.notice.repository.NoticeRepository;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermDocumentRegistrationService;
 import com.laimory.server.terms.service.TermDocumentService;
+import com.laimory.server.testsupport.TestSubjects;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.net.CookieManager;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -27,10 +39,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -51,12 +66,14 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /** DB를 mock하되 실제 Tomcat connector·filter·CSRF session·MVC 경계는 모두 실 HTTP로 검증한다. */
 @SpringBootTest(classes = AdminHttpTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"APP_ENV=local", "APP_ADMIN_PORT=0", "management.server.port=0",
-                "management.endpoint.health.group.readiness.include=readinessState", "SWAGGER_ENABLED=true"})
+                "management.endpoint.health.group.readiness.include=readinessState", "SWAGGER_ENABLED=true",
+                "photo.cdn.domain=cdn.example"})
 @DirtiesContext
 class AdminHttpTest {
     @LocalServerPort int mainPort;
@@ -66,6 +83,10 @@ class AdminHttpTest {
     @MockitoBean TermDocumentService documents;
     @MockitoBean TermDocumentRepository repository;
     @MockitoBean AppConfigRepository configs;
+    @MockitoBean NoticeRepository notices;
+    @MockitoBean InquiryRepository inquiries;
+    @MockitoBean InquiryAttachmentRepository inquiryAttachments;
+    @MockitoBean S3PhotoStorageService storage;
     private HttpClient client;
     private JsonNode csrf;
 
@@ -75,7 +96,7 @@ class AdminHttpTest {
         AppConfig config = new AppConfig();
         config.updateVersions(1L, 2L);
         when(configs.findTop2ByOrderByAppConfigIdAsc()).thenReturn(List.of(config));
-        when(documents.findAllDocuments()).thenReturn(List.of());
+        when(documents.findAllTermGroups()).thenReturn(List.of());
         when(documents.findCurrentDocuments(any())).thenReturn(List.of());
         HttpResponse<String> bootstrap = request("GET", "/admin/api/csrf", null, null, false);
         assertThat(bootstrap.statusCode()).isEqualTo(200);
@@ -86,7 +107,8 @@ class AdminHttpTest {
     @Test
     void onlyActualAdminPortServesPage_andPublicManagementContinue() throws Exception {
         assertThat(server.boundPort()).isPositive().isNotEqualTo(mainPort).isNotEqualTo(managementPort);
-        for (String path : List.of("/admin", "/admin/", "/admin/index.html", "/admin/admin.js", "/admin/admin.css", "/admin/api/terms")) {
+        for (String path : List.of("/admin", "/admin/", "/admin/index.html", "/admin/admin.js", "/admin/admin.css", "/admin/api/terms",
+                "/admin/api/notices", "/admin/api/inquiries")) {
             assertThat(request("GET", path, null, null, false).statusCode()).as(path).isEqualTo(200);
             assertThat(raw(mainPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
             assertThat(raw(managementPort, path, "Host: localhost:" + server.boundPort())).as(path).startsWith("HTTP/1.1 404");
@@ -111,11 +133,6 @@ class AdminHttpTest {
         for (String path : List.of("/%61dmin/api/csrf", "/admin;ignored/api/csrf", "/a/../admin/api/csrf")) {
             assertThat(raw(mainPort, path, "Host: localhost:" + port)).as(path).startsWith("HTTP/1.1 404");
         }
-        // 기존 trusted-edge wrapper가 serverPort를 443으로 바꿔도 local port 판정은 유지된다.
-        assertThat(raw(port, "/admin/api/csrf", "Host: localhost:" + port, "X-Forwarded-Proto: https"))
-                .startsWith("HTTP/1.1 200");
-        assertThat(raw(mainPort, "/admin/api/csrf", "Host: localhost:" + port, "X-Forwarded-Proto: https"))
-                .startsWith("HTTP/1.1 404");
     }
 
     @Test
@@ -167,7 +184,99 @@ class AdminHttpTest {
         }
     }
 
+    @Test
+    void noticeEndpointsValidateInputAndMapNotFoundAndSuccessToHttpStatus() throws Exception {
+        Notice notice = Notice.of("점검 안내", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(notice, "noticeId", 5L);
+        when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(notice));
+        when(notices.save(any(Notice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(notice));
+        when(notices.findByNoticeId(404L)).thenReturn(Optional.empty());
+
+        HttpResponse<String> list = request("GET", "/admin/api/notices", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"noticeId\":5").contains("\"title\":\"점검 안내\"")
+                .contains("\"contentUrl\":\"https://example.com/notices/5\"").contains("\"hidden\":false");
+
+        for (String bad : List.of("{}", "{\"title\":\"  \",\"contentUrl\":\"https://example.com/n\"}",
+                "{\"title\":\"t\",\"contentUrl\":\" \"}",
+                "{\"title\":\"t\",\"contentUrl\":\"http://example.com/n\"}",
+                "{\"title\":\"" + "x".repeat(256) + "\",\"contentUrl\":\"https://example.com/n\"}")) {
+            assertThat(request("POST", "/admin/api/notices", bad, origin(), true).statusCode()).as(bad).isEqualTo(400);
+        }
+        verify(notices, never()).save(any());
+        HttpResponse<String> created = request("POST", "/admin/api/notices",
+                "{\"title\":\" 새 공지 \",\"contentUrl\":\"https://example.com/notices/6\"}", origin(), true);
+        assertThat(created.statusCode()).isEqualTo(201);
+        // 관리자 쓰기는 결과를 싣지 않는다(#528) — 저장된 행으로 trim·초기 노출 상태를 확인한다.
+        assertThat(writeBody(created).isNull()).isTrue();
+        ArgumentCaptor<Notice> saved = ArgumentCaptor.forClass(Notice.class);
+        verify(notices).save(saved.capture());
+        assertThat(saved.getValue().getTitle()).isEqualTo("새 공지");
+        assertThat(saved.getValue().isHidden()).isFalse();
+
+        assertThat(request("PUT", "/admin/api/notices/5",
+                "{\"title\":\"수정\",\"contentUrl\":\"https://example.com/notices/5-r2\"}", origin(), true).statusCode()).isEqualTo(200);
+        assertThat(notice.getTitle()).isEqualTo("수정");
+        assertThat(notice.getContentUrl()).isEqualTo("https://example.com/notices/5-r2");
+        assertThat(request("PUT", "/admin/api/notices/5/visibility", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(notice.isHidden()).isFalse();
+        HttpResponse<String> hidden = request("PUT", "/admin/api/notices/5/visibility", "{\"hidden\":true}", origin(), true);
+        assertThat(hidden.statusCode()).isEqualTo(200);
+        assertThat(writeBody(hidden).isNull()).isTrue();
+        assertThat(notice.isHidden()).isTrue();
+        HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/visibility", "{\"hidden\":true}", origin(), true);
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("-404");
+    }
+
+    @Test
+    void inquiryEndpointsListDetailWithCdnViewUrlsAndToggleAnswered() throws Exception {
+        Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
+                "사진 올리면 멈춰요");
+        ReflectionTestUtils.setField(inquiry, "inquiryId", 9L);
+        InquiryAttachment attachment = InquiryAttachment.of(9L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg");
+        when(inquiries.findAllByOrderByInquiryIdDesc()).thenReturn(List.of(inquiry));
+        when(inquiries.findByInquiryId(9L)).thenReturn(Optional.of(inquiry));
+        when(inquiries.findByInquiryId(404L)).thenReturn(Optional.empty());
+        when(inquiryAttachments.findByInquiryIdOrderByInquiryAttachmentIdAsc(9L)).thenReturn(List.of(attachment));
+
+        HttpResponse<String> list = request("GET", "/admin/api/inquiries", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"inquiryId\":9")
+                .contains("\"email\":\"user@example.com\"").contains("\"title\":\"앱이 멈춰요\"")
+                .contains("\"answeredAt\":null")
+                .doesNotContain("attachmentCount");
+
+        HttpResponse<String> detail = request("GET", "/admin/api/inquiries/9", null, null, false);
+        assertThat(detail.statusCode()).isEqualTo(200);
+        assertThat(detail.body()).contains("\"title\":\"앱이 멈춰요\"")
+                .contains("\"description\":\"사진 올리면 멈춰요\"")
+                .contains("\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
+                // 앱 소유자 상세와 같은 무서명 CDN URL(#529) — presigned GET 서명이 없다.
+                .contains("\"viewUrl\":\"https://cdn.example/" + InquiryObjectKeys.subjectPrefix(TestSubjects.id(3L))
+                        + "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.jpg\"")
+                .doesNotContain("X-Amz-");
+        assertThat(request("GET", "/admin/api/inquiries/404", null, null, false).statusCode()).isEqualTo(404);
+
+        assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(inquiry.isAnswered()).isFalse();
+        HttpResponse<String> answered = request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":true}", origin(), true);
+        assertThat(answered.statusCode()).isEqualTo(200);
+        assertThat(inquiry.isAnswered()).isTrue();
+        assertThat(writeBody(answered).isNull()).isTrue();
+        assertThat(request("PUT", "/admin/api/inquiries/9/answered", "{\"answered\":false}", origin(), true).statusCode()).isEqualTo(200);
+        assertThat(inquiry.isAnswered()).isFalse();
+        assertThat(request("PUT", "/admin/api/inquiries/404/answered", "{\"answered\":true}", origin(), true).statusCode()).isEqualTo(404);
+    }
+
     private String origin() { return "http://localhost:" + server.boundPort(); }
+
+    private JsonNode writeBody(HttpResponse<String> response) throws Exception {
+        JsonNode envelope = mapper.readTree(response.body());
+        assertThat(envelope.has("body")).isTrue();
+        return envelope.get("body");
+    }
 
     private HttpResponse<String> request(String method, String path, String body, String origin, boolean token) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(origin() + path)).timeout(Duration.ofSeconds(10));
@@ -198,10 +307,14 @@ class AdminHttpTest {
             excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({AdminWebConfiguration.class, AdminPageController.class, AdminApiController.class,
             TermDocumentRegistrationService.class, AppConfigService.class, AppConfigController.class,
+            NoticeService.class, InquiryService.class, InquiryAttachmentService.class,
             GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
     static class TestApplication {
         @Bean ApiErrorResponseWriter errors(MessageSource messages, ObjectMapper mapper) {
             return new ApiErrorResponseWriter(messages, mapper);
+        }
+        @Bean Clock clock() {
+            return Clock.systemUTC();
         }
         @Bean @Order(200) SecurityFilterChain otherRequests(HttpSecurity http) throws Exception {
             return http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll()).build();

@@ -6,8 +6,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.appconfig.AppConfigResponse;
 import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.inquiry.dto.AdminInquiryDetailResponse;
+import com.laimory.server.inquiry.dto.AdminInquiryResponse;
+import com.laimory.server.inquiry.service.InquiryService;
+import com.laimory.server.notice.dto.AdminNoticeResponse;
+import com.laimory.server.notice.entity.Notice;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
-import com.laimory.server.terms.entity.TermDocument;
+import com.laimory.server.terms.dto.AdminTermGroupResponse;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.service.TermDocumentRegistrationService;
 import com.laimory.server.terms.service.TermDocumentService;
@@ -18,13 +24,13 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
-import java.util.Arrays;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +38,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * localhost 관리자 웹 API. 쓰기는 결과를 반환하지 않는다({@code body: null}) — 관리자 웹이 쓰기 직후 목록을
+ * 다시 조회하므로 조회가 단일 원천이다(#528).
+ */
 @Hidden
 @RestController
 @RequestMapping("/admin/api")
@@ -42,24 +52,20 @@ public class AdminApiController {
     private final TermDocumentService documents;
     private final TermDocumentRegistrationService registrations;
     private final AppConfigService appConfig;
+    private final NoticeService notices;
+    private final InquiryService inquiries;
 
     @GetMapping("/terms")
-    ApiResponse<List<TermGroup>> terms() {
-        List<TermDocument> all = documents.findAllDocuments();
-        return ApiResponse.success(Arrays.stream(TermType.values()).map(type -> {
-            List<Document> history = all.stream().filter(doc -> doc.getTermType() == type)
-                    .map(Document::from).toList();
-            return new TermGroup(type, history.isEmpty() ? null : history.getFirst(), history);
-        }).toList());
+    ApiResponse<List<AdminTermGroupResponse>> terms() {
+        return ApiResponse.success(documents.findAllTermGroups());
     }
 
     @PostMapping(value = "/terms", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    ApiResponse<Publication> publish(@Valid @RequestBody PublishRequest request) {
-        TermDocument saved = registrations.register(request.termType(), request.version(), request.title(),
-                request.contentUrl(), request.publicationConfirmed());
-        TermDocument current = documents.findCurrentDocuments(List.of(saved.getTermType())).getFirst();
-        return ApiResponse.success(new Publication(Document.from(saved), Document.from(current)));
+    ApiResponse<Void> publish(@Valid @RequestBody PublishRequest request) {
+        registrations.register(request.termType(), request.version(), request.title(), request.contentUrl(),
+                request.publicationConfirmed());
+        return ApiResponse.success(null);
     }
 
     @GetMapping("/app-config")
@@ -68,8 +74,55 @@ public class AdminApiController {
     }
 
     @PutMapping(value = "/app-config", consumes = MediaType.APPLICATION_JSON_VALUE)
-    ApiResponse<AppConfigResponse> updateConfig(@Valid @RequestBody VersionRequest request) {
-        return ApiResponse.success(appConfig.updateVersions(request.minAppVersion(), request.recommendAppVersion()));
+    ApiResponse<Void> updateConfig(@Valid @RequestBody VersionRequest request) {
+        appConfig.updateVersions(request.minAppVersion(), request.recommendAppVersion());
+        return ApiResponse.success(null);
+    }
+
+    /** 숨김 포함 전체 공지, 최신 순 — 공개 목록과 달리 노출 상태를 함께 보여준다. */
+    @GetMapping("/notices")
+    ApiResponse<List<AdminNoticeResponse>> notices() {
+        return ApiResponse.success(notices.findAllNotices());
+    }
+
+    @PostMapping(value = "/notices", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    ApiResponse<Void> registerNotice(@Valid @RequestBody NoticeRequest request) {
+        notices.register(request.title(), request.contentUrl());
+        return ApiResponse.success(null);
+    }
+
+    /** 제목·원문 URL 전체 교체. 노출 상태는 visibility 경로가 따로 바꾼다. */
+    @PutMapping(value = "/notices/{noticeId}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> editNotice(@PathVariable long noticeId, @Valid @RequestBody NoticeRequest request) {
+        notices.edit(noticeId, request.title(), request.contentUrl());
+        return ApiResponse.success(null);
+    }
+
+    /** 숨김(hidden=true)이 삭제 역할이다 — hard delete 경로는 두지 않는다. */
+    @PutMapping(value = "/notices/{noticeId}/visibility", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> changeNoticeVisibility(@PathVariable long noticeId, @Valid @RequestBody VisibilityRequest request) {
+        notices.changeVisibility(noticeId, request.hidden());
+        return ApiResponse.success(null);
+    }
+
+    /** 전체 문의, 최신 순. 제목·내용·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
+    @GetMapping("/inquiries")
+    ApiResponse<List<AdminInquiryResponse>> inquiries() {
+        return ApiResponse.success(inquiries.findAll());
+    }
+
+    /** 상세 + 첨부 열람 URL(앱 소유자와 같은 무서명 CDN URL, #529). */
+    @GetMapping("/inquiries/{inquiryId}")
+    ApiResponse<AdminInquiryDetailResponse> inquiry(@PathVariable long inquiryId) {
+        return ApiResponse.success(inquiries.get(inquiryId));
+    }
+
+    /** 답장을 보낸 뒤 처리됨 표시(true) 또는 해제(false). 서버는 email을 보내지 않는다. */
+    @PutMapping(value = "/inquiries/{inquiryId}/answered", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> changeInquiryAnswered(@PathVariable long inquiryId, @Valid @RequestBody AnsweredRequest request) {
+        inquiries.changeAnswered(inquiryId, request.answered());
+        return ApiResponse.success(null);
     }
 
     record PublishRequest(@NotNull TermType termType,
@@ -96,12 +149,10 @@ public class AdminApiController {
         }
     }
 
-    record Document(TermType termType, String version, String title, String contentUrl) {
-        static Document from(TermDocument doc) {
-            return new Document(doc.getTermType(), doc.getVersion(), doc.getTitle(), doc.getContentUrl());
-        }
-    }
+    record NoticeRequest(@NotBlank @Size(max = Notice.TITLE_MAX_LENGTH) String title,
+                         @NotBlank @Size(max = Notice.CONTENT_URL_MAX_LENGTH) String contentUrl) { }
 
-    record TermGroup(TermType termType, Document current, List<Document> documents) { }
-    record Publication(Document saved, Document current) { }
+    record VisibilityRequest(@NotNull Boolean hidden) { }
+
+    record AnsweredRequest(@NotNull Boolean answered) { }
 }

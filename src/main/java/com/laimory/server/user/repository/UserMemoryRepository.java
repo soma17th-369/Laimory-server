@@ -2,6 +2,7 @@ package com.laimory.server.user.repository;
 
 import com.laimory.server.user.entity.UserMemory;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -14,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 사용자의 동시 저장에서 PK 중복 예외가 새어나온다(push_registrations와 같은 선례).
  */
 public interface UserMemoryRepository extends JpaRepository<UserMemory, UUID> {
+
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<UserMemory> findBySubjectId(UUID subjectId);
 
     /**
      * User Memory 문서 전체 교체. 없으면 insert, 있으면 덮어쓴다(부분 병합 없음). native INSERT는 JPA

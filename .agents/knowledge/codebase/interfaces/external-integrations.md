@@ -108,10 +108,32 @@ versionId를 지정해 지운다**. `ListObjectsV2`는 versioning이 켜진 상�
 **빈 목록**으로 보고해 "다 지웠다"는 오판을 만들기 때문이다 — bucket 설정을 문서 계약에만 맡기지 않고
 코드가 확인하게 한 것이다. unversioned bucket에서는 versionId가 `"null"`이라 동작·호출 횟수가 같다.
 
-런타임 role `laimory-ec2-role`의 인라인 정책 `laimory-ec2-s3`가 갖는 사진 bucket 권한은
-`s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·`s3:DeleteObjectVersion`(객체)다.
-**`s3:ListBucket`은 없다**(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2`
-경로를 되살리려면 그 권한을 먼저 추가해야 한다.
+런타임 role은 **환경별로 다른 role이다**(2026-09-25 실측) — dev WAS는 `laimory-ec2-role`(인라인
+`laimory-ec2-s3`), prod WAS 2대는 `laimory-prod-was-role`(인라인 `laimory-prod-was-permissions`)이다.
+한쪽에 권한을 넣어도 다른 쪽은 그대로이므로 **IAM 변경은 환경마다 따로 적용한다.**
+
+사진 bucket 권한은 dev role이 `s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·
+`s3:DeleteObjectVersion`(객체)이고, prod role은 `s3:PutObject`·`s3:DeleteObject`뿐이다. bucket은 현재
+versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작하므로 이 차이는 지금은 드러나지 않는다 —
+**versioning을 켜는 순간 prod 삭제가 권한 부족으로 깨진다.** 두 role 모두 **`s3:ListBucket`은 없다**
+(implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2` 경로를 되살리려면 그
+권한을 먼저 추가해야 한다.
+
+같은 bucket의 `{sha256(subject)}/inquiries/{filename}` prefix는 문의 첨부(#518)가 쓴다 — presigned PUT
+발급·계정 삭제의 prefix 비우기는 사진과 같은 권한으로 동작한다. 열람은 #529부터 앱 소유자·관리자 모두 무서명 CDN URL이라
+**서버 코드는 S3 GetObject를 쓰지 않는다**(presigned GET 발급 코드 제거). 다만 #518 때 관리자 presigned GET용으로
+두 role에 넣은 `LaimoryInquiryAttachmentsRead`(`s3:GetObject`, 객체 범위 `*/inquiries/*`, 2026-09-25)는 아직 남아 있다 —
+코드 배포 후 환경별 별도 승인으로 제거할 대상이다. 사진 객체(`*/photos/*`)는 두 환경 모두 role에 GetObject가 없다.
+⚠️ 권한을 `head-object`로 판정할 때는 **실재하는 객체**를 써야 한다 — `s3:ListBucket`이 없으면 없는 key는
+404가 아니라 403으로 돌아와서, 권한이 있어도 거부처럼 보인다.
+
+문의 첨부 열람(#529 — 앱 소유자 상세·관리자 상세 공용)은 사진과 같은 **무서명 CloudFront 고정 URL**
+(`https://{PHOTO_CDN_DOMAIN}/{sha256(subject)}/inquiries/{filename}`, `InquiryAttachmentService.cdnUrl`)이다.
+2026-09-29 조회로 확인한 전제: distribution은 path별 cache behavior·CloudFront Function·서명(trusted key group)
+없이 bucket 하나를 origin으로 서빙하고, bucket 정책의 OAC `s3:GetObject`는 **bucket 전체(`/*`)** 범위다
+(실재 `inquiries` 객체가 CDN으로 200, S3 직접은 403). dev·prod는 같은 bucket·distribution을 쓴다.
+**제약: OAC 읽기 정책은 `*/inquiries/*`를 포함해야 한다.** `*/photos/*`로 좁히면 서버 에러 없이 앱·관리자의 문의
+첨부가 전부 403으로 깨진다. CDN 캐시는 탈퇴 삭제 뒤에도 TTL 동안 사본을 낼 수 있다(사진과 같은 조건).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)

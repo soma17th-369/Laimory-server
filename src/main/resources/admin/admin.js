@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
-let bootstrap, catalog = [], config;
+let bootstrap, catalog = [], config, notices = [], inquiries = [];
 
 function status(message, error = false) {
   $("status").textContent = message;
@@ -83,6 +83,116 @@ async function loadConfig() {
   $("debug-message").value = config.debugTestMessage ?? "";
 }
 
+function noticeState(notice) {
+  return notice.hidden ? "숨김" : "노출";
+}
+
+async function loadNotices() {
+  notices = await api("/admin/api/notices");
+  $("notices").replaceChildren();
+  for (const notice of notices) {
+    const row = document.createElement("tr");
+    for (const value of [String(notice.noticeId), notice.title]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    const urlCell = document.createElement("td");
+    try {
+      const link = document.createElement("a"); link.href = httpsUrl(notice.contentUrl).href;
+      link.textContent = "원문 ↗"; link.target = "_blank"; link.rel = "noopener noreferrer"; urlCell.append(link);
+    } catch { urlCell.textContent = notice.contentUrl; }
+    row.append(urlCell);
+    for (const value of [noticeState(notice), (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    const actions = document.createElement("td");
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "secondary"; edit.textContent = "수정";
+    edit.addEventListener("click", () => startNoticeEdit(notice));
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "secondary";
+    toggle.textContent = notice.hidden ? "다시 노출" : "숨기기";
+    toggle.addEventListener("click", () => changeNoticeVisibility(notice));
+    actions.append(edit, " ", toggle); row.append(actions); $("notices").append(row);
+  }
+}
+
+function startNoticeEdit(notice) {
+  $("notice-id").value = notice.noticeId; $("notice-title").value = notice.title; $("notice-url").value = notice.contentUrl;
+  $("notice-submit").textContent = "수정 내용 확인"; $("notice-cancel").hidden = false; $("notice-title").focus();
+}
+
+function resetNoticeForm() {
+  $("notice-form").reset(); $("notice-id").value = "";
+  $("notice-submit").textContent = "등록 내용 확인"; $("notice-cancel").hidden = true;
+}
+
+async function changeNoticeVisibility(notice) {
+  $("notice-fields").disabled = true;
+  try {
+    const hidden = !notice.hidden;
+    if (!await confirmChange(`#${notice.noticeId} ${notice.title}\n${noticeState(notice)} → ${hidden ? "숨김" : "노출"}`,
+      hidden ? "숨기면 앱 공지 목록에서 즉시 사라집니다. 다시 노출할 수 있습니다." : "다시 노출하면 앱 목록에 즉시 나타납니다.")) return;
+    await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/visibility`, writeOptions("PUT", JSON.stringify({hidden})));
+    status(`#${notice.noticeId} ${noticeState({hidden})} 처리 완료`);
+    await loadNotices();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
+  finally { $("notice-fields").disabled = false; }
+}
+
+function shortDate(value) {
+  return (value ?? "").replace("T", " ").slice(0, 16);
+}
+
+async function loadInquiries() {
+  inquiries = await api("/admin/api/inquiries");
+  $("inquiries").replaceChildren();
+  const unansweredOnly = $("inquiry-unanswered-only").checked;
+  for (const inquiry of inquiries) {
+    if (unansweredOnly && inquiry.answeredAt) continue;
+    const row = document.createElement("tr");
+    for (const value of [String(inquiry.inquiryId), inquiry.email, inquiry.title,
+      shortDate(inquiry.createdAt), inquiry.answeredAt ? `처리됨 ${shortDate(inquiry.answeredAt)}` : "미처리"]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    const actions = document.createElement("td");
+    const detail = document.createElement("button"); detail.type = "button"; detail.className = "secondary"; detail.textContent = "상세";
+    detail.addEventListener("click", () => showInquiry(inquiry.inquiryId));
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "secondary";
+    toggle.textContent = inquiry.answeredAt ? "처리 해제" : "처리됨";
+    toggle.addEventListener("click", () => changeInquiryAnswered(inquiry));
+    actions.append(detail, " ", toggle); row.append(actions); $("inquiries").append(row);
+  }
+}
+
+async function showInquiry(inquiryId) {
+  try {
+    const detail = await api(`/admin/api/inquiries/${encodeURIComponent(inquiryId)}`);
+    $("inquiry-detail-title").textContent = `#${detail.inquiry.inquiryId} · ${detail.inquiry.title}`;
+    $("inquiry-detail-meta").textContent = `${detail.inquiry.email} · ${shortDate(detail.inquiry.createdAt)}`;
+    $("inquiry-detail-description").textContent = detail.inquiry.description;
+    $("inquiry-detail-attachments").replaceChildren(...detail.attachments.map(attachment => {
+      const link = document.createElement("a"); link.href = attachment.viewUrl; link.target = "_blank"; link.rel = "noopener noreferrer";
+      const image = document.createElement("img"); image.src = attachment.viewUrl; image.alt = attachment.filename; image.loading = "lazy";
+      link.append(image); return link;
+    }));
+    $("inquiry-detail").hidden = false;
+    $("inquiry-detail").scrollIntoView({block: "nearest"});
+  } catch (error) { status(error.message, true); }
+}
+
+async function changeInquiryAnswered(inquiry) {
+  $("inquiry-fields").disabled = true;
+  try {
+    const answered = !inquiry.answeredAt;
+    if (!await confirmChange(`#${inquiry.inquiryId} ${inquiry.email}\n${inquiry.answeredAt ? "처리됨" : "미처리"} → ${answered ? "처리됨" : "미처리"}`,
+      answered ? "이메일로 답장을 보낸 뒤에만 처리됨으로 표시하세요. 서버는 메일을 보내지 않습니다." : "처리 표시를 해제하면 미처리 목록에 다시 나타납니다.")) return;
+    await api(`/admin/api/inquiries/${encodeURIComponent(inquiry.inquiryId)}/answered`, writeOptions("PUT", JSON.stringify({answered})));
+    status(`#${inquiry.inquiryId} ${answered ? "처리됨" : "미처리"}로 표시했습니다.`);
+    await loadInquiries();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
+  finally { $("inquiry-fields").disabled = false; }
+}
+
+$("inquiry-unanswered-only").addEventListener("change", () => loadInquiries().catch(error => status(error.message, true)));
+
 function confirmChange(details, warning) {
   $("confirm-environment").textContent = bootstrap.environment.toUpperCase();
   $("confirm-details").textContent = details;
@@ -106,12 +216,41 @@ $("term-form").addEventListener("submit", async event => {
     httpsUrl(proposal.contentUrl);
     const current = catalog.find(group => group.termType === proposal.termType)?.current;
     if (!await confirmChange(`현재\n${describe(current)}\n\n등록 후\n${describe(proposal)}`, "새 문서가 즉시 current가 됩니다. 기존 행으로 되돌리는 기능은 없습니다.")) return;
-    const result = await api("/admin/api/terms", writeOptions("POST", JSON.stringify(proposal)));
-    status(`등록 완료: ${result.saved.termType} ${result.saved.version}. 현재 버전: ${result.current.version}`);
+    await api("/admin/api/terms", writeOptions("POST", JSON.stringify(proposal)));
     $("term-form").reset();
     await loadTerms();
+    const registered = catalog.find(group => group.termType === proposal.termType)?.current;
+    status(`등록 완료: ${proposal.termType} ${proposal.version}. 현재 버전: ${registered?.version ?? "없음"}`);
   } catch (error) { status(`${error.message}\n통신 오류였다면 이력을 확인한 뒤 재시도하세요. 자동 재시도하지 않습니다.`, true); }
   finally { $("term-fields").disabled = false; }
+});
+
+$("notice-cancel").addEventListener("click", resetNoticeForm);
+$("open-notice").addEventListener("click", () => {
+  try { window.open(httpsUrl($("notice-url").value).href, "_blank", "noopener,noreferrer"); }
+  catch (error) { status(error.message, true); }
+});
+
+$("notice-form").addEventListener("submit", async event => {
+  event.preventDefault(); $("notice-fields").disabled = true;
+  try {
+    const id = $("notice-id").value;
+    const proposal = {title: $("notice-title").value.trim(), contentUrl: $("notice-url").value};
+    if (!proposal.title) throw new Error("제목을 입력해주세요.");
+    httpsUrl(proposal.contentUrl);
+    const current = id ? notices.find(notice => String(notice.noticeId) === id) : null;
+    if (id && !current) throw new Error("수정 대상 공지를 목록에서 찾을 수 없습니다. 새로고침 후 다시 시도하세요.");
+    const details = current
+      ? `수정 전\n${current.title}\n${current.contentUrl}\n\n수정 후\n${proposal.title}\n${proposal.contentUrl}`
+      : `${proposal.title}\n${proposal.contentUrl}`;
+    if (!await confirmChange(details, current ? "저장 즉시 앱에 수정된 내용이 노출됩니다." : "저장 즉시 앱 공지 목록에 노출됩니다.")) return;
+    if (current) await api(`/admin/api/notices/${encodeURIComponent(id)}`, writeOptions("PUT", JSON.stringify(proposal)));
+    else await api("/admin/api/notices", writeOptions("POST", JSON.stringify(proposal)));
+    status(`${current ? `수정 완료: #${id}` : "등록 완료:"} ${proposal.title}`);
+    resetNoticeForm();
+    await loadNotices();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 확인한 뒤 재시도하세요. 자동 재시도하지 않습니다.`, true); }
+  finally { $("notice-fields").disabled = false; }
 });
 
 $("config-form").addEventListener("submit", async event => {
@@ -142,6 +281,8 @@ $("config-form").addEventListener("submit", async event => {
     // 한 도메인의 조회 실패가 다른 도메인의 정상 기능을 숨기지 않도록 각각 활성화한다.
     const results = await Promise.allSettled([
       loadTerms().then(() => $("term-fields").disabled = false),
+      loadNotices().then(() => $("notice-fields").disabled = false),
+      loadInquiries().then(() => $("inquiry-fields").disabled = false),
       loadConfig().then(() => $("config-fields").disabled = false)
     ]);
     const failures = results.filter(result => result.status === "rejected");

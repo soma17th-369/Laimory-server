@@ -483,7 +483,7 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     private String createDraft(List<SourceItemDto> sources) {
-        String taskId = draftTaskService.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);
+        String taskId = draftTaskService.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources).taskId();
         createdTaskIds.add(taskId);
         return taskId;
     }

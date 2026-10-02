@@ -69,7 +69,7 @@ class SubjectPreferenceServiceTest {
     void findPushEnabled_missingRow_failsLoudlyWithoutWriting() {
         // 마스터 행 부재는 깨진 불변식이다 — 기본값으로 가리면 조회가 "켜짐"이라 답하는데 예정 알림은
         // 나가지 않는다. 조회도 쓰기와 같은 운영 신호를 낸다.
-        when(subjectPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(subjectPreferenceRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service().findPushEnabled(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
@@ -78,7 +78,7 @@ class SubjectPreferenceServiceTest {
 
     @Test
     void findPushEnabled_presentRowIsReturnedWithoutWriting() {
-        when(subjectPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.of(preference(false)));
+        when(subjectPreferenceRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(preference(false)));
 
         assertThat(service().findPushEnabled(SUBJECT_ID)).isFalse();
 
@@ -99,7 +99,7 @@ class SubjectPreferenceServiceTest {
     @Test
     void findOnboardingCompleted_returnsStoredValueWithoutWriting() {
         // 저장값이 권위다 — 약관 동의 이력이나 기록 존재 여부로 계산하지 않고, 조회가 값을 바꾸지 않는다.
-        when(subjectPreferenceRepository.findById(SUBJECT_ID))
+        when(subjectPreferenceRepository.findBySubjectId(SUBJECT_ID))
                 .thenReturn(Optional.of(preference(true, true)));
 
         assertThat(service().findOnboardingCompleted(SUBJECT_ID)).isTrue();
@@ -110,7 +110,7 @@ class SubjectPreferenceServiceTest {
 
     @Test
     void findOnboardingCompleted_defaultRowIsFalse() {
-        when(subjectPreferenceRepository.findById(SUBJECT_ID))
+        when(subjectPreferenceRepository.findBySubjectId(SUBJECT_ID))
                 .thenReturn(Optional.of(preference(true, false)));
 
         assertThat(service().findOnboardingCompleted(SUBJECT_ID)).isFalse();
@@ -120,7 +120,7 @@ class SubjectPreferenceServiceTest {
     void findOnboardingCompleted_missingRow_failsLoudlyWithoutWriting() {
         // 행 부재를 false로 가리면 앱이 온보딩을 다시 태우고 그 완료 요청은 다시 0행으로 실패한다 —
         // 조회도 마스터와 같은 운영 신호를 낸다.
-        when(subjectPreferenceRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(subjectPreferenceRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service().findOnboardingCompleted(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);

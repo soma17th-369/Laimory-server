@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.ServerApplication;
 import com.laimory.server.appconfig.AppConfigRepository;
+import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermDocumentRepository;
@@ -35,6 +36,7 @@ class AdminPersistenceIntegrationTest {
     @Autowired ObjectMapper mapper;
     @Autowired AppConfigRepository configs;
     @Autowired TermDocumentRepository documents;
+    @Autowired NoticeRepository notices;
     @Autowired JdbcTemplate jdbc;
     private HttpClient client;
     private JsonNode csrf;
@@ -79,9 +81,14 @@ class AdminPersistenceIntegrationTest {
                     "publicationConfirmed", true));
             var result = request("POST", "/admin/api/terms", json);
             assertThat(result.statusCode()).isEqualTo(201);
-            var body = mapper.readTree(result.body()).path("body");
-            assertThat(body.path("saved").path("version").asText()).isEqualTo(version);
-            assertThat(body.path("current").path("version").asText()).isEqualTo(version);
+            // 관리자 쓰기는 결과를 싣지 않는다(#528) — 이력 조회(단일 원천)로 새 current를 확인한다.
+            assertThat(mapper.readTree(result.body()).get("body").isNull()).isTrue();
+            JsonNode privacy = null;
+            for (JsonNode group : mapper.readTree(request("GET", "/admin/api/terms", null).body()).path("body")) {
+                if (group.path("termType").asText().equals("PRIVACY_POLICY")) privacy = group;
+            }
+            assertThat(privacy).isNotNull();
+            assertThat(privacy.path("current").path("version").asText()).isEqualTo(version);
             var saved = documents.findById(id).orElseThrow();
             assertThat(saved.getTitle()).isEqualTo("admin integration fixture");
             assertThat(saved.getCreatedAt()).isNotNull();
@@ -91,6 +98,37 @@ class AdminPersistenceIntegrationTest {
             assertThat(documents.findById(id).orElseThrow().getTitle()).isEqualTo(saved.getTitle());
         } finally {
             documents.deleteById(id);
+        }
+    }
+
+    @Test
+    void registeredNoticeIsPublicWithContentUrlUntilHidden() throws Exception {
+        Long noticeId = null;
+        try {
+            var created = request("POST", "/admin/api/notices", mapper.writeValueAsString(Map.of(
+                    "title", "admin integration notice", "contentUrl", "https://example.com/admin-notice-fixture")));
+            assertThat(created.statusCode()).isEqualTo(201);
+            assertThat(mapper.readTree(created.body()).get("body").isNull()).isTrue();
+            // 등록 응답은 ID를 싣지 않는다(#528) — 관리자 목록(최신 순, 숨김 포함)의 첫 항목이 방금 등록한 공지다.
+            JsonNode adminListed = mapper.readTree(request("GET", "/admin/api/notices", null).body()).path("body");
+            assertThat(adminListed.get(0).path("title").asText()).isEqualTo("admin integration notice");
+            noticeId = adminListed.get(0).path("noticeId").asLong();
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().getCreatedAt()).isNotNull();
+
+            JsonNode listed = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
+            // 최신 순 목록이라 방금 등록한 공지가 첫 항목이고, 원문 대신 page URL만 실린다.
+            assertThat(listed.get(0).path("noticeId").asLong()).isEqualTo(noticeId);
+            assertThat(listed.get(0).path("contentUrl").asText()).isEqualTo("https://example.com/admin-notice-fixture");
+            assertThat(listed.get(0).has("body")).isFalse();
+            assertThat(listed.get(0).path("publishedAt").asText()).isNotBlank();
+
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":true}").statusCode())
+                    .isEqualTo(200);
+            JsonNode afterHiding = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
+            assertThat(afterHiding.findValues("noticeId")).extracting(JsonNode::asLong).doesNotContain(noticeId);
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().isHidden()).isTrue();
+        } finally {
+            if (noticeId != null) notices.deleteById(noticeId);
         }
     }
 

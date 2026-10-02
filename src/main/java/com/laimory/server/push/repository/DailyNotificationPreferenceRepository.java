@@ -4,6 +4,7 @@ import com.laimory.server.push.entity.DailyNotificationPreference;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -14,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 /** daily_notification_preferences 레포 — 설정과 worker의 occurrence claim을 함께 소유한다. */
 public interface DailyNotificationPreferenceRepository
         extends JpaRepository<DailyNotificationPreference, UUID> {
+
+    /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
+    Optional<DailyNotificationPreference> findBySubjectId(UUID subjectId);
 
     /**
      * 신규 행 쓰기는 native insert-if-absent 한 문장이라 read-then-insert 경합이 UNIQUE 예외로 새지
@@ -32,8 +36,8 @@ public interface DailyNotificationPreferenceRepository
                        @Param("now") LocalDateTime now);
 
     /**
-     * due occurrence를 row lock으로 분리한다. 허용 지연을 넘긴 행도 함께 claim한다 — 발송은 하지 않지만
-     * 다음 미래 occurrence로 옮겨야 오래된 행이 다음 run에서 다시 선택되지 않는다(판정은 worker가 소유).
+     * due occurrence를 row lock으로 분리한다. 예정 시각이 오래 지난 행도 함께 claim한다 — 다음 미래
+     * occurrence로 옮겨야 여러 날 밀린 행이 다음 run에서 다시 선택되지 않고 한 번만 발송된다.
      */
     @Query(value = "select * from daily_notification_preferences "
             + "where enabled = true and next_due_at <= :nowKst "
@@ -44,8 +48,8 @@ public interface DailyNotificationPreferenceRepository
                                                                  @Param("limit") int limit);
 
     /**
-     * claim한 occurrence를 다음 예정 시각으로 옮긴다. 발송한 행과 지연 초과로 건너뛴 행이 같은 문장을
-     * 공유한다 — 시각이 서버 고정이라 claim된 행 전부가 같은 다음 예정 시각을 갖는다.
+     * claim한 occurrence를 다음 예정 시각으로 옮긴다. claim된 행 전부가 같은 문장을 공유한다 — 시각이
+     * 서버 고정이라 claim된 행 전부가 같은 다음 예정 시각을 갖는다.
      *
      * <p>전진 값은 <b>Java에서 KST로 계산해</b> 넘긴다 — SQL 안에서 {@code date()}/{@code timestamp()}로
      * 파생하지 않는다. JDBC가 {@code LocalDateTime} 파라미터를 connection timezone 기준으로 변환하므로
@@ -61,14 +65,12 @@ public interface DailyNotificationPreferenceRepository
     /**
      * ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾼다.
      *
-     * <p>재장전이 없으면 켠 사용자가 그날 알림을 놓친다. 꺼져 있는 동안 worker가 그 행을 claim하지
-     * 않아 {@code next_due_at}이 과거에 굳는데, 그 값이 21:00 run 기준 허용 지연(기본 30분)을 넘겨 있으면
-     * run이 claim만 하고 발송 없이 다음 날로 넘긴다(18:00에 굳은 행을 20:50에 켜면 그날 발송이 없다).
-     * 다음 미래 occurrence로 재장전해야 그날 21:00 발송분에 들어간다.
-     *
-     * <p>하루 1회 cron이 된 뒤로(#385) 이 재장전이 막는 것은 <b>오발송이 아니라 누락</b>이다. 매분 cron
-     * 시절에는 켠 직후 tick이 예정에 없던 알림을 즉시 쏘는 것이 문제였고 그 창은 사라졌다 — 오발송이
-     * 재현되지 않는다고 재장전을 걷어내면 위 누락이 조용히 생긴다.
+     * <p>꺼져 있는 동안 worker가 그 행을 claim하지 않아 {@code next_due_at}이 과거에 굳는다. 재장전은
+     * 켤 때 이 값을 다음 미래 occurrence로 되돌려 "{@code next_due_at} = 다음 예정 발송 시각" 의미를 지킨다.
+     * 매분 cron 시절(#385 이전)에는 재장전 없이 켜면 직후 tick이 예정에 없던 알림을 즉시 쐈다. 지금은
+     * worker에 지연 필터가 없고(#395) cron이 하루 1회 21:00이라 과거 값도 다음 21:00 run에서 발송돼,
+     * 재장전 유무와 결과가 사실상 같다. 이는 cron 전제에 기대므로 cron을 바꾸면 재장전이 다시 오발송을
+     * 막는 장치가 된다.
      *
      * @param nextDueAt 고정 시각의 다음 미래 occurrence(호출자가 KST로 계산)
      */

@@ -8,7 +8,6 @@ import java.util.Collection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** timeline_draft_source_items leaf 서비스. INSERT는 JDBC batch, 조회·삭제는 JPA repository를 사용한다. */
 @Service
@@ -44,7 +43,6 @@ public class TimelineDraftSourceItemService {
     }
 
     /** 자기 담당의 만료 행을 한 번 조회한다. 실패한 행은 다음 일일 실행에 다시 조회된다. */
-    @Transactional(readOnly = true)
     public List<TimelineDraftSourceItem> findExpired(LocalDateTime cutoff, int workerIndex,
                                                      int totalWorkerCount, int limit) {
         if (limit < 1 || limit > MAX_CLEANUP_BATCH_SIZE) {

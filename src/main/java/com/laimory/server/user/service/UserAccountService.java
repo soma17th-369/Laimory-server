@@ -17,7 +17,7 @@ import org.springframework.stereotype.Service;
  * userId는 예외 message·log에 넣지 않는다.
  *
  * <p>{@link #isActive}는 공유 Redis 캐시(#429)를 서비스 메서드에 직접 단다(#441 — wrapper 제거).
- * 필터({@code JwtAuthenticationFilter})와 token 발급·회전({@code AuthTokenService})이 같은 프록시를
+ * 필터({@code JwtAuthenticationFilter})와 token 발급({@code AuthTokenService})·회전({@code RefreshTokenService})이 같은 프록시를
  * 경유해 한 캐시를 공유한다 — 매 {@code /a/api} 요청·발급의 users PK 조회(요청 고정비)를 대체하고,
  * prod는 WAS 2대가 한 Redis를 공유하므로 탈퇴 evict가 전 인스턴스에 즉시 반영된다(per-host
  * 캐시로는 다른 host의 stale을 못 지운다).
@@ -81,7 +81,7 @@ public class UserAccountService {
 
     /** 전이 실패(영향 0행) 뒤 멱등 202와 401을 가르는 fresh 상태 조회. */
     public Optional<UserStatus> findStatus(long userId) {
-        return userRepository.findById(userId).map(User::getStatus);
+        return userRepository.findByUserId(userId).map(User::getStatus);
     }
 
     /**

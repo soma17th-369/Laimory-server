@@ -22,8 +22,8 @@ import net.logstash.logback.encoder.LogstashEncoder;
 import org.slf4j.LoggerFactory;
 
 /**
- * trusted-edge 통합 테스트 공용 harness. 엣지별 신뢰 조건은 context 설정(peer 대역)이 결정하므로
- * loopback nginx 엣지와 ALB 엣지가 서로 다른 test class(=context)를 갖고, 요청·로그 관찰 코드는 여기 둔다.
+ * ALB 엣지 통합 테스트용 harness. 신뢰 조건은 context 설정(peer 대역)이 결정하고, 요청·로그 관찰 코드는
+ * 여기 둔다.
  */
 final class TrustedEdgeProbe {
 

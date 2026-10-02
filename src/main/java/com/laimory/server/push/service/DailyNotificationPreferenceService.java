@@ -66,13 +66,12 @@ public class DailyNotificationPreferenceService {
     }
 
     public Optional<DailyNotificationPreference> find(UUID subjectId) {
-        return dailyNotificationPreferenceRepository.findById(subjectId);
+        return dailyNotificationPreferenceRepository.findBySubjectId(subjectId);
     }
 
     /**
      * ON/OFF 전환 — {@code enabled}와 다음 예정 시각을 함께 바꾸는 UPDATE 한 문장이다. 꺼져 있는 동안
-     * 과거가 된 {@code nextDueAt}을 그대로 켜면 허용 지연을 넘긴 값이라 21:00 run이 발송 없이 건너뛰므로
-     * 다음 미래 occurrence로 재장전한다(막는 것은 오발송이 아니라 누락이다 — 자세한 근거는 repository).
+     * 과거가 된 {@code nextDueAt}을 다음 미래 occurrence로 재장전한다(근거는 repository).
      * 시각이 서버 고정이라 그 값을 알아내려고 행을 읽을 필요가 없다.
      *
      * <p>행은 만들지 않는다 — 행 존재는 가입 transaction과 rollout backfill이 보장하고, 0행은 그
@@ -89,8 +88,8 @@ public class DailyNotificationPreferenceService {
      * due occurrence를 row lock으로 분리하고 같은 짧은 transaction에서 현재 시각 이후 첫 occurrence로
      * 옮긴다. 반환 시 transaction·row lock이 끝났으므로 호출자는 외부 I/O를 안전하게 수행할 수 있다.
      *
-     * <p>허용 지연을 넘긴 행도 함께 claim한다 — 발송 대상 판정은 호출자가 반환된 {@code nextDueAt}으로
-     * 하고, 여기서는 오래된 행이 다음 run에서 다시 선택되지 않도록 전진만 보장한다.
+     * <p>예정 시각이 오래 지난 행도 함께 claim한다 — 여러 날 밀린 행이 다음 run에서 다시 선택되지 않도록
+     * 전진을 보장해, 그런 행도 한 번만 발송된다.
      *
      * @return claim한 행들(값은 claim 시점 상태 — {@code nextDueAt}은 방금 처리한 occurrence 시각이다)
      */

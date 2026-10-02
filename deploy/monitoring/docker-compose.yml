@@ -41,6 +41,10 @@ services:
     image: grafana/tempo:${TEMPO_VERSION:-2.10.7}
     command:
       - -config.file=/etc/tempo/tempo.yml
+    environment:
+      # 한도 아래 soft 상한(#492): 기본 GOGC=100은 heap 2배까지 수거를 미룬다 — 600MiB 근접부터
+      # GC를 적극 수행해 hard limit(1g)까지의 여유를 spike 흡수 버퍼로 남긴다.
+      GOMEMLIMIT: 600MiB
     volumes:
       - tempo-data:/var/tempo
       - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
@@ -53,7 +57,9 @@ services:
     # healthcheck 없음(규율의 명시적 예외): 공식 이미지가 distroless(shell/wget 부재)이고 native
     # `--health` 플래그는 Tempo 3.0+ 전용이라 2.x에는 컨테이너 내부 검사 수단이 없다. 대체 확인은
     # grafana 컨테이너 경유 `wget -q --spider http://tempo:3200/ready` + OTLP ingest smoke(README Tempo 절).
-    mem_limit: 768m
+    # 768m → 1g(#492): 2026-09-14 cgroup OOM 2회 — 상한 축소(tempo.yml)와 함께 여유 확보.
+    # 한도 합 3,328MiB vs host RAM 3,834MiB로 1g까지가 host 예산 안이다(1.25g는 t3.large와 함께 검토).
+    mem_limit: 1g
     cpus: 0.5
     security_opt:
       - no-new-privileges:true

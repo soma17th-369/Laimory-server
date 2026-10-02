@@ -7,6 +7,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.terms.TermType;
+import com.laimory.server.terms.dto.AdminTermDocumentResponse;
+import com.laimory.server.terms.dto.AdminTermGroupResponse;
+import com.laimory.server.terms.dto.TermResponse;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import java.util.List;
@@ -39,10 +42,14 @@ class TermDocumentServiceTest {
         when(termDocumentRepository.findDocumentCandidates(anyCollection()))
                 .thenReturn(List.of(terms110, privacy199, terms20, terms19));
 
-        List<TermDocument> result = service.findCurrentDocuments("v1", List.of(
+        List<TermResponse> result = service.findCurrentTerms("v1", List.of(
                 TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE));
 
-        assertThat(result).containsExactly(privacy199, terms20);
+        assertThat(result).containsExactly(
+                new TermResponse(TermType.PRIVACY_POLICY, "1.99", "PRIVACY_POLICY",
+                        "https://www.laimory.app/terms/page/1.99"),
+                new TermResponse(TermType.TERMS_OF_SERVICE, "2.0", "TERMS_OF_SERVICE",
+                        "https://www.laimory.app/terms/page/2.0"));
         verify(termDocumentRepository).findDocumentCandidates(
                 List.of(TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE));
     }
@@ -69,19 +76,41 @@ class TermDocumentServiceTest {
                 document(TermType.TERMS_OF_SERVICE, "1.0"),
                 document(TermType.PRIVACY_POLICY, "1.0")));
 
-        assertThat(service.findCurrentDocuments("v1", List.of(
+        assertThat(service.findCurrentTerms("v1", List.of(
                 TermType.PRIVACY_POLICY,
                 TermType.LOCATION_BASED_SERVICE_TERMS,
                 TermType.TERMS_OF_SERVICE)))
-                .extracting(TermDocument::getTermType)
+                .extracting(TermResponse::termType)
                 .containsExactly(TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE);
     }
 
     @Test
     void emptyTypeList_shortCircuitsWithoutQuery() {
-        assertThat(service.findCurrentDocuments("v1", List.of())).isEmpty();
+        assertThat(service.findCurrentTerms("v1", List.of())).isEmpty();
         assertThat(service.findCurrentSummaries(List.of())).isEmpty();
         verifyNoInteractions(termDocumentRepository);
+    }
+
+    @Test
+    void allTermGroups_coverEveryTypeInEnumOrder_newestFirst_withNullCurrentForEmptyType() {
+        when(termDocumentRepository.findDocumentCandidates(List.of(TermType.values()))).thenReturn(List.of(
+                document(TermType.PRIVACY_POLICY, "1.9"),
+                document(TermType.TERMS_OF_SERVICE, "1.0"),
+                document(TermType.PRIVACY_POLICY, "1.10")));
+
+        List<AdminTermGroupResponse> groups = service.findAllTermGroups();
+
+        assertThat(groups).extracting(AdminTermGroupResponse::termType).containsExactly(TermType.values());
+        AdminTermGroupResponse privacy = group(groups, TermType.PRIVACY_POLICY);
+        assertThat(privacy.documents()).extracting(AdminTermDocumentResponse::version).containsExactly("1.10", "1.9");
+        assertThat(privacy.current()).isEqualTo(privacy.documents().getFirst());
+        AdminTermGroupResponse empty = group(groups, TermType.LOCATION_BASED_SERVICE_TERMS);
+        assertThat(empty.current()).isNull();
+        assertThat(empty.documents()).isEmpty();
+    }
+
+    private static AdminTermGroupResponse group(List<AdminTermGroupResponse> groups, TermType type) {
+        return groups.stream().filter(group -> group.termType() == type).findFirst().orElseThrow();
     }
 
     private static TermDocument document(TermType type, String version) {

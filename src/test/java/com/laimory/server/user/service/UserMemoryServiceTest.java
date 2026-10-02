@@ -57,7 +57,7 @@ class UserMemoryServiceTest {
 
     @Test
     void find_absentRow_isEmpty() {
-        when(userMemoryRepository.findById(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(userMemoryRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThat(service().find(SUBJECT_ID)).isEmpty();
     }
@@ -65,7 +65,7 @@ class UserMemoryServiceTest {
     @Test
     void find_existingRow_returnsStoredDocument() throws Exception {
         JsonNode document = objectMapper.readTree("{\"summary\":\"누적 요약\"}");
-        when(userMemoryRepository.findById(SUBJECT_ID)).thenReturn(Optional.of(memoryRow(document)));
+        when(userMemoryRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(memoryRow(document)));
 
         assertThat(service().find(SUBJECT_ID)).contains(document);
     }

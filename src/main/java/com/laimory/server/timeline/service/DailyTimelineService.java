@@ -24,7 +24,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 하루 타임라인 읽기 오케스트레이터. leaf 서비스를 합성한다(레포 직접 접근 금지).
@@ -48,7 +47,6 @@ public class DailyTimelineService {
     private final TimelineItemService timelineItemService;
 
     /** 인증 사용자의 모든 일일 기록 graph를 recordDate·ID 내림차순으로 반환한다. */
-    @Transactional(readOnly = true)
     public DailyTimelinesResponse getDailyTimelines(String applicationVersion, UUID subjectId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         List<DailyRecord> records = dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(subjectId);
@@ -56,7 +54,6 @@ public class DailyTimelineService {
     }
 
     /** 인증 사용자가 소유한 일일 기록 한 건의 graph를 반환한다. 없음·비소유는 같은 404로 은닉한다. */
-    @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(String applicationVersion, UUID subjectId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         DailyRecord record = dailyRecordService.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId)
@@ -65,7 +62,6 @@ public class DailyTimelineService {
     }
 
     /** 인증 사용자의 선택 날짜에 해당하는 일일 기록 graph를 반환한다. */
-    @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(String applicationVersion, UUID subjectId,
                                                   LocalDate recordDate) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
@@ -75,7 +71,6 @@ public class DailyTimelineService {
     }
 
     /** 인증 사용자가 소유한 Event와 연결 Item을 반환한다. 없음·부모 없음·비소유는 같은 404로 은닉한다. */
-    @Transactional(readOnly = true)
     public TimelineEventResponse getTimelineEvent(String applicationVersion, UUID subjectId,
                                                   Long timelineEventId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
@@ -89,9 +84,9 @@ public class DailyTimelineService {
 
     /**
      * SUCCESS polling 전용 ID 조회. polling 선검증과 이 권위 재조회 사이 record가 삭제돼도 500이 아니라
-     * DRAFT_RESULT_NOT_FOUND 404로 수렴한다. 이 조회부터 하위 graph 조립까지 한 read-only transaction이다.
+     * DRAFT_RESULT_NOT_FOUND 404로 수렴한다. 이 조회부터 하위 graph 조립까지는 transaction 없는 순차
+     * SELECT라 스냅샷 계약이 없다 — 재조회 뒤 삭제가 겹치면 Event 0개의 200이 될 수 있다.
      */
-    @Transactional(readOnly = true)
     public DailyTimelineResponse getDailyTimeline(Long dailyRecordId) {
         DailyRecord record = dailyRecordService.findById(dailyRecordId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_RESULT_NOT_FOUND));
@@ -106,7 +101,6 @@ public class DailyTimelineService {
      * @throws IllegalArgumentException {@code year}가 1000~9999(MySQL {@code DATE} 지원 범위) 밖이거나
      *                                  {@code month}가 1~12 밖일 때(400 {@code -400})
      */
-    @Transactional(readOnly = true)
     public MonthlyDailyRecordListResponse getMonthlyDailyRecords(String applicationVersion, UUID subjectId,
                                                               int year, int month) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).

@@ -1,8 +1,15 @@
 # 약관 기본틀 → 라이모리 변경 비교
 
+> **과거 비교 자료다.** 1.0 원문을 작성할 때(#383, 2026-08~09) 서버의 Markdown 초안을 기준으로 만든
+> 편집 근거이며 이후 갱신하지 않는다. 그 초안은 #470에서 삭제했고, 비교 당시 본문은 Git 이력(커밋
+> `d06a47f986641a421e304120e186e1f4874b3cd9`의 `docs/terms/drafts/`)에서만 볼 수 있다. 약관 본문의 현재
+> 관리 위치는 랜딩페이지 저장소의 `public/terms/**/*.html`이며, 1.0 게시 뒤 보완된 내용(예: Crashlytics
+> 공개사항)은 이 비교표에 없다. 각 절의 라이모리 원문 링크는 현재 랜딩 HTML을 가리키고, 아래 표의
+> `현재 상태` 열은 작성 당시 상태다.
+
 이 문서는 공개된 표준약관·유사 서비스 문서에서 **어떤 구조를 참고했고 라이모리에 맞게 무엇을
 수정·삭제·추가했는지** 검토하기 위한 비교표다. 외부 원문의 문장을 복제하지 않고 조항의 기능과
-고지 구조를 요약한다. 정확한 외부 문장은 각 출처 링크에서 확인하고, 라이모리 문장은 연결된 초안이
+고지 구조를 요약한다. 정확한 외부 문장은 각 출처 링크에서 확인하고, 라이모리 문장은 랜딩페이지 HTML이
 단일 원문이다.
 
 ## 표시 방법
@@ -37,7 +44,7 @@
 
 ## #1 이용약관
 
-**라이모리 원문** — [`drafts/01-terms-of-service.md`](drafts/01-terms-of-service.md)
+**라이모리 원문(랜딩 HTML)** — [`terms-of-service/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/terms-of-service/1.0.html)
 
 **주 기본틀**
 
@@ -76,7 +83,7 @@
 
 ## 삭제된 #2 개인정보 수집·이용 동의 → #8 통합
 
-**현재 라이모리 원문** — [`drafts/08-privacy-policy.md`](drafts/08-privacy-policy.md)
+**현재 라이모리 원문(랜딩 HTML)** — [`privacy-policy/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/privacy-policy/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -109,7 +116,7 @@
 
 ## #3 개인정보 제3자 제공 동의
 
-**라이모리 원문** — [`drafts/03-third-party-provision-consent.md`](drafts/03-third-party-provision-consent.md)
+**라이모리 원문(랜딩 HTML)** — [`third-party-provision-consent/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/third-party-provision-consent/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -136,7 +143,7 @@
 
 ## #4 민감정보 처리 동의
 
-**라이모리 원문** — [`drafts/04-sensitive-information-consent.md`](drafts/04-sensitive-information-consent.md)
+**라이모리 원문(랜딩 HTML)** — [`sensitive-information-consent/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/sensitive-information-consent/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -165,7 +172,7 @@
 
 ## #5 개인정보 국외 이전 동의
 
-**라이모리 원문** — [`drafts/05-cross-border-transfer-consent.md`](drafts/05-cross-border-transfer-consent.md)
+**라이모리 원문(랜딩 HTML)** — [`cross-border-transfer-consent/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/cross-border-transfer-consent/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -196,7 +203,7 @@
 
 ## #6 위치기반서비스 이용약관
 
-**라이모리 원문** — [`drafts/06-location-based-service-terms.md`](drafts/06-location-based-service-terms.md)
+**라이모리 원문(랜딩 HTML)** — [`location-based-service-terms/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/location-based-service-terms/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -232,7 +239,7 @@
 
 ## #8 개인정보 처리방침
 
-**라이모리 원문** — [`drafts/08-privacy-policy.md`](drafts/08-privacy-policy.md)
+**라이모리 원문(랜딩 HTML)** — [`privacy-policy/1.0.html`](https://github.com/soma17th-369/Laimory-landing-page/blob/main/public/terms/privacy-policy/1.0.html)
 
 **주 기본틀·보조 기본틀**
 
@@ -288,5 +295,5 @@ AI·국외이전·개인위치정보·자동화 처리를 한 문서에서 추�
 
 ## 문서 작성 상태
 
-비교표에서 확인한 정책 결정과 필수 고지항목은 모두 약관 원문에 반영했다. 구현·배포 상태와 별도의
+비교표에서 확인한 정책 결정과 필수 고지항목은 1.0 작성 당시 모두 약관 원문에 반영했다. 구현·배포 상태와 별도의
 법률 자문 여부는 이 비교표의 판정 범위에 포함하지 않는다.

@@ -101,7 +101,7 @@ class DailyNotificationPreferenceServiceTest {
     void findSettings_missingRow_failsLoudlyWithoutWriting() {
         // 기본값으로 가리면 "켜짐"이라 답하면서 실제로는 아무것도 보내지 않는다(worker는 없는 행을
         // claim하지 못한다). 조회도 쓰기와 같은 운영 신호를 내야 세 경로가 한 방향을 가리킨다.
-        when(repository.findById(any())).thenReturn(Optional.empty());
+        when(repository.findBySubjectId(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service().findSettings(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
@@ -110,7 +110,7 @@ class DailyNotificationPreferenceServiceTest {
 
     @Test
     void findSettings_returnsTheServerFixedTime() {
-        when(repository.findById(SUBJECT_ID))
+        when(repository.findBySubjectId(SUBJECT_ID))
                 .thenReturn(Optional.of(preference(SUBJECT_ID, true, LocalDateTime.of(2026, 7, 21, 21, 0))));
 
         assertThat(service().findSettings(SUBJECT_ID))
@@ -130,14 +130,14 @@ class DailyNotificationPreferenceServiceTest {
 
     @Test
     void updateEnabled_rearmsNextDueAtWithoutReadingTheRow() {
-        // 켜는 순간 재장전하지 않으면, 꺼둔 사이 과거로 굳은 next_due_at이 허용 지연 안쪽이라
-        // 켠 직후 tick이 예정에 없던 알림을 보낸다. 시각이 고정이라 그 값을 알아내려 행을 읽지 않는다.
+        // 켜는 순간 꺼둔 사이 과거로 굳은 next_due_at을 다음 미래 occurrence로 재장전한다(근거는
+        // repository). 시각이 고정이라 그 값을 알아내려 행을 읽지 않는다.
         when(repository.updateEnabled(any(), anyBoolean(), any())).thenReturn(1);
 
         service().updateEnabled(SUBJECT_ID, true);
 
         verify(repository).updateEnabled(SUBJECT_ID, true, LocalDateTime.of(2026, 7, 21, 21, 0));
-        verify(repository, never()).findById(any());
+        verify(repository, never()).findBySubjectId(any());
         verify(repository, never()).insertIfAbsent(any(), anyBoolean(), any(), any());
     }
 

@@ -80,14 +80,15 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 
 하루 감정 수정(#325)은 저장과 같은 2계층 경계다 — 비트랜잭션 오케스트레이터
 (`DailyRecordEmotionUpdateService`)가 날짜 사전 조회로 404·DRAFT 409를 거르고 ID snapshot만 별도
-`@Transactional` writer(`DailyRecordEmotionUpdateTransactionService`)에 넘긴다. writer는 트랜잭션의
-첫 DB 작업으로 SAVED 조건부 UPDATE를 실행하고 0행일 때만 재조회로 실패를 분류한다 — 사전 조회를
-트랜잭션 밖에 두는 이유는 MySQL `REPEATABLE READ`에서 첫 조회가 snapshot을 고정해 실패 재조회가
-동시 삭제 전 행을 다시 볼 수 있기 때문이다(`TimelineSaveService` → `TimelineSaveTransactionService`와
-같은 형태). 수동 Event 생성(#326/#361)은 `TimelineEventCreateService`의 public `@Transactional`
+writer(`DailyRecordEmotionUpdateTransactionService`)에 넘긴다. writer는 서비스 transaction 없이 SAVED
+조건부 UPDATE(리포지토리 tx 한 문장)를 먼저 실행하고 0행일 때만 재조회로 실패를 분류한다(#499) —
+사전 조회와 재조회를 한 트랜잭션에 묶지 않는 이유는 MySQL `REPEATABLE READ`에서 첫 조회가 snapshot을
+고정해 실패 재조회가 동시 삭제 전 행을 다시 볼 수 있기 때문이다(`TimelineSaveService` →
+`TimelineSaveTransactionService`와 같은 형태). 수동 Event 생성(#326/#361)은 `TimelineEventCreateService`의 public `@Transactional`
 메서드 하나가 소유 record 재확인·입력 검증·Event insert·optional PHOTO Item/junction 추가를 소유한다.
 Event 상세 필드 공통 규칙은 package-private `TimelineEventInputRules`, 수동 PHOTO 검증·분류·저장 규칙은
-package-private Spring bean `TimelineEventPhotoAddService`가 소유해 PATCH/생성이 공유한다. 사진의
+package-private Spring bean `TimelineEventPhotoAddService`가 소유해 PATCH/생성이 공유한다(대상 Event에 같은
+rawId가 있으면 오류 없이 건너뛰고, 아니면 새 Item — 기존 Item 재연결 없음, #502). 사진의
 DB-dependent `resolve`/`link`는 `MANDATORY`로 호출자 transaction 합류를 강제하고 트랜잭션 안에서 S3를
 호출하지 않는다.
 
@@ -106,8 +107,8 @@ PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 co
 PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
 request transaction에 포함하지 않는다. 모든 REST 프로세스의 bounded worker가 eligible MySQL job을
 `FOR UPDATE SKIP LOCKED`로 나눠 `PROCESSING` claim하고, 성공 job과 원문 PHOTO Item을 별도 transaction에서
-함께 제거한다. Event PATCH는 같은 object key의 `PENDING` job을 취소해 보존 Item을 재연결하고,
-`PROCESSING`이면 409로 거절한다.
+함께 제거한다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을
+저장하며 job을 조회·취소·재연결하지 않는다(#500).
 
 orphan 스위퍼도 같은 2계층이다 — `TimelineOrphanItemSweeper`(스케줄 trigger, run 예산·요약 로그)와
 `TimelineOrphanItemSweepService`(batch 하나의 `@Transactional` 경계)로 나뉜다. batch에 외부 I/O가 없어
@@ -122,6 +123,9 @@ response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 
 - controller는 HTTP 경계를, service는 use case를, repository/store/adapter는 I/O를 소유한다.
 - 여러 저장소를 아우르는 atomicity는 repository가 아니라 orchestration transaction에서 보장한다.
+- SELECT 하나이거나 lazy 접근이 없는 단순 읽기 경로는 Spring transaction 없이 autocommit SELECT로
+  실행한다(#499). 읽기 경로에서 CrudRepository 상속 조회(`findById`류)를 쓰지 않는다 —
+  `SimpleJpaRepository`의 클래스 `@Transactional(readOnly = true)` 때문에 transaction이 남는다.
 - documented pattern을 자동 강제 규칙처럼 과장하지 않는다.
 - 공개 계약은 실제 `*Api`, DTO, handler와 contract test를 함께 확인한다.
 

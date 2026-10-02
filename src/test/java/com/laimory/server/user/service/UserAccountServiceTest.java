@@ -59,7 +59,7 @@ class UserAccountServiceTest {
     @Test
     void findStatus_mapsRowStatus_orEmptyWhenMissing() {
         User user = User.of(Provider.KAKAO, "sub-1", null, null);
-        when(userRepository.findById(USER_ID))
+        when(userRepository.findByUserId(USER_ID))
                 .thenReturn(Optional.of(user))
                 .thenReturn(Optional.empty());
 

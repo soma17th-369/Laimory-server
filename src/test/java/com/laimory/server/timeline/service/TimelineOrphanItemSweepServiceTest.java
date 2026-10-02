@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -17,7 +16,6 @@ import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
-import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -33,8 +31,6 @@ class TimelineOrphanItemSweepServiceTest {
 
     private static final String NAMESPACE_A =
             "1111111111111111111111111111111111111111111111111111111111111111";
-    private static final String NAMESPACE_B =
-            "2222222222222222222222222222222222222222222222222222222222222222";
     private static final String FILENAME = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
     private static final String KEY_A = NAMESPACE_A + "/photos/" + FILENAME;
 
@@ -55,10 +51,6 @@ class TimelineOrphanItemSweepServiceTest {
                 .thenReturn(List.of());
         lenient().when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of());
-        lenient().when(timelineItemService.findLiveObjectKeysByFilenames(anyCollection()))
-                .thenReturn(Set.of());
-        lenient().when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection()))
-                .thenReturn(List.of());
     }
 
     @Test
@@ -98,8 +90,6 @@ class TimelineOrphanItemSweepServiceTest {
         TimelineItem item = photoItem(12L, FILENAME, "https://cdn.example.net/" + KEY_A);
         scan(item);
         claim(item);
-        when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection()))
-                .thenReturn(List.of(row(12L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(12L, KEY_A)).thenReturn(true);
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
@@ -107,59 +97,6 @@ class TimelineOrphanItemSweepServiceTest {
         assertThat(result.photoScheduled()).isEqualTo(1);
         verify(timelinePhotoDeleteJobService).insertIfAbsent(12L, KEY_A);
         verify(timelineItemService).deleteByIds(List.of());
-    }
-
-    @Test
-    void liveItemSharingObjectKeyBlocksJobAndOnlyRowIsDeleted() {
-        TimelineItem item = photoItem(13L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        scan(item);
-        claim(item);
-        when(timelineItemService.findLiveObjectKeysByFilenames(anyCollection())).thenReturn(Set.of(KEY_A));
-
-        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
-
-        assertThat(result.keyShared()).isEqualTo(1);
-        verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
-        verify(timelineItemService).deleteByIds(List.of(13L));
-    }
-
-    @Test
-    void liveItemWithSameFilenameButDifferentNamespaceDoesNotBlockJob() {
-        // 다른 subject가 같은 filename을 저장해도 object key는 다르다. coarse filter에는 걸리지만
-        // full key 비교에서 갈라져야 한다 — 아니면 남의 Item 때문에 S3 객체가 영구히 남는다.
-        TimelineItem item = photoItem(14L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        scan(item);
-        claim(item);
-        when(timelineItemService.findLiveObjectKeysByFilenames(anyCollection()))
-                .thenReturn(Set.of(NAMESPACE_B + "/photos/" + FILENAME));
-        when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection()))
-                .thenReturn(List.of(row(14L, "https://cdn.example.net/" + KEY_A)));
-        when(timelinePhotoDeleteJobService.insertIfAbsent(14L, KEY_A)).thenReturn(true);
-
-        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
-
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        assertThat(result.keyShared()).isZero();
-    }
-
-    @Test
-    void duplicateOrphansShareOneJobOwnedByLowestId() {
-        TimelineItem lower = photoItem(15L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        TimelineItem higher = photoItem(16L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        scan(lower, higher);
-        claim(lower, higher);
-        when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection())).thenReturn(List.of(
-                row(15L, "https://cdn.example.net/" + KEY_A),
-                row(16L, "https://cdn.example.net/" + KEY_A)));
-        when(timelinePhotoDeleteJobService.insertIfAbsent(15L, KEY_A)).thenReturn(true);
-
-        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
-
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        assertThat(result.keyShared()).isEqualTo(1);
-        verify(timelinePhotoDeleteJobService).insertIfAbsent(15L, KEY_A);
-        verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(eq(16L), anyString());
-        verify(timelineItemService).deleteByIds(List.of(16L));
     }
 
     @Test
@@ -183,8 +120,6 @@ class TimelineOrphanItemSweepServiceTest {
         TimelineItem item = photoItem(18L, FILENAME, "https://cdn.example.net/" + KEY_A);
         scan(item);
         claim(item);
-        when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection()))
-                .thenReturn(List.of(row(18L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(18L, KEY_A)).thenReturn(false);
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of(), Set.of(18L));
@@ -201,8 +136,6 @@ class TimelineOrphanItemSweepServiceTest {
         TimelineItem item = photoItem(19L, FILENAME, "https://cdn.example.net/" + KEY_A);
         scan(item);
         claim(item);
-        when(timelineItemService.findUnlinkedPhotoKeysByFilenames(anyCollection()))
-                .thenReturn(List.of(row(19L, "https://cdn.example.net/" + KEY_A)));
         when(timelinePhotoDeleteJobService.insertIfAbsent(19L, KEY_A)).thenReturn(false);
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(19L))).thenReturn(Set.of());
 
@@ -263,17 +196,4 @@ class TimelineOrphanItemSweepServiceTest {
         return item;
     }
 
-    private TimelineItemRepository.OrphanPhotoKeyRow row(long id, String photoUrl) {
-        return new TimelineItemRepository.OrphanPhotoKeyRow() {
-            @Override
-            public Long getTimelineItemId() {
-                return id;
-            }
-
-            @Override
-            public String getPhotoUrl() {
-                return photoUrl;
-            }
-        };
-    }
 }

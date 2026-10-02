@@ -16,8 +16,7 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
  * properties를 두면 의도한 변경이 조용히 무력화된다. 이 테스트가 그 어긋남을 잡는다.
  */
 @ExtendWith(SpringExtension.class)
-@SpringBootTest(classes = AccountErasureWorkerProperties.class,
-        properties = "photo.upload.presign-ttl=10m")
+@SpringBootTest(classes = AccountErasureWorkerProperties.class)
 class AccountErasureWorkerPropertyDefaultsTest {
 
     @Autowired
@@ -27,11 +26,5 @@ class AccountErasureWorkerPropertyDefaultsTest {
     void run당_처리량은_job_수가_정한다() {
         // claim 크기는 설정이 아니라 상수 1이므로 이 값이 곧 run당 최대 job 수다.
         assertThat(properties.getMaxJobsPerRun()).isEqualTo(100);
-    }
-
-    @Test
-    void 확정된_정책값이_적용된다() {
-        assertThat(properties.getGracePeriodDays()).isEqualTo(7);
-        assertThat(properties.getWindowDays()).isEqualTo(3);
     }
 }

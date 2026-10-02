@@ -154,8 +154,8 @@ public interface TimelineRecordApi {
                     + "PHOTO startAt/endAt은 nullable이지만 값이 있으면 초 단위만 허용한다(소수 초는 400). "
                     + "클라이언트가 S3 업로드 성공을 확인한 뒤 호출해야 한다. 서버는 S3 존재 여부를 확인하지 않고, "
                     + "description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 생성한다. "
-                    + "같은 rawId 재시도는 저장된 시간·클라이언트 입력 payload가 모두 같을 때만 no-op 또는 "
-                    + "같은 record PHOTO 재사용으로 수렴하며, 다르면 400이다. "
+                    + "같은 rawId가 이 Event에 이미 연결돼 있으면 그 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며"
+                    + "(같은 요청의 재시도 — 나머지 항목은 정상 처리), 아니면 새 Item이다 — 저장본과 비교하지 않는다. "
                     + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
@@ -169,9 +169,7 @@ public interface TimelineRecordApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1019` — 같은 PHOTO object를 삭제하는 중이므로 잠시 후 새 업로드 필요")
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
     })
     @PatchMapping("/events/{timelineEventId}")
     ResponseEntity<ApiResponse<Void>> updateTimelineEvent(
@@ -364,9 +362,8 @@ public interface TimelineRecordApi {
                     + "memo는 optional 키다(누락/null/공백뿐은 메모 없음, 그 외 trim 없이 원문 최대 500자). "
                     + "photosToAdd도 optional 키다 — 누락/null/빈 배열은 사진 없음이며, "
                     + "PHOTO startAt/endAt은 nullable이지만 값이 있으면 초 단위만 허용한다(소수 초는 400). "
-                    + "검증·중복·개수·기존 PHOTO 재사용·재시도 수렴 규칙은 기존 Event PATCH photosToAdd와 "
-                    + "동일하다. 같은 rawId의 기존 PHOTO는 저장된 시간·클라이언트 입력 payload가 모두 같을 "
-                    + "때만 재사용하고, 다르면 400이다. 클라이언트가 presign·S3 업로드 성공을 확인한 뒤 호출해야 하며 서버는 S3 존재 "
+                    + "검증·중복·개수 규칙은 기존 Event PATCH photosToAdd와 동일하며 새 Event라 사진은 항상 새 Item이다. "
+                    + "클라이언트가 presign·S3 업로드 성공을 확인한 뒤 호출해야 하며 서버는 S3 존재 "
                     + "여부를 확인하지 않고, description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 "
                     + "생성한다. Event·PHOTO Item·연결은 한 트랜잭션으로 커밋된다 — 일부 실패 시 사진 없는 "
                     + "Event만 남지 않는다. 필드 규칙은 기존 Event PATCH와 같고, 시간은 보낸 값 그대로 "
@@ -390,8 +387,6 @@ public interface TimelineRecordApi {
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                     description = "`-404` — 해당 날짜의 내 하루 기록이 없음(존재 여부는 구분해 주지 않는다)"),
-            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "`-1019` — 같은 PHOTO object를 삭제하는 중이므로 잠시 후 새 업로드 필요"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "415",
                     description = "`-415` — body는 있는데 Content-Type이 없거나 JSON이 아님")
     })

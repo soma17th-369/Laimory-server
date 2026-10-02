@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.laimory.server.auth.service.RefreshTokenService;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
@@ -22,7 +24,6 @@ import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.service.TimelineContentErasureService;
 import com.laimory.server.timeline.service.DailyRecordService;
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +76,8 @@ class AccountErasureServiceTest {
     private RefreshTokenService refreshTokenService;
     @Mock
     private TermAgreementService termAgreementService;
+    @Mock
+    private InquiryService inquiryService;
 
     @InjectMocks
     private AccountErasureService accountErasureService;
@@ -97,7 +100,7 @@ class AccountErasureServiceTest {
     }
 
     @Test
-    void 정지는_record_id_페이지를_모두_돌며_큐를_비운다() {
+    void 큐_비우기는_record_id_페이지를_모두_돌며_큐를_비운다() {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), eq(0L), anyInt()))
                 .thenReturn(List.of(1L, 2L, 3L));
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), eq(3L), anyInt()))
@@ -105,18 +108,18 @@ class AccountErasureServiceTest {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), eq(9L), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID);
+        accountErasureService.clearUserMemoryPending(SUBJECT_ID);
 
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(1L, 2L, 3L));
         verify(userMemoryUpdatePendingStore).removeAll(SUBJECT_ID, List.of(9L));
     }
 
     @Test
-    void 정지는_아무것도_삭제하지_않는다() {
+    void 큐_비우기는_아무것도_삭제하지_않는다() {
         when(dailyRecordService.findIdsBySubjectIdAfterId(eq(SUBJECT_ID), anyLong(), anyInt()))
                 .thenReturn(List.of());
 
-        accountErasureService.quiesce(SUBJECT_ID);
+        accountErasureService.clearUserMemoryPending(SUBJECT_ID);
 
         verify(userMemoryService, never()).delete(any());
         verify(subjectPreferenceService, never()).delete(any());
@@ -135,7 +138,7 @@ class AccountErasureServiceTest {
     @Test
     void finalization은_FK없는_행_재삭제_mapping_job_user_순서다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(true);
-        when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED))
+        when(accountErasureJobService.deleteCompleted(JOB_ID))
                 .thenReturn(true);
         when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(true);
 
@@ -147,7 +150,7 @@ class AccountErasureServiceTest {
         order.verify(pushRegistrationService).deleteAll(SUBJECT_ID);
         order.verify(termAgreementService).deleteAllByUserId(USER_ID);
         order.verify(subjectMappingService).deleteMapping(USER_ID, SUBJECT_ID);
-        order.verify(accountErasureJobService).deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED);
+        order.verify(accountErasureJobService).deleteCompleted(JOB_ID);
         order.verify(userAccountService).deleteWithdrawn(USER_ID);
     }
 
@@ -162,14 +165,14 @@ class AccountErasureServiceTest {
         assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
                 .isInstanceOf(AccountErasureConflictException.class);
 
-        verify(accountErasureJobService, never()).deleteCompleted(anyLong(), any());
+        verify(accountErasureJobService, never()).deleteCompleted(anyLong());
         verify(userAccountService, never()).deleteWithdrawn(anyLong());
     }
 
     @Test
     void job이_이미_사라졌으면_예외로_rollback시킨다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(true);
-        when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED))
+        when(accountErasureJobService.deleteCompleted(JOB_ID))
                 .thenReturn(false);
 
         assertThatThrownBy(() -> accountErasureService.finalizeErasure(JOB_ID, USER_ID, SUBJECT_ID))
@@ -188,15 +191,37 @@ class AccountErasureServiceTest {
                 List.of(new S3PhotoStorageService.ObjectVersion("c", "null"));
         when(s3PhotoStorageService.listObjectVersions(eq(prefix), anyInt()))
                 .thenReturn(page1).thenReturn(page2).thenReturn(List.of());
+        when(s3PhotoStorageService.listObjectVersions(eq(InquiryObjectKeys.subjectPrefix(SUBJECT_ID)), anyInt()))
+                .thenReturn(List.of());
         when(s3PhotoStorageService.deleteVersions(page1)).thenReturn(
                 new S3PhotoStorageService.BatchDeleteResult(Set.of("a@null", "b@null"), Map.of(), Set.of()));
         when(s3PhotoStorageService.deleteVersions(page2)).thenReturn(
                 new S3PhotoStorageService.BatchDeleteResult(Set.of("c@null"), Map.of(), Set.of()));
 
-        accountErasureService.deletePhotoObjects(SUBJECT_ID);
+        accountErasureService.deleteStoredObjects(SUBJECT_ID);
 
         // 마지막 재조회가 비었을 때만 끝난다 — 3회 조회.
         verify(s3PhotoStorageService, org.mockito.Mockito.times(3)).listObjectVersions(eq(prefix), anyInt());
+    }
+
+    @Test
+    void inquiryAttachmentPrefixIsEmptiedAfterPhotoPrefix() {
+        String photoPrefix = PhotoObjectKeys.subjectNamespace(SUBJECT_ID) + "/photos/";
+        String inquiryPrefix = InquiryObjectKeys.subjectPrefix(SUBJECT_ID);
+        List<S3PhotoStorageService.ObjectVersion> attachments =
+                List.of(new S3PhotoStorageService.ObjectVersion(inquiryPrefix + "x.jpg", "null"));
+        when(s3PhotoStorageService.listObjectVersions(eq(photoPrefix), anyInt())).thenReturn(List.of());
+        when(s3PhotoStorageService.listObjectVersions(eq(inquiryPrefix), anyInt()))
+                .thenReturn(attachments).thenReturn(List.of());
+        when(s3PhotoStorageService.deleteVersions(attachments)).thenReturn(
+                new S3PhotoStorageService.BatchDeleteResult(Set.of(inquiryPrefix + "x.jpg@null"), Map.of(), Set.of()));
+
+        accountErasureService.deleteStoredObjects(SUBJECT_ID);
+
+        InOrder order = inOrder(s3PhotoStorageService);
+        order.verify(s3PhotoStorageService).listObjectVersions(eq(photoPrefix), anyInt());
+        order.verify(s3PhotoStorageService).deleteVersions(attachments);
+        order.verify(s3PhotoStorageService).listObjectVersions(eq(inquiryPrefix), anyInt());
     }
 
     @Test
@@ -209,8 +234,17 @@ class AccountErasureServiceTest {
                 .thenReturn(new S3PhotoStorageService.BatchDeleteResult(
                         Set.of("a@null"), Map.of("b", "AccessDenied"), Set.of()));
 
-        assertThatThrownBy(() -> accountErasureService.deletePhotoObjects(SUBJECT_ID))
+        assertThatThrownBy(() -> accountErasureService.deleteStoredObjects(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void ownerRowDeletionRemovesInquiriesBeforeOtherOwnerRows() {
+        accountErasureService.deleteOwnerRows(USER_ID, SUBJECT_ID);
+
+        InOrder order = inOrder(inquiryService, userMemoryService);
+        order.verify(inquiryService).deleteAllBySubjectId(SUBJECT_ID);
+        order.verify(userMemoryService).delete(SUBJECT_ID);
     }
 
     @Test
@@ -237,7 +271,7 @@ class AccountErasureServiceTest {
     @Test
     void 회원_행이_지워지지_않으면_예외로_rollback시킨다() {
         when(subjectMappingService.deleteMapping(USER_ID, SUBJECT_ID)).thenReturn(true);
-        when(accountErasureJobService.deleteCompleted(JOB_ID, AccountErasureJobStatus.QUIESCED))
+        when(accountErasureJobService.deleteCompleted(JOB_ID))
                 .thenReturn(true);
         when(userAccountService.deleteWithdrawn(USER_ID)).thenReturn(false);
 

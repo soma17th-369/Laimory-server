@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TimelineEventType;
-import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -30,14 +29,14 @@ public class TimelineEventEditTransactionService {
     public void updateEvent(UUID subjectId, Long timelineEventId, TimelineEventEditCommand command) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
-        DailyRecord record = requireOwnedRecord(subjectId, event.getDailyRecordId());
+        requireOwnedRecord(subjectId, event.getDailyRecordId());
 
         LocalDateTime targetStartAt = command.startAt() != null ? command.startAt() : event.getStartAt();
         TimelineEventInputRules.requireValidTimeRange(targetStartAt, command.endAt());
 
         // 분류와 모든 DB-dependent 검증을 entity mutation보다 먼저 끝내 validation 실패 시 Event/memo도 그대로 둔다.
         TimelineEventPhotoAddService.PhotoChanges photoChanges =
-                timelineEventPhotoAddService.resolve(record, timelineEventId, command.photosToAdd());
+                timelineEventPhotoAddService.resolve(timelineEventId, command.photosToAdd());
 
         TimelineEventType targetEventType = command.eventType() != null
                 ? command.eventType() : event.getEventType();
@@ -51,8 +50,8 @@ public class TimelineEventEditTransactionService {
         timelineEventPhotoAddService.link(subjectId, timelineEventId, photoChanges);
     }
 
-    private DailyRecord requireOwnedRecord(UUID subjectId, Long dailyRecordId) {
-        return dailyRecordService.findById(dailyRecordId)
+    private void requireOwnedRecord(UUID subjectId, Long dailyRecordId) {
+        dailyRecordService.findById(dailyRecordId)
                 .filter(owned -> owned.getSubjectId().equals(subjectId))
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
     }

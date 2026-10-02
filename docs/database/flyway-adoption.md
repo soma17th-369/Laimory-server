@@ -24,8 +24,11 @@ mount하지 않는다. 기존 volume은 자동 초기화/삭제하지 않는다.
 - 같은 DB를 쓰는 서버는 같은 기본 `flyway_schema_history`와 migration 집합을 사용한다.
   Flyway 11.7.2는 MySQL named lock으로 실행을 조정한다. 동시 시작 시 잠금을 기다린 프로세스는
   이력을 다시 확인하여 이미 적용된 SQL을 건너뛴다. 앱 별도 lock이나 leader 선출은 두지 않는다.
-- 기존 `deploy.yml`은 host를 한 대씩 교체하고 health 성공 후 다음으로 진행한다. 실패하면 남은 host는
-  교체하지 않는다. ALB target 해제/재등록은 없어 무중단 배포를 보장하지 않는다.
+- `deploy.yml`은 prod host를 한 대씩 ALB에서 제외·drain한 뒤 교체하고 앱 검사와 ALB healthy 복귀 후
+  다음으로 진행한다. 첫 host의 교체/ALB 복귀 실패 시 직전 container로 한 번 rollback하고 배포 실패를 유지한다.
+  같은 실행에서 A가 성공한 뒤 B가 실패하면 B만 같은 신버전으로 한 번 재시도하며, 성공하면 배포 성공이다.
+  재시도 실패는 B를 구버전으로 돌리지 않고 중단한다. 수동 단독 배포는 첫 host와 같은 rollback 정책이다.
+  어느 경로도 DB 변경을 되돌리지 않으며, 원격 상태가 불명확하면 자동 복구 명령을 추가하지 않는다.
 - 한 서버가 migration을 실행하는 동안 다른 서버는 구 앱을 실행할 수 있다. SQL은 구 앱과 호환되어야 한다.
   컬럼 삭제/rename은 새 컬럼 추가 → 양쪽 호환 코드 전환 → 구 앱 제거 → 후속 삭제처럼 단계적으로 진행한다.
 - dev/test는 DB를 공유하므로 test 브랜치의 독자 migration은 금지한다. dev에서 적용·검증한 동일 SQL을
@@ -196,6 +199,8 @@ flyway info
 - `repair`는 적용된 DDL을 되돌리지 않는다. 실제 상태와 script를 맞추기 전에 실패 기록만 삭제하지 않는다.
 - `clean`, 자동 baseline, 자동 repair는 정상 배포/복구 경로에 넣지 않는다.
 - 기존 배포의 이전 image 재실행은 DB 변경을 취소하지 않는다. DB 변경 후 구 image의 호환성도 확인한다.
+- prod 자동 앱 복구도 동일하다. 일반 migration은 직전 앱과 호환되어야 하며, 구 앱도 현재 DB에서
+  기동하지 못하면 자동 복구는 실패한다. Flyway 자동 실행을 끄거나 DB undo를 자동 호출하지 않는다.
 
 ## 6. 검증
 

@@ -3,7 +3,6 @@ package com.laimory.server.terms.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.terms.dto.TermAgreementCreateRequest;
 import com.laimory.server.terms.dto.TermAgreementHistoryResponse;
-import com.laimory.server.terms.dto.TermAgreementResponse;
 import com.laimory.server.terms.service.TermAgreementCommand;
 import com.laimory.server.terms.service.TermAgreementService;
 import java.util.List;
@@ -34,9 +33,7 @@ public class TermAgreementController implements TermAgreementApi {
     public ResponseEntity<ApiResponse<TermAgreementHistoryResponse>> getMyAgreements(String applicationVersion,
                                                                                      Long userId) {
         return ResponseEntity.ok(ApiResponse.success(new TermAgreementHistoryResponse(
-                termAgreementService.getHistory(applicationVersion, userId).stream()
-                        .map(TermAgreementResponse::from)
-                        .toList())));
+                termAgreementService.getHistory(applicationVersion, userId))));
     }
 
     /** null 요소·필드는 그대로 전달한다 — 400 판정은 Service validation 한 곳이 담당한다. */

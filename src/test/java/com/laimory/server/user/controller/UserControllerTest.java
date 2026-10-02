@@ -18,8 +18,7 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
-import com.laimory.server.user.Provider;
-import com.laimory.server.user.entity.User;
+import com.laimory.server.user.dto.UserProfileResponse;
 import com.laimory.server.user.service.UserService;
 import com.laimory.server.user.service.UserWithdrawalService;
 import org.junit.jupiter.api.Test;
@@ -32,7 +31,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * 내 회원 정보 컨트롤러 슬라이스 테스트(MockMvc). 경로 매핑(GET/DELETE /user)·인증 게이트(401)·envelope·
- * nullable nickname의 명시적 JSON null·탈퇴 202(body=null)와 "userId는 인증 principal에서 서비스로 전달"
+ * userId(회원 행 PK) 노출·nullable nickname의 명시적 JSON null·탈퇴 202(body=null)와 "userId는 인증 principal에서
+ * 서비스로 전달"
  * 계약을 검증한다. 인프라 0. (hidden principal·bearerAuth 문서 계약은
  * {@code arch.ApiAuthenticationContractTest} 소유.)
  */
@@ -102,13 +102,15 @@ class UserControllerTest {
     }
 
     @Test
-    void getMyProfile_returns200WithNickname_andPassesPrincipalUserId() throws Exception {
+    void getMyProfile_returns200WithUserIdAndNickname_andPassesPrincipalUserId() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(User.of(Provider.KAKAO, "sub-123", null, "라이머"));
+                .thenReturn(new UserProfileResponse(USER_ID, "라이머"));
 
         mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.header.code").value(0))
+                // userId는 회원 행 PK(= 토큰 sub)를 JSON number로 그대로 노출한다.
+                .andExpect(jsonPath("$.body.userId").value(USER_ID))
                 .andExpect(jsonPath("$.body.nickname").value("라이머"))
                 .andExpect(header().exists("Transaction-Id"));
 
@@ -119,7 +121,7 @@ class UserControllerTest {
     @Test
     void getMyProfile_nullNickname_keepsExplicitNullKey() throws Exception {
         when(userService.getProfile("v1", USER_ID))
-                .thenReturn(User.of(Provider.GOOGLE, "sub-123", "e@x.com", null));
+                .thenReturn(new UserProfileResponse(USER_ID, null));
 
         MvcResult result = mockMvc.perform(get(PATH).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())

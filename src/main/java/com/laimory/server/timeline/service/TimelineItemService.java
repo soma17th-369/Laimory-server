@@ -27,17 +27,18 @@ public class TimelineItemService {
         if (timelineItemIds.isEmpty()) {
             return List.of();
         }
-        return timelineItemRepository.findAllById(timelineItemIds);
+        return timelineItemRepository.findByTimelineItemIdIn(timelineItemIds);
     }
 
     /** 단건 Item 로드 — 연결 해제의 타입 검사·orphan 처리 입력용. */
     public Optional<TimelineItem> findById(Long timelineItemId) {
-        return timelineItemRepository.findById(timelineItemId);
+        return timelineItemRepository.findByTimelineItemId(timelineItemId);
     }
 
     /**
      * 후보 Item ID들 중 rawId가 후보 rawIds에 속하는 것들의 rawId 집합을 반환한다.
-     * append 시 이미 타임라인에 반영된 source item을 rawId로 제외하는 데 쓴다(Item ID 축은 junction 조회가 공급).
+     * append 시 이미 타임라인에 반영된 source item을 rawId로 제외하고, 수동 PHOTO 추가가 대상 Event에 이미 연결된
+     * rawId를 오류 없이 건너뛰는 데 쓴다(Item ID 축은 junction 조회가 공급).
      * itemIds 또는 rawIds가 비면 빈 집합을 반환한다(불필요한 빈 IN 쿼리 회피).
      */
     public Set<String> findSavedRawIds(Collection<Long> itemIds, Collection<String> rawIds) {
@@ -45,14 +46,6 @@ public class TimelineItemService {
             return Set.of();
         }
         return new HashSet<>(timelineItemRepository.findRawIdsByTimelineItemIdInAndRawIdIn(itemIds, rawIds));
-    }
-
-    /** 후보 Item ID와 rawId가 모두 일치하는 final Item을 반환한다(PHOTO append 분류용). */
-    public List<TimelineItem> findByIdsAndRawIds(Collection<Long> itemIds, Collection<String> rawIds) {
-        if (itemIds.isEmpty() || rawIds.isEmpty()) {
-            return List.of();
-        }
-        return timelineItemRepository.findByTimelineItemIdInAndRawIdIn(itemIds, rawIds);
     }
 
     public List<TimelineItem> findOrphanCandidates(int workerIndex, int totalWorkerCount, int limit) {
@@ -67,29 +60,6 @@ public class TimelineItemService {
 
     public long countStaleObservedOrphans(int workerIndex, int totalWorkerCount, LocalDateTime staleBefore) {
         return timelineItemRepository.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
-    }
-
-    public void clearOrphanObservation(Collection<Long> itemIds, LocalDateTime linkedAt) {
-        if (!itemIds.isEmpty()) {
-            timelineItemRepository.clearOrphanObservation(itemIds, linkedAt);
-        }
-    }
-
-    /** 주어진 filename을 참조하면서 junction이 살아 있는 PHOTO Item의 full object key(소유 subject 기준). */
-    public Set<String> findLiveObjectKeysByFilenames(Collection<String> filenames) {
-        if (filenames.isEmpty()) {
-            return Set.of();
-        }
-        return new HashSet<>(timelineItemRepository.findLiveObjectKeysByFilenames(filenames));
-    }
-
-    /** 주어진 filename을 참조하는 junction 없는 PHOTO Item의 (id, photoUrl) — orphan 그룹 소유자 판정용. */
-    public List<TimelineItemRepository.OrphanPhotoKeyRow> findUnlinkedPhotoKeysByFilenames(
-            Collection<String> filenames) {
-        if (filenames.isEmpty()) {
-            return List.of();
-        }
-        return timelineItemRepository.findUnlinkedPhotoKeysByFilenames(filenames);
     }
 
     /** Item 행들을 삭제한다(association 0 orphan 정리 전용 — 자기 junction 행은 DB FK cascade가 지운다). */

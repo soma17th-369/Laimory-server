@@ -69,6 +69,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-cache'
 	// 위 추상화의 로컬 저장소 구현(#429 — subject 매핑처럼 무효화 전파가 불필요한 캐시용). 버전은 Spring BOM 관리.
 	implementation 'com.github.ben-manes.caffeine:caffeine'
+	// IP literal 파싱·정규화(InetAddresses, #519). firebase-admin transitive에 기대지 않고 직접 선언. Spring BOM 비관리 → 버전 명시.
+	implementation 'com.google.guava:guava:33.5.0-jre'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'

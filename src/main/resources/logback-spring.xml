@@ -2,8 +2,11 @@
 <!--
   로그 출력 프로파일 게이팅:
   - 기본(EC2, !docker): ELK 수집용 JSON을 stdout으로. Docker json-file 드라이버가 캡처한다(파일/볼륨 불필요).
-  - docker(로컬 개발): 사람이 읽는 텍스트 콘솔.
+    stdout 쓰기는 AsyncAppender 워커 1개가 맡는다(#497) — 요청 스레드는 큐에 넣고 바로 돌아온다.
+  - docker(로컬 개발): 사람이 읽는 텍스트 콘솔(동기).
   transactionId는 MDC로 자동 포함된다(JSON은 encoder가 MDC 전체 출력, 텍스트는 %X 패턴).
+  비동기 경로에서도 MDC는 enqueue 시점에 캡처되므로 필터가 MDC를 비운 뒤 써져도 보존된다
+  (TransactionIdFilterAsyncAppenderTest가 고정).
 -->
 <configuration>
     <!-- Boot 기본 변수/컨버터 로드 — 이 include가 없으면 logging.* 프로퍼티 연동이 끊긴다 -->
@@ -16,8 +19,29 @@
                 <customFields>{"service":"laimory","environment":"${APP_ENV:-local}"}</customFields>
             </encoder>
         </appender>
-        <root level="INFO">
+        <!--
+          #497: 동기 ConsoleAppender에서는 요청 스레드가 stdout 쓰기 락 하나에 직렬화돼 600~1,000 rps에서
+          http 스레드 80~90%가 락 대기로 묶였다. 인코딩·쓰기를 워커 1개로 옮겨 요청 스레드와 분리한다.
+          - neverBlock=true: 큐가 가득 차도 요청 스레드를 막지 않는다(초과 이벤트 유실). 액세스 로그는
+            응답 지연보다 유실이 자연스럽다.
+          - discardingThreshold 기본(queueSize/5): 큐가 80% 차면 INFO 이하부터 버리고 WARN/ERROR는
+            가득 찰 때까지 보존한다 — ERROR 로그 경보(#348)가 액세스 로그보다 늦게 잃는다. 0으로 두면
+            가득 찬 순간 ERROR까지 함께 버려진다.
+          - queueSize 1024: 큐 이벤트는 마스킹된 본문 preview(요청·응답 각 최대 65,536자)를 들고 있어
+            힙(기본 host RAM 25%)과 결합한다. 본문 축소(#497 ②) 뒤 상향을 재검토한다.
+          - maxFlushTime 5000: 종료 시 큐를 비우는 대기 상한(비면 즉시 종료). 롤링 배포 graceful
+            shutdown에서 tail 유실을 줄인다.
+          Logback 1.5에는 드롭 카운터가 없다 — 유실은 emitted(logback_events_total)와 delivered
+          (docker logs 줄 수)의 차이로 관측한다.
+        -->
+        <appender name="ASYNC_JSON_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
+            <queueSize>1024</queueSize>
+            <neverBlock>true</neverBlock>
+            <maxFlushTime>5000</maxFlushTime>
             <appender-ref ref="JSON_CONSOLE"/>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="ASYNC_JSON_CONSOLE"/>
         </root>
     </springProfile>
 

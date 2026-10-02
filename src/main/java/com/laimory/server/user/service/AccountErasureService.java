@@ -1,6 +1,8 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.auth.service.RefreshTokenService;
+import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
 import com.laimory.server.push.service.SubjectPreferenceService;
@@ -10,7 +12,6 @@ import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.service.DailyRecordService;
 import com.laimory.server.timeline.service.TimelineContentErasureService;
-import com.laimory.server.user.AccountErasureJobStatus;
 import com.laimory.server.user.UserStatus;
 import java.util.List;
 import java.util.UUID;
@@ -20,23 +21,21 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 계정 삭제 단계 구현(#302 PR1) — worker가 claim한 job 하나를 실제로 처리하는 곳이다.
+ * 계정 삭제 단계 구현(#302) — 탈퇴 직후의 큐 비우기와 worker가 claim한 job 하나의 실제 삭제를 맡는다.
  * 다른 feature의 repository를 직접 주입하지 않고 leaf service들을 합성한다
  * ({@code UserWithdrawalTransactionService} 선례).
  *
- * <p>세 가지 일을 한다.
  * <ol>
- *   <li>{@link #quiesce} — User Memory 미반영 큐를 비운다. <b>아무것도 삭제하지 않는다.</b>
- *       유예를 기다리지 않고 접수 직후 실행되며, 이게 없으면 일일 User Memory 배치가 탈퇴 subject의
- *       기록을 계속 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다).</li>
+ *   <li>{@link #clearUserMemoryPending} — User Memory 미반영 큐를 비운다. <b>아무것도 삭제하지 않는다.</b>
+ *       탈퇴 commit 직후 실행되며(#397), 이게 없으면 일일 User Memory 배치가 탈퇴 subject의 기록을
+ *       삭제 전까지 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼 수 없다).</li>
+ *   <li>{@link #deleteContentGraph} — 콘텐츠 graph를 유계 batch로 지운다.</li>
  *   <li>{@link #deleteOwnerRows} — 콘텐츠 graph를 제외한 owner 행을 지운다(짧은 transaction).</li>
- *   <li>{@link #finalizeErasure} — mapping·job·user를 한 transaction에서 지운다.</li>
+ *   <li>{@link #deleteStoredObjects} — subject 전용 S3 namespace를 비운다.</li>
+ *   <li>{@link #finalizeErasure} — mapping·job·user를 한 transaction에서 지운다. 콘텐츠가 남아 있으면
+ *       mapping 삭제가 subject FK {@code RESTRICT}에 막혀 transaction 전체가 rollback되고 job이
+ *       durable하게 남는다 — 반쪽 삭제 상태가 생기지 않는 fail-closed 성질이다.</li>
  * </ol>
- *
- * <p><b>PR1 범위</b>: 콘텐츠 graph({@code daily_records}·Item·draft source)와 S3 객체는 후속 PR이
- * 소유한다. 그래서 콘텐츠가 있는 회원은 {@link #finalizeErasure}의 mapping 삭제가 subject FK
- * {@code RESTRICT}에 막혀 transaction 전체가 rollback되고 job이 durable하게 남는다 — 반쪽 삭제 상태가
- * 생기지 않는 fail-closed 성질이다.
  *
  * <p>로그에 userId·subjectId·jobId를 남기지 않는다.
  */
@@ -69,6 +68,7 @@ public class AccountErasureService {
     private final PushRegistrationService pushRegistrationService;
     private final RefreshTokenService refreshTokenService;
     private final TermAgreementService termAgreementService;
+    private final InquiryService inquiryService;
 
     /**
      * 처리 대상이 맞는지 확인하고 subject를 해석한다. 탈퇴 회원은 일반 요청 경로를 다시 타지 않으므로
@@ -89,10 +89,9 @@ public class AccountErasureService {
      * {@code {subject}:{recordId}}라 record id가 필요하고, 존재하지 않는 member의 {@code ZREM}은
      * no-op이라 record id 전체를 넘기는 superset 호출이 안전하다.
      *
-     * <p>Redis 전용이라 DB transaction 밖에서 실행한다. 중간에 실패하면 단계 전이를 하지 않으므로
-     * 다음 실행이 같은 일을 다시 한다(멱등).
+     * <p>DB transaction 밖에서 실행한다. 여러 번 불러도 결과가 같다(ZREM 반복 무해).
      */
-    public void quiesce(UUID subjectId) {
+    public void clearUserMemoryPending(UUID subjectId) {
         long afterId = 0L;
         while (true) {
             List<Long> recordIds =
@@ -139,8 +138,8 @@ public class AccountErasureService {
      * 콘텐츠 graph를 제외한 owner 행을 지운다. 순서가 강제되는 곳은 하나뿐이다 —
      * 일일 알림 행이 subject 축 설정 행을 FK {@code RESTRICT}로 참조하므로 그 둘은 이 순서여야 한다.
      *
-     * <p><b>미반영 큐는 여기서 건드리지 않는다.</b> 비우는 지점은 정지 단계({@link #quiesce})뿐이고,
-     * 그때는 record가 살아 있어 id로 member를 특정할 수 있다. 하루 기록 삭제도 자기 member를 함께
+     * <p><b>미반영 큐는 여기서 건드리지 않는다.</b> 비우는 지점은 탈퇴 직후({@link #clearUserMemoryPending})
+     * 뿐이고, 그때는 record가 살아 있어 id로 member를 특정할 수 있다. 하루 기록 삭제도 자기 member를 함께
      * 지우므로(commit 이후, {@code TimelineDeletionService}) id로 못 찾는 잔여는 평시에 생기지 않는다.
      *
      * <p>다만 그 ZREM이 실패하면(예: 그 순간 Redis 장애) record는 이미 사라진 뒤라 그 member는 id로
@@ -151,6 +150,8 @@ public class AccountErasureService {
      */
     @Transactional
     public void deleteOwnerRows(long userId, UUID subjectId) {
+        // 문의(#518)는 subject FK RESTRICT라 mapping 삭제 전에 0이어야 한다 — 첨부 행 → 문의 행(email PII) 순.
+        inquiryService.deleteAllBySubjectId(subjectId);
         userMemoryService.delete(subjectId);
         dailyNotificationPreferenceService.delete(subjectId);
         subjectPreferenceService.delete(subjectId);
@@ -160,21 +161,26 @@ public class AccountErasureService {
     }
 
     /**
-     * subject 전용 S3 namespace를 통째로 비운다 — {@code {sha256(subject)}/photos/} prefix가 권위 범위다.
+     * subject 전용 S3 namespace를 통째로 비운다 — 사진 {@code {sha256(subject)}/photos/}와 문의 첨부
+     * {@code {sha256(subject)}/inquiries/}(#518) 두 prefix가 권위 범위다.
      *
      * <p>DB payload의 filename만 모아 지우면 <b>presign 후 DB 행이 생기지 않은 orphan</b>과 손상 payload를
      * 놓친다. prefix 삭제는 그것들까지 포함하고 다른 subject namespace는 건드리지 않는다.
      *
      * <p>목록이 빌 때까지 "한 페이지 조회 → 그 페이지 삭제"를 반복하고, <b>마지막 재조회가 비었을 때만</b>
-     * 끝낸다. 유예(7일)가 presign 수명을 압도하므로 첫 empty 확인 뒤 늦게 도착하는 PUT은 없다.
+     * 끝낸다. 유예(2일)가 presign 수명을 압도하므로 첫 empty 확인 뒤 늦게 도착하는 PUT은 없다.
      *
      * <p>객체별 Error·응답 누락·SDK 예외는 그대로 전파해 job을 남긴다 — 다음 실행이 재시도한다.
      * 로그에 object key나 subject를 남기지 않는다.
      *
      * @throws IllegalStateException 삭제가 확인되지 않은 key가 남아 있을 때
      */
-    public void deletePhotoObjects(UUID subjectId) {
-        String prefix = PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/";
+    public void deleteStoredObjects(UUID subjectId) {
+        deleteObjectsUnder(PhotoObjectKeys.subjectNamespace(subjectId) + "/photos/");
+        deleteObjectsUnder(InquiryObjectKeys.subjectPrefix(subjectId));
+    }
+
+    private void deleteObjectsUnder(String prefix) {
         while (true) {
             List<S3PhotoStorageService.ObjectVersion> versions =
                     s3PhotoStorageService.listObjectVersions(prefix, S3_PAGE_SIZE);
@@ -223,7 +229,7 @@ public class AccountErasureService {
         if (!subjectMappingService.deleteMapping(userId, subjectId)) {
             throw new AccountErasureConflictException("mapping");
         }
-        if (!accountErasureJobService.deleteCompleted(jobId, AccountErasureJobStatus.QUIESCED)) {
+        if (!accountErasureJobService.deleteCompleted(jobId)) {
             throw new AccountErasureConflictException("job");
         }
         if (!userAccountService.deleteWithdrawn(userId)) {

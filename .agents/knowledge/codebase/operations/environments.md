@@ -75,6 +75,12 @@ dev/prod 배포 계약은 `APP_ADMIN_PORT=8081` exact-one, dev DB를 공유하�
 forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 host 변경과 container 재생성이 필요하다.
 현재 live 활성화 여부는 host `.env`가 권위이며 코드 존재만으로 활성화됐다고 판단하지 않는다.
 
+prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgrades로 자동 설치하지만,
+서비스를 자동으로 재시작하지 않는다. needrestart는 목록만 표시하도록(`'l'`) 설정했고, mysql-01은 `mysql-`
+패키지를 자동 갱신에서 제외했다. 재시작은 계획된 시간에 사람이 한다. prod DB는 단일 인스턴스라
+재시작하면 그동안 모든 요청이 실패하기 때문이다. 설정 파일과 정기 절차는
+[prod host 패치 절차](../../../../docs/operations/prod-host-patching.md)가 소유한다.
+
 monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
 dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
 경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).
@@ -85,6 +91,14 @@ dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나�
 제한하지만, 결과적으로 **이 host의 접근 통제 등급은 prod DB와 같아진다.** 루트 볼륨 EBS 암호화와
 스풀 0700이 전제이며, 관측 host 접근 통제(#368)와 함께 평가한다. rollback은 prod MySQL SG의
 3306 규칙 1건 삭제다.
+
+운영자의 prod DB 수동 조회·DML(DataGrip)은 **prod WAS를 경유하는 SSM
+`AWS-StartPortForwardingSessionToRemoteHost` 포트포워딩**으로만 한다(로컬 포트 규약 13306). prod WAS SG가
+이미 가진 3306 경로를 재사용하므로 SG·host·sshd 변경이 없고 새 네트워크 노출이 생기지 않는다. 계정
+`laimory_ops`는 prod WAS private IP별 host 고정 + 계정 단위 `REQUIRE SSL` + `laimory.*` DML만
+(DDL 권위는 Flyway) + `MAX_USER_CONNECTIONS 5`이며, 비밀번호는 send-command로 보내지 않고 SSM 셸에서
+직접 넣는다. dev WAS SSH bastion을 prod로 넓히는 방식은 SG가 host 단위라 dev WAS 전체를 prod 인증
+표면에 닿게 하므로 채택하지 않는다. 회수는 `DROP USER`뿐이다.
 
 유일한 인바운드 예외는 trace 수집이다 — Tempo의
 OTLP는 push 모델이라 dev WAS → monitoring TCP 4317(gRPC) 인바운드를 허용하며, source는 dev WAS
@@ -102,7 +116,7 @@ application 배포·health gate 의존성이 아니다.
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
   넣으면 그 peer의 `X-Forwarded-For` 최우측만 client IP로 신뢰한다. checked-in 기본값은 비어 있어
-  loopback 엣지만 남고, malformed 값은 기동 실패다. 자세한 계약은 observability.md)
+  신뢰 엣지가 없고(모든 peer를 그대로 client IP로 씀), malformed 값은 기동 실패다. 자세한 계약은 observability.md)
 - tracing(#277 — 앱 미소비, deploy pre-flight·JVM/agent가 소비): `APP_TRACING_MODE`,
   `JAVA_TOOL_OPTIONS`(-javaagent 주입), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
   `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_SAMPLER`, `OTEL_METRICS_EXPORTER`,
@@ -152,17 +166,13 @@ application 배포·health gate 의존성이 아니다.
   `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
   서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
   최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-photo-delete-rollout.md)를 따른다.
-- `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_QUIESCE_CRON`, `ACCOUNT_ERASURE_DELETE_CRON`,
-  `ACCOUNT_ERASURE_ZONE`, `ACCOUNT_ERASURE_QUIESCE_DELAY`, `ACCOUNT_ERASURE_STALE_AFTER`,
-  `ACCOUNT_ERASURE_GRACE_PERIOD_DAYS`, `ACCOUNT_ERASURE_WINDOW_DAYS`, `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_BATCHES_PER_RUN`,
-  `ACCOUNT_ERASURE_MAX_RUN_DURATION` (checked-in default는 worker on — 정지 15분마다, 삭제 매일
-  `02:30` `Asia/Seoul`, 유예 7일 + 처리 창 3일. claim 크기는 설정으로 열지 않는다(항상 1건 —
-  여러 건을 잡아 놓고 실행 예산이 끝나면 시작도 못 한 행이 3일 창 중 하루를 날린다). run당 처리량은
-  `MAX_BATCHES_PER_RUN`이 정한다. 이 스위치는 활성화 게이트가 아니라 장애 시 즉시
-  정지용이고 "언제부터 지우는가"는 `GRACE_PERIOD_DAYS`가 정한다. 단 `docker` 프로필은 off —
-  15분마다 도는 정지 pass가 통합 테스트 job을 가로채지 않게 한다. `QUIESCE_DELAY`는 살아 있는
-  draft/User Memory task TTL과 presign TTL을 넘겨야 하고 `STALE_AFTER`는 그 이하여야 하며, 둘 다
-  기동 시 검증해 fail-fast한다 — `PHOTO_UPLOAD_PRESIGN_TTL`을 올리면 `QUIESCE_DELAY`도 함께 올려야 한다)
+- `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_DELETE_CRON`, `ACCOUNT_ERASURE_ZONE`,
+  `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_JOBS_PER_RUN` (checked-in default는 worker on — 삭제
+  매일 `02:30` `Asia/Seoul`, 접수일 D 기준 D+3~D+5. 유예 2일·처리 창 3일은 약관 "5일 이내 파기"에 묶인
+  worker 상수라 env로 열지 않는다(#397). claim 크기도 설정으로 열지 않는다(항상 1건 — 여러 건을 잡아
+  놓고 실행 예산이 끝나면 시작도 못 한 행이 3일 창 중 하루를 날린다). run당 처리량은
+  `MAX_JOBS_PER_RUN`이 정한다. 이 스위치는 활성화 게이트가 아니라 장애 시 즉시 정지용이다. 단
+  `docker` 프로필은 off — 삭제 run이 통합 테스트 job을 가로채지 않게 한다)
 - `TIMELINE_ORPHAN_SWEEP_WORKER_ENABLED`, `TIMELINE_ORPHAN_SWEEP_CRON`, `TIMELINE_ORPHAN_SWEEP_ZONE`,
   `TIMELINE_ORPHAN_SWEEP_BATCH_SIZE`, `TIMELINE_ORPHAN_SWEEP_WORKER_ID`, `TIMELINE_ORPHAN_SWEEP_SERVER_COUNT`,
   `TIMELINE_ORPHAN_SWEEP_WORKER_COUNT` (기본 매일 03:30 KST, 서버 2대 × 서버당 slot 1, 단일 batch 250).
@@ -170,15 +180,16 @@ application 배포·health gate 의존성이 아니다.
   docker profile만 server-count 기본값이 1이며 test는 기존대로 비활성화한다. 변경·원복은 전체 중지 후
   적용하며 [전환 절차](../../../../docs/database/474-orphan-sweep-rollout.md)를 따른다.
 - `DAILY_REMINDER_WORKER_ENABLED`, `DAILY_REMINDER_CRON`, `DAILY_REMINDER_ZONE`,
-  `DAILY_REMINDER_MAX_LATENESS`, `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`,
-  `DAILY_REMINDER_MAX_BATCHES_PER_RUN`, `DAILY_REMINDER_MAX_RUN_DURATION` (checked-in default는
-  worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체 사용자 21:00 발송이라
-  env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background claim이 통합
-  테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385), 허용 지연 30분,
-  process당 concurrency 1, batch 250, 최대 40 batch/5분 — 전원이 같은 21:00을 공유하고 초과분을
-  받아갈 다음 tick이 없으므로, 그날 due를 한 run에서 모두 소화하도록 예산을 process당 10,000행으로
-  잡는다. 부족하면 다음 날 run이 허용 지연을 넘긴 행을 발송 없이 skip하며 예산만 먹으므로, run 완료
-  로그의 `lateSkipped`가 0이 아니면 예산 부족 신호다)
+  `DAILY_REMINDER_BATCH_SIZE`, `DAILY_REMINDER_CONCURRENCY`, `DAILY_REMINDER_MAX_BATCHES_PER_RUN`
+  (checked-in default는 worker on — 리마인더가 사용자별 기본 ON이 된 뒤로(#318) worker on은 곧 전체
+  사용자 21:00 발송이라 env는 문제 시 발송을 멈추는 kill switch다. 단 `docker` 프로필은 off — background
+  claim이 통합 테스트가 심은 due 행을 가로채지 않게 한다. 기본 매일 21:00 `Asia/Seoul` 1회(#385),
+  process당 concurrency 1, batch 250, 최대 40 batch. run 크기는 batch 수로만 제한하고 시간 상한은 없다
+  (#395) — 전원이 같은 21:00을 공유하고 초과분을 받아갈 다음 tick이 없으므로, 그날 due를 한 run에서
+  모두 소화하도록 상한을 process당 10,000행으로 잡는다. 남은 초과분은 다음 날 21:00 run이 발송하며,
+  run 완료 로그의 `batches`가 상한과 같으면 상한에 닿은 것이다. 늦었다는 이유로 발송을 건너뛰지
+  않는다 — 발송이 정상 시간대에만 일어난다는 보장은 cron이 하루 1회 21:00(`0 0 21 * * *`)이라는
+  사실에서 나온다. cron을 바꾸면 이 판단이 무효가 된다)
 - `DRAFT_CLEANUP_WORKER_ENABLED`, `DRAFT_RETENTION_DAYS`, `DRAFT_CLEANUP_CRON`,
   `DRAFT_CLEANUP_ZONE`, `DRAFT_CLEANUP_BATCH_SIZE`, `DRAFT_CLEANUP_WORKER_ID`,
   `DRAFT_CLEANUP_SERVER_COUNT`, `DRAFT_CLEANUP_WORKER_COUNT` (checked-in default는 worker on,

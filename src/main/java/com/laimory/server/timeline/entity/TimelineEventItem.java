@@ -12,7 +12,8 @@ import jakarta.persistence.Table;
  * <p>implicit {@code @ManyToMany} 대신 명시적 join entity를 쓴다 — 삭제 흐름의 exclusive/shared 판정과
  * orphan Item 정리가 junction을 직접 질의해야 하기 때문이다. 같은 DailyRecord 안에서만 Item을 공유한다는
  * 규칙은 DB 제약이 아니라 writer 계약이다(AI·fake는 새 Item을 현재 task의 새 Event에 연결하고,
- * 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 같은 record의 PHOTO만 대상 Event에 재사용한다).
+ * 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 새 Item을 대상 Event에만 연결한다 — 기존 Item을 다른
+ * Event에 재연결하는 writer는 없다).
  */
 @Entity
 @Table(name = "timeline_event_items")

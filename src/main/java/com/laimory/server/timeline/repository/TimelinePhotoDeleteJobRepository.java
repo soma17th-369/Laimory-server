@@ -5,7 +5,6 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -66,12 +65,8 @@ public interface TimelinePhotoDeleteJobRepository extends JpaRepository<Timeline
     @Query("select count(j) from TimelinePhotoDeleteJob j where j.createdAt < :windowStart")
     long countCreatedBefore(@Param("windowStart") LocalDateTime windowStart);
 
-    @Query(value = "select * from timeline_photo_delete_jobs "
-            + "where object_key = :objectKey for update",
-            nativeQuery = true)
-    Optional<TimelinePhotoDeleteJob> findByObjectKeyForUpdate(@Param("objectKey") String objectKey);
-
     @Modifying
+    @Transactional
     @Query("update TimelinePhotoDeleteJob j set j.status = :pending "
             + "where j.timelinePhotoDeleteJobId in :jobIds and j.status = :processing")
     int markPending(@Param("jobIds") Collection<Long> jobIds,

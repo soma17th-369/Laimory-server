@@ -75,6 +75,7 @@ class WithdrawalActiveCacheE2eIntegrationTest {
                 .filter(job -> job.getUserId().equals(createdUserId))
                 .forEach(accountErasureJobRepository::delete);
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, createdSubjectId);
+        jdbcTemplate.update("DELETE FROM user_memories WHERE subject_id = ?", createdSubjectId.toString());
         userRepository.deleteById(createdUserId);
         userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(createdUserId));
         redisGateway.delete(UserAccountService.KEY_PREFIX + createdUserId);

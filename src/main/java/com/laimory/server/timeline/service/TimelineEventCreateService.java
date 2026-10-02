@@ -45,7 +45,7 @@ public class TimelineEventCreateService {
      * 포함한 Event 표현을 반환한다.
      *
      * @throws BusinessException 해당 날짜 record 없음·비소유 404 {@code -404}(존재를 구분해 주지 않는다),
-     *                           사진 수 초과 400 {@code -1004}, 같은 PHOTO object 삭제 진행 중 409 {@code -1019}
+     *                           사진 수 초과 400 {@code -1004}
      * @throws IllegalArgumentException 필수·길이·시간 범위·사진 입력 오류(400 {@code -400})
      */
     @Transactional
@@ -73,10 +73,10 @@ public class TimelineEventCreateService {
             return TimelineEventResponse.from(saved, List.of());
         }
 
-        // Event를 먼저 저장하고 실제 생성 ID를 target으로 넘겨 resolve의 계약(비-null target)을 PATCH와
-        // 동일하게 유지한다 — 신규 Event는 연결 junction이 없어 "대상 Event 기연결 no-op" 분기가 비활성이다.
+        // Event를 먼저 저장하고 실제 생성 ID를 target으로 넘겨 PATCH와 같은 계약을 탄다 — 신규 Event는
+        // 연결 junction이 없어 "이미 연결된 rawId 건너뛰기" 분기가 비활성이고 모든 사진이 새 Item이다.
         TimelineEventPhotoAddService.PhotoChanges changes =
-                timelineEventPhotoAddService.resolve(record, saved.getTimelineEventId(), photos);
+                timelineEventPhotoAddService.resolve(saved.getTimelineEventId(), photos);
         List<Long> linkedItemIds =
                 timelineEventPhotoAddService.link(subjectId, saved.getTimelineEventId(), changes);
         return TimelineEventResponse.from(saved, assembleItems(linkedItemIds));

@@ -222,3 +222,66 @@ cmp -s "$WORK/scheduler-before.tsv" "$WORK/scheduler-after.tsv" || fail 'V2 chan
 [ "$(mysql flyway_scheduler_upgrade -e "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='timeline_draft_source_items' AND INDEX_NAME='idx_draft_source_created'")" = 1 ] || fail 'created_at index missing'
 flyway flyway_scheduler_upgrade "$MIGRATIONS" -target=2 validate >"$WORK/scheduler-validate.log" 2>&1
 ok 'V1 to V2 preserves source data and drops only the draft claim column and index'
+
+# V2→V3(#517): notices 테이블 추가. 기존 행 보존과 신규 테이블의 컬럼·hidden 기본값을 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_upgrade;'
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=2 migrate >"$WORK/notice-v2.log" 2>&1
+mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend_app_version FROM app_config' >"$WORK/notice-before.tsv"
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 migrate >"$WORK/notice-v3.log" 2>&1
+mysql flyway_notice_upgrade -e 'SELECT app_config_id, min_app_version, recommend_app_version FROM app_config' >"$WORK/notice-after.tsv"
+cmp -s "$WORK/notice-before.tsv" "$WORK/notice-after.tsv" || fail 'V3 changed app_config data'
+[ "$(mysql flyway_notice_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='notices' AND COLUMN_NAME IN ('notice_id','title','content_url','hidden','created_at','updated_at','modified_by')")" = 7 ] || fail 'notices columns missing'
+mysql flyway_notice_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('probe', 'https://example.com/n', NOW(6), NOW(6))"
+[ "$(mysql flyway_notice_upgrade -e "SELECT hidden FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.hidden default is not false'
+flyway flyway_notice_upgrade "$MIGRATIONS" -target=3 validate >"$WORK/notice-validate.log" 2>&1
+ok 'V2 to V3 adds notices with hidden defaulting to false and preserves existing rows'
+
+# V3→V4(#518): inquiries·inquiry_attachments 추가. subject FK RESTRICT와 첨부 FK가 실제로 걸리는지 확인한다.
+mysql -e 'CREATE DATABASE flyway_inquiry_upgrade;'
+flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=3 migrate >"$WORK/inquiry-v3.log" 2>&1
+mysql flyway_inquiry_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('kept', 'https://example.com/n', NOW(6), NOW(6))"
+flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=4 migrate >"$WORK/inquiry-v4.log" 2>&1
+[ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='kept'")" = 1 ] || fail 'V4 changed notices data'
+[ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiries' AND COLUMN_NAME IN ('inquiry_id','subject_id','email','body','answered_at','created_at','updated_at','modified_by')")" = 8 ] || fail 'inquiries columns missing'
+[ "$(mysql flyway_inquiry_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiry_attachments' AND COLUMN_NAME IN ('inquiry_attachment_id','inquiry_id','filename','position')")" = 4 ] || fail 'inquiry_attachments columns missing'
+# 존재하지 않는 subject를 가리키는 문의는 FK가 거절해야 한다(탈퇴 fail-closed의 전제).
+if mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'b', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'inquiries.subject_id FK is not enforced'
+fi
+mysql flyway_inquiry_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1)"
+mysql flyway_inquiry_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'b', NOW(6), NOW(6))"
+mysql flyway_inquiry_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename, position) SELECT inquiry_id, 'a.jpg', 0 FROM inquiries"
+if mysql flyway_inquiry_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='00000000-0000-4000-8000-000000000001'" >/dev/null 2>&1; then
+  fail 'subject mapping delete succeeded while an inquiry still references it'
+fi
+if mysql flyway_inquiry_upgrade -e "DELETE FROM inquiries" >/dev/null 2>&1; then
+  fail 'inquiry delete succeeded while an attachment still references it'
+fi
+mysql flyway_inquiry_upgrade -e "DELETE FROM inquiry_attachments; DELETE FROM inquiries; DELETE FROM user_subject_links"
+flyway flyway_inquiry_upgrade "$MIGRATIONS" -target=4 validate >"$WORK/inquiry-validate.log" 2>&1
+ok 'V3 to V4 adds inquiries with enforced subject and attachment FKs and preserves existing rows'
+
+# V4→V5(#530): inquiries.body를 description으로 rename하고 title을 추가한다. 기존 행의 원문 보존과
+# title backfill, 기본값 제거(이후 title 누락 INSERT 거절)를 확인한다.
+mysql -e 'CREATE DATABASE flyway_inquiry_title_upgrade;'
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=4 migrate >"$WORK/inquiry-title-v4.log" 2>&1
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1)"
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, body, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'x@example.com', 'kept body', NOW(6), NOW(6))"
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 migrate >"$WORK/inquiry-title-v5.log" 2>&1
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiries' AND COLUMN_NAME='body'")" = 0 ] || fail 'inquiries.body still exists'
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT description FROM inquiries WHERE email='x@example.com'")" = 'kept body' ] || fail 'V5 did not keep body as description'
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT title FROM inquiries WHERE email='x@example.com'")" = '(제목 없음)' ] || fail 'V5 did not backfill existing title'
+if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, description, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'y@example.com', 'd', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'inquiry insert without title succeeded'
+fi
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiries (subject_id, email, title, description, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 'y@example.com', 't', 'd', NOW(6), NOW(6))"
+# 첨부 position 제거: 컬럼이 없어지고, 한 문의에 첨부 여러 장이 들어가며(UNIQUE(inquiry_id)로 줄어들지 않음),
+# 첨부 FK는 inquiry_id 단독 index 위에서 계속 강제된다.
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='inquiry_attachments' AND COLUMN_NAME='position'")" = 0 ] || fail 'inquiry_attachments.position still exists'
+mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename) SELECT inquiry_id, 'a.jpg' FROM inquiries WHERE email='y@example.com'; INSERT INTO inquiry_attachments (inquiry_id, filename) SELECT inquiry_id, 'b.jpg' FROM inquiries WHERE email='y@example.com'"
+[ "$(mysql flyway_inquiry_title_upgrade -e "SELECT COUNT(*) FROM inquiry_attachments")" = 2 ] || fail 'inquiry_attachments no longer accepts multiple attachments per inquiry'
+if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inquiry_id, filename) VALUES (999999, 'c.jpg')" >/dev/null 2>&1; then
+  fail 'inquiry_attachments.inquiry_id FK is not enforced'
+fi
+flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 validate >"$WORK/inquiry-title-validate.log" 2>&1
+ok 'V4 to V5 renames inquiry body to description, backfills title, requires it afterwards and drops attachment position'

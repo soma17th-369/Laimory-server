@@ -19,7 +19,6 @@ import com.laimory.server.config.TimelineWorkerExecutorConfig;
 import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService.ValidationResult;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +58,6 @@ class TimelinePhotoDeleteWorkerTest {
         lenient().when(properties.getTotalWorkerCount()).thenReturn(2);
         lenient().when(jobService.completeSucceeded(anyList()))
                 .thenAnswer(invocation -> invocation.<List<?>>getArgument(0).size());
-        lenient().when(jobService.retainOrphanJobs(anyList()))
-                .thenAnswer(invocation -> new ValidationResult(invocation.getArgument(0), 0));
     }
 
     @Test
@@ -128,34 +125,6 @@ class TimelinePhotoDeleteWorkerTest {
         assertThat(events).noneMatch(event -> event.getLevel() == Level.ERROR);
         assertThat(events).anyMatch(event -> event.getLevel() == Level.WARN
                 && event.getFormattedMessage().contains("만료 job count 조회 실패"));
-    }
-
-    @Test
-    void relinkedJobsAreCancelledAndExcludedBeforeS3Delete() {
-        TimelinePhotoDeleteJob relinked = job(15L, "hash/photos/relinked.jpg");
-        enableWithJobs(relinked);
-        when(jobService.retainOrphanJobs(List.of(relinked)))
-                .thenReturn(new ValidationResult(List.of(), 1));
-
-        worker.deletePendingPhotoObjects();
-
-        verify(jobService).retainOrphanJobs(List.of(relinked));
-        verifyNoInteractions(s3PhotoStorageService);
-        verify(jobService, never()).completeSucceeded(anyList());
-    }
-
-    @Test
-    void orphanValidationFailureKeepsJobsAndSkipsS3Delete() {
-        TimelinePhotoDeleteJob job = job(16L, "hash/photos/validation-failed.jpg");
-        enableWithJobs(job);
-        when(jobService.retainOrphanJobs(List.of(job)))
-                .thenThrow(new IllegalStateException("db unavailable"));
-
-        worker.deletePendingPhotoObjects();
-
-        verifyNoInteractions(s3PhotoStorageService);
-        verify(jobService, never()).completeSucceeded(anyList());
-        verify(jobService).markPendingForRetry(List.of(job));
     }
 
     @Test
