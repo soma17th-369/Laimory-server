@@ -32,7 +32,8 @@ public interface AppInitializerApi {
     @Operation(summary = "앱 초기화 상태 조회",
             description = "인증 사용자의 앱 시작 초기 상태를 반환한다. onboardingCompleted는 저장된 "
                     + "subject 설정 그대로이며 약관 동의 이력이나 기록 존재 여부로 계산하지 않는다. "
-                    + "terms.agreementRequired는 지금 현재 버전 동의가 없는 동의 대상 약관 목록이다 — "
+                    + "terms.agreementRequired는 지금 현재 버전과 같은 major의 동의가 없는 동의 대상 약관 "
+                    + "목록이다(minor 개정은 재동의를 요구하지 않는다) — "
                     + "빈 배열이면 동의 절차 없이 진행하고, 비어 있지 않으면 앱이 동의 등록을 마치기 전까지 "
                     + "진행을 차단한다(차단은 클라이언트 책임 — 서버는 이 결과로 다른 요청을 막지 않는다). "
                     + "최초 동의와 재동의를 구분하지 않으며, 현재 유효 문서가 없는 종류는 판정에서 빠진다. "

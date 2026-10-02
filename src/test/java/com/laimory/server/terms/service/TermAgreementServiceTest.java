@@ -187,6 +187,60 @@ class TermAgreementServiceTest {
         assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(onlyReady);
     }
 
+    @Test
+    void agreementRequired_minorRevisionOnly_passesWithEarlierSameMajorAgreement() {
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.2")));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.0")));
+
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).isEmpty();
+    }
+
+    @Test
+    void agreementRequired_majorRevisionWithoutAgreement_requiresCurrentVersion() {
+        TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "2.0");
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.1")));
+
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(current);
+    }
+
+    @Test
+    void agreementRequired_mixedRevisions_requireAgreementWithinCurrentMajor() {
+        // 1.0 → 1.1(경미) → 2.0(중대) → 2.1(경미): current 2.1
+        TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "2.1");
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.0"), summary(TermType.TERMS_OF_SERVICE, "1.1")))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.1"), summary(TermType.TERMS_OF_SERVICE, "2.0")));
+
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(current);
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).isEmpty();
+    }
+
+    @Test
+    void agreementRequired_sameMajorAgreementOfOtherType_doesNotPass() {
+        TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "1.1");
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.SENSITIVE_INFORMATION_CONSENT, "1.0")));
+
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(current);
+    }
+
+    @Test
+    void agreementRequired_majorComparedNumerically_notByPrefix() {
+        // "1"이 "10"의 접두사여도 다른 major다.
+        TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "10.0");
+        when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.0")));
+
+        assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(current);
+    }
+
     private static TermDocumentSummary summary(TermType type, String version) {
         return new TermDocumentSummary(type, version);
     }

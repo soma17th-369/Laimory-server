@@ -64,8 +64,8 @@ public interface TermAgreementRepository extends JpaRepository<TermAgreement, Te
     List<TermAgreementHistoryEntry> findHistoryByUserId(@Param("userId") Long userId);
 
     /**
-     * 요청 종류에서 이 회원이 동의한 문서 key 집합 — initializer가 current key 집합에서 빼는 용도다.
-     * JPQL tuple-list IN에 의존하지 않고 user/type 후보를 읽어 Java record set으로 비교한다.
+     * 요청 종류에서 이 회원이 동의한 문서 key 집합 — initializer가 current와 같은 major의 동의가 있는지
+     * 판정하는 용도다(#453). JPQL tuple-list IN에 의존하지 않고 user/type 후보를 읽어 Java에서 비교한다.
      */
     @Query("""
             SELECT new com.laimory.server.terms.service.TermDocumentSummary(a.id.termType, a.id.version)

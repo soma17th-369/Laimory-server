@@ -233,7 +233,7 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
 (`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
-지금 현재 버전 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
+지금 현재 버전과 같은 major의 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
 목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는
 종류는 그 종류만 판정에서 빠진다(종류별 fail-open — seed 누락이 500으로 앱 시작을 막지 않는다). 서버는
 이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이고, 앱은 받은 `(termType, version)`

@@ -29,6 +29,7 @@ Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laim
 |---|---|
 | URL 규칙 | `https://www.laimory.app/terms/{term-slug}/{term-version}` |
 | version 형식 | canonical `major.minor` 문자열(`1.0`, `1.10`, `2.0`). **날짜 아님** |
+| 개정 경중 | major 상향(`1.3` → `2.0`) = 동의 대상 약관 전 회원 재동의, minor 상향(`1.0` → `1.1`) = 재동의 없음(#453) |
 | current | 같은 종류에서 major, minor를 숫자로 비교한 가장 큰 version. 새 상위 version INSERT 즉시 전환 |
 | seed 컬럼 | `term_type`, `version`, `title`, `content_url` 4개 + 감사 시각 |
 | URL 생성 | 코드가 역산하지 않는다. **catalog 등록(관리자 등록 또는 수동 seed)이 넣는 값**이다 |
