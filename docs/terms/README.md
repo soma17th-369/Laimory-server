@@ -31,7 +31,7 @@ Server는 catalog의 주소만 다루고 원문을 서빙하지 않는다. `laim
 | version 형식 | canonical `major.minor` 문자열(`1.0`, `1.10`, `2.0`). **날짜 아님** |
 | current | 같은 종류에서 major, minor를 숫자로 비교한 가장 큰 version. 새 상위 version INSERT 즉시 전환 |
 | seed 컬럼 | `term_type`, `version`, `title`, `content_url` 4개 + 감사 시각 |
-| URL 생성 | 코드가 역산하지 않는다. **운영 seed가 넣는 값**이다 |
+| URL 생성 | 코드가 역산하지 않는다. **catalog 등록(관리자 등록 또는 수동 seed)이 넣는 값**이다 |
 | 게시된 버전 URL | 불변. 개정은 새 version + 새 URL |
 
 ### 본문 관리와 catalog 등록
@@ -110,8 +110,8 @@ Google Play 등재정보의 개인정보처리방침 URL도 이 페이지를 쓴
 
 공개 문서의 개인정보처리자·계약 주체는 사업자등록증의 사업자명인 **이동건**으로 통일하고,
 **라이모리**는 서비스명 및 위치기반서비스사업 신고 명칭으로 구분했다. 최초 공개본 6종의 시행일은
-2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 법률 문서의 시행일은 HTML metadata와 원문이
-계속 소유하며, DB catalog의 current 선택에는 시행 시각을 사용하지 않는다.
+2026년 8월 31일, 문서 버전은 `1.0`으로 맞췄다. 법률 문서의 시행일은 랜딩 HTML 본문(부칙)이
+소유하며, DB catalog의 current 선택에는 시행 시각을 사용하지 않는다.
 
 ## 4. 남은 빈칸
 
