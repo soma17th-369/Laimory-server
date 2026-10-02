@@ -58,8 +58,13 @@ be verified; do not turn general uncertainty into a list of hypothetical defense
   configuration, fallback paths, or future-proofing.
 - Respect existing automation and ownership boundaries. Verify an existing workflow instead of requiring the plan
   to restate its internal commands.
-- Rare but high-impact risks still qualify when evidence shows a reachable path. Rarity alone neither creates nor
-  dismisses a finding.
+- Handling a rare condition (경합·ms 단위 타이밍·장애 중첩 등) that makes the code more complex (경계 분리·래퍼·
+  우회 경로·전용 테스트 등) follows the `AGENTS.md` edge-case approval rule, so a missing defense against it is not
+  a finding by itself. When such a condition otherwise passes the finding gate, check the plan's "엣지케이스 판단"
+  section: if it records 발생 트리거·발생 빈도·얻는 것·잃는 것 and a 결정(승인됨/승인 필요) for the condition, do not
+  report it. Report only a missing judgment, as `판단 누락`, and correct it by adding the judgment, not the defense.
+- A rare condition handled simply within the existing path, and commonly occurring failure handling (정상 입력
+  검증·만료 token·외부 API 실패), are not edge cases and still qualify when they pass the finding gate.
 - Missing tests, documentation, rollout steps, rollback, or communication qualify only when their absence passes
   the finding gate. Do not add each category by default.
 - For stored data or public payload changes, inspect compatibility even without DDL. For deletions or
