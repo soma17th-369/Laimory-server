@@ -80,8 +80,9 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             return switch (provider) {
                 // Kakao: email 미수집(콘솔 권한 없음), 닉네임은 검증된 id_token의 nickname claim만 사용.
                 case KAKAO -> new ProviderProfile(null, kakaoNickname(oidcUser));
-                // Google도 email scope를 요청하지 않고, 예상 밖 email claim이 와도 저장하지 않는다.
-                case GOOGLE -> new ProviderProfile(null, oidcUser.getFullName());
+                // Google: email scope로 받은 검증된 id_token의 email claim을 서비스 안내 목적으로만 저장한다
+                // (처리방침 §1 가). 계정 식별은 여전히 sub만 쓰며 email로 병합하지 않는다.
+                case GOOGLE -> new ProviderProfile(oidcUser.getEmail(), oidcUser.getFullName());
             };
         }
 

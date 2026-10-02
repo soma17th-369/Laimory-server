@@ -181,7 +181,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 문의 | Inquiry | 현재 구현 | 로그인 사용자가 앱에서 접수한 한 건(`inquiries`, PK `inquiry_id`)이다. owner는 콘텐츠 subject이고 답장 이메일·제목(`title`, 최대 100자)·내용(`description`, 최대 2,000자)을 담는다(#530 — 이전의 단일 `body`를 나눴다)(분류·채널 축은 두지 않는다 — 규모 대비 과해서 뺀 결정). 접수 후 수정 API는 없다. 앱은 "내 문의" 목록·상세로 자기 입력 내용과 문의 상태를 조회한다(#529). 답변은 서버에 저장하지 않는다 — 관리자가 이메일로 직접 회신한다. 탈퇴 삭제(#302)가 email PII를 포함해 행째 지운다. |
-| 답장 이메일 | Reply Email | 현재 구현 | 문의마다 사용자가 입력하는 답장 주소(`email`, 최대 255자)다. 회원 정보에는 이메일이 없어 문의가 자체 소유한다. 형식은 HTTP 경계 Bean Validation(`@Email`)이 검사한다. |
+| 답장 이메일 | Reply Email | 현재 구현 | 문의마다 사용자가 입력하는 답장 주소(`email`, 최대 255자)다. 회원 이메일(`users.email` — 구글 로그인 회원만, 서비스 운영 안내 전용)과 별개로 문의가 자체 소유한다. 형식은 HTTP 경계 Bean Validation(`@Email`)이 검사한다. |
 | 문의 첨부 | Inquiry Attachment | 현재 구현 | 문의 한 건의 첨부 사진(`inquiry_attachments`, 최대 3장, 요청 순서 = PK 순서 — #530에서 `position` 컬럼 제거)이다. 사진과 같은 presigned PUT 흐름·타입·크기 규칙을 쓰되 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 사진 prefix와 분리된다. 앱 소유자(`attachmentUrls`)와 관리자(`viewUrl`) 모두 사진과 같은 무서명 CloudFront 고정 URL로 열람한다(#529). 접수 시 S3 실존은 확인하지 않는다(승인된 결정). |
 | 처리됨 | Answered | 현재 구현 | 관리자가 이메일 답장을 보낸 뒤 표시하는 `answered_at`(KST 벽시계, null=미처리)이다. 답장 발송 여부의 유일한 기록이며 서버는 이메일을 보내지 않는다. 해제할 수 있다. 앱에는 문의 상태 `ANSWERED`(해제 시 `RECEIVED`)로 그대로 보인다(#529). |
 | 문의 상태 | Inquiry Status | 현재 구현 | 앱에 보이는 문의 처리 상태 `InquiryStatus`(#529)다. 저장 컬럼이 아니라 `answered_at`에서 서버가 파생한다 — `RECEIVED`(접수됨, 미처리)·`ANSWERED`(답변 완료, 입력 이메일 확인). 처리됨 해제 시 `RECEIVED`로 되돌아가며 클라이언트가 `answeredAt`으로 따로 판정하지 않는다. |

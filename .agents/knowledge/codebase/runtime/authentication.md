@@ -92,7 +92,9 @@ flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제
 구현된 로그인·token 기능:
 
 1. Google/Kakao OIDC login에서 provider `sub`로 user를 찾거나 만든다.
-   - Google scope는 `openid,profile`이며, 예상 밖 email claim이 와도 저장하지 않는다.
+   - Google scope는 `openid,profile,email`이며, 검증된 id_token의 `email` claim을 `users.email`에
+     저장한다. 목적은 서비스 운영 안내(처리방침 §1 가)로 제한되고 광고 발송에는 쓰지 않는다.
+     식별·계정 병합에는 쓰지 않으며, 신규 가입 시에만 채운다(기존 행 backfill 경로 없음).
    - Google 인가 요청에는 `prompt=select_account`를 보내 로그인할 계정 선택을 요청한다(#480).
      공용 resolver의 기존 PKCE(S256)를 유지하면서 Google에만 적용하며, Kakao에는 `prompt`를 추가하지 않는다.
    - Kakao scope는 `openid,profile_nickname`이다. 닉네임은 검증된 id_token의 `nickname` claim에서
