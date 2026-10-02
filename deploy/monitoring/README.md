@@ -1035,6 +1035,10 @@ ACM이 재시도한다. 갱신 후 blackbox의 새 만료 시각을 확인한다
 Overview에서 최소 traffic 조건과 status/URI를 확인한 뒤 Logs dashboard에서 같은 시간대를 좁힌다.
 원문·body 심층 분석은 Kibana로 이동한다. alert/Discord에는 원문을 복사하지 않는다.
 
+prod에서 두 WAS의 `/readyz`가 동시에 503이면 공통 의존성(DB·Redis)부터 확인한다. prod MySQL host의
+`/var/log/mysql/error.log`에 `Received SHUTDOWN`이 있으면 재시작이다. 그 원인은
+`/var/log/apt/history.log`와 [prod host 패치 절차](../../docs/operations/prod-host-patching.md)로 확인한다.
+
 `Application ERROR log detected`는 Elasticsearch에 최근 5분 동안 `service=laimory`,
 `environment=dev`, `level=ERROR` 문서가 하나라도 있으면 pending 없이 warning으로 발화한다.
 단일 사용자 요청 실패를 서비스 전체 장애와 동일시하지 않으므로 critical은 기존 target/probe/backend
