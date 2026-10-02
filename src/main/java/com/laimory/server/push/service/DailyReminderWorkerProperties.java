@@ -25,7 +25,7 @@ public class DailyReminderWorkerProperties {
             @Value("${app.push.daily-reminder.worker-enabled:true}") boolean workerEnabled,
             @Value("${app.push.daily-reminder.batch-size:250}") int batchSize,
             @Value("${app.push.daily-reminder.concurrency:1}") int concurrency,
-            @Value("${app.push.daily-reminder.max-batches-per-run:4}") int maxBatchesPerRun) {
+            @Value("${app.push.daily-reminder.max-batches-per-run:40}") int maxBatchesPerRun) {
         if (batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
             throw new IllegalStateException(
                     "app.push.daily-reminder.batch-size must be between 1 and " + MAX_BATCH_SIZE);
