@@ -104,7 +104,7 @@ flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제
      UPDATE다(#305 — 탈퇴와 겹친 stale 로그인이 status/released identity를 되살리지 못함, 영향 0행은
      갱신 폐기). Google 기존 사용자는 갱신 없이 반환한다.
    - 신규 사용자 생성은 `NewUserProvisioner`의 단일 transaction이 user insert와 subject mapping
-     insert(#282, `user_subject_links`), 푸시 기본 설정, 빈 User Memory 초기화(#536)를 함께 commit/rollback한다 — 실패 시 부분 user나 orphan
+     insert(#282, `user_subject_links`), 푸시 기본 설정, 빈 User Memory 초기화(#536), 기본 크레딧 60(#548)을 함께 commit/rollback한다 — 실패 시 부분 user나 orphan
      mapping이 남지 않는다. `UserService.findOrCreate`의 무트랜잭션 catch-재조회 동시 로그인
      수렴은 유지된다(UNIQUE 패자는 provisioner transaction 전체가 rollback된 뒤 승자 행으로 수렴).
 2. 앱이 verifier에서 만든 challenge로 login 시작 주체를 바인딩한다.

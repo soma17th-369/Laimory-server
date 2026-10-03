@@ -23,11 +23,21 @@ public final class SubjectMappingFixtures {
     }
 
     /**
-     * subject를 owner로 갖는 푸시 설정 행을 FK 순서대로 지운다(#314).
+     * 가입 transaction이 만드는 크레딧 행을 준비한다(#548) — 크레딧을 소비하는 경로(draft POST 사전 검사)를 타는
+     * 테스트가 {@link #ensureExists} 뒤에 호출한다. 이미 있으면 건너뛴다.
+     */
+    public static void ensureCredits(JdbcTemplate jdbcTemplate, UUID subjectId, int remaining) {
+        jdbcTemplate.update("INSERT IGNORE INTO subject_credits (subject_id, remaining, created_at, updated_at) "
+                + "VALUES (?, ?, NOW(6), NOW(6))", subjectId.toString(), remaining);
+    }
+
+    /**
+     * subject를 owner로 갖는 푸시 설정 행(#314)과 크레딧 행(#548)을 FK 순서대로 지운다.
      * {@code user_subject_links} 행을 지우는 정리 코드는 이 helper를 먼저 호출해야 한다 —
-     * 두 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
+     * 세 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
      */
     public static void deleteSubjectScopedPushRows(JdbcTemplate jdbcTemplate, UUID subjectId) {
+        jdbcTemplate.update("DELETE FROM subject_credits WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?",
                 subjectId.toString());
         jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());

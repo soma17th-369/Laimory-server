@@ -65,6 +65,9 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `push_registrations`
 - `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
+- `subject_credits` (#548 — subject당 1행 크레딧 잔액 `remaining`, `CHECK (remaining >= 0)`, subject FK
+  `RESTRICT`, DB default 없음(기본 60의 권위는 `CreditService` 상수). 행은 가입 transaction과 V6 backfill만
+  만들고, 쓰기는 AI 결과 저장 transaction의 조건부 차감 UPDATE와 탈퇴 삭제(#302)뿐이다. V6에서 추가)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 - `notices` (#517 — 관리자가 등록하는 공지 제목 + 게시 URL(`content_url`, 원문은 게시 page 소유 —
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
@@ -108,6 +111,14 @@ backfill은 일일 알림 행을 `enabled=TRUE`로 넣어야 한다** — #314 �
 아무것도 보내지 않는 상태가 되기 때문이다. worker 스캔도 없는 행을 발견하지 못하므로
 backfill이 <b>유일한</b> 복구 권위다. 탈퇴 subject의 `user_subject_links`는 물리 삭제(#302) 전까지 남아
 있어 backfill이 그 행까지 다시 만든다 — FID가 없어 발송은 없지만 #302 삭제 대상에 포함해야 한다.
+
+`subject_credits`(#548)도 같은 두 단계다 — ① V6 migration이 테이블 생성과 함께 당시 모든 subject에
+`remaining=60`을 `INSERT IGNORE`하고, ② 모든 가입 writer가 새 image로 교체된 뒤 같은 `INSERT IGNORE ... SELECT
+FROM user_subject_links`를 운영 SQL로 다시 실행해 공백 구간 가입자를 수렴시킨다. **②는 prod에서만 한다**
+(dev·test는 하지 않기로 한 결정 — dev/test 공유 DB에서 구버전 test 앱으로 가입한 회원은 행 없이 남아 조회·draft가
+500이다). 크레딧 조회·사전 검사는 행을 만들지 않고 행이 없으면 던진다. V6의 FK `RESTRICT`는 크레딧 삭제를
+모르는 구 image의 탈퇴 worker(rolling 중·rollback 중)의 mapping 삭제를 막는다 — job은 보존돼 다음 날
+재시도하고, 처리 창 마지막 날이면 기존 만료 경보로 드러난다(수용한 결정).
 
 #318(일일 리마인더 기본 ON 전환)은 스키마를 바꾸지 않지만 **기존 행 일괄 갱신**이 필요하다. #314
 rollout으로 이미 만들어진 행은 `enabled=false`라 코드 기본값만 바꿔서는 켜지지 않는다. `enabled`만
