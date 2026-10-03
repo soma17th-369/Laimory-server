@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
@@ -116,6 +117,8 @@ class TimelineAiTaskFlowIntegrationTest {
     @BeforeEach
     void setUpSubject() {
         ensureExists(jdbcTemplate, SUBJECT_ID);
+        // 가입 transaction이 만드는 크레딧 행 — draft POST 사전 검사가 행을 요구한다(#548).
+        SubjectMappingFixtures.ensureCredits(jdbcTemplate, SUBJECT_ID, 60);
     }
 
     @AfterEach
@@ -480,6 +483,60 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThatThrownBy(() -> pollingService.poll(VERSION, SUBJECT_ID, taskId))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1001));
+    }
+
+    @Test
+    void storedResultDeductsOneCredit() {
+        String taskId = createDraft(sources());
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
+
+        assertThat(remainingCredits()).isEqualTo(59);
+    }
+
+    @Test
+    void resultRetryAfterLostResponseDeductsCreditOnlyOnce() {
+        // 같은 result token 재시도는 MySQL transaction에 재진입하지 않는다 — 이중 차감 없음.
+        String taskId = createDraft(sources());
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
+
+        assertThat(remainingCredits()).isEqualTo(59);
+    }
+
+    @Test
+    void rejectedResultLeavesCreditsUntouched() {
+        // 결과 저장이 롤백되면 같은 transaction의 차감도 롤백된다 — 타임라인이 안 생긴 시도는 크레딧을 쓰지 않는다.
+        String taskId = createDraft(sources());
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+        AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.UNKNOWN, "아침", null, null, null, null,
+                OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
+
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), invalid))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(remainingCredits()).isEqualTo(60);
+    }
+
+    @Test
+    void draftWithZeroCreditsIsRejectedWithoutCreatingRecord() {
+        jdbcTemplate.update("UPDATE subject_credits SET remaining = 0 WHERE subject_id = ?", SUBJECT_ID.toString());
+
+        assertThatThrownBy(() -> createDraft(sources()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1021));
+
+        assertThat(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).isEmpty();
+        verify(dispatcher, never()).dispatch(any());
+    }
+
+    private int remainingCredits() {
+        return jdbcTemplate.queryForObject("SELECT remaining FROM subject_credits WHERE subject_id = ?",
+                Integer.class, SUBJECT_ID.toString());
     }
 
     private String createDraft(List<SourceItemDto> sources) {

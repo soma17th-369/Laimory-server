@@ -1,6 +1,7 @@
 package com.laimory.server.user.service;
 
 import com.laimory.server.auth.service.RefreshTokenService;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.inquiry.InquiryObjectKeys;
 import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
@@ -69,6 +70,7 @@ public class AccountErasureService {
     private final RefreshTokenService refreshTokenService;
     private final TermAgreementService termAgreementService;
     private final InquiryService inquiryService;
+    private final CreditService creditService;
 
     /**
      * 처리 대상이 맞는지 확인하고 subject를 해석한다. 탈퇴 회원은 일반 요청 경로를 다시 타지 않으므로
@@ -153,6 +155,7 @@ public class AccountErasureService {
         // 문의(#518)는 subject FK RESTRICT라 mapping 삭제 전에 0이어야 한다 — 첨부 행 → 문의 행(email PII) 순.
         inquiryService.deleteAllBySubjectId(subjectId);
         userMemoryService.delete(subjectId);
+        creditService.delete(subjectId);
         dailyNotificationPreferenceService.delete(subjectId);
         subjectPreferenceService.delete(subjectId);
         pushRegistrationService.deleteAll(subjectId);

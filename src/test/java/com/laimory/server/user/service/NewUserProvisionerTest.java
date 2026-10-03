@@ -6,8 +6,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.user.Provider;
@@ -45,6 +47,9 @@ class NewUserProvisionerTest {
     @Mock
     private UserMemoryService userMemoryService;
 
+    @Mock
+    private CreditService creditService;
+
     @InjectMocks
     private NewUserProvisioner newUserProvisioner;
 
@@ -73,6 +78,17 @@ class NewUserProvisionerTest {
         inOrder.verify(subjectPreferenceService).createDefaultIfAbsent(SUBJECT_ID);
         inOrder.verify(dailyNotificationPreferenceService)
                 .createDefaultIfAbsent(SUBJECT_ID);
+    }
+
+    @Test
+    void provisionGrantsDefaultCreditsToNewSubject() {
+        when(userRepository.saveAndFlush(any())).thenReturn(savedUser(42L));
+        when(subjectMappingService.createFor(42L)).thenReturn(SUBJECT_ID);
+
+        newUserProvisioner.provision(Provider.GOOGLE, "sub-123", "e@x.com", "nick");
+
+        // 크레딧 행은 방금 만든 subject로 같은 가입 흐름에서 생성된다(#548).
+        verify(creditService).createDefaultIfAbsent(SUBJECT_ID);
     }
 
     @Test
