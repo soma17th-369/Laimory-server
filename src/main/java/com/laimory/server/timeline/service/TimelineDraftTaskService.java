@@ -131,7 +131,7 @@ public class TimelineDraftTaskService {
         RecordDates.requireNotFutureRecordDate(recordDate, recordTimeZone, clock.instant());
 
         // 크레딧 잔액 0이면 403(-1021) — 아래 조회·enrich·staging·Redis·dispatch가 전부 부수효과라 그 앞에서 끊는다.
-        // 차감은 여기가 아니라 AI 결과 저장 transaction이 한다(실패·만료된 생성은 차감 없음 — #548).
+        // 차감은 여기가 아니라 AI 결과 저장 transaction이 한다(결과가 저장되지 않은 생성은 차감 없음 — #548).
         creditService.requireAvailable(subjectId);
 
         // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row·task owner는 전부

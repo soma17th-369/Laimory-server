@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
@@ -10,6 +11,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.ProcessStage;
@@ -40,6 +42,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -96,6 +99,8 @@ class TimelineAiTaskFlowIntegrationTest {
 
     @MockitoSpyBean
     private TimelineAiDispatcher dispatcher;
+    @MockitoSpyBean
+    private CreditService creditService;
 
     private static final String VERSION = "v1";
     private static final UUID SUBJECT_ID = id(7L);
@@ -508,18 +513,27 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
-    void rejectedResultLeavesCreditsUntouched() {
-        // 결과 저장이 롤백되면 같은 transaction의 차감도 롤백된다 — 타임라인이 안 생긴 시도는 크레딧을 쓰지 않는다.
+    void creditDeductionRollsBackWithGraphWhenResultTransactionFails() {
+        // 차감이 실제로 실행된 뒤 같은 transaction이 실패하게 만든다 — 차감이 별도 transaction으로 분리되면
+        // 59가 commit돼 남으므로, 이 테스트가 "graph와 차감은 함께 commit/rollback" 계약을 고정한다.
         String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
-        AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null, null, null, null,
-                OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
+        AtomicInteger remainingInsideTransaction = new AtomicInteger(-1);
+        doAnswer(invocation -> {
+            invocation.callRealMethod();
+            remainingInsideTransaction.set(remainingCredits());
+            throw new IllegalStateException("failure after credit deduction");
+        }).when(creditService).deductOne(SUBJECT_ID);
 
-        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), invalid))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input)))
+                .isInstanceOf(IllegalStateException.class);
 
+        assertThat(remainingInsideTransaction.get()).isEqualTo(59);
         assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(timelineEventRepository
+                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
+        assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
     }
 
     @Test

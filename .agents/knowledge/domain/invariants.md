@@ -110,8 +110,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   commit/rollback한다(#536·#548). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **크레딧 차감 시점은 AI 결과 저장 transaction 하나다**(#548) — graph INSERT·채택 source DELETE와 같은
   transaction에서 `remaining > 0` 조건부 UPDATE로 1 줄인다. 저장이 롤백되면 차감도 롤백되고, 같은 result
-  token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다. 실패·만료·dispatch 502처럼 결과가 저장되지
-  않은 생성은 차감되지 않으므로 환불 경로가 없다(POST 차감 + 실패 환불은 기각 — 실패 신호가 없는 경로가 있다).
+  token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다. 결과가 저장되지 않은 생성은 차감되지
+  않으므로 환불 경로가 없다(POST 차감 + 실패 환불은 기각 — 실패 신호가 없는 경로가 있다). 반대로 결과가
+  저장됐다면 draft 응답이 UNKNOWN 502였거나 callback 없이 task가 만료됐어도 차감은 유지된다 — 기준은 요청·task
+  상태가 아니라 결과 저장 commit이다.
   draft POST는 부수효과 전에 잔액 0만 거절할 뿐 예약하지 않는다 — 사전 검사를 함께 통과한 동시 생성은 차감
   시점에 0에서 멈추고 결과는 정상 저장된다(수용한 무료 생성). 크레딧 행 부재는 기본값으로 가리지 않고 던진다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가

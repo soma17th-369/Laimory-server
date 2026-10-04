@@ -17,8 +17,8 @@ import org.springframework.stereotype.Service;
  * <p>행을 만드는 것은 가입 transaction과 rollout backfill뿐이다. 행 부재는 깨진 불변식이라 조회·사전 검사는
  * 기본값으로 가리지 않고 던진다({@code SubjectPreferenceService} 선례).
  *
- * <p>차감은 소비한 결과를 저장하는 transaction 안에서 한다 — 실패·만료처럼 결과가 저장되지 않은 시도는
- * 차감되지 않으므로 환불 경로가 없다.
+ * <p>차감은 소비한 결과를 저장하는 transaction 안에서 한다 — 결과가 저장되지 않은 시도는 차감되지 않으므로
+ * 환불 경로가 없다. 반대로 결과가 저장됐다면 요청 응답(502 등)이나 작업 종결 여부와 무관하게 차감은 유지된다.
  */
 @Service
 @RequiredArgsConstructor
