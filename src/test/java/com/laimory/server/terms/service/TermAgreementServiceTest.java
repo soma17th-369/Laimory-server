@@ -208,15 +208,24 @@ class TermAgreementServiceTest {
     }
 
     @Test
-    void agreementRequired_mixedRevisions_requireAgreementWithinCurrentMajor() {
+    void agreementRequired_mixedRevisions_agreementOnlyBeforeCurrentMajor_requiresCurrentVersion() {
         // 1.0 → 1.1(경미) → 2.0(중대) → 2.1(경미): current 2.1
         TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "2.1");
         when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));
         when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
-                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.0"), summary(TermType.TERMS_OF_SERVICE, "1.1")))
-                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.1"), summary(TermType.TERMS_OF_SERVICE, "2.0")));
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.0"), summary(TermType.TERMS_OF_SERVICE, "1.1")));
 
         assertThat(service.findAgreementRequiredTerms(USER_ID)).containsExactly(current);
+    }
+
+    @Test
+    void agreementRequired_mixedRevisions_agreementWithinCurrentMajor_passes() {
+        // 1.0 → 1.1(경미) → 2.0(중대) → 2.1(경미): current 2.1
+        when(termDocumentService.findCurrentSummaries(anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "2.1")));
+        when(termAgreementRepository.findAgreedDocumentKeys(eq(USER_ID), anyCollection()))
+                .thenReturn(List.of(summary(TermType.TERMS_OF_SERVICE, "1.1"), summary(TermType.TERMS_OF_SERVICE, "2.0")));
+
         assertThat(service.findAgreementRequiredTerms(USER_ID)).isEmpty();
     }
 
@@ -231,7 +240,7 @@ class TermAgreementServiceTest {
     }
 
     @Test
-    void agreementRequired_majorComparedNumerically_notByPrefix() {
+    void agreementRequired_majorPrefixOverlap_isDifferentMajor() {
         // "1"이 "10"의 접두사여도 다른 major다.
         TermDocumentSummary current = summary(TermType.TERMS_OF_SERVICE, "10.0");
         when(termDocumentService.findCurrentSummaries(anyCollection())).thenReturn(List.of(current));

@@ -361,7 +361,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   URL로 게시한다. 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이므로, 호스팅을
   옮길 때는 **새 행을 만들지 않고 기존 행의 `content_url`만 새 주소로 갱신한다**(#418에서 서버 서빙 →
   랜딩 게시로 이전하며 6행을 그렇게 옮겼다). 조건은 두 가지다: 새 주소의 원문이 옛 주소가 주던 것과
-  동일할 것, 그리고 `(term_type, version)` key가 그대로일 것(key가 바뀌면 이력이 다른 문서를 가리키고, major가 바뀌면 전 회원이 재동의를 요구받는다).
+  동일할 것, 그리고 `(term_type, version)` key가 그대로일 것(key를 바꾸면 새 버전 등록이 되어 major가 바뀐 경우 전 회원이 재동의를 요구받는다).
   옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
   서버가 하지 못하므로 게시 절차가 소유한다.
 - version은 최대 64자의 canonical `major.minor` 문자열이고 DB CHECK와 키 생성·동의 등록 입력 경계가

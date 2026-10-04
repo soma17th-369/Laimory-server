@@ -101,18 +101,6 @@ public class TermAgreementService {
     }
 
     /**
-     * 종류별 major 버전 — canonical 형식(앞자리 0 금지)은 DB CHECK와 입력 경계가 보장하므로 {@code .}
-     * 앞 문자열의 동등이 숫자 동등과 같다.
-     */
-    private record TermMajor(TermType termType, String major) {
-
-        static TermMajor of(TermDocumentSummary document) {
-            String version = document.version();
-            return new TermMajor(document.termType(), version.substring(0, version.indexOf('.')));
-        }
-    }
-
-    /**
      * 계정 삭제(#302)의 owner 동의 이력 전량 제거 — 완전 소거 확정(계획 §3.2)이라 탈퇴 회원의 증적은
      * 보존하지 않는다. 미존재는 0행(멱등)이며 호출자 transaction에 합류한다.
      */
@@ -147,5 +135,17 @@ public class TermAgreementService {
             throw new BusinessException(ExceptionType.STALE_TERM_VERSION);
         }
         return current;
+    }
+
+    /**
+     * 종류별 major 버전 — canonical 형식(앞자리 0 금지)은 DB CHECK와 입력 경계가 보장하므로 {@code .}
+     * 앞 문자열의 동등이 숫자 동등과 같다.
+     */
+    private record TermMajor(TermType termType, String major) {
+
+        static TermMajor of(TermDocumentSummary document) {
+            String version = document.version();
+            return new TermMajor(document.termType(), version.substring(0, version.indexOf('.')));
+        }
     }
 }
