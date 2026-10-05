@@ -255,7 +255,7 @@ class TermPersistenceIntegrationTest {
     }
 
     @Test
-    void agreementRequired_revisionCycle_tracksCurrentCompositeKey() {
+    void agreementRequired_revisionCycle_requiresAgreementOnlyForMajorRevision() {
         Long userId = newUserId();
         TermType type = TermType.CROSS_BORDER_TRANSFER_CONSENT;
         String major = nextMajor();
@@ -264,14 +264,18 @@ class TermPersistenceIntegrationTest {
         insertIfAbsent(userId, v1, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
 
-        TermDocument v11 = saveDocument(type, major + ".1");
+        // minor 개정은 같은 major의 기존 동의로 통과한다(#453).
+        saveDocument(type, major + ".1");
+        assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
+
+        TermDocument v2 = saveDocument(type, nextMajor() + ".0");
         TermDocumentSummary required = termAgreementService.findAgreementRequiredTerms(userId).stream()
                 .filter(document -> document.termType() == type)
                 .findFirst()
                 .orElseThrow();
-        assertThat(required.version()).isEqualTo(v11.getVersion());
+        assertThat(required.version()).isEqualTo(v2.getVersion());
 
-        insertIfAbsent(userId, v11, now, now);
+        insertIfAbsent(userId, v2, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
     }
 

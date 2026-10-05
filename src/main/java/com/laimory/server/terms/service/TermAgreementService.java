@@ -74,7 +74,9 @@ public class TermAgreementService {
     }
 
     /**
-     * 지금 이 순간 현재 버전 동의가 없는 동의 대상 약관(#434) — 앱 초기화가 재동의 안내에 쓴다.
+     * 지금 이 순간 현재 버전과 같은 major의 동의가 없는 동의 대상 약관(#434·#453) — 앱 초기화가 재동의
+     * 안내에 쓴다. major 상향은 재동의가 필요한 개정, minor 상향은 재동의가 필요 없는 경미한 개정이다:
+     * {@code 1.0}에 동의했으면 current {@code 1.2}는 통과하고 {@code 2.0}은 목록에 실린다.
      * 최초 동의와 재동의를 구분하지 않는다(가입 시 전부 동의가 전제라, 동의가 아예 없는 문서도 같은
      * 목록에 포함된다). current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open — 목록에
      * 들어갈 수 없으니 seed 누락이 안내를 만들지도 앱 시작을 막지도 않고, 준비된 종류의 판정은 유지된다).
@@ -86,10 +88,13 @@ public class TermAgreementService {
         if (currentDocuments.isEmpty()) {
             return List.of();
         }
-        Set<TermDocumentSummary> agreedDocumentKeys = Set.copyOf(termAgreementRepository.findAgreedDocumentKeys(
-                userId, currentDocuments.stream().map(TermDocumentSummary::termType).collect(Collectors.toSet())));
+        Set<TermMajor> agreedMajors = termAgreementRepository.findAgreedDocumentKeys(
+                        userId, currentDocuments.stream().map(TermDocumentSummary::termType).collect(Collectors.toSet()))
+                .stream()
+                .map(TermMajor::of)
+                .collect(Collectors.toSet());
         return currentDocuments.stream()
-                .filter(document -> !agreedDocumentKeys.contains(document))
+                .filter(document -> !agreedMajors.contains(TermMajor.of(document)))
                 // IN 조회 결과 순서는 보장되지 않는다 — 응답 순서를 enum 선언 순으로 고정한다.
                 .sorted(Comparator.comparing(TermDocumentSummary::termType))
                 .toList();
@@ -130,5 +135,17 @@ public class TermAgreementService {
             throw new BusinessException(ExceptionType.STALE_TERM_VERSION);
         }
         return current;
+    }
+
+    /**
+     * 종류별 major 버전 — canonical 형식(앞자리 0 금지)은 DB CHECK와 입력 경계가 보장하므로 {@code .}
+     * 앞 문자열의 동등이 숫자 동등과 같다.
+     */
+    private record TermMajor(TermType termType, String major) {
+
+        static TermMajor of(TermDocumentSummary document) {
+            String version = document.version();
+            return new TermMajor(document.termType(), version.substring(0, version.indexOf('.')));
+        }
     }
 }

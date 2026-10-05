@@ -399,8 +399,9 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
 (`modified_by` NULL), 재전송·동시 동일 batch가 PK 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
 않는다. `accepted_at`은 서버가 batch당 한 번 캡처한 KST 벽시계다. entity는 조회·validate용 read model이다.
-동의 필요 판정은 current `(term_type, version)` 집합에서 회원의 agreed key 집합을 Java record set으로
-차감하며 JPQL tuple-list IN에 의존하지 않는다.
+동의 필요 판정은 회원의 agreed key를 `(term_type, major)` 집합으로 바꿔 current의 `(term_type, major)`가
+없는 종류만 남긴다(#453 — minor 개정은 재동의 불필요). JPQL tuple-list IN에 의존하지 않고 쿼리는 current
+후보 1 + agreed key 1을 유지한다.
 
 ### Redis
 

@@ -9,7 +9,8 @@ import java.util.List;
  */
 @Schema(description = "앱 초기화 약관 상태")
 public record InitializerTermsResponse(
-        @Schema(description = "지금 동의가 필요한 약관 목록 — 현재 버전 동의가 없는 동의 대상 약관. "
+        @Schema(description = "지금 동의가 필요한 약관 목록 — 현재 버전과 같은 major의 동의가 없는 동의 대상 약관"
+                + "(minor 개정은 재동의를 요구하지 않는다). "
                 + "빈 배열이면 동의 절차 없이 진행한다.",
                 requiredMode = Schema.RequiredMode.REQUIRED)
         List<AgreementRequiredTermResponse> agreementRequired
