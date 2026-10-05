@@ -285,3 +285,23 @@ if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inqui
 fi
 flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 validate >"$WORK/inquiry-title-validate.log" 2>&1
 ok 'V4 to V5 renames inquiry body to description, backfills title, requires it afterwards and drops attachment position'
+
+# V5→V6(#548): subject_credits 추가 + 기존 subject 전원 60 backfill. 감사 컬럼이 KST 벽시계(UTC+9)인지,
+# 음수 CHECK와 subject FK RESTRICT가 실제로 걸리는지 확인한다.
+mysql -e 'CREATE DATABASE flyway_credit_upgrade;'
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=5 migrate >"$WORK/credit-v5.log" 2>&1
+mysql flyway_credit_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1), (UNHEX(REPEAT('cd', 32)), '00000000-0000-4000-8000-000000000002', 1)"
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=6 migrate >"$WORK/credit-v6.log" 2>&1
+[ "$(mysql flyway_credit_upgrade -e "SELECT COUNT(*) FROM subject_credits WHERE remaining = 60")" = 2 ] || fail 'V6 did not grant 60 credits to every existing subject'
+[ "$(mysql flyway_credit_upgrade -e "SELECT COUNT(*) FROM subject_credits WHERE TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(6), created_at) BETWEEN 535 AND 545 AND updated_at = created_at")" = 2 ] || fail 'V6 backfill audit time is not the KST wall clock'
+if mysql flyway_credit_upgrade -e "UPDATE subject_credits SET remaining = -1" >/dev/null 2>&1; then
+  fail 'subject_credits.remaining CHECK is not enforced'
+fi
+if mysql flyway_credit_upgrade -e "INSERT INTO subject_credits (subject_id, remaining, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000009', 60, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'subject_credits.subject_id FK is not enforced'
+fi
+if mysql flyway_credit_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='00000000-0000-4000-8000-000000000001'" >/dev/null 2>&1; then
+  fail 'subject mapping delete succeeded while a credit row still references it'
+fi
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=6 validate >"$WORK/credit-validate.log" 2>&1
+ok 'V5 to V6 adds subject_credits with 60 credits per existing subject, KST audit time, non-negative CHECK and subject FK'

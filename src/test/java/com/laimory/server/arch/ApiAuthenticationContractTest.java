@@ -2,6 +2,7 @@ package com.laimory.server.arch;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.laimory.server.credit.controller.CreditApi;
 import com.laimory.server.initializer.controller.AppInitializerApi;
 import com.laimory.server.inquiry.controller.InquiryApi;
 import com.laimory.server.notice.controller.PublicNoticeApi;
@@ -65,7 +66,8 @@ class ApiAuthenticationContractTest {
             TermAgreementApi.class, PrincipalKind.ACCOUNT_USER_ID,
             AppInitializerApi.class, PrincipalKind.CONTENT_SUBJECT_WITH_ACCOUNT_USER_ID,
             OnboardingApi.class, PrincipalKind.CONTENT_SUBJECT,
-            InquiryApi.class, PrincipalKind.CONTENT_SUBJECT);
+            InquiryApi.class, PrincipalKind.CONTENT_SUBJECT,
+            CreditApi.class, PrincipalKind.CONTENT_SUBJECT);
 
     static Stream<Method> protectedOperations() {
         return EXPECTED_PRINCIPALS.keySet().stream()
@@ -152,14 +154,15 @@ class ApiAuthenticationContractTest {
     }
 
     @Test
-    void protectedOperationCount_isThirtyThree() {
+    void protectedOperationCount_isThirtyFour() {
         // timeline 18개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
         // Event Item 연결 해제·월별 GET 포함)
         // + push-registrations PUT/DELETE 2개 + push-settings GET/PUT/PUT 3개
         // + user GET/DELETE 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개
         // + initializer GET 1개 + onboarding complete POST 1개(#382)
-        // + inquiries attachment-uploads POST·접수 POST 2개(#518) + 내 문의 목록·상세 GET 2개(#529).
-        assertThat(protectedOperations().count()).isEqualTo(33);
+        // + inquiries attachment-uploads POST·접수 POST 2개(#518) + 내 문의 목록·상세 GET 2개(#529)
+        // + credit GET 1개(#548).
+        assertThat(protectedOperations().count()).isEqualTo(34);
     }
 
     @Test

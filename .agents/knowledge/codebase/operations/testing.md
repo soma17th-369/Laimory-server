@@ -40,7 +40,8 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   검증하고, V2→V3(#517)는 `app_config` 행 보존과 `notices` 컬럼·`hidden` 기본값 false를, V3→V4(#518)는
   `notices` 행 보존과 `inquiries`·`inquiry_attachments` 컬럼 및 subject·첨부 FK가 실제로 삭제를 거절하는지를,
   V4→V5(#530)는 `body` 원문의 `description` 보존·`title` backfill·이후 title 누락 INSERT 거절과
-  첨부 `position` 제거 후 문의당 여러 첨부 허용·첨부 FK 유지를
+  첨부 `position` 제거 후 문의당 여러 첨부 허용·첨부 FK 유지를, V5→V6(#548)는 기존 subject 전원의
+  `subject_credits` 60 backfill·감사 컬럼 KST 벽시계·음수 CHECK·subject FK가 삽입과 mapping 삭제를 거절하는지를
   검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.

@@ -38,9 +38,9 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 33개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 34개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
-inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET)는
+inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET + credit GET)는
 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -246,6 +246,12 @@ operation 모두 bearer 인증과 `ACTIVE` 회원 검사를 요구한다. 설정
 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다(응답에 다른 상태를 미리 넣거나 provider 병렬
 aggregation framework를 만들지 않는다).
 
+`GET /a/api/{version}/credit`(#548)은 인증 subject의 남은 크레딧을 `{"remainingCredits": n}`로 반환하는
+순수 조회다(평면 필드 하나 — 총량 필드 없음). 행 생성은 가입 transaction과 rollout backfill이 소유하고, 행이
+없으면 push 설정과 같은 정책으로 기본값 추정 없이 500이다. 크레딧을 소비하는 작업은 잔액 0이면
+403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 AI 결과
+저장 시점이라 draft POST가 성공해도 잔액은 결과가 저장될 때 줄어든다.
+
 `POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
 인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
 `onboarding_completed`만 false로 바꾼다. 반복 호출도 200이며 다른 사용자·알림 설정은 유지한다.
@@ -411,7 +417,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
   `ExceptionType.fromStatus` 폴백으로 정한다(406이 `-400`과 함께 나갈 수 있음).
 - 새 code block을 할당할 때 기존 번호 블록을 보존한다. domain block 숫자는 HTTP status와 무관하며
-  status는 enum field가 결정한다. `1006`, `1010`, `1012`, `1016` 번호는 재사용하지 않는다.
+  status는 enum field가 결정한다. `1006`, `1010`, `1012`, `1016`, `1019` 번호는 재사용하지 않는다(`1019`는 #501에서 제거된 삭제 job 409).
 - 새 error는 `ExceptionType`에 code/status/logLevel을 추가하고 기본·ko·en message bundle을 함께 추가한다.
   같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.

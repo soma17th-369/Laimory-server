@@ -187,6 +187,12 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 처리됨 | Answered | 현재 구현 | 관리자가 이메일 답장을 보낸 뒤 표시하는 `answered_at`(KST 벽시계, null=미처리)이다. 답장 발송 여부의 유일한 기록이며 서버는 이메일을 보내지 않는다. 해제할 수 있다. 앱에는 문의 상태 `ANSWERED`(해제 시 `RECEIVED`)로 그대로 보인다(#529). |
 | 문의 상태 | Inquiry Status | 현재 구현 | 앱에 보이는 문의 처리 상태 `InquiryStatus`(#529)다. 저장 컬럼이 아니라 `answered_at`에서 서버가 파생한다 — `RECEIVED`(접수됨, 미처리)·`ANSWERED`(답변 완료, 입력 이메일 확인). 처리됨 해제 시 `RECEIVED`로 되돌아가며 클라이언트가 `answeredAt`으로 따로 판정하지 않는다. |
 
+## 크레딧
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 60을 한 번 지급하고 충전 경로는 없다(평생 60). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — AI 결과 저장 1회마다 같은 transaction에서 1 차감하고, 잔액 0이면 draft 생성이 403 `-1021`로 거절된다. 사용 내역(원장)은 저장하지 않는다. |
+
 ## 푸시 알림
 
 | 한글명 | 영문명 | 상태 | 설명 |

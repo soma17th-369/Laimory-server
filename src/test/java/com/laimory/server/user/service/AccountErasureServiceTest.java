@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.auth.service.RefreshTokenService;
 import com.laimory.server.inquiry.InquiryObjectKeys;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.push.service.DailyNotificationPreferenceService;
 import com.laimory.server.push.service.PushRegistrationService;
@@ -78,6 +79,8 @@ class AccountErasureServiceTest {
     private TermAgreementService termAgreementService;
     @Mock
     private InquiryService inquiryService;
+    @Mock
+    private CreditService creditService;
 
     @InjectMocks
     private AccountErasureService accountErasureService;
@@ -236,6 +239,14 @@ class AccountErasureServiceTest {
 
         assertThatThrownBy(() -> accountErasureService.deleteStoredObjects(SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void ownerRowDeletionRemovesCreditRowBeforeMappingDeletion() {
+        // subject_credits FK가 RESTRICT라 남아 있으면 finalization의 mapping 삭제가 거절된다(#548).
+        accountErasureService.deleteOwnerRows(USER_ID, SUBJECT_ID);
+
+        verify(creditService).delete(SUBJECT_ID);
     }
 
     @Test

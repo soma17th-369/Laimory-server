@@ -84,6 +84,7 @@ class InquiryPersistenceIntegrationTest {
     private void erase(Long userId, UUID subjectId) {
         inquiryService.deleteAllBySubjectId(subjectId);
         jdbcTemplate.update("DELETE FROM user_memories WHERE subject_id = ?", subjectId.toString());
+        jdbcTemplate.update("DELETE FROM subject_credits WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM subject_preferences WHERE subject_id = ?", subjectId.toString());
         userRepository.deleteById(userId);
