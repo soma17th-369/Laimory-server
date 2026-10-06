@@ -91,10 +91,23 @@ class CreditServiceTest {
     }
 
     @Test
-    void requireAvailablePassesWhenOneCreditRemains() {
-        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(1)));
+    void requireAvailableRejectsWhenRemainingIsOneBelowCost() {
+        // 경계를 비용 기준으로 둔다 — 비용 상수를 바꾸는 배포에도 "잔액이 비용보다 적으면 거절"이 같은 의미로 검증된다.
+        int cost = CreditCost.TIMELINE_CREATION.amount();
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost - 1)));
 
-        assertThatCode(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
+    }
+
+    @Test
+    void requireAvailablePassesWhenRemainingEqualsCost() {
+        int cost = CreditCost.TIMELINE_CREATION.amount();
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost)));
+
+        assertThatCode(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+                .doesNotThrowAnyException();
     }
 
     @Test
