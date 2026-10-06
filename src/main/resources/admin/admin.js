@@ -101,7 +101,7 @@ async function loadNotices() {
       link.textContent = "원문 ↗"; link.target = "_blank"; link.rel = "noopener noreferrer"; urlCell.append(link);
     } catch { urlCell.textContent = notice.contentUrl; }
     row.append(urlCell);
-    for (const value of [noticeState(notice), (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
+    for (const value of [noticeState(notice), notice.popup ? "지정" : "-", (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }
     const actions = document.createElement("td");
@@ -110,7 +110,10 @@ async function loadNotices() {
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "secondary";
     toggle.textContent = notice.hidden ? "다시 노출" : "숨기기";
     toggle.addEventListener("click", () => changeNoticeVisibility(notice));
-    actions.append(edit, " ", toggle); row.append(actions); $("notices").append(row);
+    const popup = document.createElement("button"); popup.type = "button"; popup.className = "secondary";
+    popup.textContent = notice.popup ? "팝업 해제" : "팝업 지정";
+    popup.addEventListener("click", () => changeNoticePopup(notice));
+    actions.append(edit, " ", toggle, " ", popup); row.append(actions); $("notices").append(row);
   }
 }
 
@@ -132,6 +135,20 @@ async function changeNoticeVisibility(notice) {
       hidden ? "숨기면 앱 공지 목록에서 즉시 사라집니다. 다시 노출할 수 있습니다." : "다시 노출하면 앱 목록에 즉시 나타납니다.")) return;
     await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/visibility`, writeOptions("PUT", JSON.stringify({hidden})));
     status(`#${notice.noticeId} ${noticeState({hidden})} 처리 완료`);
+    await loadNotices();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
+  finally { $("notice-fields").disabled = false; }
+}
+
+async function changeNoticePopup(notice) {
+  $("notice-fields").disabled = true;
+  try {
+    const popup = !notice.popup;
+    if (!await confirmChange(`#${notice.noticeId} ${notice.title}\n팝업 ${notice.popup ? "지정" : "미지정"} → ${popup ? "지정" : "미지정"}`,
+      popup ? (notice.hidden ? "숨김 상태라 다시 노출하기 전까지 앱 팝업에 뜨지 않습니다." : "다음 앱 실행부터 시작 팝업으로 뜹니다. 다른 팝업 공지는 그대로 유지됩니다.")
+        : "다음 앱 실행부터 시작 팝업에서 빠집니다.")) return;
+    await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/popup`, writeOptions("PUT", JSON.stringify({popup})));
+    status(`#${notice.noticeId} 팝업 ${popup ? "지정" : "해제"} 완료`);
     await loadNotices();
   } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
   finally { $("notice-fields").disabled = false; }

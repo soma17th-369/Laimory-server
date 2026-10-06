@@ -71,7 +71,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 - `notices` (#517 — 관리자가 등록하는 공지 제목 + 게시 URL(`content_url`, 원문은 게시 page 소유 —
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
-  공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가)
+  공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가. V7(#553)에서 앱 시작 팝업 지정 `popup`
+  (기본 false)을 추가했다 — 여러 행이 동시에 true일 수 있고 `hidden`과 독립이라 숨겨도 지정은 남는다)
 - `inquiries → inquiry_attachments` (#518 — 앱 인증 접수 문의. owner는 콘텐츠 subject(FK `RESTRICT`)이고
   답장 `email`·`title`(최대 100자)·`description`·관리자 `answered_at`을 담는다. 첨부는 filename만
   plain FK 자식 행으로 저장하고 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 파생한다. 답변은

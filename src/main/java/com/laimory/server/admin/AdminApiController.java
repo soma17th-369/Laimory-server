@@ -106,6 +106,13 @@ public class AdminApiController {
         return ApiResponse.success(null);
     }
 
+    /** 앱 시작 팝업 지정(true)·해제(false) — 이 공지만 바꾸며 여러 건을 동시에 지정할 수 있다(#553). */
+    @PutMapping(value = "/notices/{noticeId}/popup", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> changeNoticePopup(@PathVariable long noticeId, @Valid @RequestBody PopupRequest request) {
+        notices.changePopup(noticeId, request.popup());
+        return ApiResponse.success(null);
+    }
+
     /** 전체 문의, 최신 순. 제목·내용·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
     @GetMapping("/inquiries")
     ApiResponse<List<AdminInquiryResponse>> inquiries() {
@@ -153,6 +160,8 @@ public class AdminApiController {
                          @NotBlank @Size(max = Notice.CONTENT_URL_MAX_LENGTH) String contentUrl) { }
 
     record VisibilityRequest(@NotNull Boolean hidden) { }
+
+    record PopupRequest(@NotNull Boolean popup) { }
 
     record AnsweredRequest(@NotNull Boolean answered) { }
 }

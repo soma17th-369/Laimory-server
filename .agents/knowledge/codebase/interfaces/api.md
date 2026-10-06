@@ -229,8 +229,13 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 도입해야 한다.
 
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
-조회·기록 계약이다. GET은 최상위 `onboardingCompleted`와 약관 그룹 `terms.agreementRequired`(#434)를
-반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
+조회·기록 계약이다. GET은 최상위 `onboardingCompleted`, 약관 그룹 `terms.agreementRequired`(#434),
+최상위 `popupNoticeIds`(#553)를 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다.
+`popupNoticeIds`는 관리자가 팝업으로 지정했고 숨김이 아닌 공지 id의 최신 순(`noticeId DESC`) 배열이며
+없으면 `[]`다(사용자와 무관한 전역 값). **id만 싣는다** — 응답 field는 늘릴 수는 있어도 줄일 수 없으므로
+앱 시작마다 호출되는 이 응답이 공지 도메인 성장을 따라 커지지 않게, 제목·URL은 공지 단건 조회가 소유한다.
+앱은 id마다 단건 조회를 호출하고 404면 그 팝업만 건너뛴다(id를 받은 직후 숨겨진 공지 포함).
+이미 본 팝업의 재노출 방지는 앱이 id로 로컬 기억하며 서버는 관여하지 않는다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
 (`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
 지금 현재 버전과 같은 major의 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
@@ -288,11 +293,16 @@ code는 추가하지 않았다.**
 (`noticeId DESC`)으로 `notices[]`에 담고 각 원소는 `noticeId`·`title`·`contentUrl`·`publishedAt`이다 —
 페이지네이션은 없고, 공지가 없으면 404가 아니라 200과 `notices=[]`다. 원문은 응답에 없다(약관과 같은
 구조) — `contentUrl`은 게시된 공지 page의 절대 HTTPS URL이고 클라이언트가 WebView로 연다(이미지·서식은
-page가 소유하며 Server에는 공지 원문 route가 없다). 목록이 URL을 직접 실으므로 **상세 조회 endpoint는
-없다**. `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
-등록·수정·숨김은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
-`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출)가 소유하며, 숨김이 삭제 역할이라
-hard delete 경로는 없다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
+page가 소유하며 Server에는 공지 원문 route가 없다). `GET /api/{version}/notices/{noticeId}`(#553)는 같은
+public 단건 조회로 목록 원소와 같은 `NoticeResponse`를 반환하고, 숨김이거나 없는 공지는 404(`-404`),
+숫자가 아닌 id는 400이다 — 앱 시작 팝업이 이니셜라이저의 `popupNoticeIds`로 제목·URL을 받는 경로다.
+목록 원소와 단건 응답은 아직 같은 타입이므로 단건에만 field를 더하려면 먼저 타입을 분리해야 한다(분리 전에
+더한 field는 목록에도 남는다). `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
+등록·수정·숨김·팝업 지정은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
+`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출·`PUT /{id}/popup` 팝업 지정/해제)가
+소유하며, 숨김이 삭제 역할이라 hard delete 경로는 없다. 팝업 지정은 공지별 토글이라 여러 건을 동시에
+지정할 수 있고, 숨김과 독립이다 — 숨긴 팝업 공지는 지정이 남은 채 `popupNoticeIds`와 단건 조회에서 빠지고
+다시 노출하면 팝업으로 복귀한다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
 HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
 
 `POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증

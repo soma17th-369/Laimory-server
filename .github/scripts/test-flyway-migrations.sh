@@ -305,3 +305,14 @@ if mysql flyway_credit_upgrade -e "DELETE FROM user_subject_links WHERE subject_
 fi
 flyway flyway_credit_upgrade "$MIGRATIONS" -target=6 validate >"$WORK/credit-validate.log" 2>&1
 ok 'V5 to V6 adds subject_credits with 60 credits per existing subject, KST audit time, non-negative CHECK and subject FK'
+
+# V6→V7(#553): notices.popup 추가. 기존 공지 행·노출 상태 보존과 popup 기본값 false를 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_popup_upgrade;'
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=6 migrate >"$WORK/notice-popup-v6.log" 2>&1
+mysql flyway_notice_popup_upgrade -e "INSERT INTO notices (title, content_url, hidden, created_at, updated_at) VALUES ('kept', 'https://example.com/n', TRUE, NOW(6), NOW(6))"
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=7 migrate >"$WORK/notice-popup-v7.log" 2>&1
+[ "$(mysql flyway_notice_popup_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='kept' AND hidden = TRUE AND popup = FALSE")" = 1 ] || fail 'V7 did not keep existing notice with popup defaulting to false'
+mysql flyway_notice_popup_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('probe', 'https://example.com/n', NOW(6), NOW(6))"
+[ "$(mysql flyway_notice_popup_upgrade -e "SELECT popup FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.popup default is not false for inserts without the column'
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=7 validate >"$WORK/notice-popup-validate.log" 2>&1
+ok 'V6 to V7 adds notices.popup defaulting to false and preserves existing notices'

@@ -173,8 +173,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록 조회만 하고(목록이 URL을 직접 실어 상세 조회가 없다) 등록·수정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. |
+| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록·단건 조회만 하고(단건은 앱 시작 팝업용, #553) 등록·수정·숨김·팝업 지정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. |
 | 노출 상태 | Hidden | 현재 구현 | `hidden` boolean 하나가 노출을 제어한다. 등록 즉시 노출(false)이고 예약 게시·고정(핀)은 없다. 숨김(true)이 삭제 역할이라 hard delete 경로가 없으며 다시 노출할 수 있다. 공개 API는 숨김 행을 없는 것과 같이 다룬다(목록 제외, 상세 404). |
+| 팝업 공지 | Popup Notice | 현재 구현 | 앱 시작 시 팝업으로 띄울 공지다(`notices.popup`, #553). 관리자가 공지별로 지정·해제하며 여러 건이 동시에 지정될 수 있다. 숨김과 독립이라 숨긴 팝업 공지는 지정이 남은 채 팝업에서 빠지고 다시 노출하면 복귀한다. 이니셜라이저는 id만(`popupNoticeIds`) 주고 내용은 공지 단건 조회가 준다. 이미 본 팝업의 재노출 방지는 앱이 id로 기억하며, 같은 id는 내용이 바뀌어도 같은 팝업이다. |
 | 게시 시각 | Published At | 현재 구현 | 공개 응답의 `publishedAt`이며 값은 행의 `created_at`(Asia/Seoul 벽시계)이다. 별도 게시 시각 컬럼을 두지 않는다. |
 
 ## 문의사항
@@ -203,7 +204,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치나 앱 시작 경로가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터와 온보딩 완료 여부다. |
 | 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |
-| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 담긴 값은 온보딩 완료 여부(최상위 평면, 저장값 그대로)와 동의 필요 약관 목록(`terms.agreementRequired`, #434 — 현재 문서와 동의 이력의 조회 판정)이며 조회가 값을 바꾸지 않는다. 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다. "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
+| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 담긴 값은 온보딩 완료 여부(최상위 평면, 저장값 그대로)와 동의 필요 약관 목록(`terms.agreementRequired`, #434 — 현재 문서와 동의 이력의 조회 판정), 팝업 공지 id 목록(`popupNoticeIds`, #553 — 최상위 평면, id만)이며 조회가 값을 바꾸지 않는다. 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다. "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
 | 온보딩 완료 상태 | Onboarding Completed | 현재 구현 | 사용자가 앱 온보딩을 마쳤는지의 단일 권위(`subject_preferences.onboarding_completed`, 기본 false)다. 약관 동의 이력·기록 존재 여부로 계산하거나 동기화하지 않으며 약관 개정도 이 값을 되돌리지 않는다. 논리 탈퇴는 값을 보존하고, 재가입은 새 subject의 기본값을 쓴다. |
 | 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공한다. 일반 앱 API에는 되돌리는 짝이 없으며, 임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 해당 subject의 값을 false로 되돌린다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |

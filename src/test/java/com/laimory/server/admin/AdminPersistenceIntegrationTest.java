@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.ServerApplication;
 import com.laimory.server.appconfig.AppConfigRepository;
+import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocumentId;
@@ -127,6 +128,42 @@ class AdminPersistenceIntegrationTest {
             JsonNode afterHiding = mapper.readTree(request("GET", "/api/v1/notices", null).body()).path("body").path("notices");
             assertThat(afterHiding.findValues("noticeId")).extracting(JsonNode::asLong).doesNotContain(noticeId);
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().isHidden()).isTrue();
+        } finally {
+            if (noticeId != null) notices.deleteById(noticeId);
+        }
+    }
+
+    @Test
+    void popupNoticeIsSelectedUntilHiddenAndSingleLookupFollowsVisibility() throws Exception {
+        Long noticeId = null;
+        try {
+            assertThat(request("POST", "/admin/api/notices", mapper.writeValueAsString(Map.of(
+                    "title", "admin popup notice", "contentUrl", "https://example.com/admin-popup-fixture"))).statusCode())
+                    .isEqualTo(201);
+            noticeId = mapper.readTree(request("GET", "/admin/api/notices", null).body()).path("body").get(0)
+                    .path("noticeId").asLong();
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().isPopup()).isFalse();
+
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/popup", "{\"popup\":true}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .contains(noticeId);
+            JsonNode single = mapper.readTree(request("GET", "/api/v1/notices/" + noticeId, null).body()).path("body");
+            assertThat(single.path("title").asText()).isEqualTo("admin popup notice");
+            assertThat(single.path("contentUrl").asText()).isEqualTo("https://example.com/admin-popup-fixture");
+
+            // 숨기면 지정은 남은 채 팝업·단건 조회에서 빠지고, 다시 노출하면 팝업으로 복귀한다.
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":true}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().isPopup()).isTrue();
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .doesNotContain(noticeId);
+            assertThat(request("GET", "/api/v1/notices/" + noticeId, null).statusCode()).isEqualTo(404);
+
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":false}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .contains(noticeId);
         } finally {
             if (noticeId != null) notices.deleteById(noticeId);
         }

@@ -231,6 +231,37 @@ class AdminHttpTest {
     }
 
     @Test
+    void noticePopupEndpointTogglesOnlyThatNoticeAndMapsValidationAndNotFound() throws Exception {
+        Notice target = Notice.of("팝업 대상", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(target, "noticeId", 5L);
+        Notice other = Notice.of("기존 팝업", "https://example.com/notices/4");
+        ReflectionTestUtils.setField(other, "noticeId", 4L);
+        other.changePopup(true);
+        when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(target, other));
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(target));
+        when(notices.findByNoticeId(404L)).thenReturn(Optional.empty());
+
+        HttpResponse<String> list = request("GET", "/admin/api/notices", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"noticeId\":5,").contains("\"popup\":false").contains("\"popup\":true");
+
+        assertThat(request("PUT", "/admin/api/notices/5/popup", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(target.isPopup()).isFalse();
+        HttpResponse<String> designated = request("PUT", "/admin/api/notices/5/popup", "{\"popup\":true}", origin(), true);
+        assertThat(designated.statusCode()).isEqualTo(200);
+        assertThat(writeBody(designated).isNull()).isTrue();
+        // 여러 건 지정 가능 — 다른 공지의 기존 지정은 그대로다.
+        assertThat(target.isPopup()).isTrue();
+        assertThat(other.isPopup()).isTrue();
+        assertThat(request("PUT", "/admin/api/notices/5/popup", "{\"popup\":false}", origin(), true).statusCode())
+                .isEqualTo(200);
+        assertThat(target.isPopup()).isFalse();
+        HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/popup", "{\"popup\":true}", origin(), true);
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("-404");
+    }
+
+    @Test
     void inquiryEndpointsListDetailWithCdnViewUrlsAndToggleAnswered() throws Exception {
         Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
                 "사진 올리면 멈춰요");
