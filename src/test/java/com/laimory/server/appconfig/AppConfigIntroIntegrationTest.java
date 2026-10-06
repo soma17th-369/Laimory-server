@@ -6,11 +6,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.logging.TransactionIds;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
@@ -40,6 +43,15 @@ class AppConfigIntroIntegrationTest {
     private AppConfigRepository appConfigRepository;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    @Qualifier("redisCacheManager")
+    private CacheManager caches;
+
+    /** DB 행과 응답을 비교하므로, 다른 테스트·이전 실행이 남긴 공유 Redis 캐시(#491)를 먼저 비운다. */
+    @BeforeEach
+    void clearAppConfigCache() {
+        caches.getCache(AppConfigService.CACHE_NAME).clear();
+    }
 
     @Test
     void intro_servesAppConfigRowFromRealMysqlOverHttp() throws Exception {

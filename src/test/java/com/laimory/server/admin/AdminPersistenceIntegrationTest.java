@@ -6,11 +6,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.ServerApplication;
 import com.laimory.server.appconfig.AppConfigRepository;
+import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermDocumentRepository;
+import com.laimory.server.terms.service.TermCatalogService;
 import java.net.CookieManager;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,7 +24,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.CacheManager;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -38,6 +43,8 @@ class AdminPersistenceIntegrationTest {
     @Autowired AppConfigRepository configs;
     @Autowired TermDocumentRepository documents;
     @Autowired NoticeRepository notices;
+    // fixture 원복·삭제는 관리자 쓰기(evict)를 거치지 않으므로 해당 캐시(#491)를 직접 비운다 — Redis 캐시는 context를 넘어 남는다.
+    @Autowired @Qualifier("redisCacheManager") CacheManager caches;
     @Autowired JdbcTemplate jdbc;
     private HttpClient client;
     private JsonNode csrf;
@@ -68,6 +75,7 @@ class AdminPersistenceIntegrationTest {
         } finally {
             jdbc.update("UPDATE app_config SET min_app_version = ?, recommend_app_version = ? WHERE app_config_id = ?",
                     original.getMinAppVersion(), original.getRecommendAppVersion(), original.getAppConfigId());
+            caches.getCache(AppConfigService.CACHE_NAME).clear();
         }
     }
 
@@ -99,6 +107,7 @@ class AdminPersistenceIntegrationTest {
             assertThat(documents.findById(id).orElseThrow().getTitle()).isEqualTo(saved.getTitle());
         } finally {
             documents.deleteById(id);
+            caches.getCache(TermCatalogService.CACHE_NAME).clear();
         }
     }
 
@@ -130,6 +139,7 @@ class AdminPersistenceIntegrationTest {
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().isHidden()).isTrue();
         } finally {
             if (noticeId != null) notices.deleteById(noticeId);
+            caches.getCache(NoticeService.POPUP_CACHE_NAME).clear();
         }
     }
 
@@ -166,6 +176,7 @@ class AdminPersistenceIntegrationTest {
                     .contains(noticeId);
         } finally {
             if (noticeId != null) notices.deleteById(noticeId);
+            caches.getCache(NoticeService.POPUP_CACHE_NAME).clear();
         }
     }
 

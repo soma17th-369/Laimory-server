@@ -19,7 +19,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** 후보 전체를 한 번 읽어 semantic current를 고르고 요청 순서를 복원하는 계약을 검증한다. */
+/**
+ * 후보 전체를 한 번 읽어 semantic current를 고르고 요청 순서를 복원하는 계약을 검증한다. catalog 적재는 실물
+ * {@link TermCatalogService}를 프록시 없이 써서(캐시 없음) 같은 선택 경로를 그대로 통과시킨다.
+ */
 @ExtendWith(MockitoExtension.class)
 class TermDocumentServiceTest {
 
@@ -30,7 +33,7 @@ class TermDocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TermDocumentService(termDocumentRepository);
+        service = new TermDocumentService(termDocumentRepository, new TermCatalogService(termDocumentRepository));
     }
 
     @Test
@@ -50,8 +53,7 @@ class TermDocumentServiceTest {
                         "https://www.laimory.app/terms/page/1.99"),
                 new TermResponse(TermType.TERMS_OF_SERVICE, "2.0", "TERMS_OF_SERVICE",
                         "https://www.laimory.app/terms/page/2.0"));
-        verify(termDocumentRepository).findDocumentCandidates(
-                List.of(TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE));
+        verify(termDocumentRepository).findDocumentCandidates(List.of(TermType.values()));
     }
 
     @Test
@@ -59,7 +61,7 @@ class TermDocumentServiceTest {
         List<TermType> requested = List.of(
                 TermType.THIRD_PARTY_PROVISION_CONSENT,
                 TermType.SENSITIVE_INFORMATION_CONSENT);
-        when(termDocumentRepository.findDocumentCandidates(requested)).thenReturn(List.of(
+        when(termDocumentRepository.findDocumentCandidates(List.of(TermType.values()))).thenReturn(List.of(
                 document(TermType.SENSITIVE_INFORMATION_CONSENT, "1.9"),
                 document(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
                 document(TermType.SENSITIVE_INFORMATION_CONSENT, "1.10")));
@@ -67,7 +69,7 @@ class TermDocumentServiceTest {
         assertThat(service.findCurrentSummaries(requested)).containsExactly(
                 new TermDocumentSummary(TermType.THIRD_PARTY_PROVISION_CONSENT, "1.0"),
                 new TermDocumentSummary(TermType.SENSITIVE_INFORMATION_CONSENT, "1.10"));
-        verify(termDocumentRepository).findDocumentCandidates(requested);
+        verify(termDocumentRepository).findDocumentCandidates(List.of(TermType.values()));
     }
 
     @Test
@@ -82,6 +84,19 @@ class TermDocumentServiceTest {
                 TermType.TERMS_OF_SERVICE)))
                 .extracting(TermResponse::termType)
                 .containsExactly(TermType.PRIVACY_POLICY, TermType.TERMS_OF_SERVICE);
+    }
+
+    @Test
+    void registrationCurrentLookupQueriesOnlyRequestedTypesAndSelectsHighestVersion() {
+        List<TermType> requested = List.of(TermType.TERMS_OF_SERVICE);
+        when(termDocumentRepository.findDocumentCandidates(requested)).thenReturn(List.of(
+                document(TermType.TERMS_OF_SERVICE, "1.10"),
+                document(TermType.TERMS_OF_SERVICE, "1.9")));
+
+        List<TermDocument> current = service.findCurrentDocuments(requested);
+
+        assertThat(current).extracting(TermDocument::getVersion).containsExactly("1.10");
+        verify(termDocumentRepository).findDocumentCandidates(requested);
     }
 
     @Test

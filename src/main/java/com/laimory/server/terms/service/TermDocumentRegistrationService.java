@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +23,9 @@ public class TermDocumentRegistrationService {
 
     // INSERT transaction은 repository proxy가 소유한다. rollback이 끝난 후에만 409로 변환한다.
     // 결과는 반환하지 않는다 — 관리자 웹이 등록 직후 이력을 다시 조회한다(조회가 단일 원천, #528).
+    // 성공하면 INSERT commit 뒤 current catalog 캐시를 지운다(#491). 409·예외는 current가 바뀌지 않아 지우지 않는다.
+    @CacheEvict(cacheNames = TermCatalogService.CACHE_NAME, cacheManager = TermCatalogService.CACHE_MANAGER,
+            key = TermCatalogService.CACHE_KEY)
     public void register(TermType type, String version, String title, String contentUrl,
                                  boolean publicationConfirmed) {
         if (type == null || title == null || title.isBlank() || title.length() > 255
@@ -33,6 +37,7 @@ public class TermDocumentRegistrationService {
             throw new IllegalArgumentException("Term URL must be absolute HTTPS with a host");
         }
         TermDocument proposed = TermDocument.of(type, version, title, contentUrl);
+        // 캐시가 아니라 DB의 current와 비교한다 — stale 캐시로 통과하면 낮은 버전이 등록된다.
         List<TermDocument> current = documents.findCurrentDocuments(List.of(type));
         if (!current.isEmpty() && !proposed.isNewerThan(current.getFirst())) {
             throw new BusinessException(ExceptionType.TERM_DOCUMENT_VERSION_CONFLICT);

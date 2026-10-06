@@ -24,10 +24,14 @@ import org.springframework.stereotype.Service;
 /**
  * 약관 동의 일괄 등록·이력 조회·동의 필요 판정.
  *
- * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 지금 이 순간의 현재
- * 버전이어야 기록한다. 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고
- * 409({@code -3002})로 거절해 앱이 현재 약관을 다시 조회하게 한다. 수락 시각은 클라이언트 입력이 아니라
- * 서버가 한 번 캡처한 instant의 KST 벽시계이며 batch 전체에 같은 값을 쓴다.
+ * <p>동의 등록은 all-or-nothing이다: 제출한 모든 {@code (termType, version)}이 현재 버전이어야 기록한다.
+ * 하나라도 존재하지 않거나 개정으로 현재 버전이 바뀌었으면 아무것도 기록하지 않고 409({@code -3002})로
+ * 거절해 앱이 현재 약관을 다시 조회하게 한다. 수락 시각은 클라이언트 입력이 아니라 서버가 한 번 캡처한
+ * instant의 KST 벽시계이며 batch 전체에 같은 값을 쓴다.
+ *
+ * <p>현재 버전은 공개 조회·initializer와 같은 캐시된 current다(#491) — 관리자 등록은 commit 뒤 evict하므로
+ * 다음 요청부터 새 버전으로 검증되고, evict가 닿지 않는 동안에도 세 경로가 같은 값을 봐 409 재조회가
+ * 반복되지 않는다.
  */
 @Service
 @RequiredArgsConstructor
