@@ -3,6 +3,7 @@ package com.laimory.server.arch;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.credit.controller.CreditApi;
+import com.laimory.server.credit.controller.PublicCreditCostApi;
 import com.laimory.server.initializer.controller.AppInitializerApi;
 import com.laimory.server.inquiry.controller.InquiryApi;
 import com.laimory.server.notice.controller.PublicNoticeApi;
@@ -167,9 +168,10 @@ class ApiAuthenticationContractTest {
 
     @Test
     void publicApis_stayOutsideBearerContract() {
-        // 공개 약관·공지 조회는 보호 operation 목록 밖이다 — class-level bearer 문서가 없어야
+        // 공개 약관·공지·크레딧 비용 조회는 보호 operation 목록 밖이다 — class-level bearer 문서가 없어야
         // public prefix(/api)와 문서·실제 enforcement가 어긋나지 않는다.
         assertThat(PublicTermApi.class.getAnnotation(SecurityRequirement.class)).isNull();
         assertThat(PublicNoticeApi.class.getAnnotation(SecurityRequirement.class)).isNull();
+        assertThat(PublicCreditCostApi.class.getAnnotation(SecurityRequirement.class)).isNull();
     }
 }

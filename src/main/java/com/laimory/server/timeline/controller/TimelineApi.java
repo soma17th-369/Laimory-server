@@ -146,8 +146,9 @@ public interface TimelineApi {
                     + "payload의 photoUrl·address·places·durationText는 서버가 채우는 read-only 값이라 요청에선 null/생략한다(스키마에 read-only 표시). "
                     + "지오코딩이 일부 실패해도 품질 기준(고유 좌표 실패 20% 이하이고 시간순 연속 실패 3개 미만) 안이면 "
                     + "작업은 계속되고, 실패 좌표는 address 없이(places는 빈 배열) 저장된다. "
-                    + "크레딧 잔액이 0이면 403(-1021)으로 거절한다. 크레딧은 이 요청이 아니라 AI 결과가 저장될 때 "
-                    + "1 차감되므로 202 직후 잔액은 그대로다.")
+                    + "크레딧 잔액이 타임라인 생성 비용(`GET /api/{version}/credit/costs`의 timelineCreation)보다 "
+                    + "적으면 403(-1021)으로 거절한다. 크레딧은 이 요청이 아니라 AI 결과가 저장될 때 비용만큼 "
+                    + "차감되므로 202 직후 잔액은 그대로다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
                     description = "작업 접수 — body.taskId로 폴링", useReturnTypeSchema = true),
@@ -161,7 +162,7 @@ public interface TimelineApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-                    description = "`-1021` — 크레딧 잔액 0. record 조회·지오코딩·저장·AI dispatch 전에 거절한다"),
+                    description = "`-1021` — 크레딧 잔액이 타임라인 생성 비용보다 적음. record 조회·지오코딩·저장·AI dispatch 전에 거절한다"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),

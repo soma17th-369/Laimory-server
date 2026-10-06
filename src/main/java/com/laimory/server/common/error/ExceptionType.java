@@ -69,7 +69,8 @@ public enum ExceptionType {
     /** 감정 수정 대상 record가 아직 DRAFT — 최초 감정 확정은 save API가 담당하므로 수정할 확정 감정이 없다. */
     DAILY_RECORD_NOT_SAVED(-1020, HttpStatus.CONFLICT, Level.INFO),
     /**
-     * 크레딧 잔액 0 — 크레딧을 소비하는 작업(현재는 타임라인 draft 생성)을 부수효과 전에 거절한다(#548).
+     * 크레딧 잔액이 작업 비용보다 적음 — 크레딧을 소비하는 작업(현재는 타임라인 draft 생성)을 부수효과 전에
+     * 거절한다(#548·#555).
      * 크레딧은 범용 재화지만 첫 소비처가 timeline이라 이 대역의 다음 번호를 쓴다(-1019는 결번).
      */
     INSUFFICIENT_CREDIT(-1021, HttpStatus.FORBIDDEN, Level.INFO),

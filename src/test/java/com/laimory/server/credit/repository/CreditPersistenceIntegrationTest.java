@@ -3,6 +3,7 @@ package com.laimory.server.credit.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.credit.CreditCost;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
@@ -35,6 +36,9 @@ class CreditPersistenceIntegrationTest {
     private CreditService creditService;
 
     @Autowired
+    private SubjectCreditRepository subjectCreditRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
@@ -60,19 +64,39 @@ class CreditPersistenceIntegrationTest {
     }
 
     @Test
-    void deductOneDecreasesRemainingByOne() {
+    void deductDecreasesRemainingByTimelineCreationCost() {
         creditService.createDefaultIfAbsent(SUBJECT_ID);
 
-        creditService.deductOne(SUBJECT_ID);
+        creditService.deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
 
-        assertThat(remaining()).isEqualTo(59);
+        assertThat(remaining()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
     }
 
     @Test
-    void deductOneAtZeroKeepsZeroWithoutError() {
+    void deductAtZeroKeepsZeroWithoutError() {
         givenRemaining(0);
 
-        creditService.deductOne(SUBJECT_ID);
+        creditService.deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
+
+        assertThat(remaining()).isZero();
+    }
+
+    @Test
+    void deductOfLargerAmountSubtractsWholeAmount() {
+        // 비용이 1보다 커져도 같은 문장이 그대로 동작해야 한다 — 상수 변경 배포만으로 비용을 바꾸는 전제(#555).
+        givenRemaining(5);
+
+        subjectCreditRepository.deduct(SUBJECT_ID, 2);
+
+        assertThat(remaining()).isEqualTo(3);
+    }
+
+    @Test
+    void deductOfAmountLargerThanRemainingStopsAtZero() {
+        // 사전 검사를 함께 통과한 동시 생성은 잔액이 비용보다 적을 수 있다 — 음수 대신 0에서 멈추고 결과는 저장된다.
+        givenRemaining(1);
+
+        subjectCreditRepository.deduct(SUBJECT_ID, 2);
 
         assertThat(remaining()).isZero();
     }

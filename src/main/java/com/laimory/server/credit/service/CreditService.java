@@ -2,6 +2,8 @@ package com.laimory.server.credit.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.dto.CreditCostsResponse;
 import com.laimory.server.credit.dto.CreditResponse;
 import com.laimory.server.credit.entity.SubjectCredit;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
@@ -19,6 +21,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>차감은 소비한 결과를 저장하는 transaction 안에서 한다 — 결과가 저장되지 않은 시도는 차감되지 않으므로
  * 환불 경로가 없다. 반대로 결과가 저장됐다면 요청 응답(502 등)이나 작업 종결 여부와 무관하게 차감은 유지된다.
+ *
+ * <p>소비 비용은 {@link CreditCost}가 단일 기준이다(#555) — 앱 고지·사전 검사·차감이 같은 값을 쓴다.
  */
 @Service
 @RequiredArgsConstructor
@@ -44,22 +48,29 @@ public class CreditService {
         return new CreditResponse(findRemaining(subjectId));
     }
 
+    /** 크레딧 비용 조회(#555) — 사용자와 무관한 상수라 DB를 읽지 않는다. */
+    public CreditCostsResponse getCosts(String applicationVersion) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        return new CreditCostsResponse(CreditCost.TIMELINE_CREATION.amount());
+    }
+
     /**
-     * 크레딧을 소비하는 작업의 사전 검사 — 잔액이 0이면 403({@code -1021})으로 거절한다. 호출자는 부수효과
-     * 전에 부른다. 통과가 차감 예약은 아니다 — 동시 요청이 함께 통과하면 차감 시점에 0에서 멈춘다.
+     * 크레딧을 소비하는 작업의 사전 검사 — 잔액이 비용보다 적으면 403({@code -1021})으로 거절한다. 호출자는
+     * 부수효과 전에 부른다. 통과가 차감 예약은 아니다 — 동시 요청이 함께 통과하면 차감 시점에 0에서 멈춘다.
      */
-    public void requireAvailable(UUID subjectId) {
-        if (findRemaining(subjectId) == 0) {
+    public void requireAvailable(UUID subjectId, CreditCost cost) {
+        if (findRemaining(subjectId) < cost.amount()) {
             throw new BusinessException(ExceptionType.INSUFFICIENT_CREDIT);
         }
     }
 
     /**
-     * 1 차감 — 호출자의 결과 저장 transaction에 합류한다(롤백되면 차감도 롤백). 잔액이 이미 0이면 오류 없이
-     * 건너뛴다: 사전 검사를 함께 통과한 동시 요청의 결과를 버리지 않기 위해서다(수용한 무료 생성).
+     * 비용만큼 차감 — 호출자의 결과 저장 transaction에 합류한다(롤백되면 차감도 롤백). 잔액이 비용보다 적으면
+     * 0에서 멈추고 오류 없이 넘어간다: 사전 검사를 함께 통과한 동시 요청의 결과를 버리지 않기 위해서다(수용한
+     * 무료 생성).
      */
-    public void deductOne(UUID subjectId) {
-        subjectCreditRepository.deductOne(subjectId);
+    public void deduct(UUID subjectId, CreditCost cost) {
+        subjectCreditRepository.deduct(subjectId, cost.amount());
     }
 
     /** 계정 삭제(#302)의 잔액 행 제거 — subject mapping 삭제 전에 호출해야 한다(FK RESTRICT). 미존재는 0행(멱등). */

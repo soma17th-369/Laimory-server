@@ -11,6 +11,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
+import com.laimory.server.credit.CreditCost;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
@@ -497,7 +498,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
 
-        assertThat(remainingCredits()).isEqualTo(59);
+        assertThat(remainingCredits()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
     }
 
     @Test
@@ -509,13 +510,13 @@ class TimelineAiTaskFlowIntegrationTest {
 
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
 
-        assertThat(remainingCredits()).isEqualTo(59);
+        assertThat(remainingCredits()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
     }
 
     @Test
     void creditDeductionRollsBackWithGraphWhenResultTransactionFails() {
         // 차감이 실제로 실행된 뒤 같은 transaction이 실패하게 만든다 — 차감이 별도 transaction으로 분리되면
-        // 59가 commit돼 남으므로, 이 테스트가 "graph와 차감은 함께 commit/rollback" 계약을 고정한다.
+        // 차감분이 commit돼 남으므로, 이 테스트가 "graph와 차감은 함께 commit/rollback" 계약을 고정한다.
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
@@ -524,12 +525,12 @@ class TimelineAiTaskFlowIntegrationTest {
             invocation.callRealMethod();
             remainingInsideTransaction.set(remainingCredits());
             throw new IllegalStateException("failure after credit deduction");
-        }).when(creditService).deductOne(SUBJECT_ID);
+        }).when(creditService).deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input)))
                 .isInstanceOf(IllegalStateException.class);
 
-        assertThat(remainingInsideTransaction.get()).isEqualTo(59);
+        assertThat(remainingInsideTransaction.get()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
         assertThat(remainingCredits()).isEqualTo(60);
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();

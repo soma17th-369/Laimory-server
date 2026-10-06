@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.credit.CreditCost;
 import com.laimory.server.credit.entity.SubjectCredit;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
 import com.laimory.server.testsupport.TestSubjects;
@@ -73,10 +74,16 @@ class CreditServiceTest {
     }
 
     @Test
+    void getCostsReportsTimelineCreationCostFromCatalog() {
+        // 앱 고지 값은 사전 검사·차감과 같은 카탈로그에서 나와야 한다 — 따로 적으면 고지와 실제 차감이 어긋난다.
+        assertThat(service().getCosts("v1").timelineCreation()).isEqualTo(CreditCost.TIMELINE_CREATION.amount());
+    }
+
+    @Test
     void requireAvailableRejectsZeroCreditsWithInsufficientCredit() {
         when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(0)));
 
-        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID))
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT);
                     assertThat(ex.getErrorCode()).isEqualTo(-1021);
@@ -84,10 +91,23 @@ class CreditServiceTest {
     }
 
     @Test
-    void requireAvailablePassesWhenOneCreditRemains() {
-        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(1)));
+    void requireAvailableRejectsWhenRemainingIsOneBelowCost() {
+        // 경계를 비용 기준으로 둔다 — 비용 상수를 바꾸는 배포에도 "잔액이 비용보다 적으면 거절"이 같은 의미로 검증된다.
+        int cost = CreditCost.TIMELINE_CREATION.amount();
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost - 1)));
 
-        assertThatCode(() -> service().requireAvailable(SUBJECT_ID)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
+    }
+
+    @Test
+    void requireAvailablePassesWhenRemainingEqualsCost() {
+        int cost = CreditCost.TIMELINE_CREATION.amount();
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost)));
+
+        assertThatCode(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -95,7 +115,7 @@ class CreditServiceTest {
         // 행 부재를 잔액 부족(-1021)으로 바꿔 말하지 않는다 — 클라에 "크레딧 없음"이라 거짓 안내하게 된다.
         when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID))
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
                 .isInstanceOf(IllegalStateException.class);
     }
 }
