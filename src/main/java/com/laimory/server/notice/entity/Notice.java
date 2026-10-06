@@ -18,6 +18,9 @@ import lombok.Getter;
  * <p>노출 제어는 {@code hidden} 하나다 — 관리자는 등록·수정·숨김/재노출만 하고 hard delete는 없다
  * (실수 복구 가능). 공개 목록은 숨김이 아닌 행만 보이고, 게시 시각은 {@code created_at}이다.
  * 약관과 달리 버전·불변 계약이 없어 기존 행의 제목·URL 수정(전체 교체)을 허용한다.
+ *
+ * <p>{@code popup}은 앱 시작 팝업 지정이다(#553) — 여러 건이 동시에 켜질 수 있고, 숨김과 독립이라
+ * 숨긴 팝업 공지는 지정이 남은 채 팝업에서만 빠진다.
  */
 @Entity
 @Table(name = "notices")
@@ -42,6 +45,9 @@ public class Notice extends BaseEntity {
     @Column(name = "hidden", nullable = false)
     private boolean hidden;
 
+    @Column(name = "popup", nullable = false)
+    private boolean popup;
+
     protected Notice() {
     }
 
@@ -49,6 +55,7 @@ public class Notice extends BaseEntity {
         this.title = title;
         this.contentUrl = contentUrl;
         this.hidden = false;
+        this.popup = false;
     }
 
     /** 즉시 노출되는 새 공지를 만든다(예약 게시 없음). */
@@ -64,6 +71,10 @@ public class Notice extends BaseEntity {
 
     public void changeVisibility(boolean hidden) {
         this.hidden = hidden;
+    }
+
+    public void changePopup(boolean popup) {
+        this.popup = popup;
     }
 
     /** null·공백뿐은 거절, 그 외 strip 후 최대 255자({@code TimelineEventInputRules.requireValidTitle} 선례). */

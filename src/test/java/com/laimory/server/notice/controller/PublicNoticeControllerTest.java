@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.notice.dto.NoticeResponse;
 import com.laimory.server.notice.entity.Notice;
@@ -23,7 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 공개 공지 조회 컨트롤러 슬라이스 테스트(MockMvc). 무인증 200(public 계약)과 원문 대신 항목별
- * contentUrl만 나가는 wire 계약을 검증한다. 인프라 0.
+ * contentUrl만 나가는 wire 계약, 단건 조회의 404·400 매핑을 검증한다. 인프라 0.
  */
 @WebMvcTest(PublicNoticeController.class)
 @Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
@@ -67,6 +69,40 @@ class PublicNoticeControllerTest {
                 .andExpect(jsonPath("$.header.code").value(0))
                 .andExpect(jsonPath("$.body.notices").isArray())
                 .andExpect(jsonPath("$.body.notices").isEmpty());
+    }
+
+    @Test
+    void getNoticeWithoutBearerReturnsSingleNoticeWithContentUrl() throws Exception {
+        when(noticeService.findVisibleNotice("v1", 12L)).thenReturn(
+                notice(12L, "팝업 공지", "https://www.laimory.app/notices/12", LocalDateTime.of(2026, 10, 6, 9, 0)));
+
+        mockMvc.perform(get(PATH + "/12"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.body.noticeId").value(12))
+                .andExpect(jsonPath("$.body.title").value("팝업 공지"))
+                .andExpect(jsonPath("$.body.contentUrl").value("https://www.laimory.app/notices/12"))
+                .andExpect(jsonPath("$.body.publishedAt").value("2026-10-06T09:00:00"))
+                // 숨김·팝업 지정은 관리자 상태라 공개 wire에 없다.
+                .andExpect(jsonPath("$.body.hidden").doesNotExist())
+                .andExpect(jsonPath("$.body.popup").doesNotExist());
+    }
+
+    @Test
+    void getNoticeHiddenOrMissingReturns404() throws Exception {
+        when(noticeService.findVisibleNotice("v1", 9L))
+                .thenThrow(new BusinessException(ExceptionType.RESOURCE_NOT_FOUND));
+
+        mockMvc.perform(get(PATH + "/9"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void getNoticeWithNonNumericIdReturns400() throws Exception {
+        mockMvc.perform(get(PATH + "/abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
     }
 
     /** ID·게시 시각은 DB가 채우는 값이라 슬라이스 fixture가 직접 심고, 서비스와 같은 변환으로 응답을 만든다. */

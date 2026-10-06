@@ -44,6 +44,18 @@ class InitializerResponseSchemaTest {
     }
 
     @Test
+    void popupNoticeIdsIsRequiredArrayOfInt64() {
+        Schema<?> schema = schema("InitializerResponse");
+
+        Schema<?> popupNoticeIds = schema.getProperties().get("popupNoticeIds");
+        assertThat(popupNoticeIds).isNotNull();
+        assertThat(popupNoticeIds.getType()).isEqualTo("array");
+        assertThat(popupNoticeIds.getItems().getType()).isEqualTo("integer");
+        assertThat(popupNoticeIds.getItems().getFormat()).isEqualTo("int64");
+        assertThat(schema.getRequired()).contains("popupNoticeIds");
+    }
+
+    @Test
     void everySchema_declaresEveryPropertyRequired() {
         Map<String, Schema> schemas = ModelConverters.getInstance().readAll(InitializerResponse.class);
         assertThat(schemas.keySet()).contains("InitializerResponse", "InitializerTermsResponse",

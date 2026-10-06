@@ -35,7 +35,8 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - 여러 domain 작업은 orchestrator가 leaf service를 합성한다.
 - 다른 feature의 상태를 읽거나 쓰는 orchestrator는 그 feature의 repository가 아니라 leaf service를
   통한다 — 예: `initializer`는 `subject_preferences`를 소유한 `SubjectPreferenceService`와 약관 동의를
-  소유한 `TermAgreementService`를 각 owner 축(subjectId/userId)으로 합성하고(#382, #434), `onboarding`은
+  소유한 `TermAgreementService`를 각 owner 축(subjectId/userId)으로 합성하고(#382, #434), 사용자와 무관한
+  팝업 공지 id는 `NoticeService`에서 principal 없이 읽으며(#553), `onboarding`은
   `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
 - 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
   Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping

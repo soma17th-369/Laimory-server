@@ -19,4 +19,10 @@ public interface NoticeRepository extends JpaRepository<Notice, Long> {
     List<Notice> findAllByOrderByNoticeIdDesc();
 
     Optional<Notice> findByNoticeId(Long noticeId);
+
+    /** 공개 단건 — 숨김 행은 없는 것과 같이 다룬다. */
+    Optional<Notice> findByNoticeIdAndHiddenFalse(Long noticeId);
+
+    /** 앱 시작 팝업 — 지정됐고 숨김이 아닌 공지, 최신 순(공개 목록과 같은 순서). */
+    List<Notice> findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc();
 }
