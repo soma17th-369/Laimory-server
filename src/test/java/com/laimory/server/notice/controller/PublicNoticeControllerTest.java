@@ -73,7 +73,7 @@ class PublicNoticeControllerTest {
 
     @Test
     void getNoticeWithoutBearerReturnsSingleNoticeWithContentUrl() throws Exception {
-        when(noticeService.findVisibleNotice("v1", 12L)).thenReturn(
+        when(noticeService.getVisibleNotice("v1", 12L)).thenReturn(
                 notice(12L, "팝업 공지", "https://www.laimory.app/notices/12", LocalDateTime.of(2026, 10, 6, 9, 0)));
 
         mockMvc.perform(get(PATH + "/12"))
@@ -90,7 +90,7 @@ class PublicNoticeControllerTest {
 
     @Test
     void getNoticeHiddenOrMissingReturns404() throws Exception {
-        when(noticeService.findVisibleNotice("v1", 9L))
+        when(noticeService.getVisibleNotice("v1", 9L))
                 .thenThrow(new BusinessException(ExceptionType.RESOURCE_NOT_FOUND));
 
         mockMvc.perform(get(PATH + "/9"))

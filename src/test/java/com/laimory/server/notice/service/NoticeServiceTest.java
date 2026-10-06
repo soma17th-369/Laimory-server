@@ -141,13 +141,13 @@ class NoticeServiceTest {
     }
 
     @Test
-    void findVisibleNoticeReturnsTitleAndContentUrl() {
+    void getVisibleNoticeReturnsTitleAndContentUrl() {
         Notice notice = Notice.of("점검 안내", URL);
         ReflectionTestUtils.setField(notice, "noticeId", 12L);
         when(noticeRepository.findByNoticeIdAndHiddenFalse(12L)).thenReturn(Optional.of(notice));
         NoticeService service = new NoticeService(noticeRepository);
 
-        NoticeResponse response = service.findVisibleNotice("v1", 12L);
+        NoticeResponse response = service.getVisibleNotice("v1", 12L);
 
         assertThat(response.noticeId()).isEqualTo(12L);
         assertThat(response.title()).isEqualTo("점검 안내");
@@ -155,11 +155,11 @@ class NoticeServiceTest {
     }
 
     @Test
-    void findVisibleNoticeHiddenOrMissingIsNotFound() {
+    void getVisibleNoticeHiddenOrMissingIsNotFound() {
         when(noticeRepository.findByNoticeIdAndHiddenFalse(9L)).thenReturn(Optional.empty());
         NoticeService service = new NoticeService(noticeRepository);
 
-        assertThatThrownBy(() -> service.findVisibleNotice("v1", 9L))
+        assertThatThrownBy(() -> service.getVisibleNotice("v1", 9L))
                 .isInstanceOf(BusinessException.class)
                 .extracting(exception -> ((BusinessException) exception).getExceptionType())
                 .isEqualTo(ExceptionType.RESOURCE_NOT_FOUND);

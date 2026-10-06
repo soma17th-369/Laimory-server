@@ -34,7 +34,7 @@ public class NoticeService {
     }
 
     /** 공개 단건 — 숨김이거나 없으면 404. */
-    public NoticeResponse findVisibleNotice(String applicationVersion, long noticeId) {
+    public NoticeResponse getVisibleNotice(String applicationVersion, long noticeId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         return noticeRepository.findByNoticeIdAndHiddenFalse(noticeId)
                 .map(NoticeResponse::from)

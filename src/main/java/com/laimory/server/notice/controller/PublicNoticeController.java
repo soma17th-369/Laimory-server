@@ -23,6 +23,6 @@ public class PublicNoticeController implements PublicNoticeApi {
 
     @Override
     public ResponseEntity<ApiResponse<NoticeResponse>> getNotice(String applicationVersion, long noticeId) {
-        return ResponseEntity.ok(ApiResponse.success(noticeService.findVisibleNotice(applicationVersion, noticeId)));
+        return ResponseEntity.ok(ApiResponse.success(noticeService.getVisibleNotice(applicationVersion, noticeId)));
     }
 }
