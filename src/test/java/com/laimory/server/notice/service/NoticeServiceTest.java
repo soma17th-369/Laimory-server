@@ -186,17 +186,27 @@ class NoticeServiceTest {
     }
 
     @Test
-    void changePopupDesignatesAndReleasesTheSameRowKeepingVisibility() {
+    void changePopupDesignatesNoticeKeepingVisibility() {
         Notice notice = Notice.of("제목", URL);
         notice.changeVisibility(true);
         when(noticeRepository.findByNoticeId(3L)).thenReturn(Optional.of(notice));
         NoticeService service = new NoticeService(noticeRepository);
 
         service.changePopup(3L, true);
+
         assertThat(notice.isPopup()).isTrue();
         assertThat(notice.isHidden()).isTrue();
+    }
+
+    @Test
+    void changePopupReleasesDesignatedNotice() {
+        Notice notice = Notice.of("제목", URL);
+        notice.changePopup(true);
+        when(noticeRepository.findByNoticeId(3L)).thenReturn(Optional.of(notice));
+        NoticeService service = new NoticeService(noticeRepository);
 
         service.changePopup(3L, false);
+
         assertThat(notice.isPopup()).isFalse();
     }
 
