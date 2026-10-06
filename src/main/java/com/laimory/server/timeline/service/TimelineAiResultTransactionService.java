@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.credit.CreditCost;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
@@ -37,7 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>record timezone wall-clock 정규화 → startAt 충돌 nudge/endAt clamp</li>
  *   <li>Item(distinct rawId당 1행)·Event·junction INSERT</li>
  *   <li>채택된 staging source만 DELETE</li>
- *   <li>크레딧 1 차감(#548 — 잔액 0이면 건너뜀)</li>
+ *   <li>크레딧을 타임라인 생성 비용만큼 차감(#548·#555 — 잔액이 모자라면 0에서 멈춤)</li>
  * </ol>
  * 어느 단계에서 실패하든 graph와 staging 변경이 함께 롤백된다.
  *
@@ -141,9 +142,9 @@ public class TimelineAiResultTransactionService {
         // 5. 채택된 staging만 삭제한다(누락 source는 retention cleanup 대상으로 남긴다).
         timelineDraftSourceItemService.deleteAdopted(taskId, adoptedRawIds);
 
-        // 6. 타임라인 1회 생성 = 크레딧 1 차감(#548). graph와 같은 transaction이라 저장이 롤백되면 차감도 롤백되고,
+        // 6. 타임라인 1회 생성 = 크레딧을 생성 비용만큼 차감(#548·#555). graph와 같은 transaction이라 저장이 롤백되면 차감도 롤백되고,
         //    같은 result token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다.
-        creditService.deductOne(subjectId);
+        creditService.deduct(subjectId, CreditCost.TIMELINE_CREATION);
     }
 
     /**

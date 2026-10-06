@@ -38,7 +38,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    `rawId`는 canonical lowercase UUID(8-4-4-4-12, version 무관 — `RawIds`)만 허용하고 위반은 400 `-400`이다.
    임의 문자열에 개인정보가 실리는 것을 막는 경계라 오류 메시지에 rawId 원문을 싣지 않으며, 허용값은
    서버 정규화 없이 그대로 저장한다.
-   미래 날짜 검증 직후, record 조회 전에 크레딧 잔액을 확인한다(#548) — 0이면 403 `-1021`로 거절해 아무것도
+   미래 날짜 검증 직후, record 조회 전에 크레딧 잔액을 확인한다(#548) — 타임라인 생성 비용(`CreditCost`, #555)보다
+   적으면 403 `-1021`로 거절해 아무것도
    만들지 않는다. 행이 없으면 기본값으로 가리지 않고 500이다. 이 단계는 차감·예약을 하지 않는다(차감은 결과 저장).
 4. UUIDv7 `taskId`와 최초 입력 조회용 256-bit `taskToken`을 만들고(token 원문은 dispatch, SHA-256 hash는
    Redis용), SAVED record를 거부하며 기존 final `rawId`(record의
@@ -117,7 +118,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 DB 검증·시각 정규화·+10분 nudge/clamp·
    Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다 — 저장된
    claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. 같은 transaction의 마지막에
-   크레딧을 `remaining > 0` 조건부 UPDATE로 1 차감한다(#548 — 잔액 0이면 오류 없이 건너뛰고 결과는 저장된다;
+   크레딧을 타임라인 생성 비용만큼 `greatest(remaining - 비용, 0)`로 차감한다(#548·#555 — 잔액이 모자라면 0에서
+   멈추고 결과는 저장된다;
    graph가 롤백되면 차감도 롤백된다). **선점은
    token을 바꾸지 않는다** — callback token 회전과 `CALLBACK_PENDING` 전이는 commit 뒤 한 번의 native
    write로 함께 일어나고, 그 뒤에야 callback token 원문을 응답한다. 저장 예외면 최초 `RESULT_PENDING`

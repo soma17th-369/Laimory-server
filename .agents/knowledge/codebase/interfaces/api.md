@@ -253,9 +253,15 @@ aggregation framework를 만들지 않는다).
 
 `GET /a/api/{version}/credit`(#548)은 인증 subject의 남은 크레딧을 `{"remainingCredits": n}`로 반환하는
 순수 조회다(평면 필드 하나 — 총량 필드 없음). 행 생성은 가입 transaction과 rollout backfill이 소유하고, 행이
-없으면 push 설정과 같은 정책으로 기본값 추정 없이 500이다. 크레딧을 소비하는 작업은 잔액 0이면
-403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 AI 결과
-저장 시점이라 draft POST가 성공해도 잔액은 결과가 저장될 때 줄어든다.
+없으면 push 설정과 같은 정책으로 기본값 추정 없이 500이다. 크레딧을 소비하는 작업은 잔액이 그 작업의 비용보다
+적으면 403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 AI 결과
+저장 시점이라 draft POST가 성공해도 잔액은 결과가 저장될 때 비용만큼 줄어든다.
+
+`GET /api/{version}/credit/costs`(#555)는 작업별 크레딧 비용을 `{"timelineCreation": n}`로 반환하는 **공개**
+조회다. 비용은 사용자와 무관한 서버 상수(`CreditCost`)라 인증·subject 변환 없이 응답하며, 앱은 이 값으로 "크레딧
+N개 사용"을 고지한다 — 앱이 비용을 하드코딩하지 않으므로 비용 변경은 서버 배포만으로 끝난다. 사전 검사와 결과 저장
+차감이 같은 상수를 쓴다. 크레딧을 소비하는 기능이 늘면 같은 응답에 평면 필드를 추가한다. 보호 API(`CreditApi`)와
+인터페이스를 나눈 것은 principal 없는 보호 operation이 인증 계약 테스트의 형태에 없기 때문이다.
 
 `POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
 인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
