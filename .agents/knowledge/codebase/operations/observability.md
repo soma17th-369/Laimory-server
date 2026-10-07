@@ -221,9 +221,11 @@ Spring JSON stdout
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
   환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
 - ILM retention은 89일이다(#402). 개인정보 처리방침의 접속기록 보관기간 "수집일로부터 3개월"을
-  어떤 달력 구간에서도 넘지 않는 값이다(평년 1월 말~2월 시작 3개월은 89일). delete `min_age`는
-  일별 index 생성 시각 기준이고 index 단위로 지우므로, 같은 index에 늦게 들어온 문서는 89일보다
-  하루 미만 일찍 파기된다.
+  정상 수집 기준으로 어떤 달력 구간에서도 넘지 않는 값이다(평년 1월 말~2월 시작 3개월은 89일).
+  delete `min_age`는 일별 index 생성 시각 기준이고 index 단위로 지우므로, 같은 index에 늦게 들어온
+  문서는 89일보다 하루 미만 일찍 파기된다. 단, Filebeat는 이벤트 `@timestamp` 날짜로 index를 고르므로
+  ELK가 하루 넘게 멈췄다가 rotated log를 backfill하면 그날 index가 늦게 생성돼, 그 문서는 멈춘
+  기간만큼 더 보관된다.
 - 2026-10-02 측정: 하루 최대 합계(dev+prod) 약 1.8 MB, ELK root volume 30 GB 중 27% 사용
   → 89일 누적은 안전계수 3을 곱해도 약 0.5 GB로 low watermark(85%)까지 여유가 크다.
   증가 감시는 filesystem 경보가 맡는다.
