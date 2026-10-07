@@ -131,7 +131,7 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
 skeleton 마스킹으로 access log에 남지 않는다(구조 필드만 남는다). 마스킹 밖 경로의 body에도 개인 데이터가 실릴
 수 있고 `clientIp`·`userId`와 결합된다
 (`userId`는 같은 줄에서 그 body가 누구의 것인지 직접 지목한다).
-현재 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev다. 미래 prod에서 body+IP logging을
+당초 적용 범위는 인증된 Kibana/SSM과 7일 ILM을 전제로 한 dev였다(ILM은 #402부터 89일). 미래 prod에서 body+IP logging을
 활성화하기 전 데이터 소유자가 수집 목적·접근 통제·보존 기간·개인정보 고지 필요성을 승인하고 필요한
 개인정보처리방침 변경을 먼저 완료해야 한다. 2026-08-23 기준 prod 배포 경로가 생겼으므로 이 전제는 더 이상 성립하지 않는다 — body logging을
 끄고 켜는 runtime flag를 두는 선택지가 열렸고, 그렇게 하면 개인정보 승인 절차를 공개 일정에서
@@ -220,7 +220,19 @@ Spring JSON stdout
   dev WAS와 **prod WAS 2대**에 배치돼 있고, 같은 Elasticsearch로 보낸다.
 - index pattern은 `laimory-{environment}-YYYY.MM.dd`다. environment는 앱 로그의 필드에서 나오므로
   환경마다 index가 자동으로 갈린다. index template과 ILM은 `laimory-*`라 신규 환경을 이미 커버한다.
-- ILM retention은 7일이다.
+- ILM retention은 89일이다(#402). 개인정보 처리방침의 접속기록 보관기간 "수집일로부터 3개월"을
+  정상 수집 기준으로 어떤 달력 구간에서도 넘지 않는 값이다(평년 1월 말~2월 시작 3개월은 89일).
+  delete `min_age`는 일별 index 생성 시각 기준이고 index 단위로 지우므로, 같은 index에 늦게 들어온
+  문서는 89일보다 하루 미만 일찍 파기된다. 단, Filebeat는 이벤트 `@timestamp` 날짜로 index를 고르므로
+  ELK가 하루 넘게 멈췄다가 rotated log를 backfill하면 그날 index가 늦게 생성돼, 그 문서는 멈춘
+  기간만큼 더 보관된다.
+- 2026-10-02 측정: 하루 최대 합계(dev+prod) 약 1.8 MB, ELK root volume 30 GB 중 27% 사용
+  → 89일 누적은 안전계수 3을 곱해도 약 0.5 GB로 low watermark(85%)까지 여유가 크다.
+  증가 감시는 filesystem 경보가 맡는다.
+- setup 컨테이너는 최초 부팅에만 정책을 넣으므로, 정책 파일 변경은 S3 bootstrap 사본 동기화와
+  live `PUT _ilm/policy/laimory-logs`를 함께 해야 반영된다(기존 managed index에도 새 버전이 적용된다).
+- retention을 줄이면 이미 쌓인 오래된 index가 즉시 삭제되므로, 단축 rollback은 파괴적 변경으로
+  보고 별도 승인 없이 하지 않는다.
 - Elasticsearch/Kibana는 private dev ELK instance에서 실행된다. Kibana는 공개 엔드포인트가 없고
   SSM 포트포워딩 → `http://localhost:5601`(로컬 포트 규약)로만 접속한다(#437, Kibana 자체 로그인 유지).
 - ELK instance는 persistent Spot으로 상시 가동한다. 용량 회수 시 stop되고 용량 복귀 후 자동 재시작한다.
@@ -474,7 +486,7 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   Filebeat self-metric 수집기는 prod WAS 2대 설치가 전제다(설치 전에 rule이 먼저 배포되면
   수집기-부재 분기가 오발화한다).
 - **개인정보 게이트는 닫히지 않았다.** prod 로그 수집이 켜졌으므로 트래픽이 생기는 순간부터 접속 IP와
-  요청 본문 일부가 7일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
+  요청 본문 일부가 89일 보존된다. 지금은 사용자가 없어 실질 데이터가 없을 뿐이고, 개인정보처리방침
   개정·데이터 소유자 승인은 이 문서 상단 절차대로 공개 전에 끝내야 한다.
 
 ## Update When
