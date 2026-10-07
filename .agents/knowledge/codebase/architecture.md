@@ -39,7 +39,7 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   팝업 공지 id는 `NoticeService`에서 principal 없이 읽으며(#553), `onboarding`은
   `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
 - 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
-  Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping
+  Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig`와 그 캐시 구현 `SingleFlightRedisCacheManager`), subject mapping
   내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
   (`SubjectMappingAccessArchTest`, #282). 캐시는 wrapper 없이 서비스 메서드에 직접 단다 —
   ACTIVE 검사(`UserAccountService`, #441), subject 매핑(`SubjectMappingService`), 관리자 변경 값 3종
@@ -58,7 +58,7 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - MySQL은 JPA와 `ddl-auto=validate`를 사용한다. 모든 환경에서 앱 시작 시 Flyway가 미적용 SQL을
   실행한 뒤 JPA가 검증한다. 여러 서버는 같은 DB/history와 Flyway의 MySQL 잠금을 사용한다.
 - application-owned Redis 접근은 `RedisGateway`를 거친다(승인 예외: `CacheConfig`의 Spring Cache
-  Redis manager — 같은 key prefix를 붙인다).
+  Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager
   (`redisCacheManager`), 아니면 Caffeine manager(`localCacheManager`, `@Primary`)이며 어노테이션마다
   `cacheManager`를 명시한다. Redis 캐시의 `@Cacheable(sync = true)`는 서버(JVM) 안 키별 single-flight로

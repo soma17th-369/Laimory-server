@@ -423,8 +423,8 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 
 ### Redis
 
-application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig` 하나이며(#429), Spring
-Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
+application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig`(#429)와 그 캐시 구현
+`SingleFlightRedisCacheManager`(#491)이며, Spring Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
 `app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다.
 
 | Logical key/namespace | Purpose | Lifetime |
@@ -445,7 +445,7 @@ Spring Cache 값의 shape 변경은 rolling 배포에서 안전하지 않다 —
 다르면** 역직렬화는 성공하고 프록시 반환 지점의 `ClassCastException`으로 500이 된다(error handler
 사정권 밖). shape를 바꿀 때는 캐시 이름을 바꾸거나 배포 전에 해당 key를 비운다.
 Redis 캐시 매니저는 `@Cacheable(sync = true)`를 서버(JVM) 안 키별 single-flight로 처리한다(#491,
-`CacheConfig.SingleFlightRedisCache`) — Spring Data Redis 기본 `RedisCache`·non-locking writer는 적재를
+`SingleFlightRedisCacheManager.SingleFlightRedisCache`) — Spring Data Redis 기본 `RedisCache`·non-locking writer는 적재를
 동기화하지 않아 캐시가 빈 순간 동시 miss가 전부 DB로 간다. 서버 간은 막지 않는다(prod 최대 2회 적재).
 Spring Data Redis의 locking writer는 잠금 키에 key prefix가 붙지 않아 환경끼리 잠금을 공유하므로 쓰지 않는다.
 Timeline task 최초 저장은 native `SET PX`, 서버간 처리 stage 전이는 native `SET XX KEEPTTL`, terminal
@@ -532,7 +532,7 @@ invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 �
   (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
   title·subtitle·memo는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
-  Redis manager — 같은 key prefix를 붙인다).
+  Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
 - Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard

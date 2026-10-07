@@ -9,7 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.config.CacheConfig.SingleFlightRedisCache;
+import com.laimory.server.config.SingleFlightRedisCacheManager.SingleFlightRedisCache;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
