@@ -34,7 +34,7 @@ public class TermDocumentService {
     /** 요청 종류의 현재 문서(요청 순서) — 공개 조회용. */
     public List<TermResponse> findCurrentTerms(String applicationVersion, List<TermType> termTypes) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
-        return findCachedCurrent(termTypes);
+        return selectFromCatalog(termTypes);
     }
 
     /**
@@ -76,12 +76,13 @@ public class TermDocumentService {
      * 지정 종류들의 현재 문서 식별 요약 — 공개 조회와 같은 캐시된 current에서 필요한 key만 변환한다.
      */
     public List<TermDocumentSummary> findCurrentSummaries(Collection<TermType> termTypes) {
-        return findCachedCurrent(termTypes).stream()
+        return selectFromCatalog(termTypes).stream()
                 .map(document -> new TermDocumentSummary(document.termType(), document.version()))
                 .toList();
     }
 
-    private List<TermResponse> findCachedCurrent(Collection<TermType> termTypes) {
+    /** 전 종류 current catalog(캐시 적중이면 Redis, miss면 DB 적재)에서 요청 종류를 요청 순서로 고른다. */
+    private List<TermResponse> selectFromCatalog(Collection<TermType> termTypes) {
         if (termTypes.isEmpty()) {
             return List.of();
         }
