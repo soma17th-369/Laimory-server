@@ -42,6 +42,7 @@ class SingleFlightRedisCacheTest {
 
     private static final String CACHE_NAME = "single-flight-test";
     private static final int CALLERS = 8;
+    private static final String CALLER_THREAD_PREFIX = "single-flight-caller-";
 
     private final Map<String, byte[]> store = new ConcurrentHashMap<>();
     private final AtomicInteger loaderCalls = new AtomicInteger();
@@ -50,7 +51,9 @@ class SingleFlightRedisCacheTest {
 
     @BeforeEach
     void setUp() {
-        executor = Executors.newFixedThreadPool(CALLERS + 1);
+        AtomicInteger threadSeq = new AtomicInteger();
+        executor = Executors.newFixedThreadPool(CALLERS + 1,
+                runnable -> new Thread(runnable, CALLER_THREAD_PREFIX + threadSeq.incrementAndGet()));
         cache = new SingleFlightRedisCache(CACHE_NAME, inMemoryWriter(),
                 RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(1)));
     }
@@ -148,7 +151,7 @@ class SingleFlightRedisCacheTest {
     /** 로더 latch 또는 in-flight 적재 결과를 기다리며 멈춘 caller 스레드 수. */
     private long waitingThreads() {
         return Thread.getAllStackTraces().keySet().stream()
-                .filter(thread -> thread.getName().startsWith("pool-"))
+                .filter(thread -> thread.getName().startsWith(CALLER_THREAD_PREFIX))
                 .filter(thread -> thread.getState() == Thread.State.WAITING
                         || thread.getState() == Thread.State.TIMED_WAITING)
                 .filter(thread -> isCallerFrame(thread.getStackTrace()))

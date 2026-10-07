@@ -93,9 +93,7 @@ class AdminManagedCacheIntegrationTest {
         appConfigService.getAppConfig("v1");
         AppConfigResponse cached = appConfigService.getAppConfig("v1");
 
-        assertThat(cached.getMinAppVersion()).isEqualTo(3L);
-        assertThat(cached.getRecommendAppVersion()).isEqualTo(5L);
-        assertThat(cached.getDebugTestMessage()).isEqualTo("hello");
+        assertThat(cached).isEqualTo(new AppConfigResponse(3L, 5L, "hello"));
         verify(appConfigRepository, times(1)).findTop2ByOrderByAppConfigIdAsc();
         assertThat(stringRedisTemplate.getExpire(keyPrefix + AppConfigService.CACHE_NAME + ":all", TimeUnit.MILLISECONDS))
                 .isGreaterThan(ONE_HOUR_MS - 30_000)
@@ -110,7 +108,7 @@ class AdminManagedCacheIntegrationTest {
 
         appConfigService.updateVersions(7L, 9L);
 
-        assertThat(appConfigService.getAppConfig("v1").getMinAppVersion()).isEqualTo(7L);
+        assertThat(appConfigService.getAppConfig("v1").minAppVersion()).isEqualTo(7L);
     }
 
     @Test
