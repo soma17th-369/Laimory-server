@@ -250,7 +250,9 @@ Spring JSON stdout
   callback에는 property에 선언한 고정 SLO bucket만 둔다. 전역 percentile histogram은 켜지 않는다.
 - 캐시(#429)는 Spring Cache 표준 meter를 그대로 쓴다 — `cache.gets{cache,result=hit|miss}`와
   `cache.puts`·`cache.evictions` 계열이며 `cache` tag 값은 캐시 이름(`user:active`,
-  `subject:mapping`)이다. Boot는 **기동 시점에 존재하는 캐시만** 바인딩하므로 `CacheConfig`가
+  `subject:mapping`, #491의 `appconfig:current`·`terms:current`·`notice:popup`)이다. Redis 캐시 값은
+  매니저의 통계 수집기가 집계한다 — `CacheConfig`가 매니저를 생성자로 만들며 수집기를 직접 붙인다(빠지면
+  meter는 있어도 0에 멈춘다). Boot는 **기동 시점에 존재하는 캐시만** 바인딩하므로 `CacheConfig`가
   두 manager에 캐시 이름을 미리 선언한다(선언이 빠지면 meter가 영영 노출되지 않는다).
   `cache.gets{cache=user:active}`의 모수에는 #441부터 필터 경로에 더해 token 발급·회전 경로의
   hit/miss도 포함된다(meter 이름·의미는 그대로).
@@ -274,7 +276,7 @@ Spring JSON stdout
     ⚠️ #429부터 `lookup`은 subject 캐시 **miss 시 load에서만** 기록된다 — 요청당 해석 전수가 아니므로
     배포 전후 count를 같은 의미로 비교하지 말 것. 해석 전수(hit 포함)는 표준 meter
     `cache.gets{cache=subject:mapping,result=hit|miss}`가 담당한다(`cache.size`·eviction 계열 동반)
-  - `laimory.cache.fallback{cache=user:active|subject:mapping}`: 캐시 저장소 조회가 실패해 원본
+  - `laimory.cache.fallback{cache=user:active|subject:mapping|appconfig:current|terms:current|notice:popup}`: 캐시 저장소 조회가 실패해 원본
     경로(DB)로 강등된 수(#429 — `FailSafeCacheErrorHandler`). 사실상 Redis 장애 신호이며 redis
     가용성 경보의 요청 관점 보조다. 적재·무효화 실패는 요청을 강등시키지 않으므로 세지 않는다
     (무효화 실패는 WARN 로그로 남는다). tag는 캐시 이름뿐이다 — 식별자를 넣지 않는다

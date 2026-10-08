@@ -117,6 +117,18 @@ class ActiveStatusCacheIntegrationTest {
     }
 
     @Test
+    void redisCacheHitsAreCountedInStandardMeter() {
+        // #491부터 Redis 매니저를 builder가 아닌 생성자로 만든다 — 통계 수집기가 빠지면 meter는 있어도 0에 멈춘다.
+        when(userRepository.existsByUserIdAndStatus(userId, UserStatus.ACTIVE)).thenReturn(true);
+        double hitsBefore = hitCount();
+
+        userAccountService.isActive(userId);
+        userAccountService.isActive(userId);
+
+        assertThat(hitCount()).isGreaterThan(hitsBefore);
+    }
+
+    @Test
     void bothCachesExposeStandardCacheMeters() {
         when(userRepository.existsByUserIdAndStatus(userId, UserStatus.ACTIVE)).thenReturn(true);
         userAccountService.isActive(userId);
@@ -132,5 +144,11 @@ class ActiveStatusCacheIntegrationTest {
                 .tag("cache", UserAccountService.CACHE_NAME).meters()).isNotEmpty();
         assertThat(meterRegistry.find("cache.gets")
                 .tag("cache", SubjectMappingService.CACHE_NAME).meters()).isNotEmpty();
+    }
+
+    private double hitCount() {
+        return meterRegistry.get("cache.gets")
+                .tags("cache", UserAccountService.CACHE_NAME, "result", "hit")
+                .functionCounter().count();
     }
 }

@@ -39,11 +39,14 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   팝업 공지 id는 `NoticeService`에서 principal 없이 읽으며(#553), `onboarding`은
   `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
 - 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
-  Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig` 하나), subject mapping
+  Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig`와 그 캐시 구현 `SingleFlightRedisCacheManager`), subject mapping
   내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
   (`SubjectMappingAccessArchTest`, #282). 캐시는 wrapper 없이 서비스 메서드에 직접 단다 —
-  ACTIVE 검사(`UserAccountService`, #441)와 subject 매핑(`SubjectMappingService`) 둘 다이며,
-  우회해야 하는 호출자가 없어 별도 경계 arch test도 없다.
+  ACTIVE 검사(`UserAccountService`, #441), subject 매핑(`SubjectMappingService`), 관리자 변경 값 3종
+  (#491 — 앱 설정 `AppConfigService`, 약관 current `TermCatalogService`, 팝업 공지 id `NoticeService`)이며,
+  우회해야 하는 호출자가 없어 별도 경계 arch test도 없다. 약관 current만 적재 메서드를 `TermCatalogService`로
+  분리했다 — 요청 순서·부분집합 재구성을 하는 `TermDocumentService` 안에 두면 self-invocation이라 캐시
+  프록시를 타지 않는다. 약관 등록의 상위 버전 검사는 캐시를 거치지 않고 DB를 읽는다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
 - 임시 온보딩 reset은 일괄 제거를 위해 API·controller·service·전용 repository를
@@ -55,9 +58,11 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - MySQL은 JPA와 `ddl-auto=validate`를 사용한다. 모든 환경에서 앱 시작 시 Flyway가 미적용 SQL을
   실행한 뒤 JPA가 검증한다. 여러 서버는 같은 DB/history와 Flyway의 MySQL 잠금을 사용한다.
 - application-owned Redis 접근은 `RedisGateway`를 거친다(승인 예외: `CacheConfig`의 Spring Cache
-  Redis manager — 같은 key prefix를 붙인다).
-- 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager,
-  아니면 Caffeine manager(`@Primary`)이며 어노테이션마다 `cacheManager`를 명시한다.
+  Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
+- 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager
+  (`redisCacheManager`), 아니면 Caffeine manager(`localCacheManager`, `@Primary`)이며 어노테이션마다
+  `cacheManager`를 명시한다. Redis 캐시의 `@Cacheable(sync = true)`는 서버(JVM) 안 키별 single-flight로
+  동작한다(#491 — 같은 키의 동시 miss는 첫 호출의 적재 결과를 공유하고 서버 간은 막지 않는다).
 - OAuth handshake chain만 Redis-backed HTTP session을 사용하고 일반 API chain은 stateless다.
 
 timeline draft의 큰 흐름은 다음과 같다.

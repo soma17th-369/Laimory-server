@@ -51,7 +51,7 @@ public class UserAccountService {
      */
     public static final Duration TTL = Duration.ofMinutes(15);
 
-    private static final String CACHE_MANAGER = "activeStatusCacheManager";
+    private static final String CACHE_MANAGER = "redisCacheManager";
 
     private final UserRepository userRepository;
 

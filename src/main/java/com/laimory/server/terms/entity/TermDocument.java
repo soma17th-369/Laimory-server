@@ -7,6 +7,9 @@ import jakarta.persistence.EmbeddedId;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import java.math.BigInteger;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.Map;
 
 /**
  * 약관 문서 한 버전 — 불변(immutable) 행이다. 개정은 기존 행 UPDATE가 아니라 새 행 INSERT이며,
@@ -66,6 +69,19 @@ public class TermDocument extends BaseEntity {
         }
         return new BigInteger(version.substring(separator + 1))
                 .compareTo(new BigInteger(otherVersion.substring(otherSeparator + 1))) > 0;
+    }
+
+    /**
+     * 후보 문서들에서 종류별 current(가장 높은 버전)를 고른다 — current 선택의 단일 지점이다. 후보가 없는 종류는
+     * 결과에 없다. DB 조회 순서는 보장되지 않으므로 입력 순서에 의존하지 않는다.
+     */
+    public static Map<TermType, TermDocument> selectCurrent(Collection<TermDocument> candidates) {
+        Map<TermType, TermDocument> currentByType = new EnumMap<>(TermType.class);
+        for (TermDocument candidate : candidates) {
+            currentByType.merge(candidate.getTermType(), candidate,
+                    (current, next) -> next.isNewerThan(current) ? next : current);
+        }
+        return currentByType;
     }
 
     public TermDocumentId getId() {

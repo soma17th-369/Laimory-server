@@ -24,8 +24,9 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - Flyway 11.7.2(Boot BOM)가 모든 환경의 앱 시작 시 schema를 관리한다. 여러 서버는 공통 DB/history와
   native MySQL 잠금으로 실행을 조정한다. SQL은 배포 중인 구 앱과 호환되어야 한다.
 - Compose는 schema를 초기화하지 않는다. 이력 없는 기존 DB는 구조 확인 후 명시 baseline으로 편입한다.
-- application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 `CacheConfig`의 Spring
-  Cache Redis manager 배선 하나이며(#429), 같은 `app.redis.key-prefix`를 캐시 키에 붙인다.
+- application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 Spring Cache Redis manager
+  배선 `CacheConfig`(#429)와 그 캐시 구현 `SingleFlightRedisCacheManager`(#491)이며, 같은
+  `app.redis.key-prefix`를 캐시 키에 붙인다.
 - dev와 prod가 Redis를 공유하므로 dev는 환경 prefix로 격리한다.
 - 기본 Spring profile은 원격 의존성을 기대한다. 로컬 실행은 `docker` profile을 사용한다.
 - DB·Redis·JWT·OAuth의 필수 설정 일부는 startup에서 fail-fast한다.

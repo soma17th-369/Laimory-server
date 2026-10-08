@@ -374,10 +374,13 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   옛 주소의 접근성은 보존하지 않으므로, DB 밖에 손으로 등록한 소비자는 갱신 전에 찾아둔다. 이 확인은
   서버가 하지 못하므로 게시 절차가 소유한다.
 - version은 최대 64자의 canonical `major.minor` 문자열이고 DB CHECK와 키 생성·동의 등록 입력 경계가
-  non-canonical 값을 거절한다. 조회 중 형식 재검증은 하지 않는다. 현재 문서는 요청 종류의 엔티티 후보를
-  한 query로 읽고 `TermDocument.isNewerThan`으로 major/minor를 숫자 비교한 maximum이다
+  non-canonical 값을 거절한다. 조회 중 형식 재검증은 하지 않는다. 현재 문서는 엔티티 후보를 한 query로
+  읽고 `TermDocument.selectCurrent`(`isNewerThan`)로 major/minor를 숫자 비교한 maximum이다
   (`1.9 < 1.10 < 2.0`). 요약은 선택 후 변환하며 SQL VARCHAR 정렬·문자열 파싱으로 current를 계산하지 않는다.
-- 새 상위 버전 INSERT는 즉시 current가 된다. future 예약 효력 시각·active flag·scheduler는 없다.
+  요청 경로(공개 조회·동의 검증·initializer)는 같은 공유 Redis 캐시의 전 종류 current를 보고(#491), 관리자
+  등록의 상위 버전 검사는 캐시를 거치지 않고 DB를 읽는다(stale 캐시로 낮은 버전이 등록되지 않게).
+- 관리자 등록의 새 상위 버전 INSERT는 commit 뒤 캐시 evict로 다음 요청부터 current가 된다(앱을 우회한 DB
+  직접 INSERT는 캐시 TTL 1시간 이내). future 예약 효력 시각·active flag·scheduler는 없다.
 - 약관 동의 `accepted_at`은 `Asia/Seoul` 벽시계 `LocalDateTime` 계약이다. 캡처한 instant를 명시적 KST
   변환(`TermTimes`)으로 바꾸며 JVM/Clock zone에 의존하지 않는다.
 - 공개 조회의 타입 필터와 순서는 클라이언트가 반복 query에 보낸 `termTypes` 배열이 권위다. DB의 `IN`
