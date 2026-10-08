@@ -176,7 +176,7 @@ async function uploadNoticeThumbnail(notice, file) {
       writeOptions("POST", JSON.stringify({contentType: file.type, size: file.size})));
     let stored;
     try { stored = await fetch(upload.uploadUrl, {method: "PUT", headers: {"Content-Type": file.type}, body: file}); }
-    catch { throw new Error("S3 업로드 요청이 차단됐습니다. 사진 bucket CORS 설정을 확인하세요. 썸네일은 바뀌지 않았습니다."); }
+    catch { throw new Error("S3 업로드 요청이 실패했습니다. 사진 bucket CORS 설정 또는 네트워크 연결을 확인하세요. 썸네일은 바뀌지 않았습니다."); }
     if (!stored.ok) throw new Error(`S3 업로드 실패 (HTTP ${stored.status}). 썸네일은 바뀌지 않았습니다.`);
     await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/thumbnail`,
       writeOptions("PUT", JSON.stringify({filename: upload.filename})));
