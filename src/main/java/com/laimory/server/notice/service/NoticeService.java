@@ -6,6 +6,7 @@ import com.laimory.server.notice.dto.AdminNoticeResponse;
 import com.laimory.server.notice.dto.NoticeResponse;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -62,7 +63,7 @@ public class NoticeService {
     public List<Long> findPopupNoticeIds() {
         return noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc().stream()
                 .map(Notice::getNoticeId)
-                .collect(Collectors.toList());
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     /** 관리자 목록 — 숨김 포함 전체, 최신 순. */
