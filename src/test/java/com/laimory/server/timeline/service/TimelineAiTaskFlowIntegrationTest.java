@@ -492,7 +492,7 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
-    void storedResultDeductsOneCredit() {
+    void storedResultDeductsTimelineCreationCost() {
         String taskId = createDraft(sources());
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
 
