@@ -41,9 +41,9 @@ public interface PublicNoticeApi {
             @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion);
 
     @Operation(summary = "공지 단건 조회",
-            description = "노출 중인 공지 한 건을 반환한다. 앱 시작 팝업은 이니셜라이저의 popupNoticeIds로 "
-                    + "이 API를 호출해 제목과 contentUrl을 받는다. 숨김이거나 없는 공지는 404다 — 이니셜라이저 "
-                    + "응답 직후 숨겨진 공지도 같은 404이므로 클라이언트는 그 팝업만 건너뛴다.")
+            description = "노출 중인 공지 한 건을 반환한다. 앱 시작 팝업을 탭하면 이니셜라이저 popupNotices의 "
+                    + "noticeId로 이 API를 호출해 contentUrl을 받는다. 숨김이거나 없는 공지는 404다 — 이니셜라이저 "
+                    + "응답 뒤 숨겨진 공지도 같은 404이므로 클라이언트는 그 원문을 열지 않는다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "조회 성공", useReturnTypeSchema = true),

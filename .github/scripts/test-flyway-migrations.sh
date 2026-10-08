@@ -332,3 +332,14 @@ if mysql flyway_credit_cost_upgrade -e "UPDATE credit_costs SET cost = -1" >/dev
 fi
 flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=8 validate >"$WORK/credit-cost-validate.log" 2>&1
 ok 'V7 to V8 adds credit_costs with timeline creation cost 1, KST audit time and non-negative CHECK, keeping balances'
+
+# V8→V9(#560): notices.thumbnail_filename 추가 + 썸네일 없는 기존 팝업 지정 해제. 공지 행·노출 상태 보존,
+# 기존 행의 썸네일 NULL, 팝업 일괄 해제와 비팝업 행 불변을 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_thumbnail_upgrade;'
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=8 migrate >"$WORK/notice-thumbnail-v8.log" 2>&1
+mysql flyway_notice_thumbnail_upgrade -e "INSERT INTO notices (title, content_url, hidden, popup, created_at, updated_at) VALUES ('designated', 'https://example.com/a', TRUE, TRUE, NOW(6), NOW(6)), ('plain', 'https://example.com/b', FALSE, FALSE, NOW(6), NOW(6))"
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 migrate >"$WORK/notice-thumbnail-v9.log" 2>&1
+[ "$(mysql flyway_notice_thumbnail_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='designated' AND hidden = TRUE AND popup = FALSE AND thumbnail_filename IS NULL")" = 1 ] || fail 'V9 did not release the thumbnail-less popup while keeping the notice'
+[ "$(mysql flyway_notice_thumbnail_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='plain' AND hidden = FALSE AND popup = FALSE AND thumbnail_filename IS NULL")" = 1 ] || fail 'V9 changed a non-popup notice'
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 validate >"$WORK/notice-thumbnail-validate.log" 2>&1
+ok 'V8 to V9 adds nullable notices.thumbnail_filename and releases thumbnail-less popups, keeping notices'

@@ -39,6 +39,6 @@ public class AppInitializerService {
                         .map(document -> new AgreementRequiredTermResponse(document.termType(), document.version()))
                         .toList();
         return new InitializerResponse(onboardingCompleted, new InitializerTermsResponse(agreementRequired),
-                noticeService.findPopupNoticeIds());
+                noticeService.findPopupNotices());
     }
 }
