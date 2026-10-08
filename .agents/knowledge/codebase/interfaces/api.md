@@ -230,11 +230,13 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
 조회·기록 계약이다. GET은 최상위 `onboardingCompleted`, 약관 그룹 `terms.agreementRequired`(#434),
-최상위 `popupNoticeIds`(#553)를 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다.
-`popupNoticeIds`는 관리자가 팝업으로 지정했고 숨김이 아닌 공지 id의 최신 순(`noticeId DESC`) 배열이며
-없으면 `[]`다(사용자와 무관한 전역 값). **id만 싣는다** — 응답 field는 늘릴 수는 있어도 줄일 수 없으므로
-앱 시작마다 호출되는 이 응답이 공지 도메인 성장을 따라 커지지 않게, 제목·URL은 공지 단건 조회가 소유한다.
-앱은 id마다 단건 조회를 호출하고 404면 그 팝업만 건너뛴다(id를 받은 직후 숨겨진 공지 포함).
+최상위 `popupNotices`(#553·#560)를 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다.
+`popupNotices`는 관리자가 팝업으로 지정했고 숨김이 아닌 공지의 최신 순(`noticeId DESC`) 배열이며
+없으면 `[]`다(사용자와 무관한 전역 값). 원소는 `noticeId`·`title`·`thumbnailUrl`(무서명 CDN URL)이고 세 field
+모두 non-null이다(팝업 지정은 썸네일이 있어야 한다). 앱이 시작 직후 WebView를 띄우기 어려워 팝업을 제목·썸네일로
+네이티브로 그리기 위한 값만 싣는다(#560 — #553의 "id만" 결정을 번복). **원문 URL은 싣지 않는다** — 팝업을 탭하면
+앱이 공지 단건 조회로 `contentUrl`을 받고, 그 조회가 404면(응답 뒤 숨겨진 공지) 원문을 열지 않는다.
+#553의 `popupNoticeIds`는 prod 출시 전이라 호환 유지 없이 교체했다.
 이미 본 팝업의 재노출 방지는 앱이 id로 로컬 기억하며 서버는 관여하지 않는다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
 (`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
@@ -302,14 +304,19 @@ code는 추가하지 않았다.**
 구조) — `contentUrl`은 게시된 공지 page의 절대 HTTPS URL이고 클라이언트가 WebView로 연다(이미지·서식은
 page가 소유하며 Server에는 공지 원문 route가 없다). `GET /api/{version}/notices/{noticeId}`(#553)는 같은
 public 단건 조회로 목록 원소와 같은 `NoticeResponse`를 반환하고, 숨김이거나 없는 공지는 404(`-404`),
-숫자가 아닌 id는 400이다 — 앱 시작 팝업이 이니셜라이저의 `popupNoticeIds`로 제목·URL을 받는 경로다.
+숫자가 아닌 id는 400이다 — 앱 시작 팝업을 탭했을 때 이니셜라이저 `popupNotices`의 id로 원문 URL을 받는 경로다.
 목록 원소와 단건 응답은 아직 같은 타입이므로 단건에만 field를 더하려면 먼저 타입을 분리해야 한다(분리 전에
 더한 field는 목록에도 남는다). `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
 등록·수정·숨김·팝업 지정은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
-`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출·`PUT /{id}/popup` 팝업 지정/해제)가
+`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출·`PUT /{id}/popup` 팝업 지정/해제·
+`POST /thumbnail-uploads` 썸네일 업로드 URL 발급·`PUT /{id}/thumbnail` 썸네일 교체)가
 소유하며, 숨김이 삭제 역할이라 hard delete 경로는 없다. 팝업 지정은 공지별 토글이라 여러 건을 동시에
-지정할 수 있고, 숨김과 독립이다 — 숨긴 팝업 공지는 지정이 남은 채 `popupNoticeIds`와 단건 조회에서 빠지고
-다시 노출하면 팝업으로 복귀한다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
+지정할 수 있고, 숨김과 독립이다 — 숨긴 팝업 공지는 지정이 남은 채 `popupNotices`와 단건 조회에서 빠지고
+다시 노출하면 팝업으로 복귀한다. 지정(`popup=true`)은 썸네일이 없으면 400이고 해제는 항상 허용한다(#560).
+썸네일은 앱 사진과 같은 presigned PUT 흐름이다 — 발급(`{contentType, size}` → `{filename, uploadUrl}`, jpg/png/webp·
+사진 장당 상한, 위반은 사진과 같은 `-1007`·`-1005`)은 공지와 무관하고, 관리자 웹이 S3 PUT에 성공한 뒤에만
+`{filename}`을 저장한다(`{uuidv7}.{ext}` 형식 외 400, S3 실존은 확인하지 않음). 교체만 있고 제거는 없어 지정된
+팝업은 항상 썸네일을 가지며, 이전 객체는 지우지 않는다. 관리자 목록은 `thumbnailUrl`(없으면 null)을 싣는다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
 HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
 
 `POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
