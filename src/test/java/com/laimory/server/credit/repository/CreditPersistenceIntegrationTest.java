@@ -3,10 +3,12 @@ package com.laimory.server.credit.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,7 +22,8 @@ import org.springframework.test.context.ActiveProfiles;
 
 /**
  * subject_credits 실 MySQL 왕복 검증(#548) — 조건부 차감이 0에서 멈추는 것, 가입 재실행이 잔액을 되돌리지
- * 않는 것, 음수 CHECK와 삭제를 실제 제약 위에서 확인한다. {@code ddl-auto=validate}라 컨텍스트 기동 자체가
+ * 않는 것, 음수 CHECK와 삭제를 실제 제약 위에서 확인한다. credit_costs(#558)는 migration seed가 모든 비용 종류를
+ * 덮는지 확인한다. {@code ddl-auto=validate}라 컨텍스트 기동 자체가
  * 엔티티↔DDL 정합을 검증한다.
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
@@ -63,27 +66,42 @@ class CreditPersistenceIntegrationTest {
                 Integer.class, SUBJECT_ID.toString());
     }
 
+    /** 기대 차감액은 seed된 비용 행 기준이다 — 공유 DB의 비용 행은 테스트가 바꾸지 않는다(#558). */
+    private int timelineCreationCost() {
+        return jdbcTemplate.queryForObject("SELECT cost FROM credit_costs WHERE type = 'TIMELINE_CREATION'",
+                Integer.class);
+    }
+
     @Test
     void deductDecreasesRemainingByTimelineCreationCost() {
         creditService.createDefaultIfAbsent(SUBJECT_ID);
 
-        creditService.deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
+        creditService.deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
 
-        assertThat(remaining()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
+        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+    }
+
+    @Test
+    void everyCreditCostTypeHasSeededCostRow() {
+        // 종류를 추가하면서 migration seed를 빠뜨리면 그 기능의 사전 검사·차감이 500이 된다 — 배포 전에 잡는다.
+        List<String> seededTypes = jdbcTemplate.queryForList("SELECT type FROM credit_costs", String.class);
+
+        assertThat(seededTypes).containsAll(
+                Arrays.stream(CreditCostType.values()).map(Enum::name).toList());
     }
 
     @Test
     void deductAtZeroKeepsZeroWithoutError() {
         givenRemaining(0);
 
-        creditService.deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
+        creditService.deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
 
         assertThat(remaining()).isZero();
     }
 
     @Test
     void deductOfLargerAmountSubtractsWholeAmount() {
-        // 비용이 1보다 커져도 같은 문장이 그대로 동작해야 한다 — 상수 변경 배포만으로 비용을 바꾸는 전제(#555).
+        // 비용이 1보다 커져도 같은 문장이 그대로 동작해야 한다 — 비용 변경 migration만으로 비용을 바꾸는 전제(#558).
         givenRemaining(5);
 
         subjectCreditRepository.deduct(SUBJECT_ID, 2);

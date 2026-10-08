@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
-import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.TaskTokens;
@@ -688,7 +688,7 @@ class TimelineDraftTaskServiceTest {
     void createDraftTaskWithZeroCreditsIsRejectedBeforeAnySideEffect() {
         // 잔액 0은 403(-1021) — record 조회·enrich·staging·Redis·dispatch 전에 끊겨 아무것도 만들어지지 않는다.
         doThrow(new BusinessException(ExceptionType.INSUFFICIENT_CREDIT))
-                .when(creditService).requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
+                .when(creditService).requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
 
         assertThatThrownBy(() -> service.createDraftTask(
                 VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))

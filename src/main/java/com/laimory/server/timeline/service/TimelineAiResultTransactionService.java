@@ -2,7 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.dto.AiTimelineResultRequest;
@@ -144,7 +144,7 @@ public class TimelineAiResultTransactionService {
 
         // 6. 타임라인 1회 생성 = 크레딧을 생성 비용만큼 차감(#548·#555). graph와 같은 transaction이라 저장이 롤백되면 차감도 롤백되고,
         //    같은 result token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다.
-        creditService.deduct(subjectId, CreditCost.TIMELINE_CREATION);
+        creditService.deduct(subjectId, CreditCostType.TIMELINE_CREATION);
     }
 
     /**

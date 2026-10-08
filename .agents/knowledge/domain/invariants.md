@@ -109,12 +109,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory·기본 크레딧(60)은 하나의 transaction으로
   commit/rollback한다(#536·#548). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **크레딧 차감 시점은 AI 결과 저장 transaction 하나다**(#548) — graph INSERT·채택 source DELETE와 같은
-  transaction에서 작업 비용(`CreditCost`, #555)만큼 `greatest(remaining - 비용, 0)`으로 줄인다. 저장이 롤백되면 차감도 롤백되고, 같은 result
+  transaction에서 기능 비용(`credit_costs` 행, #555·#558)만큼 `greatest(remaining - 비용, 0)`으로 줄인다. 저장이 롤백되면 차감도 롤백되고, 같은 result
   token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다. 결과가 저장되지 않은 생성은 차감되지
   않으므로 환불 경로가 없다(POST 차감 + 실패 환불은 기각 — 실패 신호가 없는 경로가 있다). 반대로 결과가
   저장됐다면 draft 응답이 UNKNOWN 502였거나 callback 없이 task가 만료됐어도 차감은 유지된다 — 기준은 요청·task
   상태가 아니라 결과 저장 commit이다.
-  비용의 단일 기준은 `CreditCost` 상수다 — 공개 비용 조회(앱 고지)·사전 검사·차감이 같은 값을 쓰며 따로 적지 않는다.
+  비용의 단일 기준은 DB `credit_costs`의 기능 종류별 행이다(#558) — 공개 비용 조회(앱 고지)·사전 검사·차감이 매 요청
+  같은 행을 읽으며 따로 적지 않는다. 서버별 캐시를 두지 않는다(rolling 배포·비용 변경 직후 서버마다 값이 갈린다).
+  비용 변경은 새 Flyway migration의 `UPDATE`로만 하고 직접 운영 SQL로 바꾸지 않는다(기술 차단 없이 규칙으로 금지).
+  새 기능 종류는 같은 변경의 migration에 seed 행을 넣는다 — 비용 행 부재는 기본값(무료 등)으로 가리지 않고 던진다.
+  차감액은 사전 검사 시점이 아니라 결과 저장 시점의 비용이다 — 비용 변경 migration 순간 진행 중이던 생성은 새 비용으로
+  차감된다(draft 시점 비용을 task에 스냅샷하지 않기로 함).
   draft POST는 부수효과 전에 잔액이 비용보다 적은 경우만 거절할 뿐 예약하지 않는다 — 사전 검사를 함께 통과한 동시 생성은 차감
   시점에 0에서 멈추고 결과는 정상 저장된다(수용한 무료 생성). 크레딧 행 부재는 기본값으로 가리지 않고 던진다.
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가

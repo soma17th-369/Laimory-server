@@ -193,7 +193,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 60을 한 번 지급하고 충전 경로는 없다(평생 60). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — AI 결과 저장 1회마다 같은 transaction에서 크레딧 비용만큼 차감하고(0에서 멈춤), 잔액이 비용보다 적으면 draft 생성이 403 `-1021`로 거절된다. 사용 내역(원장)은 저장하지 않는다. |
-| 크레딧 비용 | Credit Cost | 현재 구현 | 크레딧을 소비하는 작업 1회의 소비량이다(#555). 서버 상수 `CreditCost`가 단일 기준이고(현재 `TIMELINE_CREATION` = 1), 공개 `GET /api/{version}/credit/costs`가 `{"timelineCreation": n}`로 앱에 알린다. 앱은 하드코딩하지 않으며 값 변경은 서버 배포로만 한다. |
+| 크레딧 비용 | Credit Cost | 현재 구현 | 크레딧을 소비하는 기능 1회의 소비량이다(#555). DB `credit_costs`의 기능 종류(`CreditCostType`)별 행이 단일 기준이고(#558 — 현재 `TIMELINE_CREATION` = 1, 0은 무료), 공개 `GET /api/{version}/credit/costs`가 `{"timelineCreation": n}`로 앱에 알린다. 앱은 하드코딩하지 않으며 값 변경은 새 Flyway migration의 `UPDATE`로만 한다. |
 
 ## 푸시 알림
 
