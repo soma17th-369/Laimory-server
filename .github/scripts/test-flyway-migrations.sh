@@ -316,3 +316,19 @@ mysql flyway_notice_popup_upgrade -e "INSERT INTO notices (title, content_url, c
 [ "$(mysql flyway_notice_popup_upgrade -e "SELECT popup FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.popup default is not false for inserts without the column'
 flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=7 validate >"$WORK/notice-popup-validate.log" 2>&1
 ok 'V6 to V7 adds notices.popup defaulting to false and preserves existing notices'
+
+# V7→V8(#558): credit_costs 추가 + 타임라인 생성 비용 1 seed. 기존 잔액 보존, seed 값·KST 감사 시각,
+# 음수 CHECK를 확인한다.
+mysql -e 'CREATE DATABASE flyway_credit_cost_upgrade;'
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=7 migrate >"$WORK/credit-cost-v7.log" 2>&1
+mysql flyway_credit_cost_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1); INSERT INTO subject_credits (subject_id, remaining, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 42, NOW(6), NOW(6))"
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=8 migrate >"$WORK/credit-cost-v8.log" 2>&1
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT remaining FROM subject_credits WHERE subject_id='00000000-0000-4000-8000-000000000001'")" = 42 ] || fail 'V8 changed existing credit balances'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT CONCAT(COUNT(*), ':', MAX(cost)) FROM credit_costs WHERE type='TIMELINE_CREATION'")" = '1:1' ] || fail 'V8 did not seed timeline creation cost 1'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT COUNT(*) FROM credit_costs")" = 1 ] || fail 'V8 seeded unexpected credit cost rows'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT COUNT(*) FROM credit_costs WHERE TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(6), created_at) BETWEEN 535 AND 545 AND updated_at = created_at")" = 1 ] || fail 'V8 seed audit time is not the KST wall clock'
+if mysql flyway_credit_cost_upgrade -e "UPDATE credit_costs SET cost = -1" >/dev/null 2>&1; then
+  fail 'credit_costs.cost CHECK is not enforced'
+fi
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=8 validate >"$WORK/credit-cost-validate.log" 2>&1
+ok 'V7 to V8 adds credit_costs with timeline creation cost 1, KST audit time and non-negative CHECK, keeping balances'

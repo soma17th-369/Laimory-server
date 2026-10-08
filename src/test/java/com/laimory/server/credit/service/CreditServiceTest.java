@@ -8,8 +8,10 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
-import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.entity.CreditCost;
 import com.laimory.server.credit.entity.SubjectCredit;
+import com.laimory.server.credit.repository.CreditCostRepository;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
@@ -25,7 +27,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 크레딧 leaf 검증 — 가입 기본값 60, 잔액 0의 사전 거절(-1021), 행 부재를 기본값으로 가리지 않는 계약을 고정한다.
+ * 크레딧 leaf 검증 — 가입 기본값 60, 잔액 0의 사전 거절(-1021), 비용을 credit_costs 행에서 읽는 것(#558),
+ * 잔액·비용 행 부재를 기본값으로 가리지 않는 계약을 고정한다.
  * 조건부 차감·삭제의 DB 의미는 {@code CreditPersistenceIntegrationTest}가 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
@@ -38,8 +41,11 @@ class CreditServiceTest {
     @Mock
     private SubjectCreditRepository subjectCreditRepository;
 
+    @Mock
+    private CreditCostRepository creditCostRepository;
+
     private CreditService service() {
-        return new CreditService(subjectCreditRepository, CLOCK);
+        return new CreditService(subjectCreditRepository, creditCostRepository, CLOCK);
     }
 
     private static SubjectCredit credit(int remaining) {
@@ -48,6 +54,14 @@ class CreditServiceTest {
         ReflectionTestUtils.setField(credit, "subjectId", SUBJECT_ID);
         ReflectionTestUtils.setField(credit, "remaining", remaining);
         return credit;
+    }
+
+    private void givenTimelineCreationCost(int cost) {
+        CreditCost row = new CreditCost() {
+        };
+        ReflectionTestUtils.setField(row, "type", CreditCostType.TIMELINE_CREATION);
+        ReflectionTestUtils.setField(row, "cost", cost);
+        when(creditCostRepository.findByType(CreditCostType.TIMELINE_CREATION)).thenReturn(Optional.of(row));
     }
 
     @Test
@@ -74,16 +88,19 @@ class CreditServiceTest {
     }
 
     @Test
-    void getCostsReportsTimelineCreationCostFromCatalog() {
-        // 앱 고지 값은 사전 검사·차감과 같은 카탈로그에서 나와야 한다 — 따로 적으면 고지와 실제 차감이 어긋난다.
-        assertThat(service().getCosts("v1").timelineCreation()).isEqualTo(CreditCost.TIMELINE_CREATION.amount());
+    void getCostsReportsTimelineCreationCostFromCostRow() {
+        // 앱 고지 값은 사전 검사·차감과 같은 비용 행에서 나와야 한다 — 따로 적으면 고지와 실제 차감이 어긋난다.
+        givenTimelineCreationCost(3);
+
+        assertThat(service().getCosts("v1").timelineCreation()).isEqualTo(3);
     }
 
     @Test
     void requireAvailableRejectsZeroCreditsWithInsufficientCredit() {
+        givenTimelineCreationCost(1);
         when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(0)));
 
-        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT);
                     assertThat(ex.getErrorCode()).isEqualTo(-1021);
@@ -92,21 +109,21 @@ class CreditServiceTest {
 
     @Test
     void requireAvailableRejectsWhenRemainingIsOneBelowCost() {
-        // 경계를 비용 기준으로 둔다 — 비용 상수를 바꾸는 배포에도 "잔액이 비용보다 적으면 거절"이 같은 의미로 검증된다.
-        int cost = CreditCost.TIMELINE_CREATION.amount();
-        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost - 1)));
+        // 비용을 1이 아닌 값으로 두어 "잔액 0만 거절"이 아니라 "잔액이 비용보다 적으면 거절"임을 검증한다.
+        givenTimelineCreationCost(3);
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(2)));
 
-        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
     }
 
     @Test
     void requireAvailablePassesWhenRemainingEqualsCost() {
-        int cost = CreditCost.TIMELINE_CREATION.amount();
-        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(cost)));
+        givenTimelineCreationCost(3);
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(3)));
 
-        assertThatCode(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+        assertThatCode(() -> service().requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION))
                 .doesNotThrowAnyException();
     }
 
@@ -115,7 +132,26 @@ class CreditServiceTest {
         // 행 부재를 잔액 부족(-1021)으로 바꿔 말하지 않는다 — 클라에 "크레딧 없음"이라 거짓 안내하게 된다.
         when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCost.TIMELINE_CREATION))
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void requireAvailableFailsLoudlyWhenCostRowIsMissing() {
+        // 비용 행 부재는 migration seed 누락이다 — 0(무료)이나 임의 기본값으로 가리면 조용히 잘못 차감한다.
+        when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.of(credit(5)));
+        when(creditCostRepository.findByType(CreditCostType.TIMELINE_CREATION)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void deductSubtractsCostReadFromCostRow() {
+        givenTimelineCreationCost(3);
+
+        service().deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+
+        verify(subjectCreditRepository).deduct(SUBJECT_ID, 3);
     }
 }

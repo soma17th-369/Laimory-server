@@ -11,7 +11,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
-import com.laimory.server.credit.CreditCost;
+import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.timeline.ItemType;
@@ -498,7 +498,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
 
-        assertThat(remainingCredits()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
+        assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
     }
 
     @Test
@@ -510,7 +510,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
 
-        assertThat(remainingCredits()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
+        assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
     }
 
     @Test
@@ -525,12 +525,12 @@ class TimelineAiTaskFlowIntegrationTest {
             invocation.callRealMethod();
             remainingInsideTransaction.set(remainingCredits());
             throw new IllegalStateException("failure after credit deduction");
-        }).when(creditService).deduct(SUBJECT_ID, CreditCost.TIMELINE_CREATION);
+        }).when(creditService).deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input)))
                 .isInstanceOf(IllegalStateException.class);
 
-        assertThat(remainingInsideTransaction.get()).isEqualTo(60 - CreditCost.TIMELINE_CREATION.amount());
+        assertThat(remainingInsideTransaction.get()).isEqualTo(60 - timelineCreationCost());
         assertThat(remainingCredits()).isEqualTo(60);
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
@@ -552,6 +552,12 @@ class TimelineAiTaskFlowIntegrationTest {
     private int remainingCredits() {
         return jdbcTemplate.queryForObject("SELECT remaining FROM subject_credits WHERE subject_id = ?",
                 Integer.class, SUBJECT_ID.toString());
+    }
+
+    /** 기대 차감액은 seed된 비용 행 기준이다 — 공유 DB의 비용 행은 테스트가 바꾸지 않는다(#558). */
+    private int timelineCreationCost() {
+        return jdbcTemplate.queryForObject("SELECT cost FROM credit_costs WHERE type = 'TIMELINE_CREATION'",
+                Integer.class);
     }
 
     private String createDraft(List<SourceItemDto> sources) {

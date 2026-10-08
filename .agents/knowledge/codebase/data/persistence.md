@@ -68,6 +68,9 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `subject_credits` (#548 — subject당 1행 크레딧 잔액 `remaining`, `CHECK (remaining >= 0)`, subject FK
   `RESTRICT`, DB default 없음(기본 60의 권위는 `CreditService` 상수). 행은 가입 transaction과 V6 backfill만
   만들고, 쓰기는 AI 결과 저장 transaction의 조건부 차감 UPDATE와 탈퇴 삭제(#302)뿐이다. V6에서 추가)
+- `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
+  선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
+  migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 - `notices` (#517 — 관리자가 등록하는 공지 제목 + 게시 URL(`content_url`, 원문은 게시 page 소유 —
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
