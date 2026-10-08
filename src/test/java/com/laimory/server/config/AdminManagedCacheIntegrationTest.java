@@ -15,6 +15,7 @@ import com.laimory.server.appconfig.AppConfigResponse;
 import com.laimory.server.appconfig.AppConfigService;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.notice.dto.PopupNoticeResponse;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.notice.service.NoticeService;
@@ -45,7 +46,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 관리자 변경 값 캐시 3종(앱 설정·약관 current·팝업 공지 id, #491) ↔ 실 Redis·실 배선 검증.
+ * 관리자 변경 값 캐시 3종(앱 설정·약관 current·팝업 공지, #491·#560) ↔ 실 Redis·실 배선 검증.
  *
  * <p>여기서만 볼 수 있는 것: ① 캐시 값이 {@code GenericJackson2JsonRedisSerializer}로 Redis를 왕복해 같은 값으로
  * 복원되는지(역직렬화가 깨지면 error handler가 매 요청 miss로 강등해 캐시가 조용히 무력화된다) ② 키 모양과 TTL
@@ -60,6 +61,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class AdminManagedCacheIntegrationTest {
 
     private static final long ONE_HOUR_MS = TimeUnit.HOURS.toMillis(1);
+    private static final String THUMBNAIL = "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp";
 
     @Autowired private AppConfigService appConfigService;
     @Autowired private TermDocumentService termDocumentService;
@@ -165,14 +167,17 @@ class AdminManagedCacheIntegrationTest {
     }
 
     @Test
-    void popupNoticeIdsKeepLongElementsThroughRedisWithOneHourTtl() {
+    void popupNoticesKeepRecordElementsThroughRedisWithOneHourTtl() {
         when(noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc())
                 .thenReturn(List.of(notice(15L), notice(12L)));
-        noticeService.findPopupNoticeIds();
+        List<PopupNoticeResponse> loaded = noticeService.findPopupNotices();
 
-        List<Long> cached = noticeService.findPopupNoticeIds();
+        List<PopupNoticeResponse> cached = noticeService.findPopupNotices();
 
-        assertThat(cached).containsExactly(15L, 12L);
+        assertThat(cached).isEqualTo(loaded);
+        assertThat(cached).extracting(PopupNoticeResponse::noticeId).containsExactly(15L, 12L);
+        assertThat(cached).extracting(PopupNoticeResponse::title).containsExactly("공지 15", "공지 12");
+        assertThat(cached.get(0).thumbnailUrl()).endsWith("/notices/" + THUMBNAIL);
         verify(noticeRepository, times(1)).findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc();
         assertThat(stringRedisTemplate.getExpire(keyPrefix + NoticeService.POPUP_CACHE_NAME + ":all", TimeUnit.MILLISECONDS))
                 .isGreaterThan(ONE_HOUR_MS - 30_000)
@@ -180,27 +185,52 @@ class AdminManagedCacheIntegrationTest {
     }
 
     @Test
-    void popupDesignationChangeEvictsPopupIds() {
+    void popupDesignationChangeEvictsPopupNotices() {
         when(noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc())
                 .thenReturn(List.of()).thenReturn(List.of(notice(15L)));
         when(noticeRepository.findByNoticeId(15L)).thenReturn(Optional.of(notice(15L)));
-        noticeService.findPopupNoticeIds();
+        noticeService.findPopupNotices();
 
         noticeService.changePopup(15L, true);
 
-        assertThat(noticeService.findPopupNoticeIds()).containsExactly(15L);
+        assertThat(noticeService.findPopupNotices()).extracting(PopupNoticeResponse::noticeId).containsExactly(15L);
     }
 
     @Test
-    void noticeVisibilityChangeEvictsPopupIds() {
+    void noticeVisibilityChangeEvictsPopupNotices() {
         when(noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc())
                 .thenReturn(List.of(notice(15L))).thenReturn(List.of());
         when(noticeRepository.findByNoticeId(15L)).thenReturn(Optional.of(notice(15L)));
-        noticeService.findPopupNoticeIds();
+        noticeService.findPopupNotices();
 
         noticeService.changeVisibility(15L, true);
 
-        assertThat(noticeService.findPopupNoticeIds()).isEmpty();
+        assertThat(noticeService.findPopupNotices()).isEmpty();
+    }
+
+    @Test
+    void noticeEditEvictsPopupNoticesSoNewTitleIsServed() {
+        Notice popup = notice(15L);
+        when(noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).thenReturn(List.of(popup));
+        when(noticeRepository.findByNoticeId(15L)).thenReturn(Optional.of(popup));
+        noticeService.findPopupNotices();
+
+        noticeService.edit(15L, "수정된 제목", "https://www.laimory.app/notices/15");
+
+        assertThat(noticeService.findPopupNotices()).extracting(PopupNoticeResponse::title).containsExactly("수정된 제목");
+    }
+
+    @Test
+    void noticeThumbnailChangeEvictsPopupNoticesSoNewUrlIsServed() {
+        Notice popup = notice(15L);
+        when(noticeRepository.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).thenReturn(List.of(popup));
+        when(noticeRepository.findByNoticeId(15L)).thenReturn(Optional.of(popup));
+        noticeService.findPopupNotices();
+
+        noticeService.changeThumbnail(15L, "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a7.png");
+
+        assertThat(noticeService.findPopupNotices().get(0).thumbnailUrl())
+                .endsWith("/notices/0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a7.png");
     }
 
     @Test
@@ -230,6 +260,7 @@ class AdminManagedCacheIntegrationTest {
     private static Notice notice(long noticeId) {
         Notice notice = Notice.of("공지 " + noticeId, "https://www.laimory.app/notices/" + noticeId);
         ReflectionTestUtils.setField(notice, "noticeId", noticeId);
+        notice.changeThumbnail(THUMBNAIL);
         return notice;
     }
 }

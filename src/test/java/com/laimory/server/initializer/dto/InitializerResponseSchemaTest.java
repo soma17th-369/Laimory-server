@@ -44,22 +44,26 @@ class InitializerResponseSchemaTest {
     }
 
     @Test
-    void popupNoticeIdsIsRequiredArrayOfInt64() {
+    void popupNoticesIsRequiredArrayOfIdTitleAndThumbnailUrl() {
         Schema<?> schema = schema("InitializerResponse");
 
-        Schema<?> popupNoticeIds = schema.getProperties().get("popupNoticeIds");
-        assertThat(popupNoticeIds).isNotNull();
-        assertThat(popupNoticeIds.getType()).isEqualTo("array");
-        assertThat(popupNoticeIds.getItems().getType()).isEqualTo("integer");
-        assertThat(popupNoticeIds.getItems().getFormat()).isEqualTo("int64");
-        assertThat(schema.getRequired()).contains("popupNoticeIds");
+        Schema<?> popupNotices = schema.getProperties().get("popupNotices");
+        assertThat(popupNotices).isNotNull();
+        assertThat(popupNotices.getType()).isEqualTo("array");
+        assertThat(popupNotices.getItems().get$ref()).endsWith("/PopupNoticeResponse");
+        assertThat(schema.getRequired()).contains("popupNotices");
+
+        Schema<?> element = schema("PopupNoticeResponse");
+        assertThat(element.getProperties().keySet()).containsExactlyInAnyOrder("noticeId", "title", "thumbnailUrl");
+        assertThat(element.getProperties().get("noticeId").getFormat()).isEqualTo("int64");
+        assertThat(element.getProperties().get("thumbnailUrl").getFormat()).isEqualTo("uri");
     }
 
     @Test
     void everySchema_declaresEveryPropertyRequired() {
         Map<String, Schema> schemas = ModelConverters.getInstance().readAll(InitializerResponse.class);
         assertThat(schemas.keySet()).contains("InitializerResponse", "InitializerTermsResponse",
-                "AgreementRequiredTermResponse");
+                "AgreementRequiredTermResponse", "PopupNoticeResponse");
         schemas.forEach((name, schema) -> {
             Map<String, Schema> properties = schema.getProperties();
             if (properties == null) {
