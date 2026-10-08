@@ -76,8 +76,12 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
   공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가. V7(#553)에서 앱 시작 팝업 지정 `popup`
   (기본 false)을 추가했다 — 여러 행이 동시에 true일 수 있고 `hidden`과 독립이라 숨겨도 지정은 남는다.
-  initializer의 팝업 id 목록은 공유 Redis 캐시 `notice:popup`을 타며(#491) 목록을 바꾸는 관리자 쓰기
-  `changePopup`·`changeVisibility`만 commit 뒤 evict한다 — 등록은 `popup=false`로 만들고 수정은 제목·URL만 바꾼다)
+  V9(#560)에서 썸네일 파일명 `thumbnail_filename VARCHAR(64) NULL`({uuidv7}.{ext}, S3 key `notices/{filename}`·
+  CDN URL은 서버 파생)을 추가하고 썸네일 없던 기존 팝업 지정을 모두 해제했다 — 이후 팝업 지정은 썸네일이 있어야 하고
+  썸네일은 교체만 있어 `popup=true ⇒ thumbnail_filename IS NOT NULL`이 쓰기 경로로 유지된다.
+  initializer의 팝업 목록(id·제목·썸네일 URL)은 공유 Redis 캐시 `notice:popup-notices`를 타며(#491·#560) 그 값을
+  바꾸는 관리자 쓰기 `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`이 commit 뒤 evict한다 — 등록만
+  `popup=false`로 만들어 evict하지 않는다)
 - `inquiries → inquiry_attachments` (#518 — 앱 인증 접수 문의. owner는 콘텐츠 subject(FK `RESTRICT`)이고
   답장 `email`·`title`(최대 100자)·`description`·관리자 `answered_at`을 담는다. 첨부는 filename만
   plain FK 자식 행으로 저장하고 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 파생한다. 답변은
@@ -440,7 +444,7 @@ application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `Cache
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `user:active:{userId}` | ACTIVE 검사 캐시(#429 — `UserAccountService.isActive`의 `@Cacheable`, #441부터 `/a/api` 필터와 token 발급·회전이 공유). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |
-| `appconfig:current:all` · `terms:current:all` · `notice:popup:all` | 관리자 변경 값 캐시(#491) — 앱 설정 응답(`AppConfigService.getAppConfig`), 전 종류 current 약관 목록(`TermCatalogService.findAllCurrentTerms`), 앱 시작 팝업 공지 id 목록(`NoticeService.findPopupNoticeIds`). 키는 `{app.redis.key-prefix}` + 캐시 이름 + `:all`(전역 단일 엔트리)이고, 값은 `GenericJackson2JsonRedisSerializer` JSON이다(목록은 역직렬화 가능한 가변 구현으로 저장, `TermResponse`·`AppConfigResponse`는 record). 무효화는 관리자 쓰기의 commit 뒤 `@CacheEvict`뿐이다 — `updateVersions` / 약관 `register` 성공 / `changePopup`·`changeVisibility`. 앱을 우회한 DB 직접 쓰기는 무효화 대상이 아니다(TTL 이내 수렴, 앱 재시작으로 지워지지 않음). evict는 쓰기를 처리한 환경의 key prefix 키만 지운다 — dev MySQL을 공유하는 test(`test_`)와 dev(`dev_`)는 한쪽 관리자 웹 변경이 다른 쪽 캐시를 지우지 않아 최대 1h 옛 값을 본다. | 1h — 쓰기 시점 고정, evict 유실 안전망 |
+| `appconfig:current:all` · `terms:current:all` · `notice:popup-notices:all` | 관리자 변경 값 캐시(#491) — 앱 설정 응답(`AppConfigService.getAppConfig`), 전 종류 current 약관 목록(`TermCatalogService.findAllCurrentTerms`), 앱 시작 팝업 공지 목록(`NoticeService.findPopupNotices` — id·제목·썸네일 URL, #560에서 값 shape가 id 목록에서 바뀌어 rolling 배포 중 구·신 값이 섞이지 않게 이름을 `notice:popup`에서 바꿨다). 키는 `{app.redis.key-prefix}` + 캐시 이름 + `:all`(전역 단일 엔트리)이고, 값은 `GenericJackson2JsonRedisSerializer` JSON이다(목록은 역직렬화 가능한 가변 구현으로 저장, `TermResponse`·`AppConfigResponse`·`PopupNoticeResponse`는 record). 무효화는 관리자 쓰기의 commit 뒤 `@CacheEvict`뿐이다 — `updateVersions` / 약관 `register` 성공 / `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`. 앱을 우회한 DB 직접 쓰기는 무효화 대상이 아니다(TTL 이내 수렴, 앱 재시작으로 지워지지 않음). evict는 쓰기를 처리한 환경의 key prefix 키만 지운다 — dev MySQL을 공유하는 test(`test_`)와 dev(`dev_`)는 한쪽 관리자 웹 변경이 다른 쪽 캐시를 지우지 않아 최대 1h 옛 값을 본다. | 1h — 쓰기 시점 고정, evict 유실 안전망 |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.

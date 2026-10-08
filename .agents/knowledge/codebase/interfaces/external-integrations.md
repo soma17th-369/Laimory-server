@@ -134,6 +134,17 @@ versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작
 (실재 `inquiries` 객체가 CDN으로 200, S3 직접은 403). dev·prod는 같은 bucket·distribution을 쓴다.
 **제약: OAC 읽기 정책은 `*/inquiries/*`를 포함해야 한다.** `*/photos/*`로 좁히면 서버 에러 없이 앱·관리자의 문의
 첨부가 전부 403으로 깨진다. CDN 캐시는 탈퇴 삭제 뒤에도 TTL 동안 사본을 낼 수 있다(사진과 같은 조건).
+
+같은 bucket의 `notices/{filename}` prefix는 공지 썸네일(#560)이 쓴다 — subject namespace 밖이라 계정 삭제
+대상이 아니고, 관리자 웹이 서버 발급 presigned PUT으로 올리며 열람은 같은 무서명 CDN URL
+(`NoticeThumbnailService.cdnUrl`)이다. 업로드 권한은 기존 role의 `s3:PutObject`(`/*`)로 충분하고(IAM 변경 없음),
+CDN 열람은 위 OAC 정책이 bucket 전체 범위라는 전제에 기댄다. 교체 시 이전 객체는 지우지 않는다.
+**관리자 웹은 브라우저라 bucket CORS가 필요하다** — 앱 업로드(비브라우저)와 달리 `http://localhost:8081`
+(SSM 터널 관리자 origin)에서 S3로 가는 cross-origin PUT은 bucket이 허용해야 한다. 필요한 규칙은 AllowedOrigins
+`http://localhost:8081`·AllowedMethods `PUT`·AllowedHeaders `Content-Type`이다. CORS는 bucket 단위라 prefix로 좁힐
+수 없지만 권한을 주지 않는다 — 업로드 가능 여부는 key·타입·크기를 고정한 presigned 서명이 정한다.
+2026-10-08 조회 시 bucket에 CORS 설정이 없었다(`NoSuchCORSConfiguration`) — 규칙이 없거나 지워지면 서버 에러 없이
+관리자 썸네일 업로드만 브라우저에서 차단된다(관리자 웹이 "CORS 설정을 확인하라"는 오류를 띄운다).
 실제 bucket, domain, credential 값은 knowledge에 복제하지 않는다.
 
 ### Firebase Cloud Messaging (타임라인 완료 푸시·일일 리마인더)
