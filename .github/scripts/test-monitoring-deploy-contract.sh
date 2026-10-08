@@ -42,7 +42,7 @@ ruby -ryaml -e '
 
   steps = workflow.dig("jobs", "deploy-alert-rules", "steps")
   abort "deploy job missing" unless steps
-  configure = steps.find { |step| step["uses"] == "aws-actions/configure-aws-credentials@v4" }
+  configure = steps.find { |step| step["uses"] == "aws-actions/configure-aws-credentials@v6" }
   abort "OIDC configure step missing" unless configure
   abort "deploy role variable changed" unless configure.dig("with", "role-to-assume") == "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
 
