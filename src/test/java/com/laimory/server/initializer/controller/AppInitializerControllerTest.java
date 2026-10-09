@@ -13,6 +13,7 @@ import com.laimory.server.initializer.dto.AgreementRequiredTermResponse;
 import com.laimory.server.initializer.dto.InitializerResponse;
 import com.laimory.server.initializer.dto.InitializerTermsResponse;
 import com.laimory.server.initializer.service.AppInitializerService;
+import com.laimory.server.notice.dto.PopupNoticeResponse;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.testsupport.TestSubjects;
@@ -67,7 +68,9 @@ class AppInitializerControllerTest {
         // 서비스 stub이 (v1, USER_ID, SUBJECT_ID)에만 응답하므로 두 hidden principal 주입까지 함께 고정된다.
         when(appInitializerService.getInitialState("v1", USER_ID, SUBJECT_ID))
                 .thenReturn(new InitializerResponse(true, new InitializerTermsResponse(List.of(
-                        new AgreementRequiredTermResponse(TermType.TERMS_OF_SERVICE, "1.1"))), List.of(15L, 12L)));
+                        new AgreementRequiredTermResponse(TermType.TERMS_OF_SERVICE, "1.1"))), List.of(
+                        new PopupNoticeResponse(15L, "점검 안내", "https://cdn.example/notices/b.webp"),
+                        new PopupNoticeResponse(12L, "새 기능", "https://cdn.example/notices/a.jpg"))));
 
         mockMvc.perform(get(BASE).with(authenticatedUser(USER_ID)))
                 .andExpect(status().isOk())
@@ -77,9 +80,11 @@ class AppInitializerControllerTest {
                 .andExpect(jsonPath("$.body.terms.agreementRequired.length()").value(1))
                 .andExpect(jsonPath("$.body.terms.agreementRequired[0].termType").value("TERMS_OF_SERVICE"))
                 .andExpect(jsonPath("$.body.terms.agreementRequired[0].version").value("1.1"))
-                .andExpect(jsonPath("$.body.popupNoticeIds.length()").value(2))
-                .andExpect(jsonPath("$.body.popupNoticeIds[0]").value(15))
-                .andExpect(jsonPath("$.body.popupNoticeIds[1]").value(12));
+                .andExpect(jsonPath("$.body.popupNotices.length()").value(2))
+                .andExpect(jsonPath("$.body.popupNotices[0].noticeId").value(15))
+                .andExpect(jsonPath("$.body.popupNotices[0].title").value("점검 안내"))
+                .andExpect(jsonPath("$.body.popupNotices[0].thumbnailUrl").value("https://cdn.example/notices/b.webp"))
+                .andExpect(jsonPath("$.body.popupNotices[1].noticeId").value(12));
     }
 
     @Test
@@ -94,7 +99,7 @@ class AppInitializerControllerTest {
                 .andExpect(jsonPath("$.body.onboardingCompleted").value(false))
                 .andExpect(jsonPath("$.body.terms.agreementRequired").isArray())
                 .andExpect(jsonPath("$.body.terms.agreementRequired").isEmpty())
-                .andExpect(jsonPath("$.body.popupNoticeIds").isArray())
-                .andExpect(jsonPath("$.body.popupNoticeIds").isEmpty());
+                .andExpect(jsonPath("$.body.popupNotices").isArray())
+                .andExpect(jsonPath("$.body.popupNotices").isEmpty());
     }
 }

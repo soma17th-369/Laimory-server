@@ -154,6 +154,13 @@ class AdminPersistenceIntegrationTest {
                     .path("noticeId").asLong();
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().isPopup()).isFalse();
 
+            // 팝업 지정은 썸네일이 있어야 한다(#560) — 저장된 파일명이 V9 컬럼으로 왕복한다.
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/popup", "{\"popup\":true}").statusCode())
+                    .isEqualTo(400);
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/thumbnail",
+                    "{\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp\"}").statusCode()).isEqualTo(200);
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().getThumbnailFilename())
+                    .isEqualTo("0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp");
             assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/popup", "{\"popup\":true}").statusCode())
                     .isEqualTo(200);
             assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.initializer.dto.AgreementRequiredTermResponse;
 import com.laimory.server.initializer.dto.InitializerResponse;
+import com.laimory.server.notice.dto.PopupNoticeResponse;
 import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.terms.TermType;
@@ -92,24 +93,26 @@ class AppInitializerServiceTest {
     }
 
     @Test
-    void getInitialStatePassesPopupNoticeIdsInLeafOrder() {
+    void getInitialStatePassesPopupNoticesInLeafOrder() {
+        PopupNoticeResponse newer = new PopupNoticeResponse(15L, "둘째 팝업", "https://cdn.example/notices/b.webp");
+        PopupNoticeResponse older = new PopupNoticeResponse(12L, "첫째 팝업", "https://cdn.example/notices/a.jpg");
         when(subjectPreferenceService.findOnboardingCompleted(SUBJECT_ID)).thenReturn(true);
         when(termAgreementService.findAgreementRequiredTerms(USER_ID)).thenReturn(List.of());
-        when(noticeService.findPopupNoticeIds()).thenReturn(List.of(15L, 12L));
+        when(noticeService.findPopupNotices()).thenReturn(List.of(newer, older));
 
         InitializerResponse response = service().getInitialState("v1", USER_ID, SUBJECT_ID);
 
-        assertThat(response.popupNoticeIds()).containsExactly(15L, 12L);
+        assertThat(response.popupNotices()).containsExactly(newer, older);
     }
 
     @Test
     void getInitialStateWithoutPopupNoticeReturnsEmptyListNotNull() {
         when(subjectPreferenceService.findOnboardingCompleted(SUBJECT_ID)).thenReturn(true);
         when(termAgreementService.findAgreementRequiredTerms(USER_ID)).thenReturn(List.of());
-        when(noticeService.findPopupNoticeIds()).thenReturn(List.of());
+        when(noticeService.findPopupNotices()).thenReturn(List.of());
 
         InitializerResponse response = service().getInitialState("v1", USER_ID, SUBJECT_ID);
 
-        assertThat(response.popupNoticeIds()).isEmpty();
+        assertThat(response.popupNotices()).isEmpty();
     }
 }

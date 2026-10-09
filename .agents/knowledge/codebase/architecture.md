@@ -36,14 +36,14 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - 다른 feature의 상태를 읽거나 쓰는 orchestrator는 그 feature의 repository가 아니라 leaf service를
   통한다 — 예: `initializer`는 `subject_preferences`를 소유한 `SubjectPreferenceService`와 약관 동의를
   소유한 `TermAgreementService`를 각 owner 축(subjectId/userId)으로 합성하고(#382, #434), 사용자와 무관한
-  팝업 공지 id는 `NoticeService`에서 principal 없이 읽으며(#553), `onboarding`은
+  팝업 공지(id·제목·썸네일 URL)는 `NoticeService`에서 principal 없이 읽으며(#553·#560), `onboarding`은
   `SubjectPreferenceService`만 의존한다. 값이 어느 package에 저장되는지는 그 leaf service 뒤에 남는다.
 - 이 형태 전체가 ArchUnit으로 강제되는 것은 아니다. 실제 강제되는 규칙은 둘이다 — application code의
   Redis 직접 접근 금지(`RedisAccessArchTest`, 승인 예외는 `CacheConfig`와 그 캐시 구현 `SingleFlightRedisCacheManager`), subject mapping
   내부(repository·lookup key deriver)를 `SubjectMappingService` 외에는 의존 금지
   (`SubjectMappingAccessArchTest`, #282). 캐시는 wrapper 없이 서비스 메서드에 직접 단다 —
   ACTIVE 검사(`UserAccountService`, #441), subject 매핑(`SubjectMappingService`), 관리자 변경 값 3종
-  (#491 — 앱 설정 `AppConfigService`, 약관 current `TermCatalogService`, 팝업 공지 id `NoticeService`)이며,
+  (#491 — 앱 설정 `AppConfigService`, 약관 current `TermCatalogService`, 팝업 공지 `NoticeService`)이며,
   우회해야 하는 호출자가 없어 별도 경계 arch test도 없다. 약관 current만 적재 메서드를 `TermCatalogService`로
   분리했다 — 요청 순서·부분집합 재구성을 하는 `TermDocumentService` 안에 두면 self-invocation이라 캐시
   프록시를 타지 않는다. 약관 등록의 상위 버전 검사는 캐시를 거치지 않고 DB를 읽는다.

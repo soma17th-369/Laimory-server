@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
-let bootstrap, catalog = [], config, notices = [], inquiries = [];
+let bootstrap, catalog = [], config, notices = [], inquiries = [], thumbnailTarget = null;
 
 function status(message, error = false) {
   $("status").textContent = message;
@@ -101,19 +101,31 @@ async function loadNotices() {
       link.textContent = "원문 ↗"; link.target = "_blank"; link.rel = "noopener noreferrer"; urlCell.append(link);
     } catch { urlCell.textContent = notice.contentUrl; }
     row.append(urlCell);
-    for (const value of [noticeState(notice), notice.popup ? "지정" : "-", (notice.createdAt ?? "").replace("T", " ").slice(0, 16)]) {
+    for (const value of [noticeState(notice), notice.popup ? "지정" : "-"]) {
       const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
     }
+    const thumbnailCell = document.createElement("td");
+    if (notice.thumbnailUrl) {
+      const image = document.createElement("img"); image.src = notice.thumbnailUrl; image.alt = `#${notice.noticeId} 썸네일`;
+      image.loading = "lazy"; image.className = "thumbnail"; thumbnailCell.append(image);
+    } else thumbnailCell.textContent = "-";
+    const createdCell = document.createElement("td"); createdCell.textContent = shortDate(notice.createdAt);
+    row.append(thumbnailCell, createdCell);
     const actions = document.createElement("td");
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "secondary"; edit.textContent = "수정";
     edit.addEventListener("click", () => startNoticeEdit(notice));
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "secondary";
     toggle.textContent = notice.hidden ? "다시 노출" : "숨기기";
     toggle.addEventListener("click", () => changeNoticeVisibility(notice));
+    const thumbnail = document.createElement("button"); thumbnail.type = "button"; thumbnail.className = "secondary";
+    thumbnail.textContent = notice.thumbnailUrl ? "썸네일 교체" : "썸네일 올리기";
+    thumbnail.addEventListener("click", () => { thumbnailTarget = notice; $("notice-thumbnail-file").click(); });
     const popup = document.createElement("button"); popup.type = "button"; popup.className = "secondary";
     popup.textContent = notice.popup ? "팝업 해제" : "팝업 지정";
+    // 서버도 썸네일 없는 지정을 400으로 거절한다 — 버튼에서 미리 이유를 보여준다.
+    if (!notice.popup && !notice.thumbnailUrl) { popup.disabled = true; popup.title = "썸네일을 먼저 올려주세요."; }
     popup.addEventListener("click", () => changeNoticePopup(notice));
-    actions.append(edit, " ", toggle, " ", popup); row.append(actions); $("notices").append(row);
+    actions.append(edit, " ", toggle, " ", thumbnail, " ", popup); row.append(actions); $("notices").append(row);
   }
 }
 
@@ -153,6 +165,32 @@ async function changeNoticePopup(notice) {
   } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
   finally { $("notice-fields").disabled = false; }
 }
+
+// 발급 → S3 직접 PUT → 성공한 뒤에만 filename 저장. S3 PUT은 사진 bucket CORS가 이 관리자 origin을 허용해야 한다.
+async function uploadNoticeThumbnail(notice, file) {
+  $("notice-fields").disabled = true;
+  try {
+    if (!await confirmChange(`#${notice.noticeId} ${notice.title}\n썸네일 ${notice.thumbnailUrl ? "교체" : "등록"}: ${file.name} (${Math.ceil(file.size / 1024)}KB)`,
+      notice.popup ? "팝업 지정 공지라 다음 앱 실행부터 새 썸네일로 뜹니다." : "팝업으로 지정하기 전에는 앱에 보이지 않습니다.")) return;
+    const upload = await api("/admin/api/notices/thumbnail-uploads",
+      writeOptions("POST", JSON.stringify({contentType: file.type, size: file.size})));
+    let stored;
+    try { stored = await fetch(upload.uploadUrl, {method: "PUT", headers: {"Content-Type": file.type}, body: file}); }
+    catch { throw new Error("S3 업로드 요청이 실패했습니다. 사진 bucket CORS 설정 또는 네트워크 연결을 확인하세요. 썸네일은 바뀌지 않았습니다."); }
+    if (!stored.ok) throw new Error(`S3 업로드 실패 (HTTP ${stored.status}). 썸네일은 바뀌지 않았습니다.`);
+    await api(`/admin/api/notices/${encodeURIComponent(notice.noticeId)}/thumbnail`,
+      writeOptions("PUT", JSON.stringify({filename: upload.filename})));
+    status(`#${notice.noticeId} 썸네일 ${notice.thumbnailUrl ? "교체" : "등록"} 완료`);
+    await loadNotices();
+  } catch (error) { status(`${error.message}\n통신 오류였다면 목록을 새로고침해 현재 상태를 확인하세요.`, true); }
+  finally { $("notice-fields").disabled = false; }
+}
+
+$("notice-thumbnail-file").addEventListener("change", () => {
+  const file = $("notice-thumbnail-file").files[0], notice = thumbnailTarget;
+  $("notice-thumbnail-file").value = ""; thumbnailTarget = null;
+  if (file && notice) uploadNoticeThumbnail(notice, file);
+});
 
 function shortDate(value) {
   return (value ?? "").replace("T", " ").slice(0, 16);
