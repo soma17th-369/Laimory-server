@@ -13,6 +13,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # v6부터 캐싱 기능이 상용 라이선스 컴포넌트(gradle-actions-caching)로 분리돼
+      # 올리면 Gradle Terms of Use 동의가 된다. 라이선스 검토 전까지 v5(MIT)에 둔다.
       - uses: gradle/actions/setup-gradle@v5
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
       - run: .github/scripts/test-monitoring-deploy-contract.sh
