@@ -31,7 +31,7 @@ jobs:
           [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "image_sha must be a 40-char lowercase hex commit SHA" >&2; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.image_sha }}
 
@@ -54,7 +54,7 @@ jobs:
           echo "building image for commit $IMAGE_TAG"
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
