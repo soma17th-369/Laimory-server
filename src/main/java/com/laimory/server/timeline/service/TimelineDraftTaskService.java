@@ -83,7 +83,6 @@ public class TimelineDraftTaskService {
     private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS =
             Set.of("clientPhotoUri", "filename", "photoUrl");
 
-
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
     private final TimelineDraftPreparationService timelineDraftPreparationService;
