@@ -446,7 +446,9 @@ application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `Cache
 쓰고, 채널 패턴 `__keyspace@<db>__:{app.redis.key-prefix}credit:charge-timer:*`에 같은 prefix를 넣어 Redis가 환경별로 나눠
 보낸다. Redis 설정 `notify-keyspace-events`에 `K`·`x`가 있어야 하며(공유 Redis 운영 전제 — environments.md) 앱은 설정을
 바꾸지 않고 기동 뒤 `CONFIG GET`으로 확인해 누락·조회 실패를 ERROR로 남긴다. 구독은 기동 완료 뒤 걸며 등록 실패도 ERROR만
-남기고 기동은 계속한다(컨테이너가 backoff 재시도).
+남기고 기동은 계속한다. 첫 구독 시도가 Redis 연결을 얻지 못하면 Spring Data Redis는 재시도하지 않아 그 서버는 재시작
+전까지 만료 알림을 받지 못한다(수용 — ERROR 경보로 감지, 재시작으로 회복). 구독이 성립한 뒤의 연결 끊김은 listener
+container가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|

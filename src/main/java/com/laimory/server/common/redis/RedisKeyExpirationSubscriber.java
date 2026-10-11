@@ -26,8 +26,10 @@ import org.springframework.stereotype.Component;
  * 실패를 ERROR로 남기고 기동은 계속한다 — 기존 ERROR 경보가 감지한다.
  *
  * <p>구독은 기동 완료 뒤에 건다. 컨테이너가 시작 시점에 구독 등록을 기다리다 실패하면 앱 기동이 실패하는데,
- * Redis 장애가 앱 기동을 막지 않던 기존 동작을 바꾸지 않기 위해서다. 등록 실패는 ERROR로 남기고, 컨테이너가
- * 연결 실패를 backoff로 다시 시도한다.
+ * Redis 장애가 앱 기동을 막지 않던 기존 동작을 바꾸지 않기 위해서다. 등록 실패는 ERROR로 남기고 기동은 계속한다.
+ * 첫 구독 시도가 Redis 연결을 얻지 못하면 Spring Data Redis는 재시도하지 않는다 — 그 서버는 재시작 전까지 만료
+ * 알림을 받지 못한다(수용 — 같은 환경의 다른 서버는 영향 없고 ERROR 경보가 감지한다). 구독이 한 번 성립한 뒤의
+ * 연결 끊김은 컨테이너가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
  *
  * <p>Spring Data Redis 타입을 직접 쓰는 {@code RedisAccessArchTest}의 승인 예외다 — pub/sub 구독은
  * {@link RedisGateway}의 key 연산 경계 밖이고, 환경 prefix는 같은 {@code app.redis.key-prefix}로 붙인다.
@@ -73,7 +75,7 @@ public class RedisKeyExpirationSubscriber implements DisposableBean {
             container.addMessageListener(this::onMessage, new PatternTopic(pattern));
             log.info("redis key expiration subscribed: pattern={}", pattern);
         } catch (RuntimeException e) {
-            log.error("redis key expiration subscribe failed (만료 처리 중단 — 컨테이너가 재시도): pattern={}",
+            log.error("redis key expiration subscribe failed (재시작 전까지 이 서버는 만료 처리 안 함): pattern={}",
                     pattern, e);
         }
     }

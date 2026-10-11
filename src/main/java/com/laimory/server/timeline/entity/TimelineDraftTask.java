@@ -58,7 +58,10 @@ public record TimelineDraftTask(
     public TimelineDraftTask {
         Objects.requireNonNull(status, "status");
         // 유실 FAILED만 dailyRecordId·tokenHash가 없다(클래스 주석) — 그 밖의 상태는 둘 다 필수다.
-        if (dailyRecordId == null ? status != TaskStatus.FAILED : dailyRecordId <= 0) {
+        if (dailyRecordId == null && status != TaskStatus.FAILED) {
+            throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
+        }
+        if (dailyRecordId != null && dailyRecordId <= 0) {
             throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
         }
         if (tokenHash == null && status != TaskStatus.FAILED) {

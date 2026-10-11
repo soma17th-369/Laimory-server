@@ -6,7 +6,6 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 import com.laimory.server.common.redis.RedisGateway;
@@ -33,8 +32,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * 차감 타이머 만료 → 유실 처리(#565)의 실 MySQL·Redis 검증. 타이머 만료가 keyspace 알림으로 구독자에게 오는 배선은
- * 짧은 TTL 타이머로 확인하고(Compose Redis의 {@code notify-keyspace-events Kx} 필요), 건너뛰는 경로(소비된 기록·
- * 다른 서버가 잡은 잠금)는 알림 대기 없이 수신자를 직접 호출해 결정적으로 확인한다.
+ * 짧은 TTL 타이머로 확인하고(Compose Redis의 {@code notify-keyspace-events Kx} 필요), 처리·건너뛰는 경로(환불·소비된
+ * 기록·다른 서버가 잡은 잠금)는 알림 대기 없이 수신자를 직접 호출해 결정적으로 확인한다.
+ *
+ * <p>통합 테스트 JVM에는 캐시된 Spring 컨텍스트가 여럿 살아 있고 컨텍스트마다 구독자가 있다 — 실제 만료 알림은 그중
+ * 환불 잠금을 잡은 아무 컨텍스트가 처리한다. 그래서 배선 테스트는 어느 컨텍스트가 처리해도 같은 DB·Redis 결과만 확인하고,
+ * 이 컨텍스트의 mock에 기대는 push 호출 확인은 수신자를 직접 부르는 테스트에서만 한다.
  *
  * <p>완료 push는 FCM 외부 호출이라 mock으로 바꾸고, 호출 자체가 계약이라 {@code verify}로 확인한다.
  *
@@ -82,20 +85,35 @@ class CreditChargeExpirationIntegrationTest {
     }
 
     @Test
-    void expiredChargeTimerRefundsRecordsFailedTaskAndPushesFailure() {
+    void expiredChargeTimerIsDeliveredAndRefundsWithFailedTask() {
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
 
         creditService.startChargeTimer(taskId, Duration.ofMillis(100));
 
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertThat(historyStatus()).isEqualTo("REFUNDED"));
+        // 환불 commit 뒤 FAILED를 쓰므로 둘 다 보일 때까지 기다린다 — 처리한 컨텍스트는 어느 것이든 된다.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            assertThat(historyStatus()).isEqualTo("REFUNDED");
+            assertThat(timelineTaskStore.find(taskId)).isPresent();
+        });
         assertThat(remainingCredits()).isEqualTo(60);
-        assertThat(jdbcTemplate.queryForObject("SELECT refund_reason FROM credit_histories WHERE reference_id = ?",
-                String.class, taskId)).isEqualTo("TIMEOUT");
-        verify(pushNotifier, timeout(5_000)).notifyAsync(SUBJECT_ID, taskId, TaskStatus.FAILED);
         DraftTaskStatusResponse polled = pollingService.poll("v1", SUBJECT_ID, taskId);
         assertThat(polled.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(polled.error()).isEqualTo(-1008);
+    }
+
+    @Test
+    void expirationOfChargedTaskRefundsRecordsFailedTaskAndPushesFailure() {
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
+
+        handler.onExpired("credit:charge-timer:" + taskId);
+
+        assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(jdbcTemplate.queryForObject("SELECT refund_reason FROM credit_histories WHERE reference_id = ?",
+                String.class, taskId)).isEqualTo("TIMEOUT");
+        DraftTaskStatusResponse polled = pollingService.poll("v1", SUBJECT_ID, taskId);
+        assertThat(polled.status()).isEqualTo(TaskStatus.FAILED);
+        assertThat(polled.error()).isEqualTo(-1008);
+        verify(pushNotifier).notifyAsync(SUBJECT_ID, taskId, TaskStatus.FAILED);
     }
 
     @Test
