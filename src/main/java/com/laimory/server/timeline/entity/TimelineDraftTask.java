@@ -22,7 +22,12 @@ import java.util.UUID;
  * 결과를 조회해, record 삭제 후 같은 날짜가 재생성돼도 과거 task가 새 기록을 반환하지 않는다.
  *
  * <p>error는 FAILED일 때만 채워진다. {@code tokenHash}는 현재 처리 단계가 사용하는 opaque task token의
- * SHA-256 hash이며 terminal 재요청 검증을 위해 종결 뒤에도 보존한다. {@code stage}는
+ * SHA-256 hash이며 terminal 재요청 검증을 위해 종결 뒤에도 보존한다.
+ *
+ * <p>예외는 <b>유실 FAILED</b>({@link #lostFailed}, #565)다 — 결과·실패 보고 없이 PROCESSING이 만료된 task를
+ * 유실 환불이 FAILED로 다시 기록할 때는 task 값이 이미 사라져 {@code dailyRecordId}·{@code tokenHash}가 없다.
+ * 그래서 FAILED에 한해 두 값이 null일 수 있다. FAILED 폴링은 {@code error}만 읽고, null hash는 어떤 token과도
+ * 일치하지 않아 늦게 온 AI 요청은 401({@code -1002})로 끝난다. {@code stage}는
  * PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태이며 terminal에는 보존하지 않는다.
  *
  * <p>{@code timelineWindow}는 클라이언트가 요청에 지정한 AI 이벤트 생성 범위의 local 원본이다(서버는
@@ -39,10 +44,10 @@ import java.util.UUID;
  */
 public record TimelineDraftTask(
         TaskStatus status,
-        long dailyRecordId,
+        @JsonInclude(JsonInclude.Include.NON_NULL) Long dailyRecordId,
         @JsonInclude(JsonInclude.Include.NON_NULL) TimelineWindow timelineWindow,
         Integer error,
-        String tokenHash,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String tokenHash,
         @JsonInclude(JsonInclude.Include.NON_NULL) ProcessStage stage,
         @JsonFormat(shape = JsonFormat.Shape.STRING)
         @JsonInclude(JsonInclude.Include.NON_NULL) Instant processingStartedAt,
@@ -52,10 +57,16 @@ public record TimelineDraftTask(
 
     public TimelineDraftTask {
         Objects.requireNonNull(status, "status");
-        if (dailyRecordId <= 0) {
+        // 유실 FAILED만 dailyRecordId·tokenHash가 없다(클래스 주석) — 그 밖의 상태는 둘 다 필수다.
+        if (dailyRecordId == null && status != TaskStatus.FAILED) {
             throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
         }
-        Objects.requireNonNull(tokenHash, "tokenHash");
+        if (dailyRecordId != null && dailyRecordId <= 0) {
+            throw new IllegalArgumentException("dailyRecordId는 양수여야 합니다");
+        }
+        if (tokenHash == null && status != TaskStatus.FAILED) {
+            throw new NullPointerException("tokenHash");
+        }
         Objects.requireNonNull(subjectId, "subjectId");
         if (status == TaskStatus.PROCESSING && processingStartedAt == null) {
             throw new IllegalArgumentException("PROCESSING task에는 processingStartedAt이 필요합니다");
@@ -170,6 +181,14 @@ public record TimelineDraftTask(
     public static TimelineDraftTask failed(UUID subjectId, long dailyRecordId, int error,
                                            String tokenHash) {
         return new TimelineDraftTask(TaskStatus.FAILED, dailyRecordId, null, error,
-                tokenHash, null, null, subjectId, null);
+                Objects.requireNonNull(tokenHash, "tokenHash"), null, null, subjectId, null);
+    }
+
+    /**
+     * 결과·실패 보고 없이 만료된 task를 유실 환불이 다시 기록하는 FAILED(#565). task 값이 이미 사라진 뒤라
+     * owner와 실패 코드만 있다 — {@code dailyRecordId}·{@code tokenHash}는 없다(클래스 주석).
+     */
+    public static TimelineDraftTask lostFailed(UUID subjectId, int error) {
+        return new TimelineDraftTask(TaskStatus.FAILED, null, null, error, null, null, null, subjectId, null);
     }
 }

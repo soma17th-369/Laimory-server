@@ -67,7 +67,14 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `subject_credits` (#548 — subject당 1행 크레딧 잔액 `remaining`, `CHECK (remaining >= 0)`, subject FK
   `RESTRICT`, DB default 없음(기본 60의 권위는 `CreditService` 상수). 행은 가입 transaction과 V6 backfill만
-  만들고, 쓰기는 AI 결과 저장 transaction의 조건부 차감 UPDATE와 탈퇴 삭제(#302)뿐이다. V6에서 추가)
+  만들고, 쓰기는 draft 선생성 transaction의 조건부 차감 UPDATE(`remaining >= 비용`, #565)·환불 증가 UPDATE와 탈퇴
+  삭제(#302)뿐이다. V6에서 추가)
+- `credit_histories` (#565 — 크레딧 사용 1건당 1행 상태 전이 기록. 대상은 `(cost_type, reference_id)` UNIQUE
+  (`TIMELINE_CREATION`이면 taskId — timeline 도메인에 종속되지 않음), `amount` = 실제 차감액(환불액의 권위, `CHECK >= 0`),
+  `status` `CHARGED`→`CONSUMED`|`REFUNDED` 한 번, `refund_reason`은 `REFUNDED`일 때만(`CHECK` 짝), 전이 시각은
+  `created_at`·`updated_at`. subject FK `RESTRICT`·subject index. 범용 원장(지급·조정)이 아니다. 쓰기는 native INSERT와
+  JPQL 전이 UPDATE라 감사 컬럼을 앱 Seoul 벽시계로 직접 채운다. 정리 작업은 없고 탈퇴 삭제가 함께 지운다.
+  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. V10에서 추가)
 - `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
   선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
   migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
@@ -128,7 +135,9 @@ FROM user_subject_links`를 운영 SQL로 다시 실행해 공백 구간 가입�
 (dev·test는 하지 않기로 한 결정 — dev/test 공유 DB에서 구버전 test 앱으로 가입한 회원은 행 없이 남아 조회·draft가
 500이다). 크레딧 조회·사전 검사는 행을 만들지 않고 행이 없으면 던진다. V6의 FK `RESTRICT`는 크레딧 삭제를
 모르는 구 image의 탈퇴 worker(rolling 중·rollback 중)의 mapping 삭제를 막는다 — job은 보존돼 다음 날
-재시도하고, 처리 창 마지막 날이면 기존 만료 경보로 드러난다(수용한 결정).
+재시도하고, 처리 창 마지막 날이면 기존 만료 경보로 드러난다(수용한 결정). `credit_histories`(V10, #565)는 backfill이
+없는 additive CREATE지만 같은 `RESTRICT` 유형이라 기록 행이 있는 subject를 구 image 탈퇴 worker가 처리하면 같은 방식으로
+막힌다(수용). V10 이전에 시작한 진행 중 task는 기록이 없어 결과 저장이 차감 없이 끝난다(최초 cutover 수용).
 
 #318(일일 리마인더 기본 ON 전환)은 스키마를 바꾸지 않지만 **기존 행 일괄 갱신**이 필요하다. #314
 rollout으로 이미 만들어진 행은 `enabled=false`라 코드 기본값만 바꿔서는 켜지지 않는다. `enabled`만
@@ -432,16 +441,25 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 
 application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig`(#429)와 그 캐시 구현
 `SingleFlightRedisCacheManager`(#491)이며, Spring Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
-`app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다.
+`app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다. 세 번째 예외는 keyspace 만료 알림 구독
+`RedisKeyExpirationSubscriber`(#565)다 — pub/sub 구독은 key 연산 경계 밖이라 Spring Data Redis listener container를 직접
+쓰고, 채널 패턴 `__keyspace@<db>__:{app.redis.key-prefix}timeline:draft-task:loss-timer:*`에 같은 prefix를 넣어 Redis가 환경별로 나눠
+보낸다. Redis 설정 `notify-keyspace-events`에 `K`·`x`가 있어야 하며(공유 Redis 운영 전제 — environments.md) 앱은 설정을
+바꾸지 않고 기동 뒤 `CONFIG GET`으로 확인해 누락·조회 실패를 ERROR로 남긴다. 구독은 기동 완료 뒤 걸며 등록 실패도 ERROR만
+남기고 기동은 계속한다. 첫 구독 시도가 Redis 연결을 얻지 못하면 Spring Data Redis는 재시도하지 않아 그 서버는 재시작
+전까지 만료 알림을 받지 못한다(수용 — ERROR 경보로 감지, 재시작으로 회복). 구독이 성립한 뒤의 연결 끊김은 listener
+container가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
 
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
-| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt`, 재시도 인지용 nullable `retryReceipt{previousTokenHash,claimedAt,retryableUntil}` 포함 — 소비된 직전 token의 hash와 결과 저장 선점 시각·재시도 절대 마감이며 원문 token도 요청 본문도 저장하지 않는다. terminal 전이가 버리고, key가 없는 배포 이전 JSON은 null로 역직렬화된다). stage·terminal 전이는 native `SET XX`(존재 확인만, 값 비교 없음)라 shape 변경이 배포 중 CAS 불일치를 만들지는 않지만, 구독자가 구/신 shape를 모두 읽을 수 있어야 하는 관대 수용 원칙은 그대로다. FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다. | PROCESSING 최초 저장 기준 절대 3m(stage write는 `KEEPTTL`이라 연장 없음), terminal 24h |
+| `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt`, 재시도 인지용 nullable `retryReceipt{previousTokenHash,claimedAt,retryableUntil}` 포함 — 소비된 직전 token의 hash와 결과 저장 선점 시각·재시도 절대 마감이며 원문 token도 요청 본문도 저장하지 않는다. terminal 전이가 버리고, key가 없는 배포 이전 JSON은 null로 역직렬화된다). stage·terminal 전이는 native `SET XX`(존재 확인만, 값 비교 없음)라 shape 변경이 배포 중 CAS 불일치를 만들지는 않지만, 구독자가 구/신 shape를 모두 읽을 수 있어야 하는 관대 수용 원칙은 그대로다. FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. PROCESSING 만료는 key 소멸이며 FAILED 전이가 아니다 — 예외는 크레딧 유실 처리가 key가 없을 때만(`SET NX`) 다시 쓰는 유실 FAILED(#565, `-1008`)이며 이 값에는 `dailyRecordId`·`tokenHash`가 없다(FAILED에 한해 null 허용·JSON 생략). 이 필드를 `long`으로 읽는 구 image는 유실 FAILED를 역직렬화하지 못해 그 task 폴링이 500이다(rolling·rollback 수용). | PROCESSING 최초 저장 기준 절대 3m(stage write는 `KEEPTTL`이라 연장 없음), terminal 24h |
 | `timeline:draft-task:processing-index` | stuck PROCESSING 관측용 sorted set(member=taskId, score=processingStartedAt epoch ms). 최초 PROCESSING 저장 뒤 native ZADD, terminal 저장 뒤 native ZREM하며(중간 stage write는 index 무명령) 실패는 같은 의도의 명령을 한 번 재시도한다. gauge read 때 PROCESSING TTL 밖 member를 정리한다. task key가 권위이고 index는 상태 판정에 쓰지 않는다. | key TTL 없음; member는 terminal 전이 또는 3m cutoff 관측 때 제거 |
 | `timeline:draft-task:user:{canonicalUuid(subjectId)}:processing` | subject별 진행 작업 조회 index sorted set(member=taskId, score=processingStartedAt epoch ms). 최초 PROCESSING 저장 뒤 native ZADD+PEXPIRE, terminal 저장 뒤 native ZREM하며(중간 stage write는 index 무명령) 명령 실패·PEXPIRE=false는 같은 의도의 명령을 한 번 재시도한다. task JSON status/owner가 권위 — 목록 조회는 후보마다 JSON을 검증해 만료·terminal·타인 소유 member를 제외하고 best-effort ZREM한다(역직렬화 불가 JSON은 500·자동 삭제 금지). | key TTL 3m — 새 task 생성마다 갱신(stage write는 갱신 안 함; 마지막 생성 뒤 inactivity cleanup이지 member별 TTL 아님 — task 수명도 생성 기준 3m이라 index가 유효 member보다 먼저 소멸하지 않는다); member는 terminal 전이·목록 조회 lazy prune 때 제거 |
 | `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`canonicalUuid(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
+| `timeline:draft-task:loss-timer:{taskId}` | 유실 타이머(#565) — 값 없는 유실 트리거. draft 선생성 commit 뒤 SET, 결과 저장·환불한 경로가 DEL. 만료(keyspace `expired` 알림)는 결과·실패 보고 없이 끝난 task에서만 온다. 금액·주인은 `credit_histories`가 권위 | PROCESSING TTL(3m) |
+| `timeline:draft-task:loss-lock:{taskId}` | 유실 유실 처리 잠금(#565) — 만료 알림을 함께 받은 서버 중 한 대만 처리하도록 유실 task에서만 `SET NX`. TTL로만 풀리고 재처리는 없다 | 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `user:active:{userId}` | ACTIVE 검사 캐시(#429 — `UserAccountService.isActive`의 `@Cacheable`, #441부터 `/a/api` 필터와 token 발급·회전이 공유). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |
 | `appconfig:current:all` · `terms:current:all` · `notice:popup-notices:all` | 관리자 변경 값 캐시(#491) — 앱 설정 응답(`AppConfigService.getAppConfig`), 전 종류 current 약관 목록(`TermCatalogService.findAllCurrentTerms`), 앱 시작 팝업 공지 목록(`NoticeService.findPopupNotices` — id·제목·썸네일 URL, #560에서 값 shape가 id 목록에서 바뀌어 rolling 배포 중 구·신 값이 섞이지 않게 이름을 `notice:popup`에서 바꿨다). 키는 `{app.redis.key-prefix}` + 캐시 이름 + `:all`(전역 단일 엔트리)이고, 값은 `GenericJackson2JsonRedisSerializer` JSON이다(목록은 역직렬화 가능한 가변 구현으로 저장, `TermResponse`·`AppConfigResponse`·`PopupNoticeResponse`는 record). 무효화는 관리자 쓰기의 commit 뒤 `@CacheEvict`뿐이다 — `updateVersions` / 약관 `register` 성공 / `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`. 앱을 우회한 DB 직접 쓰기는 무효화 대상이 아니다(TTL 이내 수렴, 앱 재시작으로 지워지지 않음). evict는 쓰기를 처리한 환경의 key prefix 키만 지운다 — dev MySQL을 공유하는 test(`test_`)와 dev(`dev_`)는 한쪽 관리자 웹 변경이 다른 쪽 캐시를 지우지 않아 최대 1h 옛 값을 본다. | 1h — 쓰기 시점 고정, evict 유실 안전망 |

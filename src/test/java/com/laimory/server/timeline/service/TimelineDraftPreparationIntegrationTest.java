@@ -33,7 +33,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * draft 선생성 트랜잭션({@link TimelineDraftPreparationService#prepareDraft})의 실제 MySQL rollback 검증.
- * SAVED 재확인 거절과 source unique 위반이 record 생성·metadata 갱신·source 저장을 all-or-nothing으로
+ * SAVED 재확인 거절·source unique 위반·잔액 부족 차감 거절(#565)이 record 생성·metadata 갱신·source 저장·
+ * 크레딧 차감을 all-or-nothing으로
  * 되돌리는지 커밋 경계 밖(새 트랜잭션 조회)에서 관찰한다 — 그래서 테스트 클래스에 @Transactional을 붙이지
  * 않는다(붙이면 서비스 rollback이 테스트 tx 롤백에 가려 관찰할 수 없다).
  *
@@ -66,6 +67,8 @@ class TimelineDraftPreparationIntegrationTest {
     void setUp() {
         subjectId = UUID.randomUUID();
         ensureExists(jdbcTemplate, subjectId);
+        // 가입 transaction이 만드는 크레딧 행 — 선생성 transaction이 차감한다(#565).
+        SubjectMappingFixtures.ensureCredits(jdbcTemplate, subjectId, 60);
         taskId = UUID.randomUUID().toString();
     }
 
@@ -87,7 +90,7 @@ class TimelineDraftPreparationIntegrationTest {
         long recordId = dailyRecordRepository.save(saved).getDailyRecordId();
 
         assertThatThrownBy(() -> timelineDraftPreparationService.prepareDraft(
-                subjectId, DATE, DATE.atTime(23, 59), "UTC", List.of(sourceRow("raw-1"))))
+                taskId, subjectId, DATE, DATE.atTime(23, 59), "UTC", List.of(sourceRow("raw-1"))))
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
                         assertThat(exception.getExceptionType())
                                 .isEqualTo(ExceptionType.DAILY_RECORD_ALREADY_SAVED));
@@ -108,7 +111,7 @@ class TimelineDraftPreparationIntegrationTest {
         List<TimelineDraftSourceItem> rows = rawIds.stream().map(this::sourceRow).toList();
 
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
-                subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, rows);
+                taskId, subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, rows);
 
         assertThat(dailyRecordId).isPositive();
         List<TimelineDraftSourceItem> saved = timelineDraftSourceItemRepository.findByTaskId(taskId);
@@ -133,12 +136,44 @@ class TimelineDraftPreparationIntegrationTest {
         // (task_id, raw_id) unique 위반이 source 저장 중간에 터지면 신규 record와 먼저 INSERT된 source까지
         // 전부 원복돼야 한다(부분 저장 금지).
         assertThatThrownBy(() -> timelineDraftPreparationService.prepareDraft(
-                subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE,
+                taskId, subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE,
                 List.of(sourceRow("raw-dup"), sourceRow("raw-dup"))))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)).isEmpty();
         assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
+    }
+
+    @Test
+    void insufficientCredits_rollsBackNewRecordAndAllSources_withoutCharging() {
+        // 조건부 차감 거절(403)이 같은 transaction의 record·source 저장까지 되돌려야 한다 — 차감 없이 생성이
+        // 시작되거나, 생성 없이 빈 DRAFT·staging만 남지 않는다.
+        jdbcTemplate.update("UPDATE subject_credits SET remaining = 0 WHERE subject_id = ?", subjectId.toString());
+
+        assertThatThrownBy(() -> timelineDraftPreparationService.prepareDraft(
+                taskId, subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, List.of(sourceRow("raw-1"))))
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
+
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)).isEmpty();
+        assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM credit_histories WHERE reference_id = ?",
+                Integer.class, taskId)).isZero();
+    }
+
+    @Test
+    void preparedDraft_chargesCreditAndRecordsTaskAsCharged() {
+        long dailyRecordId = timelineDraftPreparationService.prepareDraft(
+                taskId, subjectId, DATE, ORIGINAL_AT, ORIGINAL_ZONE, List.of(sourceRow("raw-1")));
+
+        assertThat(dailyRecordId).isPositive();
+        int cost = jdbcTemplate.queryForObject(
+                "SELECT cost FROM credit_costs WHERE type = 'TIMELINE_CREATION'", Integer.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT remaining FROM subject_credits WHERE subject_id = ?",
+                Integer.class, subjectId.toString())).isEqualTo(60 - cost);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM credit_histories WHERE cost_type = 'TIMELINE_CREATION' AND reference_id = ?",
+                String.class, taskId)).isEqualTo("CHARGED");
     }
 
     private TimelineDraftSourceItem sourceRow(String rawId) {

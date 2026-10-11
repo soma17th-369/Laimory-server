@@ -3,6 +3,10 @@ package com.laimory.server.credit.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +16,7 @@ import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.entity.CreditCost;
 import com.laimory.server.credit.entity.SubjectCredit;
 import com.laimory.server.credit.repository.CreditCostRepository;
+import com.laimory.server.credit.repository.CreditHistoryRepository;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
 import com.laimory.server.testsupport.TestSubjects;
 import java.time.Clock;
@@ -44,8 +49,11 @@ class CreditServiceTest {
     @Mock
     private CreditCostRepository creditCostRepository;
 
+    @Mock
+    private CreditHistoryRepository creditHistoryRepository;
+
     private CreditService service() {
-        return new CreditService(subjectCreditRepository, creditCostRepository, CLOCK);
+        return new CreditService(subjectCreditRepository, creditCostRepository, creditHistoryRepository, CLOCK);
     }
 
     private static SubjectCredit credit(int remaining) {
@@ -147,11 +155,24 @@ class CreditServiceTest {
     }
 
     @Test
-    void deductSubtractsCostReadFromCostRow() {
+    void chargeSubtractsCostReadFromCostRowAndRecordsThatAmount() {
+        // 비용은 비용 행에서 읽고, 기록의 amount가 그 값이어야 이후 환불액이 실제 차감액과 같다(#558·#565).
         givenTimelineCreationCost(3);
+        when(subjectCreditRepository.chargeIfSufficient(SUBJECT_ID, 3)).thenReturn(1);
 
-        service().deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+        service().charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, "task-1");
 
-        verify(subjectCreditRepository).deduct(SUBJECT_ID, 3);
+        verify(creditHistoryRepository).insertCharged(SUBJECT_ID.toString(), "TIMELINE_CREATION", "task-1", 3, NOW_KST);
+    }
+
+    @Test
+    void chargeRejectsInsufficientCreditWithoutRecording() {
+        givenTimelineCreationCost(3);
+        when(subjectCreditRepository.chargeIfSufficient(SUBJECT_ID, 3)).thenReturn(0);
+
+        assertThatThrownBy(() -> service().charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, "task-1"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
+        verify(creditHistoryRepository, never()).insertCharged(anyString(), anyString(), anyString(), anyInt(), any());
     }
 }

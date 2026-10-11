@@ -23,7 +23,8 @@ import org.springframework.stereotype.Service;
  * timeline draft 작업 상태 leaf 서비스. 자신과 1:1인 TimelineTaskStore에만 접근한다.
  * 처리중(PROCESSING)은 최초 저장 기준 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
- * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다.
+ * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다. 예외는 크레딧 차감이 남은 유실
+ * task다(#565) — 유실 타이머 만료 처리가 환불한 뒤 {@link #markLostFailedIfAbsent}로 FAILED를 다시 기록한다.
  *
  * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 native
  * {@code SET XX KEEPTTL}로 교체해 최초 만료 시각을 보존한다 — 어떤 stage write도 TTL을 연장하지 않는다.
@@ -112,6 +113,20 @@ public class TimelineTaskService {
         boolean saved = timelineTaskStore.saveTerminalIfPresent(taskId,
                 TimelineDraftTask.failed(task.subjectId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
                 TERMINAL_TTL);
+        if (saved) {
+            timelineMetrics.recordTerminalFailed();
+        }
+        return saved;
+    }
+
+    /**
+     * 결과·실패 보고 없이 만료돼 환불한 task를 FAILED로 다시 기록한다(#565) — task key가 없을 때만 쓴다.
+     * 실패 코드는 기존 AI 실패({@code -1008})를 재사용한다(앱 계약 변경 없음). task 값이 사라진 뒤라
+     * {@code dailyRecordId}·token hash가 없는 유실 FAILED다. {@code false}는 key가 이미 있다는 뜻이다.
+     */
+    public boolean markLostFailedIfAbsent(String taskId, UUID subjectId) {
+        boolean saved = timelineTaskStore.saveTerminalIfAbsent(taskId,
+                TimelineDraftTask.lostFailed(subjectId, ExceptionType.AI_REPORTED_FAILURE.code()), TERMINAL_TTL);
         if (saved) {
             timelineMetrics.recordTerminalFailed();
         }

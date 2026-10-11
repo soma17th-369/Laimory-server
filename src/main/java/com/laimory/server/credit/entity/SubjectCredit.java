@@ -26,7 +26,7 @@ public class SubjectCredit extends BaseEntity {
     @Column(name = "subject_id", nullable = false, length = 36)
     private UUID subjectId;
 
-    /** 남은 크레딧. 차감은 {@code remaining > 0} 조건부라 음수가 되지 않는다(DB CHECK 동반). */
+    /** 남은 크레딧. 차감은 {@code remaining >= amount} 조건부라 음수가 되지 않는다(DB CHECK 동반, #565). */
     @Column(nullable = false)
     private int remaining;
 

@@ -48,6 +48,9 @@ AI와 geo는 별도 override가 없으면 noop이다.
 - 이력 없는 기존 volume은 [Flyway 편입 절차](../../../../docs/database/flyway-adoption.md)에 따라
   구조를 확인한 뒤 명시 baseline한다. 데이터 보존 여부를 확인하지 않고 volume을 삭제하지 않는다.
 - local Redis는 authentication/TLS를 사용하지 않는다.
+- local Redis는 `--notify-keyspace-events Kx`로 뜬다(#565 크레딧 유실 환불의 만료 알림). 플래그 추가 전에 만든 기존
+  컨테이너에는 반영되지 않으므로 재생성하거나(`docker compose up -d --force-recreate redis`) 실행 중인 컨테이너에
+  `redis-cli CONFIG SET notify-keyspace-events Kx`를 건다 — 빠지면 기동 시 ERROR 로그가 남고 만료 알림 통합 테스트가 실패한다.
 - AWS client는 credential 없이 생성될 수 있지만 실제 presign/delete에는 유효한 AWS 설정이 필요하다.
 - CDN domain이 비어 있으면 생성한 photo URL은 실제 serving URL이 아니다.
 - 실제 OAuth round trip에는 환경별 provider credential과 redirect URI 설정이 필요하다.

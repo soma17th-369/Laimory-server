@@ -1,0 +1,70 @@
+package com.laimory.server.timeline.service;
+
+import com.laimory.server.common.redis.RedisKeyExpirationListener;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditRefundReason;
+import com.laimory.server.credit.service.CreditService;
+import com.laimory.server.push.service.TimelineCompletionPushNotifier;
+import com.laimory.server.timeline.TaskStatus;
+import java.util.Optional;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+/**
+ * draft task 유실 처리(#565) — 유실 타이머 만료 알림의 수신자. 결과 저장·환불 경로는 타이머를 지우므로, 만료는
+ * 응답 없이 PROCESSING TTL이 지난 task에서만 온다.
+ *
+ * <p>환경 안의 모든 서버가 같은 알림을 받는다 — 유실 처리 잠금({@code SET NX})을 잡은 서버만 처리한다. 잠금은
+ * TTL로만 풀리고 재처리는 없다: 잡은 서버의 DB 작업이 실패하면 크레딧 이력이 {@code CHARGED}로 남아 수동 환불한다.
+ *
+ * <p>환불이 실제로 일어났을 때만(이력이 {@code CHARGED}였을 때) task를 FAILED로 기록하고 실패 push를 보낸다.
+ * 이미 소비·환불됐으면 셋 다 건너뛴다 — 결과 저장 뒤 타이머 삭제가 실패해 온 알림이 성공한 생성을 실패로 덮거나
+ * 실패 push를 보내지 않게 한다.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class TimelineTaskLossHandler implements RedisKeyExpirationListener {
+
+    private final TimelineTaskLossTimerService timelineTaskLossTimerService;
+    private final CreditService creditService;
+    private final TimelineTaskService timelineTaskService;
+    private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
+
+    @Override
+    public String logicalKeyPrefix() {
+        return timelineTaskLossTimerService.timerKeyPrefix();
+    }
+
+    @Override
+    public void onExpired(String logicalKey) {
+        Optional<String> taskId = timelineTaskLossTimerService.taskIdOf(logicalKey);
+        if (taskId.isEmpty() || !timelineTaskLossTimerService.tryLock(taskId.get())) {
+            return;
+        }
+        try {
+            Optional<UUID> refunded = creditService.refund(
+                    CreditCostType.TIMELINE_CREATION, taskId.get(), CreditRefundReason.TIMEOUT);
+            if (refunded.isEmpty()) {
+                // 정상 종결(소비·환불)한 경로는 타이머를 지운다 — 만료가 왔다면 그 삭제가 빠진 것이다.
+                log.warn("loss timer expired but credit charge already settled (timer cancel missed): taskId={}",
+                        taskId.get());
+                return;
+            }
+            failLostTask(taskId.get(), refunded.get());
+        } catch (RuntimeException e) {
+            log.error("lost timeline task handling failed (환불 전 실패면 이력 CHARGED 잔존 — 수동 환불): taskId={}",
+                    taskId.get(), e);
+        }
+    }
+
+    private void failLostTask(String taskId, UUID subjectId) {
+        log.warn("lost timeline task refunded: taskId={}", taskId);
+        if (!timelineTaskService.markLostFailedIfAbsent(taskId, subjectId)) {
+            log.warn("lost timeline task already has a value, FAILED not written: taskId={}", taskId);
+        }
+        timelineCompletionPushNotifier.notifyAsync(subjectId, taskId, TaskStatus.FAILED);
+    }
+}

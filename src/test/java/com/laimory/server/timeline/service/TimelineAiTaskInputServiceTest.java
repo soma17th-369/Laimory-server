@@ -187,6 +187,18 @@ class TimelineAiTaskInputServiceTest {
     }
 
     @Test
+    void getInput_onLostFailedTask_returns401BeforePersonalData() {
+        // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 입력 조회는 401이다(#565).
+        when(timelineTaskService.find(TASK_ID))
+                .thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+
+        assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+    }
+
+    @Test
     void getInput_terminalTask_throws1017() {
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(TimelineDraftTask.success(SUBJECT_ID, RECORD_ID, TOKEN_HASH)));
