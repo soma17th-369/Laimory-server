@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
  * 처리중(PROCESSING)은 최초 저장 기준 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
  * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
  * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다. 예외는 크레딧 차감이 남은 유실
- * task다(#565) — 차감 타이머 만료 알림이 환불한 뒤 {@link #markLostFailedIfAbsent}로 FAILED를 다시 기록한다.
+ * task다(#565) — 유실 타이머 만료 처리가 환불한 뒤 {@link #markLostFailedIfAbsent}로 FAILED를 다시 기록한다.
  *
  * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 native
  * {@code SET XX KEEPTTL}로 교체해 최초 만료 시각을 보존한다 — 어떤 stage write도 TTL을 연장하지 않는다.

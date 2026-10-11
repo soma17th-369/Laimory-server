@@ -49,7 +49,7 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   subject FK(삽입과 mapping 삭제 거절)를 검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
-- 크레딧 유실 처리(#565)의 keyspace 만료 알림 배선은 `CreditChargeExpirationIntegrationTest`가 실 Redis로 검증하며
+- 크레딧 유실 처리(#565)의 keyspace 만료 알림 배선은 `TimelineTaskLossIntegrationTest`가 실 Redis로 검증하며
   local·CI Redis가 Compose의 `--notify-keyspace-events Kx`로 떠 있어야 한다(기존 컨테이너는 재생성 또는 `CONFIG SET`).
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름
   (dispatch→입력→결과→콜백)의 실제 MySQL·Redis 계약은 `TimelineAiTaskFlowIntegrationTest`(integration)가

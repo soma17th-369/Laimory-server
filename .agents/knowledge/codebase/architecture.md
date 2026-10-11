@@ -61,7 +61,7 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
 - application-owned Redis 접근은 `RedisGateway`를 거친다(승인 예외: `CacheConfig`의 Spring Cache
   Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager`, keyspace 만료 알림 구독 `RedisKeyExpirationSubscriber`
   — 같은 key prefix를 붙인다). 만료 알림 수신자는 `common/redis`의 `RedisKeyExpirationListener` 구현이다(현재 timeline의
-  `CreditChargeExpirationHandler` 하나 — common이 timeline을 의존하지 않게 한다).
+  `TimelineTaskLossHandler` 하나 — common이 timeline을 의존하지 않게 한다).
 - 캐시 배선은 `CacheConfig`가 소유한다. 무효화가 다른 인스턴스로 전파돼야 하면 Redis manager
   (`redisCacheManager`), 아니면 Caffeine manager(`localCacheManager`, `@Primary`)이며 어노테이션마다
   `cacheManager`를 명시한다. Redis 캐시의 `@Cacheable(sync = true)`는 서버(JVM) 안 키별 single-flight로

@@ -49,6 +49,8 @@ class TimelineCallbackServiceTest {
     private TimelineMetrics timelineMetrics;
     @Mock
     private CreditService creditService;
+    @Mock
+    private TimelineTaskLossTimerService timelineTaskLossTimerService;
     @InjectMocks
     private TimelineCallbackService service;
 
@@ -122,10 +124,10 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
 
-        InOrder order = inOrder(creditService, timelineTaskService);
+        InOrder order = inOrder(creditService, timelineTaskService, timelineTaskLossTimerService);
         order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
         order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
-        order.verify(creditService).cancelChargeTimer(TASK_ID);
+        order.verify(timelineTaskLossTimerService).cancel(TASK_ID);
     }
 
     @Test
@@ -152,7 +154,7 @@ class TimelineCallbackServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TASK_TOKEN_MISMATCH));
 
-        verifyNoInteractions(creditService, timelineCompletionPushNotifier);
+        verifyNoInteractions(creditService, timelineTaskLossTimerService, timelineCompletionPushNotifier);
     }
 
     @Test

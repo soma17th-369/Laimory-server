@@ -119,9 +119,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   겹침)은 거르지 않는다(수용 — DB 조건부 전이로 경쟁하지 않음). 환불 경로: 타이머·PROCESSING 저장 실패
   (`TASK_SAVE_FAILED`), dispatch 거절(`DISPATCH_REJECTED`), AI FAILED callback(`AI_FAILED` — terminal 저장 전에 환불하고
   실패하면 500으로 재전송에 맡김), 유실(`TIMEOUT`). dispatch UNKNOWN은 즉시 환불하지 않는다.
-  유실 감지는 Redis 차감 타이머(`credit:charge-timer:{taskId}`, TTL = PROCESSING TTL + 30초)다. 결과 저장·환불한 경로는
+  유실 감지는 Redis 유실 타이머(`timeline:draft-task:loss-timer:{taskId}`, TTL = PROCESSING TTL + 30초)다. 결과 저장·환불한 경로는
   타이머를 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 task에서만 온다. 환경 안의 모든 서버가
-  구독하고, 환불 잠금(`credit:refund-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 처리한다. 환불이 실제로 일어났을 때만
+  구독하고, 유실 처리 잠금(`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 처리한다. 환불이 실제로 일어났을 때만
   task를 FAILED(`-1008`)로 다시 기록(`SET NX`)하고 FAILED 완료 push를 보낸다 — 이미 소비·환불된 기록이면 셋 다 건너뛴다.
   알림 유실(배포 공백·구독 끊김·Redis 재시작)과 잠금 서버의 처리 실패는 수용한다 — 기록이 `CHARGED`로 남아 수동 환불한다
   (주기 sweeper 없음).
@@ -272,7 +272,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   복구하지만, 선점 뒤 **commit 전** 프로세스 종료는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 창 만료 뒤
   재요청도 401이다 — 그 task는 TTL 만료로 끝나며 자동 reconciliation은 없다.
 - PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
-  폴링·서버간 요청은 404(`-1001`)다. 예외는 크레딧 차감이 남은 유실 task다(#565) — 차감 타이머 만료 처리가 환불한 뒤
+  폴링·서버간 요청은 404(`-1001`)다. 예외는 크레딧 차감이 남은 유실 task다(#565) — 유실 타이머 만료 처리가 환불한 뒤
   task를 FAILED(`-1008`, 24h)로 다시 기록한다. 그 값은 task가 사라진 뒤 쓰므로 `dailyRecordId`·token hash가 없다
   (`TimelineDraftTask`는 FAILED에 한해 두 값 null 허용) — 폴링은 FAILED를 받고, 늦게 온 AI 입력·결과·callback은
   401(`-1002`)이다. 만료부터 유실 처리까지(약 30초+알림 지연)와 처리가 빠진 경우는 여전히 404다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지

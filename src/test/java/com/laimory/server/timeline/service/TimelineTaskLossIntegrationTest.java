@@ -31,12 +31,12 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * 차감 타이머 만료 → 유실 처리(#565)의 실 MySQL·Redis 검증. 타이머 만료가 keyspace 알림으로 구독자에게 오는 배선은
+ * 유실 타이머 만료 → 유실 처리(#565)의 실 MySQL·Redis 검증. 타이머 만료가 keyspace 알림으로 구독자에게 오는 배선은
  * 짧은 TTL 타이머로 확인하고(Compose Redis의 {@code notify-keyspace-events Kx} 필요), 처리·건너뛰는 경로(환불·소비된
  * 기록·다른 서버가 잡은 잠금)는 알림 대기 없이 수신자를 직접 호출해 결정적으로 확인한다.
  *
  * <p>통합 테스트 JVM에는 캐시된 Spring 컨텍스트가 여럿 살아 있고 컨텍스트마다 구독자가 있다 — 실제 만료 알림은 그중
- * 환불 잠금을 잡은 아무 컨텍스트가 처리한다. 그래서 배선 테스트는 어느 컨텍스트가 처리해도 같은 DB·Redis 결과만 확인하고,
+ * 유실 처리 잠금을 잡은 아무 컨텍스트가 처리한다. 그래서 배선 테스트는 어느 컨텍스트가 처리해도 같은 DB·Redis 결과만 확인하고,
  * 이 컨텍스트의 mock에 기대는 push 호출 확인은 수신자를 직접 부르는 테스트에서만 한다.
  *
  * <p>완료 push는 FCM 외부 호출이라 mock으로 바꾸고, 호출 자체가 계약이라 {@code verify}로 확인한다.
@@ -46,14 +46,16 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
-class CreditChargeExpirationIntegrationTest {
+class TimelineTaskLossIntegrationTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(565_001L);
 
     @Autowired
     private CreditService creditService;
     @Autowired
-    private CreditChargeExpirationHandler handler;
+    private TimelineTaskLossHandler handler;
+    @Autowired
+    private TimelineTaskLossTimerService timelineTaskLossTimerService;
     @Autowired
     private TimelineDraftTaskPollingService pollingService;
     @Autowired
@@ -77,18 +79,18 @@ class CreditChargeExpirationIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        redis.delete("credit:charge-timer:" + taskId);
-        redis.delete("credit:refund-lock:" + taskId);
+        redis.delete("timeline:draft-task:loss-timer:" + taskId);
+        redis.delete("timeline:draft-task:loss-lock:" + taskId);
         redis.delete("timeline:draft-task:" + taskId);
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, SUBJECT_ID);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 
     @Test
-    void expiredChargeTimerIsDeliveredAndRefundsWithFailedTask() {
+    void expiredLossTimerIsDeliveredAndRefundsWithFailedTask() {
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
 
-        creditService.startChargeTimer(taskId, Duration.ofMillis(100));
+        redis.set("timeline:draft-task:loss-timer:" + taskId, "", Duration.ofMillis(100));
 
         // 환불 commit 뒤 FAILED를 쓰므로 둘 다 보일 때까지 기다린다 — 처리한 컨텍스트는 어느 것이든 된다.
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
@@ -105,7 +107,7 @@ class CreditChargeExpirationIntegrationTest {
     void expirationOfChargedTaskRefundsRecordsFailedTaskAndPushesFailure() {
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
 
-        handler.onExpired("credit:charge-timer:" + taskId);
+        handler.onExpired("timeline:draft-task:loss-timer:" + taskId);
 
         assertThat(remainingCredits()).isEqualTo(60);
         assertThat(jdbcTemplate.queryForObject("SELECT refund_reason FROM credit_histories WHERE reference_id = ?",
@@ -123,7 +125,7 @@ class CreditChargeExpirationIntegrationTest {
         creditService.consume(CreditCostType.TIMELINE_CREATION, taskId);
         timelineTaskStore.save(taskId, TimelineDraftTask.success(SUBJECT_ID, 1L, "hash"), Duration.ofMinutes(1));
 
-        handler.onExpired("credit:charge-timer:" + taskId);
+        handler.onExpired("timeline:draft-task:loss-timer:" + taskId);
 
         assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
         assertThat(historyStatus()).isEqualTo("CONSUMED");
@@ -135,9 +137,9 @@ class CreditChargeExpirationIntegrationTest {
     void expirationWhileAnotherServerHoldsRefundLockChangesNothing() {
         // 같은 알림을 받은 다른 서버가 잠금을 먼저 잡았다 — 이 서버는 환불·기록·push를 하지 않는다.
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
-        creditService.tryLockTimeoutRefund(taskId);
+        timelineTaskLossTimerService.tryLock(taskId);
 
-        handler.onExpired("credit:charge-timer:" + taskId);
+        handler.onExpired("timeline:draft-task:loss-timer:" + taskId);
 
         assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
         assertThat(historyStatus()).isEqualTo("CHARGED");

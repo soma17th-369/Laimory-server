@@ -10,12 +10,10 @@ import com.laimory.server.credit.dto.CreditResponse;
 import com.laimory.server.credit.entity.CreditCost;
 import com.laimory.server.credit.entity.CreditHistory;
 import com.laimory.server.credit.entity.SubjectCredit;
-import com.laimory.server.credit.repository.CreditChargeTimerStore;
 import com.laimory.server.credit.repository.CreditCostRepository;
 import com.laimory.server.credit.repository.CreditHistoryRepository;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,8 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 확정하고, 생성이 실패하거나 결과 없이 유실되면 기록의 차감액을 돌려주고 {@code REFUNDED}로 바꾼다. 환불은
  * 기록이 {@code CHARGED}일 때만 일어나므로 같은 작업의 순차 재처리는 한 번만 환불한다.
  *
- * <p>유실 감지는 차감 타이머(Redis)가 맡는다 — 호출자가 차감 commit 뒤 타이머를 걸고 정상 종결 시 지우며,
- * 만료 알림을 받은 서버가 환불 잠금을 잡아 환불한다. 타이머는 트리거일 뿐 금액·주인은 기록이 권위다.
+ * <p>결과도 실패 보고도 없이 끝난 작업(유실)의 감지는 크레딧이 아니라 작업을 소유한 도메인이 맡는다(타임라인은
+ * draft task 유실 타이머) — 감지한 쪽이 {@link #refund}를 부른다. 금액·주인은 기록이 권위다.
  *
  * <p>소비 비용은 DB {@code credit_costs} 행이 단일 기준이다(#558) — 앱 고지·사전 검사·차감이 매 요청 같은 행을
  * 읽는다. 서버별 캐시를 두면 비용 변경 migration 직후 서버마다 값이 갈리므로 두지 않는다. 비용 행 부재도 깨진
@@ -51,7 +49,6 @@ public class CreditService {
     private final SubjectCreditRepository subjectCreditRepository;
     private final CreditCostRepository creditCostRepository;
     private final CreditHistoryRepository creditHistoryRepository;
-    private final CreditChargeTimerStore creditChargeTimerStore;
     private final Clock clock;
 
     /**
@@ -124,31 +121,6 @@ public class CreditService {
         creditHistoryRepository.markRefunded(history.getCreditHistoryId(), CreditHistoryStatus.REFUNDED, reason,
                 LocalDateTime.now(clock));
         return Optional.of(history.getSubjectId());
-    }
-
-    /** 차감 타이머 논리 키 prefix — 만료 알림 구독 패턴용. */
-    public static String chargeTimerKeyPrefix() {
-        return CreditChargeTimerStore.TIMER_KEY_PREFIX;
-    }
-
-    /** 만료된 논리 키가 차감 타이머 키와 정확히 일치하면 referenceId를 돌려준다. */
-    public static Optional<String> chargeTimerReferenceIdOf(String logicalKey) {
-        return CreditChargeTimerStore.referenceIdOf(logicalKey);
-    }
-
-    /** 차감 commit 뒤 유실 감지 타이머를 건다 — {@code ttl} 안에 {@link #cancelChargeTimer}가 없으면 만료 알림이 온다. */
-    public void startChargeTimer(String referenceId, Duration ttl) {
-        creditChargeTimerStore.start(referenceId, ttl);
-    }
-
-    /** 정상 종결(결과 저장·환불)한 작업의 타이머를 지운다. */
-    public void cancelChargeTimer(String referenceId) {
-        creditChargeTimerStore.cancel(referenceId);
-    }
-
-    /** 타이머 만료 알림을 받은 서버들 중 한 대만 환불하도록 잠금을 잡는다. */
-    public boolean tryLockTimeoutRefund(String referenceId) {
-        return creditChargeTimerStore.tryLockRefund(referenceId);
     }
 
     /**

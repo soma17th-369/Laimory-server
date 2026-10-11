@@ -146,7 +146,7 @@ class TimelineAiTaskFlowIntegrationTest {
             draftSourceItemService.deleteByTaskId(id);
             // redis는 RedisGateway → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
             redis.delete("timeline:draft-task:" + id);
-            redis.delete("credit:charge-timer:" + id);
+            redis.delete("timeline:draft-task:loss-timer:" + id);
         });
         createdTaskIds.clear();
         // 완료 푸시 경로가 마스터 행이 없으면 기본 행을 보정하므로(#314) mapping보다 먼저 지운다(FK RESTRICT).

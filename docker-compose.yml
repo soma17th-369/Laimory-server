@@ -24,7 +24,7 @@ services:
   redis:
     image: redis:7
     container_name: laimory-redis
-    # #565: 크레딧 차감 타이머 만료 알림(keyspace + expired). 운영 공유 Redis의 같은 설정과 맞춘다.
+    # #565: 유실 타이머 만료 알림(keyspace + expired). 운영 공유 Redis의 같은 설정과 맞춘다.
     command: ["redis-server", "--notify-keyspace-events", "Kx"]
     ports:
       - "6379:6379"

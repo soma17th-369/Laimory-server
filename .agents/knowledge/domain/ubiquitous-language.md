@@ -113,6 +113,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 최초 PROCESSING 생성 때 ZADD(+PEXPIRE 3분), terminal 전이 때 ZREM하며(중간 stage write는 index 무명령) 실패 시 같은 의도의 명령을 한 번 재시도한다. 목록 API도 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 새 task 생성마다 3분으로 다시 걸리는 inactivity cleanup이다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
+| 유실 타이머 | Loss Timer | 현재 구현 | 크레딧을 차감한 draft task의 유실을 감지하는 값 없는 Redis key다(#565, `timeline:draft-task:loss-timer:{taskId}`, TTL = PROCESSING TTL + 30초 — timeline 소유). 결과 저장·환불로 정상 종결한 경로가 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 task에서만 온다. |
+| 유실 처리 | Loss Handling | 현재 구현 | 유실 타이머 만료를 받은 서버들 중 유실 처리 잠금(`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 한 대가 크레딧을 환불(`TIMEOUT`)하고, 환불이 실제로 일어났을 때만 task를 유실 FAILED(`-1008`, `dailyRecordId`·token hash 없음)로 다시 기록하고 FAILED 완료 push를 보내는 처리다(`TimelineTaskLossHandler`). |
 
 ## 저장 규칙
 
@@ -194,7 +196,6 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 60을 한 번 지급하고 충전 경로는 없다(평생 60). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — draft 요청 시 크레딧 비용만큼 조건부로 차감하고(잔액이 비용보다 적으면 403 `-1021`), 생성이 실패하면 환불한다(#565). 지급·조정까지 담는 범용 원장은 두지 않고 사용 1건당 크레딧 이력만 남긴다. |
 | 크레딧 이력 | Credit History | 현재 구현 | 크레딧 사용 1건의 기록(#565, `credit_histories`·`CreditHistory`) — 무엇에 썼나(`cost_type`)와 대상 id(`reference_id`, 타임라인 생성이면 taskId), 차감한 양(`amount` — 환불액의 권위), 상태, 환불 사유를 담는다. 상태(`CreditHistoryStatus`): 차감됨 `CHARGED` → 소비됨 `CONSUMED`(결과 저장) 또는 환불됨 `REFUNDED`(생성 실패·유실), 전이는 한 번. 환불 사유(`CreditRefundReason`): `AI_FAILED`·`TIMEOUT`(유실)·`DISPATCH_REJECTED`·`TASK_SAVE_FAILED`. 범용 원장이 아니다. |
-| 차감 타이머 | Charge Timer | 현재 구현 | 차감한 작업의 유실을 감지하는 값 없는 Redis key(#565, `credit:charge-timer:{taskId}`)다. 결과 저장·환불한 경로가 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 작업에서만 온다 — 그 처리를 유실 처리라 부르고, 환불 잠금(`credit:refund-lock:{taskId}`)을 잡은 서버 한 대가 환불·FAILED 기록·실패 push를 한다. |
 | 크레딧 비용 | Credit Cost | 현재 구현 | 크레딧을 소비하는 기능 1회의 소비량이다(#555). DB `credit_costs`의 기능 종류(`CreditCostType`)별 행이 단일 기준이고(#558 — 현재 `TIMELINE_CREATION` = 1, 0은 무료), 공개 `GET /api/{version}/credit/costs`가 `{"timelineCreation": n}`로 앱에 알린다. 앱은 하드코딩하지 않으며 값 변경은 새 Flyway migration의 `UPDATE`로만 한다. |
 
 ## 푸시 알림

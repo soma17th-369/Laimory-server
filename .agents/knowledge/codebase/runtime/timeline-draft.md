@@ -70,7 +70,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    치환하면 이미지 URL·S3 key가 깨진다). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
    전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
    payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
-7. 크레딧 차감 타이머(`credit:charge-timer:{taskId}`, 값 없음, TTL = PROCESSING TTL + 30초 — #565)를 건 뒤
+7. 유실 타이머(`timeline:draft-task:loss-timer:{taskId}`, 값 없음, TTL = PROCESSING TTL + 30초 — #565)를 건 뒤
    Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 둘 중 하나라도 실패하면 이번 task의 source rows를
    보상 삭제하고 차감을 환불(`TASK_SAVE_FAILED`)한 뒤 타이머를 지운다 — 환불이 실패하면 타이머를 남겨 만료가 다시
@@ -94,7 +94,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    read-back·재저장 없이 상태를 불명으로 두고 같은 502로 끝낸다(500으로 전환하지 않음).
    read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 — AI가 이미 접수해 final write 중일 수
    있으므로 — FAILED로 덮거나 재저장(TTL 연장)하지 않고 PROCESSING을 유지한다(AI callback이 종결하거나
-   task TTL 3m 만료가 회수). 차감도 그대로 둔다 — 결과 저장·FAILED callback·차감 타이머 만료(유실) 중 하나가 정산한다.
+   task TTL 3m 만료가 회수). 차감도 그대로 둔다 — 결과 저장·FAILED callback·유실 타이머 만료 중 하나가 정산한다.
    502는 접수 확인 실패지 미접수 증명이 아니다.
 
 같은 날짜의 draft, 수동 Event 생성/편집(non-empty `photosToAdd` 포함), Event/DailyRecord DELETE
@@ -126,7 +126,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다 — 저장된
    claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. 같은 transaction의 마지막에
    draft 요청 때 차감한 크레딧 기록을 `CONSUMED`로 확정한다(#565 — 상태 조건 없이 마지막에 쓴 값, 기록 없는 V10 이전
-   task는 오류 없이 건너뜀; graph가 롤백되면 확정도 롤백돼 기록은 `CHARGED`로 남는다). commit 뒤 차감 타이머를
+   task는 오류 없이 건너뜀; graph가 롤백되면 확정도 롤백돼 기록은 `CHARGED`로 남는다). commit 뒤 유실 타이머를
    지운다(실패는 로그만 — 만료돼도 기록이 소비돼 유실 처리는 건너뛴다). **선점은
    token을 바꾸지 않는다** — callback token 회전과 `CALLBACK_PENDING` 전이는 commit 뒤 한 번의 native
    write로 함께 일어나고, 그 뒤에야 callback token 원문을 응답한다. 저장 예외면 최초 `RESULT_PENDING`
@@ -139,12 +139,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    막는다). terminal 저장은 native `SET XX PX 24h`이고 성공한 요청만 index 제거와 완료 푸시를 예약하며
    (`XX=false`는 404·부활 없음), 같은 terminal 재전송은 200, 상충은 409 `-1017`이다.
    FAILED는 terminal 저장 **전에** 크레딧을 환불(`AI_FAILED`)한다 — 환불 실패는 500으로 AI 재전송에 맡기고, 기록이
-   `CHARGED`일 때만 환불하므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. terminal 저장 뒤 차감 타이머를
+   `CHARGED`일 때만 환불하므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. terminal 저장 뒤 유실 타이머를
    지운다(실패는 로그만).
 4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
-5. **유실 처리**(#565): 결과도 FAILED callback도 없이 PROCESSING TTL이 지나면 차감 타이머가 만료된다. 환경 안의 모든
-   서버가 keyspace `expired` 알림을 구독하고(`RedisKeyExpirationSubscriber` → `CreditChargeExpirationHandler`), 환불 잠금
-   (`credit:refund-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 환불(`TIMEOUT`)한다. 환불이 실제로 일어났을 때만 task를
+5. **유실 처리**(#565): 결과도 FAILED callback도 없이 PROCESSING TTL이 지나면 유실 타이머가 만료된다. 환경 안의 모든
+   서버가 keyspace `expired` 알림을 구독하고(`RedisKeyExpirationSubscriber` → `TimelineTaskLossHandler`), 유실 처리 잠금
+   (`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 환불(`TIMEOUT`)한다. 환불이 실제로 일어났을 때만 task를
    FAILED(`-1008`, 24h, `SET NX` — `dailyRecordId`·token hash 없는 유실 FAILED)로 다시 기록하고 FAILED 완료 푸시를
    예약한다. 이미 소비·환불된 기록이면 셋 다 건너뛴다. 유실 FAILED 뒤 늦게 온 AI 입력·결과·callback은 token hash가 없어
    401(`-1002`)이다. 알림 유실·잠금 서버의 처리 실패는 기록 `CHARGED`로 남아 수동 환불한다(재처리 없음).
@@ -340,7 +340,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - PROCESSING TTL: 최초 PROCESSING 저장 기준 절대 3분(입력 조회·stage 전이는 `KEEPTTL`이라 연장 없음) /
   SUCCESS·FAILED TTL: 24시간 / source staging retention: 7일
 - PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이
-  404(`-1001`)로 수렴한다. 예외: 크레딧 차감이 `CHARGED`로 남은 유실 task는 차감 타이머 만료 처리가 FAILED(`-1008`)로
+  404(`-1001`)로 수렴한다. 예외: 크레딧 차감이 `CHARGED`로 남은 유실 task는 유실 타이머 만료 처리가 FAILED(`-1008`)로
   다시 기록한다(#565 — 위 "유실 처리"). 만료 전에 task 조회를 통과한 callback은 기존 terminal 전이를 완료할 수 있다.
 - PROCESSING 관측 index는 terminal 전이 때 제거하고 gauge read가 3분(PROCESSING TTL)보다 오래된 고아
   member를 정리한다.

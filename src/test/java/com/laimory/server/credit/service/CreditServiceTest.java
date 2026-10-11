@@ -15,7 +15,6 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.entity.CreditCost;
 import com.laimory.server.credit.entity.SubjectCredit;
-import com.laimory.server.credit.repository.CreditChargeTimerStore;
 import com.laimory.server.credit.repository.CreditCostRepository;
 import com.laimory.server.credit.repository.CreditHistoryRepository;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
@@ -53,12 +52,8 @@ class CreditServiceTest {
     @Mock
     private CreditHistoryRepository creditHistoryRepository;
 
-    @Mock
-    private CreditChargeTimerStore creditChargeTimerStore;
-
     private CreditService service() {
-        return new CreditService(subjectCreditRepository, creditCostRepository, creditHistoryRepository,
-                creditChargeTimerStore, CLOCK);
+        return new CreditService(subjectCreditRepository, creditCostRepository, creditHistoryRepository, CLOCK);
     }
 
     private static SubjectCredit credit(int remaining) {

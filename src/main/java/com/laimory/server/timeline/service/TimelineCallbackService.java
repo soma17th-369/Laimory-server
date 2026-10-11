@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>FAILED는 terminal 저장 전에 요청 시 차감한 크레딧을 환불한다(#565) — 환불은 기록이 {@code CHARGED}일 때만
  * 일어나므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. 환불이 실패하면 전파해(500) AI 재전송에 맡긴다.
- * terminal 저장 뒤 차감 타이머를 지운다(실패는 로그만 — 만료돼도 기록이 이미 환불돼 유실 처리는 건너뛴다).
+ * terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만 — 만료돼도 기록이 이미 환불돼 유실 처리는 건너뛴다).
  */
 @Slf4j
 @Service
@@ -42,6 +42,7 @@ public class TimelineCallbackService {
     private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
     private final TimelineMetrics timelineMetrics;
     private final CreditService creditService;
+    private final TimelineTaskLossTimerService timelineTaskLossTimerService;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String taskToken, DraftTaskCallbackRequest request) {
@@ -95,7 +96,7 @@ public class TimelineCallbackService {
                 log.warn("failed callback task expired before terminal write: taskId={}", taskId);
                 throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
             }
-            cancelChargeTimerQuietly(taskId);
+            cancelLossTimerQuietly(taskId);
             enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.FAILED);
             return;
         }
@@ -111,11 +112,11 @@ public class TimelineCallbackService {
         enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.SUCCESS);
     }
 
-    private void cancelChargeTimerQuietly(String taskId) {
+    private void cancelLossTimerQuietly(String taskId) {
         try {
-            creditService.cancelChargeTimer(taskId);
+            timelineTaskLossTimerService.cancel(taskId);
         } catch (RuntimeException e) {
-            log.warn("credit charge timer cancel failed after failed callback: taskId={} detail={}",
+            log.warn("loss timer cancel failed after failed callback: taskId={} detail={}",
                     taskId, e.getClass().getSimpleName());
         }
     }

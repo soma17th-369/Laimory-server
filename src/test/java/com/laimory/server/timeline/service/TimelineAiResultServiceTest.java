@@ -19,7 +19,6 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
-import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.common.privacy.RedactionResult;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
@@ -58,7 +57,7 @@ class TimelineAiResultServiceTest {
     @Spy
     private PrivacyRedactor privacyRedactor = new PrivacyRedactor();
     @Mock
-    private CreditService creditService;
+    private TimelineTaskLossTimerService timelineTaskLossTimerService;
 
 
     private static final String VERSION = "v1";
@@ -77,7 +76,7 @@ class TimelineAiResultServiceTest {
     @BeforeEach
     void setUp() {
         service = new TimelineAiResultService(timelineTaskService, timelineAiResultTransactionService,
-                privacyRedactor, creditService, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
+                privacyRedactor, timelineTaskLossTimerService, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
     }
 
     private TimelineDraftTask taskAt(ProcessStage stage) {
@@ -148,18 +147,18 @@ class TimelineAiResultServiceTest {
     }
 
     @Test
-    void storeResult_cancelsCreditChargeTimerAfterCommit() {
+    void storeResult_cancelsLossTimerAfterCommit() {
         // 차감이 소비로 확정됐으니 유실 감지 타이머를 지운다 — 남겨 두면 만료 알림이 유실 처리를 시도한다(#565).
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
         when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
 
-        verify(creditService).cancelChargeTimer(TASK_ID);
+        verify(timelineTaskLossTimerService).cancel(TASK_ID);
     }
 
     @Test
-    void storeResult_storageFailure_keepsCreditChargeTimer() {
+    void storeResult_storageFailure_keepsLossTimer() {
         // 저장이 롤백되면 차감은 CHARGED로 남는다 — 타이머가 남아야 AI 응답이 끊겨도 유실 처리가 환불한다.
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
         when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
@@ -169,7 +168,7 @@ class TimelineAiResultServiceTest {
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOf(RuntimeException.class);
 
-        verify(creditService, never()).cancelChargeTimer(anyString());
+        verify(timelineTaskLossTimerService, never()).cancel(anyString());
     }
 
     @Test

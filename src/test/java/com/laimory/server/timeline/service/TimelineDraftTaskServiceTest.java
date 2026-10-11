@@ -50,7 +50,6 @@ import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.payload.StayPayload;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -98,6 +97,8 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private CreditService creditService;
     @Mock
+    private TimelineTaskLossTimerService timelineTaskLossTimerService;
+    @Mock
     private Clock clock;
 
     private TimelineDraftTaskService service;
@@ -132,7 +133,7 @@ class TimelineDraftTaskServiceTest {
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
                 sourceItemEnrichmentService, timelineAiDispatcher,
-                privacyRedactor, creditService, new ObjectMapper(), clock);
+                privacyRedactor, creditService, timelineTaskLossTimerService, new ObjectMapper(), clock);
         // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
         lenient().when(sourceItemEnrichmentService.enrich(anyList(), any()))
@@ -395,17 +396,16 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_startsChargeTimerAfterChargeCommitAndBeforeProcessing() {
-        // 차감은 선생성 transaction 안에서 일어난다 — 타이머는 그 commit 뒤, PROCESSING 저장 전에 건다(#565).
-        // TTL은 PROCESSING TTL(3분) + 여유 30초다.
+    void createDraftTask_startsLossTimerAfterChargeCommitAndBeforeProcessing() {
+        // 차감은 선생성 transaction 안에서 일어난다 — 유실 타이머는 그 commit 뒤, PROCESSING 저장 전에 건다(#565).
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
 
         String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
-        InOrder order = inOrder(timelineDraftPreparationService, creditService, timelineTaskService);
+        InOrder order = inOrder(timelineDraftPreparationService, timelineTaskLossTimerService, timelineTaskService);
         order.verify(timelineDraftPreparationService).prepareDraft(eq(taskId), eq(SUBJECT_ID), eq(DATE),
                 eq(RECORD_AT), eq(ZONE), anyList());
-        order.verify(creditService).startChargeTimer(taskId, Duration.ofSeconds(210));
+        order.verify(timelineTaskLossTimerService).start(taskId);
         order.verify(timelineTaskService).createProcessing(eq(taskId), eq(SUBJECT_ID), eq(RECORD_ID), any(), any(),
                 eq(PROCESSING_STARTED_AT));
         verify(creditService, never()).refund(any(), anyString(), any());
@@ -422,13 +422,13 @@ class TimelineDraftTaskServiceTest {
 
         String taskId = preparedTaskId();
         verify(creditService).refund(CreditCostType.TIMELINE_CREATION, taskId, CreditRefundReason.TASK_SAVE_FAILED);
-        verify(creditService).cancelChargeTimer(taskId);
+        verify(timelineTaskLossTimerService).cancel(taskId);
     }
 
     @Test
-    void createDraftTask_whenChargeTimerFails_refundsWithoutSavingProcessing() {
+    void createDraftTask_whenLossTimerFails_refundsWithoutSavingProcessing() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
-        doThrow(new RuntimeException("redis down")).when(creditService).startChargeTimer(anyString(), any());
+        doThrow(new RuntimeException("redis down")).when(timelineTaskLossTimerService).start(anyString());
 
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .hasMessageContaining("redis down");
@@ -450,7 +450,7 @@ class TimelineDraftTaskServiceTest {
         assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
                 .hasMessageContaining("redis down");
 
-        verify(creditService, never()).cancelChargeTimer(anyString());
+        verify(timelineTaskLossTimerService, never()).cancel(anyString());
     }
 
     @Test
@@ -465,7 +465,7 @@ class TimelineDraftTaskServiceTest {
 
         String taskId = preparedTaskId();
         verify(creditService).refund(CreditCostType.TIMELINE_CREATION, taskId, CreditRefundReason.DISPATCH_REJECTED);
-        verify(creditService).cancelChargeTimer(taskId);
+        verify(timelineTaskLossTimerService).cancel(taskId);
     }
 
     @Test
@@ -479,7 +479,7 @@ class TimelineDraftTaskServiceTest {
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
 
         verify(creditService, never()).refund(any(), anyString(), any());
-        verify(creditService, never()).cancelChargeTimer(anyString());
+        verify(timelineTaskLossTimerService, never()).cancel(anyString());
     }
 
     /** 선생성 transaction에 넘긴 taskId — 실패 경로는 응답에 taskId가 없어 여기서 꺼낸다. */
@@ -769,7 +769,7 @@ class TimelineDraftTaskServiceTest {
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
                 sourceItemEnrichmentService, timelineAiDispatcher,
-                failingRedactor, creditService, new ObjectMapper(), clock);
+                failingRedactor, creditService, timelineTaskLossTimerService, new ObjectMapper(), clock);
 
         assertThatThrownBy(() -> failingService.createDraftTask(
                 VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))

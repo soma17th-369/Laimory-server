@@ -31,7 +31,6 @@ import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,7 +60,7 @@ import org.springframework.stereotype.Service;
  * DRAFT를 잘못 지우는 것보다 empty DRAFT를 재사용하는 것이 안전하다(실패 task의 empty DRAFT는 같은 날짜
  * 재시도가 재사용하며 자동 cleanup하지 않는다).
  *
- * <p>크레딧은 선생성 transaction이 요청 시점에 차감한다(#565). commit 뒤 차감 타이머를 건 다음 PROCESSING을
+ * <p>크레딧은 선생성 transaction이 요청 시점에 차감한다(#565). commit 뒤 유실 타이머를 건 다음 PROCESSING을
  * 기록하며, 둘 중 하나라도 실패하거나 AI가 dispatch를 거절하면(미접수 확정) 응답 전에 환불하고 타이머를 지운다.
  * dispatch 결과를 모르면(UNKNOWN) 그대로 둔다 — 결과 저장·FAILED callback·타이머 만료(유실) 중 하나가 정산한다.
  */
@@ -84,11 +83,6 @@ public class TimelineDraftTaskService {
     private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS =
             Set.of("clientPhotoUri", "filename", "photoUrl");
 
-    /**
-     * 차감 타이머 = PROCESSING TTL + 여유. 결과 저장·FAILED callback은 task가 살아 있는 동안만 받아들여지므로,
-     * 그 처리와 타이머 삭제가 여유 안에 끝나면 정상 종결한 task의 만료 알림은 오지 않는다.
-     */
-    private static final Duration CHARGE_TIMER_TTL = TimelineTaskService.PROCESSING_TTL.plusSeconds(30);
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
@@ -101,6 +95,7 @@ public class TimelineDraftTaskService {
     private final TimelineAiDispatcher timelineAiDispatcher;
     private final PrivacyRedactor privacyRedactor;
     private final CreditService creditService;
+    private final TimelineTaskLossTimerService timelineTaskLossTimerService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -196,12 +191,12 @@ public class TimelineDraftTaskService {
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
                 taskId, subjectId, recordDate, recordAt, recordTimeZone, rows);
 
-        // 2. 차감 타이머 + Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
+        // 2. 유실 타이머 + Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
         //    실패하면 이번 task의 source rows를 보상 삭제하고 환불한 뒤 전파한다(DailyRecord는 유지 — 클래스 주석 참고).
         //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다.
         Instant processingStartedAt = clock.instant();
         try {
-            creditService.startChargeTimer(taskId, CHARGE_TIMER_TTL);
+            timelineTaskLossTimerService.start(taskId);
             timelineTaskService.createProcessing(taskId, subjectId, dailyRecordId,
                     new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
                     tokenHash, processingStartedAt);
@@ -238,7 +233,7 @@ public class TimelineDraftTaskService {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
             // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 3분 TTL)을 그대로 둔다.
             // AI callback 또는 TTL 만료가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
-            // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·차감 타이머 만료(유실)가 환불한다.
+            // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·유실 타이머 만료가 환불한다.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
                     taskId, e.getMessage());
             throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
@@ -254,7 +249,7 @@ public class TimelineDraftTaskService {
     private void refundAndCancelTimerQuietly(String taskId, CreditRefundReason reason) {
         try {
             creditService.refund(CreditCostType.TIMELINE_CREATION, taskId, reason);
-            creditService.cancelChargeTimer(taskId);
+            timelineTaskLossTimerService.cancel(taskId);
         } catch (RuntimeException e) {
             log.warn("timeline credit refund or timer cancel failed (타이머가 남았으면 만료가 환불): taskId={}",
                     taskId, e);

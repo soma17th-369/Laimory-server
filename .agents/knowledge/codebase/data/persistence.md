@@ -443,7 +443,7 @@ application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `Cache
 `SingleFlightRedisCacheManager`(#491)이며, Spring Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
 `app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다. 세 번째 예외는 keyspace 만료 알림 구독
 `RedisKeyExpirationSubscriber`(#565)다 — pub/sub 구독은 key 연산 경계 밖이라 Spring Data Redis listener container를 직접
-쓰고, 채널 패턴 `__keyspace@<db>__:{app.redis.key-prefix}credit:charge-timer:*`에 같은 prefix를 넣어 Redis가 환경별로 나눠
+쓰고, 채널 패턴 `__keyspace@<db>__:{app.redis.key-prefix}timeline:draft-task:loss-timer:*`에 같은 prefix를 넣어 Redis가 환경별로 나눠
 보낸다. Redis 설정 `notify-keyspace-events`에 `K`·`x`가 있어야 하며(공유 Redis 운영 전제 — environments.md) 앱은 설정을
 바꾸지 않고 기동 뒤 `CONFIG GET`으로 확인해 누락·조회 실패를 ERROR로 남긴다. 구독은 기동 완료 뒤 걸며 등록 실패도 ERROR만
 남기고 기동은 계속한다. 첫 구독 시도가 Redis 연결을 얻지 못하면 Spring Data Redis는 재시도하지 않아 그 서버는 재시작
@@ -458,8 +458,8 @@ container가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
 | `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`canonicalUuid(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
-| `credit:charge-timer:{taskId}` | 크레딧 차감 타이머(#565) — 값 없는 유실 트리거. draft 선생성 commit 뒤 SET, 결과 저장·환불한 경로가 DEL. 만료(keyspace `expired` 알림)는 결과·실패 보고 없이 끝난 task에서만 온다. 금액·주인은 `credit_histories`가 권위 | PROCESSING TTL + 30s(3m30s) |
-| `credit:refund-lock:{taskId}` | 유실 환불 잠금(#565) — 만료 알림을 함께 받은 서버 중 한 대만 처리하도록 유실 task에서만 `SET NX`. TTL로만 풀리고 재처리는 없다 | 3m |
+| `timeline:draft-task:loss-timer:{taskId}` | 유실 타이머(#565) — 값 없는 유실 트리거. draft 선생성 commit 뒤 SET, 결과 저장·환불한 경로가 DEL. 만료(keyspace `expired` 알림)는 결과·실패 보고 없이 끝난 task에서만 온다. 금액·주인은 `credit_histories`가 권위 | PROCESSING TTL + 30s(3m30s) |
+| `timeline:draft-task:loss-lock:{taskId}` | 유실 유실 처리 잠금(#565) — 만료 알림을 함께 받은 서버 중 한 대만 처리하도록 유실 task에서만 `SET NX`. TTL로만 풀리고 재처리는 없다 | 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `user:active:{userId}` | ACTIVE 검사 캐시(#429 — `UserAccountService.isActive`의 `@Cacheable`, #441부터 `/a/api` 필터와 token 발급·회전이 공유). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |
 | `appconfig:current:all` · `terms:current:all` · `notice:popup-notices:all` | 관리자 변경 값 캐시(#491) — 앱 설정 응답(`AppConfigService.getAppConfig`), 전 종류 current 약관 목록(`TermCatalogService.findAllCurrentTerms`), 앱 시작 팝업 공지 목록(`NoticeService.findPopupNotices` — id·제목·썸네일 URL, #560에서 값 shape가 id 목록에서 바뀌어 rolling 배포 중 구·신 값이 섞이지 않게 이름을 `notice:popup`에서 바꿨다). 키는 `{app.redis.key-prefix}` + 캐시 이름 + `:all`(전역 단일 엔트리)이고, 값은 `GenericJackson2JsonRedisSerializer` JSON이다(목록은 역직렬화 가능한 가변 구현으로 저장, `TermResponse`·`AppConfigResponse`·`PopupNoticeResponse`는 record). 무효화는 관리자 쓰기의 commit 뒤 `@CacheEvict`뿐이다 — `updateVersions` / 약관 `register` 성공 / `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`. 앱을 우회한 DB 직접 쓰기는 무효화 대상이 아니다(TTL 이내 수렴, 앱 재시작으로 지워지지 않음). evict는 쓰기를 처리한 환경의 key prefix 키만 지운다 — dev MySQL을 공유하는 test(`test_`)와 dev(`dev_`)는 한쪽 관리자 웹 변경이 다른 쪽 캐시를 지우지 않아 최대 1h 옛 값을 본다. | 1h — 쓰기 시점 고정, evict 유실 안전망 |

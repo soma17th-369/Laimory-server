@@ -214,7 +214,7 @@ healthy Kakao provider에서도 local rejection을 받는다. #262 이후 local 
 - application default, host `.env` 소유 값, workflow가 강제하는 기대값을 구분한다.
 - shared Redis의 dev prefix를 application key와 Spring Session namespace 모두에서 보존한다.
 - shared Redis(dev·test·prod 공유 1대)는 `notify-keyspace-events`에 `K`·`x`가 켜져 있어야 하고, 앱 Redis 사용자
-  (`laimory_app`)는 환경별 채널 패턴 `&__keyspace@0__:{dev_,test_,}credit:charge-timer:*`(PSUBSCRIBE는 ACL 패턴과 문자
+  (`laimory_app`)는 환경별 채널 패턴 `&__keyspace@0__:{dev_,test_,}timeline:draft-task:loss-timer:*`(PSUBSCRIBE는 ACL 패턴과 문자
   그대로 일치해야 함)과 기동 검사용 `+config|get` 권한을 가져야 한다(#565 크레딧 유실 환불). 누락이면 유실 환불이 조용히
   멈추고 기동 시 ERROR 로그가 남는다. 설정 변경은 공유 인스턴스 전체(세 환경)에 동시에 적용되며 운영 승인 대상이다.
 

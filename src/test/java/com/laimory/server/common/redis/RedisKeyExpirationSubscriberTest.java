@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * keyspace 만료 알림 구독의 순수 판정(#565) — 채널 이름을 논리 키로 되돌리는 것과 기동 시 설정 검사 기준.
- * 실제 구독·알림 배선은 {@code CreditChargeExpirationIntegrationTest}가 실 Redis로 검증한다.
+ * 실제 구독·알림 배선은 {@code TimelineTaskLossIntegrationTest}가 실 Redis로 검증한다.
  */
 class RedisKeyExpirationSubscriberTest {
 
@@ -15,15 +15,15 @@ class RedisKeyExpirationSubscriberTest {
     @Test
     void channelOfOwnEnvironmentIsTurnedIntoLogicalKey() {
         assertThat(RedisKeyExpirationSubscriber.logicalKeyOf(
-                "__keyspace@0__:dev_credit:charge-timer:abc", DEV_CHANNEL_PREFIX))
-                .contains("credit:charge-timer:abc");
+                "__keyspace@0__:dev_timeline:draft-task:loss-timer:abc", DEV_CHANNEL_PREFIX))
+                .contains("timeline:draft-task:loss-timer:abc");
     }
 
     @Test
     void channelOfOtherEnvironmentYieldsNothing() {
         // prod(빈 prefix) 키의 채널이 dev 구독자에게 와도 처리하지 않는다.
         assertThat(RedisKeyExpirationSubscriber.logicalKeyOf(
-                "__keyspace@0__:credit:charge-timer:abc", DEV_CHANNEL_PREFIX)).isEmpty();
+                "__keyspace@0__:timeline:draft-task:loss-timer:abc", DEV_CHANNEL_PREFIX)).isEmpty();
     }
 
     @Test
