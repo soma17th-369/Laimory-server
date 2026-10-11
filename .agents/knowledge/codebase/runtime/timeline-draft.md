@@ -146,7 +146,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    서버가 keyspace `expired` 알림을 구독하고(`RedisKeyExpirationSubscriber` → `TimelineTaskLossHandler`), 유실 처리 잠금
    (`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 환불(`TIMEOUT`)한다. 환불이 실제로 일어났을 때만 task를
    FAILED(`-1008`, 24h, `SET NX` — `dailyRecordId`·token hash 없는 유실 FAILED)로 다시 기록하고 FAILED 완료 푸시를
-   예약한다. 이미 소비·환불된 기록이면 셋 다 건너뛴다. 유실 FAILED 뒤 늦게 온 AI 입력·결과·callback은 token hash가 없어
+   예약한다. 이미 소비·환불된 기록이면 셋 다 건너뛰고 WARN을 남긴다(정상 종결 경로의 타이머 삭제가 빠졌다는 뜻). 유실 FAILED 뒤 늦게 온 AI 입력·결과·callback은 token hash가 없어
    401(`-1002`)이다. 알림 유실·잠금 서버의 처리 실패는 기록 `CHARGED`로 남아 수동 환불한다(재처리 없음).
 
 **수용된 MVP 한계**: Redis와 MySQL은 분산 transaction이 아니다. 응답 유실은 재시도 창

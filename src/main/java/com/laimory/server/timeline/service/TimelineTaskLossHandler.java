@@ -45,8 +45,15 @@ public class TimelineTaskLossHandler implements RedisKeyExpirationListener {
             return;
         }
         try {
-            creditService.refund(CreditCostType.TIMELINE_CREATION, taskId.get(), CreditRefundReason.TIMEOUT)
-                    .ifPresent(subjectId -> failLostTask(taskId.get(), subjectId));
+            Optional<UUID> refunded = creditService.refund(
+                    CreditCostType.TIMELINE_CREATION, taskId.get(), CreditRefundReason.TIMEOUT);
+            if (refunded.isEmpty()) {
+                // 정상 종결(소비·환불)한 경로는 타이머를 지운다 — 만료가 왔다면 그 삭제가 빠진 것이다.
+                log.warn("loss timer expired but credit charge already settled (timer cancel missed): taskId={}",
+                        taskId.get());
+                return;
+            }
+            failLostTask(taskId.get(), refunded.get());
         } catch (RuntimeException e) {
             log.error("lost timeline task handling failed (환불 전 실패면 이력 CHARGED 잔존 — 수동 환불): taskId={}",
                     taskId.get(), e);
