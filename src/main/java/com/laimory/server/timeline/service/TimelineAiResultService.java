@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -35,6 +36,9 @@ import org.springframework.stereotype.Service;
  * <p>응답 유실 뒤 소비된 result token으로 다시 오면 MySQL을 건드리지 않고 새 callback token만
  * 재발급한다(멱등). 이 시점의 body는 적용할 경로가 없어 무시한다 — staging은 이미 삭제됐고 graph는
  * append-only다. 창은 첫 요청 도착 시각 기준 절대 마감이며 재발급으로 미끄러지지 않는다.
+ *
+ * <p>저장 commit 뒤 크레딧 차감 타이머를 지운다(#565) — 차감은 이미 소비로 확정됐으므로 만료 알림이 와도
+ * 유실 처리는 건너뛴다. 삭제 실패는 로그만 남긴다.
  */
 @Slf4j
 @Service
@@ -46,17 +50,20 @@ public class TimelineAiResultService {
     private final TimelineTaskService timelineTaskService;
     private final TimelineAiResultTransactionService timelineAiResultTransactionService;
     private final PrivacyRedactor privacyRedactor;
+    private final CreditService creditService;
     private final Clock clock;
     private final Duration retryWindow;
 
     public TimelineAiResultService(TimelineTaskService timelineTaskService,
                                    TimelineAiResultTransactionService timelineAiResultTransactionService,
                                    PrivacyRedactor privacyRedactor,
+                                   CreditService creditService,
                                    Clock clock,
                                    @Value("${app.ai.retry-window:15s}") Duration retryWindow) {
         this.timelineTaskService = timelineTaskService;
         this.timelineAiResultTransactionService = timelineAiResultTransactionService;
         this.privacyRedactor = privacyRedactor;
+        this.creditService = creditService;
         this.clock = clock;
         this.retryWindow = retryWindow;
     }
@@ -108,6 +115,7 @@ public class TimelineAiResultService {
             releaseClaim(taskId, task, storageFailure);
             throw storageFailure;
         }
+        cancelChargeTimerQuietly(taskId);
 
         String callbackToken = TaskTokens.generate();
         TimelineDraftTask committed =
@@ -154,6 +162,16 @@ public class TimelineAiResultService {
         }
         log.info("ai result replay reissued callback token: taskId={}", taskId);
         return new AiTimelineResultResponse(callbackToken);
+    }
+
+    /** 삭제가 실패해 타이머가 만료돼도 기록이 이미 소비됐으므로 유실 처리는 건너뛴다 — 로그만 남긴다. */
+    private void cancelChargeTimerQuietly(String taskId) {
+        try {
+            creditService.cancelChargeTimer(taskId);
+        } catch (RuntimeException e) {
+            log.warn("credit charge timer cancel failed after result commit: taskId={} detail={}",
+                    taskId, e.getClass().getSimpleName());
+        }
     }
 
     /**

@@ -44,10 +44,13 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   `subject_credits` 60 backfill·감사 컬럼 KST 벽시계·음수 CHECK·subject FK가 삽입과 mapping 삭제를 거절하는지를,
   V6→V7(#553)은 기존 공지 행·노출 상태 보존과 `notices.popup` 기본값 false를, V7→V8(#558)은 기존 크레딧 잔액
   보존과 `credit_costs`의 `TIMELINE_CREATION` = 1 단일 seed·감사 컬럼 KST 벽시계·음수 CHECK를,
-  V8→V9(#560)는 공지 행·노출 상태 보존과 nullable `thumbnail_filename`, 썸네일 없던 팝업 지정 해제·비팝업 행 불변을
-  검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
+  V8→V9(#560)는 공지 행·노출 상태 보존과 nullable `thumbnail_filename`, 썸네일 없던 팝업 지정 해제·비팝업 행 불변을,
+  V9→V10(#565)은 기존 잔액 보존·빈 `credit_histories`와 대상 UNIQUE·`amount` 음수 CHECK·`refund_reason` 짝 CHECK·
+  subject FK(삽입과 mapping 삭제 거절)를 검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
+- 크레딧 유실 처리(#565)의 keyspace 만료 알림 배선은 `CreditChargeExpirationIntegrationTest`가 실 Redis로 검증하며
+  local·CI Redis가 Compose의 `--notify-keyspace-events Kx`로 떠 있어야 한다(기존 컨테이너는 재생성 또는 `CONFIG SET`).
 - AI dispatcher 배선(`AiDispatcherWiringTest`)은 일반 `test`/CI 범위에서 검증하고, 서버간 AI 흐름
   (dispatch→입력→결과→콜백)의 실제 MySQL·Redis 계약은 `TimelineAiTaskFlowIntegrationTest`(integration)가
   검증한다.

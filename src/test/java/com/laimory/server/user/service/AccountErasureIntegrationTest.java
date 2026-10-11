@@ -87,6 +87,7 @@ class AccountErasureIntegrationTest {
                 "DELETE FROM account_erasure_jobs WHERE user_id = ?", userId));
         createdSubjectIds.forEach(subjectId -> {
             jdbcTemplate.update("DELETE FROM user_memories WHERE subject_id = ?", subjectId.toString());
+            jdbcTemplate.update("DELETE FROM credit_histories WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM subject_credits WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?",
                     subjectId.toString());
@@ -265,6 +266,28 @@ class AccountErasureIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM user_subject_links WHERE subject_id = ?", Integer.class,
                 subjectId.toString())).isZero();
+
+        // 이미 소거된 뒤라 정리 대상이 없다.
+        createdUserIds.clear();
+        createdSubjectIds.clear();
+    }
+
+    @Test
+    void subjectWithCreditHistoryIsErasedThroughMapping() {
+        // 크레딧 사용 기록(#565)도 subject FK RESTRICT라 owner 행 삭제가 함께 지워야 mapping까지 소거된다.
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        jdbcTemplate.update("INSERT INTO credit_histories (subject_id, cost_type, reference_id, amount, status, "
+                        + "created_at, updated_at) VALUES (?, 'TIMELINE_CREATION', ?, 1, 'CONSUMED', now(6), now(6))",
+                subjectId.toString(), UUID.randomUUID().toString());
+
+        UUID resolved = accountErasureService.resolveTarget(userId);
+        accountErasureService.deleteOwnerRows(userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
+
+        assertThat(countBySubject("credit_histories", subjectId)).isZero();
+        assertThat(mappingCount(subjectId)).isZero();
 
         // 이미 소거된 뒤라 정리 대상이 없다.
         createdUserIds.clear();

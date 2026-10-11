@@ -388,7 +388,9 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
 - 창을 넘긴 재요청은 저장이 끝났더라도 401 `-1002`다. graph는 남아 일반 조회 경로로 보이므로 데이터
   손실이 아니라 task 종결 실패다.
 - 이 경로의 reconciliation과 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
-- task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다.
+- task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다. 예외는 크레딧 유실 처리(#565)가 만료 약
+  30초 뒤 다시 기록한 FAILED다 — token hash가 없어 그 뒤 24시간 동안 늦게 온 입력·결과·callback은 401 `-1002`다
+  (이미 "만료·terminal 재요청"에 쓰는 응답이라 AI 쪽 처리 변경은 필요 없다).
 - PROCESSING TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체(`KEEPTTL`)가 연장하지 않는다. terminal TTL은 24시간이다.
 
 ## Current Implementations

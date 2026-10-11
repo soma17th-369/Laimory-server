@@ -17,7 +17,9 @@ import static org.mockito.Mockito.when;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.common.privacy.RedactionResult;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
@@ -55,6 +57,8 @@ class TimelineAiResultServiceTest {
     // 실물 redactor를 spy로 주입한다 — 치환 검증은 실물 동작으로, 실패 주입만 stubbing으로 한다.
     @Spy
     private PrivacyRedactor privacyRedactor = new PrivacyRedactor();
+    @Mock
+    private CreditService creditService;
 
 
     private static final String VERSION = "v1";
@@ -73,7 +77,7 @@ class TimelineAiResultServiceTest {
     @BeforeEach
     void setUp() {
         service = new TimelineAiResultService(timelineTaskService, timelineAiResultTransactionService,
-                privacyRedactor, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
+                privacyRedactor, creditService, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
     }
 
     private TimelineDraftTask taskAt(ProcessStage stage) {
@@ -141,6 +145,43 @@ class TimelineAiResultServiceTest {
         assertThat(claimed.tokenHash()).isEqualTo(TOKEN_HASH);
         assertThat(claimed.retryReceipt().claimed()).isTrue();
         assertThat(written.getAllValues().get(1)).isEqualTo(pending);
+    }
+
+    @Test
+    void storeResult_cancelsCreditChargeTimerAfterCommit() {
+        // 차감이 소비로 확정됐으니 유실 감지 타이머를 지운다 — 남겨 두면 만료 알림이 유실 처리를 시도한다(#565).
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result());
+
+        verify(creditService).cancelChargeTimer(TASK_ID);
+    }
+
+    @Test
+    void storeResult_storageFailure_keepsCreditChargeTimer() {
+        // 저장이 롤백되면 차감은 CHARGED로 남는다 — 타이머가 남아야 AI 응답이 끊겨도 유실 처리가 환불한다.
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        doThrow(new RuntimeException("db down"))
+                .when(timelineAiResultTransactionService).store(anyString(), any(), anyLong(), any());
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(creditService, never()).cancelChargeTimer(anyString());
+    }
+
+    @Test
+    void storeResult_onLostFailedTask_returns401WithoutStoring() {
+        // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 결과는 어떤 token으로도 401이다(#565).
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TASK_TOKEN_MISMATCH));
+
+        verify(timelineAiResultTransactionService, never()).store(anyString(), any(), anyLong(), any());
     }
 
     @Test

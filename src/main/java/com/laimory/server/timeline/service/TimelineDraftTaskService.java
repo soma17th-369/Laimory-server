@@ -7,6 +7,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
@@ -30,6 +31,7 @@ import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -58,6 +60,10 @@ import org.springframework.stereotype.Service;
  * DailyRecord는 지우지 않는다 — 이번 task가 처음 만든 record인지 durable하게 알 수 없고, 같은 날짜 기존
  * DRAFT를 잘못 지우는 것보다 empty DRAFT를 재사용하는 것이 안전하다(실패 task의 empty DRAFT는 같은 날짜
  * 재시도가 재사용하며 자동 cleanup하지 않는다).
+ *
+ * <p>크레딧은 선생성 transaction이 요청 시점에 차감한다(#565). commit 뒤 차감 타이머를 건 다음 PROCESSING을
+ * 기록하며, 둘 중 하나라도 실패하거나 AI가 dispatch를 거절하면(미접수 확정) 응답 전에 환불하고 타이머를 지운다.
+ * dispatch 결과를 모르면(UNKNOWN) 그대로 둔다 — 결과 저장·FAILED callback·타이머 만료(유실) 중 하나가 정산한다.
  */
 @Slf4j
 @Service
@@ -77,6 +83,12 @@ public class TimelineDraftTaskService {
      */
     private static final Set<String> STORAGE_REDACTION_EXCLUDED_FIELDS =
             Set.of("clientPhotoUri", "filename", "photoUrl");
+
+    /**
+     * 차감 타이머 = PROCESSING TTL + 여유. 결과 저장·FAILED callback은 task가 살아 있는 동안만 받아들여지므로,
+     * 그 처리와 타이머 삭제가 여유 안에 끝나면 정상 종결한 task의 만료 알림은 오지 않는다.
+     */
+    private static final Duration CHARGE_TIMER_TTL = TimelineTaskService.PROCESSING_TTL.plusSeconds(30);
 
     private final DailyRecordService dailyRecordService;
     private final TimelineTaskService timelineTaskService;
@@ -132,8 +144,8 @@ public class TimelineDraftTaskService {
         RecordDates.requireNotFutureRecordDate(recordDate, recordTimeZone, clock.instant());
 
         // 크레딧 잔액이 타임라인 생성 비용보다 적으면 403(-1021) — 아래 조회·enrich·staging·Redis·dispatch가 전부
-        // 부수효과라 그 앞에서 끊는다.
-        // 차감은 여기가 아니라 AI 결과 저장 transaction이 한다(결과가 저장되지 않은 생성은 차감 없음 — #548).
+        // 부수효과라 그 앞에서 끊는다. 차감은 아래 선생성 transaction이 조건부로 한다(#565) — 이 검사는 enrich 같은
+        // 외부 호출 전 조기 거절이고, 함께 통과한 동시 요청의 초과분은 그 조건부 차감이 403으로 거절한다.
         creditService.requireAvailable(subjectId, CreditCostType.TIMELINE_CREATION);
 
         // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row·task owner는 전부
@@ -167,8 +179,9 @@ public class TimelineDraftTaskService {
         // -1015 영구 포함)을 던져 draft 생성이 502로 실패한다 — 저장 前이라 아무것도 안 만들어짐(롤백 불필요).
         List<SourceItemDto> enrichedItems = sourceItemEnrichmentService.enrich(newItems, subjectId);
 
-        // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows를 한 트랜잭션으로
-        //    먼저 커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 전체 롤백 후 전파(500).
+        // 1. DailyRecord 선생성(기존 DRAFT면 recordAt/recordTimezone 갱신) + source rows + 크레딧 차감을 한
+        //    트랜잭션으로 먼저 커밋한다(Redis보다 먼저 — 위 클래스 주석의 순서 불변식). 실패 시 전체 롤백 후
+        //    전파(500, 잔액 부족은 403).
         //    payload는 enrich본의 textual leaf를 치환한 결과만 staging에 저장한다
         //    (clientPhotoUri·filename·photoUrl은 원문 보존 — STORAGE_REDACTION_EXCLUDED_FIELDS).
         //    redaction은 prepareDraft보다 먼저 완료되며 실패는 그대로 전파한다 — 원문 fallback 없이
@@ -181,18 +194,20 @@ public class TimelineDraftTaskService {
                                 STORAGE_REDACTION_EXCLUDED_FIELDS).node()))
                 .toList();
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
-                subjectId, recordDate, recordAt, recordTimeZone, rows);
+                taskId, subjectId, recordDate, recordAt, recordTimeZone, rows);
 
-        // 2. Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
-        //    실패하면 이번 task의 source rows만 보상 삭제하고 전파한다(DailyRecord는 유지 — 클래스 주석 참고).
+        // 2. 차감 타이머 + Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
+        //    실패하면 이번 task의 source rows를 보상 삭제하고 환불한 뒤 전파한다(DailyRecord는 유지 — 클래스 주석 참고).
         //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다.
         Instant processingStartedAt = clock.instant();
         try {
+            creditService.startChargeTimer(taskId, CHARGE_TIMER_TTL);
             timelineTaskService.createProcessing(taskId, subjectId, dailyRecordId,
                     new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
                     tokenHash, processingStartedAt);
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
+            refundAndCancelTimerQuietly(taskId, CreditRefundReason.TASK_SAVE_FAILED);
             throw e;
         }
 
@@ -208,6 +223,7 @@ public class TimelineDraftTaskService {
             // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
+            refundAndCancelTimerQuietly(taskId, CreditRefundReason.DISPATCH_REJECTED);
             try {
                 timelineTaskService.markFailed(
                         taskId, subjectId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
@@ -222,12 +238,27 @@ public class TimelineDraftTaskService {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
             // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 3분 TTL)을 그대로 둔다.
             // AI callback 또는 TTL 만료가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
+            // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·차감 타이머 만료(유실)가 환불한다.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
                     taskId, e.getMessage());
             throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         }
 
         return new CreateDraftTaskResponse(taskId);
+    }
+
+    /**
+     * 생성을 시작하지 못한 task의 차감을 돌려주고 타이머를 지운다. 원래 실패를 덮지 않도록 실패는 로그만 남긴다 —
+     * 환불이 실패하면 타이머를 지우지 않으므로, 타이머가 남았다면 만료(유실 처리)가 다시 환불한다.
+     */
+    private void refundAndCancelTimerQuietly(String taskId, CreditRefundReason reason) {
+        try {
+            creditService.refund(CreditCostType.TIMELINE_CREATION, taskId, reason);
+            creditService.cancelChargeTimer(taskId);
+        } catch (RuntimeException e) {
+            log.warn("timeline credit refund or timer cancel failed (타이머가 남았으면 만료가 환불): taskId={}",
+                    taskId, e);
+        }
     }
 
     /**

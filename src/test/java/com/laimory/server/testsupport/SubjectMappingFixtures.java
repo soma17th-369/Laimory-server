@@ -32,11 +32,12 @@ public final class SubjectMappingFixtures {
     }
 
     /**
-     * subject를 owner로 갖는 푸시 설정 행(#314)과 크레딧 행(#548)을 FK 순서대로 지운다.
+     * subject를 owner로 갖는 푸시 설정 행(#314)과 크레딧 행(#548)·크레딧 사용 기록(#565)을 FK 순서대로 지운다.
      * {@code user_subject_links} 행을 지우는 정리 코드는 이 helper를 먼저 호출해야 한다 —
-     * 세 테이블 모두 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
+     * 모든 테이블이 ON DELETE RESTRICT라 mapping 삭제가 막힌다(운영 탈퇴 경로와 같은 순서).
      */
     public static void deleteSubjectScopedPushRows(JdbcTemplate jdbcTemplate, UUID subjectId) {
+        jdbcTemplate.update("DELETE FROM credit_histories WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM subject_credits WHERE subject_id = ?", subjectId.toString());
         jdbcTemplate.update("DELETE FROM daily_notification_preferences WHERE subject_id = ?",
                 subjectId.toString());

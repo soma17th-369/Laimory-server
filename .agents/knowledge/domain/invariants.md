@@ -108,20 +108,33 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
 - 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory·기본 크레딧(60)은 하나의 transaction으로
   commit/rollback한다(#536·#548). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
-- **크레딧 차감 시점은 AI 결과 저장 transaction 하나다**(#548) — graph INSERT·채택 source DELETE와 같은
-  transaction에서 기능 비용(`credit_costs` 행, #555·#558)만큼 `greatest(remaining - 비용, 0)`으로 줄인다. 저장이 롤백되면 차감도 롤백되고, 같은 result
-  token 재시도는 이 transaction에 재진입하지 않아 이중 차감이 없다. 결과가 저장되지 않은 생성은 차감되지
-  않으므로 환불 경로가 없다(POST 차감 + 실패 환불은 기각 — 실패 신호가 없는 경로가 있다). 반대로 결과가
-  저장됐다면 draft 응답이 UNKNOWN 502였거나 callback 없이 task가 만료됐어도 차감은 유지된다 — 기준은 요청·task
-  상태가 아니라 결과 저장 commit이다.
+- **크레딧은 draft 요청 시점에 차감하고, 생성이 실패하면 돌려준다**(#565 — #548의 "결과 저장 시 차감"을 대체).
+  draft 선생성 transaction(DailyRecord·staging)이 잔액이 비용 이상일 때만 조건부로 빼고(`remaining >= 비용`, 0 클램프 없음)
+  사용 1건당 기록(`credit_histories`, `CHARGED`, `amount` = 실제 차감액)을 남긴다 — 잔액이 모자라면 403(`-1021`)으로
+  같은 transaction 전체가 롤백된다. 동시 요청도 잔액을 넘지 못한다(사전 검사는 enrich 같은 외부 호출 전 조기 거절일 뿐이다).
+  결과 저장 transaction은 기록을 `CONSUMED`로 확정한다(graph와 함께 commit/rollback). 기록 상태는 `CHARGED`에서
+  `CONSUMED`·`REFUNDED`로 한 번 전이한다.
+  환불은 기록이 `CHARGED`일 때만 기록의 `amount`를 돌려주고 `REFUNDED`+사유로 바꾼다 — 같은 작업의 **순차** 재처리(AI FAILED
+  재전송, 타이머 삭제 실패 뒤 만료 알림)는 한 번만 환불한다. 동시에 겹친 환불(FAILED 처리와 유실 처리가 30초 여유를 넘겨
+  겹침)은 거르지 않는다(수용 — DB 조건부 전이로 경쟁하지 않음). 환불 경로: 타이머·PROCESSING 저장 실패
+  (`TASK_SAVE_FAILED`), dispatch 거절(`DISPATCH_REJECTED`), AI FAILED callback(`AI_FAILED` — terminal 저장 전에 환불하고
+  실패하면 500으로 재전송에 맡김), 유실(`TIMEOUT`). dispatch UNKNOWN은 즉시 환불하지 않는다.
+  유실 감지는 Redis 차감 타이머(`credit:charge-timer:{taskId}`, TTL = PROCESSING TTL + 30초)다. 결과 저장·환불한 경로는
+  타이머를 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 task에서만 온다. 환경 안의 모든 서버가
+  구독하고, 환불 잠금(`credit:refund-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 처리한다. 환불이 실제로 일어났을 때만
+  task를 FAILED(`-1008`)로 다시 기록(`SET NX`)하고 FAILED 완료 push를 보낸다 — 이미 소비·환불된 기록이면 셋 다 건너뛴다.
+  알림 유실(배포 공백·구독 끊김·Redis 재시작)과 잠금 서버의 처리 실패는 수용한다 — 기록이 `CHARGED`로 남아 수동 환불한다
+  (주기 sweeper 없음).
+  결과 저장과 유실 환불이 겹치면(결과 처리+타이머 삭제가 여유를 넘김) 결과는 그대로 저장되고 그 생성 1회는 무료가 된다
+  (기록은 나중에 쓴 상태). 결과가 저장됐다면 draft 응답이 UNKNOWN 502였거나 SUCCESS callback 없이 task가 만료됐어도
+  차감은 유지된다.
   비용의 단일 기준은 DB `credit_costs`의 기능 종류별 행이다(#558) — 공개 비용 조회(앱 고지)·사전 검사·차감이 매 요청
   같은 행을 읽으며 따로 적지 않는다. 서버별 캐시를 두지 않는다(rolling 배포·비용 변경 직후 서버마다 값이 갈린다).
   비용 변경은 새 Flyway migration의 `UPDATE`로만 하고 직접 운영 SQL로 바꾸지 않는다(기술 차단 없이 규칙으로 금지).
   새 기능 종류는 같은 변경의 migration에 seed 행을 넣는다 — 비용 행 부재는 기본값(무료 등)으로 가리지 않고 던진다.
-  차감액은 사전 검사 시점이 아니라 결과 저장 시점의 비용이다 — 비용 변경 migration 순간 진행 중이던 생성은 새 비용으로
-  차감된다(draft 시점 비용을 task에 스냅샷하지 않기로 함).
-  draft POST는 부수효과 전에 잔액이 비용보다 적은 경우만 거절할 뿐 예약하지 않는다 — 사전 검사를 함께 통과한 동시 생성은 차감
-  시점에 0에서 멈추고 결과는 정상 저장된다(수용한 무료 생성). 크레딧 행 부재는 기본값으로 가리지 않고 던진다.
+  환불액은 기록의 차감액이다 — 차감 뒤 비용 변경 migration이 진행 중 생성의 환불액을 바꾸지 않는다.
+  크레딧 행 부재는 기본값으로 가리지 않고 던진다. 기록 도입(V10) 전에 시작한 task의 결과 저장은 기록이 없어 차감 없이
+  저장된다(최초 cutover 수용).
 - **저장 전이와 User Memory 교체는 하나의 transaction이 아니다** — 저장 API가 전이를, AI 결과 API가
   교체를 각각 commit한다. User Memory는 다음 타임라인 품질을 높이는 보조 데이터이고 그 갱신 성패가
   사용자의 저장 완료를 좌우하지 않는다.
@@ -259,7 +272,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   복구하지만, 선점 뒤 **commit 전** 프로세스 종료는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 창 만료 뒤
   재요청도 401이다 — 그 task는 TTL 만료로 끝나며 자동 reconciliation은 없다.
 - PROCESSING 만료는 key 소멸이지 FAILED 전이가 아니다 — scheduler가 만료 task를 복구하지 않고 이후
-  폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
+  폴링·서버간 요청은 404(`-1001`)다. 예외는 크레딧 차감이 남은 유실 task다(#565) — 차감 타이머 만료 처리가 환불한 뒤
+  task를 FAILED(`-1008`, 24h)로 다시 기록한다. 그 값은 task가 사라진 뒤 쓰므로 `dailyRecordId`·token hash가 없다
+  (`TimelineDraftTask`는 FAILED에 한해 두 값 null 허용) — 폴링은 FAILED를 받고, 늦게 온 AI 입력·결과·callback은
+  401(`-1002`)이다. 만료부터 유실 처리까지(약 30초+알림 지연)와 처리가 빠진 경우는 여전히 404다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
   않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 3분 안에 단계를 마치면 유효하다 — 502를
   미접수 증명으로 삼아 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING

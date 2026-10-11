@@ -190,7 +190,9 @@ Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저
 terminal callback은 409 `-1017`다. 이미 소비된 token의 재요청은 재시도 창(기본 15s, 첫 요청 도착 기준)
 안에서만 멱등 처리된다 — 입력은 같은 입력과 새 result token을, 결과는 같은 결과일 때만
 새 callback token을 200으로 반환하며 graph는 다시 쓰지 않는다(응답 shape는 신규 저장과 같다).
-창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다.
+창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다. 결과도 callback도 없이 PROCESSING이
+만료돼 크레딧 유실 처리가 FAILED로 다시 기록한 task(#565 — token hash 없음)에 24시간 안에 늦게 온 입력·결과·callback은
+404가 아니라 401 `-1002`다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
 `POST /t/api/{version}/timeline/test`(#394)는 **dev 전용 AI 동기 테스트** endpoint다. AI Timeline
@@ -256,8 +258,12 @@ aggregation framework를 만들지 않는다).
 `GET /a/api/{version}/credit`(#548)은 인증 subject의 남은 크레딧을 `{"remainingCredits": n}`로 반환하는
 순수 조회다(평면 필드 하나 — 총량 필드 없음). 행 생성은 가입 transaction과 rollout backfill이 소유하고, 행이
 없으면 push 설정과 같은 정책으로 기본값 추정 없이 500이다. 크레딧을 소비하는 작업은 잔액이 그 작업의 비용보다
-적으면 403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 AI 결과
-저장 시점이라 draft POST가 성공해도 잔액은 결과가 저장될 때 비용만큼 줄어든다.
+적으면 403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 draft
+요청 시점이다(#565): `POST /a/api/{version}/timeline/drafts`가 202를 반환한 시점에 잔액은 이미 비용만큼 줄어 있다. 동시
+요청도 잔액을 넘지 못한다(잔액 1에서 두 날짜를 동시에 요청하면 하나는 403). 생성이 실패하면 돌려준다 — 폴링이
+FAILED면 이미 환불됐고, 502 `-1009`는 AI 미접수가 확정이면 응답 전에, 결과를 모르면(UNKNOWN) 결과가 오지 않을 때
+약 3분 30초 뒤 환불된다(그때 FAILED 완료 push가 오고 폴링도 FAILED `-1008`). 앱은 502 직후 잔액을 단정하지 말고 다시
+조회한다. 유실 처리 전(약 30초+알림 지연)이나 처리가 빠진 경우 폴링은 404 `-1001`이며 이것도 실패로 다룬다.
 
 `GET /api/{version}/credit/costs`(#555)는 작업별 크레딧 비용을 `{"timelineCreation": n}`로 반환하는 **공개**
 조회다. 비용은 사용자와 무관한 DB 값(`credit_costs` 행, #558)이라 인증·subject 변환 없이 응답하며, 앱은 이 값으로

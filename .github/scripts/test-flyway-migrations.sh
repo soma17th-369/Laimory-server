@@ -343,3 +343,35 @@ flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 migrate >"$WORK/n
 [ "$(mysql flyway_notice_thumbnail_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='plain' AND hidden = FALSE AND popup = FALSE AND thumbnail_filename IS NULL")" = 1 ] || fail 'V9 changed a non-popup notice'
 flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 validate >"$WORK/notice-thumbnail-validate.log" 2>&1
 ok 'V8 to V9 adds nullable notices.thumbnail_filename and releases thumbnail-less popups, keeping notices'
+
+# V9→V10(#565): credit_histories 추가. 기존 잔액 보존·빈 테이블, amount·refund_reason 짝 CHECK, 대상 UNIQUE,
+# subject FK가 삽입과 mapping 삭제를 거절하는지 확인한다.
+mysql -e 'CREATE DATABASE flyway_credit_history_upgrade;'
+flyway flyway_credit_history_upgrade "$MIGRATIONS" -target=9 migrate >"$WORK/credit-history-v9.log" 2>&1
+mysql flyway_credit_history_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1); INSERT INTO subject_credits (subject_id, remaining, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 42, NOW(6), NOW(6))"
+flyway flyway_credit_history_upgrade "$MIGRATIONS" -target=10 migrate >"$WORK/credit-history-v10.log" 2>&1
+[ "$(mysql flyway_credit_history_upgrade -e "SELECT remaining FROM subject_credits WHERE subject_id='00000000-0000-4000-8000-000000000001'")" = 42 ] || fail 'V10 changed existing credit balances'
+[ "$(mysql flyway_credit_history_upgrade -e "SELECT COUNT(*) FROM credit_histories")" = 0 ] || fail 'V10 created credit history rows'
+CREDIT_HISTORY_COLUMNS="(subject_id, cost_type, reference_id, amount, status, refund_reason, created_at, updated_at)"
+mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000001', 'TIMELINE_CREATION', 'task-1', 1, 'CHARGED', NULL, NOW(6), NOW(6))"
+if mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000001', 'TIMELINE_CREATION', 'task-1', 1, 'CHARGED', NULL, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'credit_histories (cost_type, reference_id) UNIQUE is not enforced'
+fi
+if mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000001', 'TIMELINE_CREATION', 'task-2', -1, 'CHARGED', NULL, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'credit_histories.amount CHECK is not enforced'
+fi
+if mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000001', 'TIMELINE_CREATION', 'task-3', 1, 'REFUNDED', NULL, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'credit_histories REFUNDED without refund_reason was accepted'
+fi
+if mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000001', 'TIMELINE_CREATION', 'task-4', 1, 'CONSUMED', 'TIMEOUT', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'credit_histories refund_reason on a non-REFUNDED row was accepted'
+fi
+if mysql flyway_credit_history_upgrade -e "INSERT INTO credit_histories $CREDIT_HISTORY_COLUMNS VALUES ('00000000-0000-4000-8000-000000000009', 'TIMELINE_CREATION', 'task-5', 1, 'CHARGED', NULL, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'credit_histories.subject_id FK is not enforced'
+fi
+mysql flyway_credit_history_upgrade -e "DELETE FROM subject_credits"
+if mysql flyway_credit_history_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='00000000-0000-4000-8000-000000000001'" >/dev/null 2>&1; then
+  fail 'subject mapping delete succeeded while a credit history row still references it'
+fi
+flyway flyway_credit_history_upgrade "$MIGRATIONS" -target=10 validate >"$WORK/credit-history-validate.log" 2>&1
+ok 'V9 to V10 adds empty credit_histories with UNIQUE target, amount and refund_reason CHECKs and subject FK, keeping balances'

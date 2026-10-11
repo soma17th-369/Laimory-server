@@ -3,12 +3,17 @@ package com.laimory.server.credit.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,8 +26,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * subject_credits 실 MySQL 왕복 검증(#548) — 조건부 차감이 0에서 멈추는 것, 가입 재실행이 잔액을 되돌리지
- * 않는 것, 음수 CHECK와 삭제를 실제 제약 위에서 확인한다. credit_costs(#558)는 migration seed가 모든 비용 종류를
+ * subject_credits·credit_histories 실 MySQL 왕복 검증(#548·#565) — 조건부 차감이 잔액을 넘지 않는 것, 사용 기록의
+ * 소비·환불 전이와 환불이 한 번만 일어나는 것, 가입 재실행이 잔액을 되돌리지 않는 것, 음수 CHECK와 삭제를 실제
+ * 제약 위에서 확인한다. credit_costs(#558)는 migration seed가 모든 비용 종류를
  * 덮는지 확인한다. {@code ddl-auto=validate}라 컨텍스트 기동 자체가
  * 엔티티↔DDL 정합을 검증한다.
  *
@@ -34,6 +40,7 @@ import org.springframework.test.context.ActiveProfiles;
 class CreditPersistenceIntegrationTest {
 
     private static final UUID SUBJECT_ID = TestSubjects.id(948_001L);
+    private static final String TASK_ID = "00000000-0000-7000-8000-000000948001";
 
     @Autowired
     private CreditService creditService;
@@ -66,6 +73,16 @@ class CreditPersistenceIntegrationTest {
                 Integer.class, SUBJECT_ID.toString());
     }
 
+    private Map<String, Object> history() {
+        return jdbcTemplate.queryForMap("SELECT subject_id, amount, status, refund_reason FROM credit_histories "
+                + "WHERE cost_type = 'TIMELINE_CREATION' AND reference_id = ?", TASK_ID);
+    }
+
+    private int historyCount() {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM credit_histories WHERE subject_id = ?",
+                Integer.class, SUBJECT_ID.toString());
+    }
+
     /** 기대 차감액은 seed된 비용 행 기준이다 — 공유 DB의 비용 행은 테스트가 바꾸지 않는다(#558). */
     private int timelineCreationCost() {
         return jdbcTemplate.queryForObject("SELECT cost FROM credit_costs WHERE type = 'TIMELINE_CREATION'",
@@ -73,12 +90,16 @@ class CreditPersistenceIntegrationTest {
     }
 
     @Test
-    void deductDecreasesRemainingByTimelineCreationCost() {
+    void chargeDecreasesRemainingByCostAndRecordsCharged() {
         creditService.createDefaultIfAbsent(SUBJECT_ID);
 
-        creditService.deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
 
         assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(history()).containsEntry("subject_id", SUBJECT_ID.toString())
+                .containsEntry("amount", timelineCreationCost())
+                .containsEntry("status", "CHARGED")
+                .containsEntry("refund_reason", null);
     }
 
     @Test
@@ -91,32 +112,114 @@ class CreditPersistenceIntegrationTest {
     }
 
     @Test
-    void deductAtZeroKeepsZeroWithoutError() {
+    void chargeBelowCostIsRejectedWithoutChangingRemainingOrRecording() {
         givenRemaining(0);
 
-        creditService.deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+        assertThatThrownBy(() -> creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
 
         assertThat(remaining()).isZero();
+        assertThat(historyCount()).isZero();
     }
 
     @Test
-    void deductOfLargerAmountSubtractsWholeAmount() {
+    void chargeOfLargerAmountSubtractsWholeAmount() {
         // 비용이 1보다 커져도 같은 문장이 그대로 동작해야 한다 — 비용 변경 migration만으로 비용을 바꾸는 전제(#558).
         givenRemaining(5);
 
-        subjectCreditRepository.deduct(SUBJECT_ID, 2);
+        int charged = subjectCreditRepository.chargeIfSufficient(SUBJECT_ID, 2);
 
+        assertThat(charged).isEqualTo(1);
         assertThat(remaining()).isEqualTo(3);
     }
 
     @Test
-    void deductOfAmountLargerThanRemainingStopsAtZero() {
-        // 사전 검사를 함께 통과한 동시 생성은 잔액이 비용보다 적을 수 있다 — 음수 대신 0에서 멈추고 결과는 저장된다.
+    void chargeOfAmountLargerThanRemainingChangesNothing() {
+        // 사전 검사를 함께 통과한 동시 요청은 잔액이 비용보다 적을 수 있다 — 음수·0 클램프 없이 거절한다(#565).
         givenRemaining(1);
 
-        subjectCreditRepository.deduct(SUBJECT_ID, 2);
+        int charged = subjectCreditRepository.chargeIfSufficient(SUBJECT_ID, 2);
 
-        assertThat(remaining()).isZero();
+        assertThat(charged).isZero();
+        assertThat(remaining()).isEqualTo(1);
+    }
+
+    @Test
+    void refundOfChargedRestoresAmountAndMarksRefundedWithReason() {
+        creditService.createDefaultIfAbsent(SUBJECT_ID);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
+
+        Optional<UUID> refunded = creditService.refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.AI_FAILED);
+
+        assertThat(refunded).contains(SUBJECT_ID);
+        assertThat(remaining()).isEqualTo(60);
+        assertThat(history()).containsEntry("status", "REFUNDED").containsEntry("refund_reason", "AI_FAILED");
+    }
+
+    @Test
+    void secondRefundOfSameChargeKeepsRemaining() {
+        // AI FAILED 재전송·타이머 삭제 실패 뒤 만료 알림 같은 순차 재처리가 두 번 환불하지 않는다.
+        creditService.createDefaultIfAbsent(SUBJECT_ID);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
+        creditService.refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+
+        Optional<UUID> refundedAgain = creditService.refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.TIMEOUT);
+
+        assertThat(refundedAgain).isEmpty();
+        assertThat(remaining()).isEqualTo(60);
+        assertThat(history()).containsEntry("refund_reason", "AI_FAILED");
+    }
+
+    @Test
+    void refundOfConsumedChargeKeepsRemaining() {
+        // 결과가 저장된 생성에 늦게 온 유실 알림이 차감을 되돌리지 않는다.
+        creditService.createDefaultIfAbsent(SUBJECT_ID);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
+        creditService.consume(CreditCostType.TIMELINE_CREATION, TASK_ID);
+
+        Optional<UUID> refunded = creditService.refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.TIMEOUT);
+
+        assertThat(refunded).isEmpty();
+        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(history()).containsEntry("status", "CONSUMED");
+    }
+
+    @Test
+    void refundWithoutRecordChangesNothing() {
+        // 계정 삭제가 기록을 지운 뒤 또는 기록 도입 전에 시작한 작업 — 환불할 근거가 없다.
+        givenRemaining(7);
+
+        Optional<UUID> refunded = creditService.refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.TIMEOUT);
+
+        assertThat(refunded).isEmpty();
+        assertThat(remaining()).isEqualTo(7);
+    }
+
+    @Test
+    void consumeMarksChargedRecordConsumedWithoutChangingRemaining() {
+        creditService.createDefaultIfAbsent(SUBJECT_ID);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
+
+        creditService.consume(CreditCostType.TIMELINE_CREATION, TASK_ID);
+
+        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(history()).containsEntry("status", "CONSUMED").containsEntry("refund_reason", null);
+    }
+
+    @Test
+    void consumeWithoutRecordProceedsWithoutError() {
+        // 기록 도입(V10) 전에 시작한 작업의 결과 저장 — 차감 없이 저장된다(rolling 배포 수용 항목).
+        givenRemaining(7);
+
+        creditService.consume(CreditCostType.TIMELINE_CREATION, TASK_ID);
+
+        assertThat(remaining()).isEqualTo(7);
+        assertThat(historyCount()).isZero();
     }
 
     @Test
@@ -140,13 +243,15 @@ class CreditPersistenceIntegrationTest {
     }
 
     @Test
-    void deleteRemovesCreditRowSoMappingCanBeDeleted() {
+    void deleteRemovesCreditRowAndHistoriesSoMappingCanBeDeleted() {
         creditService.createDefaultIfAbsent(SUBJECT_ID);
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
 
         creditService.delete(SUBJECT_ID);
 
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM subject_credits WHERE subject_id = ?",
                 Integer.class, SUBJECT_ID.toString())).isZero();
+        assertThat(historyCount()).isZero();
         assertThat(jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?",
                 SUBJECT_ID.toString())).isEqualTo(1);
     }

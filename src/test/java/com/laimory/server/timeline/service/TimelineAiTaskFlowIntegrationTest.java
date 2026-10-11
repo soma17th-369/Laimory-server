@@ -43,7 +43,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
@@ -146,6 +146,7 @@ class TimelineAiTaskFlowIntegrationTest {
             draftSourceItemService.deleteByTaskId(id);
             // redis는 RedisGateway → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
             redis.delete("timeline:draft-task:" + id);
+            redis.delete("credit:charge-timer:" + id);
         });
         createdTaskIds.clear();
         // 완료 푸시 경로가 마스터 행이 없으면 기본 행을 보정하므로(#314) mapping보다 먼저 지운다(FK RESTRICT).
@@ -514,24 +515,59 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
-    void creditDeductionRollsBackWithGraphWhenResultTransactionFails() {
-        // 차감이 실제로 실행된 뒤 같은 transaction이 실패하게 만든다 — 차감이 별도 transaction으로 분리되면
-        // 차감분이 commit돼 남으므로, 이 테스트가 "graph와 차감은 함께 commit/rollback" 계약을 고정한다.
+    void draftRequestChargesCreditBeforeAnyResult() {
+        // #565: 차감 시점은 결과 저장이 아니라 draft 요청이다 — 202 직후 잔액이 이미 줄고 기록은 CHARGED다.
+        String taskId = createDraft(sources());
+
+        assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
+        assertThat(historyStatus(taskId)).isEqualTo("CHARGED");
+    }
+
+    @Test
+    void storedResultConsumesChargeWithoutChargingAgain() {
+        String taskId = createDraft(sources());
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input));
+
+        assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
+        assertThat(historyStatus(taskId)).isEqualTo("CONSUMED");
+    }
+
+    @Test
+    void failedCallbackRefundsChargeOnceEvenWhenResent() {
+        String taskId = createDraft(sources());
+        String inputToken = capturedRequest().taskToken();
+        DraftTaskCallbackRequest failed = new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "inference failed");
+
+        callbackService.handleCallback(VERSION, taskId, inputToken, failed);
+        callbackService.handleCallback(VERSION, taskId, inputToken, failed);
+
+        assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(historyStatus(taskId)).isEqualTo("REFUNDED");
+    }
+
+    @Test
+    void consumeRollsBackWithGraphWhenResultTransactionFails() {
+        // 소비 확정이 실제로 실행된 뒤 같은 transaction이 실패하게 만든다 — 확정이 별도 transaction으로 분리되면
+        // CONSUMED가 commit돼 남아 이후 FAILED callback·유실 처리가 환불하지 못한다. 이 테스트가 "graph와 소비 확정은
+        // 함께 commit/rollback" 계약을 고정한다(#565 — #548의 차감 롤백 계약을 대체).
         String taskId = createDraft(sources());
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
-        AtomicInteger remainingInsideTransaction = new AtomicInteger(-1);
+        AtomicReference<String> statusInsideTransaction = new AtomicReference<>();
         doAnswer(invocation -> {
             invocation.callRealMethod();
-            remainingInsideTransaction.set(remainingCredits());
-            throw new IllegalStateException("failure after credit deduction");
-        }).when(creditService).deduct(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+            statusInsideTransaction.set(historyStatus(taskId));
+            throw new IllegalStateException("failure after credit consume");
+        }).when(creditService).consume(CreditCostType.TIMELINE_CREATION, taskId);
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input)))
                 .isInstanceOf(IllegalStateException.class);
 
-        assertThat(remainingInsideTransaction.get()).isEqualTo(60 - timelineCreationCost());
-        assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(statusInsideTransaction.get()).isEqualTo("CONSUMED");
+        assertThat(historyStatus(taskId)).isEqualTo("CHARGED");
+        assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
         assertThat(timelineEventRepository
                 .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
@@ -547,6 +583,12 @@ class TimelineAiTaskFlowIntegrationTest {
 
         assertThat(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).isEmpty();
         verify(dispatcher, never()).dispatch(any());
+    }
+
+    private String historyStatus(String taskId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT status FROM credit_histories WHERE cost_type = 'TIMELINE_CREATION' AND reference_id = ?",
+                String.class, taskId);
     }
 
     private int remainingCredits() {

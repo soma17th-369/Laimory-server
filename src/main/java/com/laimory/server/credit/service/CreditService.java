@@ -3,17 +3,25 @@ package com.laimory.server.credit.service;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditHistoryStatus;
+import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.dto.CreditCostsResponse;
 import com.laimory.server.credit.dto.CreditResponse;
 import com.laimory.server.credit.entity.CreditCost;
+import com.laimory.server.credit.entity.CreditHistory;
 import com.laimory.server.credit.entity.SubjectCredit;
+import com.laimory.server.credit.repository.CreditChargeTimerStore;
 import com.laimory.server.credit.repository.CreditCostRepository;
+import com.laimory.server.credit.repository.CreditHistoryRepository;
 import com.laimory.server.credit.repository.SubjectCreditRepository;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * subject 크레딧 잔액의 단일 관문(#548). 크레딧은 타임라인 전용이 아닌 범용 재화다.
@@ -21,8 +29,13 @@ import org.springframework.stereotype.Service;
  * <p>행을 만드는 것은 가입 transaction과 rollout backfill뿐이다. 행 부재는 깨진 불변식이라 조회·사전 검사는
  * 기본값으로 가리지 않고 던진다({@code SubjectPreferenceService} 선례).
  *
- * <p>차감은 소비한 결과를 저장하는 transaction 안에서 한다 — 결과가 저장되지 않은 시도는 차감되지 않으므로
- * 환불 경로가 없다. 반대로 결과가 저장됐다면 요청 응답(502 등)이나 작업 종결 여부와 무관하게 차감은 유지된다.
+ * <p>차감은 작업 요청 시점에 한다(#565) — 잔액이 비용 이상일 때만 조건부로 빼고 사용 1건당 기록
+ * ({@code credit_histories}, {@code CHARGED})을 같은 transaction에 남긴다. 결과가 저장되면 기록을 {@code CONSUMED}로
+ * 확정하고, 생성이 실패하거나 결과 없이 유실되면 기록의 차감액을 돌려주고 {@code REFUNDED}로 바꾼다. 환불은
+ * 기록이 {@code CHARGED}일 때만 일어나므로 같은 작업의 순차 재처리는 한 번만 환불한다.
+ *
+ * <p>유실 감지는 차감 타이머(Redis)가 맡는다 — 호출자가 차감 commit 뒤 타이머를 걸고 정상 종결 시 지우며,
+ * 만료 알림을 받은 서버가 환불 잠금을 잡아 환불한다. 타이머는 트리거일 뿐 금액·주인은 기록이 권위다.
  *
  * <p>소비 비용은 DB {@code credit_costs} 행이 단일 기준이다(#558) — 앱 고지·사전 검사·차감이 매 요청 같은 행을
  * 읽는다. 서버별 캐시를 두면 비용 변경 migration 직후 서버마다 값이 갈리므로 두지 않는다. 비용 행 부재도 깨진
@@ -37,6 +50,8 @@ public class CreditService {
 
     private final SubjectCreditRepository subjectCreditRepository;
     private final CreditCostRepository creditCostRepository;
+    private final CreditHistoryRepository creditHistoryRepository;
+    private final CreditChargeTimerStore creditChargeTimerStore;
     private final Clock clock;
 
     /**
@@ -61,7 +76,8 @@ public class CreditService {
 
     /**
      * 크레딧을 소비하는 작업의 사전 검사 — 잔액이 비용보다 적으면 403({@code -1021})으로 거절한다. 호출자는
-     * 부수효과 전에 부른다. 통과가 차감 예약은 아니다 — 동시 요청이 함께 통과하면 차감 시점에 0에서 멈춘다.
+     * 외부 호출 등 부수효과 전에 부른다. 통과가 차감 예약은 아니다 — 동시 요청이 함께 통과하면 {@link #charge}의
+     * 조건부 차감이 넘치는 쪽을 403으로 거절한다.
      */
     public void requireAvailable(UUID subjectId, CreditCostType type) {
         if (findRemaining(subjectId) < findCost(type)) {
@@ -70,16 +86,77 @@ public class CreditService {
     }
 
     /**
-     * 비용만큼 차감 — 호출자의 결과 저장 transaction에 합류한다(롤백되면 차감도 롤백). 잔액이 비용보다 적으면
-     * 0에서 멈추고 오류 없이 넘어간다: 사전 검사를 함께 통과한 동시 요청의 결과를 버리지 않기 위해서다(수용한
-     * 무료 생성).
+     * 비용만큼 차감하고 사용 기록({@code CHARGED})을 남긴다 — 호출자의 transaction에 합류한다(롤백되면 둘 다
+     * 롤백). 잔액이 비용보다 적으면 403({@code -1021})이다. 기록의 {@code amount}가 이후 환불액이다.
      */
-    public void deduct(UUID subjectId, CreditCostType type) {
-        subjectCreditRepository.deduct(subjectId, findCost(type));
+    public void charge(UUID subjectId, CreditCostType type, String referenceId) {
+        int cost = findCost(type);
+        if (subjectCreditRepository.chargeIfSufficient(subjectId, cost) == 0) {
+            throw new BusinessException(ExceptionType.INSUFFICIENT_CREDIT);
+        }
+        creditHistoryRepository.insertCharged(subjectId.toString(), type.name(), referenceId, cost,
+                LocalDateTime.now(clock));
     }
 
-    /** 계정 삭제(#302)의 잔액 행 제거 — subject mapping 삭제 전에 호출해야 한다(FK RESTRICT). 미존재는 0행(멱등). */
+    /**
+     * 결과 저장으로 차감을 확정한다({@code CONSUMED}) — 결과 저장 transaction에 합류한다. 기록이 없으면(기록 도입
+     * 전에 시작한 작업) 오류 없이 건너뛴다(그 작업은 차감 없이 저장된다).
+     */
+    public void consume(CreditCostType type, String referenceId) {
+        creditHistoryRepository.markConsumed(type, referenceId, CreditHistoryStatus.CONSUMED,
+                LocalDateTime.now(clock));
+    }
+
+    /**
+     * 기록이 {@code CHARGED}일 때만 차감액을 돌려주고 {@code REFUNDED}로 바꾼다(한 transaction). 환불했으면 그
+     * subject를, 기록이 없거나(계정 삭제·기록 도입 전 작업) 이미 소비·환불됐으면 비어 있는 값을 돌려준다 —
+     * 같은 작업의 순차 재처리가 두 번 환불하지 않는다. 동시에 겹친 환불은 거르지 않는다(수용한 경합).
+     */
+    @Transactional
+    public Optional<UUID> refund(CreditCostType type, String referenceId, CreditRefundReason reason) {
+        Optional<CreditHistory> charged = creditHistoryRepository.findByCostTypeAndReferenceId(type, referenceId)
+                .filter(history -> history.getStatus() == CreditHistoryStatus.CHARGED);
+        if (charged.isEmpty()) {
+            return Optional.empty();
+        }
+        CreditHistory history = charged.get();
+        subjectCreditRepository.refund(history.getSubjectId(), history.getAmount());
+        creditHistoryRepository.markRefunded(history.getCreditHistoryId(), CreditHistoryStatus.REFUNDED, reason,
+                LocalDateTime.now(clock));
+        return Optional.of(history.getSubjectId());
+    }
+
+    /** 차감 타이머 논리 키 prefix — 만료 알림 구독 패턴용. */
+    public static String chargeTimerKeyPrefix() {
+        return CreditChargeTimerStore.TIMER_KEY_PREFIX;
+    }
+
+    /** 만료된 논리 키가 차감 타이머 키와 정확히 일치하면 referenceId를 돌려준다. */
+    public static Optional<String> chargeTimerReferenceIdOf(String logicalKey) {
+        return CreditChargeTimerStore.referenceIdOf(logicalKey);
+    }
+
+    /** 차감 commit 뒤 유실 감지 타이머를 건다 — {@code ttl} 안에 {@link #cancelChargeTimer}가 없으면 만료 알림이 온다. */
+    public void startChargeTimer(String referenceId, Duration ttl) {
+        creditChargeTimerStore.start(referenceId, ttl);
+    }
+
+    /** 정상 종결(결과 저장·환불)한 작업의 타이머를 지운다. */
+    public void cancelChargeTimer(String referenceId) {
+        creditChargeTimerStore.cancel(referenceId);
+    }
+
+    /** 타이머 만료 알림을 받은 서버들 중 한 대만 환불하도록 잠금을 잡는다. */
+    public boolean tryLockTimeoutRefund(String referenceId) {
+        return creditChargeTimerStore.tryLockRefund(referenceId);
+    }
+
+    /**
+     * 계정 삭제(#302)의 사용 기록·잔액 행 제거 — subject mapping 삭제 전에 호출해야 한다(둘 다 FK RESTRICT).
+     * 미존재는 0행(멱등).
+     */
     public void delete(UUID subjectId) {
+        creditHistoryRepository.deleteBySubjectId(subjectId);
         subjectCreditRepository.deleteBySubjectId(subjectId);
     }
 
