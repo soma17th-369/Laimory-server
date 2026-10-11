@@ -113,7 +113,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작업 시작 시각 | Processing Started At | 현재 구현 | 전처리(검증·dedupe·enrich·선생성+staging 커밋)를 마치고 Redis PROCESSING task를 저장하기 직전에 캡처하는 Server 절대 시각(`processingStartedAt`, UTC Instant)이다. `recordAt`(클라 기록 시각)과 무관하고 PROCESSING 전용이다 — terminal 전이 시 폐기한다. |
 | subject별 진행 작업 index | Subject Processing Index | 현재 구현 | subject별 진행 중 draft 작업 조회 보조 sorted set(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`, member=taskId, score=작업 시작 시각 epoch ms)이다. task JSON의 status/owner가 유일한 권위이며 index는 후보일 뿐이다 — 최초 PROCESSING 생성 때 ZADD(+PEXPIRE 3분), terminal 전이 때 ZREM하며(중간 stage write는 index 무명령) 실패 시 같은 의도의 명령을 한 번 재시도한다. 목록 API도 후보마다 JSON을 검증하고 만료·terminal·타인 소유 member를 lazy 정리한다. key TTL은 새 task 생성마다 3분으로 다시 걸리는 inactivity cleanup이다. |
 | 작업 대기 경과 시간 | Elapsed Seconds | 현재 구현 | PROCESSING polling 응답의 `elapsedSeconds`(완료된 초, 0 이상 int64)다. 작업 시작 시각부터 polling 관측 시각까지다. SUCCESS/FAILED에서는 필드를 생략한다. |
-| 유실 타이머 | Loss Timer | 현재 구현 | 크레딧을 차감한 draft task의 유실을 감지하는 값 없는 Redis key다(#565, `timeline:draft-task:loss-timer:{taskId}`, TTL = PROCESSING TTL + 30초 — timeline 소유). 결과 저장·환불로 정상 종결한 경로가 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 task에서만 온다. |
+| 유실 타이머 | Loss Timer | 현재 구현 | 크레딧을 차감한 draft task의 유실을 감지하는 값 없는 Redis key다(#565, `timeline:draft-task:loss-timer:{taskId}`, TTL = PROCESSING TTL 3분 — timeline 소유). 결과 저장·환불로 정상 종결한 경로가 지우므로 만료(keyspace `expired` 알림)는 결과도 실패 보고도 없이 끝난 task에서만 온다. |
 | 유실 처리 | Loss Handling | 현재 구현 | 유실 타이머 만료를 받은 서버들 중 유실 처리 잠금(`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 한 대가 크레딧을 환불(`TIMEOUT`)하고, 환불이 실제로 일어났을 때만 task를 유실 FAILED(`-1008`, `dailyRecordId`·token hash 없음)로 다시 기록하고 FAILED 완료 push를 보내는 처리다(`TimelineTaskLossHandler`). |
 
 ## 저장 규칙

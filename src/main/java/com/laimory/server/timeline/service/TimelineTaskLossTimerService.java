@@ -17,10 +17,10 @@ import org.springframework.stereotype.Service;
 public class TimelineTaskLossTimerService {
 
     /**
-     * 유실 타이머 = PROCESSING TTL + 여유. 결과 저장·FAILED callback은 task가 살아 있는 동안만 받아들여지므로,
-     * 그 처리와 타이머 삭제가 여유 안에 끝나면 정상 종결한 task의 만료 알림은 오지 않는다.
+     * 유실 타이머 = PROCESSING TTL. AI 처리는 운영 실측 2분 이내라(3개월간 2분 초과 없음) 정상 task는 결과 저장·
+     * FAILED callback과 타이머 삭제를 만료보다 충분히 먼저 끝낸다 — 별도 여유를 두지 않는다.
      */
-    private static final Duration TIMER_TTL = TimelineTaskService.PROCESSING_TTL.plusSeconds(30);
+    private static final Duration TIMER_TTL = TimelineTaskService.PROCESSING_TTL;
 
     private final TimelineTaskLossTimerStore timelineTaskLossTimerStore;
 

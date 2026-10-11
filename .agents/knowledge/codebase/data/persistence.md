@@ -74,7 +74,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `status` `CHARGED`→`CONSUMED`|`REFUNDED` 한 번, `refund_reason`은 `REFUNDED`일 때만(`CHECK` 짝), 전이 시각은
   `created_at`·`updated_at`. subject FK `RESTRICT`·subject index. 범용 원장(지급·조정)이 아니다. 쓰기는 native INSERT와
   JPQL 전이 UPDATE라 감사 컬럼을 앱 Seoul 벽시계로 직접 채운다. 정리 작업은 없고 탈퇴 삭제가 함께 지운다.
-  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 30s + 수 분)`. V10에서 추가)
+  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. V10에서 추가)
 - `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
   선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
   migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
@@ -458,7 +458,7 @@ container가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
 | `timeline:user-memory-update:pending` | 미반영 날짜 sorted set(member=`canonicalUuid(subjectId):dailyRecordId`, score=최초 대기 epoch ms) | 기본 30d retention/TTL |
 | `timeline:user-memory-update:user:{canonicalUuid(subjectId)}` | subject별 갱신 guard(`SET NX`) | PROCESSING 3m |
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
-| `timeline:draft-task:loss-timer:{taskId}` | 유실 타이머(#565) — 값 없는 유실 트리거. draft 선생성 commit 뒤 SET, 결과 저장·환불한 경로가 DEL. 만료(keyspace `expired` 알림)는 결과·실패 보고 없이 끝난 task에서만 온다. 금액·주인은 `credit_histories`가 권위 | PROCESSING TTL + 30s(3m30s) |
+| `timeline:draft-task:loss-timer:{taskId}` | 유실 타이머(#565) — 값 없는 유실 트리거. draft 선생성 commit 뒤 SET, 결과 저장·환불한 경로가 DEL. 만료(keyspace `expired` 알림)는 결과·실패 보고 없이 끝난 task에서만 온다. 금액·주인은 `credit_histories`가 권위 | PROCESSING TTL(3m) |
 | `timeline:draft-task:loss-lock:{taskId}` | 유실 유실 처리 잠금(#565) — 만료 알림을 함께 받은 서버 중 한 대만 처리하도록 유실 task에서만 `SET NX`. TTL로만 풀리고 재처리는 없다 | 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `user:active:{userId}` | ACTIVE 검사 캐시(#429 — `UserAccountService.isActive`의 `@Cacheable`, #441부터 `/a/api` 필터와 token 발급·회전이 공유). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |

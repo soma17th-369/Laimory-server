@@ -70,7 +70,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    치환하면 이미지 URL·S3 key가 깨진다). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
    전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
    payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
-7. 유실 타이머(`timeline:draft-task:loss-timer:{taskId}`, 값 없음, TTL = PROCESSING TTL + 30초 — #565)를 건 뒤
+7. 유실 타이머(`timeline:draft-task:loss-timer:{taskId}`, 값 없음, TTL = PROCESSING TTL 3분 — #565)를 건 뒤
    Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(`dailyRecordId`·owner·local window·token
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 둘 중 하나라도 실패하면 이번 task의 source rows를
    보상 삭제하고 차감을 환불(`TASK_SAVE_FAILED`)한 뒤 타이머를 지운다 — 환불이 실패하면 타이머를 남겨 만료가 다시
