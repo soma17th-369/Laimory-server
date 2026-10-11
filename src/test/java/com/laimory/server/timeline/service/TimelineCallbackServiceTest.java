@@ -2,6 +2,10 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,6 +17,9 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditRefundReason;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
@@ -24,6 +31,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,6 +47,10 @@ class TimelineCallbackServiceTest {
     private TimelineCompletionPushNotifier timelineCompletionPushNotifier;
     @Mock
     private TimelineMetrics timelineMetrics;
+    @Mock
+    private CreditService creditService;
+    @Mock
+    private TimelineTaskLossTimerService timelineTaskLossTimerService;
     @InjectMocks
     private TimelineCallbackService service;
 
@@ -99,6 +111,50 @@ class TimelineCallbackServiceTest {
         verify(timelineTaskService).markFailedIfPresent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
         verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+    }
+
+    @Test
+    void failedCallback_refundsChargeBeforeTerminalThenCancelsTimer() {
+        // 환불이 terminal 저장보다 먼저다 — terminal 뒤에 환불이 실패하면 재전송이 terminal replay(200)로 끝나
+        // 환불 기회가 사라진다. 타이머는 정상 종결 뒤 지운다(#565).
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
+
+        InOrder order = inOrder(creditService, timelineTaskService, timelineTaskLossTimerService);
+        order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+        order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
+        order.verify(timelineTaskLossTimerService).cancel(TASK_ID);
+    }
+
+    @Test
+    void failedCallback_refundFailure_propagatesWithoutTerminalWrite() {
+        // 환불이 실패하면 500으로 AI 재전송에 맡긴다 — task는 PROCESSING으로 남아 재전송이 다시 환불을 시도한다.
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        doThrow(new IllegalStateException("db down")).when(creditService)
+                .refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(timelineTaskService, never()).markFailedIfPresent(anyString(), any(), any());
+        verifyNoInteractions(timelineCompletionPushNotifier);
+    }
+
+    @Test
+    void callbackOnLostFailedTask_returns401() {
+        // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 callback은 같은 FAILED라도 401이다(#565).
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.TASK_TOKEN_MISMATCH));
+
+        verifyNoInteractions(creditService, timelineTaskLossTimerService, timelineCompletionPushNotifier);
     }
 
     @Test

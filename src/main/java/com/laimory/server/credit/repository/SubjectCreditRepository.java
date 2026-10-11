@@ -30,14 +30,20 @@ public interface SubjectCreditRepository extends JpaRepository<SubjectCredit, UU
     Optional<SubjectCredit> findBySubjectId(UUID subjectId);
 
     /**
-     * {@code amount}만큼 차감하되 0 아래로는 내려가지 않는다(잔액이 모자라면 0). 바닥 계산과 감소가 한 문장이라
-     * 동시 차감도 음수가 되지 않는다. 0행은 잔액 0(또는 행 없음)이다.
+     * 잔액이 {@code amount} 이상일 때만 그만큼 차감한다(#565). 비교와 감소가 한 문장이라 동시 요청도 잔액을 넘지
+     * 못한다. 0행은 잔액 부족(또는 행 없음)이다.
      */
     @Modifying
     @Transactional
-    @Query("update SubjectCredit c set c.remaining = greatest(c.remaining - :amount, 0) "
-            + "where c.subjectId = :subjectId and c.remaining > 0")
-    int deduct(@Param("subjectId") UUID subjectId, @Param("amount") int amount);
+    @Query("update SubjectCredit c set c.remaining = c.remaining - :amount "
+            + "where c.subjectId = :subjectId and c.remaining >= :amount")
+    int chargeIfSufficient(@Param("subjectId") UUID subjectId, @Param("amount") int amount);
+
+    /** 환불 — {@code amount}만큼 돌려준다. 0행은 행 없음(계정 삭제)이다. */
+    @Modifying
+    @Transactional
+    @Query("update SubjectCredit c set c.remaining = c.remaining + :amount where c.subjectId = :subjectId")
+    int refund(@Param("subjectId") UUID subjectId, @Param("amount") int amount);
 
     /** 계정 삭제(#302)의 잔액 행 제거. 미존재는 0행(멱등). */
     @Modifying

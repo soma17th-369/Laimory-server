@@ -2,6 +2,9 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditRefundReason;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
@@ -25,6 +28,10 @@ import org.springframework.stereotype.Service;
  *
  * <p>terminal 저장은 native {@code SET XX PX 24시간}이고 성공 뒤에만 index 제거·push enqueue를 실행한다.
  * write 실패는 검증 뒤 task 만료뿐이라 404로 수렴하며 만료 task를 부활시키지 않는다.
+ *
+ * <p>FAILED는 terminal 저장 전에 요청 시 차감한 크레딧을 환불한다(#565) — 환불은 기록이 {@code CHARGED}일 때만
+ * 일어나므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. 환불이 실패하면 전파해(500) AI 재전송에 맡긴다.
+ * terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만 — 만료돼도 기록이 이미 환불돼 유실 처리는 건너뛴다).
  */
 @Slf4j
 @Service
@@ -34,6 +41,8 @@ public class TimelineCallbackService {
     private final TimelineTaskService timelineTaskService;
     private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
     private final TimelineMetrics timelineMetrics;
+    private final CreditService creditService;
+    private final TimelineTaskLossTimerService timelineTaskLossTimerService;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String taskToken, DraftTaskCallbackRequest request) {
@@ -81,10 +90,13 @@ public class TimelineCallbackService {
                 log.warn("failed callback while result claimed: taskId={}", taskId);
                 throw new BusinessException(ExceptionType.DRAFT_TASK_STATE_CONFLICT);
             }
-            if (!timelineTaskService.markFailedIfPresent(taskId, task, resolveAiFailureCode(taskId, request))) {
+            ExceptionType failureType = resolveAiFailureCode(taskId, request);
+            creditService.refund(CreditCostType.TIMELINE_CREATION, taskId, CreditRefundReason.AI_FAILED);
+            if (!timelineTaskService.markFailedIfPresent(taskId, task, failureType)) {
                 log.warn("failed callback task expired before terminal write: taskId={}", taskId);
                 throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
             }
+            cancelLossTimerQuietly(taskId);
             enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.FAILED);
             return;
         }
@@ -98,6 +110,15 @@ public class TimelineCallbackService {
             throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
         enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.SUCCESS);
+    }
+
+    private void cancelLossTimerQuietly(String taskId) {
+        try {
+            timelineTaskLossTimerService.cancel(taskId);
+        } catch (RuntimeException e) {
+            log.warn("loss timer cancel failed after failed callback: taskId={} detail={}",
+                    taskId, e.getClass().getSimpleName());
+        }
     }
 
     /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. */

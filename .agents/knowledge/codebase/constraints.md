@@ -25,8 +25,10 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
   native MySQL 잠금으로 실행을 조정한다. SQL은 배포 중인 구 앱과 호환되어야 한다.
 - Compose는 schema를 초기화하지 않는다. 이력 없는 기존 DB는 구조 확인 후 명시 baseline으로 편입한다.
 - application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 Spring Cache Redis manager
-  배선 `CacheConfig`(#429)와 그 캐시 구현 `SingleFlightRedisCacheManager`(#491)이며, 같은
-  `app.redis.key-prefix`를 캐시 키에 붙인다.
+  배선 `CacheConfig`(#429)와 그 캐시 구현 `SingleFlightRedisCacheManager`(#491), keyspace 만료 알림 구독
+  `RedisKeyExpirationSubscriber`(#565)이며, 같은 `app.redis.key-prefix`를 캐시 키·구독 채널 패턴에 붙인다.
+- 공유 Redis의 `notify-keyspace-events`에 `K`·`x`가 있어야 크레딧 유실 환불이 동작한다(#565). 앱은 설정을 바꾸지 않고
+  기동 뒤 확인해 누락을 ERROR로 남긴다. 로컬 Compose Redis는 `--notify-keyspace-events Kx`로 뜬다.
 - dev와 prod가 Redis를 공유하므로 dev는 환경 prefix로 격리한다.
 - 기본 Spring profile은 원격 의존성을 기대한다. 로컬 실행은 `docker` profile을 사용한다.
 - DB·Redis·JWT·OAuth의 필수 설정 일부는 startup에서 fail-fast한다.

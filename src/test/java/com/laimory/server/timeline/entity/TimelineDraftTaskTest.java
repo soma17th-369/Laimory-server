@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.timeline.ProcessStage;
+import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.entity.TimelineDraftTask.RetryReceipt;
 import java.time.Instant;
@@ -85,5 +86,37 @@ class TimelineDraftTaskTest {
         assertThat(claimed.retryWindowExpired(UNTIL.minusMillis(1))).isFalse();
         assertThat(claimed.retryWindowExpired(UNTIL)).isTrue();
         assertThat(taskAt(ProcessStage.RESULT_PENDING).retryWindowExpired(NOW)).isTrue();
+    }
+
+    @Test
+    void lostFailed_hasOwnerAndErrorWithoutRecordOrTokenHash() {
+        // 유실 처리는 task 값이 사라진 뒤 FAILED를 다시 기록한다 — owner와 실패 코드만 있다(#565).
+        TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT_ID, -1008);
+
+        assertThat(lost.status()).isEqualTo(TaskStatus.FAILED);
+        assertThat(lost.subjectId()).isEqualTo(SUBJECT_ID);
+        assertThat(lost.error()).isEqualTo(-1008);
+        assertThat(lost.dailyRecordId()).isNull();
+        assertThat(lost.tokenHash()).isNull();
+    }
+
+    @Test
+    void lostFailed_matchesNoToken() {
+        // 늦게 온 AI 요청은 어떤 token으로도 401로 끝난다 — 소비된 token 재시도 경로도 없다.
+        TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT_ID, -1008);
+
+        assertThat(lost.matchesToken(TOKEN)).isFalse();
+        assertThat(lost.matchesPreviousToken(TOKEN)).isFalse();
+    }
+
+    @Test
+    void missingRecordOrTokenHash_outsideFailed_isRejected() {
+        // 예외는 FAILED에 한정된다 — PROCESSING·SUCCESS는 폴링 결과 조회·token 검증에 두 값이 필요하다.
+        assertThatThrownBy(() -> new TimelineDraftTask(TaskStatus.SUCCESS, null, null, null, TOKEN_HASH,
+                null, null, SUBJECT_ID, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new TimelineDraftTask(TaskStatus.SUCCESS, RECORD_ID, null, null, null,
+                null, null, SUBJECT_ID, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new TimelineDraftTask(TaskStatus.PROCESSING, null, null, null, TOKEN_HASH,
+                ProcessStage.INPUT_PENDING, STARTED_AT, SUBJECT_ID, null)).isInstanceOf(IllegalArgumentException.class);
     }
 }
