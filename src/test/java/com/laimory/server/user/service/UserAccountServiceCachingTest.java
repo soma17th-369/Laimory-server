@@ -43,12 +43,12 @@ class UserAccountServiceCachingTest {
     @Autowired
     private UserRepository userRepository;
     @Autowired
-    private CacheManager activeStatusCacheManager;
+    private CacheManager redisCacheManager;
 
     @BeforeEach
     void resetSlice() {
         reset(userRepository);
-        activeStatusCacheManager.getCache(UserAccountService.CACHE_NAME).clear();
+        redisCacheManager.getCache(UserAccountService.CACHE_NAME).clear();
     }
 
     @Test
@@ -71,7 +71,7 @@ class UserAccountServiceCachingTest {
 
         // 음성 캐시 금지 — 탈퇴 판정이 캐시에 얼어붙으면 안 된다(#429 원칙 2).
         verify(userRepository, times(2)).existsByUserIdAndStatus(USER_ID, UserStatus.ACTIVE);
-        assertThat(activeStatusCacheManager.getCache(UserAccountService.CACHE_NAME).get(USER_ID))
+        assertThat(redisCacheManager.getCache(UserAccountService.CACHE_NAME).get(USER_ID))
                 .isNull();
     }
 
@@ -108,7 +108,7 @@ class UserAccountServiceCachingTest {
 
         /** 빈 이름이 곧 어노테이션의 {@code cacheManager} 지정값이다. */
         @Bean
-        CacheManager activeStatusCacheManager() {
+        CacheManager redisCacheManager() {
             return new ConcurrentMapCacheManager(UserAccountService.CACHE_NAME);
         }
 

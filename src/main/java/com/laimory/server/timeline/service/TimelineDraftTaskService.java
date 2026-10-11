@@ -6,6 +6,8 @@ import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.RawIds;
@@ -86,6 +88,7 @@ public class TimelineDraftTaskService {
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
     private final TimelineAiDispatcher timelineAiDispatcher;
     private final PrivacyRedactor privacyRedactor;
+    private final CreditService creditService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -127,6 +130,11 @@ public class TimelineDraftTaskService {
         // 같은 자리에서 recordDate의 DATE 범위와 "요청 timezone 기준 미래 아님"까지 확정한다 — 아래의 record
         // 조회·enrich·staging·Redis·dispatch가 전부 부수효과라 그 앞에서 끊어야 한다.
         RecordDates.requireNotFutureRecordDate(recordDate, recordTimeZone, clock.instant());
+
+        // 크레딧 잔액이 타임라인 생성 비용보다 적으면 403(-1021) — 아래 조회·enrich·staging·Redis·dispatch가 전부
+        // 부수효과라 그 앞에서 끊는다.
+        // 차감은 여기가 아니라 AI 결과 저장 transaction이 한다(결과가 저장되지 않은 생성은 차감 없음 — #548).
+        creditService.requireAvailable(subjectId, CreditCostType.TIMELINE_CREATION);
 
         // 이 아래의 record 조회·enrich photoUrl 키 파생·draft row·task owner는 전부
         // 인증 경계에서 해석한 subjectId 하나만 쓴다 — 지점이 갈리면 남의 키로 URL을 파생하거나

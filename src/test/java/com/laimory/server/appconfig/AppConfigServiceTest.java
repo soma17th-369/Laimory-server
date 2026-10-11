@@ -40,9 +40,9 @@ class AppConfigServiceTest {
 
         AppConfigResponse response = service.getAppConfig("v1");
 
-        assertThat(response.getMinAppVersion()).isEqualTo(3L);
-        assertThat(response.getRecommendAppVersion()).isEqualTo(5L);
-        assertThat(response.getDebugTestMessage()).isEqualTo("hello");
+        assertThat(response.minAppVersion()).isEqualTo(3L);
+        assertThat(response.recommendAppVersion()).isEqualTo(5L);
+        assertThat(response.debugTestMessage()).isEqualTo("hello");
     }
 
     @Test
@@ -70,7 +70,7 @@ class AppConfigServiceTest {
         ReflectionTestUtils.setField(row, "debugTestMessage", "unchanged");
         when(appConfigRepository.findTop2ByOrderByAppConfigIdAsc()).thenReturn(List.of(row));
         service.updateVersions(5L, Long.MAX_VALUE);
-        assertThat(service.getAppConfig("v1").getMinAppVersion()).isEqualTo(5L);
+        assertThat(service.getAppConfig("v1").minAppVersion()).isEqualTo(5L);
         assertThat(row.getRecommendAppVersion()).isEqualTo(Long.MAX_VALUE);
         assertThat(row.getDebugTestMessage()).isEqualTo("unchanged");
         assertThatThrownBy(() -> service.updateVersions(6L, 5L)).isInstanceOf(IllegalArgumentException.class);

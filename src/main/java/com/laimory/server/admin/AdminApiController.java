@@ -10,8 +10,10 @@ import com.laimory.server.inquiry.dto.AdminInquiryDetailResponse;
 import com.laimory.server.inquiry.dto.AdminInquiryResponse;
 import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.notice.dto.AdminNoticeResponse;
+import com.laimory.server.notice.dto.NoticeThumbnailUploadResponse;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.service.NoticeService;
+import com.laimory.server.notice.service.NoticeThumbnailService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.dto.AdminTermGroupResponse;
 import com.laimory.server.terms.entity.TermDocumentId;
@@ -53,6 +55,7 @@ public class AdminApiController {
     private final TermDocumentRegistrationService registrations;
     private final AppConfigService appConfig;
     private final NoticeService notices;
+    private final NoticeThumbnailService noticeThumbnails;
     private final InquiryService inquiries;
 
     @GetMapping("/terms")
@@ -106,6 +109,30 @@ public class AdminApiController {
         return ApiResponse.success(null);
     }
 
+    /** 앱 시작 팝업 지정(true)·해제(false) — 이 공지만 바꾸며 여러 건을 동시에 지정할 수 있다(#553). */
+    @PutMapping(value = "/notices/{noticeId}/popup", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> changeNoticePopup(@PathVariable long noticeId, @Valid @RequestBody PopupRequest request) {
+        notices.changePopup(noticeId, request.popup());
+        return ApiResponse.success(null);
+    }
+
+    /**
+     * 썸네일 업로드 URL 발급(#560) — 관리자 웹은 이 URL로 S3에 직접 PUT하고(사진 bucket CORS가 관리자 origin을
+     * 허용) 성공한 뒤에만 filename을 저장한다. 발급 결과가 곧 응답이라 쓰기 void 규칙(#528)의 대상이 아니다.
+     */
+    @PostMapping(value = "/notices/thumbnail-uploads", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<NoticeThumbnailUploadResponse> createNoticeThumbnailUpload(
+            @Valid @RequestBody ThumbnailUploadRequest request) {
+        return ApiResponse.success(noticeThumbnails.createUpload(request.contentType(), request.size()));
+    }
+
+    /** 썸네일 교체(제거 없음) — 팝업 지정은 썸네일이 있어야 한다. */
+    @PutMapping(value = "/notices/{noticeId}/thumbnail", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ApiResponse<Void> changeNoticeThumbnail(@PathVariable long noticeId, @Valid @RequestBody ThumbnailRequest request) {
+        notices.changeThumbnail(noticeId, request.filename());
+        return ApiResponse.success(null);
+    }
+
     /** 전체 문의, 최신 순. 제목·내용·email이 실리므로 access log는 privacy skeleton 대상이다(#518). */
     @GetMapping("/inquiries")
     ApiResponse<List<AdminInquiryResponse>> inquiries() {
@@ -153,6 +180,12 @@ public class AdminApiController {
                          @NotBlank @Size(max = Notice.CONTENT_URL_MAX_LENGTH) String contentUrl) { }
 
     record VisibilityRequest(@NotNull Boolean hidden) { }
+
+    record PopupRequest(@NotNull Boolean popup) { }
+
+    record ThumbnailUploadRequest(@NotBlank String contentType, @NotNull @Positive Long size) { }
+
+    record ThumbnailRequest(@NotBlank String filename) { }
 
     record AnsweredRequest(@NotNull Boolean answered) { }
 }

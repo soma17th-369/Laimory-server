@@ -38,9 +38,9 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 33개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 34개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
-inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET)는
+inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET + credit GET)는
 `bearerAuth` security requirement와
 401 응답을 문서화한다. principal parameter는 operation마다 원칙적으로 하나다 —
 콘텐츠·push operation은 hidden `@CurrentSubject UUID subjectId`, 회원 account operation은 hidden
@@ -229,11 +229,18 @@ rollout backfill이 소유한다). 행이 없으면 GET·PUT 모두 기본값으
 도입해야 한다.
 
 `GET /a/api/{version}/initializer`와 `POST /a/api/{version}/onboarding/complete`(#382)는 앱 시작 상태의
-조회·기록 계약이다. GET은 최상위 `onboardingCompleted`와 약관 그룹 `terms.agreementRequired`(#434)를
-반환하고, POST는 온보딩 완료 값을 `true`로 전이한다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
+조회·기록 계약이다. GET은 최상위 `onboardingCompleted`, 약관 그룹 `terms.agreementRequired`(#434),
+최상위 `popupNotices`(#553·#560)를 반환하고, POST는 온보딩 완료 값을 `true`로 전이한다.
+`popupNotices`는 관리자가 팝업으로 지정했고 숨김이 아닌 공지의 최신 순(`noticeId DESC`) 배열이며
+없으면 `[]`다(사용자와 무관한 전역 값). 원소는 `noticeId`·`title`·`thumbnailUrl`(무서명 CDN URL)이고 세 field
+모두 non-null이다(팝업 지정은 썸네일이 있어야 한다). 앱이 시작 직후 WebView를 띄우기 어려워 팝업을 제목·썸네일로
+네이티브로 그리기 위한 값만 싣는다(#560 — #553의 "id만" 결정을 번복). **원문 URL은 싣지 않는다** — 팝업을 탭하면
+앱이 공지 단건 조회로 `contentUrl`을 받고, 그 조회가 404면(응답 뒤 숨겨진 공지) 원문을 열지 않는다.
+#553의 `popupNoticeIds`는 prod 출시 전이라 호환 유지 없이 교체했다.
+이미 본 팝업의 재노출 방지는 앱이 id로 로컬 기억하며 서버는 관여하지 않는다. 온보딩 완료 값의 단일 권위는 저장된 subject 설정
 (`subject_preferences.onboarding_completed`)이며 약관 동의 이력·기록 존재 여부로 계산하거나
 자동 동기화하지 않는다 — 약관 개정도 저장된 완료 상태를 되돌리지 않는다. `terms.agreementRequired`는
-지금 현재 버전 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
+지금 현재 버전과 같은 major의 동의가 없는 동의 대상 약관(고지 전용 `PRIVACY_POLICY` 제외 5종)의 `(termType, version)`
 목록이다 — 빈 배열이면 동의 절차가 불필요하고, 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는
 종류는 그 종류만 판정에서 빠진다(종류별 fail-open — seed 누락이 500으로 앱 시작을 막지 않는다). 서버는
 이 결과로 다른 요청을 차단하지 않는다 — 진행 차단은 클라이언트 책임이고, 앱은 받은 `(termType, version)`
@@ -245,6 +252,19 @@ operation 모두 bearer 인증과 `ACTIVE` 회원 검사를 요구한다. 설정
 요청은 다시 실패한다. GET 응답에 초기 상태가 추가되더라도 기존 field의 의미와 호환성은 유지하며,
 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다(응답에 다른 상태를 미리 넣거나 provider 병렬
 aggregation framework를 만들지 않는다).
+
+`GET /a/api/{version}/credit`(#548)은 인증 subject의 남은 크레딧을 `{"remainingCredits": n}`로 반환하는
+순수 조회다(평면 필드 하나 — 총량 필드 없음). 행 생성은 가입 transaction과 rollout backfill이 소유하고, 행이
+없으면 push 설정과 같은 정책으로 기본값 추정 없이 500이다. 크레딧을 소비하는 작업은 잔액이 그 작업의 비용보다
+적으면 403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 AI 결과
+저장 시점이라 draft POST가 성공해도 잔액은 결과가 저장될 때 비용만큼 줄어든다.
+
+`GET /api/{version}/credit/costs`(#555)는 작업별 크레딧 비용을 `{"timelineCreation": n}`로 반환하는 **공개**
+조회다. 비용은 사용자와 무관한 DB 값(`credit_costs` 행, #558)이라 인증·subject 변환 없이 응답하며, 앱은 이 값으로
+"크레딧 N개 사용"을 고지한다 — 앱이 비용을 하드코딩하지 않으므로 비용 변경은 서버의 Flyway migration만으로 끝난다.
+사전 검사와 결과 저장 차감이 같은 행을 읽는다(캐시 없음). 비용 행이 없으면 기본값 없이 500이다. 크레딧을 소비하는
+기능이 늘면 같은 응답에 평면 필드를 추가한다. 보호 API(`CreditApi`)와
+인터페이스를 나눈 것은 principal 없는 보호 operation이 인증 계약 테스트의 형태에 없기 때문이다.
 
 `POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
 인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
@@ -282,11 +302,21 @@ code는 추가하지 않았다.**
 (`noticeId DESC`)으로 `notices[]`에 담고 각 원소는 `noticeId`·`title`·`contentUrl`·`publishedAt`이다 —
 페이지네이션은 없고, 공지가 없으면 404가 아니라 200과 `notices=[]`다. 원문은 응답에 없다(약관과 같은
 구조) — `contentUrl`은 게시된 공지 page의 절대 HTTPS URL이고 클라이언트가 WebView로 연다(이미지·서식은
-page가 소유하며 Server에는 공지 원문 route가 없다). 목록이 URL을 직접 실으므로 **상세 조회 endpoint는
-없다**. `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
-등록·수정·숨김은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
-`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출)가 소유하며, 숨김이 삭제 역할이라
-hard delete 경로는 없다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
+page가 소유하며 Server에는 공지 원문 route가 없다). `GET /api/{version}/notices/{noticeId}`(#553)는 같은
+public 단건 조회로 목록 원소와 같은 `NoticeResponse`를 반환하고, 숨김이거나 없는 공지는 404(`-404`),
+숫자가 아닌 id는 400이다 — 앱 시작 팝업을 탭했을 때 이니셜라이저 `popupNotices`의 id로 원문 URL을 받는 경로다.
+목록 원소와 단건 응답은 아직 같은 타입이므로 단건에만 field를 더하려면 먼저 타입을 분리해야 한다(분리 전에
+더한 field는 목록에도 남는다). `publishedAt`은 행의 `created_at`(Asia/Seoul 벽시계, offset 없음)이고 예약 게시는 없다.
+등록·수정·숨김·팝업 지정은 앱 API에 없고 localhost 관리자 웹의 `/admin/api/notices`(목록 GET·등록 POST 201·
+`PUT /{id}` 제목·URL 전체 교체·`PUT /{id}/visibility` 숨김/재노출·`PUT /{id}/popup` 팝업 지정/해제·
+`POST /thumbnail-uploads` 썸네일 업로드 URL 발급·`PUT /{id}/thumbnail` 썸네일 교체)가
+소유하며, 숨김이 삭제 역할이라 hard delete 경로는 없다. 팝업 지정은 공지별 토글이라 여러 건을 동시에
+지정할 수 있고, 숨김과 독립이다 — 숨긴 팝업 공지는 지정이 남은 채 `popupNotices`와 단건 조회에서 빠지고
+다시 노출하면 팝업으로 복귀한다. 지정(`popup=true`)은 썸네일이 없으면 400이고 해제는 항상 허용한다(#560).
+썸네일은 앱 사진과 같은 presigned PUT 흐름이다 — 발급(`{contentType, size}` → `{filename, uploadUrl}`, jpg/png/webp·
+사진 장당 상한, 위반은 사진과 같은 `-1007`·`-1005`)은 공지와 무관하고, 관리자 웹이 S3 PUT에 성공한 뒤에만
+`{filename}`을 저장한다(`{uuidv7}.{ext}` 형식 외 400, S3 실존은 확인하지 않음). 교체만 있고 제거는 없어 지정된
+팝업은 항상 썸네일을 가지며, 이전 객체는 지우지 않는다. 관리자 목록은 `thumbnailUrl`(없으면 null)을 싣는다. 관리자 입력 규칙은 title strip 후 1~255자, contentUrl은 host가 있는 절대
 HTTPS·최대 512자(약관 등록과 같은 기준)이며 위반은 400이다. **새 error code는 추가하지 않았다.**
 
 `POST /a/api/{version}/inquiries`와 `POST /a/api/{version}/inquiries/attachment-uploads`(#518)는 인증
@@ -411,7 +441,7 @@ app-facing success/error는 다음 envelope를 사용한다.
 - MVC 표준 예외·RSE 브리지는 framework가 정한 HTTP status를 그대로 보존하고 envelope code만
   `ExceptionType.fromStatus` 폴백으로 정한다(406이 `-400`과 함께 나갈 수 있음).
 - 새 code block을 할당할 때 기존 번호 블록을 보존한다. domain block 숫자는 HTTP status와 무관하며
-  status는 enum field가 결정한다. `1006`, `1010`, `1012`, `1016` 번호는 재사용하지 않는다.
+  status는 enum field가 결정한다. `1006`, `1010`, `1012`, `1016`, `1019` 번호는 재사용하지 않는다(`1019`는 #501에서 제거된 삭제 job 409).
 - 새 error는 `ExceptionType`에 code/status/logLevel을 추가하고 기본·ko·en message bundle을 함께 추가한다.
   같은 공개 code의 새 내부 원인은 새 타입으로 구분할 수 있지만 같은 status/message를 유지한다.
 - message bundle 문구는 client에게 직접 노출되는 짧은 사용자 문구로 쓰고 내부 진단·운영 지침을 넣지 않는다.

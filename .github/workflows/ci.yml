@@ -8,12 +8,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      # v6부터 캐싱 기능이 상용 라이선스 컴포넌트(gradle-actions-caching)로 분리돼
+      # 올리면 Gradle Terms of Use 동의가 된다. 라이선스 검토 전까지 v5(MIT)에 둔다.
+      - uses: gradle/actions/setup-gradle@v5
       - run: deploy/monitoring/tests/test-alert-rule-scripts.sh
       - run: .github/scripts/test-monitoring-deploy-contract.sh
       # deploy 계약 harness는 지금까지 수동 실행에만 의존했다. 환경 분기가 들어가면서 이 harness가
@@ -28,7 +30,7 @@ jobs:
         run: bash .github/scripts/test-flyway-migrations.sh
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports
           path: |
@@ -37,7 +39,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload combined coverage
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jacoco-coverage
           path: build/reports/jacoco/allTests/

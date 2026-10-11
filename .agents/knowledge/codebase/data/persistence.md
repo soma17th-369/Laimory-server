@@ -65,10 +65,23 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `push_registrations`
 - `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
+- `subject_credits` (#548 — subject당 1행 크레딧 잔액 `remaining`, `CHECK (remaining >= 0)`, subject FK
+  `RESTRICT`, DB default 없음(기본 60의 권위는 `CreditService` 상수). 행은 가입 transaction과 V6 backfill만
+  만들고, 쓰기는 AI 결과 저장 transaction의 조건부 차감 UPDATE와 탈퇴 삭제(#302)뿐이다. V6에서 추가)
+- `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
+  선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
+  migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
 - `term_documents → term_agreements` (버전별 불변 약관 문서와 회원 동의 이력 — #303)
 - `notices` (#517 — 관리자가 등록하는 공지 제목 + 게시 URL(`content_url`, 원문은 게시 page 소유 —
   `term_documents` 선례). owner 없음. `hidden` flag 하나가 노출을 제어하고 hard delete는 없다.
-  공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가)
+  공개 응답의 `publishedAt`은 `created_at`이다. V3에서 추가. V7(#553)에서 앱 시작 팝업 지정 `popup`
+  (기본 false)을 추가했다 — 여러 행이 동시에 true일 수 있고 `hidden`과 독립이라 숨겨도 지정은 남는다.
+  V9(#560)에서 썸네일 파일명 `thumbnail_filename VARCHAR(64) NULL`({uuidv7}.{ext}, S3 key `notices/{filename}`·
+  CDN URL은 서버 파생)을 추가하고 썸네일 없던 기존 팝업 지정을 모두 해제했다 — 이후 팝업 지정은 썸네일이 있어야 하고
+  썸네일은 교체만 있어 `popup=true ⇒ thumbnail_filename IS NOT NULL`이 쓰기 경로로 유지된다.
+  initializer의 팝업 목록(id·제목·썸네일 URL)은 공유 Redis 캐시 `notice:popup-notices`를 타며(#491·#560) 그 값을
+  바꾸는 관리자 쓰기 `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`이 commit 뒤 evict한다 — 등록만
+  `popup=false`로 만들어 evict하지 않는다)
 - `inquiries → inquiry_attachments` (#518 — 앱 인증 접수 문의. owner는 콘텐츠 subject(FK `RESTRICT`)이고
   답장 `email`·`title`(최대 100자)·`description`·관리자 `answered_at`을 담는다. 첨부는 filename만
   plain FK 자식 행으로 저장하고 S3 key는 `{sha256(subject)}/inquiries/{filename}`로 파생한다. 답변은
@@ -108,6 +121,14 @@ backfill은 일일 알림 행을 `enabled=TRUE`로 넣어야 한다** — #314 �
 아무것도 보내지 않는 상태가 되기 때문이다. worker 스캔도 없는 행을 발견하지 못하므로
 backfill이 <b>유일한</b> 복구 권위다. 탈퇴 subject의 `user_subject_links`는 물리 삭제(#302) 전까지 남아
 있어 backfill이 그 행까지 다시 만든다 — FID가 없어 발송은 없지만 #302 삭제 대상에 포함해야 한다.
+
+`subject_credits`(#548)도 같은 두 단계다 — ① V6 migration이 테이블 생성과 함께 당시 모든 subject에
+`remaining=60`을 `INSERT IGNORE`하고, ② 모든 가입 writer가 새 image로 교체된 뒤 같은 `INSERT IGNORE ... SELECT
+FROM user_subject_links`를 운영 SQL로 다시 실행해 공백 구간 가입자를 수렴시킨다. **②는 prod에서만 한다**
+(dev·test는 하지 않기로 한 결정 — dev/test 공유 DB에서 구버전 test 앱으로 가입한 회원은 행 없이 남아 조회·draft가
+500이다). 크레딧 조회·사전 검사는 행을 만들지 않고 행이 없으면 던진다. V6의 FK `RESTRICT`는 크레딧 삭제를
+모르는 구 image의 탈퇴 worker(rolling 중·rollback 중)의 mapping 삭제를 막는다 — job은 보존돼 다음 날
+재시도하고, 처리 창 마지막 날이면 기존 만료 경보로 드러난다(수용한 결정).
 
 #318(일일 리마인더 기본 ON 전환)은 스키마를 바꾸지 않지만 **기존 행 일괄 갱신**이 필요하다. #314
 rollout으로 이미 만들어진 행은 `enabled=false`라 코드 기본값만 바꿔서는 켜지지 않는다. `enabled`만
@@ -299,12 +320,14 @@ backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `
 앞에도 매칭되므로 문자 집합 검사로 Java `TermDocumentId.validateVersion`의 전체 문자열 검증과 일치시킨다.
 형식 검증은 키 생성·동의 등록 요청과 DB INSERT/UPDATE 경계가 담당하며, 조회 중에는 반복하지 않는다.
 repository는 요청한 종류(최대 6종)의 전체 후보를 엔티티 한 query로 읽고,
-`TermDocumentService`가 `TermDocument.isNewerThan`의 `BigInteger` major/minor 비교로 종류별 maximum을
-고른다. 공개 조회·동의 검증·initializer는 같은 조회와 선택 경로를 공유하고, 요약이 필요한
-호출자는 선택된 엔티티를 `(termType, version)`의 `TermDocumentSummary`로 변환한다. 별도 summary 후보
+`TermDocument.selectCurrent`가 `TermDocument.isNewerThan`의 `BigInteger` major/minor 비교로 종류별 maximum을
+고른다(선택의 단일 지점). 공개 조회·동의 검증·initializer는 같은 경로를 공유한다 — `TermCatalogService`가
+전 종류 current를 공유 Redis 캐시 `terms:current` 하나로 적재하고(#491), `TermDocumentService`가 요청 순서·
+부분집합으로 재구성하며 요약이 필요한 호출자는 `(termType, version)`의 `TermDocumentSummary`로 변환한다.
+관리자 등록의 상위 버전 검사와 관리자 이력은 캐시를 거치지 않고 DB를 직접 읽는다. 별도 summary 후보
 쿼리와 버전 값 객체는 두지 않는다.
-DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 새 상위 버전 INSERT는 즉시
-current가 되며 future 예약 효력 시각은 없다.
+DB `MAX(VARCHAR)`, SQL 문자열 파싱, generated sort key는 쓰지 않는다. 관리자 등록의 새 상위 버전 INSERT는
+commit 뒤 캐시 evict로 다음 요청부터 current가 되며 future 예약 효력 시각은 없다.
 
 `term_type`은 enum literal exact-match를 위해 `ascii_bin`이다. 기동 검사(`TermCatalogReadiness`)는
 raw projection으로 `term_type`·`content_url`을 한 번 읽어 전체 종류의 seed 누락·미지 literal·잘못된
@@ -347,6 +370,8 @@ atomic rename, 검증, rollback 순서는
 
 `app_config`는 정확히 1행이어야 한다. `findTop2ByOrderByAppConfigIdAsc`로 0행·2행 이상을 판별하고,
 공개 `/api/{version}/intro`와 관리자 조회·변경 모두 `AppConfigService`의 같은 exact-one 경계를 사용한다.
+조회는 공유 Redis 캐시 `appconfig:current`를 타고(#491) 관리자 UPDATE가 commit 뒤 evict한다. UPDATE 경로는
+캐시를 거치지 않고 DB에서 행을 읽는다.
 불변식 위반은 500이며 임의 첫 행이나 default를 반환하지 않는다. 배포 pre-stop도 COUNT=1을 요구한다.
 관리자 UPDATE는 transaction 안에서 다시 1행을 조회하고 양의 Long인 최소·권장 버전에
 `minimum <= recommended`를 강제한다. `debugTestMessage`는 읽기 전용이고 감사 DDL은 없다.
@@ -399,13 +424,14 @@ runbook gate). backlog 관측 지표는 두지 않는다(경보 미부착 지표
 `INSERT IGNORE`(insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채우며
 (`modified_by` NULL), 재전송·동시 동일 batch가 PK 예외 없이 수렴하고 기존 `accepted_at`을 덮어쓰지
 않는다. `accepted_at`은 서버가 batch당 한 번 캡처한 KST 벽시계다. entity는 조회·validate용 read model이다.
-동의 필요 판정은 current `(term_type, version)` 집합에서 회원의 agreed key 집합을 Java record set으로
-차감하며 JPQL tuple-list IN에 의존하지 않는다.
+동의 필요 판정은 회원의 agreed key를 `(term_type, major)` 집합으로 바꿔 current의 `(term_type, major)`가
+없는 종류만 남긴다(#453 — minor 개정은 재동의 불필요). JPQL tuple-list IN에 의존하지 않고 쿼리는 current
+후보 1 + agreed key 1을 유지한다.
 
 ### Redis
 
-application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig` 하나이며(#429), Spring
-Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
+application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `CacheConfig`(#429)와 그 캐시 구현
+`SingleFlightRedisCacheManager`(#491)이며, Spring Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직접 쓰되 같은
 `app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다.
 
 | Logical key/namespace | Purpose | Lifetime |
@@ -418,12 +444,17 @@ Cache의 Redis `CacheManager`가 gateway 대신 Spring Data Redis 타입을 직�
 | `timeline:user-memory-update:{taskId}` | User Memory 작업 JSON(owner UUIDv4 subject, 대상 record IDs, base digest) | PROCESSING 3m |
 | `auth:app-code:{sha256hex}` | one-time App Code | 60s |
 | `user:active:{userId}` | ACTIVE 검사 캐시(#429 — `UserAccountService.isActive`의 `@Cacheable`, #441부터 `/a/api` 필터와 token 발급·회전이 공유). 저장소 배선은 `CacheConfig`의 Redis `CacheManager`가 소유하며 키는 `{app.redis.key-prefix}` + 캐시 이름(`user:active`) + `:` + userId로 조립된다. 값은 `GenericJackson2JsonRedisSerializer`가 쓴 JSON `true`이고 **ACTIVE=true만** 적재한다(음성은 `unless`로 미캐시). 무효화는 탈퇴 orchestrator가 commit 후 수행하는 `@CacheEvict` 하나뿐(갱신 경로 없음)이며, evict 실패·적재 경합의 stale은 TTL이 수렴시킨다(허용 범위는 authentication.md "탈퇴 차단 정책"). 저장소 연산 실패는 `FailSafeCacheErrorHandler`가 삼켜 miss로 강등하고 DB 직행한다. | 15m — 쓰기 시점 고정(조회가 연장하지 않음) |
+| `appconfig:current:all` · `terms:current:all` · `notice:popup-notices:all` | 관리자 변경 값 캐시(#491) — 앱 설정 응답(`AppConfigService.getAppConfig`), 전 종류 current 약관 목록(`TermCatalogService.findAllCurrentTerms`), 앱 시작 팝업 공지 목록(`NoticeService.findPopupNotices` — id·제목·썸네일 URL, #560에서 값 shape가 id 목록에서 바뀌어 rolling 배포 중 구·신 값이 섞이지 않게 이름을 `notice:popup`에서 바꿨다). 키는 `{app.redis.key-prefix}` + 캐시 이름 + `:all`(전역 단일 엔트리)이고, 값은 `GenericJackson2JsonRedisSerializer` JSON이다(목록은 역직렬화 가능한 가변 구현으로 저장, `TermResponse`·`AppConfigResponse`·`PopupNoticeResponse`는 record). 무효화는 관리자 쓰기의 commit 뒤 `@CacheEvict`뿐이다 — `updateVersions` / 약관 `register` 성공 / `changePopup`·`changeVisibility`·`edit`·`changeThumbnail`. 앱을 우회한 DB 직접 쓰기는 무효화 대상이 아니다(TTL 이내 수렴, 앱 재시작으로 지워지지 않음). evict는 쓰기를 처리한 환경의 key prefix 키만 지운다 — dev MySQL을 공유하는 test(`test_`)와 dev(`dev_`)는 한쪽 관리자 웹 변경이 다른 쪽 캐시를 지우지 않아 최대 1h 옛 값을 본다. | 1h — 쓰기 시점 고정, evict 유실 안전망 |
 | `${REDIS_KEY_PREFIX}spring:session` | OAuth handshake session namespace | 5m |
 
 `RedisGateway`가 `app.redis.key-prefix`를 붙이므로 호출자는 logical key만 넘긴다.
 Spring Cache 값의 shape 변경은 rolling 배포에서 안전하지 않다 — 저장된 값이 **유효 JSON인데 타입만
 다르면** 역직렬화는 성공하고 프록시 반환 지점의 `ClassCastException`으로 500이 된다(error handler
 사정권 밖). shape를 바꿀 때는 캐시 이름을 바꾸거나 배포 전에 해당 key를 비운다.
+Redis 캐시 매니저는 `@Cacheable(sync = true)`를 서버(JVM) 안 키별 single-flight로 처리한다(#491,
+`SingleFlightRedisCacheManager.SingleFlightRedisCache`) — Spring Data Redis 기본 `RedisCache`·non-locking writer는 적재를
+동기화하지 않아 캐시가 빈 순간 동시 miss가 전부 DB로 간다. 서버 간은 막지 않는다(prod 최대 2회 적재).
+Spring Data Redis의 locking writer는 잠금 키에 key prefix가 붙지 않아 환경끼리 잠금을 공유하므로 쓰지 않는다.
 Timeline task 최초 저장은 native `SET PX`, 서버간 처리 stage 전이는 native `SET XX KEEPTTL`, terminal
 전이는 native `SET XX PX`로 수행한다 — timeline task에 Lua script는 0개다. `XX`는 missing key에서
 실패해 만료 task를 부활시키지 않고, `KEEPTTL`은 최초 PROCESSING 만료 시각을 보존한다. 전역·사용자별
@@ -508,7 +539,7 @@ invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 �
   (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
   title·subtitle·memo는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
-  Redis manager — 같은 key prefix를 붙인다).
+  Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
 - Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard

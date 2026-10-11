@@ -15,6 +15,7 @@
   <section aria-labelledby="terms-heading">
     <h2 id="terms-heading">약관 문서</h2>
     <p>새 상위 버전만 등록할 수 있습니다. 기존 문서는 수정하거나 삭제할 수 없습니다.</p>
+    <p>major를 올리면(예: 1.3 → 2.0) 동의 대상 약관은 전 회원에게 재동의를 요청하고, minor만 올리면(예: 1.0 → 1.1) 재동의를 요청하지 않습니다.</p>
     <form id="term-form">
       <fieldset id="term-fields" disabled>
         <label>약관 종류<select id="term-type" required></select></label>
@@ -42,7 +43,9 @@
       <label>게시된 원문 HTTPS URL<input id="notice-url" type="url" required maxlength="512" placeholder="https://…"></label>
       <div class="actions"><button type="submit" id="notice-submit">등록 내용 확인</button><button type="button" id="open-notice" class="secondary">원문 열어 확인 ↗</button><button type="button" id="notice-cancel" class="secondary" hidden>수정 취소</button></div>
     </fieldset></form>
-    <div class="table-scroll"><table><thead><tr><th>번호</th><th>제목</th><th>원문</th><th>상태</th><th>게시</th><th>작업</th></tr></thead><tbody id="notices"></tbody></table></div>
+    <p class="notice">앱 시작 팝업은 제목과 썸네일로 뜹니다. 썸네일(jpg·png·webp)을 먼저 올려야 팝업으로 지정할 수 있습니다.</p>
+    <input id="notice-thumbnail-file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+    <div class="table-scroll"><table><thead><tr><th>번호</th><th>제목</th><th>원문</th><th>상태</th><th>팝업</th><th>썸네일</th><th>게시</th><th>작업</th></tr></thead><tbody id="notices"></tbody></table></div>
   </section>
   <section aria-labelledby="inquiry-heading">
     <h2 id="inquiry-heading">문의사항</h2>

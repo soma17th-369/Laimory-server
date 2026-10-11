@@ -160,20 +160,22 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 약관 문서 | Term Document | 현재 구현 | 약관 한 버전의 불변 행(`term_documents`, PK `(term_type, version)`)이다. 종류·버전·제목·**게시 URL**을 담고 원문 본문은 담지 않는다 — 본문은 약관 원문 page(Term Content Page)가 소유한다. 개정은 UPDATE가 아니라 새 행 INSERT다(UPDATE하면 그 버전에 동의한 이력이 소급 변조된다). 게시된 버전·URL을 수정·삭제하는 API는 없고 관리자 등록은 원문 page 게시 확인 후 상위 버전을 기존 Repository의 native INSERT로 등록한다. |
 | 약관 종류 | Term Type | 현재 구현 | `TermType` enum 6종 — `TERMS_OF_SERVICE`(이용약관)·`SENSITIVE_INFORMATION_CONSENT`(민감정보)·`THIRD_PARTY_PROVISION_CONSENT`(제3자 제공)·`CROSS_BORDER_TRANSFER_CONSENT`(국외 이전)·`LOCATION_BASED_SERVICE_TERMS`(위치약관)·`PRIVACY_POLICY`(개인정보 처리방침)다. 6종 모두 같은 catalog와 반복 `termTypes` 공개 조회를 쓰며 enum에는 stage·순서·필수/고지 분류 속성이 없다. 공개 응답 순서는 클라이언트 요청 순서이고, 동의 대상 분류는 `TermAgreementService`(#434)의 상수가 소유하며 개인정보 처리방침은 상시 공개만 한다. 기동 seed 검사는 동의 대상과 무관하게 전체 종류를 확인한다. 게시 URL은 정책이 아니라 게시 사실이라 문서 행이 소유한다. |
-| 약관 버전 | Term Version | 현재 구현 | canonical `major.minor` 문자열(`^[1-9][0-9]*[.](0\|[1-9][0-9]*)$`, 최대 64자)이다. 별도 값 객체 없이 DB/API 문자열을 유지한다. `TermDocumentId`가 키 생성·동의 등록 입력의 형식을 검증하고 DB CHECK가 저장 값을 보장한다. 조회 중 형식 재검증 없이 `TermDocument.isNewerThan`이 `BigInteger` segment로 비교한다(`1.9 < 1.10 < 2.0`). 컬럼은 exact-match `utf8mb4_bin`이고 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. |
+| 약관 버전 | Term Version | 현재 구현 | canonical `major.minor` 문자열(`^[1-9][0-9]*[.](0\|[1-9][0-9]*)$`, 최대 64자)이다. 별도 값 객체 없이 DB/API 문자열을 유지한다. `TermDocumentId`가 키 생성·동의 등록 입력의 형식을 검증하고 DB CHECK가 저장 값을 보장한다. 조회 중 형식 재검증 없이 `TermDocument.isNewerThan`이 `BigInteger` segment로 비교한다(`1.9 < 1.10 < 2.0`). 컬럼은 exact-match `utf8mb4_bin`이고 클라이언트는 조회 응답의 `(termType, version)`을 동의 등록에 그대로 회신한다. 두 자리는 개정의 경중도 뜻한다 — major 상향은 재동의 개정, minor 상향은 경미 개정이다(#453). |
 | 약관 원문 page | Term Content Page | 현재 구현 | 랜딩페이지 저장소의 `public/terms/{slug}/{version}.html`에서 직접 관리하는 버전별 HTML이며(#470 — Server 저장소에는 원문·생성기가 없다), 랜딩페이지(Vercel)가 `/terms/{slug}/{version}`에서 1년 `immutable` cache header와 함께 로그인 없이 전달한다(#418 — Server에는 원문 route가 없다). 약관 DB·API는 원문을 저장·동적 렌더링·proxy하지 않고 문서 행의 `content_url`만 다루며 요청·기동 중 HTTP 조회도 하지 않는다(게시 여부는 게시 게이트가 확인). 게시된 버전 page의 내용은 수정·재사용·삭제하지 않고 개정은 새 version·새 URL로 게시한다 — 이력 재현의 근거는 URL 문자열이 아니라 그 문서 행이 가리키는 원문이라, 호스팅 이전은 새 행이 아니라 기존 행의 content_url 갱신으로 한다(#418). 현재 게시 규약은 `https://www.laimory.app/terms/{종류}/{version}`이지만 이는 운영 규약이지 catalog가 역산하거나 강제하는 형식이 아니다(catalog readiness는 https 절대 URI인지만 검사). |
-| 현재 문서 | Current Term Document | 현재 구현 | 같은 종류의 canonical 버전 중 major, minor를 숫자로 비교한 가장 큰 행이다. 요청 종류의 엔티티 후보를 한 DB query로 읽고 `TermDocumentService`가 엔티티의 `isNewerThan`으로 종류별 maximum을 선택한다. 요약이 필요하면 선택 후 변환하고 별도 요약 후보 쿼리는 두지 않는다. 새 상위 버전 INSERT는 예약 시각 없이 즉시 current가 된다. |
+| 현재 문서 | Current Term Document | 현재 구현 | 같은 종류의 canonical 버전 중 major, minor를 숫자로 비교한 가장 큰 행이다. 엔티티 후보를 한 DB query로 읽고 `TermDocument.selectCurrent`가 `isNewerThan`으로 종류별 maximum을 선택한다. 요청 경로(공개 조회·동의 검증·initializer)는 `TermCatalogService`가 공유 Redis 캐시에 적재한 전 종류 current를 쓰고(#491), 관리자 등록의 상위 버전 검사만 DB를 직접 읽는다. 요약이 필요하면 선택 후 변환하고 별도 요약 후보 쿼리는 두지 않는다. 관리자 등록의 새 상위 버전 INSERT는 예약 시각 없이 commit 뒤 캐시 evict로 다음 요청부터 current가 된다. |
 | 약관 동의 | Term Agreement | 현재 구현 | 회원이 특정 약관 버전에 동의한 이력 행(`term_agreements`, PK `(user_id, term_type, version)`)이다. owner는 인증 회원 raw `user_id`다(콘텐츠 subject 아님). `(term_type, version)` 복합 FK가 불변 문서를 가리키며 이 행이 "언제 어떤 버전에 동의했는지"의 권위 기록이다. |
 | 수락 시각 | Accepted At | 현재 구현 | 서버가 동의 batch transaction에서 한 번 캡처한 KST 벽시계다(클라이언트 입력 아님). 같은 버전 재동의는 멱등이며 최초 수락 시각을 덮어쓰지 않는다. |
-| 동의 필요 약관 | Agreement Required Terms | 현재 구현 | 지금 현재 버전 동의가 없는 동의 대상 약관이다(#434). 대상은 고지 전용 `PRIVACY_POLICY`를 제외한 5종 전부이고 그 분류는 `TermAgreementService`의 상수 한 곳이 소유한다(`TermType`에 속성 없음). 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open). 앱 초기화 응답이 `(termType, version)` 목록으로 알려주고 진행 차단은 클라이언트 책임이다 — 서버는 이 판정으로 요청을 막지 않는다. |
+| 재동의 개정 / 경미 개정 | Major Revision / Minor Revision | 현재 구현 | 약관 개정의 경중이다(#453). 재동의 개정은 major를 올린 버전(`1.3` → `2.0`)으로 동의 대상 약관의 전 회원에게 재동의를 요구하고, 경미 개정은 minor만 올린 버전(`1.0` → `1.1`)으로 같은 major의 기존 동의를 그대로 인정한다. 경중은 별도 컬럼 없이 등록 시 운영자가 고르는 버전 번호가 정하며, 관리자 등록 화면이 이 규칙을 안내한다. 경미 개정도 동의 등록은 current exact-match라 과거 동의를 새 버전으로 승계·복사하지 않는다. |
+| 동의 필요 약관 | Agreement Required Terms | 현재 구현 | 지금 현재 버전과 같은 major의 동의가 없는 동의 대상 약관이다(#434·#453 — minor 개정은 재동의를 요구하지 않는다). 대상은 고지 전용 `PRIVACY_POLICY`를 제외한 5종 전부이고 그 분류는 `TermAgreementService`의 상수 한 곳이 소유한다(`TermType`에 속성 없음). 최초 동의와 재동의를 구분하지 않으며, current 문서가 없는 종류는 그 종류만 판정에서 빠진다(종류별 fail-open). 앱 초기화 응답이 `(termType, version)` 목록으로 알려주고 진행 차단은 클라이언트 책임이다 — 서버는 이 판정으로 요청을 막지 않는다. |
 | catalog 준비 상태 | Term Catalog Readiness | 현재 구현 | `TermCatalogReadiness`가 기동 시 raw catalog를 한 번 조회해 전체 `TermType`의 seed 존재·종류 literal·HTTPS URL 형식을 검사한다. 버전 형식은 쓰기 경계와 DB CHECK가 보장하므로 재검증하지 않는다. 빈 catalog는 WARN, 잘못된 seed나 조회 실패는 ERROR, 정상은 INFO 로그로 알리되 기동·공개 조회는 막지 않는다. 별도 metric·단계별 준비 상태·상태 전이 관리는 없다. |
 
 ## 공지사항
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록 조회만 하고(목록이 URL을 직접 실어 상세 조회가 없다) 등록·수정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. |
+| 공지 | Notice | 현재 구현 | 관리자가 등록하는 공지 한 건(`notices`, PK `notice_id`)이다. 제목과 게시된 원문 page의 주소(`content_url`)만 담는다 — 원문(이미지·서식 포함)은 그 page가 소유하고 서버는 본문을 저장·반환하지 않는다(약관 문서와 같은 구조). 앱은 공개 목록·단건 조회만 하고(단건은 팝업 탭 시 원문 URL용, #553·#560) 등록·수정·숨김·팝업 지정·썸네일 지정은 localhost 관리자 웹이 한다(#517). 약관과 달리 버전·불변 계약이 없어 수정은 기존 행의 제목·URL 전체 교체다. 썸네일(`thumbnail_filename`, #560)은 앱 시작 팝업용 이미지로, 관리자 웹이 presigned PUT으로 올리고 응답에는 무서명 CDN URL(`thumbnailUrl`)로 싣는다 — 교체만 있고 제거는 없다. |
 | 노출 상태 | Hidden | 현재 구현 | `hidden` boolean 하나가 노출을 제어한다. 등록 즉시 노출(false)이고 예약 게시·고정(핀)은 없다. 숨김(true)이 삭제 역할이라 hard delete 경로가 없으며 다시 노출할 수 있다. 공개 API는 숨김 행을 없는 것과 같이 다룬다(목록 제외, 상세 404). |
+| 팝업 공지 | Popup Notice | 현재 구현 | 앱 시작 시 팝업으로 띄울 공지다(`notices.popup`, #553). 관리자가 공지별로 지정·해제하며 여러 건이 동시에 지정될 수 있다. 숨김과 독립이라 숨긴 팝업 공지는 지정이 남은 채 팝업에서 빠지고 다시 노출하면 복귀한다. 썸네일이 있어야 지정할 수 있다(#560). 이니셜라이저는 앱이 WebView 없이 그릴 id·제목·썸네일 URL(`popupNotices`)을 주고, 원문 URL은 탭 시 공지 단건 조회가 준다. 이미 본 팝업의 재노출 방지는 앱이 id로 기억하며, 같은 id는 제목·썸네일이 바뀌어도 같은 팝업이다. |
 | 게시 시각 | Published At | 현재 구현 | 공개 응답의 `publishedAt`이며 값은 행의 `created_at`(Asia/Seoul 벽시계)이다. 별도 게시 시각 컬럼을 두지 않는다. |
 
 ## 문의사항
@@ -186,6 +188,13 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 처리됨 | Answered | 현재 구현 | 관리자가 이메일 답장을 보낸 뒤 표시하는 `answered_at`(KST 벽시계, null=미처리)이다. 답장 발송 여부의 유일한 기록이며 서버는 이메일을 보내지 않는다. 해제할 수 있다. 앱에는 문의 상태 `ANSWERED`(해제 시 `RECEIVED`)로 그대로 보인다(#529). |
 | 문의 상태 | Inquiry Status | 현재 구현 | 앱에 보이는 문의 처리 상태 `InquiryStatus`(#529)다. 저장 컬럼이 아니라 `answered_at`에서 서버가 파생한다 — `RECEIVED`(접수됨, 미처리)·`ANSWERED`(답변 완료, 입력 이메일 확인). 처리됨 해제 시 `RECEIVED`로 되돌아가며 클라이언트가 `answeredAt`으로 따로 판정하지 않는다. |
 
+## 크레딧
+
+| 한글명 | 영문명 | 상태 | 설명 |
+|---|---|---|---|
+| 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 60을 한 번 지급하고 충전 경로는 없다(평생 60). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — AI 결과 저장 1회마다 같은 transaction에서 크레딧 비용만큼 차감하고(0에서 멈춤), 잔액이 비용보다 적으면 draft 생성이 403 `-1021`로 거절된다. 사용 내역(원장)은 저장하지 않는다. |
+| 크레딧 비용 | Credit Cost | 현재 구현 | 크레딧을 소비하는 기능 1회의 소비량이다(#555). DB `credit_costs`의 기능 종류(`CreditCostType`)별 행이 단일 기준이고(#558 — 현재 `TIMELINE_CREATION` = 1, 0은 무료), 공개 `GET /api/{version}/credit/costs`가 `{"timelineCreation": n}`로 앱에 알린다. 앱은 하드코딩하지 않으며 값 변경은 새 Flyway migration의 `UPDATE`로만 한다. |
+
 ## 푸시 알림
 
 | 한글명 | 영문명 | 상태 | 설명 |
@@ -196,7 +205,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치나 앱 시작 경로가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터와 온보딩 완료 여부다. |
 | 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |
-| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 담긴 값은 온보딩 완료 여부(최상위 평면, 저장값 그대로)와 동의 필요 약관 목록(`terms.agreementRequired`, #434 — 현재 문서와 동의 이력의 조회 판정)이며 조회가 값을 바꾸지 않는다. 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다. "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
+| 앱 초기화 | App Initializer | 현재 구현 | 앱이 시작할 때 인증 사용자별 초기 상태를 한 번에 받는 조회다(`GET /a/api/{version}/initializer`, #382). 담긴 값은 온보딩 완료 여부(최상위 평면, 저장값 그대로)와 동의 필요 약관 목록(`terms.agreementRequired`, #434 — 현재 문서와 동의 이력의 조회 판정), 팝업 공지 목록(`popupNotices`, #553·#560 — 최상위 평면, 원소는 id·제목·썸네일 URL)이며 조회가 값을 바꾸지 않는다. 그룹(depth)은 미래에도 여러 field를 가질 도메인에만 만든다. "초기화"는 데이터를 지우거나 기본값으로 되돌리는 뜻이 아니다 — 앱 시작 상태 조회를 가리킨다. |
 | 온보딩 완료 상태 | Onboarding Completed | 현재 구현 | 사용자가 앱 온보딩을 마쳤는지의 단일 권위(`subject_preferences.onboarding_completed`, 기본 false)다. 약관 동의 이력·기록 존재 여부로 계산하거나 동기화하지 않으며 약관 개정도 이 값을 되돌리지 않는다. 논리 탈퇴는 값을 보존하고, 재가입은 새 subject의 기본값을 쓴다. |
 | 온보딩 완료 기록 | Complete Onboarding | 현재 구현 | 온보딩 완료 상태를 `true`로 바꾸는 단방향 멱등 command다(`POST /a/api/{version}/onboarding/complete`, #382). request body가 없고(대상은 인증 subject 자신), 반복 호출도 같은 200으로 성공한다. 일반 앱 API에는 되돌리는 짝이 없으며, 임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 해당 subject의 값을 false로 되돌린다. |
 | 일일 알림 설정 | Daily Notification Preference | 현재 구현 | subject의 일일 알림 ON/OFF와 occurrence 스케줄 상태(`daily_notification_preferences`)다. subject당 한 행이며 알림 종류 판별자가 없다(#321) — 발송 시각은 컬럼이 아니라 애플리케이션 상수가 소유하고, 두 번째 일일 알림은 이 테이블이 아니라 새 테이블로 간다. |

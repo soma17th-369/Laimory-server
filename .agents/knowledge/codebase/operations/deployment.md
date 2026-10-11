@@ -243,7 +243,7 @@ paired local Origin + CSRF token + JSON body를 모두 요구한다. 관리자 G
 익명 접근 가능하며 로그인·JWT는 없다. 모든 관리자 endpoint는 공개 OpenAPI에서 제외한다.
 SSM 권한과 해당 host의 local process 권한을 가진 사람은 관리 기능에 접근할 수 있으므로 host 자체가
 신뢰 경계다. access log(environment·Transaction-Id·요청/응답)와 SSM session 기록만 남고,
-요청을 운영자 identity에 결정적으로 연계할 수 없다. 기존 access 로그 보존은 7일이다.
+요청을 운영자 identity에 결정적으로 연계할 수 없다. 기존 access 로그 보존은 89일이다.
 
 작업 후 브라우저를 닫고 Ctrl+C로 터널을 종료한다. CSRF 세션이 만료되면 새로고침한다. 요청 실패로
 저장 여부가 불확실하면 현재 값/이력을 다시 조회한 뒤 판단하고 자동 재시도하지 않는다.

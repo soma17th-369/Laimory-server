@@ -3,6 +3,7 @@ package com.laimory.server.initializer.service;
 import com.laimory.server.initializer.dto.AgreementRequiredTermResponse;
 import com.laimory.server.initializer.dto.InitializerResponse;
 import com.laimory.server.initializer.dto.InitializerTermsResponse;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.terms.service.TermAgreementService;
 import java.util.List;
@@ -16,7 +17,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>초기 상태가 늘어도 provider를 병렬 호출하는 aggregation framework를 만들지 않는다 — 필요한 leaf
  * service를 여기서 직접 부른다. 온보딩은 subject 축, 약관 동의는 raw userId 축이라 두 principal을
- * 각 leaf에만 넘기고 섞지 않는다.
+ * 각 leaf에만 넘기고 섞지 않는다. 팝업 공지는 사용자와 무관한 전역 값이라 principal을 넘기지 않는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -24,6 +25,7 @@ public class AppInitializerService {
 
     private final SubjectPreferenceService subjectPreferenceService;
     private final TermAgreementService termAgreementService;
+    private final NoticeService noticeService;
 
     /**
      * 앱 시작 상태 조회 — 순수 읽기다. 설정 행이 없으면 leaf service의 예외를 기본값으로 삼키지 않고
@@ -36,6 +38,7 @@ public class AppInitializerService {
                 termAgreementService.findAgreementRequiredTerms(userId).stream()
                         .map(document -> new AgreementRequiredTermResponse(document.termType(), document.version()))
                         .toList();
-        return new InitializerResponse(onboardingCompleted, new InitializerTermsResponse(agreementRequired));
+        return new InitializerResponse(onboardingCompleted, new InitializerTermsResponse(agreementRequired),
+                noticeService.findPopupNotices());
     }
 }

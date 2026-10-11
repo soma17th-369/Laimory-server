@@ -6,10 +6,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.ServerApplication;
 import com.laimory.server.appconfig.AppConfigRepository;
+import com.laimory.server.appconfig.AppConfigService;
+import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocumentId;
 import com.laimory.server.terms.repository.TermDocumentRepository;
+import com.laimory.server.terms.service.TermCatalogService;
 import java.net.CookieManager;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,7 +24,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.cache.CacheManager;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -37,6 +43,8 @@ class AdminPersistenceIntegrationTest {
     @Autowired AppConfigRepository configs;
     @Autowired TermDocumentRepository documents;
     @Autowired NoticeRepository notices;
+    // fixture 원복·삭제는 관리자 쓰기(evict)를 거치지 않으므로 해당 캐시(#491)를 직접 비운다 — Redis 캐시는 context를 넘어 남는다.
+    @Autowired @Qualifier("redisCacheManager") CacheManager caches;
     @Autowired JdbcTemplate jdbc;
     private HttpClient client;
     private JsonNode csrf;
@@ -67,6 +75,7 @@ class AdminPersistenceIntegrationTest {
         } finally {
             jdbc.update("UPDATE app_config SET min_app_version = ?, recommend_app_version = ? WHERE app_config_id = ?",
                     original.getMinAppVersion(), original.getRecommendAppVersion(), original.getAppConfigId());
+            caches.getCache(AppConfigService.CACHE_NAME).clear();
         }
     }
 
@@ -98,6 +107,7 @@ class AdminPersistenceIntegrationTest {
             assertThat(documents.findById(id).orElseThrow().getTitle()).isEqualTo(saved.getTitle());
         } finally {
             documents.deleteById(id);
+            caches.getCache(TermCatalogService.CACHE_NAME).clear();
         }
     }
 
@@ -129,6 +139,51 @@ class AdminPersistenceIntegrationTest {
             assertThat(notices.findByNoticeId(noticeId).orElseThrow().isHidden()).isTrue();
         } finally {
             if (noticeId != null) notices.deleteById(noticeId);
+            caches.getCache(NoticeService.POPUP_CACHE_NAME).clear();
+        }
+    }
+
+    @Test
+    void popupNoticeIsSelectedUntilHiddenAndSingleLookupFollowsVisibility() throws Exception {
+        Long noticeId = null;
+        try {
+            assertThat(request("POST", "/admin/api/notices", mapper.writeValueAsString(Map.of(
+                    "title", "admin popup notice", "contentUrl", "https://example.com/admin-popup-fixture"))).statusCode())
+                    .isEqualTo(201);
+            noticeId = mapper.readTree(request("GET", "/admin/api/notices", null).body()).path("body").get(0)
+                    .path("noticeId").asLong();
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().isPopup()).isFalse();
+
+            // 팝업 지정은 썸네일이 있어야 한다(#560) — 저장된 파일명이 V9 컬럼으로 왕복한다.
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/popup", "{\"popup\":true}").statusCode())
+                    .isEqualTo(400);
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/thumbnail",
+                    "{\"filename\":\"0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp\"}").statusCode()).isEqualTo(200);
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().getThumbnailFilename())
+                    .isEqualTo("0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp");
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/popup", "{\"popup\":true}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .contains(noticeId);
+            JsonNode single = mapper.readTree(request("GET", "/api/v1/notices/" + noticeId, null).body()).path("body");
+            assertThat(single.path("title").asText()).isEqualTo("admin popup notice");
+            assertThat(single.path("contentUrl").asText()).isEqualTo("https://example.com/admin-popup-fixture");
+
+            // 숨기면 지정은 남은 채 팝업·단건 조회에서 빠지고, 다시 노출하면 팝업으로 복귀한다.
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":true}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByNoticeId(noticeId).orElseThrow().isPopup()).isTrue();
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .doesNotContain(noticeId);
+            assertThat(request("GET", "/api/v1/notices/" + noticeId, null).statusCode()).isEqualTo(404);
+
+            assertThat(request("PUT", "/admin/api/notices/" + noticeId + "/visibility", "{\"hidden\":false}").statusCode())
+                    .isEqualTo(200);
+            assertThat(notices.findByPopupTrueAndHiddenFalseOrderByNoticeIdDesc()).extracting(Notice::getNoticeId)
+                    .contains(noticeId);
+        } finally {
+            if (noticeId != null) notices.deleteById(noticeId);
+            caches.getCache(NoticeService.POPUP_CACHE_NAME).clear();
         }
     }
 

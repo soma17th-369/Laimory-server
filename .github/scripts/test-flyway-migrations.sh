@@ -285,3 +285,61 @@ if mysql flyway_inquiry_title_upgrade -e "INSERT INTO inquiry_attachments (inqui
 fi
 flyway flyway_inquiry_title_upgrade "$MIGRATIONS" -target=5 validate >"$WORK/inquiry-title-validate.log" 2>&1
 ok 'V4 to V5 renames inquiry body to description, backfills title, requires it afterwards and drops attachment position'
+
+# V5→V6(#548): subject_credits 추가 + 기존 subject 전원 60 backfill. 감사 컬럼이 KST 벽시계(UTC+9)인지,
+# 음수 CHECK와 subject FK RESTRICT가 실제로 걸리는지 확인한다.
+mysql -e 'CREATE DATABASE flyway_credit_upgrade;'
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=5 migrate >"$WORK/credit-v5.log" 2>&1
+mysql flyway_credit_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1), (UNHEX(REPEAT('cd', 32)), '00000000-0000-4000-8000-000000000002', 1)"
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=6 migrate >"$WORK/credit-v6.log" 2>&1
+[ "$(mysql flyway_credit_upgrade -e "SELECT COUNT(*) FROM subject_credits WHERE remaining = 60")" = 2 ] || fail 'V6 did not grant 60 credits to every existing subject'
+[ "$(mysql flyway_credit_upgrade -e "SELECT COUNT(*) FROM subject_credits WHERE TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(6), created_at) BETWEEN 535 AND 545 AND updated_at = created_at")" = 2 ] || fail 'V6 backfill audit time is not the KST wall clock'
+if mysql flyway_credit_upgrade -e "UPDATE subject_credits SET remaining = -1" >/dev/null 2>&1; then
+  fail 'subject_credits.remaining CHECK is not enforced'
+fi
+if mysql flyway_credit_upgrade -e "INSERT INTO subject_credits (subject_id, remaining, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000009', 60, NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'subject_credits.subject_id FK is not enforced'
+fi
+if mysql flyway_credit_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='00000000-0000-4000-8000-000000000001'" >/dev/null 2>&1; then
+  fail 'subject mapping delete succeeded while a credit row still references it'
+fi
+flyway flyway_credit_upgrade "$MIGRATIONS" -target=6 validate >"$WORK/credit-validate.log" 2>&1
+ok 'V5 to V6 adds subject_credits with 60 credits per existing subject, KST audit time, non-negative CHECK and subject FK'
+
+# V6→V7(#553): notices.popup 추가. 기존 공지 행·노출 상태 보존과 popup 기본값 false를 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_popup_upgrade;'
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=6 migrate >"$WORK/notice-popup-v6.log" 2>&1
+mysql flyway_notice_popup_upgrade -e "INSERT INTO notices (title, content_url, hidden, created_at, updated_at) VALUES ('kept', 'https://example.com/n', TRUE, NOW(6), NOW(6))"
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=7 migrate >"$WORK/notice-popup-v7.log" 2>&1
+[ "$(mysql flyway_notice_popup_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='kept' AND hidden = TRUE AND popup = FALSE")" = 1 ] || fail 'V7 did not keep existing notice with popup defaulting to false'
+mysql flyway_notice_popup_upgrade -e "INSERT INTO notices (title, content_url, created_at, updated_at) VALUES ('probe', 'https://example.com/n', NOW(6), NOW(6))"
+[ "$(mysql flyway_notice_popup_upgrade -e "SELECT popup FROM notices WHERE title='probe'")" = 0 ] || fail 'notices.popup default is not false for inserts without the column'
+flyway flyway_notice_popup_upgrade "$MIGRATIONS" -target=7 validate >"$WORK/notice-popup-validate.log" 2>&1
+ok 'V6 to V7 adds notices.popup defaulting to false and preserves existing notices'
+
+# V7→V8(#558): credit_costs 추가 + 타임라인 생성 비용 1 seed. 기존 잔액 보존, seed 값·KST 감사 시각,
+# 음수 CHECK를 확인한다.
+mysql -e 'CREATE DATABASE flyway_credit_cost_upgrade;'
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=7 migrate >"$WORK/credit-cost-v7.log" 2>&1
+mysql flyway_credit_cost_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ab', 32)), '00000000-0000-4000-8000-000000000001', 1); INSERT INTO subject_credits (subject_id, remaining, created_at, updated_at) VALUES ('00000000-0000-4000-8000-000000000001', 42, NOW(6), NOW(6))"
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=8 migrate >"$WORK/credit-cost-v8.log" 2>&1
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT remaining FROM subject_credits WHERE subject_id='00000000-0000-4000-8000-000000000001'")" = 42 ] || fail 'V8 changed existing credit balances'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT CONCAT(COUNT(*), ':', MAX(cost)) FROM credit_costs WHERE type='TIMELINE_CREATION'")" = '1:1' ] || fail 'V8 did not seed timeline creation cost 1'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT COUNT(*) FROM credit_costs")" = 1 ] || fail 'V8 seeded unexpected credit cost rows'
+[ "$(mysql flyway_credit_cost_upgrade -e "SELECT COUNT(*) FROM credit_costs WHERE TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(6), created_at) BETWEEN 535 AND 545 AND updated_at = created_at")" = 1 ] || fail 'V8 seed audit time is not the KST wall clock'
+if mysql flyway_credit_cost_upgrade -e "UPDATE credit_costs SET cost = -1" >/dev/null 2>&1; then
+  fail 'credit_costs.cost CHECK is not enforced'
+fi
+flyway flyway_credit_cost_upgrade "$MIGRATIONS" -target=8 validate >"$WORK/credit-cost-validate.log" 2>&1
+ok 'V7 to V8 adds credit_costs with timeline creation cost 1, KST audit time and non-negative CHECK, keeping balances'
+
+# V8→V9(#560): notices.thumbnail_filename 추가 + 썸네일 없는 기존 팝업 지정 해제. 공지 행·노출 상태 보존,
+# 기존 행의 썸네일 NULL, 팝업 일괄 해제와 비팝업 행 불변을 확인한다.
+mysql -e 'CREATE DATABASE flyway_notice_thumbnail_upgrade;'
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=8 migrate >"$WORK/notice-thumbnail-v8.log" 2>&1
+mysql flyway_notice_thumbnail_upgrade -e "INSERT INTO notices (title, content_url, hidden, popup, created_at, updated_at) VALUES ('designated', 'https://example.com/a', TRUE, TRUE, NOW(6), NOW(6)), ('plain', 'https://example.com/b', FALSE, FALSE, NOW(6), NOW(6))"
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 migrate >"$WORK/notice-thumbnail-v9.log" 2>&1
+[ "$(mysql flyway_notice_thumbnail_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='designated' AND hidden = TRUE AND popup = FALSE AND thumbnail_filename IS NULL")" = 1 ] || fail 'V9 did not release the thumbnail-less popup while keeping the notice'
+[ "$(mysql flyway_notice_thumbnail_upgrade -e "SELECT COUNT(*) FROM notices WHERE title='plain' AND hidden = FALSE AND popup = FALSE AND thumbnail_filename IS NULL")" = 1 ] || fail 'V9 changed a non-popup notice'
+flyway flyway_notice_thumbnail_upgrade "$MIGRATIONS" -target=9 validate >"$WORK/notice-thumbnail-validate.log" 2>&1
+ok 'V8 to V9 adds nullable notices.thumbnail_filename and releases thumbnail-less popups, keeping notices'

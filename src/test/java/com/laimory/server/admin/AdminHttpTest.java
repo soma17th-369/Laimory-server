@@ -23,6 +23,7 @@ import com.laimory.server.inquiry.service.InquiryService;
 import com.laimory.server.notice.entity.Notice;
 import com.laimory.server.notice.repository.NoticeRepository;
 import com.laimory.server.notice.service.NoticeService;
+import com.laimory.server.notice.service.NoticeThumbnailService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.entity.TermDocument;
 import com.laimory.server.terms.repository.TermDocumentRepository;
@@ -231,6 +232,95 @@ class AdminHttpTest {
     }
 
     @Test
+    void noticePopupEndpointTogglesOnlyThatNoticeAndMapsValidationAndNotFound() throws Exception {
+        Notice target = Notice.of("팝업 대상", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(target, "noticeId", 5L);
+        target.changeThumbnail("0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.webp");
+        Notice other = Notice.of("기존 팝업", "https://example.com/notices/4");
+        ReflectionTestUtils.setField(other, "noticeId", 4L);
+        other.changeThumbnail("0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a7.jpg");
+        other.changePopup(true);
+        when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(target, other));
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(target));
+        when(notices.findByNoticeId(404L)).thenReturn(Optional.empty());
+
+        HttpResponse<String> list = request("GET", "/admin/api/notices", null, null, false);
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("\"noticeId\":5,").contains("\"popup\":false").contains("\"popup\":true");
+
+        assertThat(request("PUT", "/admin/api/notices/5/popup", "{}", origin(), true).statusCode()).isEqualTo(400);
+        assertThat(target.isPopup()).isFalse();
+        HttpResponse<String> designated = request("PUT", "/admin/api/notices/5/popup", "{\"popup\":true}", origin(), true);
+        assertThat(designated.statusCode()).isEqualTo(200);
+        assertThat(writeBody(designated).isNull()).isTrue();
+        // 여러 건 지정 가능 — 다른 공지의 기존 지정은 그대로다.
+        assertThat(target.isPopup()).isTrue();
+        assertThat(other.isPopup()).isTrue();
+        assertThat(request("PUT", "/admin/api/notices/5/popup", "{\"popup\":false}", origin(), true).statusCode())
+                .isEqualTo(200);
+        assertThat(target.isPopup()).isFalse();
+        HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/popup", "{\"popup\":true}", origin(), true);
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("-404");
+    }
+
+    @Test
+    void noticePopupDesignationWithoutThumbnailIsBadRequest() throws Exception {
+        Notice notice = Notice.of("썸네일 없음", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(notice, "noticeId", 5L);
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(notice));
+
+        HttpResponse<String> rejected = request("PUT", "/admin/api/notices/5/popup", "{\"popup\":true}", origin(), true);
+
+        assertThat(rejected.statusCode()).isEqualTo(400);
+        assertThat(notice.isPopup()).isFalse();
+    }
+
+    @Test
+    void noticeThumbnailUploadIssuesSignedUrlUnderNoticesPrefixAndRejectsInvalidFiles() throws Exception {
+        when(storage.generatePresignedPutUrl(anyString(), eq("image/webp"), eq(2048L)))
+                .thenAnswer(invocation -> "https://s3.example/" + invocation.getArgument(0) + "?signed");
+
+        HttpResponse<String> issued = request("POST", "/admin/api/notices/thumbnail-uploads",
+                "{\"contentType\":\"image/webp\",\"size\":2048}", origin(), true);
+
+        assertThat(issued.statusCode()).isEqualTo(200);
+        JsonNode body = writeBody(issued);
+        assertThat(body.path("filename").asText()).endsWith(".webp");
+        assertThat(body.path("uploadUrl").asText())
+                .isEqualTo("https://s3.example/notices/" + body.path("filename").asText() + "?signed");
+        for (String bad : List.of("{}", "{\"contentType\":\"image/webp\"}", "{\"contentType\":\"image/gif\",\"size\":2048}",
+                "{\"contentType\":\"image/webp\",\"size\":0}", "{\"contentType\":\"image/webp\",\"size\":10485761}")) {
+            assertThat(request("POST", "/admin/api/notices/thumbnail-uploads", bad, origin(), true).statusCode())
+                    .as(bad).isEqualTo(400);
+        }
+    }
+
+    @Test
+    void noticeThumbnailEndpointStoresFilenameShownAsCdnUrlAndMapsValidationAndNotFound() throws Exception {
+        Notice notice = Notice.of("점검 안내", "https://example.com/notices/5");
+        ReflectionTestUtils.setField(notice, "noticeId", 5L);
+        when(notices.findByNoticeId(5L)).thenReturn(Optional.of(notice));
+        when(notices.findByNoticeId(404L)).thenReturn(Optional.empty());
+        when(notices.findAllByOrderByNoticeIdDesc()).thenReturn(List.of(notice));
+        String filename = "0199a1b2-c3d4-7e5f-8a90-b1c2d3e4f5a6.png";
+
+        assertThat(request("PUT", "/admin/api/notices/5/thumbnail", "{\"filename\":\"../" + filename + "\"}",
+                origin(), true).statusCode()).isEqualTo(400);
+        assertThat(notice.getThumbnailFilename()).isNull();
+        HttpResponse<String> stored = request("PUT", "/admin/api/notices/5/thumbnail",
+                "{\"filename\":\"" + filename + "\"}", origin(), true);
+        assertThat(stored.statusCode()).isEqualTo(200);
+        assertThat(writeBody(stored).isNull()).isTrue();
+        assertThat(request("GET", "/admin/api/notices", null, null, false).body())
+                .contains("\"thumbnailUrl\":\"https://cdn.example/notices/" + filename + "\"");
+        HttpResponse<String> missing = request("PUT", "/admin/api/notices/404/thumbnail",
+                "{\"filename\":\"" + filename + "\"}", origin(), true);
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("-404");
+    }
+
+    @Test
     void inquiryEndpointsListDetailWithCdnViewUrlsAndToggleAnswered() throws Exception {
         Inquiry inquiry = Inquiry.of(TestSubjects.id(3L), "user@example.com", "앱이 멈춰요",
                 "사진 올리면 멈춰요");
@@ -307,7 +397,7 @@ class AdminHttpTest {
             excludeName = "org.springframework.boot.autoconfigure.security.oauth2.client.servlet.OAuth2ClientAutoConfiguration")
     @Import({AdminWebConfiguration.class, AdminPageController.class, AdminApiController.class,
             TermDocumentRegistrationService.class, AppConfigService.class, AppConfigController.class,
-            NoticeService.class, InquiryService.class, InquiryAttachmentService.class,
+            NoticeService.class, NoticeThumbnailService.class, InquiryService.class, InquiryAttachmentService.class,
             GlobalExceptionHandler.class, TrustedEdgeRequestFilter.class})
     static class TestApplication {
         @Bean ApiErrorResponseWriter errors(MessageSource messages, ObjectMapper mapper) {

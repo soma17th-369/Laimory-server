@@ -1,11 +1,15 @@
 package com.laimory.server.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.laimory.server.appconfig.AppConfigService;
+import com.laimory.server.notice.service.NoticeService;
+import com.laimory.server.terms.service.TermCatalogService;
 import com.laimory.server.user.service.SubjectMappingService;
 import com.laimory.server.user.service.UserAccountService;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CachingConfigurer;
@@ -16,8 +20,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.cache.CacheStatisticsCollector;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
@@ -29,14 +35,15 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
  *
  * <p><b>결정 규칙 — 저장소는 무엇으로 하나.</b> "무효화가 다른 인스턴스에 전파돼야 하는가?"
  * <ul>
- *   <li>예 → {@link #activeStatusCacheManager}(Redis). prod는 WAS 2대가 한 Redis를 공유하므로
- *       탈퇴 evict가 전 인스턴스에 즉시 반영된다. 대가는 요청당 네트워크 왕복이다.</li>
+ *   <li>예 → {@link #redisCacheManager}(Redis). prod는 WAS 2대가 한 Redis를 공유하므로
+ *       evict(탈퇴·관리자 변경)가 전 인스턴스에 즉시 반영된다. 대가는 요청당 네트워크 왕복이다.</li>
  *   <li>아니오 → {@link #localCacheManager}(Caffeine). 값이 불변이거나 stale이 무해해서 per-host
  *       잔존이 문제가 되지 않는 캐시용 — 요청당 네트워크가 0이다.</li>
  * </ul>
  * 어느 쪽도 계층형(L1+L2)이 아니다. per-host miss 증폭이 아프거나(서버 증설) Redis 왕복이 실측에서
  * 유의미해질 때 승격을 검토한다. 캐시는 wrapper 없이 서비스 메서드에 직접 단다
- * (ACTIVE 검사 {@link UserAccountService}, subject 매핑 {@link SubjectMappingService} — #441).
+ * (ACTIVE 검사 {@link UserAccountService}, subject 매핑 {@link SubjectMappingService} — #441, 관리자 변경 값
+ * {@link AppConfigService}·{@link TermCatalogService}·{@link NoticeService} — #491).
  *
  * <p>{@code @Primary}는 로컬 매니저에 둔다. 매니저가 둘이라 {@code cacheManager} 미지정은 실수인데,
  * 그 실수가 "공유돼야 할 캐시가 조용히 per-host가 되는" 쪽이 아니라 로컬로 수렴하는 쪽이 되게
@@ -46,8 +53,9 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
  * 한 단계 앞으로 고정한다 — 캐시 인터셉터가 안쪽이면 적중에도 transaction이 열리고 닫혀
  * {@code @Transactional} 메서드에 캐시를 다는 의미가 사라진다(조용한 성능 회귀).
  *
- * <p><b>RedisGateway 승인 예외</b>: 이 클래스만 {@code RedisAccessArchTest}가 금지하는 Spring Data
- * Redis 타입을 직접 의존한다 — {@code RedisCacheWriter}를 gateway 위에 재구현하는 것은 본말전도다.
+ * <p><b>RedisGateway 승인 예외</b>: 이 클래스와 Redis 캐시 구현({@link SingleFlightRedisCacheManager})만
+ * {@code RedisAccessArchTest}가 금지하는 Spring Data Redis 타입을 직접 의존한다 — {@code RedisCacheWriter}를
+ * gateway 위에 재구현하는 것은 본말전도다.
  * 대신 gateway와 같은 {@code app.redis.key-prefix}를 캐시 키 prefix에 붙여 dev/prod가 한 Redis를
  * 공유해도 네임스페이스가 섞이지 않는다는 불변식을 그대로 지킨다.
  */
@@ -65,30 +73,46 @@ public class CacheConfig implements CachingConfigurer {
     }
 
     /**
+     * 관리자 웹으로만 바뀌는 전역 값 캐시(앱 버전·약관 current·팝업 공지 id, #491)의 TTL. 즉시성은 관리자 쓰기의
+     * evict가 담당하고 이 TTL은 evict 유실 대비 안전망이다 — 키가 사실상 하나라 길게 잡아도 메모리 부담이 없고,
+     * 낮은 트래픽에서도 적중하려면 길어야 한다. 앱을 우회한 DB 직접 쓰기는 고려하지 않는다.
+     */
+    private static final Duration ADMIN_MANAGED_TTL = Duration.ofHours(1);
+
+    /**
      * 공유 무효화가 필요한 캐시용 Redis 매니저. TTL은 쓰기 시점 고정(조회가 연장하지 않는다)이고,
      * 키 prefix 계산으로 실제 키 모양이 {@code {app.redis.key-prefix}user:active:{userId}} —
-     * 즉 다른 application key와 같은 {@code {feature}:{entity}:{id}} 규칙에 남는다.
+     * 즉 다른 application key와 같은 {@code {feature}:{entity}:{id}} 규칙에 남는다. 기본 TTL은 ACTIVE 검사
+     * 기준이고, 관리자 변경 값 캐시는 {@link #ADMIN_MANAGED_TTL}을 캐시별로 덮어쓴다.
      *
      * <p>값은 JSON 직렬화한다. 캐시가 읽어 올 수 있는 유효 JSON이 기대 타입과 다르면
      * (역직렬화는 성공하고 프록시 반환 지점에서 {@code ClassCastException}) 요청이 500이 된다 —
      * 캐시 값 shape를 바꿀 때는 키를 바꾸거나 배포 전 비우는 것이 안전하다.
      *
-     * <p>{@code initialCacheNames}로 기동 시점에 캐시를 만들어 둔다. Spring Boot의 cache metrics는
+     * <p>initial cache configuration으로 기동 시점에 캐시를 만들어 둔다. Spring Boot의 cache metrics는
      * 기동 시 존재하는 캐시만 바인딩하므로, 이게 없으면 첫 요청 뒤에야 캐시가 생겨 표준
      * {@code cache.*} meter가 영영 노출되지 않는다.
+     *
+     * <p>builder가 아니라 생성자로 만든다 — builder는 항상 {@link RedisCacheManager} 자체를 만들어
+     * {@link SingleFlightRedisCacheManager}를 쓸 수 없다. 그래서 builder가 하던 일을 여기서 직접 한다:
+     * 통계 수집기(빠지면 기동은 정상이지만 Redis 캐시의 {@code cache.gets}가 0으로 보고된다), 기동 시 캐시,
+     * 실행 중 캐시 생성 허용(builder 기본값과 같음).
      */
     @Bean
-    public RedisCacheManager activeStatusCacheManager(RedisConnectionFactory redisConnectionFactory) {
-        RedisCacheConfiguration configuration = RedisCacheConfiguration.defaultCacheConfig()
+    public RedisCacheManager redisCacheManager(RedisConnectionFactory redisConnectionFactory) {
+        RedisCacheConfiguration defaults = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(UserAccountService.TTL)
                 .computePrefixWith(cacheName -> keyPrefix + cacheName + ":")
                 .serializeValuesWith(RedisSerializationContext.SerializationPair
                         .fromSerializer(new GenericJackson2JsonRedisSerializer()));
-        return RedisCacheManager.builder(redisConnectionFactory)
-                .cacheDefaults(configuration)
-                .initialCacheNames(Set.of(UserAccountService.CACHE_NAME))
-                .enableStatistics()
-                .build();
+        RedisCacheConfiguration adminManaged = defaults.entryTtl(ADMIN_MANAGED_TTL);
+        RedisCacheWriter cacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(redisConnectionFactory)
+                .withStatisticsCollector(CacheStatisticsCollector.create());
+        return new SingleFlightRedisCacheManager(cacheWriter, defaults, Map.of(
+                UserAccountService.CACHE_NAME, defaults,
+                AppConfigService.CACHE_NAME, adminManaged,
+                TermCatalogService.CACHE_NAME, adminManaged,
+                NoticeService.POPUP_CACHE_NAME, adminManaged));
     }
 
     /**

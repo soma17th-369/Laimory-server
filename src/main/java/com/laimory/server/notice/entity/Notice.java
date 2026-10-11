@@ -1,6 +1,7 @@
 package com.laimory.server.notice.entity;
 
 import com.laimory.server.common.BaseEntity;
+import com.laimory.server.timeline.photo.PhotoFilenames;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -18,6 +19,10 @@ import lombok.Getter;
  * <p>노출 제어는 {@code hidden} 하나다 — 관리자는 등록·수정·숨김/재노출만 하고 hard delete는 없다
  * (실수 복구 가능). 공개 목록은 숨김이 아닌 행만 보이고, 게시 시각은 {@code created_at}이다.
  * 약관과 달리 버전·불변 계약이 없어 기존 행의 제목·URL 수정(전체 교체)을 허용한다.
+ *
+ * <p>{@code popup}은 앱 시작 팝업 지정이다(#553) — 여러 건이 동시에 켜질 수 있고, 숨김과 독립이라
+ * 숨긴 팝업 공지는 지정이 남은 채 팝업에서만 빠진다. 팝업은 앱이 제목과 썸네일로 그리므로 썸네일이 있어야
+ * 지정할 수 있다(#560) — 썸네일은 교체만 있고 제거가 없어 지정된 팝업은 항상 썸네일을 가진다.
  */
 @Entity
 @Table(name = "notices")
@@ -42,6 +47,13 @@ public class Notice extends BaseEntity {
     @Column(name = "hidden", nullable = false)
     private boolean hidden;
 
+    @Column(name = "popup", nullable = false)
+    private boolean popup;
+
+    /** 썸네일 파일명({@code {uuidv7}.{ext}}) — S3 key·CDN URL은 {@code NoticeThumbnailService}가 파생한다. 없으면 null. */
+    @Column(name = "thumbnail_filename", length = 64)
+    private String thumbnailFilename;
+
     protected Notice() {
     }
 
@@ -49,6 +61,7 @@ public class Notice extends BaseEntity {
         this.title = title;
         this.contentUrl = contentUrl;
         this.hidden = false;
+        this.popup = false;
     }
 
     /** 즉시 노출되는 새 공지를 만든다(예약 게시 없음). */
@@ -64,6 +77,20 @@ public class Notice extends BaseEntity {
 
     public void changeVisibility(boolean hidden) {
         this.hidden = hidden;
+    }
+
+    /** 지정(true)은 썸네일이 있어야 한다 — 없으면 400. 해제(false)는 항상 허용한다. */
+    public void changePopup(boolean popup) {
+        if (popup && thumbnailFilename == null) {
+            throw new IllegalArgumentException("thumbnail is required to designate a popup notice");
+        }
+        this.popup = popup;
+    }
+
+    /** 썸네일을 교체한다(제거는 없다). 파일명 형식은 사진과 같은 {@code {uuidv7}.{jpg|png|webp}}만 받는다. */
+    public void changeThumbnail(String thumbnailFilename) {
+        PhotoFilenames.requireValid(thumbnailFilename);
+        this.thumbnailFilename = thumbnailFilename;
     }
 
     /** null·공백뿐은 거절, 그 외 strip 후 최대 255자({@code TimelineEventInputRules.requireValidTitle} 선례). */

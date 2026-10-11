@@ -11,6 +11,7 @@ import com.laimory.server.terms.repository.TermAgreementRepository;
 import com.laimory.server.terms.repository.TermDocumentRepository;
 import com.laimory.server.terms.service.TermAgreementService;
 import com.laimory.server.terms.service.TermAgreementTransactionService;
+import com.laimory.server.terms.service.TermCatalogService;
 import com.laimory.server.terms.service.TermDocumentService;
 import com.laimory.server.terms.service.TermDocumentSummary;
 import java.sql.SQLException;
@@ -25,6 +26,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,6 +35,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.cache.CacheManager;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
@@ -58,10 +62,22 @@ class TermPersistenceIntegrationTest {
     private TermAgreementService termAgreementService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    @Qualifier("redisCacheManager")
+    private CacheManager cacheManager;
 
     private final List<TermDocumentId> createdDocumentIds = new ArrayList<>();
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<String> rawLowercaseVersions = new ArrayList<>();
+
+    /**
+     * fixture는 관리자 등록(evict)을 거치지 않고 DB에 직접 쓰므로, current catalog 캐시(#491)를 테스트 시작과 매 직접
+     * 쓰기 뒤에 비운다 — 다른 테스트·이전 실행이 남긴 캐시가 이 테스트의 DB 상태를 가리지 않게 한다.
+     */
+    @BeforeEach
+    void clearCatalogCacheBeforeTest() {
+        clearCurrentCatalogCache();
+    }
 
     @AfterEach
     void cleanUp() {
@@ -76,6 +92,7 @@ class TermPersistenceIntegrationTest {
         createdDocumentIds.clear();
         createdUserIds.clear();
         rawLowercaseVersions.clear();
+        clearCurrentCatalogCache();
     }
 
     @Test
@@ -255,7 +272,7 @@ class TermPersistenceIntegrationTest {
     }
 
     @Test
-    void agreementRequired_revisionCycle_tracksCurrentCompositeKey() {
+    void agreementRequired_revisionCycle_requiresAgreementOnlyForMajorRevision() {
         Long userId = newUserId();
         TermType type = TermType.CROSS_BORDER_TRANSFER_CONSENT;
         String major = nextMajor();
@@ -264,14 +281,18 @@ class TermPersistenceIntegrationTest {
         insertIfAbsent(userId, v1, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
 
-        TermDocument v11 = saveDocument(type, major + ".1");
+        // minor 개정은 같은 major의 기존 동의로 통과한다(#453).
+        saveDocument(type, major + ".1");
+        assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
+
+        TermDocument v2 = saveDocument(type, nextMajor() + ".0");
         TermDocumentSummary required = termAgreementService.findAgreementRequiredTerms(userId).stream()
                 .filter(document -> document.termType() == type)
                 .findFirst()
                 .orElseThrow();
-        assertThat(required.version()).isEqualTo(v11.getVersion());
+        assertThat(required.version()).isEqualTo(v2.getVersion());
 
-        insertIfAbsent(userId, v11, now, now);
+        insertIfAbsent(userId, v2, now, now);
         assertThat(agreementRequiredTypes(userId)).doesNotContain(type);
     }
 
@@ -307,6 +328,7 @@ class TermPersistenceIntegrationTest {
                 type, version, "통합 테스트 제목",
                 "https://www.laimory.app/terms/" + type.name().toLowerCase().replace('_', '-') + "/" + version));
         createdDocumentIds.add(document.getId());
+        clearCurrentCatalogCache();
         return document;
     }
 
@@ -315,6 +337,11 @@ class TermPersistenceIntegrationTest {
                 + " (term_type, version, title, content_url, created_at, updated_at)"
                 + " VALUES (?, ?, '통합 테스트 제목', 'https://www.laimory.app/terms/integration', NOW(6), NOW(6))",
                 termType, version);
+        clearCurrentCatalogCache();
+    }
+
+    private void clearCurrentCatalogCache() {
+        cacheManager.getCache(TermCatalogService.CACHE_NAME).clear();
     }
 
     private int insertIfAbsent(Long userId, TermDocument document, LocalDateTime acceptedAt,

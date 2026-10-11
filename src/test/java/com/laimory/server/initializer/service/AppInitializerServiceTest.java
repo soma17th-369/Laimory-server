@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 
 import com.laimory.server.initializer.dto.AgreementRequiredTermResponse;
 import com.laimory.server.initializer.dto.InitializerResponse;
+import com.laimory.server.notice.dto.PopupNoticeResponse;
+import com.laimory.server.notice.service.NoticeService;
 import com.laimory.server.push.service.SubjectPreferenceService;
 import com.laimory.server.terms.TermType;
 import com.laimory.server.terms.service.TermAgreementService;
@@ -21,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * 앱 초기화 orchestration 검증 — leaf 결과를 그대로 응답으로 옮기고(subjectId는 온보딩, userId는 약관 —
- * 두 principal을 섞지 않는다), leaf 예외를 기본값으로 삼키지 않는 계약을 고정한다.
+ * 두 principal을 섞지 않는다, 팝업 공지 id는 전역 값), leaf 예외를 기본값으로 삼키지 않는 계약을 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 class AppInitializerServiceTest {
@@ -35,8 +37,11 @@ class AppInitializerServiceTest {
     @Mock
     private TermAgreementService termAgreementService;
 
+    @Mock
+    private NoticeService noticeService;
+
     private AppInitializerService service() {
-        return new AppInitializerService(subjectPreferenceService, termAgreementService);
+        return new AppInitializerService(subjectPreferenceService, termAgreementService, noticeService);
     }
 
     @Test
@@ -85,5 +90,29 @@ class AppInitializerServiceTest {
 
         assertThatThrownBy(() -> service().getInitialState("v1", USER_ID, SUBJECT_ID))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void getInitialStatePassesPopupNoticesInLeafOrder() {
+        PopupNoticeResponse newer = new PopupNoticeResponse(15L, "둘째 팝업", "https://cdn.example/notices/b.webp");
+        PopupNoticeResponse older = new PopupNoticeResponse(12L, "첫째 팝업", "https://cdn.example/notices/a.jpg");
+        when(subjectPreferenceService.findOnboardingCompleted(SUBJECT_ID)).thenReturn(true);
+        when(termAgreementService.findAgreementRequiredTerms(USER_ID)).thenReturn(List.of());
+        when(noticeService.findPopupNotices()).thenReturn(List.of(newer, older));
+
+        InitializerResponse response = service().getInitialState("v1", USER_ID, SUBJECT_ID);
+
+        assertThat(response.popupNotices()).containsExactly(newer, older);
+    }
+
+    @Test
+    void getInitialStateWithoutPopupNoticeReturnsEmptyListNotNull() {
+        when(subjectPreferenceService.findOnboardingCompleted(SUBJECT_ID)).thenReturn(true);
+        when(termAgreementService.findAgreementRequiredTerms(USER_ID)).thenReturn(List.of());
+        when(noticeService.findPopupNotices()).thenReturn(List.of());
+
+        InitializerResponse response = service().getInitialState("v1", USER_ID, SUBJECT_ID);
+
+        assertThat(response.popupNotices()).isEmpty();
     }
 }

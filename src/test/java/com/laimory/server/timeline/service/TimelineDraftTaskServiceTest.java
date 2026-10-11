@@ -25,6 +25,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
+import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
@@ -92,6 +94,8 @@ class TimelineDraftTaskServiceTest {
     @Mock
     private TimelineAiDispatcher timelineAiDispatcher;
     @Mock
+    private CreditService creditService;
+    @Mock
     private Clock clock;
 
     private TimelineDraftTaskService service;
@@ -126,7 +130,7 @@ class TimelineDraftTaskServiceTest {
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
                 sourceItemEnrichmentService, timelineAiDispatcher,
-                privacyRedactor, new ObjectMapper(), clock);
+                privacyRedactor, creditService, new ObjectMapper(), clock);
         // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
         lenient().when(sourceItemEnrichmentService.enrich(anyList(), any()))
@@ -667,7 +671,7 @@ class TimelineDraftTaskServiceTest {
                 dailyRecordService, timelineTaskService, timelineDraftPreparationService,
                 timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
                 sourceItemEnrichmentService, timelineAiDispatcher,
-                failingRedactor, new ObjectMapper(), clock);
+                failingRedactor, creditService, new ObjectMapper(), clock);
 
         assertThatThrownBy(() -> failingService.createDraftTask(
                 VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
@@ -678,6 +682,24 @@ class TimelineDraftTaskServiceTest {
         verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyLong(), any(), any(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
         verify(timelineDraftSourceItemService, never()).deleteByTaskId(anyString());
+    }
+
+    @Test
+    void createDraftTaskWithZeroCreditsIsRejectedBeforeAnySideEffect() {
+        // 잔액 0은 403(-1021) — record 조회·enrich·staging·Redis·dispatch 전에 끊겨 아무것도 만들어지지 않는다.
+        doThrow(new BusinessException(ExceptionType.INSUFFICIENT_CREDIT))
+                .when(creditService).requireAvailable(SUBJECT_ID, CreditCostType.TIMELINE_CREATION);
+
+        assertThatThrownBy(() -> service.createDraftTask(
+                VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class, ex ->
+                        assertThat(ex.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
+
+        verify(dailyRecordService, never()).findBySubjectIdAndRecordDate(any(), any());
+        verify(sourceItemEnrichmentService, never()).enrich(anyList(), any());
+        verify(timelineDraftPreparationService, never()).prepareDraft(any(), any(), any(), anyString(), anyList());
+        verify(timelineTaskService, never()).createProcessing(anyString(), any(), anyLong(), any(), any(), any());
+        verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
     @Test
