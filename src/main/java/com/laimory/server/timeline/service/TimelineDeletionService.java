@@ -46,8 +46,8 @@ public class TimelineDeletionService {
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         requireOwnedRecord(subjectId, event.getDailyRecordId(),
                 ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-        executeSoftDelete("event", timelineEventId,
-                () -> timelineDeletionTransactionService.deleteEvent(subjectId, timelineEventId));
+        timelineDeletionTransactionService.deleteEvent(subjectId, timelineEventId);
+        log.info("timeline soft delete commit 완료: target=event id={}", timelineEventId);
     }
 
     /**
@@ -70,8 +70,8 @@ public class TimelineDeletionService {
     public void deleteDailyRecord(String applicationVersion, UUID subjectId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         requireOwnedRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
-        executeSoftDelete("dailyRecord", dailyRecordId,
-                () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
+        timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId);
+        log.info("timeline soft delete commit 완료: target=dailyRecord id={}", dailyRecordId);
         removePendingForDeletedRecord(subjectId, dailyRecordId);
     }
 
@@ -81,8 +81,8 @@ public class TimelineDeletionService {
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         Long dailyRecordId = record.getDailyRecordId();
-        executeSoftDelete("dailyRecord", dailyRecordId,
-                () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
+        timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId);
+        log.info("timeline soft delete commit 완료: target=dailyRecord id={}", dailyRecordId);
         removePendingForDeletedRecord(subjectId, dailyRecordId);
     }
 
@@ -98,14 +98,6 @@ public class TimelineDeletionService {
      */
     private void removePendingForDeletedRecord(UUID subjectId, Long dailyRecordId) {
         userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
-    }
-
-    /** soft delete transaction의 commit을 안전한 구조화 로그에 남긴다. */
-    private void executeSoftDelete(String target, Long targetId, Runnable dbSoftDelete) {
-        long totalStartNanos = System.nanoTime();
-        dbSoftDelete.run();
-        log.info("timeline soft delete commit 완료: target={} id={} totalElapsedMs={}",
-                target, targetId, Duration.ofNanos(System.nanoTime() - totalStartNanos).toMillis());
     }
 
     /** 연결 해제의 PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */

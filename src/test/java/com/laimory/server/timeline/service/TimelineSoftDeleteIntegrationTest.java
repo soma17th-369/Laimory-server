@@ -52,7 +52,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 @SpringBootTest
 @ActiveProfiles("docker")
 @Tag("integration")
-class TimelineDeletionCascadeIntegrationTest {
+class TimelineSoftDeleteIntegrationTest {
 
     // 매 테스트 임의 사용자로 persistent local DB의 기존 record/job과 격리하고, 날짜도 다른 고정 fixture와 구분한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 3);
