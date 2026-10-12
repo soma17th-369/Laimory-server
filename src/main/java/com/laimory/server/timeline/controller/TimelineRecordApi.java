@@ -199,11 +199,10 @@ public interface TimelineRecordApi {
             @RequestBody UpdateTimelineEventMemoRequest request);
 
     @Operation(summary = "타임라인 Event 삭제",
-            description = "Event와 마지막 참조가 사라지는 non-PHOTO Item을 DB에서 삭제한다. 마지막 Event를 지워도 하루 기록"
+            description = "Event를 삭제한다. 삭제한 Event는 이후 모든 조회·수정에서 사라지고 404가 된다. 서버는 "
+                    + "행을 soft delete로 남기되 장소명·주소는 지운다(#568). 마지막 Event를 지워도 하루 기록"
                     + "(DailyRecord)은 유지된다 — 하루 전체 제거는 DailyRecord 삭제 API가 담당한다. "
-                    + "마지막 참조가 사라지는 PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 "
-                    + "worker가 S3 성공 시 Item과 작업을 최종 삭제한다. 따라서 200은 root 삭제와 PHOTO "
-                    + "정리 작업 등록 성공을 뜻하고 S3 삭제 완료를 기다리지 않는다.")
+                    + "200은 삭제 표시 commit을 뜻한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
@@ -245,11 +244,8 @@ public interface TimelineRecordApi {
 
     @Operation(summary = "하루 기록(DailyRecord) 삭제(ID, deprecated)", deprecated = true,
             description = "호환을 위해 한시적으로 유지하는 ID 기반 삭제다. 신규 클라이언트는 "
-                    + "DELETE /daily-records/{recordDate}를 사용한다. 하루 전체 Record·Events와 마지막 "
-                    + "참조가 사라지는 non-PHOTO Items를 DB에서 삭제한다. "
-                    + "마지막 참조가 사라지는 PHOTO Item은 S3 삭제 작업과 함께 보존하며, commit 뒤 별도 "
-                    + "worker가 S3 성공 시 Item과 작업을 최종 삭제한다. 따라서 200은 root 삭제와 PHOTO "
-                    + "정리 작업 등록 성공을 뜻하고 S3 삭제 완료를 기다리지 않는다.")
+                    + "DELETE /daily-records/{recordDate}를 사용한다. 동작은 날짜 삭제와 같다 — 하루 기록과 "
+                    + "그 Events를 삭제하고, 이후 조회에서 사라지며, 같은 날짜에 다시 기록할 수 있다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),
@@ -266,10 +262,10 @@ public interface TimelineRecordApi {
 
     @Operation(summary = "하루 기록(DailyRecord) 날짜 삭제",
             description = "인증 사용자가 선택한 날짜의 하루 기록을 삭제한다(DRAFT/SAVED 모두). recordDate는 yyyy-MM-dd "
-                    + "형식이며 서버에서 계산·timezone 보정하지 않는다. 하루 전체 Record·Events와 마지막 참조가 "
-                    + "사라지는 non-PHOTO Items를 DB에서 삭제한다. 마지막 참조가 사라지는 PHOTO Item은 S3 삭제 "
-                    + "작업과 함께 보존하며, commit 뒤 별도 worker가 S3 성공 시 Item과 작업을 최종 삭제한다. "
-                    + "따라서 200은 root 삭제와 PHOTO 정리 작업 등록 성공을 뜻한다.")
+                    + "형식이며 서버에서 계산·timezone 보정하지 않는다. 하루 기록과 그 Events를 삭제한다 — 이후 "
+                    + "모든 조회에서 사라지고, 같은 날짜에 다시 draft를 만들면 새 하루 기록이 생긴다. 서버는 행을 "
+                    + "soft delete로 남기되 하루 감정과 Event의 장소명·주소는 지운다(#568). 200은 삭제 표시 "
+                    + "commit을 뜻한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "삭제 성공(body 없음)", useReturnTypeSchema = true),

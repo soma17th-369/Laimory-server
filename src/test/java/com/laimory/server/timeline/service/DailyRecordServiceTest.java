@@ -47,35 +47,35 @@ class DailyRecordServiceTest {
     void findByUserIdAndRecordDate_delegatesToRepository() {
         LocalDate date = LocalDate.of(2026, 5, 8);
         DailyRecord record = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
-        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.of(record));
+        when(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(SUBJECT, date)).thenReturn(Optional.of(record));
 
         Optional<DailyRecord> result = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT, date);
 
         assertThat(result).containsSame(record);
-        verify(dailyRecordRepository).findBySubjectIdAndRecordDate(SUBJECT, date);
+        verify(dailyRecordRepository).findBySubjectIdAndRecordDateAndDeletedAtIsNull(SUBJECT, date);
     }
 
     @Test
     void findByUserIdOrderByRecordDateDescDailyRecordIdDesc_delegatesToRepository() {
         DailyRecord record = DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
         List<DailyRecord> records = List.of(record);
-        when(dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT)).thenReturn(records);
+        when(dailyRecordRepository.findBySubjectIdAndDeletedAtIsNullOrderByRecordDateDescDailyRecordIdDesc(SUBJECT)).thenReturn(records);
 
         List<DailyRecord> result = dailyRecordService.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT);
 
         assertThat(result).isSameAs(records);
-        verify(dailyRecordRepository).findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(SUBJECT);
+        verify(dailyRecordRepository).findBySubjectIdAndDeletedAtIsNullOrderByRecordDateDescDailyRecordIdDesc(SUBJECT);
     }
 
     @Test
     void findByDailyRecordIdAndUserId_delegatesToRepository() {
         DailyRecord record = DailyRecord.createDraft(SUBJECT, LocalDate.of(2026, 5, 8), RECORD_AT, ZONE);
-        when(dailyRecordRepository.findByDailyRecordIdAndSubjectId(100L, SUBJECT)).thenReturn(Optional.of(record));
+        when(dailyRecordRepository.findByDailyRecordIdAndSubjectIdAndDeletedAtIsNull(100L, SUBJECT)).thenReturn(Optional.of(record));
 
         Optional<DailyRecord> result = dailyRecordService.findByDailyRecordIdAndSubjectId(100L, SUBJECT);
 
         assertThat(result).containsSame(record);
-        verify(dailyRecordRepository).findByDailyRecordIdAndSubjectId(100L, SUBJECT);
+        verify(dailyRecordRepository).findByDailyRecordIdAndSubjectIdAndDeletedAtIsNull(100L, SUBJECT);
     }
 
     @Test
@@ -93,7 +93,7 @@ class DailyRecordServiceTest {
         LocalDate end = LocalDate.of(2026, 5, 31);
         List<DailyRecord> records = List.of(DailyRecord.createDraft(SUBJECT, start, RECORD_AT, ZONE));
         when(dailyRecordRepository
-                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualAndDeletedAtIsNullOrderByRecordDateAsc(
                         SUBJECT, start, end))
                 .thenReturn(records);
 
@@ -102,7 +102,7 @@ class DailyRecordServiceTest {
 
         assertThat(result).isSameAs(records);
         verify(dailyRecordRepository)
-                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualAndDeletedAtIsNullOrderByRecordDateAsc(
                         SUBJECT, start, end);
     }
 
@@ -151,7 +151,7 @@ class DailyRecordServiceTest {
         LocalDate date = LocalDate.of(2026, 5, 8);
         DailyRecord existing = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(existing, "dailyRecordId", 100L);
-        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.of(existing));
+        when(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(SUBJECT, date)).thenReturn(Optional.of(existing));
 
         DailyRecord result = dailyRecordService.findOrCreateDraft(SUBJECT, date, RECORD_AT, ZONE);
 
@@ -162,7 +162,7 @@ class DailyRecordServiceTest {
     @Test
     void findOrCreateDraft_createsWhenAbsent() {
         LocalDate date = LocalDate.of(2026, 5, 8);
-        when(dailyRecordRepository.findBySubjectIdAndRecordDate(SUBJECT, date)).thenReturn(Optional.empty());
+        when(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(SUBJECT, date)).thenReturn(Optional.empty());
         DailyRecord created = DailyRecord.createDraft(SUBJECT, date, RECORD_AT, ZONE);
         ReflectionTestUtils.setField(created, "dailyRecordId", 200L);
         when(dailyRecordRepository.save(any())).thenReturn(created);

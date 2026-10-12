@@ -19,13 +19,12 @@ import org.springframework.stereotype.Service;
  *
  * <p>공통 순서가 load-bearing이다:
  * 조회·소유권 사전 검증(404 은닉 — 아무 부수효과 전에 거절) →
- * 별도 트랜잭션에서 재확인 후 PHOTO 삭제 job enqueue + DB hard delete
- * ({@link TimelineDeletionTransactionService} — Event/junction은 DB {@code ON DELETE CASCADE},
- * non-PHOTO orphan은 명시 삭제, valid PHOTO orphan은 job과 함께 보존).
+ * 별도 트랜잭션에서 재확인 후 DB 변경({@link TimelineDeletionTransactionService}).
  *
- * <p>S3 삭제는 request 경로에서 실행하지 않는다. 마지막 Event 참조가 사라지는 PHOTO Item 보존과 삭제
- * job, root/non-PHOTO hard delete가 같은 MySQL transaction으로 commit되면 API가 성공한다. 별도 worker가
- * S3를 재시도하고 성공 뒤 PHOTO Item과 job을 최종 hard delete한다.
+ * <p>Event·DailyRecord 삭제는 soft delete다(#568) — 행·junction·Item을 남기고 {@code deleted_at}만 찍으며,
+ * 감정·장소명·주소는 지운다. 삭제된 행은 앱 조회에서 빠지고 분석용으로 회원 탈퇴 시까지 남는다.
+ * Event-Item 연결 해제만 junction을 hard delete하고, 마지막 참조였던 PHOTO는 S3 삭제 job으로 넘긴다
+ * (S3 삭제는 request 경로에서 실행하지 않는다).
  *
  * <p>마지막 Event를 지워도 DailyRecord는 유지한다 — 하루 전체 제거는 DailyRecord 삭제만 담당한다.
  * 로그에 객체 key·URL·메모 내용은 남기지 않는다.
@@ -40,14 +39,14 @@ public class TimelineDeletionService {
     private final UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
     private final TimelineDeletionTransactionService timelineDeletionTransactionService;
 
-    /** Event/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
+    /** Event를 soft delete한다. */
     public void deleteEvent(String applicationVersion, UUID subjectId, Long timelineEventId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = timelineEventService.findById(timelineEventId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         requireOwnedRecord(subjectId, event.getDailyRecordId(),
                 ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-        executeDelete("event", timelineEventId,
+        executeSoftDelete("event", timelineEventId,
                 () -> timelineDeletionTransactionService.deleteEvent(subjectId, timelineEventId));
     }
 
@@ -67,22 +66,22 @@ public class TimelineDeletionService {
                 () -> timelineDeletionTransactionService.detachEventItem(subjectId, timelineEventId, timelineItemId));
     }
 
-    /** Record·Events/non-PHOTO orphan을 hard delete하고 PHOTO orphan Item과 삭제 job을 남긴다. */
+    /** Record와 그 Event들을 soft delete한다. */
     public void deleteDailyRecord(String applicationVersion, UUID subjectId, Long dailyRecordId) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         requireOwnedRecord(subjectId, dailyRecordId, ExceptionType.DAILY_RECORD_NOT_FOUND);
-        executeDelete("dailyRecord", dailyRecordId,
+        executeSoftDelete("dailyRecord", dailyRecordId,
                 () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
         removePendingForDeletedRecord(subjectId, dailyRecordId);
     }
 
-    /** 날짜로 찾은 Record·Events/non-PHOTO orphan을 삭제하고 PHOTO orphan Item과 삭제 job을 남긴다. */
+    /** 날짜로 찾은 Record와 그 Event들을 soft delete한다. */
     public void deleteDailyRecordByDate(String applicationVersion, UUID subjectId, LocalDate recordDate) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DAILY_RECORD_NOT_FOUND));
         Long dailyRecordId = record.getDailyRecordId();
-        executeDelete("dailyRecord", dailyRecordId,
+        executeSoftDelete("dailyRecord", dailyRecordId,
                 () -> timelineDeletionTransactionService.deleteDailyRecord(subjectId, dailyRecordId));
         removePendingForDeletedRecord(subjectId, dailyRecordId);
     }
@@ -101,7 +100,15 @@ public class TimelineDeletionService {
         userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
     }
 
-    /** PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */
+    /** soft delete transaction의 commit을 안전한 구조화 로그에 남긴다. */
+    private void executeSoftDelete(String target, Long targetId, Runnable dbSoftDelete) {
+        long totalStartNanos = System.nanoTime();
+        dbSoftDelete.run();
+        log.info("timeline soft delete commit 완료: target={} id={} totalElapsedMs={}",
+                target, targetId, Duration.ofNanos(System.nanoTime() - totalStartNanos).toMillis());
+    }
+
+    /** 연결 해제의 PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */
     private void executeDelete(String target, Long targetId,
                                Supplier<TimelineDeletionTransactionService.DeletionResult> dbDelete) {
         long totalStartNanos = System.nanoTime();

@@ -124,16 +124,16 @@ nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용�
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}`와 날짜 기반
-`DELETE /a/api/{version}/timeline/daily-records/{recordDate}`는 필요한 PHOTO S3 삭제 작업·원문
-PHOTO Item 보존과 기존 root/junction/non-PHOTO hard delete가 MySQL에서 commit되면 200을 반환한다. 기존
-`DELETE /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 의미로 동작하는 deprecated 호환
-API다. S3 완료는 비동기 worker 책임이며, 성공 뒤 원문 PHOTO Item과 job을 최종 hard delete하므로 S3 장애를
-동기 502로 반환하지 않는다. 없음·비소유 404 계약은 유지하고 SAVED record도 삭제할 수 있다. 잘못된 날짜 형식은 400이며,
-같은 날짜 작업 중이라는 이유로 `-1016`을 반환하지 않는다.
+`DELETE /a/api/{version}/timeline/daily-records/{recordDate}`는 soft delete(#568)가 MySQL에서 commit되면 200을
+반환한다. 기존 `DELETE /a/api/{version}/timeline/daily-records/by-id/{dailyRecordId}`도 같은 의미로 동작하는
+deprecated 호환 API다. 삭제한 Event·하루는 이후 모든 조회·수정에서 없음(404·목록 제외)과 같고, 삭제한 날짜에
+다시 draft를 만들면 새 하루 기록이 생긴다. S3 호출이 없으므로 S3 장애와 무관하다. 없음·비소유 404 계약은
+유지하고 SAVED record도 삭제할 수 있다. 잘못된 날짜 형식은 400이며, 같은 날짜 작업 중이라는 이유로 `-1016`을
+반환하지 않는다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}/items/{timelineItemId}`는 Event-Item junction
-한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 위
-삭제 API들과 같은 PHOTO 삭제 작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
+한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 PHOTO 삭제
+작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED record에서도 해제할 수 있다. 성공 응답은 `body=null`이다.
 

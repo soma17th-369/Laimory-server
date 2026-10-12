@@ -22,7 +22,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. `subject_id + record_date`는 유일하다. |
+| 일일 기록 | Daily Record | 현재 구현 | 한 콘텐츠 subject의 특정 날짜 기록이다. 활성 기록은 `subject_id + record_date`가 유일하다(삭제 기록은 soft delete로 남는다, #568). |
 | 기록 날짜 | Record Date | 현재 구현 | 일일 기록의 대상 날짜다. 클라이언트가 draft 요청에 명시한 선택 날짜가 단일 권위이며, 서버는 계산·보정 없이 DailyRecord 조회·선생성에 그대로 쓴다(과거 정오 경계 파생은 #164에서 삭제). 허용 범위는 MySQL `DATE`와 같은 `1000-01-01`~`9999-12-31`(양끝 포함)이고 범위 밖은 400 `-400`이다(#366). 미래 날짜는 하루 기록을 실제로 만드는 draft 생성에서만 거절하며(요청 record timezone 기준 — 서버 zone이 아니다), `DailyRecord` 생성 경로가 그 하나뿐이라 이 경계만으로 미래 record가 생기지 않는다. save·조회·삭제·감정 수정·Event 생성에는 미래 제한이 없다. `recordAt`과 날짜가 달라도 되는 계약은 유지된다. |
 | 기록 시각 | Record At | 현재 구현 | 사용자가 실제로 기록을 만든 벽시계 시각(`recordAt`)이다. timezone(`recordTimeZone`)과 함께 역산용 메타데이터로만 저장하며 서버는 아무것도 파생하지 않는다 — 기록 날짜와 날짜가 달라도 된다(다음날 아침에 쓴 어제 일기). |
 | 하루 감정 | Emotion Type | 현재 구현 | 하루 전체의 5단계 감정 enum(`VERY_HAPPY`~`VERY_UNHAPPY`)이다. draft에서는 NULL이고, save API의 필수 body `emotionType`이 `SAVED` 전이와 같은 조건부 UPDATE로 최초 확정한다. 확정 후에는 `PUT .../daily-records/{recordDate}/emotion`이 SAVED record의 감정만 교체한다(status 불변·멱등, DRAFT는 409 `-1020`, User Memory 재enqueue 없음). 저장 전 DRAFT·과거 SAVED 행의 NULL은 정상값이며(backfill 없음) 이벤트별 감정은 없다. |
@@ -120,11 +120,12 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 규칙 | 상태 | 설명 |
 |---|---|---|
-| Daily Record 유일성 | 현재 구현 | `UNIQUE(subject_id, record_date)`다. |
+| Daily Record 유일성 | 현재 구현 | 활성 행(`deleted_at` NULL)만 `(subject_id, record_date)` 유일하다 — V11 생성 컬럼 `active_marker`(활성 1, 삭제 NULL) unique. 삭제 행은 같은 날짜에 여럿 남을 수 있다(#568). |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
-| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행 삭제 시 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 대상에만 연결된 non-PHOTO Item은 같은 transaction에서 명시 삭제하고 shared Item은 유지한다. 마지막 참조가 사라진 유효 PHOTO Item은 job과 함께 보존하며, commit 뒤 worker가 S3 삭제 성공을 확인한 뒤 Item과 job을 최종 hard delete한다. |
+| 삭제(soft delete) | 현재 구현 | Event·DailyRecord 삭제 API는 행을 지우지 않고 `deleted_at`을 찍는다(#568). 앱 조회에서는 없는 것과 같고, 행은 분석용으로 회원 탈퇴 시까지 남는다. 같은 UPDATE에서 Event `place`·`address`, record `emotion_type`을 지운다. record 삭제는 하위 활성 Event에 같은 `deleted_at`을 찍는다. junction·Item은 남고 PHOTO 삭제 job은 생기지 않는다. "활성" = `deleted_at` NULL. |
+| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행의 hard delete(계정 삭제·테스트 정리)에서 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 API는 soft delete라 cascade가 일어나지 않는다. |
 | orphan 스위퍼 | 현재 구현 | junction이 0인 final Item을 하루 1회(03:30 KST) 수렴시키는 스케줄 작업. 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 object key를 복원할 수 없는 손상 PHOTO만 즉시 hard delete한다. job이 이미 있는 Item은 worker 소유라 손대지 않는다. "스위퍼가 S3를 지운다"고 쓰지 않는다 — S3 삭제는 언제나 delete job worker 몫이다. |
-| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(일일 orphan 스위퍼가 수렴시킨다), 마지막 참조 PHOTO는 Cascade 삭제와 같은 job 보존 규칙을 따른다. |
+| Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). 마지막 참조 판정은 best-effort 일반 읽기라 경합 시 job 없는 orphan Item이 남을 수 있고(일일 orphan 스위퍼가 수렴시킨다), 마지막 참조 PHOTO는 job과 함께 보존되고 worker가 S3 성공 뒤 최종 삭제한다. |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |
 | AI 결과 단일 트랜잭션 | 현재 구현 | retry receipt에 선점 표식(`claimedAt`)을 남긴 요청이 서버 결과 검증 후 Event/Item/junction 저장과 accepted source 삭제를 하나의 DB transaction으로 commit하고, commit 뒤 한 번의 native write로 callback token hash와 Redis `CALLBACK_PENDING`으로 회전한다. 저장 실패는 가능한 경우 최초 `RESULT_PENDING` snapshot으로 복구한다. |
 | Event 편집 단일 트랜잭션 | 현재 구현 | Event PATCH는 Event 필드·선택적 memo 수정과 수동 PHOTO Item/junction 추가를 하나의 DB transaction으로 commit한다. 수동 Event 생성도 Event와 optional PHOTO Item/junction을 하나의 transaction으로 commit한다. 수동 PHOTO는 두 경로 모두 대상 Event에 같은 rawId가 있으면 오류 없이 건너뛰고, 아니면 새 Item이다(#502). |
