@@ -154,14 +154,29 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - Event·DailyRecord 삭제와 Event-Item 연결 해제는 record 상태와 무관하게 허용한다(SAVED 포함).
   없음·비소유는 404로 은닉한다.
-- 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
-  transaction이 그 정확한 ID의 owner/DRAFT를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
+- 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 활성 record의 ID를 snapshot하고 삭제
+  transaction이 그 정확한 ID의 owner를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
   record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.
-- 삭제 transaction은 다른 Event가 참조하지 않아 association 0이 될 orphan Item을 계산하고, orphan PHOTO의
-  full object key와 원문 Item PK를 `timeline_photo_delete_jobs`에 insert한다. 같은 commit에서
-  root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
-  Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
-- DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
+- **Event·DailyRecord 삭제는 soft delete다(#568).** 행을 지우지 않고 `deleted_at`(NULL = 활성)을 찍으며,
+  junction·Item은 그대로 두고 PHOTO 삭제 job도 만들지 않는다. 삭제 기록은 분석용으로 회원 탈퇴 시까지 남고
+  계정 삭제(#302)가 hard delete한다.
+  - 같은 UPDATE에서 Event의 `place`·`address`, record의 `emotion_type`을 NULL로 지운다(삭제 기록에 위치정보·
+    감정은 남기지 않는다). 지운 값은 복구되지 않는다.
+  - record 삭제는 그 record의 활성 Event에도 **record와 같은 `deleted_at`**을 찍는다. 먼저 개별 삭제된 Event는
+    원래 시각을 유지한다 — "하루째 삭제"(`event.deleted_at = record.deleted_at`)와 "Event만 삭제"를 시각으로
+    구분한다. 삭제된 Event 판정은 `timeline_events.deleted_at`으로 충분하다. 예외는 record 삭제 commit 직후
+    끼어든 Event 생성·AI 결과 저장(ms 경합, 수용)뿐이며, 이것까지 잡으려면 소속 record의 `deleted_at`도 본다.
+  - 삭제 쓰기는 `deleted_at IS NULL` 조건의 bulk UPDATE라 동시 삭제의 후발 요청은 0행으로 끝나고(응답 200)
+    첫 삭제 시각이 남는다. `DailyRecord`는 `@DynamicUpdate`라 같은 날짜 draft append의 dirty-checking UPDATE가
+    그 사이 commit된 `deleted_at`이나 저장 전이를 되돌리지 않는다.
+  - 앱의 모든 조회·수정 경로는 활성 행만 본다 — 삭제된 record·Event는 지금의 "없음"과 같다(404, 목록 제외,
+    save·감정 수정 0행 → 404, User Memory 배치는 사라진 하루로 걷어냄). rawId "이미 저장됨" 판정도 활성 Event에서
+    출발하므로 삭제된 Event의 사진이 같은 사진 재생성을 막지 않는다.
+  - 삭제 행까지 보는 경로는 계정 삭제(무필터 id 조회·native join·FK cascade)뿐이다.
+- Event-Item 연결 해제는 hard delete다. 마지막 참조가 사라지는 PHOTO는 full object key와 원문 Item PK를
+  `timeline_photo_delete_jobs`에 insert하고 원문 Item을 job과 함께 보존한다. 연결 해제의 잔여 참조에는 삭제된
+  Event의 junction도 포함되므로, 삭제된 Event와 공유한 사진은 job 없이 남는다(수용).
+- DELETE API(연결 해제)는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
   03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
   D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
   처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
@@ -174,25 +189,25 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
   보장하지 않는다.
   별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
-- 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
+- 연결 해제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
   진행한다(orphan 허용 — draft cleanup과 동일 규칙).
 - 같은 날짜의 draft(AI 작업), 수동 Event 생성/편집(수동 PHOTO 추가 포함), Event/DailyRecord 삭제
   사이에는 공통 Redis admission guard가 없다. 각 작업의 입력·소유권 preflight와 자기 DB transaction
   경계는 유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나
   지우지 않으며 기존 TTL로 자연 만료한다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
-- Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
-  Item은 record FK가 없어 cascade되지 않는다. 삭제 대상에만 연결된 non-PHOTO와 job을 만들 수 없는 손상
-  PHOTO는 같은 transaction에서 명시 삭제하고, 유효한 PHOTO는 job과 함께 보존한다. orphan 판정은 삭제 전
-  junction 스냅샷 기준이다. 같은 날짜 graph 쓰기를 직렬화하는 공통 guard가 없으므로 경합 정합성은
-  보장하지 않는다.
+- 같은 날짜 유일성은 활성 record에만 걸린다(V11 생성 컬럼 `active_marker` unique). 삭제한 날짜에 다시 기록하면
+  새 record가 생기고, 같은 날짜의 삭제 행은 몇 개든 남는다.
+- Event/Record 행의 hard delete(계정 삭제·테스트 정리)는 자기 junction을 DB FK `ON DELETE CASCADE`로 지운다
+  (JPA cascade 없음). Item은 record FK가 없어 cascade되지 않는다. 같은 날짜 graph 쓰기를 직렬화하는 공통
+  guard가 없으므로 경합 정합성은 보장하지 않는다.
 - Event-Item 연결 해제는 대상 junction 한 줄만 직접 DELETE로 지우고 Event·shared Item은 유지한다. 현재
   정책상 연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). 직접
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
   수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
   동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
-  마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
+  마지막 참조 orphan 처리는 유효 PHOTO job 보존·손상 PHOTO 즉시 삭제다.
 - **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
   insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상

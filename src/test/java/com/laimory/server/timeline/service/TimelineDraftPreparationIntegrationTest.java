@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -75,8 +76,9 @@ class TimelineDraftPreparationIntegrationTest {
     @AfterEach
     void cleanUp() {
         timelineDraftSourceItemRepository.deleteByTaskId(taskId);
-        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
-                .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
+        // soft delete된 record까지 지운다(활성 조회는 삭제 행을 못 본다) — 계정 삭제용 무필터 id 조회를 쓴다.
+        dailyRecordRepository.findIdsBySubjectIdAfterId(subjectId, 0L, PageRequest.of(0, 100))
+                .forEach(dailyRecordRepository::deleteById);
         // 가입 transaction이 만든 subject 축 push 행(#314)이 남아 있으면 mapping 삭제가 FK RESTRICT에 막힌다.
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
@@ -140,7 +142,7 @@ class TimelineDraftPreparationIntegrationTest {
                 List.of(sourceRow("raw-dup"), sourceRow("raw-dup"))))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)).isEmpty();
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(subjectId, DATE)).isEmpty();
         assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
     }
 
@@ -155,7 +157,7 @@ class TimelineDraftPreparationIntegrationTest {
                 .isInstanceOfSatisfying(BusinessException.class, exception ->
                         assertThat(exception.getExceptionType()).isEqualTo(ExceptionType.INSUFFICIENT_CREDIT));
 
-        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)).isEmpty();
+        assertThat(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(subjectId, DATE)).isEmpty();
         assertThat(timelineDraftSourceItemRepository.findByTaskId(taskId)).isEmpty();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM credit_histories WHERE reference_id = ?",
                 Integer.class, taskId)).isZero();

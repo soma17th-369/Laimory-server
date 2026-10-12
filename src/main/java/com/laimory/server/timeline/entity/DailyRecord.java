@@ -15,17 +15,26 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.Getter;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * 일일 기록. (subject_id, record_date) 유일. draft 생성 시 status=DRAFT, emotion_type=NULL이며
+ * 일일 기록. 활성 행(deleted_at NULL)만 (subject_id, record_date) 유일하다 — 삭제 행은 같은 날짜에 여럿 남을 수
+ * 있다(DB 생성 컬럼 {@code active_marker} unique, 엔티티는 매핑하지 않음). draft 생성 시 status=DRAFT, emotion_type=NULL이며
  * 저장 API의 조건부 UPDATE가 emotion_type과 status=SAVED를 함께 최초 확정한다(과거 SAVED 행의
  * NULL은 정상값). 확정 후에는 SAVED 전용 감정 수정 PUT이 emotion_type만 교체한다(status 불변) —
  * DRAFT에 감정을 미리 쓰는 write 지점은 없다.
+ *
+ * <p>삭제는 soft delete다({@code deleted_at}). 값은 repository의 조건부 bulk UPDATE만 쓰고 엔티티에는 setter가 없다.
+ *
+ * <p>{@code @DynamicUpdate}: dirty-checking UPDATE(같은 날짜 draft append의 {@link #updateRecordTime})가 실제로 바뀐
+ * 컬럼만 SET하게 한다. 기본 UPDATE는 모든 updatable 컬럼을 로드 시점 값으로 다시 쓰므로, 그 사이 commit된
+ * soft delete({@code deleted_at})나 저장 전이({@code status}·{@code emotion_type})를 되돌린다.
  */
 @Entity
 @Table(name = "daily_records")
+@DynamicUpdate
 @Getter
 public class DailyRecord extends BaseEntity {
 
@@ -54,6 +63,9 @@ public class DailyRecord extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(length = 32, nullable = false)
     private DailyRecordStatus status;
+
+    /** soft delete 시각. NULL이면 활성이다. 조건부 bulk UPDATE만 쓴다. */
+    private LocalDateTime deletedAt;
 
     protected DailyRecord() {
     }

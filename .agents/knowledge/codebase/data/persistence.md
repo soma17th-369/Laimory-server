@@ -165,8 +165,9 @@ final 테이블(`timeline_events`/`timeline_items`)의 writer는 API JPA 하나�
 transaction이 쓰고, Event PATCH의 Event/memo 수정·수동 PHOTO Item/junction 추가와 수동 Event 생성
 (#326/#361 — Event + optional PHOTO Item/junction)도 같은 계층이 각각 한 transaction으로 commit한다.
 timestamp DB default(`CURRENT_TIMESTAMP(6)`)는 과거 AI raw INSERT 계약의 잔재로 남아 있으며 무해하다.
-`timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) 삭제의
-FK cascade가 기본이고, Event-Item 연결 해제만 영향 행 수를 반환하는 직접 DELETE로 명시 삭제한다.
+`timeline_event_items`는 순수 연결 행이라 감사 컬럼이 없다. junction 행 삭제는 root(Event/Item) hard delete의
+FK cascade가 기본이고(Event·record 삭제 API는 soft delete라 junction을 남긴다), Event-Item 연결 해제만 영향 행
+수를 반환하는 직접 DELETE로 명시 삭제한다.
 
 `timeline_draft_source_items`의 draft 준비 hot path INSERT는 생성 ID를 같은 transaction에서 사용하지 않으므로
 전용 `JdbcTemplate` batch writer가 입력 순서대로 저장한다. Connector/J가 batch를 multi-values INSERT로
@@ -289,7 +290,18 @@ Manager 기동 1회 로드(`app.subject.mode=secretsmanager`), 로컬/테스트�
 = user rollback). rotation은 previous key hit 때 PK·version만 native UPDATE로 원자 교체한다(subject 불변).
 
 콘텐츠 owner는 Java `UUID subjectId`다. `daily_records`의 canonical UUID 문자열 `subject_id`는 NOT NULL이며
-`uq_daily_records_subject_date (subject_id, record_date)` UNIQUE·FK RESTRICT를 가진다.
+`uq_daily_records_subject_active_date (subject_id, record_date, active_marker)` UNIQUE·FK RESTRICT를 가진다.
+`active_marker`는 V11(#568) VIRTUAL 생성 컬럼(`IF(deleted_at IS NULL, 1, NULL)`)이라 활성 행만 날짜 유일하고,
+엔티티는 매핑하지 않는다(값은 MySQL이 계산). 이 unique가 `subject_id` FK의 지원 index와 `(subject_id, record_date)`
+조회 prefix를 겸한다.
+
+`daily_records`·`timeline_events`의 `deleted_at DATETIME(6) NULL`(V11)은 soft delete 표시다(NULL = 활성).
+writer는 repository의 조건부 bulk UPDATE(`deleted_at IS NULL`)뿐이고 엔티티에 setter가 없다. 조회 repository
+메서드는 이름에 `DeletedAtIsNull`을 담아 활성 행만 읽는다. 삭제 행까지 보는 경로는 계정 삭제(#302)의
+`findIdsBySubjectIdAfterId`·native join·JPQL bulk delete와 FK cascade뿐이다. `DailyRecord`는 `@DynamicUpdate`다 —
+유일한 dirty-checking 쓰기(draft append의 `updateRecordTime`)가 bulk UPDATE로 바뀐 `deleted_at`·`status`·
+`emotion_type`을 로드 시점 값으로 되돌리지 않게 한다. 삭제·필드 제거 규칙은 [invariants](../../domain/invariants.md)의
+Deletion 절이 소유한다.
 `timeline_draft_source_items.subject_id`도 NOT NULL·FK RESTRICT이고,
 `push_registrations.subject_id`는 NOT NULL·조회 index를 가지되 기존 soft-owner 방침대로 FK는 없다.
 `user_memories`·`subject_preferences`는 subject PK·FK RESTRICT다. subject FK는 `user_subject_links.subject_id`를
@@ -505,8 +517,8 @@ draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot�
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
 delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
-Event/DailyRecord 삭제는 root/junction/non-PHOTO orphan hard delete와 함께 MySQL job을 만들고 유효한
-orphan PHOTO Item을 보존한 뒤 즉시 성공하며, 별도 worker가
+Event-Item 연결 해제는 junction hard delete와 함께 마지막 참조가 사라진 PHOTO의 MySQL job을 만들고 원문
+PHOTO Item을 보존한 뒤 즉시 성공하며(Event/DailyRecord 삭제는 soft delete라 job을 만들지 않는다, #568), 별도 worker가
 `DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
 apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 claim한 job의 object key를 그대로
 삭제 요청하고, `Deleted`로 확인된 job과 그 PHOTO Item만 별도 transaction에서 지운다.

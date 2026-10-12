@@ -33,14 +33,14 @@ class TimelineEventServiceTest {
                 LocalDateTime.of(2026, 5, 8, 9, 0), null, "아침", null, null, null, null);
         List<TimelineEvent> events = List.of(event);
         when(timelineEventRepository
-                .findByDailyRecordIdInOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds))
+                .findByDailyRecordIdInAndDeletedAtIsNullOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds))
                 .thenReturn(events);
 
         List<TimelineEvent> result = timelineEventService.findByDailyRecordIds(dailyRecordIds);
 
         assertThat(result).isSameAs(events);
         verify(timelineEventRepository)
-                .findByDailyRecordIdInOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds);
+                .findByDailyRecordIdInAndDeletedAtIsNullOrderByDailyRecordIdAscStartAtAscTimelineEventIdAsc(dailyRecordIds);
     }
 
     @Test

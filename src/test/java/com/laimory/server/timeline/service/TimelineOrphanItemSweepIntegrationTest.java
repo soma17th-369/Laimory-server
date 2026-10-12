@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -101,8 +102,9 @@ class TimelineOrphanItemSweepIntegrationTest {
         if (!jobIds.isEmpty()) {
             timelinePhotoDeleteJobRepository.deleteAllByIdInBatch(jobIds);
         }
-        dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, DATE)
-                .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId()));
+        // soft delete된 record까지 지운다(활성 조회는 삭제 행을 못 본다) — 계정 삭제용 무필터 id 조회를 쓴다.
+        dailyRecordRepository.findIdsBySubjectIdAfterId(subjectId, 0L, PageRequest.of(0, 100))
+                .forEach(dailyRecordRepository::deleteById);
         List<Long> remaining = fixtureItemIds.stream()
                 .filter(id -> timelineItemRepository.existsById(id))
                 .toList();

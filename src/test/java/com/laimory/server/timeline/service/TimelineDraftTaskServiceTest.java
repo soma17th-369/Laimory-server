@@ -330,7 +330,7 @@ class TimelineDraftTaskServiceTest {
         // 보상 삭제: 이번 task의 source rows만 지운다. DailyRecord는 유지 — 이번 task가 처음 만든 record인지
         // durable하게 알 수 없고, empty DRAFT 재사용이 안전하다. dispatch는 호출되지 않는다.
         verify(timelineDraftSourceItemService).deleteByTaskId(anyString());
-        verify(dailyRecordService, never()).deleteById(anyLong());
+        verify(dailyRecordService, never()).softDelete(anyLong(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
 
