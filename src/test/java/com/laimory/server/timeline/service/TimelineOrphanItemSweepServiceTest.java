@@ -12,7 +12,6 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -47,8 +46,8 @@ class TimelineOrphanItemSweepServiceTest {
     void setUp() {
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
                 timelinePhotoDeleteJobService, new ObjectMapper(), java.time.Clock.systemUTC());
-        lenient().when(timelineEventItemService.findByTimelineItemIds(anyCollection()))
-                .thenReturn(List.of());
+        lenient().when(timelineEventItemService.findActivelyLinkedItemIds(anyCollection()))
+                .thenReturn(Set.of());
         lenient().when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of());
     }
@@ -152,8 +151,7 @@ class TimelineOrphanItemSweepServiceTest {
         scan(gainedJob, gainedJunction);
         claim(gainedJob, gainedJunction);
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(20L, 21L))).thenReturn(Set.of(20L));
-        when(timelineEventItemService.findByTimelineItemIds(List.of(20L, 21L)))
-                .thenReturn(List.of(TimelineEventItem.of(99L, 21L)));
+        when(timelineEventItemService.findActivelyLinkedItemIds(List.of(20L, 21L))).thenReturn(Set.of(21L));
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 

@@ -62,7 +62,7 @@ public class TimelineItemService {
         return timelineItemRepository.countStaleObservedOrphans(workerIndex, totalWorkerCount, staleBefore);
     }
 
-    /** Item 행들을 삭제한다(association 0 orphan 정리 전용 — 자기 junction 행은 DB FK cascade가 지운다). */
+    /** Item 행들을 삭제한다(orphan 정리 전용 — 남은 자기 junction 행(삭제된 Event 연결)은 DB FK cascade가 지운다). */
     public void deleteByIds(Collection<Long> timelineItemIds) {
         if (timelineItemIds.isEmpty()) {
             return;

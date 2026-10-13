@@ -4,6 +4,7 @@ import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -30,12 +31,23 @@ public class TimelineEventItemService {
         return timelineEventItemRepository.findByTimelineEventIdIn(timelineEventIds);
     }
 
-    /** 후보 Item들의 현재 association 전체 — 삭제 흐름의 exclusive/shared 판정과 orphan 검출에 쓴다. */
+    /**
+     * 후보 Item들의 현재 association 전체(삭제된 Event 연결 포함) — 연결 해제의 잔여 참조 판정용(#568 E5).
+     * 고아 판정에는 쓰지 않는다 — 삭제된 Event 연결을 제외하는 {@code findActivelyLinkedItemIds}를 쓴다(#569).
+     */
     public List<TimelineEventItem> findByTimelineItemIds(Collection<Long> timelineItemIds) {
         if (timelineItemIds.isEmpty()) {
             return List.of();
         }
         return timelineEventItemRepository.findByTimelineItemIdIn(timelineItemIds);
+    }
+
+    /** 후보 Item 중 활성 Event에 연결된 Item id — 삭제된 Event의 연결은 고아 판정에서 제외한다(#569). */
+    public Set<Long> findActivelyLinkedItemIds(Collection<Long> timelineItemIds) {
+        if (timelineItemIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(timelineEventItemRepository.findActivelyLinkedItemIdsIn(timelineItemIds));
     }
 
     /** 해당 Event-Item 연결 존재 여부(일반 읽기) — 연결 해제의 404 은닉/타입 거절 순서 판정용. */

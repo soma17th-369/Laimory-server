@@ -208,10 +208,16 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
   스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
   마지막 참조 orphan 처리는 유효 PHOTO job 보존·손상 PHOTO 즉시 삭제다.
-- **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
+- **활성 Event 연결과 사진 job이 모두 없는 final Item은 고아 후보이다.** soft delete된 Event(#568)의 junction은
+  연결로 치지 않는다(#569). Item과 junction은 한 transaction에서
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500).
+  삭제된 Event를 되살리는 경로도 없으므로 고아는 다시 살아나지 않는다. 일일 스위퍼가
   이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
   PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
+- **삭제된 기록의 원본 항목(Item)은 기록 삭제일로부터 5일 이내 파기된다(처리방침 고지).** 삭제일 D에 대해
+  스위퍼 처리 ≤ D+1 03:30, PHOTO S3 첫 삭제 ≤ D+2 03:00, 처리 창 마지막 재시도 ≤ D+4다. 스위퍼 스케줄·
+  delete job 처리 창을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
+  아래 남은 활성 Event의 Item은 대상이 아니다(수용, #568 E4·#569 E1).
 - **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
   전제 위에서 job을 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
   발급하는 UUIDv7이고, 기존 Item을 다른 Event에 재연결하는 writer가 없으며(#502), dev·prod 전수 집계
@@ -229,7 +235,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
 - 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 관측된 Item에 junction을 다시 만드는 writer가 없으므로
   표시를 해제하는 경로도 없다(#502). BaseEntity·공통 AuditorAware는 변경하지 않는다.
-  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job 모두 없는 건수를 집계한다.
+  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 활성 Event 연결·job 모두 없는 건수를 집계한다.
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
   서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.

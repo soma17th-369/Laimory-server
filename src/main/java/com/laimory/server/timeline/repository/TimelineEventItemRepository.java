@@ -29,9 +29,19 @@ public interface TimelineEventItemRepository extends JpaRepository<TimelineEvent
     @Query("select l from TimelineEventItem l where l.id.timelineEventId in :eventIds")
     List<TimelineEventItem> findByTimelineEventIdIn(@Param("eventIds") Collection<Long> timelineEventIds);
 
-    /** 후보 Item들의 현재 association 전체 — 삭제 흐름의 exclusive/shared 판정과 orphan 검출에 쓴다. */
+    /**
+     * 후보 Item들의 현재 association 전체(삭제된 Event 연결 포함) — 연결 해제의 잔여 참조 판정용(#568 E5).
+     * 고아 판정에는 쓰지 않는다 — 삭제된 Event 연결을 제외하는 {@code findActivelyLinkedItemIdsIn}를 쓴다(#569).
+     */
     @Query("select l from TimelineEventItem l where l.id.timelineItemId in :itemIds")
     List<TimelineEventItem> findByTimelineItemIdIn(@Param("itemIds") Collection<Long> timelineItemIds);
+
+    /** 후보 Item 중 활성(soft delete 안 된) Event에 연결된 Item id — 고아 스위퍼 재검증용(#569). */
+    @Query(value = "select distinct l.timeline_item_id from timeline_event_items l "
+            + "join timeline_events e on e.timeline_event_id = l.timeline_event_id "
+            + "where l.timeline_item_id in (:itemIds) and e.deleted_at is null",
+            nativeQuery = true)
+    List<Long> findActivelyLinkedItemIdsIn(@Param("itemIds") Collection<Long> timelineItemIds);
 
     /**
      * 주어진 record들의 Event에 연결된 Item id(#302 계정 삭제의 owner snapshot).
