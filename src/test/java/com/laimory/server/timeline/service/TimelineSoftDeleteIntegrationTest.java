@@ -249,6 +249,8 @@ class TimelineSoftDeleteIntegrationTest {
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b60.jpg";
         Long itemId = savePhotoLinkedTo("raw-complete", filename, 9, targetEventId);
         timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
+        // 연결 해제는 더 이상 job을 만들지 않는다(#551). 기존 job을 처리하는 worker 완료 계약만 검증한다.
+        timelinePhotoDeleteJobService.insertIfAbsent(itemId, PhotoObjectKeys.subjectFullKey(filename, subjectId));
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
 
         timelinePhotoDeleteJobService.completeSucceeded(List.of(job));
@@ -263,6 +265,8 @@ class TimelineSoftDeleteIntegrationTest {
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b61.jpg";
         Long itemId = savePhotoLinkedTo("raw-complete-rollback", filename, 9, targetEventId);
         timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
+        // 연결 해제는 더 이상 job을 만들지 않는다(#551). 기존 job을 처리하는 worker 완료 계약만 검증한다.
+        timelinePhotoDeleteJobService.insertIfAbsent(itemId, PhotoObjectKeys.subjectFullKey(filename, subjectId));
         TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
         doThrow(new IllegalStateException("forced completion item delete failure"))
                 .when(timelineItemService).deleteByIds(List.of(itemId));

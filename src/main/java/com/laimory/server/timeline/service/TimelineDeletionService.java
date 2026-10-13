@@ -5,9 +5,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
-import java.time.Duration;
 import java.time.LocalDate;
-import java.util.function.Supplier;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -23,8 +21,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>Event·DailyRecord 삭제는 soft delete다(#568) — 행·junction·Item을 남기고 {@code deleted_at}만 찍으며,
  * 감정·장소명·주소는 지운다. 삭제된 행은 앱 조회에서 빠지고 분석용으로 회원 탈퇴 시까지 남는다.
- * Event-Item 연결 해제만 junction을 hard delete하고, 마지막 참조였던 PHOTO는 S3 삭제 job으로 넘긴다
- * (S3 삭제는 request 경로에서 실행하지 않는다).
+ * Event-Item 연결 해제만 junction을 hard delete한다. 연결을 잃은 Item과 S3 사진은 orphan 스위퍼가
+ * 정리한다(#551 — S3 삭제는 request 경로에서 실행하지 않는다).
  *
  * <p>마지막 Event를 지워도 DailyRecord는 유지한다 — 하루 전체 제거는 DailyRecord 삭제만 담당한다.
  * 로그에 객체 key·URL·메모 내용은 남기지 않는다.
@@ -51,7 +49,7 @@ public class TimelineDeletionService {
     }
 
     /**
-     * Event에서 PHOTO Item 연결만 해제한다. 마지막 참조였으면 PHOTO orphan Item과 삭제 job을 남긴다.
+     * Event에서 PHOTO Item 연결만 해제한다. 마지막 참조였으면 Item은 고아로 남는다.
      * 사전 guard는 event·record까지만이고 junction 존재·삭제 판정은 트랜잭션이 소유한다
      * ({@link TimelineDeletionTransactionService#detachEventItem} — 직접 DELETE 영향 행 수 기반).
      */
@@ -62,8 +60,8 @@ public class TimelineDeletionService {
                 .orElseThrow(() -> new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND));
         requireOwnedRecord(subjectId, event.getDailyRecordId(),
                 ExceptionType.TIMELINE_EVENT_NOT_FOUND);
-        executeDelete("eventItem", timelineItemId,
-                () -> timelineDeletionTransactionService.detachEventItem(subjectId, timelineEventId, timelineItemId));
+        timelineDeletionTransactionService.detachEventItem(subjectId, timelineEventId, timelineItemId);
+        log.info("timeline 연결 해제 commit 완료: target=eventItem id={}", timelineItemId);
     }
 
     /** Record와 그 Event들을 soft delete한다. */
@@ -98,17 +96,6 @@ public class TimelineDeletionService {
      */
     private void removePendingForDeletedRecord(UUID subjectId, Long dailyRecordId) {
         userMemoryUpdatePendingStore.removeAll(subjectId, List.of(dailyRecordId));
-    }
-
-    /** 연결 해제의 PHOTO job enqueue + hard delete transaction 결과를 안전한 구조화 로그에 반영한다. */
-    private void executeDelete(String target, Long targetId,
-                               Supplier<TimelineDeletionTransactionService.DeletionResult> dbDelete) {
-        long totalStartNanos = System.nanoTime();
-        TimelineDeletionTransactionService.DeletionResult result = dbDelete.get();
-        log.info("timeline DB 삭제 commit 완료: target={} id={} photoDeleteScheduled={} "
-                        + "sharedPhotoRetained={} invalidPhotoSkipped={} totalElapsedMs={}",
-                target, targetId, result.scheduled(), result.sharedRetained(), result.invalidSkipped(),
-                Duration.ofNanos(System.nanoTime() - totalStartNanos).toMillis());
     }
 
     /** record 없음·비소유는 {@code notFoundType}(404 은닉)으로 사전 거절한다. */

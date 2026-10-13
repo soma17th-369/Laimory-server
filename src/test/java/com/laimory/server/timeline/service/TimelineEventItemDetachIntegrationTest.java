@@ -25,7 +25,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,11 +42,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
- * Event-Item 연결 해제 ↔ 실 MySQL 계약 검증(mockito론 못 잡음): junction 한 줄만 지워지고 shared Item은
- * 유지되며, 마지막 참조 해제는 PHOTO Item/job을 보존한다. junction 삭제는 영향 행 수를 반환하는 직접
- * DELETE라 같은 junction을 두 요청이 동시에 끊어도 하나만 성공하고 후발은 404다(stale-state 500 없음).
- * 서로 다른 junction의 동시 해제가 겹쳐 job 없는 orphan이 남는 드문 경합은 orphan 스위퍼(후속)가 수렴
- * 대상으로 맡는다 — 여기서는 검증하지 않는다.
+ * Event-Item 연결 해제 ↔ 실 MySQL 계약 검증(mockito론 못 잡음): junction 한 줄만 지워지고 Item은
+ * 남는다 — 마지막 참조였으면 고아가 되고 S3 사진과 함께 orphan 스위퍼가 정리한다(#551). junction 삭제는
+ * 영향 행 수를 반환하는 직접 DELETE라 같은 junction을 두 요청이 동시에 끊어도 하나만 성공하고 후발은
+ * 404다(stale-state 500 없음).
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -143,10 +141,8 @@ class TimelineEventItemDetachIntegrationTest {
                 "raw-detach-shared", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4c01.jpg",
                 9, targetEventId, siblingEventId);
 
-        TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
+        timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
 
-        assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(0, 1, 0));
         // 대상 junction만 사라지고 Event·Item·형제 연결·record는 그대로다.
         assertThat(timelineEventItemRepository.findByTimelineEventId(targetEventId)).isEmpty();
         assertThat(timelineEventItemRepository.findByTimelineEventId(siblingEventId))
@@ -158,24 +154,17 @@ class TimelineEventItemDetachIntegrationTest {
     }
 
     @Test
-    void detachEventItem_lastReference_enqueuesJobAndPreservesItem() {
+    void detachEventItem_lastReference_leavesItemAsOrphan() {
         Long targetEventId = saveEvent("마지막 참조", 9);
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4c02.jpg";
-        Long itemId = savePhotoLinkedTo("raw-detach-last", filename, 9, targetEventId);
+        Long itemId = savePhotoLinkedTo(
+                "raw-detach-last", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4c02.jpg", 9, targetEventId);
 
-        TimelineDeletionTransactionService.DeletionResult result =
-                timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
+        timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
 
-        assertThat(result).isEqualTo(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
-        assertThat(timelineEventItemRepository.findByTimelineEventId(targetEventId)).isEmpty();
+        // Item은 연결 없이 남는다 — S3 사진과 Item 정리는 orphan 스위퍼의 몫이다(#551).
+        assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(itemId))).isEmpty();
         assertThat(timelineEventRepository.findById(targetEventId)).isPresent();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
-        assertThat(findFixturePhotoDeleteJobs())
-                .singleElement()
-                .satisfies(job -> {
-                    assertThat(job.getTimelineItemId()).isEqualTo(itemId);
-                    assertThat(job.getObjectKey()).isEqualTo(PhotoObjectKeys.subjectFullKey(filename, subjectId));
-                });
     }
 
     @Test
@@ -192,32 +181,28 @@ class TimelineEventItemDetachIntegrationTest {
         List<Outcome> succeeded = outcomes.stream().filter(outcome -> outcome.error() == null).toList();
         List<Outcome> failed = outcomes.stream().filter(outcome -> outcome.error() != null).toList();
         assertThat(succeeded).hasSize(1);
-        assertThat(succeeded.getFirst().result())
-                .isEqualTo(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
         assertThat(failed).singleElement()
                 .satisfies(outcome -> assertThat(outcome.error())
                         .isInstanceOfSatisfying(BusinessException.class,
                                 exception -> assertThat(exception.getErrorCode()).isEqualTo(-404)));
         assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(itemId))).isEmpty();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
-        assertThat(findFixturePhotoDeleteJobs()).hasSize(1);
     }
 
-    /** 두 detach를 같은 순간 시작시키고 (결과, 예외) 쌍으로 수집한다 — 예외 타입 검증까지 테스트가 소유한다. */
-    private List<Outcome> runConcurrently(
-            Callable<TimelineDeletionTransactionService.DeletionResult> first,
-            Callable<TimelineDeletionTransactionService.DeletionResult> second) throws Exception {
+    /** 두 detach를 같은 순간 시작시키고 예외 여부를 수집한다 — 예외 타입 검증까지 테스트가 소유한다. */
+    private List<Outcome> runConcurrently(Runnable first, Runnable second) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             CountDownLatch start = new CountDownLatch(1);
             List<Future<Outcome>> futures = new ArrayList<>();
-            for (Callable<TimelineDeletionTransactionService.DeletionResult> call : List.of(first, second)) {
+            for (Runnable call : List.of(first, second)) {
                 futures.add(executor.submit(() -> {
                     start.await();
                     try {
-                        return new Outcome(call.call(), null);
+                        call.run();
+                        return new Outcome(null);
                     } catch (Exception exception) {
-                        return new Outcome(null, exception);
+                        return new Outcome(exception);
                     }
                 }));
             }
@@ -232,6 +217,6 @@ class TimelineEventItemDetachIntegrationTest {
         }
     }
 
-    private record Outcome(TimelineDeletionTransactionService.DeletionResult result, Exception error) {
+    private record Outcome(Exception error) {
     }
 }

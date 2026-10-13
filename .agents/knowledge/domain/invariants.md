@@ -173,11 +173,10 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
     save·감정 수정 0행 → 404, User Memory 배치는 사라진 하루로 걷어냄). rawId "이미 저장됨" 판정도 활성 Event에서
     출발하므로 삭제된 Event의 사진이 같은 사진 재생성을 막지 않는다.
   - 삭제 행까지 보는 경로는 계정 삭제(무필터 id 조회·native join·FK cascade)뿐이다.
-- Event-Item 연결 해제는 hard delete다. 마지막 참조가 사라지는 PHOTO는 full object key와 원문 Item PK를
-  `timeline_photo_delete_jobs`에 insert하고 원문 Item을 job과 함께 보존한다. 연결 해제의 잔여 참조에는 삭제된
-  Event의 junction도 포함되므로, 삭제된 Event와 공유한 사진은 job 없이 남는다(수용).
-- DELETE API(연결 해제)는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
-  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
+- Event-Item 연결 해제는 junction만 hard delete한다. Item은 분류·삭제하지 않고 job도 만들지 않는다 — 마지막
+  참조였으면 고아로 남고 S3 사진과 함께 일일 스위퍼가 정리한다(#551). S3는 request 경로에서 호출하지 않는다.
+- PHOTO 삭제 job은 #551 전환 중 이전 버전이 만든 것만 남는다(새 job을 만드는 writer 없음). 그 job을 처리하는
+  worker의 기본 스케줄은 매일 03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
   D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
   처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
   `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
@@ -189,8 +188,6 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
   보장하지 않는다.
   별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
-- 연결 해제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
-  진행한다(orphan 허용 — draft cleanup과 동일 규칙).
 - 같은 날짜의 draft(AI 작업), 수동 Event 생성/편집(수동 PHOTO 추가 포함), Event/DailyRecord 삭제
   사이에는 공통 Redis admission guard가 없다. 각 작업의 입력·소유권 preflight와 자기 DB transaction
   경계는 유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나
@@ -204,22 +201,23 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - Event-Item 연결 해제는 대상 junction 한 줄만 직접 DELETE로 지우고 Event·shared Item은 유지한다. 현재
   정책상 연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). 직접
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
-  수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
-  동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
-  스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
-  마지막 참조 orphan 처리는 유효 PHOTO job 보존·손상 PHOTO 즉시 삭제다.
+  수렴한다. 남은 참조를 판정하지 않는다 — 연결을 잃은 Item의 정리는 스위퍼가 맡는다(#551).
 - **활성 Event 연결과 사진 job이 모두 없는 final Item은 고아 후보이다.** soft delete된 Event(#568)의 junction은
   연결로 치지 않는다(#569). Item과 junction은 한 transaction에서
   insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500).
   삭제된 Event를 되살리는 경로도 없으므로 고아는 다시 살아나지 않는다. 일일 스위퍼가
-  이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
-  PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
+  이를 전제로 수렴시킨다 — non-PHOTO와 key를 복원할 수 없는 손상 PHOTO는 즉시 hard delete하고(S3 orphan 허용),
+  유효 PHOTO는 S3 삭제가 `Deleted`로 확인된 뒤에만 행을 지운다(#551). 스위퍼 스레드는 S3 응답을 기다리지 않고
+  전용 executor가 결과를 받아 처리한다. 실패·응답 누락·예외·제출 거절·결과 수신 전 종료는 행을 남겨 다음 실행이
+  다시 요청하며, 별도 실패 기록이나 중단 장치 없이 관측 후 72시간 잔존 경보가 장기 실패를 알린다.
+  job이 이미 있는 Item(#551 전환 전 생성)은 worker 소유라 건드리지 않는다.
 - **삭제된 기록의 원본 항목(Item)은 기록 삭제일로부터 5일 이내 파기된다(처리방침 고지).** 삭제일 D에 대해
-  스위퍼 처리 ≤ D+1 03:30, PHOTO S3 첫 삭제 ≤ D+2 03:00, 처리 창 마지막 재시도 ≤ D+4다. 스위퍼 스케줄·
-  delete job 처리 창을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
+  스위퍼 처리와 PHOTO S3 첫 삭제 요청 ≤ D+1 03:30이고, S3 실패분은 매일 재요청되며 관측 후 72시간
+  (≤ D+4 03:30) 잔존하면 ERROR 경보가 뜬다(#551). #551 전환 전 생성된 job은 기존 처리 창(마지막 재시도 ≤ D+4)을
+  따른다. 스위퍼 스케줄·72시간 경보 기준을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
   아래 남은 활성 Event의 Item은 대상이 아니다(수용, #568 E4·#569 E1).
 - **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
-  전제 위에서 job을 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
+  전제 위에서 S3 삭제를 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
   발급하는 UUIDv7이고, 기존 Item을 다른 Event에 재연결하는 writer가 없으며(#502), dev·prod 전수 집계
   실측 0건(2026-09-20). 과거에 있던 두 방어(스위퍼 enqueue 전 live-key 확인, worker S3 직전 key 공유
   재검증)와 같은 key orphan 그룹의 최소 id 소유자 규칙은 #503에서 제거됐다 — 재연결·재사용 writer를

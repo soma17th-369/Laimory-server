@@ -2,8 +2,9 @@
 
 고아 스위퍼는 `MOD(timeline_item_id - 1, serverCount * workerCount)`가
 `workerId * workerCount + localIndex`인 후보를 slot당 최대 batch-size개 한 번 처리한다.
-기본은 서버 2대 × slot 1개 × 후보 250개이며 PK 공백과 쏠림을 수용한다. S3는 호출하지 않으므로
-여러 slot도 같은 스케줄 스레드에서 순차 실행한다.
+기본은 서버 2대 × slot 1개 × 후보 250개이며 PK 공백과 쏠림을 수용한다. DB 처리는 여러 slot도 같은
+스케줄 스레드에서 순차 실행하고, 유효 PHOTO의 S3 삭제만 전용 executor(스레드 = `WORKER_COUNT`, queue 0)에
+넘긴다(#551). 그래서 `TIMELINE_ORPHAN_SWEEP_WORKER_COUNT`는 서버당 동시 S3 삭제 요청 수이기도 하다.
 
 ## 설정·전환
 
