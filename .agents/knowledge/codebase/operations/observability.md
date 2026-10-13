@@ -324,8 +324,9 @@ Spring JSON stdout
   workerIndex·count만 ERROR로 남겨 기존 application ERROR 경보를 사용한다. S3 삭제가 계속 실패해 남은
   PHOTO도 이 경보로 드러난다 — 스위퍼의 유일한 장기 실패 알림이다(#551).
   batch 로그(`orphan 스위퍼 batch 완료`: selected·revalidationDropped·photoRequested·invalidDeleted·nonPhotoDeleted)와
-  executor의 S3 결과 로그(`orphan PHOTO S3 삭제 완료`: requested·s3Succeeded·s3Failed·unreported·durationMs·
-  errorCodes, 실패는 WARN)를 key=value로 남기며 object key는 싣지 않는다. 이번 후보 밖의 기존
+  executor의 S3 결과 로그(`orphan PHOTO S3 삭제 완료`: requested·s3Succeeded·s3Failed·unreported는 서로 다른 key 수로
+  합이 requested, itemsDeleted는 Item 수, durationMs·errorCodes. Item 삭제 실패는 같은 필드의 WARN)를 key=value로
+  남기며 object key는 싣지 않는다. 이번 후보 밖의 기존
   관측 Item도 포함하지만 LIMIT/워커 장애로 미관측인 Item이나 실제 고아 전환 시각은 측정하지 않는다.
   서버 장애는 기존 `laimory_target_down` 경보로 수동 복구하며 자동 인수는 없다.
 

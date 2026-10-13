@@ -108,17 +108,20 @@ public class TimelineOrphanItemSweeper {
         }
     }
 
-    /** executor 스레드에서 S3 삭제를 요청하고, 삭제가 확인된 key의 Item만 지운다. key는 로그에 싣지 않는다. */
+    /**
+     * executor 스레드에서 S3 삭제를 요청하고, 삭제가 확인된 key의 Item만 지운다. 로그의 requested·s3Succeeded·
+     * s3Failed·unreported는 서로 다른 key 수(합 = requested), itemsDeleted는 Item 수다. key는 로그에 싣지 않는다.
+     */
     private void deletePhotos(int workerIndex, List<PhotoDeletion> photoDeletions) {
         long startedAtNanos = System.nanoTime();
+        List<String> objectKeys = photoDeletions.stream().map(PhotoDeletion::objectKey).distinct().toList();
         BatchDeleteResult result;
         try {
-            result = s3PhotoStorageService.deleteAll(
-                    photoDeletions.stream().map(PhotoDeletion::objectKey).toList());
+            result = s3PhotoStorageService.deleteAll(objectKeys);
         } catch (RuntimeException exception) {
             log.warn("orphan PHOTO S3 삭제 실패(Item 유지, 다음 실행에서 재시도): workerIndex={} requested={} "
                             + "durationMs={} exceptionType={}",
-                    workerIndex, photoDeletions.size(), elapsedMillis(startedAtNanos),
+                    workerIndex, objectKeys.size(), elapsedMillis(startedAtNanos),
                     exception.getClass().getSimpleName());
             return;
         }
@@ -128,25 +131,32 @@ public class TimelineOrphanItemSweeper {
                 .filter(photo -> deletedObjectKeys.contains(photo.objectKey()))
                 .map(PhotoDeletion::timelineItemId)
                 .toList();
+        String itemDeleteExceptionType = null;
         if (!deletedItemIds.isEmpty()) {
             try {
                 sweepService.deletePhotoItems(deletedItemIds);
             } catch (RuntimeException exception) {
-                // S3는 이미 지워졌다. Item이 남아 다음 실행이 다시 요청하면 없는 key라 Deleted로 수렴한다.
-                log.warn("orphan PHOTO Item 삭제 실패(다음 실행에서 수렴): workerIndex={} s3Succeeded={} "
-                                + "exceptionType={}",
-                        workerIndex, deletedItemIds.size(), exception.getClass().getSimpleName());
-                return;
+                itemDeleteExceptionType = exception.getClass().getSimpleName();
             }
         }
 
         Map<String, Long> errorCodeCounts = result.errorCodeByObjectKey().values().stream()
                 .map(code -> LogSanitizer.sanitize(code, MAX_LOGGED_ERROR_CODE_LENGTH))
                 .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        if (itemDeleteExceptionType != null) {
+            // S3는 이미 지워졌다. Item이 남아 다음 실행이 다시 요청하면 없는 key라 Deleted로 수렴한다.
+            log.warn("orphan PHOTO Item 삭제 실패(다음 실행에서 수렴): workerIndex={} requested={} s3Succeeded={} "
+                            + "s3Failed={} unreported={} itemsDeleted=0 durationMs={} errorCodes={} exceptionType={}",
+                    workerIndex, objectKeys.size(), deletedObjectKeys.size(), result.errorCodeByObjectKey().size(),
+                    result.unreportedObjectKeys().size(), elapsedMillis(startedAtNanos), errorCodeCounts,
+                    itemDeleteExceptionType);
+            return;
+        }
         log.info("orphan PHOTO S3 삭제 완료: workerIndex={} requested={} s3Succeeded={} s3Failed={} unreported={} "
-                        + "durationMs={} errorCodes={}",
-                workerIndex, photoDeletions.size(), deletedItemIds.size(), result.errorCodeByObjectKey().size(),
-                result.unreportedObjectKeys().size(), elapsedMillis(startedAtNanos), errorCodeCounts);
+                        + "itemsDeleted={} durationMs={} errorCodes={}",
+                workerIndex, objectKeys.size(), deletedObjectKeys.size(), result.errorCodeByObjectKey().size(),
+                result.unreportedObjectKeys().size(), deletedItemIds.size(), elapsedMillis(startedAtNanos),
+                errorCodeCounts);
     }
 
     private static long elapsedMillis(long startedAtNanos) {
