@@ -44,8 +44,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * orphan 스위퍼의 실 MySQL 계약 검증.
  *
- * <p>핵심은 두 가지다 — ① junction 0 Item이 규칙대로 수렴하는가, ② 동시 실행에서 job이 중복되거나
- * FK 위반으로 batch가 깨지지 않는가.
+ * <p>핵심은 두 가지다 — ① 활성 Event 연결이 없는 Item(junction 0 또는 soft delete된 Event에만 연결, #569)이
+ * 규칙대로 수렴하는가, ② 동시 실행에서 job이 중복되거나 FK 위반으로 batch가 깨지지 않는가.
  *
  * <p>실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -71,6 +71,8 @@ class TimelineOrphanItemSweepIntegrationTest {
     private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
     @Autowired
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
+    @Autowired
+    private TimelineDeletionTransactionService deletionTransactionService;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private TimelineItemService itemService;
     @Autowired
@@ -147,6 +149,81 @@ class TimelineOrphanItemSweepIntegrationTest {
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
         assertThat(timelineItemRepository.existsById(orphan)).isFalse();
         assertThat(timelineItemRepository.existsById(linked)).isTrue();
+    }
+
+    @Test
+    void itemsOfDeletedEventAreSweptLikeOrphans() {
+        String filename = filename(11);
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        Long calendar = saveCalendar("raw-deleted-calendar", eventId);
+        Long photo = savePhoto("raw-deleted-photo", filename, eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+
+        var result = sweep(0, 1, 250);
+
+        assertThat(result.nonPhotoDeleted()).isEqualTo(1);
+        assertThat(result.photoScheduled()).isEqualTo(1);
+        assertThat(timelineItemRepository.existsById(calendar)).isFalse();
+        assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(calendar))).isEmpty();
+        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getObjectKey)
+                .containsExactly(PhotoObjectKeys.subjectFullKey(filename, subjectId));
+        assertThat(timelineItemRepository.existsById(photo)).isTrue();
+        assertThat(timelineEventRepository.findById(eventId)).isPresent();
+    }
+
+    @Test
+    void itemSharedWithActiveEventIsNotSwept() {
+        Long deletedEvent = saveEvent("삭제 이벤트", 9);
+        Long activeEvent = saveEvent("유지 이벤트", 10);
+        Long shared = savePhoto("raw-shared", filename(12), deletedEvent, activeEvent);
+        deletionTransactionService.deleteEvent(subjectId, deletedEvent);
+
+        var result = sweep(0, 1, 250);
+
+        assertThat(result.selected()).isZero();
+        assertThat(timelineItemRepository.existsById(shared)).isTrue();
+        assertThat(jobsOfFixture()).isEmpty();
+    }
+
+    @Test
+    void itemsOfDeletedDailyRecordAreSwept() {
+        Long eventId = saveEvent("하루 삭제 이벤트", 9);
+        Long calendar = saveCalendar("raw-record-calendar", eventId);
+        deletionTransactionService.deleteDailyRecord(subjectId, recordId);
+
+        var result = sweep(0, 1, 250);
+
+        assertThat(result.nonPhotoDeleted()).isEqualTo(1);
+        assertThat(timelineItemRepository.existsById(calendar)).isFalse();
+    }
+
+    @Test
+    void detachLeavingOnlyDeletedEventLinkMakesPhotoSweepable() {
+        // #568 E5 — 연결 해제는 삭제된 Event의 junction을 남은 참조로 보고 job을 만들지 않는다. 스위퍼가 정리한다.
+        String filename = filename(13);
+        Long deletedEvent = saveEvent("삭제 이벤트", 9);
+        Long activeEvent = saveEvent("해제 이벤트", 10);
+        Long shared = savePhoto("raw-detach", filename, deletedEvent, activeEvent);
+        deletionTransactionService.deleteEvent(subjectId, deletedEvent);
+        deletionTransactionService.detachEventItem(subjectId, activeEvent, shared);
+        assertThat(jobsOfFixture()).isEmpty();
+
+        var result = sweep(0, 1, 250);
+
+        assertThat(result.photoScheduled()).isEqualTo(1);
+        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId).containsExactly(shared);
+    }
+
+    @Test
+    void staleCountIncludesItemLinkedOnlyToDeletedEvent() {
+        var now = java.time.LocalDateTime.of(2026, 9, 12, 3, 30);
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        Long item = saveCalendar("raw-stale-deleted", eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+        jdbcTemplate.update("UPDATE timeline_items SET modified_by='ORPHAN_SWEEPER', updated_at=? "
+                + "WHERE timeline_item_id=?", now.minusHours(72), item);
+
+        assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(1);
     }
 
     @Test

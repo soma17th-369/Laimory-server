@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
+import com.laimory.server.timeline.service.TimelineOrphanItemSweepService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.entity.AccountErasureJob;
@@ -77,6 +79,8 @@ class AccountErasureIntegrationTest {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
+    @Autowired
+    private TimelineOrphanItemSweepService timelineOrphanItemSweepService;
 
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<UUID> createdSubjectIds = new ArrayList<>();
@@ -458,6 +462,51 @@ class AccountErasureIntegrationTest {
                 .isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isZero();
+        assertThat(mappingCount(subjectId)).isZero();
+
+        createdUserIds.clear();
+        createdSubjectIds.clear();
+    }
+
+    /**
+     * 스위퍼가 삭제된 Event의 PHOTO에 job을 만든 상태(#569)에서도 탈퇴 삭제가 끝난다. 이 Item은 삭제된 Event의
+     * junction이 남아 record graph에서도 보이므로, job을 namespace로 먼저 지우지 않으면 Item 삭제가 job FK에 막힌다.
+     */
+    @Test
+    void photoJobCreatedBySweeperForDeletedEventDoesNotBlockErasure() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        long recordId = insertSavedRecord(subjectId, "2026-01-05");
+        jdbcTemplate.update("INSERT INTO timeline_events (daily_record_id, start_at, title, deleted_at, "
+                + "created_at, updated_at) VALUES (?, '2026-01-05 10:00:00', '지운 이벤트', now(6), now(6), now(6))",
+                recordId);
+        Long deletedEventId = jdbcTemplate.queryForObject(
+                "SELECT timeline_event_id FROM timeline_events WHERE daily_record_id = ?", Long.class, recordId);
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-" + String.format("%012x", userId % 0xffffffffffL) + ".jpg";
+        String photoUrl = "https://cdn.example/" + PhotoObjectKeys.subjectFullKey(filename, subjectId);
+        jdbcTemplate.update("INSERT INTO timeline_items (item_type, raw_id, payload, created_at, updated_at) "
+                        + "VALUES ('PHOTO', ?, JSON_OBJECT('filename', ?, 'photoUrl', ?), now(6), now(6))",
+                UUID.randomUUID().toString(), filename, photoUrl);
+        Long itemId = jdbcTemplate.queryForObject("SELECT max(timeline_item_id) FROM timeline_items", Long.class);
+        jdbcTemplate.update("INSERT INTO timeline_event_items (timeline_event_id, timeline_item_id) "
+                + "VALUES (?, ?)", deletedEventId, itemId);
+        timelineOrphanItemSweepService.sweepBatch(List.of(itemId));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isEqualTo(1);
+
+        UUID resolved = accountErasureService.resolveTarget(userId);
+        accountErasureService.deleteContentGraph(resolved);
+        accountErasureService.deleteOwnerRows(userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", Integer.class, itemId))
                 .isZero();
         assertThat(mappingCount(subjectId)).isZero();
 

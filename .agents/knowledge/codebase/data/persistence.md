@@ -526,7 +526,8 @@ apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 claim
 실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
 만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
 
-orphan 스위퍼(03:30 KST)는 junction·delete job이 모두 없는 자기 PK MOD 담당 Item을 최대 250개
+orphan 스위퍼(03:30 KST)는 활성 Event 연결(soft delete된 Event의 junction 제외, #569)·delete job이 모두 없는
+자기 PK MOD 담당 Item을 최대 250개
 한 번 조회한다. 선택한 PK 중 미표시 고아에만 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST
 `updated_at`을 기록해 먼저 commit하고, 새 처리 transaction에서 같은 PK를 일반 조회·재검증한다.
 후보의 PK 선점 락과 job 존재 확인의 `FOR SHARE`는 없다. 쓰기 SQL의 InnoDB 잠금은 남는다.
@@ -540,7 +541,7 @@ orphan 스위퍼(03:30 KST)는 junction·delete job이 모두 없는 자기 PK M
 job으로 넘긴 Item은 제외하며 미관측 Item의 과거 고아 전환 시각을 추정하지 않는다.
 
 object key 복원 경로는 저장된 `photoUrl`의 path 하나다 — junction 0 행은 subject를 잃어 다른 경로가
-없고, 복원 불가 행은 job 없이 삭제된다(S3 orphan 허용). 같은 object key를 공유하는 Item 상태에 대한
+없고(삭제된 Event에 연결된 행도 같은 경로를 쓴다), 복원 불가 행은 job 없이 삭제된다(S3 orphan 허용). 같은 object key를 공유하는 Item 상태에 대한
 key 단위 사전 분류·소유자 규칙은 없다(#503 — 그런 상태를 만드는 writer가 없다는 전제와 수용 잔여는
 invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 수렴 장치다 — 자기 job이 보이면 행을
 보존하고, 아니면 행만 지운다.

@@ -3,7 +3,6 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -14,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -82,16 +80,17 @@ public class TimelineOrphanItemSweepService {
                 counters.invalidDeleted, counters.nonPhotoDeleted);
     }
 
-    /** 새 처리 snapshot에서 연결과 job을 일반 조회한다. DML 경합 실패는 전체 처리가 rollback된다. */
+    /**
+     * 새 처리 snapshot에서 활성 Event 연결과 job을 일반 조회한다. 삭제된 Event의 연결만 남은 Item은 고아다(#569).
+     * DML 경합 실패는 전체 처리가 rollback된다.
+     */
     private List<TimelineItem> revalidate(List<TimelineItem> items) {
         if (items.isEmpty()) {
             return List.of();
         }
         List<Long> itemIds = items.stream().map(TimelineItem::getTimelineItemId).toList();
         Set<Long> withJob = timelinePhotoDeleteJobService.findItemIdsWithJob(itemIds);
-        Set<Long> linked = timelineEventItemService.findByTimelineItemIds(itemIds).stream()
-                .map(TimelineEventItem::getTimelineItemId)
-                .collect(Collectors.toSet());
+        Set<Long> linked = timelineEventItemService.findActivelyLinkedItemIds(itemIds);
         return items.stream()
                 .filter(item -> !withJob.contains(item.getTimelineItemId()))
                 .filter(item -> !linked.contains(item.getTimelineItemId()))

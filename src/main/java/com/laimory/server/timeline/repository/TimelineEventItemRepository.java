@@ -33,6 +33,13 @@ public interface TimelineEventItemRepository extends JpaRepository<TimelineEvent
     @Query("select l from TimelineEventItem l where l.id.timelineItemId in :itemIds")
     List<TimelineEventItem> findByTimelineItemIdIn(@Param("itemIds") Collection<Long> timelineItemIds);
 
+    /** 후보 Item 중 활성(soft delete 안 된) Event에 연결된 Item id — 고아 스위퍼 재검증용(#569). */
+    @Query(value = "select distinct l.timeline_item_id from timeline_event_items l "
+            + "join timeline_events e on e.timeline_event_id = l.timeline_event_id "
+            + "where l.timeline_item_id in (:itemIds) and e.deleted_at is null",
+            nativeQuery = true)
+    List<Long> findActivelyLinkedItemIdsIn(@Param("itemIds") Collection<Long> timelineItemIds);
+
     /**
      * 주어진 record들의 Event에 연결된 Item id(#302 계정 삭제의 owner snapshot).
      * 연관 매핑 없이 FK 값으로 join한다(저장소 방침).

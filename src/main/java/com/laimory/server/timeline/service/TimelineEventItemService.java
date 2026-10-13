@@ -4,6 +4,7 @@ import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +37,14 @@ public class TimelineEventItemService {
             return List.of();
         }
         return timelineEventItemRepository.findByTimelineItemIdIn(timelineItemIds);
+    }
+
+    /** 후보 Item 중 활성 Event에 연결된 Item id — 삭제된 Event의 연결은 고아 판정에서 제외한다(#569). */
+    public Set<Long> findActivelyLinkedItemIds(Collection<Long> timelineItemIds) {
+        if (timelineItemIds.isEmpty()) {
+            return Set.of();
+        }
+        return Set.copyOf(timelineEventItemRepository.findActivelyLinkedItemIdsIn(timelineItemIds));
     }
 
     /** 해당 Event-Item 연결 존재 여부(일반 읽기) — 연결 해제의 404 은닉/타입 거절 순서 판정용. */
