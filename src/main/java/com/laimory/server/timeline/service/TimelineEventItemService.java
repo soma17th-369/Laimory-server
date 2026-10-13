@@ -31,7 +31,10 @@ public class TimelineEventItemService {
         return timelineEventItemRepository.findByTimelineEventIdIn(timelineEventIds);
     }
 
-    /** 후보 Item들의 현재 association 전체 — 삭제 흐름의 exclusive/shared 판정과 orphan 검출에 쓴다. */
+    /**
+     * 후보 Item들의 현재 association 전체(삭제된 Event 연결 포함) — 연결 해제의 잔여 참조 판정용(#568 E5).
+     * 고아 판정에는 쓰지 않는다 — 삭제된 Event 연결을 제외하는 {@code findActivelyLinkedItemIds}를 쓴다(#569).
+     */
     public List<TimelineEventItem> findByTimelineItemIds(Collection<Long> timelineItemIds) {
         if (timelineItemIds.isEmpty()) {
             return List.of();

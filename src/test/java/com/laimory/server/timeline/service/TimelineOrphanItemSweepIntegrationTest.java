@@ -152,22 +152,41 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void itemsOfDeletedEventAreSweptLikeOrphans() {
-        String filename = filename(11);
+    void nonPhotoOfDeletedEventIsDeletedWithItsJunction() {
         Long eventId = saveEvent("삭제 이벤트", 9);
         Long calendar = saveCalendar("raw-deleted-calendar", eventId);
-        Long photo = savePhoto("raw-deleted-photo", filename, eventId);
         deletionTransactionService.deleteEvent(subjectId, eventId);
 
         var result = sweep(0, 1, 250);
 
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
-        assertThat(result.photoScheduled()).isEqualTo(1);
         assertThat(timelineItemRepository.existsById(calendar)).isFalse();
         assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(calendar))).isEmpty();
+    }
+
+    @Test
+    void photoOfDeletedEventGetsDeleteJobAndKeepsRow() {
+        String filename = filename(11);
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        Long photo = savePhoto("raw-deleted-photo", filename, eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+
+        var result = sweep(0, 1, 250);
+
+        assertThat(result.photoScheduled()).isEqualTo(1);
         assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getObjectKey)
                 .containsExactly(PhotoObjectKeys.subjectFullKey(filename, subjectId));
         assertThat(timelineItemRepository.existsById(photo)).isTrue();
+    }
+
+    @Test
+    void sweepingItemsOfDeletedEventKeepsTheEventRow() {
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        saveCalendar("raw-deleted-keep-event", eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+
+        sweep(0, 1, 250);
+
         assertThat(timelineEventRepository.findById(eventId)).isPresent();
     }
 
