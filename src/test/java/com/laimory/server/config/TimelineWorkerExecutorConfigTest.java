@@ -3,6 +3,7 @@ package com.laimory.server.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.laimory.server.timeline.service.TimelineDraftCleanupWorkerProperties;
+import com.laimory.server.timeline.service.TimelineOrphanItemSweeperProperties;
 import com.laimory.server.timeline.service.TimelinePhotoDeleteWorkerProperties;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
@@ -34,7 +35,9 @@ class TimelineWorkerExecutorConfigTest {
             .withBean(TimelinePhotoDeleteWorkerProperties.class, () ->
                     new TimelinePhotoDeleteWorkerProperties(true, 250, 0, 2, 1))
             .withBean(TimelineDraftCleanupWorkerProperties.class, () ->
-                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 0, 2, 1));
+                    new TimelineDraftCleanupWorkerProperties(true, 7, 250, 0, 2, 1))
+            .withBean(TimelineOrphanItemSweeperProperties.class, () ->
+                    new TimelineOrphanItemSweeperProperties(true, 250, 0, 2, 1));
 
     @Test
     void workerExecutorsCoexistWithBootDefaultAndAsyncUsesBootExecutor() {
@@ -42,6 +45,7 @@ class TimelineWorkerExecutorConfigTest {
             assertThat(context).hasBean("applicationTaskExecutor");
             assertThat(context).hasBean("timelinePhotoDeleteWorkerExecutor");
             assertThat(context).hasBean("timelineDraftCleanupWorkerExecutor");
+            assertThat(context).hasBean("timelineOrphanSweepExecutor");
 
             ThreadPoolTaskExecutor application = context.getBean(
                     "applicationTaskExecutor", ThreadPoolTaskExecutor.class);
@@ -50,7 +54,10 @@ class TimelineWorkerExecutorConfigTest {
             ThreadPoolTaskExecutor draft = context.getBean(
                     "timelineDraftCleanupWorkerExecutor", ThreadPoolTaskExecutor.class);
             assertThat(photo).isNotSameAs(application);
+            ThreadPoolTaskExecutor orphan = context.getBean(
+                    "timelineOrphanSweepExecutor", ThreadPoolTaskExecutor.class);
             assertThat(draft).isNotSameAs(application);
+            assertThat(orphan).isNotSameAs(application);
 
             AsyncProbe probe = context.getBean(AsyncProbe.class);
             assertThat(probe.threadName().join()).startsWith("task-");
@@ -58,6 +65,8 @@ class TimelineWorkerExecutorConfigTest {
                     .startsWith("photo-delete-");
             assertThat(CompletableFuture.supplyAsync(() -> Thread.currentThread().getName(), draft).join())
                     .startsWith("draft-cleanup-");
+            assertThat(CompletableFuture.supplyAsync(() -> Thread.currentThread().getName(), orphan).join())
+                    .startsWith("orphan-sweep-");
         });
     }
 
@@ -68,6 +77,17 @@ class TimelineWorkerExecutorConfigTest {
             var executor = config.timelinePhotoDeleteWorkerExecutor(new TimelinePhotoDeleteWorkerProperties(true, 250, 1, 2, count));
             assertThat(executor.getCorePoolSize()).isEqualTo(count);
             assertThat(executor.getMaxPoolSize()).isEqualTo(count);
+        }
+    }
+
+    @Test
+    void orphanSweepExecutorCapacityEqualsWorkerCountWithoutQueue() {
+        var config = new TimelineWorkerExecutorConfig();
+        for (int count : new int[] {1, 2}) {
+            var executor = config.timelineOrphanSweepExecutor(new TimelineOrphanItemSweeperProperties(true, 250, 1, 2, count));
+            assertThat(executor.getCorePoolSize()).isEqualTo(count);
+            assertThat(executor.getMaxPoolSize()).isEqualTo(count);
+            assertThat(executor.getQueueCapacity()).isZero();
         }
     }
 

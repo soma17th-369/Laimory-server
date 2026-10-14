@@ -3,8 +3,6 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,10 +10,10 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.NotificationPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
+import com.laimory.server.timeline.service.TimelineOrphanItemSweepService.PhotoDeletion;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
@@ -47,8 +45,8 @@ class TimelineOrphanItemSweepServiceTest {
     void setUp() {
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
                 timelinePhotoDeleteJobService, new ObjectMapper(), java.time.Clock.systemUTC());
-        lenient().when(timelineEventItemService.findByTimelineItemIds(anyCollection()))
-                .thenReturn(List.of());
+        lenient().when(timelineEventItemService.findActivelyLinkedItemIds(anyCollection()))
+                .thenReturn(Set.of());
         lenient().when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of());
     }
@@ -81,21 +79,20 @@ class TimelineOrphanItemSweepServiceTest {
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.nonPhotoDeleted()).isEqualTo(1);
+        assertThat(result.photoDeletions()).isEmpty();
         verify(timelineItemService).deleteByIds(List.of(11L));
-        verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
     }
 
     @Test
-    void validPhotoOrphanGetsDeleteJobAndKeepsRow() {
+    void validPhotoOrphanIsReturnedForS3DeletionAndKeepsRow() {
         TimelineItem item = photoItem(12L, FILENAME, "https://cdn.example.net/" + KEY_A);
         scan(item);
         claim(item);
-        when(timelinePhotoDeleteJobService.insertIfAbsent(12L, KEY_A)).thenReturn(true);
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        verify(timelinePhotoDeleteJobService).insertIfAbsent(12L, KEY_A);
+        // 행은 S3 삭제가 확인된 뒤에만 지운다(#551).
+        assertThat(result.photoDeletions()).containsExactly(new PhotoDeletion(12L, KEY_A));
         verify(timelineItemService).deleteByIds(List.of());
     }
 
@@ -109,40 +106,29 @@ class TimelineOrphanItemSweepServiceTest {
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.invalidDeleted()).isEqualTo(1);
-        verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
+        assertThat(result.photoDeletions()).isEmpty();
         verify(timelineItemService).deleteByIds(List.of(17L));
     }
 
     @Test
-    void duplicateInsertPreservesRowWhenItsJobIsVisible() {
-        // insert ignore가 false를 돌려준 이유가 "이 Item의 job이 방금 생겼다"면 행을 지우면 FK 위반이다.
-        // 이 mock은 조회 결과별 분기만 검증한다. RR snapshot 뒤 동시 생성 job의 가시성을 보장하지 않는다.
-        TimelineItem item = photoItem(18L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        scan(item);
-        claim(item);
-        when(timelinePhotoDeleteJobService.insertIfAbsent(18L, KEY_A)).thenReturn(false);
-        when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
-                .thenReturn(Set.of(), Set.of(18L));
+    void orphansSharingObjectKeyAreBothReturnedForDeletion() {
+        // 수용된 race/legacy 중복. S3 삭제는 멱등이라 둘 다 같은 key로 요청하고 둘 다 지워진다.
+        TimelineItem first = photoItem(18L, FILENAME, "https://cdn.example.net/" + KEY_A);
+        TimelineItem second = photoItem(19L, FILENAME, "https://cdn.example.net/" + KEY_A);
+        scan(first, second);
+        claim(first, second);
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
-        assertThat(result.photoAlreadyJob()).isEqualTo(1);
-        assertThat(result.keyShared()).isZero();
-        verify(timelineItemService).deleteByIds(List.of());
+        assertThat(result.photoDeletions())
+                .containsExactly(new PhotoDeletion(18L, KEY_A), new PhotoDeletion(19L, KEY_A));
     }
 
     @Test
-    void objectKeyTakenByAnotherItemDeletesRow() {
-        TimelineItem item = photoItem(19L, FILENAME, "https://cdn.example.net/" + KEY_A);
-        scan(item);
-        claim(item);
-        when(timelinePhotoDeleteJobService.insertIfAbsent(19L, KEY_A)).thenReturn(false);
-        when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(19L))).thenReturn(Set.of());
+    void deletePhotoItemsDeletesOnlyGivenItems() {
+        service.deletePhotoItems(List.of(12L, 13L));
 
-        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
-
-        assertThat(result.keyShared()).isEqualTo(1);
-        verify(timelineItemService).deleteByIds(List.of(19L));
+        verify(timelineItemService).deleteByIds(List.of(12L, 13L));
     }
 
     @Test
@@ -152,14 +138,13 @@ class TimelineOrphanItemSweepServiceTest {
         scan(gainedJob, gainedJunction);
         claim(gainedJob, gainedJunction);
         when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(20L, 21L))).thenReturn(Set.of(20L));
-        when(timelineEventItemService.findByTimelineItemIds(List.of(20L, 21L)))
-                .thenReturn(List.of(TimelineEventItem.of(99L, 21L)));
+        when(timelineEventItemService.findActivelyLinkedItemIds(List.of(20L, 21L))).thenReturn(Set.of(21L));
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
         assertThat(result.revalidationDropped()).isEqualTo(2);
+        assertThat(result.photoDeletions()).isEmpty();
         verify(timelineItemService).deleteByIds(List.of());
-        verify(timelinePhotoDeleteJobService, never()).insertIfAbsent(anyLong(), anyString());
     }
 
     @Test

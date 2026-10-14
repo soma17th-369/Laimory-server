@@ -13,7 +13,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** daily_records leaf 서비스. 자신과 1:1인 DailyRecordRepository에만 접근한다. */
+/**
+ * daily_records leaf 서비스. 자신과 1:1인 DailyRecordRepository에만 접근한다.
+ * 조회는 모두 활성 record(soft delete 안 된 행)만 본다 — 예외는 계정 삭제용 {@link #findIdsBySubjectIdAfterId}다.
+ */
 @Service
 @RequiredArgsConstructor
 public class DailyRecordService {
@@ -22,21 +25,21 @@ public class DailyRecordService {
     private final Clock clock;
 
     public Optional<DailyRecord> findBySubjectIdAndRecordDate(UUID subjectId, LocalDate recordDate) {
-        return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate);
+        return dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(subjectId, recordDate);
     }
 
     public Optional<DailyRecord> findById(Long id) {
-        return dailyRecordRepository.findByDailyRecordId(id);
+        return dailyRecordRepository.findByDailyRecordIdAndDeletedAtIsNull(id);
     }
 
     /** 사용자의 일일 기록 전체를 record_date, daily_record_id 내림차순으로 반환한다. */
     public List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(UUID subjectId) {
-        return dailyRecordRepository.findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(subjectId);
+        return dailyRecordRepository.findBySubjectIdAndDeletedAtIsNullOrderByRecordDateDescDailyRecordIdDesc(subjectId);
     }
 
     /** 일일 기록 ID와 subject가 모두 일치하는 소유 record만 반환한다. */
     /**
-     * subject의 record id를 PK 커서로 유계 조회한다(#302 정지 단계). User Memory 미반영 큐의 member가
+     * subject의 record id를 PK 커서로 유계 조회한다(#302 정지 단계). soft delete된 record도 포함한다. User Memory 미반영 큐의 member가
      * {@code {subject}:{recordId}}라 큐를 비우려면 id가 필요하고, 기록이 많은 회원도 한 번에 다 읽지
      * 않으려고 페이지로 넘긴다. 빈 결과 = 더 없음.
      *
@@ -48,7 +51,7 @@ public class DailyRecordService {
     }
 
     public Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId) {
-        return dailyRecordRepository.findByDailyRecordIdAndSubjectId(dailyRecordId, subjectId);
+        return dailyRecordRepository.findByDailyRecordIdAndSubjectIdAndDeletedAtIsNull(dailyRecordId, subjectId);
     }
 
     /**
@@ -60,7 +63,7 @@ public class DailyRecordService {
         if (dailyRecordIds.isEmpty()) {
             return List.of();
         }
-        return dailyRecordRepository.findBySubjectIdAndDailyRecordIdInOrderByRecordDateAsc(
+        return dailyRecordRepository.findBySubjectIdAndDailyRecordIdInAndDeletedAtIsNullOrderByRecordDateAsc(
                 subjectId, dailyRecordIds);
     }
 
@@ -68,7 +71,7 @@ public class DailyRecordService {
     public List<DailyRecord> findBySubjectIdAndRecordDateBetweenOrderByRecordDateAsc(
             UUID subjectId, LocalDate startInclusive, LocalDate endInclusive) {
         return dailyRecordRepository
-                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+                .findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualAndDeletedAtIsNullOrderByRecordDateAsc(
                         subjectId, startInclusive, endInclusive);
     }
 
@@ -76,9 +79,12 @@ public class DailyRecordService {
         return dailyRecordRepository.save(dailyRecord);
     }
 
-    /** 하루 기록 행을 삭제한다. 하위 timeline_events/timeline_items는 DB FK {@code ON DELETE CASCADE}가 지운다. */
-    public void deleteById(Long dailyRecordId) {
-        dailyRecordRepository.deleteById(dailyRecordId);
+    /**
+     * 활성 record를 {@code now} 시각으로 soft delete하고 하루 감정을 지운다. 실제로 삭제 표시한 행 수를 반환한다
+     * (0 = 이미 삭제됨). 하위 Event 삭제 표시는 호출부가 같은 {@code now}로 함께 수행한다.
+     */
+    public int softDelete(Long dailyRecordId, LocalDateTime now) {
+        return dailyRecordRepository.softDelete(dailyRecordId, now);
     }
 
     /**
@@ -116,7 +122,7 @@ public class DailyRecordService {
     @Transactional
     public DailyRecord findOrCreateDraft(UUID subjectId, LocalDate recordDate, LocalDateTime recordAt,
                                          String recordTimezone) {
-        return dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, recordDate)
+        return dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(subjectId, recordDate)
                 .map(existing -> {
                     existing.updateRecordTime(recordAt, recordTimezone);
                     return existing;

@@ -375,3 +375,28 @@ if mysql flyway_credit_history_upgrade -e "DELETE FROM user_subject_links WHERE 
 fi
 flyway flyway_credit_history_upgrade "$MIGRATIONS" -target=10 validate >"$WORK/credit-history-validate.log" 2>&1
 ok 'V9 to V10 adds empty credit_histories with UNIQUE target, amount and refund_reason CHECKs and subject FK, keeping balances'
+
+# V10→V11(#568): daily_records·timeline_events.deleted_at 추가와 같은 날짜 unique를 활성 행에만 거는 교체.
+# 기존 행 보존(활성), 옛 unique 제거·새 unique 존재, subject FK 유지, 같은 날짜 삭제 행 여러 개 + 활성 행 중복 거부를 확인한다.
+mysql -e 'CREATE DATABASE flyway_soft_delete_upgrade;'
+flyway flyway_soft_delete_upgrade "$MIGRATIONS" -target=10 migrate >"$WORK/soft-delete-v10.log" 2>&1
+SOFT_DELETE_SUBJECT='00000000-0000-4000-8000-000000000002'
+RECORD_COLUMNS="(subject_id, record_date, record_at, record_timezone, status, created_at, updated_at)"
+mysql flyway_soft_delete_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('cd', 32)), '$SOFT_DELETE_SUBJECT', 1); INSERT INTO daily_records $RECORD_COLUMNS VALUES ('$SOFT_DELETE_SUBJECT', '2026-01-05', '2026-01-05 10:00:00', 'Asia/Seoul', 'SAVED', NOW(6), NOW(6))"
+mysql flyway_soft_delete_upgrade -e "INSERT INTO timeline_events (daily_record_id, start_at, title, created_at, updated_at) SELECT daily_record_id, '2026-01-05 10:00:00', 'kept', NOW(6), NOW(6) FROM daily_records"
+flyway flyway_soft_delete_upgrade "$MIGRATIONS" -target=11 migrate >"$WORK/soft-delete-v11.log" 2>&1
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT COUNT(*) FROM daily_records WHERE deleted_at IS NULL AND active_marker = 1")" = 1 ] || fail 'V11 did not keep the existing record active'
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT COUNT(*) FROM timeline_events WHERE title='kept' AND deleted_at IS NULL")" = 1 ] || fail 'V11 did not keep the existing event active'
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'daily_records' AND INDEX_NAME = 'uq_daily_records_subject_date'")" = 0 ] || fail 'V11 kept the old (subject_id, record_date) UNIQUE'
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'daily_records' AND INDEX_NAME = 'uq_daily_records_subject_active_date' AND NON_UNIQUE = 0")" = 'subject_id,record_date,active_marker' ] || fail 'V11 did not add the active-row UNIQUE'
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_daily_records_subject'")" = 1 ] || fail 'V11 dropped fk_daily_records_subject'
+if mysql flyway_soft_delete_upgrade -e "INSERT INTO daily_records $RECORD_COLUMNS VALUES ('$SOFT_DELETE_SUBJECT', '2026-01-05', '2026-01-05 11:00:00', 'Asia/Seoul', 'DRAFT', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'a second active record for the same date was accepted'
+fi
+mysql flyway_soft_delete_upgrade -e "UPDATE daily_records SET deleted_at = '2026-01-06 09:00:00' WHERE subject_id = '$SOFT_DELETE_SUBJECT'; INSERT INTO daily_records $RECORD_COLUMNS VALUES ('$SOFT_DELETE_SUBJECT', '2026-01-05', '2026-01-06 10:00:00', 'Asia/Seoul', 'DRAFT', NOW(6), NOW(6)); UPDATE daily_records SET deleted_at = '2026-01-07 09:00:00' WHERE subject_id = '$SOFT_DELETE_SUBJECT' AND deleted_at IS NULL; INSERT INTO daily_records $RECORD_COLUMNS VALUES ('$SOFT_DELETE_SUBJECT', '2026-01-05', '2026-01-07 10:00:00', 'Asia/Seoul', 'DRAFT', NOW(6), NOW(6))"
+[ "$(mysql flyway_soft_delete_upgrade -e "SELECT CONCAT(SUM(deleted_at IS NOT NULL), '/', SUM(deleted_at IS NULL)) FROM daily_records WHERE subject_id = '$SOFT_DELETE_SUBJECT' AND record_date = '2026-01-05'")" = '2/1' ] || fail 'V11 did not allow repeated deletions of the same date beside one active record'
+if mysql flyway_soft_delete_upgrade -e "DELETE FROM user_subject_links WHERE subject_id='$SOFT_DELETE_SUBJECT'" >/dev/null 2>&1; then
+  fail 'subject mapping delete succeeded while daily records still reference it'
+fi
+flyway flyway_soft_delete_upgrade "$MIGRATIONS" -target=11 validate >"$WORK/soft-delete-validate.log" 2>&1
+ok 'V10 to V11 adds deleted_at and an active-row date UNIQUE, keeping rows active and the subject FK'

@@ -69,6 +69,12 @@ public class TimelineEvent extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String memo;
 
+    /**
+     * soft delete 시각. NULL이면 활성이다. 조건부 bulk UPDATE만 쓴다 — Event 단건 삭제, 또는 소속 DailyRecord 삭제
+     * 시 record와 같은 시각(이미 삭제된 Event는 원래 시각 유지). 삭제 때 place·address는 함께 NULL이 된다.
+     */
+    private LocalDateTime deletedAt;
+
     protected TimelineEvent() {
     }
 

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.laimory.server.timeline.entity.UserMemoryUpdatePending;
+import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.UserMemoryUpdatePendingStore;
+import com.laimory.server.timeline.service.TimelineOrphanItemSweepService;
 import com.laimory.server.user.Provider;
 import com.laimory.server.user.SubjectLookupKeyDeriver;
 import com.laimory.server.user.entity.AccountErasureJob;
@@ -77,6 +79,8 @@ class AccountErasureIntegrationTest {
     private JdbcTemplate jdbcTemplate;
     @Autowired
     private UserMemoryUpdatePendingStore userMemoryUpdatePendingStore;
+    @Autowired
+    private TimelineOrphanItemSweepService timelineOrphanItemSweepService;
 
     private final List<Long> createdUserIds = new ArrayList<>();
     private final List<UUID> createdSubjectIds = new ArrayList<>();
@@ -86,6 +90,7 @@ class AccountErasureIntegrationTest {
         createdUserIds.forEach(userId -> jdbcTemplate.update(
                 "DELETE FROM account_erasure_jobs WHERE user_id = ?", userId));
         createdSubjectIds.forEach(subjectId -> {
+            deleteContentLeftByFailedTest(subjectId);
             jdbcTemplate.update("DELETE FROM user_memories WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM credit_histories WHERE subject_id = ?", subjectId.toString());
             jdbcTemplate.update("DELETE FROM subject_credits WHERE subject_id = ?", subjectId.toString());
@@ -98,6 +103,23 @@ class AccountErasureIntegrationTest {
                 userSubjectLinkRepository.deleteById(subjectLookupKeyDeriver.deriveCurrent(userId)));
         createdUserIds.clear();
         createdSubjectIds.clear();
+    }
+
+    /**
+     * 콘텐츠 정리는 본문의 탈퇴 삭제가 맡는다. 본문이 중간에 실패하면 남는 record graph를 지운다 — 삭제된 Event에
+     * 연결된 Item은 orphan 스위퍼 후보라(#569) 남겨 두면 다른 스위퍼 테스트의 개수 단언을 깨뜨린다.
+     * job FK가 Item 삭제를 막으므로 job → Item → record 순서다(Event·junction은 FK cascade).
+     */
+    private void deleteContentLeftByFailedTest(UUID subjectId) {
+        List<Long> itemIds = jdbcTemplate.queryForList("SELECT l.timeline_item_id FROM timeline_event_items l "
+                + "JOIN timeline_events e ON e.timeline_event_id = l.timeline_event_id "
+                + "JOIN daily_records r ON r.daily_record_id = e.daily_record_id "
+                + "WHERE r.subject_id = ?", Long.class, subjectId.toString());
+        itemIds.forEach(itemId -> {
+            jdbcTemplate.update("DELETE FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", itemId);
+            jdbcTemplate.update("DELETE FROM timeline_items WHERE timeline_item_id = ?", itemId);
+        });
+        jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", subjectId.toString());
     }
 
     private long provisionedUser() {
@@ -416,6 +438,96 @@ class AccountErasureIntegrationTest {
         createdSubjectIds.clear();
     }
 
+    /**
+     * soft delete된 기록(#568)도 탈퇴 시 남김없이 hard delete된다. 같은 날짜에 삭제 행과 활성 행이 함께 있어도
+     * 계정 삭제는 무필터 조회로 둘 다 찾는다 — 하나라도 남으면 mapping 삭제가 FK에 막혀 finalization이 실패한다.
+     */
+    @Test
+    void softDeletedRecordsEventsAndItemsAreErasedOnWithdrawal() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        jdbcTemplate.update("INSERT INTO daily_records (subject_id, record_date, record_at, record_timezone, status, "
+                        + "deleted_at, created_at, updated_at) VALUES (?, '2026-01-04', '2026-01-04 10:00:00', "
+                        + "'Asia/Seoul', 'SAVED', now(6), now(6), now(6))",
+                subjectId.toString());
+        Long deletedRecordId = jdbcTemplate.queryForObject(
+                "SELECT daily_record_id FROM daily_records WHERE subject_id = ? AND deleted_at IS NOT NULL",
+                Long.class, subjectId.toString());
+        long activeRecordId = insertSavedRecord(subjectId, "2026-01-04");
+        jdbcTemplate.update("INSERT INTO timeline_events (daily_record_id, start_at, title, deleted_at, "
+                + "created_at, updated_at) VALUES (?, '2026-01-04 10:00:00', '지운 이벤트', now(6), now(6), now(6))",
+                deletedRecordId);
+        Long deletedEventId = jdbcTemplate.queryForObject(
+                "SELECT timeline_event_id FROM timeline_events WHERE daily_record_id = ?", Long.class,
+                deletedRecordId);
+        jdbcTemplate.update("INSERT INTO timeline_items (item_type, raw_id, payload, created_at, updated_at) "
+                + "VALUES ('LOCATION', ?, '{}', now(6), now(6))", UUID.randomUUID().toString());
+        Long itemId = jdbcTemplate.queryForObject("SELECT max(timeline_item_id) FROM timeline_items", Long.class);
+        jdbcTemplate.update("INSERT INTO timeline_event_items (timeline_event_id, timeline_item_id) "
+                + "VALUES (?, ?)", deletedEventId, itemId);
+
+        UUID resolved = accountErasureService.resolveTarget(userId);
+        accountErasureService.deleteContentGraph(resolved);
+        accountErasureService.deleteOwnerRows(userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM daily_records WHERE daily_record_id IN (?, ?)", Integer.class,
+                deletedRecordId, activeRecordId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_events WHERE timeline_event_id = ?", Integer.class, deletedEventId))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isZero();
+        assertThat(mappingCount(subjectId)).isZero();
+
+        createdUserIds.clear();
+        createdSubjectIds.clear();
+    }
+
+    /**
+     * 스위퍼가 삭제된 Event의 PHOTO를 S3 삭제로 넘기고 결과를 받기 전(#551)에도 탈퇴 삭제가 끝난다. 이 Item은 삭제된
+     * Event의 junction이 남아 record graph에서 보이므로 계정 삭제가 함께 지운다.
+     */
+    @Test
+    void photoAwaitingSweeperS3ResultIsErasedWithRecordGraph() {
+        long userId = withdrawnUser();
+        UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
+        long jobId = jobIdOf(userId);
+        long recordId = insertSavedRecord(subjectId, "2026-01-05");
+        jdbcTemplate.update("INSERT INTO timeline_events (daily_record_id, start_at, title, deleted_at, "
+                + "created_at, updated_at) VALUES (?, '2026-01-05 10:00:00', '지운 이벤트', now(6), now(6), now(6))",
+                recordId);
+        Long deletedEventId = jdbcTemplate.queryForObject(
+                "SELECT timeline_event_id FROM timeline_events WHERE daily_record_id = ?", Long.class, recordId);
+        String filename = "0190b2c3-d4e5-7f6a-8b9c-" + String.format("%012x", userId % 0xffffffffffL) + ".jpg";
+        String photoUrl = "https://cdn.example/" + PhotoObjectKeys.subjectFullKey(filename, subjectId);
+        jdbcTemplate.update("INSERT INTO timeline_items (item_type, raw_id, payload, created_at, updated_at) "
+                        + "VALUES ('PHOTO', ?, JSON_OBJECT('filename', ?, 'photoUrl', ?), now(6), now(6))",
+                UUID.randomUUID().toString(), filename, photoUrl);
+        Long itemId = jdbcTemplate.queryForObject("SELECT max(timeline_item_id) FROM timeline_items", Long.class);
+        jdbcTemplate.update("INSERT INTO timeline_event_items (timeline_event_id, timeline_item_id) "
+                + "VALUES (?, ?)", deletedEventId, itemId);
+        assertThat(timelineOrphanItemSweepService.sweepBatch(List.of(itemId)).photoDeletions())
+                .extracting(TimelineOrphanItemSweepService.PhotoDeletion::timelineItemId)
+                .containsExactly(itemId);
+
+        UUID resolved = accountErasureService.resolveTarget(userId);
+        accountErasureService.deleteContentGraph(resolved);
+        accountErasureService.deleteOwnerRows(userId, resolved);
+        accountErasureService.finalizeErasure(jobId, userId, resolved);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
+                .isZero();
+        assertThat(mappingCount(subjectId)).isZero();
+
+        createdUserIds.clear();
+        createdSubjectIds.clear();
+    }
+
     /** 콘텐츠가 남아 있으면 mapping 삭제가 FK에 막혀 finalization 전체가 rollback된다(fail-closed). */
     @Test
     void 콘텐츠를_지우지_않고_finalization하면_전부_되돌아온다() {
@@ -457,7 +569,8 @@ class AccountErasureIntegrationTest {
                         + "VALUES (?, ?, ?, 'Asia/Seoul', 'SAVED', now(6), now(6))",
                 subjectId.toString(), recordDate, recordDate + " 10:00:00");
         return jdbcTemplate.queryForObject(
-                "SELECT daily_record_id FROM daily_records WHERE subject_id = ? AND record_date = ?",
+                "SELECT daily_record_id FROM daily_records "
+                        + "WHERE subject_id = ? AND record_date = ? AND deleted_at IS NULL",
                 Long.class, subjectId.toString(), recordDate);
     }
 

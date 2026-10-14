@@ -26,8 +26,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 삭제 request 오케스트레이터 단위 검증.
  *
- * <p>request 경로는 S3를 호출하지 않고, 사전 검증 → PHOTO job enqueue를 포함한 DB transaction 순서만
- * 소유한다.
+ * <p>request 경로는 S3를 호출하지 않고, 사전 검증 → DB transaction(삭제는 soft delete, 연결 해제는 PHOTO job
+ * enqueue 포함) 순서만 소유한다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineDeletionServiceTest {
@@ -67,8 +67,6 @@ class TimelineDeletionServiceTest {
     @Test
     void deleteDailyRecord_removesPendingOnlyAfterTransactionReturns() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(0, 0, 0));
 
         service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
 
@@ -95,7 +93,7 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteEvent_runsTransaction() {
-        stubOwnedDraftEvent(new TimelineDeletionTransactionService.DeletionResult(2, 1, 3));
+        stubOwnedDraftEvent();
 
         service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID);
 
@@ -104,7 +102,7 @@ class TimelineDeletionServiceTest {
 
     @Test
     void deleteDailyRecord_runsTransaction() {
-        stubOwnedDraftRecord(new TimelineDeletionTransactionService.DeletionResult(4, 2, 1));
+        stubOwnedDraftRecord();
 
         service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
 
@@ -115,8 +113,6 @@ class TimelineDeletionServiceTest {
     void deleteDailyRecordByDate_resolvesSnapshotIdAndRunsTransaction() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(3, 2, 1));
 
         service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE);
 
@@ -128,8 +124,6 @@ class TimelineDeletionServiceTest {
     void detachEventItem_runsTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
@@ -169,8 +163,6 @@ class TimelineDeletionServiceTest {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
@@ -181,8 +173,8 @@ class TimelineDeletionServiceTest {
     void detachEventItem_dbFailurePropagates() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(timelineDeletionTransactionService).detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOf(RuntimeException.class)
@@ -194,8 +186,8 @@ class TimelineDeletionServiceTest {
     void deleteEvent_dbFailurePropagates() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID))
-                .thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(timelineDeletionTransactionService).deleteEvent(SUBJECT_ID, EVENT_ID);
 
         assertThatThrownBy(() -> service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID))
                 .isInstanceOf(RuntimeException.class)
@@ -206,8 +198,8 @@ class TimelineDeletionServiceTest {
     @Test
     void deleteDailyRecord_dbFailurePropagates() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
 
         assertThatThrownBy(() -> service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID))
                 .isInstanceOf(RuntimeException.class)
@@ -219,8 +211,8 @@ class TimelineDeletionServiceTest {
     void deleteDailyRecordByDate_dbFailurePropagates() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
 
         assertThatThrownBy(() -> service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE))
                 .isInstanceOf(RuntimeException.class)
@@ -261,8 +253,6 @@ class TimelineDeletionServiceTest {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
-        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.deleteEvent(VERSION, SUBJECT_ID, EVENT_ID);
 
@@ -300,8 +290,6 @@ class TimelineDeletionServiceTest {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.deleteDailyRecord(VERSION, SUBJECT_ID, RECORD_ID);
 
@@ -328,23 +316,19 @@ class TimelineDeletionServiceTest {
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, RECORD_DATE))
                 .thenReturn(Optional.of(saved));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.deleteDailyRecordByDate(VERSION, SUBJECT_ID, RECORD_DATE);
 
         verify(timelineDeletionTransactionService).deleteDailyRecord(SUBJECT_ID, RECORD_ID);
     }
 
-    private void stubOwnedDraftEvent(TimelineDeletionTransactionService.DeletionResult result) {
+    private void stubOwnedDraftEvent() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteEvent(SUBJECT_ID, EVENT_ID)).thenReturn(result);
     }
 
-    private void stubOwnedDraftRecord(TimelineDeletionTransactionService.DeletionResult result) {
+    private void stubOwnedDraftRecord() {
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.deleteDailyRecord(SUBJECT_ID, RECORD_ID)).thenReturn(result);
     }
 
     private TimelineEvent event() {

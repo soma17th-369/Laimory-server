@@ -46,7 +46,9 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   보존과 `credit_costs`의 `TIMELINE_CREATION` = 1 단일 seed·감사 컬럼 KST 벽시계·음수 CHECK를,
   V8→V9(#560)는 공지 행·노출 상태 보존과 nullable `thumbnail_filename`, 썸네일 없던 팝업 지정 해제·비팝업 행 불변을,
   V9→V10(#565)은 기존 잔액 보존·빈 `credit_histories`와 대상 UNIQUE·`amount` 음수 CHECK·`refund_reason` 짝 CHECK·
-  subject FK(삽입과 mapping 삭제 거절)를 검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
+  subject FK(삽입과 mapping 삭제 거절)를, V10→V11(#568)은 기존 record·Event 활성 유지와 옛 날짜 UNIQUE 제거·
+  활성 행 UNIQUE(`subject_id, record_date, active_marker`) 추가, subject FK 유지, 같은 날짜 삭제 행 여러 개 +
+  활성 행 중복 거부를 검증한다. 이후 migration은 [Flyway 절차](../../../../docs/database/flyway-adoption.md)에 따라 해당 변경의
   이전 버전·대표 데이터 업그레이드 검증을 추가해야 한다.
   script가 만든 컨테이너/네트워크만 제거하며 기존 local volume은 사용하지 않는다.
 - 크레딧 유실 처리(#565)의 keyspace 만료 알림 배선은 `TimelineTaskLossIntegrationTest`가 실 Redis로 검증하며

@@ -132,7 +132,7 @@ class TimelineAiTaskFlowIntegrationTest {
         // Item은 record FK cascade 대상이 아니므로 junction 경유로 먼저 지운다(테스트 잔존 방지).
         dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).ifPresent(record -> {
             List<Long> eventIds = timelineEventRepository
-                    .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()).stream()
+                    .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()).stream()
                     .map(TimelineEvent::getTimelineEventId)
                     .toList();
             List<Long> itemIds = timelineEventItemRepository.findByTimelineEventIdIn(eventIds).stream()
@@ -204,7 +204,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(taskService.find(taskId).orElseThrow().matchesToken(callbackToken)).isTrue();
 
         List<TimelineEvent> events = timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
         assertThat(events).singleElement().satisfies(event -> {
             assertThat(event.getTitle()).isEqualTo("아침");
             assertThat(event.getEventType()).isEqualTo(TimelineEventType.UNKNOWN);
@@ -243,7 +243,7 @@ class TimelineAiTaskFlowIntegrationTest {
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input, "   "));
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getQuestion()).isNull());
     }
@@ -258,7 +258,7 @@ class TimelineAiTaskFlowIntegrationTest {
         resultService.storeResult(VERSION, taskId, input.taskToken(), resultFrom(input, QUESTION, "  ", null));
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
                 .singleElement()
                 .satisfies(event -> {
                     assertThat(event.getPlace()).isNull();
@@ -288,7 +288,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         // Event·Item·junction 모두 한 번만 삽입되고 채택 source 삭제도 한 번만 반영된다.
         List<TimelineEvent> events = timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId());
         assertThat(events).hasSize(1);
         assertThat(timelineItemRepository.findAll())
                 .filteredOn(item -> RAW_ID.equals(item.getRawId()))
@@ -338,7 +338,7 @@ class TimelineAiTaskFlowIntegrationTest {
                 resultService.storeResult(VERSION, taskId, resultToken, resultFrom(input, "다른 질문인가요?"));
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId()))
                 .singleElement()
                 .satisfies(event -> assertThat(event.getQuestion()).isEqualTo("원래 질문인가요?"));
 
@@ -367,7 +367,7 @@ class TimelineAiTaskFlowIntegrationTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
     }
 
     @Test
@@ -392,7 +392,7 @@ class TimelineAiTaskFlowIntegrationTest {
         callbackService.handleCallback(VERSION, taskId, callbackToken, success());
         assertThat(pollingService.poll(VERSION, SUBJECT_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).hasSize(1);
     }
 
     @Test
@@ -411,7 +411,7 @@ class TimelineAiTaskFlowIntegrationTest {
 
         // graph는 롤백되고 Redis stage가 RESULT_PENDING으로 복구돼 올바른 결과를 재시도할 수 있다.
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
         assertThat(taskService.find(taskId).orElseThrow().stage()).isEqualTo(ProcessStage.RESULT_PENDING);
         // 선점 흔적이 남으면 정상 재시도가 409로 막힌다 — 보상은 선점 표식을 지워야 한다.
@@ -569,7 +569,7 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(historyStatus(taskId)).isEqualTo("CHARGED");
         assertThat(remainingCredits()).isEqualTo(60 - timelineCreationCost());
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
     }
 

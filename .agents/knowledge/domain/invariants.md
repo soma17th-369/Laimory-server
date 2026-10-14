@@ -154,15 +154,29 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 
 - Event·DailyRecord 삭제와 Event-Item 연결 해제는 record 상태와 무관하게 허용한다(SAVED 포함).
   없음·비소유는 404로 은닉한다.
-- 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 record의 ID를 snapshot하고 삭제
-  transaction이 그 정확한 ID의 owner/DRAFT를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
+- 날짜 기반 DailyRecord 삭제는 `(request subjectId, recordDate)`로 소유 활성 record의 ID를 snapshot하고 삭제
+  transaction이 그 정확한 ID의 owner를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
   record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.
-- 삭제 transaction은 다른 Event가 참조하지 않아 association 0이 될 orphan Item을 계산하고, orphan PHOTO의
-  full object key와 원문 Item PK를 `timeline_photo_delete_jobs`에 insert한다. 같은 commit에서
-  root/junction/non-PHOTO orphan은 hard delete하지만 유효한 PHOTO Item은 job과 함께 보존한다. 다른
-  Event에도 연결된 shared Item/PHOTO는 유지하고 job을 만들지 않는다.
-- DELETE API는 MySQL commit 뒤 S3 완료를 기다리지 않고 성공한다. 모든 process의 기본 스케줄은 매일
-  03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
+- **Event·DailyRecord 삭제는 soft delete다(#568).** 행을 지우지 않고 `deleted_at`(NULL = 활성)을 찍으며,
+  junction·Item은 그대로 두고 PHOTO 삭제 job도 만들지 않는다. 삭제 기록은 분석용으로 회원 탈퇴 시까지 남고
+  계정 삭제(#302)가 hard delete한다.
+  - 같은 UPDATE에서 Event의 `place`·`address`, record의 `emotion_type`을 NULL로 지운다(삭제 기록에 위치정보·
+    감정은 남기지 않는다). 지운 값은 복구되지 않는다.
+  - record 삭제는 그 record의 활성 Event에도 **record와 같은 `deleted_at`**을 찍는다. 먼저 개별 삭제된 Event는
+    원래 시각을 유지한다 — "하루째 삭제"(`event.deleted_at = record.deleted_at`)와 "Event만 삭제"를 시각으로
+    구분한다. 삭제된 Event 판정은 `timeline_events.deleted_at`으로 충분하다. 예외는 record 삭제 commit 직후
+    끼어든 Event 생성·AI 결과 저장(ms 경합, 수용)뿐이며, 이것까지 잡으려면 소속 record의 `deleted_at`도 본다.
+  - 삭제 쓰기는 `deleted_at IS NULL` 조건의 bulk UPDATE라 동시 삭제의 후발 요청은 0행으로 끝나고(응답 200)
+    첫 삭제 시각이 남는다. `DailyRecord`는 `@DynamicUpdate`라 같은 날짜 draft append의 dirty-checking UPDATE가
+    그 사이 commit된 `deleted_at`이나 저장 전이를 되돌리지 않는다.
+  - 앱의 모든 조회·수정 경로는 활성 행만 본다 — 삭제된 record·Event는 지금의 "없음"과 같다(404, 목록 제외,
+    save·감정 수정 0행 → 404, User Memory 배치는 사라진 하루로 걷어냄). rawId "이미 저장됨" 판정도 활성 Event에서
+    출발하므로 삭제된 Event의 사진이 같은 사진 재생성을 막지 않는다.
+  - 삭제 행까지 보는 경로는 계정 삭제(무필터 id 조회·native join·FK cascade)뿐이다.
+- Event-Item 연결 해제는 junction만 hard delete한다. Item은 분류·삭제하지 않고 job도 만들지 않는다 — 마지막
+  참조였으면 고아로 남고 S3 사진과 함께 일일 스위퍼가 정리한다(#551). S3는 request 경로에서 호출하지 않는다.
+- PHOTO 삭제 job은 #551 전환 중 이전 버전이 만든 것만 남는다(새 job을 만드는 writer 없음). 그 job을 처리하는
+  worker의 기본 스케줄은 매일 03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
   D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
   처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
   `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
@@ -174,31 +188,36 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
   보장하지 않는다.
   별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
-- 삭제 대상 PHOTO payload가 깨졌거나 filename/object key를 만들 수 없으면 job만 건너뛰고 hard delete는
-  진행한다(orphan 허용 — draft cleanup과 동일 규칙).
 - 같은 날짜의 draft(AI 작업), 수동 Event 생성/편집(수동 PHOTO 추가 포함), Event/DailyRecord 삭제
   사이에는 공통 Redis admission guard가 없다. 각 작업의 입력·소유권 preflight와 자기 DB transaction
   경계는 유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나
   지우지 않으며 기존 TTL로 자연 만료한다.
 - 마지막 Event를 삭제해도 DailyRecord는 유지한다. 하루 전체 제거는 DailyRecord 삭제만 담당한다.
-- Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`가 지운다(JPA cascade 없음).
-  Item은 record FK가 없어 cascade되지 않는다. 삭제 대상에만 연결된 non-PHOTO와 job을 만들 수 없는 손상
-  PHOTO는 같은 transaction에서 명시 삭제하고, 유효한 PHOTO는 job과 함께 보존한다. orphan 판정은 삭제 전
-  junction 스냅샷 기준이다. 같은 날짜 graph 쓰기를 직렬화하는 공통 guard가 없으므로 경합 정합성은
-  보장하지 않는다.
+- 같은 날짜 유일성은 활성 record에만 걸린다(V11 생성 컬럼 `active_marker` unique). 삭제한 날짜에 다시 기록하면
+  새 record가 생기고, 같은 날짜의 삭제 행은 몇 개든 남는다.
+- Event/Record 행의 hard delete(계정 삭제·테스트 정리)는 자기 junction을 DB FK `ON DELETE CASCADE`로 지운다
+  (JPA cascade 없음). Item은 record FK가 없어 cascade되지 않는다. 같은 날짜 graph 쓰기를 직렬화하는 공통
+  guard가 없으므로 경합 정합성은 보장하지 않는다.
 - Event-Item 연결 해제는 대상 junction 한 줄만 직접 DELETE로 지우고 Event·shared Item은 유지한다. 현재
   정책상 연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). 직접
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
-  수렴한다. 잔여 association 판정은 자기 삭제를 반영한 일반 읽기 best-effort다 — 서로 다른 junction의
-  동시 해제가 겹치면 마지막 참조를 shared로 오판해 job 없는 orphan Item이 남을 수 있다(root 삭제의
-  스냅샷 orphan 판정 경합과 같은 계열). 원인 불문 이런 orphan은 일일 스위퍼가 수렴시킨다.
-  마지막 참조 orphan 처리(유효 PHOTO job 보존·손상 PHOTO 즉시 삭제)는 root 삭제와 같은 규칙이다.
-- **junction·사진 job이 모두 없는 final Item은 고아 후보이다.** Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500). 일일 스위퍼가
-  이를 전제로 수렴시킨다 — 유효 PHOTO는 delete job으로 넘기고 non-PHOTO와 key를 복원할 수 없는 손상
-  PHOTO만 즉시 hard delete하며, job이 이미 있는 Item은 worker 소유라 건드리지 않는다.
+  수렴한다. 남은 참조를 판정하지 않는다 — 연결을 잃은 Item의 정리는 스위퍼가 맡는다(#551).
+- **활성 Event 연결과 사진 job이 모두 없는 final Item은 고아 후보이다.** soft delete된 Event(#568)의 junction은
+  연결로 치지 않는다(#569). Item과 junction은 한 transaction에서
+  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500).
+  삭제된 Event를 되살리는 경로도 없으므로 고아는 다시 살아나지 않는다. 일일 스위퍼가
+  이를 전제로 수렴시킨다 — non-PHOTO와 key를 복원할 수 없는 손상 PHOTO는 즉시 hard delete하고(S3 orphan 허용),
+  유효 PHOTO는 S3 삭제가 `Deleted`로 확인된 뒤에만 행을 지운다(#551). 스위퍼 스레드는 S3 응답을 기다리지 않고
+  전용 executor가 결과를 받아 처리한다. 실패·응답 누락·예외·제출 거절·결과 수신 전 종료는 행을 남겨 다음 실행이
+  다시 요청하며, 별도 실패 기록이나 중단 장치 없이 관측 후 72시간 잔존 경보가 장기 실패를 알린다.
+  job이 이미 있는 Item(#551 전환 전 생성)은 worker 소유라 건드리지 않는다.
+- **삭제된 기록의 원본 항목(Item)은 기록 삭제일로부터 5일 이내 파기된다(처리방침 고지).** 삭제일 D에 대해
+  스위퍼 처리와 PHOTO S3 첫 삭제 요청 ≤ D+1 03:30이고, S3 실패분은 매일 재요청되며 관측 후 72시간
+  (≤ D+4 03:30) 잔존하면 ERROR 경보가 뜬다(#551). #551 전환 전 생성된 job은 기존 처리 창(마지막 재시도 ≤ D+4)을
+  따른다. 스위퍼 스케줄·72시간 경보 기준을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
+  아래 남은 활성 Event의 Item은 대상이 아니다(수용, #568 E4·#569 E1).
 - **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
-  전제 위에서 job을 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
+  전제 위에서 S3 삭제를 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
   발급하는 UUIDv7이고, 기존 Item을 다른 Event에 재연결하는 writer가 없으며(#502), dev·prod 전수 집계
   실측 0건(2026-09-20). 과거에 있던 두 방어(스위퍼 enqueue 전 live-key 확인, worker S3 직전 key 공유
   재검증)와 같은 key orphan 그룹의 최소 id 소유자 규칙은 #503에서 제거됐다 — 재연결·재사용 writer를
@@ -214,7 +233,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
 - 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 관측된 Item에 junction을 다시 만드는 writer가 없으므로
   표시를 해제하는 경로도 없다(#502). BaseEntity·공통 AuditorAware는 변경하지 않는다.
-  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job 모두 없는 건수를 집계한다.
+  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 활성 Event 연결·job 모두 없는 건수를 집계한다.
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
   서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.

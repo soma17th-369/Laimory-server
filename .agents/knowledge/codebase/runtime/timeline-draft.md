@@ -226,24 +226,27 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 
 ### Delete
 
-- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): junction·delete job이 모두 없는 final Item을
-  PK MOD 담당에서 slot당 한 배치(기본 250)만 조회해 유효 PHOTO는 delete job으로 넘기고 non-PHOTO·손상 PHOTO는 즉시 삭제한다. 원인 불문
-  0-junction Item의 수렴을 담당하며 S3는 호출하지 않는다.
+- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): 활성 Event 연결·delete job이 모두 없는 final Item을
+  PK MOD 담당에서 slot당 한 배치(기본 250)만 조회해 non-PHOTO·손상 PHOTO는 즉시 삭제하고, 유효 PHOTO는 행을 남긴 채
+  전용 executor(`orphan-sweep-`)에 S3 삭제를 넘긴다 — 스케줄 스레드는 응답을 기다리지 않는다. executor 스레드가
+  `DeleteObjects`(10s/3s timeout)를 호출해 `Deleted`로 확인된 key의 Item만 별도 transaction에서 지우고, 실패·응답
+  누락·예외·제출 거절은 Item을 남겨 다음 실행이 다시 요청한다(#551). 원인 불문
+  고아(junction 0 또는 soft delete된 Event에만 연결, #569)의 수렴을 담당한다.
   후보 최초 관측을 먼저 commit하고 별도 transaction에서 처리한다. 처리 실패에도 최초 시각은 유지하며,
   표시를 해제하는 경로는 없다(관측된 Item에 junction을 다시 만드는 writer 없음, #502).
   처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 ERROR로 알린다.
-- Event 삭제: preflight 뒤 DB transaction에서 owner/DRAFT 재확인 → 삭제 Event에만 연결된 orphan Item
-  판정 → orphan PHOTO delete-job insert와 원문 PHOTO Item 보존 → Event 삭제(junction은 FK cascade) +
-  non-PHOTO orphan 명시 삭제. 날짜 Redis guard는 취득하지 않는다.
+- Event 삭제: preflight 뒤 DB transaction에서 owner 재확인 → Event soft delete(`deleted_at`, `place`·`address`
+  NULL, #568). junction·Item은 남는다. 그 Item은 다음 스위퍼 실행이 정리한다(#569). 날짜 Redis guard는 취득하지 않는다.
 - DailyRecord 삭제의 날짜 기반 공개 경로는 `(request subjectId, recordDate)`로 record를 찾는
   `DELETE .../daily-records/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
-  삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner/DRAFT를 재확인한다. lookup 뒤 같은
+  삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner를 재확인한다. lookup 뒤 같은
   날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/by-id/{dailyRecordId}`는
   같은 transaction을 호출하는 deprecated 호환 경로다.
-- DailyRecord 삭제 transaction은 record의 Event 집합에만 연결된 orphan Item을 계산해 PHOTO job insert·원문
-  PHOTO Item 보존과 Record/Event/junction/non-PHOTO Item hard delete를 같은 commit으로 묶는다. record 밖
-  Event에 연결된 후보는 방어적으로 shared 취급해 유지한다.
-- Event와 DailyRecord DELETE는 MySQL commit 뒤 S3 완료를 기다리지 않고 200을 반환한다. 모든 REST
+- DailyRecord 삭제 transaction은 record를 soft delete(`emotion_type` NULL)하고, 그 record의 활성 Event에 같은
+  `deleted_at`을 찍으며 `place`·`address`를 지운다(#568). record가 이미 삭제됐으면(동시 삭제) Event 처리를
+  건너뛴다. commit 뒤 오케스트레이터가 User Memory 미반영 큐에서 그 record를 뺀다.
+- Event-Item 연결 해제는 junction만 지우고 Item·S3는 스위퍼에 맡긴다(#551 — job을 만들지 않는다).
+- #551 전환 전에 만들어진 PHOTO delete job만 기존 worker가 처리한다. 모든 REST
   process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
   KST 생성일 기준 D+1~D+3 처리 창 안의 자기 PK MOD 담당 job을 slot당 최대 250개 한 번 일반 조회한다.
   claim transaction이 `status=PROCESSING`과 `updated_at=claim 시각`을 기록해 같은 날 재선택을 막고

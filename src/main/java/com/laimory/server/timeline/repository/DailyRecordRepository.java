@@ -15,16 +15,20 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 앱 조회 메서드는 이름에 {@code DeletedAtIsNull}을 담아 활성 행(soft delete 안 된 행)만 읽는다(#568).
+ * 삭제 행까지 보는 메서드는 계정 삭제(#302)용 {@link #findIdsBySubjectIdAfterId}·{@link #deleteAllByIdIn}뿐이다.
+ */
 public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> {
 
-    Optional<DailyRecord> findBySubjectIdAndRecordDate(UUID subjectId, LocalDate recordDate);
+    Optional<DailyRecord> findBySubjectIdAndRecordDateAndDeletedAtIsNull(UUID subjectId, LocalDate recordDate);
 
     /** PK 단건 조회 — 상속 {@code findById}와 달리 인터페이스 선언이라 transaction 없이 실행된다(#499). */
-    Optional<DailyRecord> findByDailyRecordId(Long dailyRecordId);
+    Optional<DailyRecord> findByDailyRecordIdAndDeletedAtIsNull(Long dailyRecordId);
 
-    List<DailyRecord> findBySubjectIdOrderByRecordDateDescDailyRecordIdDesc(UUID subjectId);
+    List<DailyRecord> findBySubjectIdAndDeletedAtIsNullOrderByRecordDateDescDailyRecordIdDesc(UUID subjectId);
 
-    Optional<DailyRecord> findByDailyRecordIdAndSubjectId(Long dailyRecordId, UUID subjectId);
+    Optional<DailyRecord> findByDailyRecordIdAndSubjectIdAndDeletedAtIsNull(Long dailyRecordId, UUID subjectId);
 
     /**
      * subject의 record id만 유계로 읽는다(#302 정지 단계) — User Memory 미반영 큐의 member가
@@ -56,15 +60,16 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
      * <p>정렬을 DB가 하는 이유: User Memory 갱신은 접기라 <b>기록 날짜 순서로</b> 접어야 한다.
      * 큐 진입 순서(과거 날짜를 나중에 저장할 수 있다)와 다르다.
      */
-    List<DailyRecord> findBySubjectIdAndDailyRecordIdInOrderByRecordDateAsc(
+    List<DailyRecord> findBySubjectIdAndDailyRecordIdInAndDeletedAtIsNullOrderByRecordDateAsc(
             UUID subjectId, Collection<Long> dailyRecordIds);
 
     /**
      * 소유 record를 양끝 포함 날짜 범위로 골라 {@code record_date} 오름차순으로 반환한다.
-     * 월별 경량 조회가 월 첫날~마지막 날 범위로 호출하며 {@code (subject_id, record_date)}가 유일해
+     * 월별 경량 조회가 월 첫날~마지막 날 범위로 호출하며 활성 행은 {@code (subject_id, record_date)}가 유일해
      * 추가 tie-breaker는 필요 없다.
      */
-    List<DailyRecord> findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualOrderByRecordDateAsc(
+    List<DailyRecord>
+            findBySubjectIdAndRecordDateGreaterThanEqualAndRecordDateLessThanEqualAndDeletedAtIsNullOrderByRecordDateAsc(
             UUID subjectId, LocalDate startInclusive, LocalDate endInclusive);
 
     /**
@@ -83,7 +88,7 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
             + "set r.emotionType = :emotionType, "
             + "r.status = :saved, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
-            + "and r.status = :draft")
+            + "and r.status = :draft and r.deletedAt is null")
     int markSaved(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
                   @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now,
                   @Param("saved") DailyRecordStatus saved, @Param("draft") DailyRecordStatus draft);
@@ -105,7 +110,7 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     @Query("update DailyRecord r "
             + "set r.emotionType = :emotionType, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.subjectId = :subjectId "
-            + "and r.status = :saved")
+            + "and r.status = :saved and r.deletedAt is null")
     int updateSavedEmotion(@Param("dailyRecordId") Long dailyRecordId, @Param("subjectId") UUID subjectId,
                            @Param("emotionType") EmotionType emotionType, @Param("now") LocalDateTime now,
                            @Param("saved") DailyRecordStatus saved);
@@ -113,4 +118,15 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
     default int updateSavedEmotion(Long dailyRecordId, UUID subjectId, EmotionType emotionType, LocalDateTime now) {
         return updateSavedEmotion(dailyRecordId, subjectId, emotionType, now, DailyRecordStatus.SAVED);
     }
+
+    /**
+     * 활성 record를 soft delete하고 하루 감정을 지운다(#568 — 삭제 기록은 분석용으로 남기되 감정은 남기지 않는다).
+     * 이미 삭제된 행은 조건에서 빠져 0을 반환하므로 동시 삭제의 첫 시각이 보존된다. {@code markSaved}와 같은 이유로
+     * {@code updated_at}을 직접 채운다.
+     */
+    @Modifying
+    @Query("update DailyRecord r "
+            + "set r.deletedAt = :now, r.emotionType = null, r.updatedAt = :now "
+            + "where r.dailyRecordId = :dailyRecordId and r.deletedAt is null")
+    int softDelete(@Param("dailyRecordId") Long dailyRecordId, @Param("now") LocalDateTime now);
 }

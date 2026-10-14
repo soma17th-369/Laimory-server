@@ -47,6 +47,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -120,8 +121,9 @@ class TimelineSaveFlowIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        List.of(DATE, OTHER_DATE).forEach(date -> dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, date)
-                .ifPresent(record -> dailyRecordRepository.deleteById(record.getDailyRecordId())));
+        // soft delete된 record까지 지운다(활성 조회는 삭제 행을 못 본다) — 계정 삭제용 무필터 id 조회를 쓴다.
+        dailyRecordRepository.findIdsBySubjectIdAfterId(subjectId, 0L, PageRequest.of(0, 100))
+                .forEach(dailyRecordRepository::deleteById);
         userMemoryRepository.deleteBySubjectId(subjectId.toString());
         taskStore.releaseGuard(subjectId);
         List<Long> leftover = pendingEntriesOf(subjectId).stream()
@@ -164,10 +166,10 @@ class TimelineSaveFlowIntegrationTest {
         assertThat(edited.getMemo()).isEqualTo("수정");
 
         timelineDeletionService.deleteEvent("v1", subjectId, eventId);
-        assertThat(timelineEventRepository.findById(eventId)).isEmpty();
+        assertThat(timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(eventId)).isEmpty();
 
         timelineDeletionService.deleteDailyRecordByDate("v1", subjectId, DATE);
-        assertThat(dailyRecordRepository.findById(recordId)).isEmpty();
+        assertThat(dailyRecordRepository.findByDailyRecordIdAndDeletedAtIsNull(recordId)).isEmpty();
     }
 
     @Test

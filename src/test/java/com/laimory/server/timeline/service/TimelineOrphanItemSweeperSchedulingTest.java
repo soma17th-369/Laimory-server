@@ -5,6 +5,7 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.ZoneId;
@@ -45,7 +46,8 @@ class TimelineOrphanItemSweeperSchedulingTest {
     void disabledSweeperDoesNotTouchDatabase() {
         TimelineOrphanItemSweepService sweepService = mock(TimelineOrphanItemSweepService.class);
         TimelineOrphanItemSweeper sweeper = new TimelineOrphanItemSweeper(sweepService,
-                new TimelineOrphanItemSweeperProperties(false, 250, 0, 2, 1));
+                mock(S3PhotoStorageService.class), new TimelineOrphanItemSweeperProperties(false, 250, 0, 2, 1),
+                Runnable::run);
 
         sweeper.sweepOrphanItems();
 
@@ -57,8 +59,8 @@ class TimelineOrphanItemSweeperSchedulingTest {
     void reportsStaleCountEvenWhenCurrentBatchIsEmpty(org.springframework.boot.test.system.CapturedOutput output) {
         TimelineOrphanItemSweepService service = mock(TimelineOrphanItemSweepService.class);
         org.mockito.Mockito.when(service.countStaleObservedOrphans(1, 2)).thenReturn(3L);
-        var sweeper = new TimelineOrphanItemSweeper(service,
-                new TimelineOrphanItemSweeperProperties(true, 250, 1, 2, 1));
+        var sweeper = new TimelineOrphanItemSweeper(service, mock(S3PhotoStorageService.class),
+                new TimelineOrphanItemSweeperProperties(true, 250, 1, 2, 1), Runnable::run);
         sweeper.sweepOrphanItems();
         // 운영 logback 설정이 로드된 JVM에서는 로그가 AsyncAppender 워커 스레드로 써지므로(#497) 캡처는 eventual이다.
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
@@ -74,8 +76,8 @@ class TimelineOrphanItemSweeperSchedulingTest {
         org.mockito.Mockito.when(service.observeBatch(3, 4, 1)).thenReturn(java.util.List.of(12L));
         org.mockito.Mockito.when(service.sweepBatch(org.mockito.ArgumentMatchers.anyList()))
                 .thenThrow(new IllegalStateException("rollback"));
-        var sweeper = new TimelineOrphanItemSweeper(service,
-                new TimelineOrphanItemSweeperProperties(true, 1, 1, 2, 2));
+        var sweeper = new TimelineOrphanItemSweeper(service, mock(S3PhotoStorageService.class),
+                new TimelineOrphanItemSweeperProperties(true, 1, 1, 2, 2), Runnable::run);
         sweeper.sweepOrphanItems();
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(service);
         order.verify(service).observeBatch(2, 4, 1);

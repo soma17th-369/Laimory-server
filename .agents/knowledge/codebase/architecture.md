@@ -108,22 +108,20 @@ HTTP 경계의 `@Valid`가 검사한다. 길이·공백 정규화는 위 서비�
 병합한 뒤 시간 범위를 검증한다(endAt은 누락·null도 항상 비움). Bean Validation과 JSON 타입 오류는
 기존 `GlobalExceptionHandler`의 MVC 표준 예외 경로로 400 응답한다.
 
-Event/DailyRecord 삭제는 preflight 뒤 별도 transaction service가 orphan PHOTO delete-job insert·원문
-PHOTO Item 보존과 기존 root/junction/non-PHOTO orphan hard delete를 한 commit으로 묶는다. Event-Item
-연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 재사용하되 junction 한 줄만 직접 DELETE로 지운다 —
-영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴하고, 마지막 참조 판정은 best-effort 일반
-읽기라 경합 시 job 없는 orphan Item이 남을 수 있다(일일 orphan 스위퍼가 수렴 담당). 마지막 참조
-PHOTO는 같은 delete-job 규칙으로 넘긴다. 날짜 Redis admission은 없다. S3는
-request transaction에 포함하지 않는다. 모든 REST 프로세스의 bounded worker가 eligible MySQL job을
-`FOR UPDATE SKIP LOCKED`로 나눠 `PROCESSING` claim하고, 성공 job과 원문 PHOTO Item을 별도 transaction에서
-함께 제거한다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을
-저장하며 job을 조회·취소·재연결하지 않는다(#500).
+Event/DailyRecord 삭제는 preflight(`TimelineDeletionService`) 뒤 별도 transaction service
+(`TimelineDeletionTransactionService`)가 소유권을 재확인하고 soft delete(`deleted_at`)만 한다(#568).
+Event-Item 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 쓰되 junction 한 줄만 직접 DELETE로 지운다 —
+영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴한다. 어느 쪽도 Item을 분류·삭제하지 않고 S3를
+호출하지 않는다. 연결을 잃은 Item은 일일 orphan 스위퍼가 정리한다(#551). 날짜 Redis admission은 없다.
+수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을 저장하며 job을 조회·취소·
+재연결하지 않는다(#500). #551 전환 중에는 이전 버전이 만든 PHOTO delete job이 남아 있을 수 있어 기존
+worker(전용 executor, PK MOD 담당 일반 조회 claim)가 그 job만 처리한다 — 새 job을 만드는 경로는 없다.
 
-orphan 스위퍼도 같은 2계층이다 — `TimelineOrphanItemSweeper`(스케줄 trigger, run 예산·요약 로그)와
-`TimelineOrphanItemSweepService`(batch 하나의 `@Transactional` 경계)로 나뉜다. batch에 외부 I/O가 없어
-별도 worker executor를 두지 않고, process 간 분배는 후보 PK를 좁게 잠그는
-`FOR UPDATE SKIP LOCKED` claim이 담당한다. S3 삭제는 이 경로에 없다 — 스위퍼는 delete job을 만들 뿐이고
-객체 삭제는 기존 worker가 그대로 수행한다.
+orphan 스위퍼는 `TimelineOrphanItemSweeper`(스케줄 trigger, slot 순차 실행·요약 로그)와
+`TimelineOrphanItemSweepService`(관측·처리·PHOTO Item 삭제 각각의 `REQUIRES_NEW` 경계)로 나뉜다. process 간
+분배는 PK MOD 담당의 일반 조회다. 유효 PHOTO의 S3 삭제는 전용 executor(`timelineOrphanSweepExecutor`,
+스레드 = worker-count, queue 0)에 넘기고 스케줄 스레드는 응답을 기다리지 않는다. executor 스레드가 동기
+`S3Client`로 `DeleteObjects`를 호출한 뒤 `Deleted`로 확인된 key의 Item만 별도 transaction에서 지운다(#551).
 
 response envelope는 `GlobalExceptionHandler`, transaction ID와 access log는
 `TransactionIdFilter`가 담당한다.

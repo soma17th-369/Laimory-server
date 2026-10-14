@@ -41,6 +41,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -117,17 +118,12 @@ class TimelineManualMutationIntegrationTest {
     @AfterEach
     void cleanUp() {
         Set<Long> itemIds = new LinkedHashSet<>(trackedItemIds);
-        List.of(DATE, ABSENT_DATE).forEach(date ->
-                dailyRecordRepository.findBySubjectIdAndRecordDate(subjectId, date)
-                        .ifPresent(record -> {
-                            timelineEventRepository
-                                    .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(
-                                            record.getDailyRecordId())
-                                    .forEach(event -> timelineEventItemRepository
-                                            .findByTimelineEventId(event.getTimelineEventId())
-                                            .forEach(link -> itemIds.add(link.getTimelineItemId())));
-                            dailyRecordRepository.deleteById(record.getDailyRecordId());
-                        }));
+        // soft delete된 record·Event까지 지운다(활성 조회는 삭제 행을 못 본다) — 계정 삭제용 무필터 조회를 쓴다.
+        List<Long> recordIds = dailyRecordRepository.findIdsBySubjectIdAfterId(subjectId, 0L, PageRequest.of(0, 100));
+        if (!recordIds.isEmpty()) {
+            itemIds.addAll(timelineEventItemRepository.findItemIdsByDailyRecordIdIn(recordIds));
+            recordIds.forEach(dailyRecordRepository::deleteById);
+        }
         // 삭제 job이 Item을 FK RESTRICT로 참조하므로 job → Item 순으로 지운다.
         itemIds.forEach(itemId -> jdbcTemplate.update(
                 "DELETE FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", itemId));
@@ -275,7 +271,7 @@ class TimelineManualMutationIntegrationTest {
                         assertThat(exception.getErrorCode()).isEqualTo(-404));
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
     }
 
     // --- #361 photosToAdd 동시 추가 ---
@@ -330,7 +326,7 @@ class TimelineManualMutationIntegrationTest {
                 .hasMessage("photo startAt must use second precision: index=0");
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(recordId)).isEmpty();
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
     }
 
@@ -360,7 +356,7 @@ class TimelineManualMutationIntegrationTest {
         // 신규 사진끼리 filename이 겹치면 resolve가 400으로 거절한다 — Event를 먼저 insert한 뒤의 실패라
         // rollback이 실제로 일어나야 사진 없는 Event가 남지 않는다.
         long eventCountBefore = timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId).size();
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(recordId).size();
         long itemCountBefore = timelineItemRepository.count();
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
@@ -371,7 +367,7 @@ class TimelineManualMutationIntegrationTest {
                 .hasMessage("filename is duplicated across new photos");
 
         assertThat(timelineEventRepository
-                .findByDailyRecordIdOrderByStartAtAscTimelineEventIdAsc(recordId))
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(recordId))
                 .hasSize((int) eventCountBefore);
         assertThat(timelineItemRepository.count()).isEqualTo(itemCountBefore);
     }
