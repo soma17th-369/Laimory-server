@@ -93,7 +93,7 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void unrestorableObjectKeyDropsJobAndDeletesRow() {
+    void unrestorableObjectKeySkipsS3AndDeletesRow() {
         TimelineItem broken = photoItem(17L, FILENAME,
                 "https://cdn.example.net/" + NAMESPACE_A.substring(0, 40) + "[REDACTED_CARD]/photos/" + FILENAME);
         scan(broken);

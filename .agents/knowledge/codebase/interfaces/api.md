@@ -132,8 +132,8 @@ deprecated 호환 API다. 삭제한 Event·하루는 이후 모든 조회·수�
 반환하지 않는다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}/items/{timelineItemId}`는 Event-Item junction
-한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 PHOTO 삭제
-작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
+한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 참조였으면 고아로 남아 orphan 스위퍼가
+S3 사진과 함께 정리한다(#551). 현재 정책상 PHOTO Item만
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED record에서도 해제할 수 있다. 성공 응답은 `body=null`이다.
 

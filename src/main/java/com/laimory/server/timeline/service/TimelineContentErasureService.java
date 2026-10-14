@@ -69,8 +69,7 @@ public class TimelineContentErasureService {
     }
 
     /**
-     * 이 Item들의 현재 소유자가 대상 subject뿐인지 확인한다. junction 0이면 소유자가 없어 통과한다 —
-     * 그 경우 소유 근거는 호출자가 이미 갖고 있다(record graph).
+     * 이 Item들의 현재 소유자가 대상 subject뿐인지 확인한다.
      */
     private void requireSoleOwner(UUID subjectId, List<Long> itemIds) {
         Set<String> owners = timelineEventItemRepository.findOwnerSubjectIdsByItemIdIn(itemIds).stream()

@@ -80,4 +80,12 @@ class TimelineContentErasureServiceTest {
         verify(timelineItemRepository, never()).deleteAllByIdIn(any());
         verify(dailyRecordRepository, never()).deleteAllByIdIn(any());
     }
+
+    @Test
+    void 대상이_없으면_0을_돌려준다() {
+        when(dailyRecordRepository.findIdsBySubjectIdAfterId(any(), any(), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        assertThat(service.deleteRecordBatch(SUBJECT_ID, BATCH)).isZero();
+    }
 }

@@ -31,15 +31,12 @@ class TimelineOrphanItemSweeperSchedulingTest {
     }
 
     @Test
-    void defaultsRunAfterPhotoDeleteAndBeforeDraftCleanup() {
+    void defaultsRunAt0330BeforeDraftCleanup() {
         ZoneId zone = ZoneId.of(DEFAULT_ZONE);
         ZonedDateTime beforeRun = ZonedDateTime.of(2026, 8, 6, 3, 29, 59, 0, zone);
 
         assertThat(CronExpression.parse(DEFAULT_CRON).next(beforeRun))
                 .isEqualTo(ZonedDateTime.of(2026, 8, 6, 3, 30, 0, 0, zone));
-        // PHOTO 삭제의 정규 시작(03:00) 뒤이고 draft cleanup(04:00)보다 앞이다.
-        assertThat(CronExpression.parse("0 0 3 * * *").next(beforeRun.minusHours(1)))
-                .isBefore(ZonedDateTime.of(2026, 8, 6, 3, 30, 0, 0, zone));
     }
 
     @Test

@@ -284,8 +284,8 @@ shutdown override는 없었다. ALB/host 설정은 live가 권위다. 30초 drai
 Boot 기본 graceful을 사용하므로 application.properties에 같은 설정을 중복 추가하지 않는다.
 
 HTTP drain과 background 작업 완료는 별개다. 기존 `DailyReminderWorker`는 claim commit 후 process가
-종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, PHOTO 삭제 등 다른 worker도 각자의 DB 재시도
-계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
+종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, 계정 삭제·draft cleanup·orphan 스위퍼 등 다른
+worker도 각자의 DB 재시도 계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
 
 ## Manual Operations
 

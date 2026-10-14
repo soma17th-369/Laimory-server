@@ -131,7 +131,7 @@ class TimelineDeletionTransactionServiceTest {
     }
 
     @Test
-    void deleteEventSoftDeletesEventAndLeavesItemsWithoutPhotoJob() {
+    void deleteEventSoftDeletesEventAndLeavesItems() {
         stubOwnedDraftEvent();
 
         service.deleteEvent(SUBJECT_ID, EVENT_ID);

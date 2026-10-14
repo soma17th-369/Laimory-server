@@ -1091,7 +1091,7 @@ target alert가 원인을 알린다. index는 관측 전용이므로 task 상태
 두 서버 합계 후보 상한은 하루 500개다. S3 실패·응답 누락·예외·제출 거절은 Item을 남겨 다음 날 다시 요청한다.
 
 고아가 줄지 않으면 직전 03:30 KST에 두 app process가 가용했는지 확인하고 application log의
-`orphan 스위퍼 batch 완료`(selected·photoRequested·invalidDeleted·nonPhotoDeleted)와
+`orphan 스위퍼 batch 완료`(selected·revalidationDropped·photoRequested·invalidDeleted·nonPhotoDeleted)와
 `orphan PHOTO S3 삭제 완료`(requested·s3Succeeded·s3Failed·unreported·itemsDeleted·durationMs·errorCodes; 실패는
 WARN)를 조회해 S3/IAM 오류와 함께 본다. 관측 후 72시간 넘게 남은 고아는 `orphan Item 최초 관측 후 72시간 잔존`
 ERROR로 기존 application ERROR 경보가 알린다. 남은 PHOTO Item은 다음 실행의 재시도 근거이므로 수동 삭제하거나
