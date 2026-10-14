@@ -263,19 +263,10 @@ image 재배포다. 새 workflow는 dev/prod key 부재를 거절하므로 제�
   배포 완료 후 장애는 수동 복구한다. 성공한 배포의 이전 image는 cleanup이 prune할 수 있으므로 이후 수동
   rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해 재배포한다.
 
-PHOTO delete worker는 checked-in default가 on이고 배포된 container는 다음 03:00 KST부터 pending job을
-처리한다. worker의 claim 판정은 `timeline_photo_delete_jobs`가 `available_at` 없는 신 schema이고 감사
-컬럼(`created_at`/`updated_at`)이 앱 바인딩 KST 프레임인 것을 전제한다. 이 schema가 아직 반영되지 않은
-live 환경(dev·prod)은 일회성 비호환 cutover가 선행돼야 하며 순서가 불변식이다: ① 새 claim index
-`(created_at, PK)` 추가 → ② worker off로 container 재생성 → ③ job insert/cancel 가능한 API 쓰기 중지
-(행 수 증가 정지 확인) → ④ 잔존 행 감사 시각 `+9h` 정규화(기존 행은 `current_timestamp(6)`가 채운
-UTC 프레임; 0건이면 생략) → ⑤ 새 binary 배포(worker off 유지) → ⑥ old index·`available_at` DROP →
-⑦ 쓰기 재개 → ⑧ worker 재활성. 정규화 이후 구 binary로 되돌리려면 쓰기 중지·worker off를 유지한 채
-감사 시각 `-9h` 원복이 먼저고, column DROP 이후라면 `available_at`과 old index 복원까지 선행해야 한다.
-단계별 SQL과 검증 항목은 PR #377 본문에 있다. 즉시 중지하거나 cutover 전인 환경은 host `.env`의 worker
-flag를 false로 바꾸고 deploy workflow를 재실행해 container를 재생성한다. pending job row는 수동 삭제하지
-않는다. job은 보존 중인 원문 PHOTO Item을 FK로 참조하므로 backlog를 수동 정리할 때도 job만 또는 Item만
-단독 삭제하지 않는다.
+PHOTO delete worker와 `timeline_photo_delete_jobs`는 #551에서 제거됐다. V12 `DROP TABLE`은 job entity를 가진
+구 image와 호환되지 않으므로(Hibernate validate 기동 실패) V12 이후 그 이전 image로 rollback하려면 V1의
+`CREATE TABLE timeline_photo_delete_jobs`를 먼저 승인받아 적용한다. host `.env`의 `TIMELINE_PHOTO_DELETE_*`는
+더 이상 읽히지 않는다(정리는 선택, host 변경 건별 승인).
 
 ### Rolling deployment time budgets (#484)
 
@@ -293,8 +284,8 @@ shutdown override는 없었다. ALB/host 설정은 live가 권위다. 30초 drai
 Boot 기본 graceful을 사용하므로 application.properties에 같은 설정을 중복 추가하지 않는다.
 
 HTTP drain과 background 작업 완료는 별개다. 기존 `DailyReminderWorker`는 claim commit 후 process가
-종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, PHOTO 삭제 등 다른 worker도 각자의 DB 재시도
-계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
+종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, 계정 삭제·draft cleanup·orphan 스위퍼 등 다른
+worker도 각자의 DB 재시도 계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
 
 ## Manual Operations
 

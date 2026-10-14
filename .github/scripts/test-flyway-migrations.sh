@@ -400,3 +400,16 @@ if mysql flyway_soft_delete_upgrade -e "DELETE FROM user_subject_links WHERE sub
 fi
 flyway flyway_soft_delete_upgrade "$MIGRATIONS" -target=11 validate >"$WORK/soft-delete-validate.log" 2>&1
 ok 'V10 to V11 adds deleted_at and an active-row date UNIQUE, keeping rows active and the subject FK'
+
+# V11→V12(#551): timeline_photo_delete_jobs 제거. 남아 있던 job 행이 있어도 DROP되고(FK도 함께 제거),
+# 그 job이 가리키던 timeline_items 행은 보존되어 이후 orphan 스위퍼가 정리할 수 있어야 한다.
+mysql -e 'CREATE DATABASE flyway_photo_job_drop_upgrade;'
+flyway flyway_photo_job_drop_upgrade "$MIGRATIONS" -target=11 migrate >"$WORK/photo-job-drop-v11.log" 2>&1
+mysql flyway_photo_job_drop_upgrade -e "INSERT INTO timeline_items (item_type, raw_id, payload, created_at, updated_at) VALUES ('PHOTO', 'raw-photo-job-drop', JSON_OBJECT('filename', 'a.jpg'), NOW(6), NOW(6)); INSERT INTO timeline_photo_delete_jobs (timeline_item_id, object_key, created_at, updated_at) SELECT timeline_item_id, 'ns/photos/a.jpg', NOW(6), NOW(6) FROM timeline_items WHERE raw_id = 'raw-photo-job-drop'"
+flyway flyway_photo_job_drop_upgrade "$MIGRATIONS" -target=12 migrate >"$WORK/photo-job-drop-v12.log" 2>&1
+[ "$(mysql flyway_photo_job_drop_upgrade -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timeline_photo_delete_jobs'")" = 0 ] || fail 'V12 kept timeline_photo_delete_jobs'
+[ "$(mysql flyway_photo_job_drop_upgrade -e "SELECT COUNT(*) FROM timeline_items WHERE raw_id = 'raw-photo-job-drop'")" = 1 ] || fail 'V12 removed the timeline item a job referenced'
+mysql flyway_photo_job_drop_upgrade -e "DELETE FROM timeline_items WHERE raw_id = 'raw-photo-job-drop'"
+[ "$(mysql flyway_photo_job_drop_upgrade -e "SELECT COUNT(*) FROM timeline_items WHERE raw_id = 'raw-photo-job-drop'")" = 0 ] || fail 'timeline item is still blocked after V12'
+flyway flyway_photo_job_drop_upgrade "$MIGRATIONS" -target=12 validate >"$WORK/photo-job-drop-validate.log" 2>&1
+ok 'V11 to V12 drops timeline_photo_delete_jobs with existing rows, keeping and unblocking the referenced timeline item'

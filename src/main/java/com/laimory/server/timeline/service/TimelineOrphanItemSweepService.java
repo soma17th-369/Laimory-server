@@ -33,7 +33,6 @@ public class TimelineOrphanItemSweepService {
 
     private final TimelineItemService timelineItemService;
     private final TimelineEventItemService timelineEventItemService;
-    private final TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -96,19 +95,16 @@ public class TimelineOrphanItemSweepService {
     }
 
     /**
-     * 새 처리 snapshot에서 활성 Event 연결과 job을 일반 조회한다. 삭제된 Event의 연결만 남은 Item은 고아다(#569).
-     * job이 있는 Item은 PHOTO 삭제 worker의 몫이라 건드리지 않는다 — 새 job은 더 생기지 않고, 기존 job이
-     * 다 처리되면 job 확인과 worker를 함께 걷어낸다(#551). DML 경합 실패는 전체 처리가 rollback된다.
+     * 새 처리 snapshot에서 활성 Event 연결을 일반 조회한다. 삭제된 Event의 연결만 남은 Item은 고아다(#569).
+     * DML 경합 실패는 전체 처리가 rollback된다.
      */
     private List<TimelineItem> revalidate(List<TimelineItem> items) {
         if (items.isEmpty()) {
             return List.of();
         }
         List<Long> itemIds = items.stream().map(TimelineItem::getTimelineItemId).toList();
-        Set<Long> withJob = timelinePhotoDeleteJobService.findItemIdsWithJob(itemIds);
         Set<Long> linked = timelineEventItemService.findActivelyLinkedItemIds(itemIds);
         return items.stream()
-                .filter(item -> !withJob.contains(item.getTimelineItemId()))
                 .filter(item -> !linked.contains(item.getTimelineItemId()))
                 .toList();
     }

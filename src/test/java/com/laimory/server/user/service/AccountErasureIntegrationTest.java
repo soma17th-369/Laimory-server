@@ -108,17 +108,15 @@ class AccountErasureIntegrationTest {
     /**
      * 콘텐츠 정리는 본문의 탈퇴 삭제가 맡는다. 본문이 중간에 실패하면 남는 record graph를 지운다 — 삭제된 Event에
      * 연결된 Item은 orphan 스위퍼 후보라(#569) 남겨 두면 다른 스위퍼 테스트의 개수 단언을 깨뜨린다.
-     * job FK가 Item 삭제를 막으므로 job → Item → record 순서다(Event·junction은 FK cascade).
+     * record가 먼저 사라지면 junction도 cascade돼 Item을 특정할 수 없으므로 Item → record 순서다.
      */
     private void deleteContentLeftByFailedTest(UUID subjectId) {
         List<Long> itemIds = jdbcTemplate.queryForList("SELECT l.timeline_item_id FROM timeline_event_items l "
                 + "JOIN timeline_events e ON e.timeline_event_id = l.timeline_event_id "
                 + "JOIN daily_records r ON r.daily_record_id = e.daily_record_id "
                 + "WHERE r.subject_id = ?", Long.class, subjectId.toString());
-        itemIds.forEach(itemId -> {
-            jdbcTemplate.update("DELETE FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", itemId);
-            jdbcTemplate.update("DELETE FROM timeline_items WHERE timeline_item_id = ?", itemId);
-        });
+        itemIds.forEach(itemId ->
+                jdbcTemplate.update("DELETE FROM timeline_items WHERE timeline_item_id = ?", itemId));
         jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", subjectId.toString());
     }
 

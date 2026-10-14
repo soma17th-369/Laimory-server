@@ -56,7 +56,6 @@ apt list --upgradable 2>/dev/null | grep '^mysql-'   # mysql-01만
 | 시각 | 작업 |
 |---|---|
 | 02:30 | 탈퇴 계정 데이터 삭제 |
-| 03:00 | 타임라인 사진 삭제 job |
 | 03:30 | orphan Item sweep |
 | 04:00 | draft cleanup |
 | 04:15 | prod mysqldump 백업(monitoring host) |

@@ -113,9 +113,8 @@ Event/DailyRecord 삭제는 preflight(`TimelineDeletionService`) 뒤 별도 tran
 Event-Item 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 쓰되 junction 한 줄만 직접 DELETE로 지운다 —
 영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴한다. 어느 쪽도 Item을 분류·삭제하지 않고 S3를
 호출하지 않는다. 연결을 잃은 Item은 일일 orphan 스위퍼가 정리한다(#551). 날짜 Redis admission은 없다.
-수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을 저장하며 job을 조회·취소·
-재연결하지 않는다(#500). #551 전환 중에는 이전 버전이 만든 PHOTO delete job이 남아 있을 수 있어 기존
-worker(전용 executor, PK MOD 담당 일반 조회 claim)가 그 job만 처리한다 — 새 job을 만드는 경로는 없다.
+수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 항상 새 Item을 저장하며 삭제 대기 사진을 조회·재연결하지
+않는다(#500).
 
 orphan 스위퍼는 `TimelineOrphanItemSweeper`(스케줄 trigger, slot 순차 실행·요약 로그)와
 `TimelineOrphanItemSweepService`(관측·처리·PHOTO Item 삭제 각각의 `REQUIRES_NEW` 경계)로 나뉜다. process 간

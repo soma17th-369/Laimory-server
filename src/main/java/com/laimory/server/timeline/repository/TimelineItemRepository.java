@@ -36,7 +36,7 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
     /**
      * 담당 PK에서 한 배치만 일반 조회한다. 관측 표시는 후보 제외 조건이 아니다.
      *
-     * <p>고아 = 활성 Event 연결과 사진 job이 모두 없는 Item이다. soft delete된 Event(#568)는 junction을 남기므로
+     * <p>고아 = 활성 Event 연결이 없는 Item이다. soft delete된 Event(#568)는 junction을 남기므로
      * 그 Event에만 연결된 Item도 후보다(#569). 아래 관측·잔존 집계 쿼리도 같은 조건을 쓴다.
      */
     @Query(value = "select * from timeline_items i "
@@ -44,8 +44,6 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
             + "and not exists (select 1 from timeline_event_items l "
             + "                join timeline_events e on e.timeline_event_id = l.timeline_event_id "
             + "                where l.timeline_item_id = i.timeline_item_id and e.deleted_at is null) "
-            + "and not exists (select 1 from timeline_photo_delete_jobs j "
-            + "                where j.timeline_item_id = i.timeline_item_id) "
             + "order by i.timeline_item_id limit :limit", nativeQuery = true)
     List<TimelineItem> findOrphanCandidates(@Param("workerIndex") int workerIndex,
                                             @Param("totalWorkerCount") int totalWorkerCount,
@@ -58,9 +56,7 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
             + "and (i.modified_by is null or i.modified_by <> 'ORPHAN_SWEEPER') "
             + "and not exists (select 1 from timeline_event_items l "
             + "                join timeline_events e on e.timeline_event_id = l.timeline_event_id "
-            + "                where l.timeline_item_id = i.timeline_item_id and e.deleted_at is null) "
-            + "and not exists (select 1 from timeline_photo_delete_jobs j "
-            + "                where j.timeline_item_id = i.timeline_item_id)", nativeQuery = true)
+            + "                where l.timeline_item_id = i.timeline_item_id and e.deleted_at is null)", nativeQuery = true)
     int markOrphanObserved(@Param("itemIds") Collection<Long> itemIds,
                            @Param("observedAt") LocalDateTime observedAt);
 
@@ -70,9 +66,7 @@ public interface TimelineItemRepository extends JpaRepository<TimelineItem, Long
             + "and i.modified_by = 'ORPHAN_SWEEPER' and i.updated_at <= :staleBefore "
             + "and not exists (select 1 from timeline_event_items l "
             + "                join timeline_events e on e.timeline_event_id = l.timeline_event_id "
-            + "                where l.timeline_item_id = i.timeline_item_id and e.deleted_at is null) "
-            + "and not exists (select 1 from timeline_photo_delete_jobs j "
-            + "                where j.timeline_item_id = i.timeline_item_id)", nativeQuery = true)
+            + "                where l.timeline_item_id = i.timeline_item_id and e.deleted_at is null)", nativeQuery = true)
     long countStaleObservedOrphans(@Param("workerIndex") int workerIndex,
                                    @Param("totalWorkerCount") int totalWorkerCount,
                                    @Param("staleBefore") LocalDateTime staleBefore);

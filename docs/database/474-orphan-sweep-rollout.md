@@ -33,14 +33,14 @@ AWS·host 변경은 대상·영향·복구 방법을 제시하고 별도 승인�
 
 ## 최초 관측과 72시간 경보
 
-선택한 최대 250개 PK 안에서 아직 관측되지 않았고 junction·사진 job이 모두 없는 Item에만
+선택한 최대 250개 PK 안에서 아직 관측되지 않았고 활성 Event 연결이 없는 Item에만
 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST 최초 관측 시각을 기록해 먼저 commit한다.
 같은 PK는 새 처리 transaction에서 재검증한다. 처리 rollback·재조회가 최초 시각을 덮어쓰지 않는다.
 
 공통 감사 동작은 유지한다(당시 있던 기존 Item 재연결의 관측 표시 해제 경로는 이후 #502에서 재연결
 writer와 함께 제거됨).
 
-각 slot의 처리 commit/rollback 뒤 담당 전체에서 관측 후 72시간 이상이며 junction·job이 모두 없는
+각 slot의 처리 commit/rollback 뒤 담당 전체에서 관측 후 72시간 이상이며 활성 Event 연결이 없는
 Item 수가 양수이면 workerIndex·count만 ERROR로 남긴다. 기존 application ERROR 경보를 사용한다.
-이번 후보 밖의 관측 Item도 포함하며 job으로 넘긴 Item은 제외한다. 이후 사진 job 실패는 기존 만료
-경보가 담당한다. 실제 고아 전환 시각이나 LIMIT·워커 중단 때문에 미관측인 적체의 대기시간은 측정하지 않는다.
+이번 후보 밖의 관측 Item도 포함하며, S3 삭제가 계속 실패해 남은 PHOTO도 이 경보에 잡힌다(#551).
+실제 고아 전환 시각이나 LIMIT·워커 중단 때문에 미관측인 적체의 대기시간은 측정하지 않는다.
