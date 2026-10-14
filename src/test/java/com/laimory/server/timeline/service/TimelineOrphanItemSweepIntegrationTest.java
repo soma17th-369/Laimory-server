@@ -15,6 +15,7 @@ import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
+import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
@@ -44,8 +45,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * orphan 스위퍼의 실 MySQL 계약 검증.
  *
- * <p>핵심은 두 가지다 — ① 활성 Event 연결이 없는 Item(junction 0 또는 soft delete된 Event에만 연결, #569)이
- * 규칙대로 수렴하는가, ② 동시 실행에서 job이 중복되거나 FK 위반으로 batch가 깨지지 않는가.
+ * <p>핵심은 세 가지다 — ① 활성 Event 연결이 없는 Item(junction 0 또는 soft delete된 Event에만 연결, #569)이
+ * 규칙대로 수렴하는가, ② 유효 PHOTO는 S3 삭제가 확인된 뒤에만 행이 지워지고 실패하면 다음 실행까지 남는가(#551),
+ * ③ 동시 실행에서 같은 PHOTO를 두 번 넘기거나 FK 위반으로 batch가 깨지지 않는가. S3는 mock이다.
  *
  * <p>실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -73,6 +75,9 @@ class TimelineOrphanItemSweepIntegrationTest {
     private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     @Autowired
     private TimelineDeletionTransactionService deletionTransactionService;
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("timelineOrphanSweepExecutor")
+    private org.springframework.core.task.TaskExecutor orphanSweepExecutor;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
     private TimelineItemService itemService;
     @Autowired
@@ -118,23 +123,20 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void concurrentDetachRemnantConvergesToExactlyOneJob() {
-        // #247 동시 해제 경합의 종단 상태 — 공유 PHOTO의 junction 두 줄이 모두 사라졌는데 job이 없다.
+    void photoOrphanIsReturnedAgainUntilItsItemIsDeleted() {
+        // S3 결과를 받기 전에는 행이 남으므로 다음 실행이 같은 PHOTO를 다시 넘긴다(#551).
         String filename = filename(1);
-        Long eventOne = saveEvent("첫 이벤트", 9);
-        Long eventTwo = saveEvent("둘째 이벤트", 10);
-        Long itemId = savePhoto("raw-a1", filename, eventOne, eventTwo);
-        // 동시 해제 두 요청이 남긴 종단 상태를 직접 만든다(스레드 타이밍에 의존하지 않는 결정적 재현).
+        Long eventId = saveEvent("해제 이벤트", 9);
+        Long itemId = savePhoto("raw-a1", filename, eventId);
         jdbcTemplate.update("DELETE FROM timeline_event_items WHERE timeline_item_id = ?", itemId);
+        var expected = new TimelineOrphanItemSweepService.PhotoDeletion(
+                itemId, PhotoObjectKeys.subjectFullKey(filename, subjectId));
 
         var first = sweep(0, 1, 250);
         var second = sweep(0, 1, 250);
 
-        assertThat(first.photoScheduled()).isEqualTo(1);
-        assertThat(second.photoScheduled()).isZero();
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getObjectKey)
-                .containsExactly(PhotoObjectKeys.subjectFullKey(filename, subjectId));
-        // 원문 PHOTO Item은 worker가 S3 성공 뒤 지운다 — 스위퍼는 보존한다.
+        assertThat(first.photoDeletions()).containsExactly(expected);
+        assertThat(second.photoDeletions()).containsExactly(expected);
         assertThat(timelineItemRepository.existsById(itemId)).isTrue();
     }
 
@@ -165,7 +167,7 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void photoOfDeletedEventGetsDeleteJobAndKeepsRow() {
+    void photoOfDeletedEventIsReturnedForS3DeletionAndKeepsRow() {
         String filename = filename(11);
         Long eventId = saveEvent("삭제 이벤트", 9);
         Long photo = savePhoto("raw-deleted-photo", filename, eventId);
@@ -173,10 +175,56 @@ class TimelineOrphanItemSweepIntegrationTest {
 
         var result = sweep(0, 1, 250);
 
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getObjectKey)
-                .containsExactly(PhotoObjectKeys.subjectFullKey(filename, subjectId));
+        assertThat(result.photoDeletions()).containsExactly(new TimelineOrphanItemSweepService.PhotoDeletion(
+                photo, PhotoObjectKeys.subjectFullKey(filename, subjectId)));
         assertThat(timelineItemRepository.existsById(photo)).isTrue();
+    }
+
+    @Test
+    void sweeperDeletesPhotoItemOnlyAfterS3ConfirmsDeletion() {
+        String filename = filename(14);
+        String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        Long photo = savePhoto("raw-sweeper-photo", filename, eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+        S3PhotoStorageService s3 = org.mockito.Mockito.mock(S3PhotoStorageService.class);
+        org.mockito.Mockito.when(s3.deleteAll(org.mockito.ArgumentMatchers.anyList()))
+                .thenAnswer(invocation -> new S3PhotoStorageService.BatchDeleteResult(
+                        Set.copyOf(invocation.<List<String>>getArgument(0)), java.util.Map.of(), Set.of()));
+
+        sweeperWith(s3, orphanSweepExecutor).sweepOrphanItems();
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10))
+                .until(() -> !timelineItemRepository.existsById(photo));
+        org.mockito.Mockito.verify(s3).deleteAll(org.mockito.ArgumentMatchers.argThat(keys -> keys.contains(objectKey)));
+        assertThat(timelineEventItemRepository.findByTimelineItemIdIn(List.of(photo))).isEmpty();
+    }
+
+    @Test
+    void sweeperKeepsPhotoItemAndFirstObservationWhenS3Fails() {
+        String filename = filename(15);
+        String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
+        Long eventId = saveEvent("삭제 이벤트", 9);
+        Long photo = savePhoto("raw-sweeper-fail", filename, eventId);
+        deletionTransactionService.deleteEvent(subjectId, eventId);
+        S3PhotoStorageService s3 = org.mockito.Mockito.mock(S3PhotoStorageService.class);
+        org.mockito.Mockito.when(s3.deleteAll(org.mockito.ArgumentMatchers.anyList()))
+                .thenAnswer(invocation -> new S3PhotoStorageService.BatchDeleteResult(Set.of(),
+                        invocation.<List<String>>getArgument(0).stream()
+                                .collect(java.util.stream.Collectors.toMap(key -> key, key -> "InternalError")),
+                        Set.of()));
+
+        // 실패 경로는 DB 상태만 본다 — 같은 스레드에서 실행해 두 run의 제출이 queue 0 executor와 겹치지 않게 한다.
+        sweeperWith(s3, Runnable::run).sweepOrphanItems();
+        var observed = timelineItemRepository.findById(photo).orElseThrow();
+        sweeperWith(s3, Runnable::run).sweepOrphanItems();
+        org.mockito.Mockito.verify(s3, org.mockito.Mockito.times(2))
+                .deleteAll(org.mockito.ArgumentMatchers.argThat(keys -> keys.contains(objectKey)));
+
+        // 실패한 PHOTO는 남아 다음 실행이 다시 요청하고, 최초 관측 시각은 덮어쓰지 않는다(72h 경보의 기준).
+        var retried = timelineItemRepository.findById(photo).orElseThrow();
+        assertThat(retried.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
+        assertThat(retried.getUpdatedAt()).isEqualTo(observed.getUpdatedAt());
     }
 
     @Test
@@ -218,7 +266,7 @@ class TimelineOrphanItemSweepIntegrationTest {
 
     @Test
     void detachLeavingOnlyDeletedEventLinkMakesPhotoSweepable() {
-        // #568 E5 — 연결 해제는 삭제된 Event의 junction을 남은 참조로 보고 job을 만들지 않는다. 스위퍼가 정리한다.
+        // 연결 해제는 Item을 분류하지 않는다(#551). 삭제된 Event의 연결만 남은 PHOTO는 스위퍼가 정리한다.
         String filename = filename(13);
         Long deletedEvent = saveEvent("삭제 이벤트", 9);
         Long activeEvent = saveEvent("해제 이벤트", 10);
@@ -229,8 +277,8 @@ class TimelineOrphanItemSweepIntegrationTest {
 
         var result = sweep(0, 1, 250);
 
-        assertThat(result.photoScheduled()).isEqualTo(1);
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId).containsExactly(shared);
+        assertThat(result.photoDeletions()).extracting(TimelineOrphanItemSweepService.PhotoDeletion::timelineItemId)
+                .containsExactly(shared);
     }
 
     @Test
@@ -246,13 +294,13 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void damagedPhotoUrlDropsJobAndDeletesRow() {
+    void damagedPhotoUrlSkipsS3AndDeletesRow() {
         Long orphan = savePhotoWithKey("raw-damaged", filename(6), "not-a-valid-object-key");
 
         var result = sweep(0, 1, 250);
 
         assertThat(result.invalidDeleted()).isEqualTo(1);
-        assertThat(jobsOfFixture()).isEmpty();
+        assertThat(result.photoDeletions()).isEmpty();
         assertThat(timelineItemRepository.existsById(orphan)).isFalse();
     }
 
@@ -272,7 +320,7 @@ class TimelineOrphanItemSweepIntegrationTest {
     }
 
     @Test
-    void concurrentSweepsCreateExactlyOneJobAndNeitherFails() throws Exception {
+    void concurrentSweepsReturnPhotoExactlyOnceAndNeitherFails() throws Exception {
         String filename = filename(8);
         String objectKey = PhotoObjectKeys.subjectFullKey(filename, subjectId);
         Long orphan = savePhotoWithKey("raw-h8", filename, objectKey);
@@ -282,17 +330,16 @@ class TimelineOrphanItemSweepIntegrationTest {
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<Integer> first = executor.submit(() -> {
                 start.await();
-                return template.execute(status -> sweep(0, 2, 250).photoScheduled());
+                return template.execute(status -> sweep(0, 2, 250).photoDeletions().size());
             });
             Future<Integer> second = executor.submit(() -> {
                 start.await();
-                return template.execute(status -> sweep(1, 2, 250).photoScheduled());
+                return template.execute(status -> sweep(1, 2, 250).photoDeletions().size());
             });
             start.countDown();
             assertThat(first.get() + second.get()).isEqualTo(1);
         }
 
-        assertThat(jobsOfFixture()).extracting(TimelinePhotoDeleteJob::getTimelineItemId).containsExactly(orphan);
         assertThat(timelineItemRepository.existsById(orphan)).isTrue();
     }
 
@@ -309,12 +356,11 @@ class TimelineOrphanItemSweepIntegrationTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> sweepService.sweepBatch(candidates))
                 .isInstanceOf(IllegalStateException.class);
         org.mockito.Mockito.reset(itemService);
-        assertThat(jobsOfFixture()).isEmpty(); // job insert preceding the failure also rolled back
         sweepService.observeBatch(0, 1, 250);
         var retried = timelineItemRepository.findById(itemId).orElseThrow();
         assertThat(retried.getUpdatedAt()).isEqualTo(first.getUpdatedAt());
         assertThat(retried.getModifiedBy()).isEqualTo("ORPHAN_SWEEPER");
-        assertThat(sweepService.sweepBatch(candidates).photoScheduled()).isEqualTo(1);
+        assertThat(sweepService.sweepBatch(candidates).photoDeletions()).hasSize(1);
     }
 
     @Test
@@ -341,6 +387,13 @@ class TimelineOrphanItemSweepIntegrationTest {
                 + itemService.countStaleObservedOrphans(1, 2, now.minusHours(72))).isEqualTo(2);
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> itemService.deleteByIds(List.of(exact)));
         assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(1);
+    }
+
+    /** S3 mock으로 만든 스위퍼. docker profile 기본 담당(서버 1대·slot 1개)을 쓴다. */
+    private TimelineOrphanItemSweeper sweeperWith(S3PhotoStorageService s3,
+                                                  org.springframework.core.task.TaskExecutor executor) {
+        return new TimelineOrphanItemSweeper(sweepService, s3,
+                new TimelineOrphanItemSweeperProperties(true, 250, 0, 1, 1), executor);
     }
 
     private TimelineOrphanItemSweepService.SweepBatchResult sweep(int workerIndex, int total, int limit) {

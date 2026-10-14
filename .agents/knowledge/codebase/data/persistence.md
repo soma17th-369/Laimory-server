@@ -51,7 +51,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `app_config`
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
-- `timeline_photo_delete_jobs` (마지막 참조가 사라진 PHOTO Item과 S3 삭제 의무, 행 존재=대기,
+- `timeline_photo_delete_jobs` (#551 전환 중 — 새로 만드는 경로가 없고 이전 버전이 만든 job만 남는다. 행 존재=대기,
   처리 창=`created_at` 기준 KST D+1~D+3, 같은 날 재선택 방지=`updated_at`, 성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, retention 기준은 `created_at`)
@@ -177,7 +177,8 @@ auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.no
 삭제·cleanup은 기존 JPA repository가 담당한다. 초안 정리는 PK MOD 담당의 만료 행을 한 번 일반 조회하고
 S3 성공 또는 S3가 불필요한 행만 최종 transaction에서 삭제한다. 선점 UPDATE나 재시도 시각 컬럼은 없다.
 
-`timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. `timeline_item_id`와 full
+`timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. #551 이후 운영 코드에 job을 만드는
+writer는 없고(사진 S3 삭제는 orphan 스위퍼가 직접 요청), 아래 규칙은 전환 전에 생긴 job의 처리에만 적용된다. `timeline_item_id`와 full
 `object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
 가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 service가 캡처한
 KST 시각 하나를 `created_at`/`updated_at`에 직접 채운다 — `created_at`은 처리 창, `updated_at`은 같은
@@ -517,22 +518,23 @@ draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot�
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
 delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
-Event-Item 연결 해제는 junction hard delete와 함께 마지막 참조가 사라진 PHOTO의 MySQL job을 만들고 원문
-PHOTO Item을 보존한 뒤 즉시 성공하며(Event/DailyRecord 삭제는 soft delete라 job을 만들지 않는다, #568), 별도 worker가
-`DeleteObjects` 배치(최대 1,000 key/request, verbose, 요청 단위 apiCallTimeout 10s·
-apiCallAttemptTimeout 3s)를 transaction 밖에서 호출한다. worker는 claim한 job의 object key를 그대로
-삭제 요청하고, `Deleted`로 확인된 job과 그 PHOTO Item만 별도 transaction에서 지운다.
-기본 서버 2대 × 서버당 worker-count 1이며 각 slot은 PK MOD 담당에서 최대 250개 한 배치만 처리한다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
-실행에서 재시도한다. PHOTO payload가 깨졌거나 filename/object key를
-만들 수 없으면 job을 건너뛰고 손상 Item의 hard delete는 진행한다(orphan 허용).
+Event-Item 연결 해제는 junction만 hard delete하고 즉시 성공한다(Event/DailyRecord 삭제는 soft delete, #568).
+어느 삭제 API도 Item을 분류하거나 job을 만들지 않는다 — 연결을 잃은 Item과 그 S3 사진은 orphan 스위퍼가
+정리한다(#551). 전환 전에 만들어진 job은 기존 worker가 `DeleteObjects` 배치(최대 1,000 key/request, verbose,
+요청 단위 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 transaction 밖에서 호출해 처리하고, `Deleted`로 확인된
+job과 그 PHOTO Item만 별도 transaction에서 지운다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
+실행에서 재시도한다.
 
 orphan 스위퍼(03:30 KST)는 활성 Event 연결(soft delete된 Event의 junction 제외, #569)·delete job이 모두 없는
 자기 PK MOD 담당 Item을 최대 250개
 한 번 조회한다. 선택한 PK 중 미표시 고아에만 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST
 `updated_at`을 기록해 먼저 commit하고, 새 처리 transaction에서 같은 PK를 일반 조회·재검증한다.
 후보의 PK 선점 락과 job 존재 확인의 `FOR SHARE`는 없다. 쓰기 SQL의 InnoDB 잠금은 남는다.
-유효 PHOTO는 `insertIfAbsent`로 delete job에 넘기고 non-PHOTO·복원 불가 PHOTO는 즉시 삭제한다.
-스위퍼는 S3를 직접 호출하지 않는다.
+non-PHOTO·복원 불가 PHOTO는 처리 transaction에서 즉시 삭제한다(손상 PHOTO의 S3 객체는 orphan 허용). 유효 PHOTO는
+행을 남긴 채 `(itemId, photoUrl에서 복원한 full key)`를 처리 commit 뒤 전용 executor에 넘기고, executor 스레드가
+같은 `DeleteObjects` 규칙(10s/3s timeout)으로 삭제를 요청해 `Deleted`로 확인된 key의 Item만 새 transaction에서
+지운다(#551). S3 Error·응답 누락·예외·executor 거절(queue 0)·결과 수신 전 종료는 Item을 남겨 다음 실행이 다시
+요청한다 — S3 삭제는 멱등이라 이미 지운 key도 `Deleted`로 수렴한다. 별도 실패 기록·시도 횟수·중단 장치는 없다.
 
 관측 표시가 있는 Item의 `updated_at`은 최초 관측 시각이다. 재시도와 처리 rollback은 이 시각을 바꾸지
 않는다. `TimelineItem`에는 기존 행 필드 수정 writer가 없고, 관측된 Item에 junction을 다시 만드는 writer도

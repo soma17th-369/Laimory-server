@@ -488,11 +488,11 @@ class AccountErasureIntegrationTest {
     }
 
     /**
-     * 스위퍼가 삭제된 Event의 PHOTO에 job을 만든 상태(#569)에서도 탈퇴 삭제가 끝난다. 이 Item은 삭제된 Event의
-     * junction이 남아 record graph에서도 보이므로, job을 namespace로 먼저 지우지 않으면 Item 삭제가 job FK에 막힌다.
+     * 스위퍼가 삭제된 Event의 PHOTO를 S3 삭제로 넘기고 결과를 받기 전(#551)에도 탈퇴 삭제가 끝난다. 이 Item은 삭제된
+     * Event의 junction이 남아 record graph에서 보이므로 계정 삭제가 함께 지운다.
      */
     @Test
-    void photoJobCreatedBySweeperForDeletedEventDoesNotBlockErasure() {
+    void photoAwaitingSweeperS3ResultIsErasedWithRecordGraph() {
         long userId = withdrawnUser();
         UUID subjectId = createdSubjectIds.get(createdSubjectIds.size() - 1);
         long jobId = jobIdOf(userId);
@@ -510,10 +510,9 @@ class AccountErasureIntegrationTest {
         Long itemId = jdbcTemplate.queryForObject("SELECT max(timeline_item_id) FROM timeline_items", Long.class);
         jdbcTemplate.update("INSERT INTO timeline_event_items (timeline_event_id, timeline_item_id) "
                 + "VALUES (?, ?)", deletedEventId, itemId);
-        timelineOrphanItemSweepService.sweepBatch(List.of(itemId));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", Integer.class, itemId))
-                .isEqualTo(1);
+        assertThat(timelineOrphanItemSweepService.sweepBatch(List.of(itemId)).photoDeletions())
+                .extracting(TimelineOrphanItemSweepService.PhotoDeletion::timelineItemId)
+                .containsExactly(itemId);
 
         UUID resolved = accountErasureService.resolveTarget(userId);
         accountErasureService.deleteContentGraph(resolved);
@@ -522,9 +521,6 @@ class AccountErasureIntegrationTest {
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM timeline_items WHERE timeline_item_id = ?", Integer.class, itemId))
-                .isZero();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", Integer.class, itemId))
                 .isZero();
         assertThat(mappingCount(subjectId)).isZero();
 

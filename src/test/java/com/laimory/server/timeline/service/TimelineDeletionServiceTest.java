@@ -124,8 +124,6 @@ class TimelineDeletionServiceTest {
     void detachEventItem_runsTransaction() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
@@ -165,8 +163,6 @@ class TimelineDeletionServiceTest {
         DailyRecord saved = draftRecordOf(SUBJECT_ID);
         ReflectionTestUtils.setField(saved, "status", DailyRecordStatus.SAVED);
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(saved));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenReturn(new TimelineDeletionTransactionService.DeletionResult(1, 0, 0));
 
         service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L);
 
@@ -177,8 +173,8 @@ class TimelineDeletionServiceTest {
     void detachEventItem_dbFailurePropagates() {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event()));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
-        when(timelineDeletionTransactionService.detachEventItem(SUBJECT_ID, EVENT_ID, 21L))
-                .thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(timelineDeletionTransactionService).detachEventItem(SUBJECT_ID, EVENT_ID, 21L);
 
         assertThatThrownBy(() -> service.detachEventItem(VERSION, SUBJECT_ID, EVENT_ID, 21L))
                 .isInstanceOf(RuntimeException.class)

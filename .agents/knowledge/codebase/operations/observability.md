@@ -302,7 +302,7 @@ Spring JSON stdout
 - management child context에는 application의 `TransactionIdFilter`가 등록되지 않는다. 방어적으로
   health/prometheus exact path도 정상 access log 제외 목록에 유지한다.
 - 애플리케이션은 Prometheus/Grafana를 호출하거나 의존하지 않는다.
-- PHOTO delete worker의 checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, 기본 서버 2대 × 서버당 worker-count 1,
+- PHOTO delete worker는 #551 전환 중 이전 버전이 남긴 job만 처리한다(새 job 생산자 없음). checked-in 운영 cadence는 매일 03:00 `Asia/Seoul`이고, 기본 서버 2대 × 서버당 worker-count 1,
   slot당 단일 batch 250이다. 정상 job도 최대 약 24시간 대기하며 missed run을 catch-up하지 않고
   다음 실행까지 MySQL에 보존한다. 처리 기회는 KST 생성일 기준 D+1~D+3 일일 실행뿐이고, 창을 벗어난
   미완료 job은 재시도 없이 보존하며 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존
@@ -320,8 +320,13 @@ Spring JSON stdout
   소요 시간을 key=value application log로 남긴다.
 
 - 고아 Item 스위퍼는 처리 commit/rollback 뒤 담당 전체의 `ORPHAN_SWEEPER` 표시가 있고
-  최초 관측 후 72시간 이상이며 junction·사진 job이 모두 없는 Item을 집계한다. 양수이면
-  workerIndex·count만 ERROR로 남겨 기존 application ERROR 경보를 사용한다. 이번 후보 밖의 기존
+  최초 관측 후 72시간 이상이며 활성 Event 연결·사진 job이 모두 없는 Item을 집계한다. 양수이면
+  workerIndex·count만 ERROR로 남겨 기존 application ERROR 경보를 사용한다. S3 삭제가 계속 실패해 남은
+  PHOTO도 이 경보로 드러난다 — 스위퍼의 유일한 장기 실패 알림이다(#551).
+  batch 로그(`orphan 스위퍼 batch 완료`: selected·revalidationDropped·photoRequested·invalidDeleted·nonPhotoDeleted)와
+  executor의 S3 결과 로그(`orphan PHOTO S3 삭제 완료`: requested·s3Succeeded·s3Failed·unreported는 서로 다른 key 수로
+  합이 requested, itemsDeleted는 Item 수, durationMs·errorCodes. Item 삭제 실패는 같은 필드의 WARN)를 key=value로
+  남기며 object key는 싣지 않는다. 이번 후보 밖의 기존
   관측 Item도 포함하지만 LIMIT/워커 장애로 미관측인 Item이나 실제 고아 전환 시각은 측정하지 않는다.
   서버 장애는 기존 `laimory_target_down` 경보로 수동 복구하며 자동 인수는 없다.
 
