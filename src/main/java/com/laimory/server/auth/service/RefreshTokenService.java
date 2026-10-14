@@ -115,6 +115,11 @@ public class RefreshTokenService {
         refreshTokenRepository.deleteAllByUserId(userId);
     }
 
+    /** 만료 정리(#514): cutoff 이전에 만료된 행을 상태와 무관하게 지운다. 반환 = 삭제 행 수. */
+    public int deleteAllExpiredBefore(LocalDateTime cutoff) {
+        return refreshTokenRepository.deleteAllExpiredBefore(cutoff);
+    }
+
     public void revoke(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new IllegalArgumentException("refreshToken must not be blank");

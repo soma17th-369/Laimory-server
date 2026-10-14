@@ -117,7 +117,10 @@ flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제
    refresh 재사용 탐지만 유지한다. 이 발급 전 검사는 #441부터 필터와 같은 공유 Redis 캐시를
    경유한다(위 "탈퇴 차단 정책"). 검사 통과 직후 탈퇴와 겹친 in-flight 발급은 허용된 제한 예외이며
    그 token도 `/a/api` ACTIVE 검사와 다음 회전 검사(둘 다 탈퇴 evict 뒤 miss부터)에서 거절된다.
-6. refresh token은 기본 30일이며 DB에 SHA-256 hash만 저장한다.
+6. refresh token은 기본 30일이며 DB에 SHA-256 hash만 저장한다. 만료 후 1일이 지난 행은 상태와 무관하게
+   `RefreshTokenSweeper`가 매일 03:00 KST에 지운다(#514). 만료된 토큰은 회전이 `isExpired`에서 끊어 행 존재가
+   동작에 영향이 없고, 만료 전 `ROTATED`/`REVOKED` 행은 재사용 탐지 증거라 남는다. 1일 유예는 만료 검사를 통과한
+   회전 요청의 행이 같은 순간 지워져 `claimRotation` 0행 → 재사용 오탐(전체 폐기)이 되는 경로를 없앤다.
 7. refresh는 rotation되고 reuse가 탐지되면 해당 user의 refresh token을 모두 revoke한다.
 8. logout은 전달된 refresh token을 revoke한다.
 9. `JwtTokens.parseUserId`로 서명·만료를 검증하고 subject userId를 읽는 기능은 있다.

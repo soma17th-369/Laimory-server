@@ -444,6 +444,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - access JWT에는 `iss/sub/iat/exp`만 두고 PII를 넣지 않는다.
 - refresh token raw value는 저장하지 않고 hash만 저장한다.
 - refresh rotation과 reuse detection은 transactionally 처리하고 reuse 때 그 사용자의 refresh를 모두 revoke한다.
+- 만료 전 `ROTATED`/`REVOKED` refresh 행은 재사용 탐지 증거라 지우지 않는다. 일일 정리(#514)는 만료 후 1일이 지난
+  행만 지운다 — 만료된 토큰은 회전이 `isExpired`에서 거절해 재사용 경로에 들어가지 않으므로 행이 없어도 결과가 같다.
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.

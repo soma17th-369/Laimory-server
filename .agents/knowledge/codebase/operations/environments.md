@@ -190,6 +190,9 @@ application 배포·health gate 의존성이 아니다.
   서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
   최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-draft-cleanup-rollout.md)를 따른다.
 - `USER_MEMORY_UPDATE_CRON`, `USER_MEMORY_UPDATE_ZONE`, `USER_MEMORY_UPDATE_RETENTION`
+- `REFRESH_TOKEN_SWEEP_CRON`, `REFRESH_TOKEN_SWEEP_ZONE` (#514 — 기본 매일 03:00 `Asia/Seoul`. 만료 후 1일
+  지난 refresh token 행 정리. 모든 인스턴스가 같은 DELETE를 실행하므로 서버별 번호 설정이 없다. 끄려면 cron을
+  `-`로 둔다. 1일 유예는 회전 경합 방지 상수라 env로 열지 않는다)
 - `APP_ENV`
 
 정확한 property mapping과 default는 `application*.properties`가 권위다.

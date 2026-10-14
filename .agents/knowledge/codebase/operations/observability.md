@@ -321,6 +321,9 @@ Spring JSON stdout
   남기며 object key는 싣지 않는다. 이번 후보 밖의 기존
   관측 Item도 포함하지만 LIMIT/워커 장애로 미관측인 Item이나 실제 고아 전환 시각은 측정하지 않는다.
   서버 장애는 기존 `laimory_target_down` 경보로 수동 복구하며 자동 인수는 없다.
+- 만료 refresh token 정리(#514)는 지표·경보 없이 run마다 `만료 refresh token 정리 완료`(deleted·durationMs) INFO,
+  실패 시 exceptionType만 WARN으로 남기고 다음 날 재시도한다. 모든 인스턴스가 실행하므로 한 run에서 한쪽만
+  deleted가 양수이고 나머지는 0이 정상이다.
 
 ## Metrics Assets
 
