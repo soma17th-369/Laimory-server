@@ -3,19 +3,15 @@ package com.laimory.server.timeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
-import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -46,20 +42,10 @@ class TimelineContentErasureServiceTest {
     @Mock
     private TimelineItemRepository timelineItemRepository;
     @Mock
-    private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
-    @Mock
     private TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
 
     @InjectMocks
     private TimelineContentErasureService service;
-
-    /** fail-closed 경로에서는 jobId를 읽기 전에 멈추므로 lenient stub이다. */
-    private static TimelinePhotoDeleteJob job(long jobId, long itemId) {
-        TimelinePhotoDeleteJob job = org.mockito.Mockito.mock(TimelinePhotoDeleteJob.class);
-        org.mockito.Mockito.lenient().when(job.getTimelinePhotoDeleteJobId()).thenReturn(jobId);
-        org.mockito.Mockito.lenient().when(job.getTimelineItemId()).thenReturn(itemId);
-        return job;
-    }
 
     @Test
     void record보다_Item을_먼저_지운다() {
@@ -93,48 +79,5 @@ class TimelineContentErasureServiceTest {
 
         verify(timelineItemRepository, never()).deleteAllByIdIn(any());
         verify(dailyRecordRepository, never()).deleteAllByIdIn(any());
-    }
-
-    @Test
-    void delete_job과_그_원문_Item을_함께_지운다() {
-        List<TimelinePhotoDeleteJob> jobs = List.of(job(100L, 10L), job(101L, 11L));
-        when(timelinePhotoDeleteJobRepository.findByObjectKeyNamespace(anyString(), anyInt()))
-                .thenReturn(jobs);
-        when(timelineEventItemRepository.findOwnerSubjectIdsByItemIdIn(List.of(10L, 11L)))
-                .thenReturn(List.of()); // junction 0 — 정상
-        when(timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(List.of(100L, 101L))).thenReturn(2);
-
-        assertThat(service.deletePhotoDeleteJobBatch(SUBJECT_ID, BATCH)).isEqualTo(2);
-
-        // job을 먼저 지워야 Item FK RESTRICT가 풀린다.
-        InOrder order = inOrder(timelinePhotoDeleteJobRepository, timelineItemRepository);
-        order.verify(timelinePhotoDeleteJobRepository).deleteAllByJobIdIn(List.of(100L, 101L));
-        order.verify(timelineItemRepository).deleteAllByIdIn(List.of(10L, 11L));
-    }
-
-    @Test
-    void 재연결된_job_Item이_다른_subject_소유면_멈춘다() {
-        List<TimelinePhotoDeleteJob> jobs = List.of(job(100L, 10L));
-        when(timelinePhotoDeleteJobRepository.findByObjectKeyNamespace(anyString(), anyInt()))
-                .thenReturn(jobs);
-        when(timelineEventItemRepository.findOwnerSubjectIdsByItemIdIn(List.of(10L)))
-                .thenReturn(List.of(OTHER_SUBJECT_ID.toString()));
-
-        assertThatThrownBy(() -> service.deletePhotoDeleteJobBatch(SUBJECT_ID, BATCH))
-                .isInstanceOf(TimelineContentErasureService.CrossSubjectItemException.class);
-
-        verify(timelinePhotoDeleteJobRepository, never()).deleteAllByJobIdIn(any());
-        verify(timelineItemRepository, never()).deleteAllByIdIn(any());
-    }
-
-    @Test
-    void 대상이_없으면_0을_돌려준다() {
-        when(timelinePhotoDeleteJobRepository.findByObjectKeyNamespace(anyString(), anyInt()))
-                .thenReturn(List.of());
-        assertThat(service.deletePhotoDeleteJobBatch(SUBJECT_ID, BATCH)).isZero();
-
-        when(dailyRecordRepository.findIdsBySubjectIdAfterId(any(), any(), any(Pageable.class)))
-                .thenReturn(List.of());
-        assertThat(service.deleteRecordBatch(SUBJECT_ID, BATCH)).isZero();
     }
 }

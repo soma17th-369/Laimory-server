@@ -111,9 +111,6 @@ public class AccountErasureService {
      *
      * <p>순서에 이유가 있다.
      * <ol>
-     *   <li><b>PHOTO delete job과 그 Item</b> — Item FK가 {@code RESTRICT}라 job이 남아 있으면 아래
-     *       record graph의 Item 삭제가 거절된다. 또 이 Item들은 junction 0이라 record graph
-     *       snapshot에 잡히지 않으므로 여기서 지우지 않으면 아무도 정리하지 않는다.</li>
      *   <li><b>record graph</b> — batch마다 Item과 record를 한 transaction에서 지운다.</li>
      *   <li><b>draft source</b> — subject FK {@code RESTRICT}라 mapping 삭제 전에 0이어야 한다.</li>
      * </ol>
@@ -121,7 +118,6 @@ public class AccountErasureService {
      * <p>각 batch가 독립 transaction이라 중간 crash는 남은 것만 다음 실행이 이어서 지운다(멱등).
      */
     public void deleteContentGraph(UUID subjectId) {
-        drain(b -> timelineContentErasureService.deletePhotoDeleteJobBatch(subjectId, b));
         drain(b -> timelineContentErasureService.deleteRecordBatch(subjectId, b));
         drain(b -> timelineContentErasureService.deleteDraftSourceBatch(subjectId, b));
     }

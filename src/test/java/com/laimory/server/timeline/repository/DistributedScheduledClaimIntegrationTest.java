@@ -6,14 +6,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.ItemType;
-import com.laimory.server.timeline.TimelinePhotoDeleteJobStatus;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
-import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
-import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.TimelineDraftSourceItemService;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteJobService;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
@@ -44,19 +39,10 @@ class DistributedScheduledClaimIntegrationTest {
     private static final UUID SUBJECT_ID = id(96L);
 
     @Autowired
-    private TimelinePhotoDeleteJobService photoJobService;
-
-    @Autowired
     private TimelineDraftSourceItemService draftSourceItemService;
 
     @Autowired
-    private TimelinePhotoDeleteJobRepository photoJobRepository;
-
-    @Autowired
     private TimelineDraftSourceItemRepository draftSourceItemRepository;
-
-    @Autowired
-    private TimelineItemRepository timelineItemRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -64,61 +50,15 @@ class DistributedScheduledClaimIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    private List<Long> photoItemIds = List.of();
-
     @BeforeEach
     void setUp() {
-        photoJobRepository.deleteAllInBatch();
         draftSourceItemRepository.deleteAllInBatch();
         ensureExists(jdbcTemplate, SUBJECT_ID);
     }
 
     @AfterEach
     void cleanUp() {
-        photoJobRepository.deleteAllInBatch();
         draftSourceItemRepository.deleteAllInBatch();
-        timelineItemRepository.deleteAllByIdInBatch(photoItemIds);
-    }
-
-    @Test
-    void photoWorkersClaimDisjointBatchesAndDoNotReclaimThemSameDay() throws Exception {
-        photoItemIds = java.util.stream.IntStream.range(0, ROW_COUNT)
-                .mapToObj(this::savePhotoItem)
-                .toList();
-        for (int index = 0; index < ROW_COUNT; index++) {
-            assertThat(photoJobService.insertIfAbsent(
-                    photoItemIds.get(index), "claim-test/photos/" + index + ".jpg")).isTrue();
-        }
-        // KST 처리 창(D+1~D+3) 안의 어제 생성·어제 마지막 갱신으로 맞춰 오늘 run의 claim 대상이 되게 한다.
-        LocalDateTime withinWindow = LocalDateTime.now().toLocalDate().atStartOfDay().minusHours(12);
-        jdbcTemplate.update("update timeline_photo_delete_jobs set created_at = ?, updated_at = ?",
-                withinWindow, withinWindow);
-
-        java.util.concurrent.atomic.AtomicInteger owner = new java.util.concurrent.atomic.AtomicInteger();
-        List<List<TimelinePhotoDeleteJob>> claims = claimConcurrently(
-                () -> photoJobService.claimEligible(owner.getAndIncrement(), 2, ROW_COUNT));
-        Set<Long> selected = new HashSet<>();
-        claims.forEach(batch -> addDisjoint(selected, batch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId));
-        assertThat(selected).hasSize(ROW_COUNT);
-        assertThat(photoJobService.claimEligible(0, 2, ROW_COUNT)).isEmpty();
-        assertThat(photoJobService.claimEligible(1, 2, ROW_COUNT)).isEmpty();
-        assertThat(photoJobRepository.findAll())
-                .extracting(TimelinePhotoDeleteJob::getStatus)
-                .containsOnly(TimelinePhotoDeleteJobStatus.PROCESSING);
-    }
-
-    @Test
-    void duplicatePhotoCompletionsConvergeWithoutPessimisticPreLock() throws Exception {
-        long itemId = savePhotoItem(ROW_COUNT + 1);
-        photoItemIds = List.of(itemId);
-        assertThat(photoJobService.insertIfAbsent(itemId, "claim-test/photos/completion.jpg")).isTrue();
-        TimelinePhotoDeleteJob job = photoJobRepository.findAll().getFirst();
-
-        List<Integer> completed = runConcurrently(() -> photoJobService.completeSucceeded(List.of(job)));
-
-        assertThat(completed).containsExactlyInAnyOrder(1, 0);
-        assertThat(photoJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isEmpty();
-        assertThat(timelineItemRepository.findById(itemId)).isEmpty();
     }
 
     @Test
@@ -145,49 +85,6 @@ class DistributedScheduledClaimIntegrationTest {
         assertThat(selected).hasSize(ROW_COUNT);
         assertThat(draftSourceItemService.findExpired(cutoff, 0, 2, ROW_COUNT)).hasSize(ROW_COUNT / 2);
         assertThat(draftSourceItemService.findExpired(cutoff, 1, 2, ROW_COUNT)).hasSize(ROW_COUNT / 2);
-    }
-
-    @Test
-    void sparsePhotoPrimaryKeysHaveOneOwnerForTwoAndFourWorkers() {
-        photoItemIds = java.util.stream.IntStream.range(0, 24).mapToObj(this::savePhotoItem).toList();
-        for (int index = 0; index < photoItemIds.size(); index++) {
-            photoJobService.insertIfAbsent(photoItemIds.get(index), "partition/photos/" + index + ".jpg");
-        }
-        jdbcTemplate.update("DELETE FROM timeline_photo_delete_jobs "
-                + "WHERE MOD(timeline_photo_delete_job_id, 4)=1 OR MOD(timeline_photo_delete_job_id, 7)=0");
-        var expectedIds = photoJobRepository.findAll().stream()
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId).toList();
-        for (int total : List.of(2, 4)) {
-            var yesterday = LocalDateTime.now().toLocalDate().atStartOfDay().minusHours(12);
-            jdbcTemplate.update("UPDATE timeline_photo_delete_jobs SET created_at=?, updated_at=?, status='PENDING'",
-                    yesterday, yesterday);
-            Set<Long> selected = new HashSet<>();
-            for (int worker = 0; worker < total; worker++) {
-                var batch = photoJobService.claimEligible(worker, total, 250);
-                final int owner = worker;
-                assertThat(batch).allMatch(job -> (job.getTimelinePhotoDeleteJobId() - 1) % total == owner);
-                addDisjoint(selected, batch, TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId);
-            }
-            assertThat(selected).containsExactlyInAnyOrderElementsOf(expectedIds);
-        }
-    }
-
-    private long savePhotoItem(int index) {
-        String filename = "claim-" + index + ".jpg";
-        TimelineItem item = TimelineItem.of(
-                ItemType.PHOTO,
-                "raw-" + index,
-                LocalDateTime.of(2000, 1, 1, 9, 0),
-                null,
-                objectMapper.valueToTree(new PhotoPayload(
-                        filename,
-                        "content://claim/" + index,
-                        null,
-                        null,
-                        null,
-                        null, null,
-                        "https://cdn.example/" + filename)));
-        return timelineItemRepository.save(item).getTimelineItemId();
     }
 
     @Test
@@ -232,27 +129,6 @@ class DistributedScheduledClaimIntegrationTest {
             start.countDown();
             return List.of(first.get(), second.get());
         }
-    }
-
-    /**
-     * SKIP LOCKED는 겹치지 않는 claim을 보장하지만 경합 중인 한 호출이 LIMIT를 모두 채우지는 않을 수 있다.
-     * 최초 동시 claim과 후속 drain 전체에서 각 ID가 한 번만 나오고 같은 날 queue가 비는지를 검증한다.
-     */
-    private <T> void assertDisjointAndEventuallyDrained(
-            List<List<T>> initialClaims,
-            Supplier<List<T>> nextClaim,
-            Function<T, Long> idExtractor) {
-        Set<Long> claimedIds = new HashSet<>();
-        initialClaims.forEach(batch -> addDisjoint(claimedIds, batch, idExtractor));
-
-        int followUpClaims = 0;
-        List<T> batch = nextClaim.get();
-        while (!batch.isEmpty()) {
-            assertThat(followUpClaims++).isLessThan(ROW_COUNT);
-            addDisjoint(claimedIds, batch, idExtractor);
-            batch = nextClaim.get();
-        }
-        assertThat(claimedIds).hasSize(ROW_COUNT);
     }
 
     private <T> void addDisjoint(Set<Long> claimedIds, List<T> batch, Function<T, Long> idExtractor) {

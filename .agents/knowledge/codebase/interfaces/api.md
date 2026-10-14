@@ -119,7 +119,7 @@ nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용�
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. memo PUT은 필드 부재·null·blank 모두 제거라 PATCH의 null=유지와 다르다.
-`photosToAdd`는 PHOTO delete job과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
+`photosToAdd`는 삭제 대기 사진과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
 삭제된 사진을 다시 넣는 것은 새 presign·새 filename의 새 사진이다(#500).
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 

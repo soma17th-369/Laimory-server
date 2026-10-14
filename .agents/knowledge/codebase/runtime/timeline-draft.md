@@ -226,7 +226,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 
 ### Delete
 
-- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): 활성 Event 연결·delete job이 모두 없는 final Item을
+- orphan 스위퍼(03:30 KST, `app.timeline.orphan-sweep.*`): 활성 Event 연결이 없는 final Item을
   PK MOD 담당에서 slot당 한 배치(기본 250)만 조회해 non-PHOTO·손상 PHOTO는 즉시 삭제하고, 유효 PHOTO는 행을 남긴 채
   전용 executor(`orphan-sweep-`)에 S3 삭제를 넘긴다 — 스케줄 스레드는 응답을 기다리지 않는다. executor 스레드가
   `DeleteObjects`(10s/3s timeout)를 호출해 `Deleted`로 확인된 key의 Item만 별도 transaction에서 지우고, 실패·응답
@@ -245,17 +245,7 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - DailyRecord 삭제 transaction은 record를 soft delete(`emotion_type` NULL)하고, 그 record의 활성 Event에 같은
   `deleted_at`을 찍으며 `place`·`address`를 지운다(#568). record가 이미 삭제됐으면(동시 삭제) Event 처리를
   건너뛴다. commit 뒤 오케스트레이터가 User Memory 미반영 큐에서 그 record를 뺀다.
-- Event-Item 연결 해제는 junction만 지우고 Item·S3는 스위퍼에 맡긴다(#551 — job을 만들지 않는다).
-- #551 전환 전에 만들어진 PHOTO delete job만 기존 worker가 처리한다. 모든 REST
-  process의 worker는 checked-in default인 매일 03:00 `Asia/Seoul`(cron/zone 환경 override 가능)에
-  KST 생성일 기준 D+1~D+3 처리 창 안의 자기 PK MOD 담당 job을 slot당 최대 250개 한 번 일반 조회한다.
-  claim transaction이 `status=PROCESSING`과 `updated_at=claim 시각`을 기록해 같은 날 재선택을 막고
-  commit한 뒤 verbose `DeleteObjects`를 호출하며,
-  `Deleted` job과 원문 PHOTO Item만 completion transaction에서 최종 삭제한다. 기본 서버 2대 × 서버당 worker-count 1이며 slot당 한 배치다.
-  Error·응답 누락·SDK 예외는 `PENDING`으로 되돌리며 crash job은 stale
-  `PROCESSING`으로 다음 일일 실행에서 재claim한다. 처리 창을 벗어난 미완료 job은 재시도 없이 보존되고
-  worker가 run 시작에 건수만 ERROR 로그로 경보한다.
-  실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않으며 job은 다음 실행까지 MySQL에 남는다.
+- Event-Item 연결 해제는 junction만 지우고 Item·S3는 스위퍼에 맡긴다(#551).
 
 ### Save (DRAFT→SAVED)와 User Memory 갱신
 

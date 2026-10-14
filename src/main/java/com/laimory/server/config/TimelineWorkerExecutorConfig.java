@@ -2,7 +2,6 @@ package com.laimory.server.config;
 
 import com.laimory.server.timeline.service.TimelineDraftCleanupWorkerProperties;
 import com.laimory.server.timeline.service.TimelineOrphanItemSweeperProperties;
-import com.laimory.server.timeline.service.TimelinePhotoDeleteWorkerProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -19,17 +18,6 @@ public class TimelineWorkerExecutorConfig {
         executor.setMaxPoolSize(properties.getWorkerCount());
         executor.setQueueCapacity(0);
         executor.setThreadNamePrefix("draft-cleanup-");
-        return executor;
-    }
-
-    @Bean(name = "timelinePhotoDeleteWorkerExecutor", defaultCandidate = false)
-    public ThreadPoolTaskExecutor timelinePhotoDeleteWorkerExecutor(
-            TimelinePhotoDeleteWorkerProperties properties) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(properties.getWorkerCount());
-        executor.setMaxPoolSize(properties.getWorkerCount());
-        executor.setQueueCapacity(0);
-        executor.setThreadNamePrefix("photo-delete-");
         return executor;
     }
 

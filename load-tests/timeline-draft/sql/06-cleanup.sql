@@ -52,9 +52,6 @@ HAVING COUNT(*) = SUM(r.daily_record_id IS NOT NULL);
 START TRANSACTION;
 
 -- 1) 합성 사용자에게만 연결된 timeline_items. AI 격리가 지켜졌다면 0행이다.
---    PHOTO 삭제 대기 job이 이 item을 참조하고 있으면 FK(ON DELETE 미지정 = RESTRICT)가 삭제를 거절해
---    transaction 전체가 실패한다. 부하 테스트 경로는 job을 만들지 않으므로 정상적으로는 생기지 않는다
---    — 만나면 05의 orphan-to-be 값부터 다시 본다(0이어야 한다).
 DELETE i FROM timeline_items i
 JOIN k6_251_items k ON k.timeline_item_id = i.timeline_item_id;
 
