@@ -351,6 +351,9 @@ Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로
 터널을 먼저 열어야 링크가 동작한다(deploy/monitoring/README.md "접속" 절). WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
+5xx ratio는 `uri` `/actuator.*`와 `/readyz`를 분자·분모·최소 요청 수에서 모두 뺀다. `/readyz`는 ALB
+헬스체크 경로라 graceful shutdown 중 503을 돌려주고, 저트래픽 dev 단일 host 배포에서는 이 몇 건만으로
+비율을 넘긴다. readiness 실패 감지는 `laimory_target_down`이 소유한다.
 Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
