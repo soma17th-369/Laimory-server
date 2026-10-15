@@ -2,6 +2,7 @@ package com.laimory.server.auth.repository;
 
 import com.laimory.server.auth.RefreshTokenStatus;
 import com.laimory.server.auth.entity.RefreshToken;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -67,4 +68,13 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Transactional
     @Query("delete from RefreshToken t where t.userId = :userId")
     int deleteAllByUserId(@Param("userId") Long userId);
+
+    /**
+     * 만료 정리(#514): cutoff 이전에 만료된 행을 상태와 무관하게 지운다. 만료된 토큰은 rotate가 isExpired에서
+     * 끊어 행 존재가 동작에 영향이 없다 — 만료 전 ROTATED/REVOKED 행(재사용 탐지 증거)은 대상이 아니다.
+     */
+    @Modifying
+    @Transactional
+    @Query("delete from RefreshToken t where t.expiresAt < :cutoff")
+    int deleteAllExpiredBefore(@Param("cutoff") LocalDateTime cutoff);
 }

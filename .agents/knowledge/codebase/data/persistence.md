@@ -61,7 +61,12 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   탈퇴 transaction은 `refresh_tokens`·`push_registrations`·`subject_preferences`·
   `daily_notification_preferences` 행을 **지우지 않는다**(#367) — 알림 두 행은 `false`로 UPDATE하고
   나머지는 그대로 둔다. 이 행들의 물리 삭제는 #302 삭제 worker가 소유하므로, 탈퇴 회원의 잔존 행은
-  누락이 아니라 설계다.
+  누락이 아니라 설계다. `refresh_tokens`에는 물리 삭제 경로가 하나 더 있다 — 만료 후 1일이 지난 행을
+  상태·회원과 무관하게 지우는 일일 정리(#514, `delete ... where expires_at < :cutoff` 한 문장, cutoff는
+  발급과 같은 application Clock). 모든 인스턴스가 같은 문장을 실행하고(멱등, 서버별 분배 없음)
+  `idx_refresh_tokens_expires_at`(V13)으로 평시 만료 범위만 range 스캔한다. 만료 비율이 높으면 옵티마이저가
+  전체 스캔을 고를 수 있어 READ COMMITTED(#576)를 전제로 한다 — REPEATABLE READ에서는 그 DELETE가 훑은 모든
+  행을 잠근다.
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`

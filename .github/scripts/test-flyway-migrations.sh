@@ -413,3 +413,16 @@ mysql flyway_photo_job_drop_upgrade -e "DELETE FROM timeline_items WHERE raw_id 
 [ "$(mysql flyway_photo_job_drop_upgrade -e "SELECT COUNT(*) FROM timeline_items WHERE raw_id = 'raw-photo-job-drop'")" = 0 ] || fail 'timeline item is still blocked after V12'
 flyway flyway_photo_job_drop_upgrade "$MIGRATIONS" -target=12 validate >"$WORK/photo-job-drop-validate.log" 2>&1
 ok 'V11 to V12 drops timeline_photo_delete_jobs with existing rows, keeping and unblocking the referenced timeline item'
+
+# V12→V13(#514): refresh_tokens.expires_at 인덱스 추가. 상태별 기존 refresh 행 보존과 인덱스 정의(expires_at
+# 단일 컬럼, non-unique)를 확인한다.
+mysql -e 'CREATE DATABASE flyway_refresh_expiry_index_upgrade;'
+flyway flyway_refresh_expiry_index_upgrade "$MIGRATIONS" -target=12 migrate >"$WORK/refresh-expiry-v12.log" 2>&1
+mysql flyway_refresh_expiry_index_upgrade -e "INSERT INTO refresh_tokens (user_id, token_hash, status, parent_id, expires_at, created_at, updated_at) VALUES (1, REPEAT('a', 64), 'ACTIVE', NULL, '2026-01-01 00:00:00', NOW(6), NOW(6)), (1, REPEAT('b', 64), 'ROTATED', NULL, '2026-01-02 00:00:00', NOW(6), NOW(6)), (1, REPEAT('c', 64), 'REVOKED', NULL, '2026-01-03 00:00:00', NOW(6), NOW(6))"
+mysql flyway_refresh_expiry_index_upgrade -e 'SELECT refresh_token_id, user_id, token_hash, status, expires_at FROM refresh_tokens ORDER BY refresh_token_id' >"$WORK/refresh-expiry-before.tsv"
+flyway flyway_refresh_expiry_index_upgrade "$MIGRATIONS" -target=13 migrate >"$WORK/refresh-expiry-v13.log" 2>&1
+mysql flyway_refresh_expiry_index_upgrade -e 'SELECT refresh_token_id, user_id, token_hash, status, expires_at FROM refresh_tokens ORDER BY refresh_token_id' >"$WORK/refresh-expiry-after.tsv"
+cmp -s "$WORK/refresh-expiry-before.tsv" "$WORK/refresh-expiry-after.tsv" || fail 'V13 changed existing refresh_tokens rows'
+[ "$(mysql flyway_refresh_expiry_index_upgrade -e "SELECT CONCAT(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX), ':', MAX(NON_UNIQUE)) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'refresh_tokens' AND INDEX_NAME = 'idx_refresh_tokens_expires_at'")" = 'expires_at:1' ] || fail 'V13 expires_at index missing or not a single-column non-unique index'
+flyway flyway_refresh_expiry_index_upgrade "$MIGRATIONS" -target=13 validate >"$WORK/refresh-expiry-validate.log" 2>&1
+ok 'V12 to V13 adds a non-unique expires_at index on refresh_tokens, keeping existing rows'
