@@ -15,8 +15,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>{@link TimelineSaveService}와 같은 경계다: 비트랜잭션 사전 검증(404 은닉·DRAFT 409) → 별도
  * 트랜잭션에서 SAVED 조건부 UPDATE 커밋({@link DailyRecordEmotionUpdateTransactionService}).
- * 사전 조회를 트랜잭션 밖에 두는 이유는 MySQL {@code REPEATABLE READ}에서 조회와 실패 재조회를 한
- * 트랜잭션에 묶으면 첫 조회 snapshot이 동시 삭제 전 행을 다시 보여 줄 수 있기 때문이다.
+ * 판정 기준은 조건부 UPDATE의 영향 행 수라 사전 조회를 그 트랜잭션에 묶을 필요가 없다(#499 —
+ * 서비스 트랜잭션 없이 리포지토리 tx 한 문장).
  *
  * <p>User Memory 갱신은 새로 enqueue하지 않는다 — SAVED Event 편집과 같은 현재 정책이다.
  */

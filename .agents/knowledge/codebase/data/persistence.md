@@ -25,6 +25,10 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 Flyway 11.7.2가 모든 환경에서 앱 시작 시 schema를 관리한다. 기존 DataSource를 사용하며
 migration 실행·이력 검증에 실패하면 JPA 초기화와 앱 기동도 실패한다.
+앱 연결(Flyway 포함)의 격리 수준은 Hikari `transaction-isolation`으로 고정한 **READ COMMITTED**다(#576).
+MySQL 서버 기본값(RR)은 바꾸지 않았으므로 DataGrip·수동 SQL·`mysqldump` 세션은 RR이다. 앱과 같은 잠금을
+재현하려면 세션 격리 수준을 명시한다. InnoDB RC는 `binlog_format=ROW`(또는 MIXED)가 전제다 — STATEMENT면
+모든 DML이 실패한다. dev·prod는 ROW이고 2026-10-14 실측했다. 격리 수준 확인은 `DatasourceIsolationIntegrationTest`가 한다.
 약관 index/FK/CHECK는 #432 cutover의 `*_v2_432_*` 이름을 V1에서도 유지한다. baseline을 위한
 legacy rollback 테이블 삭제는 하지 않으며, 활성 업무 구조와 보관 테이블을 구분해 대조한다.
 
@@ -288,8 +292,8 @@ runtime repository/entity도 subject만 읽고 쓴다.
 `updateSavedEmotion`(감정만 교체, `WHERE status='SAVED'` — #325). 둘 다 영향 행 수가 판정 기준이고
 bulk UPDATE라 JPA auditing을 우회하므로 `updated_at`을 app Clock 파라미터로 직접 채운다(`modified_by`
 NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우선(리포지토리 tx 한 문장) → 0행일 때만
-재조회 분류 경계를 쓴다(#499) — MySQL 기본 `REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에
-묶으면 첫 조회가 고정한 snapshot이 동시 삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
+재조회 분류 경계를 쓴다(#499) — 영향 행 수가 판정 기준이라 사전 조회를 쓰기 트랜잭션에 묶지 않고,
+0행 뒤 분류 조회는 별도 문장으로 최신 커밋 상태를 읽는다. #325·#326은 신규 DDL·backfill 없이 기존
 `daily_records`·`timeline_events` 컬럼만 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
