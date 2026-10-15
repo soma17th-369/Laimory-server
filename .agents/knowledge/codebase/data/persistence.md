@@ -81,7 +81,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `status` `CHARGED`→`CONSUMED`|`REFUNDED` 한 번, `refund_reason`은 `REFUNDED`일 때만(`CHECK` 짝), 전이 시각은
   `created_at`·`updated_at`. subject FK `RESTRICT`·subject index. 범용 원장(지급·조정)이 아니다. 쓰기는 native INSERT와
   JPQL 전이 UPDATE라 감사 컬럼을 앱 Seoul 벽시계로 직접 채운다. 정리 작업은 없고 탈퇴 삭제가 함께 지운다.
-  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. V10에서 추가)
+  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. 1시간 기준 같은 조건의 건수를
+  `laimory.credit.history.charged.stale` gauge가 5분마다 다시 세어 경보한다(#582). V10에서 추가)
 - `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
   선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
   migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)

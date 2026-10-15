@@ -263,6 +263,9 @@ Spring JSON stdout
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
   - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
+  - `laimory.credit.history.charged.stale`: 1시간 넘게 `CHARGED`인 크레딧 기록 수(#582) — 유실 환불이 놓친 건.
+    DB count를 scrape마다가 아니라 5분에 한 번만 다시 세고, DB 오류는 NaN이다. 모든 서버가 같은 값을 내므로
+    경보는 `max by (environment)`로 환경당 하나만 만든다
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
     최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
     없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다
@@ -354,9 +357,10 @@ Elasticsearch의 `service=laimory AND level=ERROR` count를 environment terms로
 터널을 먼저 열어야 링크가 동작한다(deploy/monitoring/README.md "접속" 절). WARN 단건은
 notification하지 않고 dashboard 추세와 Kibana Discover에서 조사한다. critical은 기존 5xx ratio,
 target/probe/backend down, OOM 같은 사용자 영향·장애 신호가 소유한다.
-5xx ratio는 `uri` `/actuator.*`와 `/readyz`를 분자·분모·최소 요청 수에서 모두 뺀다. `/readyz`는 ALB
-헬스체크 경로라 graceful shutdown 중 503을 돌려주고, 저트래픽 dev 단일 host 배포에서는 이 몇 건만으로
-비율을 넘긴다. readiness 실패 감지는 `laimory_target_down`이 소유한다.
+5xx ratio와 p95 latency는 `uri` `/actuator.*`·`/readyz`·`/status`를 분자·분모·최소 요청 수에서 모두 뺀다.
+`/readyz`는 ALB 헬스체크 경로라 graceful shutdown 중 503을 돌려주고, 저트래픽 dev 단일 host 배포에서는 이
+몇 건만으로 비율을 넘긴다. 반대로 평시에는 15초 간격 헬스체크와 `/status` probe가 최소 요청 수 gate를 혼자
+채우고 실제 API의 5xx 비율·p95를 희석한다(#582). readiness 실패 감지는 `laimory_target_down`이 소유한다.
 Logs dashboard의 `ERROR & WARN Logs` 데이터 포인트에는 Kibana data link가 있다. 클릭한 시각 전후
 5분과 현재 environment, 클릭한 ERROR/WARN series를 Discover에 넘기고
 `message`/`level`/`errorCode`/`path`/`exceptionType` 열을 연다. 링크에는 원문 로그를 넣지 않는다.
@@ -485,7 +489,7 @@ filter 다음의 `TransactionIdFilter`가 보는 `request.getRemoteAddr()`다.
   다른 provisioning 자산은 여전히 live rollout 완료를 뜻하지 않는다. SSM identity/secret 구성,
   Discord firing/resolved와 24시간 soak도 별도로 확인한다.
 - distributed tracing과 dependency-complete readiness endpoint는 없다.
-- **로그 경보도 환경 중립이다(#348).** 지표 기반 rule 9개에 더해 log pipeline 계열과 ERROR 로그
+- **로그 경보도 환경 중립이다(#348).** 지표 기반 rule 10개에 더해 log pipeline 계열과 ERROR 로그
   경보가 prod를 평가한다. Grafana ES datasource는 `laimory-*` wildcard이고 API key도 `laimory-*`
   범위다. 단, datasource·dashboard json은 자동 배포 대상이 아니라 host 수동 적용이 필요하고,
   Filebeat self-metric 수집기는 prod WAS 2대 설치가 전제다(설치 전에 rule이 먼저 배포되면

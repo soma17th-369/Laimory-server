@@ -63,3 +63,63 @@ groups:
           service: laimory
           severity: warning
         isPaused: false
+  - orgId: 1
+    name: laimory-credit-stale-charged
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_credit_stale_charged
+        title: Credit charge left unsettled
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (environment) (laimory_credit_history_charged_stale{job="spring_boot",environment!="test"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: '{{ $values.B.Value }} credit charge(s) have stayed CHARGED for over an hour.'
+          description: 'A CHARGED credit history older than the threshold means the lost-task refund (Redis expiry notification) was missed. Check the task and refund manually; there is no automatic sweeper.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#credit-charged-stale
+        labels:
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false

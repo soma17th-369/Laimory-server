@@ -239,9 +239,9 @@ UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-ru
 
 alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 환경마다 존재하는지**로 갈린다.
 
-- **환경 중립 9개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
+- **환경 중립 10개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
   `laimory_hikari_saturated`, `laimory_target_down`, `laimory_host_memory_low`,
-  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`.
+  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`, `laimory_credit_stale_charged`.
   PromQL에 환경을 고정하지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
   환경마다 별개 alert instance가 나오게 한다. 단 **`environment!="test"`는 공통 제외다(#400)** —
   test는 부하 실험용 sandbox라 p95 급등·인스턴스 정지가 by-design이고(정지 운용이 기본),
@@ -1082,6 +1082,35 @@ draft POST가 dispatch 실패 502(-1009)를 반환한 경우에도 접수 여부
 task가 남아 stuck에 잡힐 수 있다 — 3분 안에 AI callback이 오면 terminal로 빠지고, callback 없이 만료되면
 FAILED 전이 없이 사라져 이후 폴링·콜백은 404(-1001)다. Redis 장애 시 gauge는 NaN이 되고 별도 Redis
 target alert가 원인을 알린다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
+
+### Credit CHARGED stale
+
+`laimory_credit_stale_charged`는 1시간 넘게 `CHARGED`인 `credit_histories` 행이 있다는 뜻이다(#582). 정상 흐름은
+결과 저장(`CONSUMED`)이나 실패·유실 환불(`REFUNDED`)로 수 분 안에 전이하므로, 이 행은 유실 환불(Redis keyspace
+`expired` 알림)이 놓친 것이다 — 구독 끊김·Redis 재시작·eviction·배포 공백이 원인이다. 자동 sweeper는 없고 운영자가
+환불한다. gauge는 5분마다 다시 세므로 환불 뒤 경보 해제까지 최대 5분 걸린다.
+
+prod DB 수동 접속 경로(`laimory_ops`, prod WAS 경유 SSM 터널)로 대상부터 확인한다.
+
+```sql
+SELECT credit_history_id, subject_id, reference_id, amount, created_at
+FROM credit_histories
+WHERE status = 'CHARGED'
+  AND created_at < CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') - INTERVAL 1 HOUR;
+```
+
+`created_at`·`updated_at`은 KST 벽시계라 DB의 "지금"을 `CONVERT_TZ`로 맞춘다. `reference_id`는 `TIMELINE_CREATION`이면 taskId다. 결과가 저장됐으면 기록은 이미 `CONSUMED`라 여기에 나오지 않는다.
+행마다 같은 transaction에서 상태가 아직 `CHARGED`일 때만 잔액과 기록을 함께 바꾼다(앱 환불과 같은 의미).
+
+```sql
+START TRANSACTION;
+UPDATE credit_histories
+SET status = 'REFUNDED', refund_reason = 'TIMEOUT', updated_at = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00')
+WHERE credit_history_id = ? AND status = 'CHARGED';
+-- 위 UPDATE가 1행일 때만 실행한다. 0행이면 ROLLBACK.
+UPDATE subject_credits SET remaining = remaining + ?, updated_at = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') WHERE subject_id = ?;
+COMMIT;
+```
 
 ### Timeline orphan sweeper (PHOTO S3 삭제)
 
