@@ -292,7 +292,7 @@ worker도 각자의 DB 재시도 계약을 따른다. 이번 배포 변경은 �
 Flyway는 모든 환경의 앱 시작 시 실행한다. [Flyway 운영 절차](../../../../docs/database/flyway-adoption.md)에
 따라 기존 DB는 최초 구조 대조와 명시 baseline, 빈 운영 DB는 최초 CLI bootstrap을 subject schema와
 `app_config` preflight 전에 완료한다. 이후 일반 migration은 앱이 자동 실행한다. 기존 DB의 실제 편입 여부와
-앱 DataSource의 DDL 권한은 live 조회로 확인한다. 검사 대상 테이블을 바꾸는 PR은 preflight가 배포 중
+Flyway 전용 계정(`SPRING_FLYWAY_USER`)의 DDL 권한은 live 조회로 확인한다(앱 DataSource 계정은 DML만 — [environments](environments.md)). 검사 대상 테이블을 바꾸는 PR은 preflight가 배포 중
 구/신 schema 양쪽에 맞도록 함께 조정한다. 긴 SQL/비호환 변경은 별도 maintenance로 다룬다.
 
 - 저장소는 전체 AWS topology와 신규 host 초기화를 자동화하지 않는다.
