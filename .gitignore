@@ -67,6 +67,11 @@ application-secret.properties
 .env
 .env.*
 /deploy/monitoring/secrets/
+# Terraform 로컬 산출물(state·secret 변수 — 비밀 포함, 공개 저장소에 커밋 금지)
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform/
 
 ### Agent Local Plans ###
 /.agents/plans/
