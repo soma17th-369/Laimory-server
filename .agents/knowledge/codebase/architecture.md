@@ -91,8 +91,7 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 (`DailyRecordEmotionUpdateService`)가 날짜 사전 조회로 404·DRAFT 409를 거르고 ID snapshot만 별도
 writer(`DailyRecordEmotionUpdateTransactionService`)에 넘긴다. writer는 서비스 transaction 없이 SAVED
 조건부 UPDATE(리포지토리 tx 한 문장)를 먼저 실행하고 0행일 때만 재조회로 실패를 분류한다(#499) —
-사전 조회와 재조회를 한 트랜잭션에 묶지 않는 이유는 MySQL `REPEATABLE READ`에서 첫 조회가 snapshot을
-고정해 실패 재조회가 동시 삭제 전 행을 다시 볼 수 있기 때문이다(`TimelineSaveService` →
+판정 기준이 영향 행 수라 사전 조회를 쓰기 트랜잭션에 묶지 않는다(`TimelineSaveService` →
 `TimelineSaveTransactionService`와 같은 형태). 수동 Event 생성(#326/#361)은 `TimelineEventCreateService`의 public `@Transactional`
 메서드 하나가 소유 record 재확인·입력 검증·Event insert·optional PHOTO Item/junction 추가를 소유한다.
 Event 상세 필드 공통 규칙은 package-private `TimelineEventInputRules`, 수동 PHOTO 검증·분류·저장 규칙은

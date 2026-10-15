@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>동시성은 ①의 영향 행 수가 유일한 직렬화 지점이다. 승자만 ②~⑤를 수행하고, 영향 0행은 fresh
  * 조회로 분류한다 — {@code WITHDRAWAL_PENDING}이면 이미 인증을 통과한 동시 탈퇴의 멱등 수렴(202),
  * 회원 없음이면 기존 401 {@code -2001}이다. loser의 ①은 승자의 row lock에 걸려 commit 이후에야
- * 0행을 관측하고, ①이 이 transaction의 첫 문장이라 이후 조회 snapshot도 승자 commit 이후다.
+ * 0행을 관측하고, READ COMMITTED라 이후 분류 조회도 승자 commit 이후 상태를 읽는다(#576).
  *
  * <p>두 UPDATE의 0행 예외나 job enqueue 실패는 바깥 {@code @Transactional} 경계에서 회원 전이·
  * identity release·선행 UPDATE까지 전부 rollback한다 — 알림이 켜진 채 탈퇴만 접수되는 상태를
