@@ -272,13 +272,6 @@ PROCESSING 시작 약 3분 뒤 환불된다(그때 FAILED 완료 push가 오고 
 기능이 늘면 같은 응답에 평면 필드를 추가한다. 보호 API(`CreditApi`)와
 인터페이스를 나눈 것은 principal 없는 보호 operation이 인증 계약 테스트의 형태에 없기 때문이다.
 
-`POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
-인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
-`onboarding_completed`만 false로 바꾼다. 반복 호출도 200이며 다른 사용자·알림 설정은 유지한다.
-userId 누락·형식 오류·0·음수는 400, subject 매핑·설정 행 부재는 기존 내부 오류 500이다.
-제거하려면 main/test의 `onboarding/temporary` 패키지를 삭제하고 이 문단과 관련 임시 예외 설명을
-정리한다. 일반 온보딩 완료 API·SecurityConfig·스키마의 기능 수정은 필요 없다.
-
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는 `userId`(회원 행
 PK = access token의 `sub`, 항상 존재하는 JSON number — 가명화 subjectId가 아님)와 nullable `nickname`이며,
 nickname 값이 없으면 key 생략이 아니라 명시적 JSON null이다. 다른 회원을 선택하는
