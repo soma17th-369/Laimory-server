@@ -34,6 +34,9 @@ public interface CreditHistoryRepository extends JpaRepository<CreditHistory, Lo
     /** 대상 단건 조회 — 인터페이스 선언이라 호출자 transaction 밖에서는 transaction 없이 실행된다(#499). */
     Optional<CreditHistory> findByCostTypeAndReferenceId(CreditCostType costType, String referenceId);
 
+    /** {@code createdAt} 이전에 생긴 해당 상태 기록 수 — 유실 환불 누락 경보 gauge(#582)용. */
+    long countByStatusAndCreatedAtBefore(CreditHistoryStatus status, LocalDateTime createdAt);
+
     /**
      * 결과 저장으로 차감을 확정한다. 상태를 조건으로 보지 않는다 — 유실 환불 뒤 늦게 저장된 결과도 마지막에 쓴
      * {@code CONSUMED}가 남는다(그 생성 1회 무료, 수용한 경합). 행이 없으면(기록 도입 전 task) 0행이다.

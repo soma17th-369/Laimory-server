@@ -124,7 +124,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   구독하고, 유실 처리 잠금(`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 처리한다. 환불이 실제로 일어났을 때만
   task를 FAILED(`-1008`)로 다시 기록(`SET NX`)하고 FAILED 완료 push를 보낸다 — 이미 소비·환불된 기록이면 셋 다 건너뛴다.
   알림 유실(배포 공백·구독 끊김·Redis 재시작)과 잠금 서버의 처리 실패는 수용한다 — 기록이 `CHARGED`로 남아 수동 환불한다
-  (주기 sweeper 없음).
+  (주기 sweeper 없음). 1시간 넘게 `CHARGED`인 기록 수를 gauge로 노출하고 경보해 놓친 건을 운영자가 알게 한다(#582).
   결과 저장과 유실 환불이 겹치면(결과 처리+타이머 삭제가 3분 만료 경계에 걸림) 결과는 그대로 저장되고 그 생성 1회는 무료가 된다
   (기록은 나중에 쓴 상태). 결과가 저장됐다면 draft 응답이 UNKNOWN 502였거나 SUCCESS callback 없이 task가 만료됐어도
   차감은 유지된다.
