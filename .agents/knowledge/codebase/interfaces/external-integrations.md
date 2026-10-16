@@ -113,10 +113,10 @@ versionId를 지정해 지운다**. `ListObjectsV2`는 versioning이 켜진 상�
 `laimory-ec2-s3`), prod WAS 2대는 `laimory-prod-was-role`(인라인 `laimory-prod-was-permissions`)이다.
 한쪽에 권한을 넣어도 다른 쪽은 그대로이므로 **IAM 변경은 환경마다 따로 적용한다.**
 
-사진 bucket 권한은 dev role이 `s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·
-`s3:DeleteObjectVersion`(객체)이고, prod role은 `s3:PutObject`·`s3:DeleteObject`뿐이다. bucket은 현재
-versioning을 쓰지 않아 삭제 경로가 versionId `"null"`로 같게 동작하므로 이 차이는 지금은 드러나지 않는다 —
-**versioning을 켜는 순간 prod 삭제가 권한 부족으로 깨진다.** 두 role 모두 **`s3:ListBucket`은 없다**
+사진 bucket 권한은 두 role 모두 `s3:PutObject`·`s3:DeleteObject`(객체) + `s3:ListBucketVersions`(bucket)·
+`s3:DeleteObjectVersion`(객체)이다(2026-10-15 실측 — 2026-09-25 prod 누락 이후 추가됨). 삭제 경로는 version API를
+쓰므로 versioning 여부와 무관하게 이 넷이 필요하다. bucket은 versioning을 켠 적이 없다(Unversioned) — 잘못 지운
+객체는 복구할 수 없다. 두 role 모두 **`s3:ListBucket`은 없다**
 (implicit deny) — 목록은 version API로만 하므로 필요하지 않다. `ListObjectsV2` 경로를 되살리려면 그
 권한을 먼저 추가해야 한다.
 
