@@ -63,6 +63,10 @@ taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 �
 목록은 앱 재진입 시 잃은 taskId를 재발견하는 힌트이고, 각 작업의 최신 상태·결과는 기존 단건 폴링
 (`GET .../drafts/{taskId}`)이 권위다. Redis 권위 read·task JSON 해석 실패는 catch-all 500 `-500`이다.
 
+draft 작업이 실패로 끝나면(폴링 FAILED, draft POST의 task 저장 실패·미접수 확정 502 `-1009`) 그 날짜의 DailyRecord가 활성 Event 없는 DRAFT일 때
+soft delete된다(#593) — 앱에는 없는 기록이라 날짜 조회는 404 `-404`(`DAILY_RECORD_NOT_FOUND`), 월별·전체 목록에서
+빠진다. 결과·실패 보고가 없는 작업은 처리 기한(PROCESSING 시작 3분)에 폴링이 404 틈 없이 FAILED `-1008`이 된다.
+
 `GET /a/api/{version}/timeline/daily-records`는 인증 사용자의 DRAFT/SAVED DailyRecord 전체를
 `recordDate DESC, dailyRecordId DESC` 순서로 반환한다. 기록이 없으면 200과 `timelines=[]`다.
 `{recordDate}`를 path로 받는 다섯 API(일별 GET·DELETE, `/save`, `/emotion`, `/events`)는 ISO parse에
@@ -190,9 +194,8 @@ Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저
 terminal callback은 409 `-1017`다. 이미 소비된 token의 재요청은 재시도 창(기본 15s, 첫 요청 도착 기준)
 안에서만 멱등 처리된다 — 입력은 같은 입력과 새 result token을, 결과는 같은 결과일 때만
 새 callback token을 200으로 반환하며 graph는 다시 쓰지 않는다(응답 shape는 신규 저장과 같다).
-창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다. 결과도 callback도 없이 PROCESSING이
-만료돼 크레딧 유실 처리가 FAILED로 다시 기록한 task(#565 — token hash 없음)에 24시간 안에 늦게 온 입력·결과·callback은
-404가 아니라 401 `-1002`다.
+창 만료·저장 증거 없음은 401 `-1002`, 선점 중 중복 요청은 409 `-1017`다. 결과도 callback도 없이 처리 기한(3분)이
+지나 크레딧 유실 처리가 FAILED로 종결한 task(#565·#593 — token hash 보존)는 일반 terminal task와 같이 응답한다.
 계약 상세는 [ai-contract](ai-contract.md)가 소유한다.
 
 `POST /t/api/{version}/timeline/test`(#394)는 **dev 전용 AI 동기 테스트** endpoint다. AI Timeline
@@ -263,7 +266,8 @@ aggregation framework를 만들지 않는다).
 요청도 잔액을 넘지 못한다(잔액 1에서 두 날짜를 동시에 요청하면 하나는 403). 생성이 실패하면 돌려준다 — 폴링이
 FAILED면 이미 환불됐고, 502 `-1009`는 AI 미접수가 확정이면 응답 전에, 결과를 모르면(UNKNOWN) 결과가 오지 않을 때
 PROCESSING 시작 약 3분 뒤 환불된다(그때 FAILED 완료 push가 오고 폴링도 FAILED `-1008`). 앱은 502 직후 잔액을 단정하지 말고 다시
-조회한다. 유실 처리 전(만료 알림 지연 수 초)이나 처리가 빠진 경우 폴링은 404 `-1001`이며 이것도 실패로 다룬다.
+조회한다. 유실 처리 전(만료 알림 지연 수 초) 폴링은 아직 PROCESSING이고, 처리가 빠진 경우 PROCESSING 시작 5분 뒤
+404 `-1001`이며 이것도 실패로 다룬다.
 
 `GET /api/{version}/credit/costs`(#555)는 작업별 크레딧 비용을 `{"timelineCreation": n}`로 반환하는 **공개**
 조회다. 비용은 사용자와 무관한 DB 값(`credit_costs` 행, #558)이라 인증·subject 변환 없이 응답하며, 앱은 이 값으로

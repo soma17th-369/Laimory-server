@@ -16,9 +16,14 @@ import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
+import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineTaskStore;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,7 +36,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
- * 유실 타이머 만료 → 유실 처리(#565)의 실 MySQL·Redis 검증. 타이머 만료가 keyspace 알림으로 구독자에게 오는 배선은
+ * 유실 타이머 만료 → 유실 처리(#565·#593)의 실 MySQL·Redis 검증. 타이머 만료가 keyspace 알림으로 구독자에게 오는 배선은
  * 짧은 TTL 타이머로 확인하고(Compose Redis의 {@code notify-keyspace-events Kx} 필요), 처리·건너뛰는 경로(환불·소비된
  * 기록·다른 서버가 잡은 잠금)는 알림 대기 없이 수신자를 직접 호출해 결정적으로 확인한다.
  *
@@ -63,6 +68,8 @@ class TimelineTaskLossIntegrationTest {
     @Autowired
     private RedisGateway redis;
     @Autowired
+    private DailyRecordRepository dailyRecordRepository;
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
@@ -83,39 +90,58 @@ class TimelineTaskLossIntegrationTest {
         redis.delete("timeline:draft-task:loss-lock:" + taskId);
         redis.delete("timeline:draft-task:" + taskId);
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, SUBJECT_ID);
+        jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", SUBJECT_ID.toString());
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
     }
 
     @Test
-    void expiredLossTimerIsDeliveredAndRefundsWithFailedTask() {
+    void expiredLossTimerIsDeliveredAndFailsLiveTask() {
+        long recordId = emptyDraft(LocalDate.of(2026, 10, 10));
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
+        saveProcessing(recordId);
 
         redis.set("timeline:draft-task:loss-timer:" + taskId, "", Duration.ofMillis(100));
 
-        // 환불 commit 뒤 FAILED를 쓰므로 둘 다 보일 때까지 기다린다 — 처리한 컨텍스트는 어느 것이든 된다.
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
-            assertThat(historyStatus()).isEqualTo("REFUNDED");
-            assertThat(timelineTaskStore.find(taskId)).isPresent();
-        });
+        // 환불·삭제 commit 뒤 FAILED를 쓰므로 FAILED가 보일 때까지 기다린다 — 처리한 컨텍스트는 어느 것이든 된다.
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(timelineTaskStore.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.FAILED));
+        assertThat(historyStatus()).isEqualTo("REFUNDED");
         assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(recordModifiedBy(recordId)).isEqualTo("ai_failed");
         DraftTaskStatusResponse polled = pollingService.poll("v1", SUBJECT_ID, taskId);
         assertThat(polled.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(polled.error()).isEqualTo(-1008);
     }
 
     @Test
-    void expirationOfChargedTaskRefundsRecordsFailedTaskAndPushesFailure() {
+    void expirationOfLiveChargedTaskRefundsDeletesEmptyDraftFailsTaskAndPushesFailure() {
+        long recordId = emptyDraft(LocalDate.of(2026, 10, 11));
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
+        saveProcessing(recordId);
 
         handler.onExpired("timeline:draft-task:loss-timer:" + taskId);
 
         assertThat(remainingCredits()).isEqualTo(60);
         assertThat(jdbcTemplate.queryForObject("SELECT refund_reason FROM credit_histories WHERE reference_id = ?",
                 String.class, taskId)).isEqualTo("TIMEOUT");
+        assertThat(recordModifiedBy(recordId)).isEqualTo("ai_failed");
         DraftTaskStatusResponse polled = pollingService.poll("v1", SUBJECT_ID, taskId);
         assertThat(polled.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(polled.error()).isEqualTo(-1008);
         verify(pushNotifier).notifyAsync(SUBJECT_ID, taskId, TaskStatus.FAILED);
+    }
+
+    @Test
+    void expirationOfChargedTaskWithoutTaskRefundsWithoutFailedTaskOrPush() {
+        // 배포 중 옛 서버가 만든 task(3분 TTL)는 타이머와 함께 사라진다 — 환불만 하고 FAILED·push는 남기지 않는다.
+        creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, taskId);
+
+        handler.onExpired("timeline:draft-task:loss-timer:" + taskId);
+
+        assertThat(remainingCredits()).isEqualTo(60);
+        assertThat(historyStatus()).isEqualTo("REFUNDED");
+        assertThat(timelineTaskStore.find(taskId)).isEmpty();
+        verify(pushNotifier, never()).notifyAsync(any(), anyString(), any());
     }
 
     @Test
@@ -145,6 +171,24 @@ class TimelineTaskLossIntegrationTest {
         assertThat(historyStatus()).isEqualTo("CHARGED");
         assertThat(timelineTaskStore.find(taskId)).isEmpty();
         verify(pushNotifier, never()).notifyAsync(any(), anyString(), any());
+    }
+
+    private long emptyDraft(LocalDate recordDate) {
+        return dailyRecordRepository.save(DailyRecord.createDraft(
+                SUBJECT_ID, recordDate, recordDate.atTime(12, 0), "Asia/Seoul")).getDailyRecordId();
+    }
+
+    private void saveProcessing(long recordId) {
+        timelineTaskStore.save(taskId, TimelineDraftTask.processing(SUBJECT_ID, recordId,
+                new TimelineDraftTask.TimelineWindow(LocalDateTime.of(2026, 10, 10, 0, 0),
+                        LocalDateTime.of(2026, 10, 10, 23, 0)), "hash", Instant.now()),
+                Duration.ofMinutes(1));
+    }
+
+    private String recordModifiedBy(long recordId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT modified_by FROM daily_records WHERE daily_record_id = ? AND deleted_at IS NOT NULL",
+                String.class, recordId);
     }
 
     private String historyStatus() {

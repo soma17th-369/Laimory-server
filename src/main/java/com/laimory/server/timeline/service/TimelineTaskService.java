@@ -21,10 +21,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * timeline draft 작업 상태 leaf 서비스. 자신과 1:1인 TimelineTaskStore에만 접근한다.
- * 처리중(PROCESSING)은 최초 저장 기준 3분, 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
- * PROCESSING 만료는 Redis key 소멸이지 FAILED 전이가 아니다 — callback 없이 만료된 task의
- * 이후 폴링·콜백은 404(-1001)로 수렴하며, scheduler가 FAILED로 복구하지 않는다. 예외는 크레딧 차감이 남은 유실
- * task다(#565) — 유실 타이머 만료 처리가 환불한 뒤 {@link #markLostFailedIfAbsent}로 FAILED를 다시 기록한다.
+ * 처리중(PROCESSING)은 최초 저장 기준 5분({@link #PROCESSING_TTL}), 종결 상태(SUCCESS/FAILED)는 24시간 TTL로 보관한다.
+ * 처리 기한({@link #PROCESSING_DEADLINE}, 3분)이 지나도 결과·실패 보고가 없으면 유실 타이머 만료 처리가 환불하고
+ * 아직 살아 있는 task를 {@link #markFailedIfPresent}로 FAILED 종결한다(#565·#593). PROCESSING key 만료는 그 처리마저
+ * 없었던 task(타이머 알림 유실)의 마지막 회수이지 FAILED 전이가 아니다 — 이후 폴링·콜백은 404(-1001)로 수렴한다.
  *
  * <p>현재 task token은 hash로 검증하고, PROCESSING token hash와 내부 단계는 native
  * {@code SET XX KEEPTTL}로 교체해 최초 만료 시각을 보존한다 — 어떤 stage write도 TTL을 연장하지 않는다.
@@ -40,11 +40,14 @@ public class TimelineTaskService {
     private static final Map<Integer, ExceptionType> TASK_FAILURE_TYPES_BY_CODE = TASK_FAILURE_TYPES.stream()
             .collect(Collectors.toUnmodifiableMap(ExceptionType::code, Function.identity()));
 
-    // AI 접수는 202 즉시 반환, 정상 inference·callback은 3분 내 종료가 운영 목표 — 사용자에게
-    // 무기한 PROCESSING을 노출하지 않기 위해 callback 없는 task는 이 TTL이 회수한다.
-    // transport 구현이 접수 대기 상한을 이 값에 맞춰 기동 시 검증한다(http는 같은 패키지, agentcore는
-    // com.laimory.server.ai.agentcore) — 그래서 package-private이 아니라 public이다.
-    public static final Duration PROCESSING_TTL = Duration.ofMinutes(3);
+    // AI 접수는 202 즉시 반환, 정상 inference·callback은 3분 내 종료가 운영 목표다(실측 2분 이내) — 이 기한이
+    // 지나도록 보고가 없으면 유실 타이머가 실패 처리한다. transport 구현이 접수 대기 상한을 이 값에 맞춰 기동 시
+    // 검증한다(http는 같은 패키지, agentcore는 com.laimory.server.ai.agentcore) — 그래서 public이다.
+    public static final Duration PROCESSING_DEADLINE = Duration.ofMinutes(3);
+
+    // PROCESSING task key·subject index 수명. 처리 기한보다 길어 유실 타이머 만료 처리가 task를 읽어 record를
+    // 정리하고 FAILED로 종결할 수 있다(#593). 그 처리마저 없으면(알림 유실) 이 TTL이 회수한다.
+    public static final Duration PROCESSING_TTL = Duration.ofMinutes(5);
 
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
 
@@ -68,7 +71,7 @@ public class TimelineTaskService {
 
     /**
      * PROCESSING task 내부 상태(token hash·stage·retry receipt)를 교체한다. native {@code SET XX KEEPTTL}
-     * 이라 최초 PROCESSING 저장이 정한 3분 만료 시각을 보존한다 — {@code processingStartedAt}도 그대로라
+     * 이라 최초 PROCESSING 저장이 정한 만료 시각을 보존한다 — {@code processingStartedAt}도 그대로라
      * 폴링 {@code elapsedSeconds}·task 만료·stuck 관측이 전부 최초 시작 기준으로 일치한다.
      * 반환 {@code false}는 write 시점에 task가 만료됐다는 뜻이다(호출부는 404로 수렴한다).
      */
@@ -113,20 +116,6 @@ public class TimelineTaskService {
         boolean saved = timelineTaskStore.saveTerminalIfPresent(taskId,
                 TimelineDraftTask.failed(task.subjectId(), task.dailyRecordId(), failureType.code(), task.tokenHash()),
                 TERMINAL_TTL);
-        if (saved) {
-            timelineMetrics.recordTerminalFailed();
-        }
-        return saved;
-    }
-
-    /**
-     * 결과·실패 보고 없이 만료돼 환불한 task를 FAILED로 다시 기록한다(#565) — task key가 없을 때만 쓴다.
-     * 실패 코드는 기존 AI 실패({@code -1008})를 재사용한다(앱 계약 변경 없음). task 값이 사라진 뒤라
-     * {@code dailyRecordId}·token hash가 없는 유실 FAILED다. {@code false}는 key가 이미 있다는 뜻이다.
-     */
-    public boolean markLostFailedIfAbsent(String taskId, UUID subjectId) {
-        boolean saved = timelineTaskStore.saveTerminalIfAbsent(taskId,
-                TimelineDraftTask.lostFailed(subjectId, ExceptionType.AI_REPORTED_FAILURE.code()), TERMINAL_TTL);
         if (saved) {
             timelineMetrics.recordTerminalFailed();
         }

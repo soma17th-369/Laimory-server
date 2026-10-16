@@ -27,7 +27,7 @@ import software.amazon.awssdk.services.bedrockagentcore.BedrockAgentCoreClient;
  * {@link AwsRetryStrategy#doNotRetry()}로 봉인한다.
  *
  * <p>timeout은 HTTP mode의 접수 대기(connect 2s + read 5s)와 같은 크기로 고정한다 — 접수는 즉시 반환
- * 계약이고, 대기 상한이 task 수명(PROCESSING TTL 3분)의 절반에 근접하면 유효한 ack를 받고도 이미 만료된
+ * 계약이고, 대기 상한이 처리 기한(3분)의 절반에 근접하면 유효한 ack를 받고도 이미 실패 처리된
  * taskId를 받게 된다. 이 불변식은 아래에서 기동 시 강제한다.
  */
 @Configuration
@@ -96,11 +96,11 @@ public class AgentCoreClientConfig {
                 .build();
     }
 
-    /** 접수 최대 대기가 PROCESSING TTL의 절반 미만인지 기동 시 강제한다(HTTP dispatcher와 같은 불변식). */
+    /** 접수 최대 대기가 처리 기한의 절반 미만인지 기동 시 강제한다(HTTP dispatcher와 같은 불변식). */
     private static void requireAckWaitWithinTaskLifetime() {
-        if (CALL_TIMEOUT.compareTo(TimelineTaskService.PROCESSING_TTL.dividedBy(2)) >= 0) {
+        if (CALL_TIMEOUT.compareTo(TimelineTaskService.PROCESSING_DEADLINE.dividedBy(2)) >= 0) {
             throw new IllegalStateException(
-                    "AgentCore api-call-timeout(" + CALL_TIMEOUT + ")은 PROCESSING TTL의 절반보다 짧아야 합니다.");
+                    "AgentCore api-call-timeout(" + CALL_TIMEOUT + ")은 처리 기한의 절반보다 짧아야 합니다.");
         }
     }
 

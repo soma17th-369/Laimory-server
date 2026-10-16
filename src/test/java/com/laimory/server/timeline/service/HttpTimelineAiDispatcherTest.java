@@ -81,13 +81,13 @@ class HttpTimelineAiDispatcherTest {
     }
 
     @Test
-    void constructor_ackWaitReachingHalfProcessingTtl_failsFast() {
-        // task는 dispatch 전에 TTL(3m)로 저장되므로 접수 대기 상한(connect+read 합)이 수명에 근접하면
-        // 유효한 202를 받고도 만료된 taskId를 반환할 수 있다 — 합 90s(TTL 절반) 이상은 기동 시 거부한다.
+    void constructor_ackWaitReachingHalfProcessingDeadline_failsFast() {
+        // 유실 타이머는 dispatch 전에 처리 기한(3m)으로 걸리므로 접수 대기 상한(connect+read 합)이 기한에 근접하면
+        // 유효한 202를 받고도 실패 처리된 taskId를 반환할 수 있다 — 합 90s(기한 절반) 이상은 기동 시 거부한다.
         assertThatThrownBy(() -> new HttpTimelineAiDispatcher(RestClient.builder(),
                 server.url("/").toString(), Duration.ofSeconds(45), Duration.ofSeconds(45)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("PROCESSING TTL");
+                .hasMessageContaining("처리 기한");
         assertThatCode(() -> new HttpTimelineAiDispatcher(RestClient.builder(),
                 server.url("/").toString(), Duration.ofSeconds(45), Duration.ofMillis(44_999)))
                 .doesNotThrowAnyException();
