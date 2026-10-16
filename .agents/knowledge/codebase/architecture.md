@@ -50,9 +50,6 @@ Laimory 서버의 package, HTTP 경계, service 합성, 저장소와 transaction
   프록시를 타지 않는다. 약관 등록의 상위 버전 검사는 캐시를 거치지 않고 DB를 읽는다.
 - `SystemController`는 `/status`에서 `DataSource`를 직접 probe하고,
   `AuthHandoffPageController`는 정적 HTML handoff adapter인 의도적 예외다.
-- 임시 온보딩 reset은 일괄 제거를 위해 API·controller·service·전용 repository를
-  `onboarding/temporary`에 모은 예외다. `SubjectMappingService`로 userId를 해석하고 전용 repository가
-  `SubjectPreference`의 완료 컬럼만 갱신한다. 일반 설정 service/repository에는 임시 메서드를 추가하지 않는다.
 
 저장 경계:
 
@@ -91,8 +88,7 @@ non-empty PHOTO 추가는 orchestration service가 입력을 preflight하고, �
 (`DailyRecordEmotionUpdateService`)가 날짜 사전 조회로 404·DRAFT 409를 거르고 ID snapshot만 별도
 writer(`DailyRecordEmotionUpdateTransactionService`)에 넘긴다. writer는 서비스 transaction 없이 SAVED
 조건부 UPDATE(리포지토리 tx 한 문장)를 먼저 실행하고 0행일 때만 재조회로 실패를 분류한다(#499) —
-사전 조회와 재조회를 한 트랜잭션에 묶지 않는 이유는 MySQL `REPEATABLE READ`에서 첫 조회가 snapshot을
-고정해 실패 재조회가 동시 삭제 전 행을 다시 볼 수 있기 때문이다(`TimelineSaveService` →
+판정 기준이 영향 행 수라 사전 조회를 쓰기 트랜잭션에 묶지 않는다(`TimelineSaveService` →
 `TimelineSaveTransactionService`와 같은 형태). 수동 Event 생성(#326/#361)은 `TimelineEventCreateService`의 public `@Transactional`
 메서드 하나가 소유 record 재확인·입력 검증·Event insert·optional PHOTO Item/junction 추가를 소유한다.
 Event 상세 필드 공통 규칙은 package-private `TimelineEventInputRules`, 수동 PHOTO 검증·분류·저장 규칙은
@@ -113,9 +109,8 @@ Event/DailyRecord 삭제는 preflight(`TimelineDeletionService`) 뒤 별도 tran
 Event-Item 연결 해제(PHOTO 전용 DELETE)는 같은 두 계층을 쓰되 junction 한 줄만 직접 DELETE로 지운다 —
 영향 행 수 0(같은 junction 동시 해제의 후발)은 404로 수렴한다. 어느 쪽도 Item을 분류·삭제하지 않고 S3를
 호출하지 않는다. 연결을 잃은 Item은 일일 orphan 스위퍼가 정리한다(#551). 날짜 Redis admission은 없다.
-수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 delete job과 무관하게 새 Item을 저장하며 job을 조회·취소·
-재연결하지 않는다(#500). #551 전환 중에는 이전 버전이 만든 PHOTO delete job이 남아 있을 수 있어 기존
-worker(전용 executor, PK MOD 담당 일반 조회 claim)가 그 job만 처리한다 — 새 job을 만드는 경로는 없다.
+수동 PHOTO 추가(Event PATCH·Event 생성 POST)는 항상 새 Item을 저장하며 삭제 대기 사진을 조회·재연결하지
+않는다(#500).
 
 orphan 스위퍼는 `TimelineOrphanItemSweeper`(스케줄 trigger, slot 순차 실행·요약 로그)와
 `TimelineOrphanItemSweepService`(관측·처리·PHOTO Item 삭제 각각의 `REQUIRES_NEW` 경계)로 나뉜다. process 간

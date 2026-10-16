@@ -11,7 +11,6 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -20,7 +19,6 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
-import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
@@ -70,10 +68,6 @@ class TimelineOrphanItemSweepIntegrationTest {
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
     @Autowired
-    private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
-    @Autowired
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
-    @Autowired
     private TimelineDeletionTransactionService deletionTransactionService;
     @Autowired
     @org.springframework.beans.factory.annotation.Qualifier("timelineOrphanSweepExecutor")
@@ -102,13 +96,6 @@ class TimelineOrphanItemSweepIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        List<Long> jobIds = timelinePhotoDeleteJobRepository.findAll().stream()
-                .filter(job -> fixtureItemIds.contains(job.getTimelineItemId()))
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .toList();
-        if (!jobIds.isEmpty()) {
-            timelinePhotoDeleteJobRepository.deleteAllByIdInBatch(jobIds);
-        }
         // soft delete된 record까지 지운다(활성 조회는 삭제 행을 못 본다) — 계정 삭제용 무필터 id 조회를 쓴다.
         dailyRecordRepository.findIdsBySubjectIdAfterId(subjectId, 0L, PageRequest.of(0, 100))
                 .forEach(dailyRecordRepository::deleteById);
@@ -249,7 +236,6 @@ class TimelineOrphanItemSweepIntegrationTest {
 
         assertThat(result.selected()).isZero();
         assertThat(timelineItemRepository.existsById(shared)).isTrue();
-        assertThat(jobsOfFixture()).isEmpty();
     }
 
     @Test
@@ -273,7 +259,6 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long shared = savePhoto("raw-detach", filename, deletedEvent, activeEvent);
         deletionTransactionService.deleteEvent(subjectId, deletedEvent);
         deletionTransactionService.detachEventItem(subjectId, activeEvent, shared);
-        assertThat(jobsOfFixture()).isEmpty();
 
         var result = sweep(0, 1, 250);
 
@@ -302,21 +287,6 @@ class TimelineOrphanItemSweepIntegrationTest {
         assertThat(result.invalidDeleted()).isEqualTo(1);
         assertThat(result.photoDeletions()).isEmpty();
         assertThat(timelineItemRepository.existsById(orphan)).isFalse();
-    }
-
-    @Test
-    void itemWithExistingJobIsExcludedFromCandidates() {
-        // job이 있는 Item은 후보 조회 단계에서 빠진다(worker 소유라 스위퍼가 건드리면 FK 위반).
-        String filename = filename(7);
-        Long orphan = savePhotoWithKey("raw-g7", filename,
-                PhotoObjectKeys.subjectFullKey(filename, subjectId));
-        timelinePhotoDeleteJobService.insertIfAbsent(orphan, PhotoObjectKeys.subjectFullKey(filename, subjectId));
-
-        var result = sweep(0, 1, 250);
-
-        assertThat(result.selected()).isZero();
-        assertThat(timelineItemRepository.existsById(orphan)).isTrue();
-        assertThat(jobsOfFixture()).hasSize(1);
     }
 
     @Test
@@ -371,15 +341,13 @@ class TimelineOrphanItemSweepIntegrationTest {
         Long unobserved = saveCalendar("raw-unobserved");
         Long outsideBatch = saveCalendar("raw-outside");
         Long linked = saveCalendar("raw-linked-old", saveEvent("linked", 9));
-        Long withJob = savePhoto("raw-with-job", filename(92));
-        for (Long id : List.of(exact, outsideBatch, linked, withJob)) {
+        for (Long id : List.of(exact, outsideBatch, linked)) {
             jdbcTemplate.update("UPDATE timeline_items SET modified_by='ORPHAN_SWEEPER', updated_at=? "
                     + "WHERE timeline_item_id=?", now.minusHours(72), id);
         }
         jdbcTemplate.update("UPDATE timeline_items SET modified_by='ORPHAN_SWEEPER', updated_at=? "
                 + "WHERE timeline_item_id=?", now.minusHours(72).plusNanos(1000), recent);
         jdbcTemplate.update("UPDATE timeline_items SET updated_at=? WHERE timeline_item_id=?", now.minusDays(8), unobserved);
-        timelinePhotoDeleteJobService.insertIfAbsent(withJob, PhotoObjectKeys.subjectFullKey(filename(92), subjectId));
         assertThat(sweepService.observeBatch(0, 1, 1)).containsExactly(exact);
         assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72))).isEqualTo(2);
         assertThat(itemService.countStaleObservedOrphans(0, 1, now.minusHours(72).minusNanos(1000))).isZero();
@@ -398,12 +366,6 @@ class TimelineOrphanItemSweepIntegrationTest {
 
     private TimelineOrphanItemSweepService.SweepBatchResult sweep(int workerIndex, int total, int limit) {
         return sweepService.sweepBatch(sweepService.observeBatch(workerIndex, total, limit));
-    }
-
-    private List<TimelinePhotoDeleteJob> jobsOfFixture() {
-        return timelinePhotoDeleteJobRepository.findAll().stream()
-                .filter(job -> fixtureItemIds.contains(job.getTimelineItemId()))
-                .toList();
     }
 
     /** UUIDv7 + 허용 확장자 전체 일치를 통과해야 key 복원이 된다 — 마지막 그룹은 반드시 hex 12자다. */

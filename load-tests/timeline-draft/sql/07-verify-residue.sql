@@ -51,12 +51,10 @@ FROM user_subject_links l
 JOIN k6_251_subjects k ON k.subject_id = l.subject_id;
 
 -- 어떤 event에도 연결되지 않은 timeline_items — 이번 정리가 만든 고아가 없어야 한다.
--- (PHOTO 삭제 대기 job이 소유한 item은 정상 상태라 제외한다.)
+-- (실사용 삭제가 남긴 고아는 다음 03:30 orphan 스위퍼가 정리하는 정상 상태라 이 값에 섞일 수 있다(#551).
+--  0이 아니면 정리 전에 같은 쿼리로 잰 값과 비교한다.)
 SELECT 'timeline_items (orphan)' AS target_table, COUNT(*) AS residue_rows
 FROM timeline_items i
 WHERE NOT EXISTS (
     SELECT 1 FROM timeline_event_items ei WHERE ei.timeline_item_id = i.timeline_item_id
-)
-  AND NOT EXISTS (
-    SELECT 1 FROM timeline_photo_delete_jobs j WHERE j.timeline_item_id = i.timeline_item_id
 );

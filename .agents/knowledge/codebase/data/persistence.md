@@ -25,6 +25,10 @@ entity, repository, table/index/FK, Redis key/value/TTL, photo object 또는 cle
 MySQL 8과 JPA/Hibernate를 사용하며 `spring.jpa.hibernate.ddl-auto=validate`다.
 Flyway 11.7.2가 모든 환경에서 앱 시작 시 schema를 관리한다. 기존 DataSource를 사용하며
 migration 실행·이력 검증에 실패하면 JPA 초기화와 앱 기동도 실패한다.
+앱 연결(Flyway 포함)의 격리 수준은 Hikari `transaction-isolation`으로 고정한 **READ COMMITTED**다(#576).
+MySQL 서버 기본값(RR)은 바꾸지 않았으므로 DataGrip·수동 SQL·`mysqldump` 세션은 RR이다. 앱과 같은 잠금을
+재현하려면 세션 격리 수준을 명시한다. InnoDB RC는 `binlog_format=ROW`(또는 MIXED)가 전제다 — STATEMENT면
+모든 DML이 실패한다. dev·prod는 ROW이고 2026-10-14 실측했다. 격리 수준 확인은 `DatasourceIsolationIntegrationTest`가 한다.
 약관 index/FK/CHECK는 #432 cutover의 `*_v2_432_*` 이름을 V1에서도 유지한다. baseline을 위한
 legacy rollback 테이블 삭제는 하지 않으며, 활성 업무 구조와 보관 테이블을 구분해 대조한다.
 
@@ -51,15 +55,18 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `app_config`
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
-- `timeline_photo_delete_jobs` (#551 전환 중 — 새로 만드는 경로가 없고 이전 버전이 만든 job만 남는다. 행 존재=대기,
-  처리 창=`created_at` 기준 KST D+1~D+3, 같은 날 재선택 방지=`updated_at`, 성공 시 Item과 행 삭제)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, retention 기준은 `created_at`)
 - `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업).
   탈퇴 transaction은 `refresh_tokens`·`push_registrations`·`subject_preferences`·
   `daily_notification_preferences` 행을 **지우지 않는다**(#367) — 알림 두 행은 `false`로 UPDATE하고
   나머지는 그대로 둔다. 이 행들의 물리 삭제는 #302 삭제 worker가 소유하므로, 탈퇴 회원의 잔존 행은
-  누락이 아니라 설계다.
+  누락이 아니라 설계다. `refresh_tokens`에는 물리 삭제 경로가 하나 더 있다 — 만료 후 1일이 지난 행을
+  상태·회원과 무관하게 지우는 일일 정리(#514, `delete ... where expires_at < :cutoff` 한 문장, cutoff는
+  발급과 같은 application Clock). 모든 인스턴스가 같은 문장을 실행하고(멱등, 서버별 분배 없음)
+  `idx_refresh_tokens_expires_at`(V13)으로 평시 만료 범위만 range 스캔한다. 만료 비율이 높으면 옵티마이저가
+  전체 스캔을 고를 수 있어 READ COMMITTED(#576)를 전제로 한다 — REPEATABLE READ에서는 그 DELETE가 훑은 모든
+  행을 잠근다.
 - `user_subject_links` (인증 사용자↔콘텐츠 subject HMAC 매핑 — raw `user_id` 미저장)
 - `user_memories` (subject당 1행 opaque JSON 문서, 행 존재=메모리 있음)
 - `push_registrations`
@@ -74,7 +81,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `status` `CHARGED`→`CONSUMED`|`REFUNDED` 한 번, `refund_reason`은 `REFUNDED`일 때만(`CHECK` 짝), 전이 시각은
   `created_at`·`updated_at`. subject FK `RESTRICT`·subject index. 범용 원장(지급·조정)이 아니다. 쓰기는 native INSERT와
   JPQL 전이 UPDATE라 감사 컬럼을 앱 Seoul 벽시계로 직접 채운다. 정리 작업은 없고 탈퇴 삭제가 함께 지운다.
-  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. V10에서 추가)
+  유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. 1시간 기준 같은 조건의 건수를
+  `laimory.credit.history.charged.stale` gauge가 5분마다 다시 세어 경보한다(#582). V10에서 추가)
 - `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
   선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
   migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
@@ -177,33 +185,8 @@ auditing을 우회하므로 Spring Data auditing과 같은 app `LocalDateTime.no
 삭제·cleanup은 기존 JPA repository가 담당한다. 초안 정리는 PK MOD 담당의 만료 행을 한 번 일반 조회하고
 S3 성공 또는 S3가 불필요한 행만 최종 transaction에서 삭제한다. 선점 UPDATE나 재시도 시각 컬럼은 없다.
 
-`timeline_photo_delete_jobs`는 object registry가 아닌 순수 작업 테이블이다. #551 이후 운영 코드에 job을 만드는
-writer는 없고(사진 S3 삭제는 orphan 스위퍼가 직접 요청), 아래 규칙은 전환 전에 생긴 job의 처리에만 적용된다. `timeline_item_id`와 full
-`object_key`는 각각 UNIQUE이며, 기본 RESTRICT FK의 `timeline_item_id`가 보존 중인 원문 PHOTO Item을
-가리킨다. native `INSERT IGNORE`가 Item/object 중복 enqueue를 원자적으로 no-op하며 service가 캡처한
-KST 시각 하나를 `created_at`/`updated_at`에 직접 채운다 — `created_at`은 처리 창, `updated_at`은 같은
-날 재선택 방지의 기준이라 두 컬럼이 같은 프레임이어야 한다. `status`는 `PENDING`/`PROCESSING` 두 값이고
-INSERT는 상태를 명시하지 않고 default `PENDING`을 쓴다. 처리 기회는 KST 생성일 D 기준 D+1~D+3 일일
-실행뿐이다 — 생성 당일 제외는 처리 창의 시작 경계이고, 창 제한은
-영구 실패 job 하나가 매일 외부 I/O를 반복하는 것을 막는다. worker는 checked-in default인 매일 03:00
-`Asia/Seoul`(cron/zone 환경 override 가능)에 모든 process에서 발화한다. 각 bounded worker는 짧은
-transaction으로 처리 창 안이면서 `updated_at < 오늘 00:00`인 행을 `(created_at, PK)` 순서로 최대 250개
-PK MOD 담당에서 일반 조회하고, 같은 transaction에서 `status=PROCESSING`과 `updated_at=claim 시각`을
-기록한 뒤 commit한다. 창 경계와 claim 시각은 같은 application Clock instant를 KST로 변환해 parameter로
-바인딩하며 DB `NOW()`를 판정에 쓰지 않는다. claim한 job은 재검증 없이 그대로 S3 삭제 대상이다 —
-job이 가리키는 상태를 바꾸는 writer가 없다(#503, 근거는 invariants.md). transaction 밖에서 S3를
-호출하고 성공 job을 먼저 지운 뒤 해당 Item을
-같은 completion transaction에서 지운다. job 삭제가 0건이면 선행 completion일 수 있으므로
-Item을 지우지 않고, batch 일부만 지워지면 전체 completion을 rollback한다. 명시적 실패·응답 누락·SDK
-예외는 `PENDING`으로 되돌리고(`updated_at`이 claim 시각이라 같은 날 재선택 없음), crash 행은
-`PROCESSING`으로 남는다. 둘 다 처리 창 안이면 `updated_at`이 전날이 된 다음 일일 실행이 재claim하며
-이미 다른 worker가 완료한 행은 정상적인 idempotent 수렴이다. 창을 벗어난 미완료 행은 재시도 없이 job과
-원문 PHOTO Item을 보존하고, worker가 run 시작에 건수만 조회해 0보다 크면 `expiredCount`만 담은 ERROR
-로그로 기존 application ERROR 경보를 발화시킨다(식별자·object key 미포함, count 조회 실패는 WARN 후
-claim 계속). 실행 시각에 애플리케이션이 내려가 있어도 catch-up하지 않고 실제 시도 횟수는 보장하지
-않으며, Item 삭제가 실패하면 job 삭제도 rollback된다. 수동 PHOTO 추가(Event PATCH·Event 생성 POST)는
-이 테이블을 읽지 않는다 — job 존재 검사·취소·보존 Item 재연결·`FOR UPDATE` 경로 모두 없다(#495·#500).
-별도 시도 횟수·backoff·token·error·완료 이력 column은 없다.
+PHOTO 삭제 job 테이블(`timeline_photo_delete_jobs`)과 03:00 worker는 #551에서 제거됐다(V12 `DROP TABLE`) — 사진
+S3 삭제는 orphan 스위퍼가 S3 성공을 확인한 뒤 Item을 지우는 방식으로 맡는다(아래 스위퍼 절).
 
 `push_registrations`(#174)는 subject 1:N FCM 등록(FID)이다. `firebase_installation_id`는 전역 UNIQUE로
 한 시점 단일 owner를 강제하고, 대소문자 구분 opaque 식별자라 **컬럼 단위** `utf8mb4_bin` collation을
@@ -315,8 +298,8 @@ runtime repository/entity도 subject만 읽고 쓴다.
 `updateSavedEmotion`(감정만 교체, `WHERE status='SAVED'` — #325). 둘 다 영향 행 수가 판정 기준이고
 bulk UPDATE라 JPA auditing을 우회하므로 `updated_at`을 app Clock 파라미터로 직접 채운다(`modified_by`
 NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우선(리포지토리 tx 한 문장) → 0행일 때만
-재조회 분류 경계를 쓴다(#499) — MySQL 기본 `REPEATABLE READ`에서 조회와 0행 실패 재조회를 한 트랜잭션에
-묶으면 첫 조회가 고정한 snapshot이 동시 삭제 전 행을 다시 보여 stale 분류가 나오기 때문이다. #325·#326은 신규 DDL·backfill 없이 기존
+재조회 분류 경계를 쓴다(#499) — 영향 행 수가 판정 기준이라 사전 조회를 쓰기 트랜잭션에 묶지 않고,
+0행 뒤 분류 조회는 별도 문장으로 최신 커밋 상태를 읽는다. #325·#326은 신규 DDL·backfill 없이 기존
 `daily_records`·`timeline_events` 컬럼만 쓴다.
 
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
@@ -417,9 +400,7 @@ finalization 소유). status는 `PENDING → (행 삭제)`와 격리용 `MANUAL_
 단계는 `status`가 맡고 배치 cursor는 삭제가 단조적이라 필요 없다(#365가 `available_at`을 제거한 선례). 쓰기는 탈퇴 transaction에 합류하는 native `INSERT IGNORE`
 (insert-if-absent)뿐이라 JPA auditing이 돌지 않고 감사 컬럼은 insert SQL이 직접 채운다(`modified_by`
 NULL) — `created_at`이 접수 감사 시각이다. entity는 read model이다.
-삭제 pass의 순서는 FK가 강제한다: PHOTO delete job과 그 원문 Item(job이 남으면 Item FK `RESTRICT`가
-걸린다. 그 Item은 junction 0이라 record graph snapshot에 안 잡히므로 job과 같은 transaction에서 함께
-지운다) → record graph(batch마다 Item과 record를 **한 transaction**에서 — record가 먼저 사라지면 junction도
+삭제 pass의 순서는 FK가 강제한다: record graph(batch마다 Item과 record를 **한 transaction**에서 — record가 먼저 사라지면 junction도
 CASCADE로 사라져 Item을 다시 특정할 경로가 없다) → draft source → owner 행 → S3 prefix → finalization.
 snapshot한 Item이 다른 subject의 Event에도 걸려 있으면 조용히 지우지 않고 수동 확인으로 보낸다.
 
@@ -427,8 +408,7 @@ User Memory 미반영 큐는 탈퇴 commit 직후 `UserWithdrawalService`가 비
 User Memory 배치가 삭제 전까지 탈퇴 subject의 기록을 AI로 보낸다(그 배치는 subject만 알고 회원 상태를 볼
 수 없다). 비우기 실패는 로그만 남기고 재시도하지 않는다. **삭제 worker**(일일 cron)는 접수일 D 기준
 D+3·D+4·D+5 세 번만 시도하고(유예 2일 + 창 3일 — 약관 "탈퇴 접수일로부터 5일 이내 파기"에 묶인
-worker 상수, 설정 아님), 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로 경보한다(PHOTO
-삭제 job과 같은 규칙). 유예 덕분에 가장 이른 삭제도 접수 후 이틀 넘게(최소 약 50시간) 지난 뒤라 탈퇴 시점의 AI
+worker 상수, 설정 아님), 창을 벗어난 미완료 job은 재시도 없이 보존한 채 건수만 ERROR로 경보한다. 유예 덕분에 가장 이른 삭제도 접수 후 이틀 넘게(최소 약 50시간) 지난 뒤라 탈퇴 시점의 AI
 task·presigned PUT은 모두 만료돼 있다. 만료·수동 확인 job의 재처리는
 [계정 삭제 수동 재처리](../../../../docs/database/account-erasure-recovery.md)를 따른다.
 
@@ -512,7 +492,7 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 해당 입력에는 `description`·`photoUrl`이 없고, 저장 시 `description=null`과 서버가 materialize한 CDN URL을
 쓴다. 삭제된 PHOTO를 다시 추가할 때 Android는 새 presign 응답의 filename을 사용하고 과거 object key를
 재사용하지 않는다. 이미 업로드를 마친 동일 pending addition의 PATCH 재시도만 그 pending filename을
-보존할 수 있다. 서버는 수동 추가에서 delete job을 조회하지 않는다(#500).
+보존할 수 있다.
 
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
@@ -520,16 +500,13 @@ delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orph
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
 Event-Item 연결 해제는 junction만 hard delete하고 즉시 성공한다(Event/DailyRecord 삭제는 soft delete, #568).
 어느 삭제 API도 Item을 분류하거나 job을 만들지 않는다 — 연결을 잃은 Item과 그 S3 사진은 orphan 스위퍼가
-정리한다(#551). 전환 전에 만들어진 job은 기존 worker가 `DeleteObjects` 배치(최대 1,000 key/request, verbose,
-요청 단위 apiCallTimeout 10s·apiCallAttemptTimeout 3s)를 transaction 밖에서 호출해 처리하고, `Deleted`로 확인된
-job과 그 PHOTO Item만 별도 transaction에서 지운다. 객체별 Error·응답 누락·SDK 예외는 두 행을 남겨 다음 날
-실행에서 재시도한다.
+정리한다(#551).
 
-orphan 스위퍼(03:30 KST)는 활성 Event 연결(soft delete된 Event의 junction 제외, #569)·delete job이 모두 없는
+orphan 스위퍼(03:30 KST)는 활성 Event 연결(soft delete된 Event의 junction 제외, #569)이 없는
 자기 PK MOD 담당 Item을 최대 250개
 한 번 조회한다. 선택한 PK 중 미표시 고아에만 `modified_by='ORPHAN_SWEEPER'`와 앱 Clock의 KST
 `updated_at`을 기록해 먼저 commit하고, 새 처리 transaction에서 같은 PK를 일반 조회·재검증한다.
-후보의 PK 선점 락과 job 존재 확인의 `FOR SHARE`는 없다. 쓰기 SQL의 InnoDB 잠금은 남는다.
+후보의 PK 선점 락은 없다. 쓰기 SQL의 InnoDB 잠금은 남는다.
 non-PHOTO·복원 불가 PHOTO는 처리 transaction에서 즉시 삭제한다(손상 PHOTO의 S3 객체는 orphan 허용). 유효 PHOTO는
 행을 남긴 채 `(itemId, photoUrl에서 복원한 full key)`를 처리 commit 뒤 전용 executor에 넘기고, executor 스레드가
 같은 `DeleteObjects` 규칙(10s/3s timeout)으로 삭제를 요청해 `Deleted`로 확인된 key의 Item만 새 transaction에서
@@ -539,14 +516,14 @@ non-PHOTO·복원 불가 PHOTO는 처리 transaction에서 즉시 삭제한다(�
 관측 표시가 있는 Item의 `updated_at`은 최초 관측 시각이다. 재시도와 처리 rollback은 이 시각을 바꾸지
 않는다. `TimelineItem`에는 기존 행 필드 수정 writer가 없고, 관측된 Item에 junction을 다시 만드는 writer도
 없으므로 표시를 해제하는 경로는 없다(#502). 공통 감사 동작은 유지한다.
-처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 별도 transaction에서 집계해 ERROR로 알린다.
-job으로 넘긴 Item은 제외하며 미관측 Item의 과거 고아 전환 시각을 추정하지 않는다.
+처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 별도 transaction에서 집계해 ERROR로 알린다 — S3 실패로
+남은 PHOTO도 포함된다. 미관측 Item의 과거 고아 전환 시각은 추정하지 않는다.
 
 object key 복원 경로는 저장된 `photoUrl`의 path 하나다 — junction 0 행은 subject를 잃어 다른 경로가
-없고(삭제된 Event에 연결된 행도 같은 경로를 쓴다), 복원 불가 행은 job 없이 삭제된다(S3 orphan 허용). 같은 object key를 공유하는 Item 상태에 대한
-key 단위 사전 분류·소유자 규칙은 없다(#503 — 그런 상태를 만드는 writer가 없다는 전제와 수용 잔여는
-invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 수렴 장치다 — 자기 job이 보이면 행을
-보존하고, 아니면 행만 지운다.
+없고(삭제된 Event에 연결된 행도 같은 경로를 쓴다), 복원 불가 행은 S3 삭제 없이 삭제된다(S3 orphan 허용).
+같은 object key를 공유하는 Item 상태에 대한 key 단위 사전 분류·소유자 규칙은 없다(#503 — 그런 상태를 만드는
+writer가 없다는 전제와 수용 잔여는 invariants.md 소유). 같은 key의 고아가 여럿이면 각자 같은 key 삭제를 요청하고,
+S3 삭제가 멱등이라 모두 `Deleted`로 수렴해 지워진다(#551).
 
 ## Invariants
 
@@ -575,14 +552,11 @@ invariants.md 소유). job insert의 UNIQUE 충돌 사후 분기가 유일한 �
   Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
 - 만료 PHOTO staging은 S3 삭제 성공 뒤 row를 삭제하고 실패 시 row를 남긴다.
-- Event/DailyRecord 삭제는 필요한 PHOTO job insert·PHOTO Item 보존과 root/junction/non-PHOTO hard
-  delete를 같은 transaction으로 commit한다.
-  Event/Record 행 삭제 시 자기 junction은 DB FK `ON DELETE CASCADE`로 소멸하고(JPA cascade 없음),
-  Item은 record FK가 없어 cascade되지 않으므로 삭제 대상에만 연결된 orphan을 같은 트랜잭션에서
-  분류한다. non-PHOTO와 job을 만들 수 없는 손상 PHOTO만 즉시 삭제하고, 유효한 PHOTO는 job과 함께
-  보존한다(다른 Event에도 연결된 shared Item·PHOTO는 유지). S3 작업 권위는 MySQL job row이며 worker는
-  S3 호출 직전 현재 association을 재확인해 linked Item의 job을 취소한다. orphan job만 S3 처리하고 성공 시
-  Item과 row를 한 transaction에서 삭제하며 실패 시 둘 다 보존한다.
+- Event/DailyRecord 삭제는 soft delete(`deleted_at`)만 하고(#568) Event-Item 연결 해제는 junction만 hard
+  delete한다 — 어느 쪽도 Item을 분류·삭제하거나 S3를 호출하지 않는다. Event/Record 행의 hard delete(계정 삭제)
+  시 자기 junction은 DB FK `ON DELETE CASCADE`로 소멸하고(JPA cascade 없음), Item은 record FK가 없어
+  cascade되지 않는다. 활성 연결이 없는 Item은 orphan 스위퍼가 수렴시키며, 유효 PHOTO는 S3 `Deleted` 확인
+  뒤에만 행을 지우고 실패하면 행을 남겨 다음 실행이 다시 요청한다(#551).
 
 ## Known Gaps
 

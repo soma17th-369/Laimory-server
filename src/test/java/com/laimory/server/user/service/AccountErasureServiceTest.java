@@ -259,9 +259,7 @@ class AccountErasureServiceTest {
     }
 
     @Test
-    void 콘텐츠_graph는_job_record_draft_순서로_비운다() {
-        when(timelineContentErasureService.deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt()))
-                .thenReturn(2).thenReturn(0);
+    void 콘텐츠_graph는_record_draft_순서로_비운다() {
         when(timelineContentErasureService.deleteRecordBatch(eq(SUBJECT_ID), anyInt()))
                 .thenReturn(1).thenReturn(0);
         when(timelineContentErasureService.deleteDraftSourceBatch(eq(SUBJECT_ID), anyInt()))
@@ -270,8 +268,6 @@ class AccountErasureServiceTest {
         accountErasureService.deleteContentGraph(SUBJECT_ID);
 
         InOrder order = inOrder(timelineContentErasureService);
-        order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
-                .deletePhotoDeleteJobBatch(eq(SUBJECT_ID), anyInt());
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())
                 .deleteRecordBatch(eq(SUBJECT_ID), anyInt());
         order.verify(timelineContentErasureService, org.mockito.Mockito.atLeastOnce())

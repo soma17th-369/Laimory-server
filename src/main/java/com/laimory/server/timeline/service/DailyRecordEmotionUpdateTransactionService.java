@@ -14,8 +14,8 @@ import org.springframework.stereotype.Service;
  * 감정 수정의 writer 전담 빈({@link TimelineSaveTransactionService}와 같은 형태). 서비스 transaction은
  * 없다(#499) — 조건부 UPDATE는 리포지토리 tx 한 문장으로 실행되고, 이 빈은 0행의 원인 분류를 소유한다.
  *
- * <p>첫 DB 작업이 SAVED 조건부 UPDATE다 — 0행 후의 분류 SELECT는 시작 시점 snapshot 없이 최신
- * 커밋 상태를 읽는다. 영향 행 수가 판정 기준이고, 0행의 원인은 DRAFT(409 {@code -1020})·
+ * <p>첫 DB 작업이 SAVED 조건부 UPDATE다 — 0행 후의 분류 SELECT는 별도 문장이라 최신 커밋 상태를
+ * 읽는다. 영향 행 수가 판정 기준이고, 0행의 원인은 DRAFT(409 {@code -1020})·
  * 없음/비소유(404)·동일 감정 SAVED(멱등 성공)로 분류한다.
  */
 @Slf4j

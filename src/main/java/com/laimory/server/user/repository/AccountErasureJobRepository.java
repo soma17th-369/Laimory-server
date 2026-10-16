@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * account_erasure_jobs 레포 — #305의 userId-only 접수와 #302 worker의 claim·전이·완료를 소유한다.
  *
- * <p>삭제 claim은 PHOTO 삭제 job(#365)과 같은 <b>날짜 경계 처리 창</b>을 쓴다 —
+ * <p>삭제 claim은 <b>날짜 경계 처리 창</b>을 쓴다(#365 PHOTO 삭제 job에서 가져온 규칙, 그 job은 #551에서 제거) —
  * {@code updated_at < todayStart}가 같은 날 재선택을 막으면서 재시도 간격을 겸하므로 별도 stale 기준이
  * 없다.
  *

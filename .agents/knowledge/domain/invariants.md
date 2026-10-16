@@ -124,7 +124,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   구독하고, 유실 처리 잠금(`timeline:draft-task:loss-lock:{taskId}`, `SET NX` 3분)을 잡은 서버만 처리한다. 환불이 실제로 일어났을 때만
   task를 FAILED(`-1008`)로 다시 기록(`SET NX`)하고 FAILED 완료 push를 보낸다 — 이미 소비·환불된 기록이면 셋 다 건너뛴다.
   알림 유실(배포 공백·구독 끊김·Redis 재시작)과 잠금 서버의 처리 실패는 수용한다 — 기록이 `CHARGED`로 남아 수동 환불한다
-  (주기 sweeper 없음).
+  (주기 sweeper 없음). 1시간 넘게 `CHARGED`인 기록 수를 gauge로 노출하고 경보해 놓친 건을 운영자가 알게 한다(#582).
   결과 저장과 유실 환불이 겹치면(결과 처리+타이머 삭제가 3분 만료 경계에 걸림) 결과는 그대로 저장되고 그 생성 1회는 무료가 된다
   (기록은 나중에 쓴 상태). 결과가 저장됐다면 draft 응답이 UNKNOWN 502였거나 SUCCESS callback 없이 task가 만료됐어도
   차감은 유지된다.
@@ -158,7 +158,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   transaction이 그 정확한 ID의 owner를 다시 확인한다. lookup 뒤 같은 날짜 record가 재생성돼도 새
   record를 대신 삭제하지 않는다. deprecated ID 경로도 같은 삭제 transaction을 사용한다.
 - **Event·DailyRecord 삭제는 soft delete다(#568).** 행을 지우지 않고 `deleted_at`(NULL = 활성)을 찍으며,
-  junction·Item은 그대로 두고 PHOTO 삭제 job도 만들지 않는다. 삭제 기록은 분석용으로 회원 탈퇴 시까지 남고
+  junction·Item은 그대로 둔다. 삭제 기록은 분석용으로 회원 탈퇴 시까지 남고
   계정 삭제(#302)가 hard delete한다.
   - 같은 UPDATE에서 Event의 `place`·`address`, record의 `emotion_type`을 NULL로 지운다(삭제 기록에 위치정보·
     감정은 남기지 않는다). 지운 값은 복구되지 않는다.
@@ -173,21 +173,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
     save·감정 수정 0행 → 404, User Memory 배치는 사라진 하루로 걷어냄). rawId "이미 저장됨" 판정도 활성 Event에서
     출발하므로 삭제된 Event의 사진이 같은 사진 재생성을 막지 않는다.
   - 삭제 행까지 보는 경로는 계정 삭제(무필터 id 조회·native join·FK cascade)뿐이다.
-- Event-Item 연결 해제는 junction만 hard delete한다. Item은 분류·삭제하지 않고 job도 만들지 않는다 — 마지막
+- Event-Item 연결 해제는 junction만 hard delete한다. Item은 분류·삭제하지 않는다 — 마지막
   참조였으면 고아로 남고 S3 사진과 함께 일일 스위퍼가 정리한다(#551). S3는 request 경로에서 호출하지 않는다.
-- PHOTO 삭제 job은 #551 전환 중 이전 버전이 만든 것만 남는다(새 job을 만드는 writer 없음). 그 job을 처리하는
-  worker의 기본 스케줄은 매일 03:00 `Asia/Seoul`이며 cron/zone을 환경에서 override할 수 있다. job의 처리 기회는 KST 생성일 D 기준
-  D+1~D+3 일일 실행뿐이다. 각 worker는 외부 I/O 전에 짧은 transaction에서 처리 창 안이면서 오늘 아직
-  처리하지 않은(`updated_at < 오늘 00:00`) 자기 PK MOD 담당 job 최대 250개를 한 번 일반 조회하고
-  `PENDING`/stale `PROCESSING`을 `PROCESSING`으로 전이하면서 `updated_at`을 claim 시각으로 갱신한다.
-  commit 뒤 `DeleteObjects`를 호출해 `Deleted`로 확인된 job과
-  원문 PHOTO Item만 completion transaction에서 지운다. Error·응답 누락·SDK 예외·crash 행은 처리 창
-  안의 다음 일일 실행에서 재시도하고, 정상 실패는 `PENDING`으로 되돌린다. 이미 다른 worker가 완료한
-  행은 오류가 아니라 idempotent 완료로 수렴한다. 처리 창을 벗어난 미완료 job은 재시도 없이 원문 Item과
-  함께 보존하고 worker가 건수만 ERROR 로그로 경보한다.
-  애플리케이션이 실행 시각에 내려가 있으면 catch-up하지 않고 다음 실행까지 보존한다 — 실제 시도 횟수는
-  보장하지 않는다.
-  별도 attempt/token/error/completed 이력과 Redis queue는 두지 않는다.
 - 같은 날짜의 draft(AI 작업), 수동 Event 생성/편집(수동 PHOTO 추가 포함), Event/DailyRecord 삭제
   사이에는 공통 Redis admission guard가 없다. 각 작업의 입력·소유권 preflight와 자기 DB transaction
   경계는 유지하지만 서로를 날짜 단위로 직렬화하지 않는다. 과거 `timeline:date-guard:*` key는 읽거나
@@ -202,19 +189,17 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   정책상 연결된 PHOTO만 허용한다(non-PHOTO는 400, 미연결·없음·비소유는 타입 무관 404 은닉 우선). 직접
   DELETE의 영향 행 수가 판정 기준이라 같은 junction의 동시 해제 후발 요청은 stale-state 500 없이 404로
   수렴한다. 남은 참조를 판정하지 않는다 — 연결을 잃은 Item의 정리는 스위퍼가 맡는다(#551).
-- **활성 Event 연결과 사진 job이 모두 없는 final Item은 고아 후보이다.** soft delete된 Event(#568)의 junction은
+- **활성 Event 연결이 없는 final Item은 고아 후보이다.** soft delete된 Event(#568)의 junction은
   연결로 치지 않는다(#569). Item과 junction은 한 transaction에서
-  insert된다(AI 결과 store·수동 PHOTO link). 사진 job이 보존한 Item에는 재연결 경로가 없다(수동 추가는 job을 조회하지 않고 새 Item을 만든다, #500).
+  insert된다(AI 결과 store·수동 PHOTO link). 고아에 연결을 다시 만드는 writer가 없고(수동 추가는 항상 새 Item, #500·#502),
   삭제된 Event를 되살리는 경로도 없으므로 고아는 다시 살아나지 않는다. 일일 스위퍼가
   이를 전제로 수렴시킨다 — non-PHOTO와 key를 복원할 수 없는 손상 PHOTO는 즉시 hard delete하고(S3 orphan 허용),
   유효 PHOTO는 S3 삭제가 `Deleted`로 확인된 뒤에만 행을 지운다(#551). 스위퍼 스레드는 S3 응답을 기다리지 않고
   전용 executor가 결과를 받아 처리한다. 실패·응답 누락·예외·제출 거절·결과 수신 전 종료는 행을 남겨 다음 실행이
   다시 요청하며, 별도 실패 기록이나 중단 장치 없이 관측 후 72시간 잔존 경보가 장기 실패를 알린다.
-  job이 이미 있는 Item(#551 전환 전 생성)은 worker 소유라 건드리지 않는다.
 - **삭제된 기록의 원본 항목(Item)은 기록 삭제일로부터 5일 이내 파기된다(처리방침 고지).** 삭제일 D에 대해
   스위퍼 처리와 PHOTO S3 첫 삭제 요청 ≤ D+1 03:30이고, S3 실패분은 매일 재요청되며 관측 후 72시간
-  (≤ D+4 03:30) 잔존하면 ERROR 경보가 뜬다(#551). #551 전환 전 생성된 job은 기존 처리 창(마지막 재시도 ≤ D+4)을
-  따른다. 스위퍼 스케줄·72시간 경보 기준을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
+  (≤ D+4 03:30) 잔존하면 ERROR 경보가 뜬다(#551). 스위퍼 스케줄·72시간 경보 기준을 바꾸면 이 기한을 다시 계산한다. record 삭제와 Event 생성의 ms 경합으로 삭제된 record
   아래 남은 활성 Event의 Item은 대상이 아니다(수용, #568 E4·#569 E1).
 - **같은 object key를 서로 다른 Item이 공유하는 상태는 서버가 만들지 않는다 — 삭제 파이프라인은 이
   전제 위에서 S3 삭제를 재검증 없이 실행한다(#503).** 전제의 근거: filename은 presign마다 서버가 새로
@@ -233,12 +218,12 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   되돌리지 않는다. 쓰기 경합에 의한 batch rollback은 다음 정규 실행에서 재시도한다.
 - 관측된 Item의 updated_at은 재조회·실패 시 유지한다. 관측된 Item에 junction을 다시 만드는 writer가 없으므로
   표시를 해제하는 경로도 없다(#502). BaseEntity·공통 AuditorAware는 변경하지 않는다.
-  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 활성 Event 연결·job 모두 없는 건수를 집계한다.
+  처리 종료 뒤 담당 전체에서 관측 후 72시간 이상이며 활성 Event 연결이 없는 건수를 집계한다.
   이번 batch 밖의 관측 Item도 포함하고, 미관측 Item과 실제 고아 전환 이후의 대기시간은 측정하지 않는다.
 - 최초 전환·증설·원복은 모든 worker 중지·실행 종료 → 전체 설정 일치 확인 → 재개 순서다.
   서버 장애 시 자동 인수·자동 번호 변경·누락 실행 보충은 없으며 기존 장애 경보로 수동 복구한다.
 - `filename`·`photoUrl`이 손상된 저장분(#387 배포 이전)은 복구하지 않고 수용한다 — orphan이 되면
-  key 복원 불가로 job 없이 행만 삭제된다(S3 orphan 허용).
+  key 복원 불가로 S3 삭제 없이 행만 삭제된다(S3 orphan 허용).
 
 ### AI 서버간 계약
 
@@ -352,8 +337,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 일반 앱 API의 온보딩 완료는 **단방향 멱등 전이**다. `false → true` command이며,
   이미 완료한 subject의 재호출도 matched row 기준으로 성공한다(값이 같아서 0행인 것이 아니라 0행은 행
   부재를 뜻한다 — 이 판정이 changed 기준으로 바뀌면 정상 재시도가 500이 된다).
-  임시 테스트 예외인 `POST /api/{version}/onboarding/reset?userId=...`만 인증 없이 지정한 사용자의
-  완료 값을 false로 되돌린다. 구현·writer는 제거 가능한 `onboarding/temporary` 패키지에 격리한다.
+  완료 값을 false로 되돌리는 API는 없다.
 - 온보딩 값과 알림 마스터는 서로를 덮지 않는다 — 두 쓰기 모두 컬럼 단위 조건 UPDATE다. 특히 논리
   탈퇴의 마스터 OFF는 온보딩 값을 초기화하지 않는다(#367로 행이 보존되므로 초기화하면 접근이 막힌
   옛 subject의 온보딩만 되살아나고, 재가입은 어차피 새 subject의 기본값 false를 쓴다).
@@ -380,9 +364,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 수동 PHOTO의 nullable startAt/endAt은 `timeline_items`의 MySQL `DATETIME` 정밀도에 맞춰 초 단위만
   허용하고 소수 초는 저장 전에 400으로 거절한다.
 - 삭제된 PHOTO를 다시 추가하는 것은 새 upload identity다. filename은 presign마다 서버가 새로 발급하는
-  UUIDv7이라 Android는 같은 로컬 사진이어도 새 filename만 Event PATCH에 넣으며, 삭제 job이 가진 과거
-  filename이 추가 요청에 다시 오는 경로는 없다. 그래서 수동 PHOTO 추가는 delete job을 조회하지 않는다 —
-  job 존재 거절·취소·보존 Item 재연결·`FOR UPDATE` 어느 것도 없다(#495·#500). 이미 S3 업로드를 마친
+  UUIDv7이라 Android는 같은 로컬 사진이어도 새 filename만 Event PATCH에 넣으며, 삭제된 사진의 과거
+  filename이 추가 요청에 다시 오는 경로는 없다. 그래서 수동 PHOTO 추가는 삭제 대기 사진을 조회하지 않는다 —
+  거절·취소·보존 Item 재연결·`FOR UPDATE` 어느 것도 없다(#495·#500, 삭제 job 자체는 #551에서 제거). 이미 S3 업로드를 마친
   **동일 pending addition**의 PATCH 재시도는 같은 rawId가 대상 Event에 이미 연결돼 있어 오류 없이 건너뛴다(#502).
 - 만료 PHOTO draft는 S3 삭제에 성공한 뒤 DB row를 삭제한다. S3 실패 때 row를 남겨 retry한다.
 - finalized photo와 presign 후 draft가 생기지 않은 orphan object는 현재 cleanup 범위가 아니다.
@@ -459,6 +443,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - access JWT에는 `iss/sub/iat/exp`만 두고 PII를 넣지 않는다.
 - refresh token raw value는 저장하지 않고 hash만 저장한다.
 - refresh rotation과 reuse detection은 transactionally 처리하고 reuse 때 그 사용자의 refresh를 모두 revoke한다.
+- 만료 전 `ROTATED`/`REVOKED` refresh 행은 재사용 탐지 증거라 지우지 않는다. 일일 정리(#514)는 만료 후 1일이 지난
+  행만 지운다 — 만료된 토큰은 회전이 `isExpired`에서 거절해 재사용 경로에 들어가지 않으므로 행이 없어도 결과가 같다.
 - App Code는 hash-key Redis entry로 저장하고 GETDEL로 한 번만 소비한다.
 - `/a/api`는 유효한 자체 access JWT(Bearer)가 있어야 접근한다 — 무토큰/무효 토큰은 401 `-2001`
   단일 계약으로 수렴하고, 사유·token 원문은 응답·로그에 남기지 않는다.

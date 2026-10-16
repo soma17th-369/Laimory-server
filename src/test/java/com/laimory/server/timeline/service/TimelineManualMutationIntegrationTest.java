@@ -59,7 +59,7 @@ import org.springframework.test.context.TestPropertySource;
  *   <li>수동 Event는 DRAFT/SAVED 모두에 insert되며 question/place/address null이고, 날짜 조회에서
  *       startAt/ID 정렬대로 노출된다. 타인 subject·없는 날짜에는 행이 생기지 않는다.</li>
  *   <li>photosToAdd 포함 생성은 Event·PHOTO Item·junction을 한 commit으로 만들고(응답 == 직후 조회),
- *       기존 PHOTO 재사용·PENDING job 취소·PROCESSING 409는 PATCH와 같은 규칙이며, 사진 해석 실패는
+ *       기존 PHOTO 재사용은 PATCH와 같은 규칙이며, 사진 해석 실패는
  *       Event insert까지 전체 롤백된다(부분 상태 금지).</li>
  * </ul>
  */
@@ -124,9 +124,6 @@ class TimelineManualMutationIntegrationTest {
             itemIds.addAll(timelineEventItemRepository.findItemIdsByDailyRecordIdIn(recordIds));
             recordIds.forEach(dailyRecordRepository::deleteById);
         }
-        // 삭제 job이 Item을 FK RESTRICT로 참조하므로 job → Item 순으로 지운다.
-        itemIds.forEach(itemId -> jdbcTemplate.update(
-                "DELETE FROM timeline_photo_delete_jobs WHERE timeline_item_id = ?", itemId));
         if (!itemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(itemIds);
         }

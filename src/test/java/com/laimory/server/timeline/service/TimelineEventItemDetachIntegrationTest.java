@@ -12,14 +12,12 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
-import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -54,7 +52,7 @@ import org.springframework.test.context.ActiveProfiles;
 @Tag("integration")
 class TimelineEventItemDetachIntegrationTest {
 
-    // 매 테스트 임의 사용자로 persistent local DB의 기존 record/job과 격리하고, 날짜도 다른 고정 fixture와 구분한다.
+    // 매 테스트 임의 사용자로 persistent local DB의 기존 record와 격리하고, 날짜도 다른 고정 fixture와 구분한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 5);
     private static final String ZONE = "Asia/Seoul";
 
@@ -66,8 +64,6 @@ class TimelineEventItemDetachIntegrationTest {
     private TimelineItemRepository timelineItemRepository;
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
-    @Autowired
-    private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
     @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
@@ -90,12 +86,6 @@ class TimelineEventItemDetachIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        List<Long> fixtureJobIds = findFixturePhotoDeleteJobs().stream()
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .toList();
-        if (!fixtureJobIds.isEmpty()) {
-            timelinePhotoDeleteJobRepository.deleteAllByIdInBatch(fixtureJobIds);
-        }
         if (!fixtureItemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(fixtureItemIds);
         }
@@ -105,12 +95,6 @@ class TimelineEventItemDetachIntegrationTest {
         // 가입 transaction이 만든 subject 축 push 행(#314)이 남아 있으면 mapping 삭제가 FK RESTRICT에 막힌다.
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
-    }
-
-    private List<TimelinePhotoDeleteJob> findFixturePhotoDeleteJobs() {
-        return timelinePhotoDeleteJobRepository.findAll().stream()
-                .filter(job -> fixtureItemIds.contains(job.getTimelineItemId()))
-                .toList();
     }
 
     private Long saveEvent(String title, int hour) {
@@ -150,7 +134,6 @@ class TimelineEventItemDetachIntegrationTest {
                 .containsExactly(itemId);
         assertThat(timelineEventRepository.findById(targetEventId)).isPresent();
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
-        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
     }
 
     @Test

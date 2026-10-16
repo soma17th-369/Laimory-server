@@ -36,18 +36,14 @@ class TimelineOrphanItemSweepServiceTest {
     private TimelineItemService timelineItemService;
     @Mock
     private TimelineEventItemService timelineEventItemService;
-    @Mock
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
 
     private TimelineOrphanItemSweepService service;
 
     @BeforeEach
     void setUp() {
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
-                timelinePhotoDeleteJobService, new ObjectMapper(), java.time.Clock.systemUTC());
+                new ObjectMapper(), java.time.Clock.systemUTC());
         lenient().when(timelineEventItemService.findActivelyLinkedItemIds(anyCollection()))
-                .thenReturn(Set.of());
-        lenient().when(timelinePhotoDeleteJobService.findItemIdsWithJob(anyCollection()))
                 .thenReturn(Set.of());
     }
 
@@ -55,7 +51,7 @@ class TimelineOrphanItemSweepServiceTest {
     void observationAndStaleThresholdUseClockInSeoul() {
         var clock = java.time.Clock.fixed(java.time.Instant.parse("2026-09-11T18:30:00Z"), java.time.ZoneOffset.UTC);
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
-                timelinePhotoDeleteJobService, new ObjectMapper(), clock);
+                new ObjectMapper(), clock);
         scan(notificationItem(11L));
         assertThat(service.observeBatch(1, 2, 250)).containsExactly(11L);
         verify(timelineItemService).markOrphanObserved(List.of(11L), LocalDateTime.of(2026, 9, 12, 3, 30));
@@ -97,7 +93,7 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void unrestorableObjectKeyDropsJobAndDeletesRow() {
+    void unrestorableObjectKeySkipsS3AndDeletesRow() {
         TimelineItem broken = photoItem(17L, FILENAME,
                 "https://cdn.example.net/" + NAMESPACE_A.substring(0, 40) + "[REDACTED_CARD]/photos/" + FILENAME);
         scan(broken);
@@ -132,18 +128,17 @@ class TimelineOrphanItemSweepServiceTest {
     }
 
     @Test
-    void revalidationDropsItemsThatGainedJobOrJunctionAfterScan() {
-        TimelineItem gainedJob = photoItem(20L, FILENAME, "https://cdn.example.net/" + KEY_A);
+    void revalidationDropsItemsThatGainedActiveLinkAfterScan() {
+        TimelineItem stillOrphan = photoItem(20L, FILENAME, "https://cdn.example.net/" + KEY_A);
         TimelineItem gainedJunction = notificationItem(21L);
-        scan(gainedJob, gainedJunction);
-        claim(gainedJob, gainedJunction);
-        when(timelinePhotoDeleteJobService.findItemIdsWithJob(List.of(20L, 21L))).thenReturn(Set.of(20L));
+        scan(stillOrphan, gainedJunction);
+        claim(stillOrphan, gainedJunction);
         when(timelineEventItemService.findActivelyLinkedItemIds(List.of(20L, 21L))).thenReturn(Set.of(21L));
 
         var result = service.sweepBatch(service.observeBatch(0, 2, 250));
 
-        assertThat(result.revalidationDropped()).isEqualTo(2);
-        assertThat(result.photoDeletions()).isEmpty();
+        assertThat(result.revalidationDropped()).isEqualTo(1);
+        assertThat(result.photoDeletions()).containsExactly(new PhotoDeletion(20L, KEY_A));
         verify(timelineItemService).deleteByIds(List.of());
     }
 

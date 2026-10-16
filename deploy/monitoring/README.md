@@ -239,9 +239,9 @@ UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-ru
 
 alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 환경마다 존재하는지**로 갈린다.
 
-- **환경 중립 9개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
+- **환경 중립 10개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
   `laimory_hikari_saturated`, `laimory_target_down`, `laimory_host_memory_low`,
-  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`.
+  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`, `laimory_credit_stale_charged`.
   PromQL에 환경을 고정하지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
   환경마다 별개 alert instance가 나오게 한다. 단 **`environment!="test"`는 공통 제외다(#400)** —
   test는 부하 실험용 sandbox라 p95 급등·인스턴스 정지가 by-design이고(정지 운용이 기본),
@@ -1083,33 +1083,50 @@ task가 남아 stuck에 잡힐 수 있다 — 3분 안에 AI callback이 오면 
 FAILED 전이 없이 사라져 이후 폴링·콜백은 404(-1001)다. Redis 장애 시 gauge는 NaN이 되고 별도 Redis
 target alert가 원인을 알린다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
 
-### Timeline PHOTO delete worker
+### Credit CHARGED stale
 
-각 slot은 매일 03:00 KST에 자기 PK MOD 담당 job을 최대 250개 한 번 조회·처리한다.
-기본 서버 2대 × 서버당 worker-count 1이므로 두 서버 합계 후보 상한은 500개다. 후보 PK의 쏠림과
-실패가 있어 실제 성공 건수는 더 작을 수 있다. 정상 job도 다음 실행까지 최대 약 24시간 대기할
-수 있고 S3 실패·crash·단일 배치 상한 초과분은 다음 날 실행으로 이월된다. 처리 기회는 KST
-생성일 기준 D+1~D+3 세 번의 일일 실행뿐이다 — 창을 벗어난 미완료 job은 더 이월되지 않고 보존되며,
-worker가 run 시작에 `expiredCount`만 담은 ERROR 로그를 남겨 기존 application ERROR 경보가 발화한다
-(job ID·object key 미포함). dev WAS에서는 전체
-환경을 출력하지 말고 각 container의
-`TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_WORKER_ID`,
-`TIMELINE_PHOTO_DELETE_SERVER_COUNT`, `TIMELINE_PHOTO_DELETE_WORKER_COUNT` 값을 확인한다.
-번호 변경·증설은 [전체 중지·적용·재개 절차](../../docs/database/474-photo-delete-rollout.md)를 따른다.
+`laimory_credit_stale_charged`는 1시간 넘게 `CHARGED`인 `credit_histories` 행이 있다는 뜻이다(#582). 정상 흐름은
+결과 저장(`CONSUMED`)이나 실패·유실 환불(`REFUNDED`)로 수 분 안에 전이하므로, 이 행은 유실 환불(Redis keyspace
+`expired` 알림)이 놓친 것이다 — 구독 끊김·Redis 재시작·eviction·배포 공백이 원인이다. 자동 sweeper는 없고 운영자가
+환불한다. gauge는 5분마다 다시 세므로 환불 뒤 경보 해제까지 최대 5분 걸린다.
 
-worker는 checked-in default로 활성화된다. flag를 바꿀 때는 host `.env`를 수정한 뒤 deploy workflow를
-다시 실행하거나 기존 container를 stop/remove하고 동일한 `docker run --env-file` 인자로 새로 만들어야
-한다. `docker restart`는 생성 당시 환경을 재사용하므로 변경된 `.env`를 읽지 않는다.
+prod DB 수동 접속 경로(`laimory_ops`, prod WAS 경유 SSM 터널)로 대상부터 확인한다.
 
-flag가 true인데 job이 줄지 않으면 직전 03:00 KST에 두 app process가 가용했는지 확인하고 application
-log의 `PHOTO 삭제 worker run 시작`, `PHOTO 삭제 batch 완료`, `PHOTO 삭제 worker run 완료`를 조회한다.
-`claimed`, `s3Succeeded`, `s3Failed`, `unreported`, `dbCompleted`,
-`deferred`, 단계별 오류 수와 `durationMs`를 process-wide run budget, MySQL/Hikari 상태, S3/IAM 오류와
-함께 확인한다. 실패
-job과 그 FK가 가리키는 원문 PHOTO Item은 처리 창 안에서 재시도되는 복구 권위이므로 둘 중 하나를 수동
-삭제하거나 object key를 로그에 복사하지 않는다. 처리 창이 끝난 만료 job과 Item도 원인 확인을 위해
-보존한다 — 만료 ERROR 경보를 받으면 수동 삭제 대신 원인을 조사한다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존
-provisioning 파일을 백업한 뒤 자산을 반영하고 Grafana provisioning reload/restart 절차를 따른다.
+```sql
+SELECT credit_history_id, subject_id, reference_id, amount, created_at
+FROM credit_histories
+WHERE status = 'CHARGED'
+  AND created_at < CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') - INTERVAL 1 HOUR;
+```
+
+`created_at`·`updated_at`은 KST 벽시계라 DB의 "지금"을 `CONVERT_TZ`로 맞춘다. `reference_id`는 `TIMELINE_CREATION`이면 taskId다. 결과가 저장됐으면 기록은 이미 `CONSUMED`라 여기에 나오지 않는다.
+행마다 같은 transaction에서 상태가 아직 `CHARGED`일 때만 잔액과 기록을 함께 바꾼다(앱 환불과 같은 의미).
+
+```sql
+START TRANSACTION;
+UPDATE credit_histories
+SET status = 'REFUNDED', refund_reason = 'TIMEOUT', updated_at = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00')
+WHERE credit_history_id = ? AND status = 'CHARGED';
+-- 위 UPDATE가 1행일 때만 실행한다. 0행이면 ROLLBACK.
+UPDATE subject_credits SET remaining = remaining + ?, updated_at = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') WHERE subject_id = ?;
+COMMIT;
+```
+
+### Timeline orphan sweeper (PHOTO S3 삭제)
+
+사진 S3 삭제는 orphan 스위퍼가 맡는다(#551, PHOTO delete worker와 job 테이블은 제거됨). 각 slot은 매일 03:30 KST에
+자기 PK MOD 담당 고아를 최대 250개 한 번 처리하고, 유효 PHOTO는 전용 executor(`orphan-sweep-` 스레드)에서
+`DeleteObjects` 1회로 지운 뒤 `Deleted`로 확인된 Item만 삭제한다. 기본 서버 2대 × 서버당 worker-count 1이라
+두 서버 합계 후보 상한은 하루 500개다. S3 실패·응답 누락·예외·제출 거절은 Item을 남겨 다음 날 다시 요청한다.
+
+고아가 줄지 않으면 직전 03:30 KST에 두 app process가 가용했는지 확인하고 application log의
+`orphan 스위퍼 batch 완료`(selected·revalidationDropped·photoRequested·invalidDeleted·nonPhotoDeleted)와
+`orphan PHOTO S3 삭제 완료`(requested·s3Succeeded·s3Failed·unreported·itemsDeleted·durationMs·errorCodes; 실패는
+WARN)를 조회해 S3/IAM 오류와 함께 본다. 관측 후 72시간 넘게 남은 고아는 `orphan Item 최초 관측 후 72시간 잔존`
+ERROR로 기존 application ERROR 경보가 알린다. 남은 PHOTO Item은 다음 실행의 재시도 근거이므로 수동 삭제하거나
+object key를 로그에 복사하지 않는다. 설정 변경은 [orphan 스위퍼 전환 절차](../../docs/database/474-orphan-sweep-rollout.md)를
+따른다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존 provisioning 파일을 백업한 뒤 자산을 반영하고
+Grafana provisioning reload/restart 절차를 따른다.
 
 ### AWS metric collection
 

@@ -18,7 +18,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",status=~"5..",uri!~"/actuator.*",environment!="test"}[5m])) / clamp_min(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])), 1)) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])) >= 20)'
+              expr: '(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",status=~"5..",uri!~"/actuator.*|/readyz|/status",environment!="test"}[5m])) / clamp_min(sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*|/readyz|/status",environment!="test"}[5m])), 1)) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*|/readyz|/status",environment!="test"}[5m])) >= 20)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200
@@ -164,7 +164,7 @@ groups:
             model:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
-              expr: '(histogram_quantile(0.95, sum by (le, environment, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])))) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*",environment!="test"}[5m])) >= 20)'
+              expr: '(histogram_quantile(0.95, sum by (le, environment, instance) (rate(http_server_requests_seconds_bucket{job="spring_boot",uri!~"/actuator.*|/readyz|/status",environment!="test"}[5m])))) and on (environment, instance) (sum by (environment, instance) (increase(http_server_requests_seconds_count{job="spring_boot",uri!~"/actuator.*|/readyz|/status",environment!="test"}[5m])) >= 20)'
               instant: true
               intervalMs: 15000
               maxDataPoints: 43200

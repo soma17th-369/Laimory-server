@@ -27,8 +27,11 @@ automation을 바꿀 때 읽는다.
 | prod | default | prod MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
-Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 새 `.env` 항목은 필수가 아니며
-기존 DataSource 계정의 migration DDL 권한을 최초 편입 전에 확인한다. dev/test는 DB와 migration 이력을
+Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 앱 DataSource 계정(`DB_USERNAME`)은 DML만
+가지며, migration은 `.env`의 `SPRING_FLYWAY_USER`·`SPRING_FLYWAY_PASSWORD`(Spring relaxed binding으로
+`spring.flyway.user`/`password`)가 가리키는 전용 DDL 계정으로 실행한다 — 이 키가 빠지면 Flyway가 DML 계정으로
+돌아, 미적용 DDL migration이 있을 때 기동이 실패한다. 전용 계정은 WAS private IP별로 host가 고정돼 있어 WAS를 새로 만들면 grant도
+함께 만든다. 2026-10-15 실측: prod·dev 모두 이 구조다(test host는 정지 상태라 미확인). dev/test는 DB와 migration 이력을
 공유하므로 test 브랜치의 독자 SQL을 실행하지 않고 동일한 migration 집합을 사용한다.
 모든 환경에서 Hibernate `ddl-auto=validate`를 유지하며, 기존 DB 최초 baseline은 별도 명시 작업이다.
 실제 환경 편입 상태는 [운영 절차](../../../../docs/database/flyway-adoption.md)로 확인한다.
@@ -159,13 +162,6 @@ application 배포·health gate 의존성이 아니다.
 - `SWAGGER_ENABLED`
 - `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
 - `AWS_REGION`, S3/CDN and photo upload limit names
-- `TIMELINE_PHOTO_DELETE_WORKER_ENABLED`, `TIMELINE_PHOTO_DELETE_CRON`,
-  `TIMELINE_PHOTO_DELETE_ZONE`, `TIMELINE_PHOTO_DELETE_BATCH_SIZE`,
-  `TIMELINE_PHOTO_DELETE_WORKER_ID`, `TIMELINE_PHOTO_DELETE_SERVER_COUNT`,
-  `TIMELINE_PHOTO_DELETE_WORKER_COUNT` (checked-in default는 worker on, 매일 `03:00`
-  `Asia/Seoul`, 서버 2대 × 서버당 worker-count 1, slot당 단일 batch 250)
-  서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
-  최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-photo-delete-rollout.md)를 따른다.
 - `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_DELETE_CRON`, `ACCOUNT_ERASURE_ZONE`,
   `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_JOBS_PER_RUN` (checked-in default는 worker on — 삭제
   매일 `02:30` `Asia/Seoul`, 접수일 D 기준 D+3~D+5. 유예 2일·처리 창 3일은 약관 "5일 이내 파기"에 묶인
@@ -197,6 +193,9 @@ application 배포·health gate 의존성이 아니다.
   서버별 worker-id·공통 server-count/worker-count를 명시한다(docker 기본 server-count=1).
   최초 전환·번호 변경은 [전체 중지·적용·재개 절차](../../../../docs/database/474-draft-cleanup-rollout.md)를 따른다.
 - `USER_MEMORY_UPDATE_CRON`, `USER_MEMORY_UPDATE_ZONE`, `USER_MEMORY_UPDATE_RETENTION`
+- `REFRESH_TOKEN_SWEEP_CRON`, `REFRESH_TOKEN_SWEEP_ZONE` (#514 — 기본 매일 03:00 `Asia/Seoul`. 만료 후 1일
+  지난 refresh token 행 정리. 모든 인스턴스가 같은 DELETE를 실행하므로 서버별 번호 설정이 없다. 끄려면 cron을
+  `-`로 둔다. 1일 유예는 회전 경합 방지 상수라 env로 열지 않는다)
 - `APP_ENV`
 
 정확한 property mapping과 default는 `application*.properties`가 권위다.

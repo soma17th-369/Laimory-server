@@ -1,11 +1,9 @@
 package com.laimory.server.timeline.service;
 
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineDraftSourceItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
-import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -34,7 +32,6 @@ public class TimelineContentErasureService {
     private final DailyRecordRepository dailyRecordRepository;
     private final TimelineEventItemRepository timelineEventItemRepository;
     private final TimelineItemRepository timelineItemRepository;
-    private final TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
     private final TimelineDraftSourceItemRepository timelineDraftSourceItemRepository;
 
     /** snapshot한 Item이 다른 subject 소유로 확인됐을 때 — 자동 삭제를 멈추고 수동 확인으로 보낸다. */
@@ -42,42 +39,6 @@ public class TimelineContentErasureService {
         public CrossSubjectItemException() {
             super("timeline item is owned by another subject");
         }
-    }
-
-    /**
-     * PHOTO delete job과 그 원문 Item을 한 batch 지운다.
-     *
-     * <p>job이 존재하는 Item은 마지막 Event 참조가 사라져 생긴 것이라 <b>junction 0이고 record graph
-     * snapshot에 잡히지 않는다</b>. job 행만 지우고 Item을 두면 그 Item은 아무도 정리하지 않으므로 둘을
-     * 함께 지운다. job 행을 지운 뒤 crash해도 Item id를 잃지 않도록 <b>같은 transaction</b>이다.
-     *
-     * <p>record graph 삭제보다 <b>먼저</b> 호출해야 한다 — Item FK가 {@code RESTRICT}라 job 행이 남아
-     * 있으면 그 Item 삭제가 거절된다.
-     *
-     * @return 처리한 job 수(0 = 더 없음)
-     */
-    @Transactional
-    public int deletePhotoDeleteJobBatch(UUID subjectId, int batchSize) {
-        String namespacePrefix = com.laimory.server.timeline.photo.PhotoObjectKeys.subjectNamespace(subjectId)
-                + "/photos/";
-        List<TimelinePhotoDeleteJob> jobs =
-                timelinePhotoDeleteJobRepository.findByObjectKeyNamespace(namespacePrefix, batchSize);
-        if (jobs.isEmpty()) {
-            return 0;
-        }
-        List<Long> itemIds = jobs.stream()
-                .map(TimelinePhotoDeleteJob::getTimelineItemId)
-                .distinct()
-                .toList();
-        // object_key prefix는 "발급 당시 subject"일 뿐 현재 소유의 증거가 아니다. 다른 subject의
-        // Event에 걸린 Item이 섞여 있으면 지우지 않는다(하드 삭제 전 경계 단언).
-        requireSoleOwner(subjectId, itemIds);
-
-        timelinePhotoDeleteJobRepository.deleteAllByJobIdIn(jobs.stream()
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .toList());
-        timelineItemRepository.deleteAllByIdIn(itemIds);
-        return jobs.size();
     }
 
     /**
@@ -108,8 +69,7 @@ public class TimelineContentErasureService {
     }
 
     /**
-     * 이 Item들의 현재 소유자가 대상 subject뿐인지 확인한다. junction 0이면 소유자가 없어 통과한다 —
-     * 그 경우 소유 근거는 호출자가 이미 갖고 있다(record graph 또는 object_key namespace).
+     * 이 Item들의 현재 소유자가 대상 subject뿐인지 확인한다.
      */
     private void requireSoleOwner(UUID subjectId, List<Long> itemIds) {
         Set<String> owners = timelineEventItemRepository.findOwnerSubjectIdsByItemIdIn(itemIds).stream()

@@ -26,8 +26,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 삭제 request 오케스트레이터 단위 검증.
  *
- * <p>request 경로는 S3를 호출하지 않고, 사전 검증 → DB transaction(삭제는 soft delete, 연결 해제는 PHOTO job
- * enqueue 포함) 순서만 소유한다.
+ * <p>request 경로는 S3를 호출하지 않고, 사전 검증 → DB transaction(삭제는 soft delete, 연결 해제는 junction만
+ * 삭제) 순서만 소유한다.
  */
 @ExtendWith(MockitoExtension.class)
 class TimelineDeletionServiceTest {

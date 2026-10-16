@@ -2,7 +2,6 @@ package com.laimory.server.timeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.doThrow;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,7 +13,6 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.entity.TimelinePhotoDeleteJob;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
@@ -22,7 +20,6 @@ import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
-import com.laimory.server.timeline.repository.TimelinePhotoDeleteJobRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashSet;
@@ -39,13 +36,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 /**
  * 삭제 DB 트랜잭션 bean ↔ 실 MySQL 계약 검증(mockito론 못 잡음):
- * Event·DailyRecord 삭제는 soft delete다(#568) — 행·junction·Item이 남고 PHOTO job은 생기지 않으며, 활성 조회에서
- * 빠진다. 감정·장소명·주소는 지워진다. record 삭제는 하위 활성 Event에 같은 시각을 찍는다. 같은 날짜 유일성은 활성
- * 행에만 걸린다(V11 생성 컬럼 unique). 연결 해제로 생긴 PHOTO job은 S3 성공 완료 경계에서 Item과 함께 최종 삭제된다.
+ * Event·DailyRecord 삭제는 soft delete다(#568) — 행·junction·Item이 남고 활성 조회에서 빠진다. 감정·장소명·주소는
+ * 지워진다. record 삭제는 하위 활성 Event에 같은 시각을 찍는다. 같은 날짜 유일성은 활성 행에만 걸린다(V11 생성 컬럼
+ * unique).
  *
  * 실행: docker compose up -d 후 ./gradlew integrationTest
  */
@@ -54,7 +50,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 @Tag("integration")
 class TimelineSoftDeleteIntegrationTest {
 
-    // 매 테스트 임의 사용자로 persistent local DB의 기존 record/job과 격리하고, 날짜도 다른 고정 fixture와 구분한다.
+    // 매 테스트 임의 사용자로 persistent local DB의 기존 record와 격리하고, 날짜도 다른 고정 fixture와 구분한다.
     private static final LocalDate DATE = LocalDate.of(2000, 1, 3);
     private static final String ZONE = "Asia/Seoul";
 
@@ -67,17 +63,11 @@ class TimelineSoftDeleteIntegrationTest {
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
     @Autowired
-    private TimelinePhotoDeleteJobRepository timelinePhotoDeleteJobRepository;
-    @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
-    @Autowired
-    private TimelinePhotoDeleteJobService timelinePhotoDeleteJobService;
     @Autowired
     private DailyRecordService dailyRecordService;
     @Autowired
     private JdbcTemplate jdbcTemplate;
-    @MockitoSpyBean
-    private TimelineItemService timelineItemService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Set<Long> fixtureItemIds = new HashSet<>();
@@ -97,28 +87,16 @@ class TimelineSoftDeleteIntegrationTest {
     @AfterEach
     void cleanUp() {
         deleteFixtureRecord();
-        deleteFixturePhotoJobsAndItems();
+        deleteFixtureItems();
         // 가입 transaction이 만든 subject 축 push 행(#314)이 남아 있으면 mapping 삭제가 FK RESTRICT에 막힌다.
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, subjectId);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", subjectId.toString());
     }
 
-    private void deleteFixturePhotoJobsAndItems() {
-        List<Long> fixtureJobIds = findFixturePhotoDeleteJobs().stream()
-                .map(TimelinePhotoDeleteJob::getTimelinePhotoDeleteJobId)
-                .toList();
-        if (!fixtureJobIds.isEmpty()) {
-            timelinePhotoDeleteJobRepository.deleteAllByIdInBatch(fixtureJobIds);
-        }
+    private void deleteFixtureItems() {
         if (!fixtureItemIds.isEmpty()) {
             timelineItemRepository.deleteAllByIdInBatch(fixtureItemIds);
         }
-    }
-
-    private List<TimelinePhotoDeleteJob> findFixturePhotoDeleteJobs() {
-        return timelinePhotoDeleteJobRepository.findAll().stream()
-                .filter(job -> fixtureItemIds.contains(job.getTimelineItemId()))
-                .toList();
     }
 
     private void deleteFixtureRecord() {
@@ -184,12 +162,11 @@ class TimelineSoftDeleteIntegrationTest {
             assertThat(event.getPlace()).isNull();
             assertThat(event.getAddress()).isNull();
         });
-        // junction·Item은 남고 PHOTO 삭제 job은 생기지 않는다.
+        // junction·Item은 남는다.
         assertThat(timelineEventItemRepository.findByTimelineEventId(targetEventId))
                 .extracting(TimelineEventItem::getTimelineItemId)
                 .containsExactly(photoItemId);
         assertThat(timelineItemRepository.findById(photoItemId)).isPresent();
-        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
         // 형제 Event와 record는 그대로다.
         assertThat(timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(siblingEventId))
                 .hasValueSatisfying(event -> assertThat(event.getPlace()).isEqualTo("카페"));
@@ -242,40 +219,4 @@ class TimelineSoftDeleteIntegrationTest {
                 .containsExactlyInAnyOrder(recordId, reRecorded.getDailyRecordId());
         assertThat(dailyRecordRepository.findBySubjectIdAndRecordDateAndDeletedAtIsNull(subjectId, DATE)).isEmpty();
     }
-
-    @Test
-    void completeSucceeded_deletesOriginalPhotoItemAndJobTogether() {
-        Long targetEventId = saveEvent("완료 대상", 9);
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b60.jpg";
-        Long itemId = savePhotoLinkedTo("raw-complete", filename, 9, targetEventId);
-        timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
-        // 연결 해제는 더 이상 job을 만들지 않는다(#551). 기존 job을 처리하는 worker 완료 계약만 검증한다.
-        timelinePhotoDeleteJobService.insertIfAbsent(itemId, PhotoObjectKeys.subjectFullKey(filename, subjectId));
-        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
-
-        timelinePhotoDeleteJobService.completeSucceeded(List.of(job));
-
-        assertThat(findFixturePhotoDeleteJobs()).isEmpty();
-        assertThat(timelineItemRepository.findById(itemId)).isEmpty();
-    }
-
-    @Test
-    void completeSucceeded_itemDeleteFailure_rollsBackJobDeleteAndKeepsBothRows() {
-        Long targetEventId = saveEvent("완료 롤백 대상", 9);
-        String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b61.jpg";
-        Long itemId = savePhotoLinkedTo("raw-complete-rollback", filename, 9, targetEventId);
-        timelineDeletionTransactionService.detachEventItem(subjectId, targetEventId, itemId);
-        // 연결 해제는 더 이상 job을 만들지 않는다(#551). 기존 job을 처리하는 worker 완료 계약만 검증한다.
-        timelinePhotoDeleteJobService.insertIfAbsent(itemId, PhotoObjectKeys.subjectFullKey(filename, subjectId));
-        TimelinePhotoDeleteJob job = findFixturePhotoDeleteJobs().getFirst();
-        doThrow(new IllegalStateException("forced completion item delete failure"))
-                .when(timelineItemService).deleteByIds(List.of(itemId));
-
-        assertThatThrownBy(() -> timelinePhotoDeleteJobService.completeSucceeded(List.of(job)))
-                .isInstanceOf(IllegalStateException.class);
-
-        assertThat(timelinePhotoDeleteJobRepository.findById(job.getTimelinePhotoDeleteJobId())).isPresent();
-        assertThat(timelineItemRepository.findById(itemId)).isPresent();
-    }
-
 }

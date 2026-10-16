@@ -119,7 +119,7 @@ nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용�
 권위 상태를 다시 조회한다. 별도 PHOTO 추가 endpoint는 없고
 `PUT .../events/{timelineEventId}/memo`도 memo만 교체하는 현재 지원 API이며 성공 응답은 동일하게
 `body=null`이다. memo PUT은 필드 부재·null·blank 모두 제거라 PATCH의 null=유지와 다르다.
-`photosToAdd`는 PHOTO delete job과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
+`photosToAdd`는 삭제 대기 사진과 대조하지 않는다 — filename은 presign마다 서버가 새로 발급하므로
 삭제된 사진을 다시 넣는 것은 새 presign·새 filename의 새 사진이다(#500).
 기존 operation을 확장한 것이라 이 편집 계약으로 보호 operation 수가 늘지는 않았다.
 
@@ -132,8 +132,8 @@ deprecated 호환 API다. 삭제한 Event·하루는 이후 모든 조회·수�
 반환하지 않는다.
 
 `DELETE /a/api/{version}/timeline/events/{timelineEventId}/items/{timelineItemId}`는 Event-Item junction
-한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 Event 참조가 사라진 PHOTO는 PHOTO 삭제
-작업 규칙(보존 + worker 최종 삭제)을 따른다. 현재 정책상 PHOTO Item만
+한 줄만 해제한다 — 다른 Event에 연결된 같은 Item은 유지되고, 마지막 참조였으면 고아로 남아 orphan 스위퍼가
+S3 사진과 함께 정리한다(#551). 현재 정책상 PHOTO Item만
 허용하며 연결된 non-PHOTO는 400 `-1018`이다. Event 없음·비소유·Item 없음·해당 Event 미연결은 구분 없이
 404 은닉이고(미연결 non-PHOTO도 404가 우선), SAVED record에서도 해제할 수 있다. 성공 응답은 `body=null`이다.
 
@@ -271,13 +271,6 @@ PROCESSING 시작 약 3분 뒤 환불된다(그때 FAILED 완료 push가 오고 
 사전 검사와 결과 저장 차감이 같은 행을 읽는다(캐시 없음). 비용 행이 없으면 기본값 없이 500이다. 크레딧을 소비하는
 기능이 늘면 같은 응답에 평면 필드를 추가한다. 보호 API(`CreditApi`)와
 인터페이스를 나눈 것은 principal 없는 보호 operation이 인증 계약 테스트의 형태에 없기 때문이다.
-
-`POST /api/{version}/onboarding/reset?userId=123`은 온보딩을 반복 테스트하기 위한 임시 예외다.
-인증·활성화 설정·request body 없이 양수 `userId`를 받고, `SubjectMappingService`로 해석한 subject의
-`onboarding_completed`만 false로 바꾼다. 반복 호출도 200이며 다른 사용자·알림 설정은 유지한다.
-userId 누락·형식 오류·0·음수는 400, subject 매핑·설정 행 부재는 기존 내부 오류 500이다.
-제거하려면 main/test의 `onboarding/temporary` 패키지를 삭제하고 이 문단과 관련 임시 예외 설명을
-정리한다. 일반 온보딩 완료 API·SecurityConfig·스키마의 기능 수정은 필요 없다.
 
 `GET /a/api/{version}/user`는 토큰 응답과 분리된 인증 회원 본인 조회다. 응답 body 필드는 `userId`(회원 행
 PK = access token의 `sub`, 항상 존재하는 JSON number — 가명화 subjectId가 아님)와 nullable `nickname`이며,
