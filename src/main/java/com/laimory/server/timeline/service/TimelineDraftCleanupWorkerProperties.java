@@ -21,7 +21,7 @@ public class TimelineDraftCleanupWorkerProperties {
             @Value("${app.draft.worker-id:0}") int workerId,
             @Value("${app.draft.server-count:2}") int serverCount,
             @Value("${app.draft.worker-count:1}") int workerCount) {
-        // PROCESSING TTL(3분)보다 충분히 길게 유지해 진행 중 source가 정리되지 않도록 한다.
+        // PROCESSING TTL(5분)보다 충분히 길게 유지해 진행 중 source가 정리되지 않도록 한다.
         if (retentionDays < 1) {
             throw new IllegalStateException("app.draft.retention-days must be at least 1");
         }

@@ -24,9 +24,9 @@ import java.util.UUID;
  * <p>error는 FAILED일 때만 채워진다. {@code tokenHash}는 현재 처리 단계가 사용하는 opaque task token의
  * SHA-256 hash이며 terminal 재요청 검증을 위해 종결 뒤에도 보존한다.
  *
- * <p>예외는 <b>유실 FAILED</b>({@link #lostFailed}, #565)다 — 결과·실패 보고 없이 PROCESSING이 만료된 task를
- * 유실 환불이 FAILED로 다시 기록할 때는 task 값이 이미 사라져 {@code dailyRecordId}·{@code tokenHash}가 없다.
- * 그래서 FAILED에 한해 두 값이 null일 수 있다. FAILED 폴링은 {@code error}만 읽고, null hash는 어떤 token과도
+ * <p>예외는 <b>유실 FAILED</b>({@link #lostFailed}, #565)다 — #593 전 유실 환불은 task 값이 이미 사라진 뒤
+ * FAILED를 다시 기록해 {@code dailyRecordId}·{@code tokenHash}가 없었다. #593부터는 살아 있는 task를 종결하므로 새로
+ * 쓰지 않지만, 배포 전·롤링 배포 중 옛 서버가 쓴 값이 terminal TTL(24시간) 동안 남으므로 FAILED에 한해 두 값이 null일 수 있다. FAILED 폴링은 {@code error}만 읽고, null hash는 어떤 token과도
  * 일치하지 않아 늦게 온 AI 요청은 401({@code -1002})로 끝난다. {@code stage}는
  * PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태이며 terminal에는 보존하지 않는다.
  *
@@ -185,8 +185,9 @@ public record TimelineDraftTask(
     }
 
     /**
-     * 결과·실패 보고 없이 만료된 task를 유실 환불이 다시 기록하는 FAILED(#565). task 값이 이미 사라진 뒤라
-     * owner와 실패 코드만 있다 — {@code dailyRecordId}·{@code tokenHash}는 없다(클래스 주석).
+     * #593 전 유실 환불이 다시 기록하던 FAILED(#565)의 형태. task 값이 사라진 뒤라 owner와 실패 코드만 있다 —
+     * {@code dailyRecordId}·{@code tokenHash}는 없다. 서버는 더 이상 쓰지 않고 옛 서버가 남긴 값을 읽는 쪽 계약을
+     * 고정하는 데만 쓴다(클래스 주석).
      */
     public static TimelineDraftTask lostFailed(UUID subjectId, int error) {
         return new TimelineDraftTask(TaskStatus.FAILED, null, null, error, null, null, null, subjectId, null);

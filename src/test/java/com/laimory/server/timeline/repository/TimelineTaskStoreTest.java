@@ -173,31 +173,14 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void saveTerminalIfAbsent_lostFailed_roundTripsWithoutRecordOrTokenHash() throws Exception {
-        // 유실 FAILED(#565)는 task 값이 사라진 뒤 쓰므로 dailyRecordId·tokenHash가 JSON에 없다 — 다시 읽어도 같은 값이다.
+    void find_legacyLostFailedWithoutRecordOrTokenHash_readsAsFailed() throws Exception {
+        // #593 전 유실 처리가 쓴 FAILED(#565)에는 dailyRecordId·tokenHash가 없다 — 배포 뒤 24시간 동안 남는 값을 읽는다.
         TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT, -1008);
-        when(redis.setIfAbsent(anyString(), anyString(), any())).thenReturn(true);
+        String legacyJson = objectMapper.writeValueAsString(lost);
+        when(redis.get("timeline:draft-task:abc")).thenReturn(legacyJson);
 
-        assertThat(store.saveTerminalIfAbsent("abc", lost, Duration.ofHours(24))).isTrue();
-
-        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
-        verify(redis).setIfAbsent(org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"), json.capture(),
-                org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)));
-        assertThat(json.getValue()).doesNotContain("dailyRecordId").doesNotContain("tokenHash");
-        assertThat(objectMapper.readValue(json.getValue(), TimelineDraftTask.class)).isEqualTo(lost);
-        verify(redis).removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("abc"));
-        verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("abc"));
-    }
-
-    @Test
-    void saveTerminalIfAbsent_existingKey_returnsFalseWithoutIndexCommands() {
-        // 살아 있는 task(정상 종결된 SUCCESS 등)를 덮지 않는다.
-        when(redis.setIfAbsent(anyString(), anyString(), any())).thenReturn(false);
-
-        assertThat(store.saveTerminalIfAbsent("abc", TimelineDraftTask.lostFailed(SUBJECT, -1008),
-                Duration.ofHours(24))).isFalse();
-
-        verify(redis, never()).removeFromSortedSet(anyString(), any());
+        assertThat(store.find("abc")).contains(lost);
+        assertThat(legacyJson).doesNotContain("dailyRecordId").doesNotContain("tokenHash");
     }
 
     @Test

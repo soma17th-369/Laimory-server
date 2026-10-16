@@ -262,7 +262,9 @@ Spring JSON stdout
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
-  - `laimory.timeline.task.processing.stuck`: 90초 초과, 3분 TTL 만료 전인 PROCESSING task 수
+  - `laimory.timeline.task.processing.stuck`: 90초 초과, PROCESSING TTL(5분) 만료 전인 PROCESSING task 수 — 보통은
+    처리 기한(3분)의 유실 처리가 FAILED로 종결해 빠지고, 유실 처리가 없거나 건너뛴 task(만료 알림 유실, 기록 소비 뒤
+    callback 없음)는 5분까지 남는다
   - `laimory.credit.history.charged.stale`: 1시간 넘게 `CHARGED`인 크레딧 기록 수(#582) — 유실 환불이 놓친 건.
     DB count를 scrape마다가 아니라 5분에 한 번만 다시 세고, DB 오류는 NaN이다. 모든 서버가 같은 값을 내므로
     경보는 `max by (environment)`로 환경당 하나만 만든다

@@ -51,6 +51,8 @@ class TimelineCallbackServiceTest {
     private CreditService creditService;
     @Mock
     private TimelineTaskLossTimerService timelineTaskLossTimerService;
+    @Mock
+    private DailyRecordService dailyRecordService;
     @InjectMocks
     private TimelineCallbackService service;
 
@@ -128,6 +130,37 @@ class TimelineCallbackServiceTest {
         order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
         order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
         order.verify(timelineTaskLossTimerService).cancel(TASK_ID);
+    }
+
+    @Test
+    void failedCallback_softDeletesEmptyDraftAfterRefundBeforeTerminal() {
+        // 실패 push·폴링을 받는 시점에 그 날짜는 이미 없는 기록이어야 한다(#593).
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
+
+        InOrder order = inOrder(creditService, dailyRecordService, timelineTaskService, timelineCompletionPushNotifier);
+        order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+        order.verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+        order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
+        order.verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+    }
+
+    @Test
+    void failedCallback_draftDeleteFailure_propagatesWithoutTerminalWrite() {
+        // 삭제가 실패하면 환불처럼 500으로 AI 재전송에 맡긴다 — 재전송은 끝난 환불을 건너뛰고 삭제만 다시 시도한다.
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        doThrow(new IllegalStateException("db down")).when(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(timelineTaskService, never()).markFailedIfPresent(anyString(), any(), any());
+        verifyNoInteractions(timelineCompletionPushNotifier);
     }
 
     @Test

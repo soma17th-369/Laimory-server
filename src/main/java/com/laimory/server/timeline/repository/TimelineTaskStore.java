@@ -106,22 +106,6 @@ public class TimelineTaskStore {
         return true;
     }
 
-    /**
-     * task key가 없을 때만 terminal을 기록한다(native {@code SET NX PX}, #565). 유실 환불이 만료된 task를
-     * FAILED로 다시 기록하는 용도라, 아직 살아 있는 task(정상 종결된 SUCCESS 등)를 덮지 않는다.
-     * write가 성공하면 남아 있을 수 있는 processing index member를 제거한다. 반환 {@code false}는 key가 있다는 뜻이다.
-     */
-    public boolean saveTerminalIfAbsent(String taskId, TimelineDraftTask terminal, Duration ttl) {
-        if (terminal.status() == TaskStatus.PROCESSING) {
-            throw new IllegalStateException("terminal task만 저장할 수 있습니다: " + taskId);
-        }
-        if (!redis.setIfAbsent(KEY_PREFIX + taskId, serialize(taskId, terminal), ttl)) {
-            return false;
-        }
-        removeProcessingIndexes(taskId, terminal.subjectId());
-        return true;
-    }
-
     private static void requireProcessingStartedAt(TimelineDraftTask task, String taskId) {
         if (task.status() == TaskStatus.PROCESSING && task.processingStartedAt() == null) {
             throw new IllegalStateException("PROCESSING task 시작 시각이 없습니다: " + taskId);

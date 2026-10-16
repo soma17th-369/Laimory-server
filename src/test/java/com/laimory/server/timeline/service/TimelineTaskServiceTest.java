@@ -45,7 +45,7 @@ class TimelineTaskServiceTest {
 
     @Test
     void createProcessing_storesRecordIdAndStartedAtWithProcessingTtl() {
-        // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이의 기준) + TTL 3분.
+        // dailyRecordId는 PROCESSING부터 실린다(폴링·콜백 전이의 기준) + TTL 5분(처리 기한 3분 뒤 유실 처리가 읽는다, #593).
         service.createProcessing("t", SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT);
 
         ArgumentCaptor<TimelineDraftTask> task = ArgumentCaptor.forClass(TimelineDraftTask.class);
@@ -55,7 +55,7 @@ class TimelineTaskServiceTest {
         assertThat(task.getValue().dailyRecordId()).isEqualTo(RECORD_ID);
         assertThat(task.getValue().processingStartedAt()).isEqualTo(STARTED_AT);
         assertThat(task.getValue().subjectId()).isEqualTo(SUBJECT_ID);
-        assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(3));
+        assertThat(ttl.getValue()).isEqualTo(Duration.ofMinutes(5));
         verify(timelineMetrics).recordDraftCreated();
     }
 
@@ -157,19 +157,19 @@ class TimelineTaskServiceTest {
         Instant now = Instant.parse("2026-07-24T12:00:00Z");
         Duration threshold = Duration.ofSeconds(90);
         when(timelineTaskStore.countStuckProcessing(
-                now, threshold, Duration.ofMinutes(3))).thenReturn(2L);
+                now, threshold, Duration.ofMinutes(5))).thenReturn(2L);
 
         assertThat(service.countStuckProcessing(now, threshold)).isEqualTo(2L);
     }
 
     @Test
     void countStuckProcessing_rejectsThresholdOutsideProcessingWindow() {
-        // 0·음수·PROCESSING TTL(3m) 이상은 거부한다(90s는 위 테스트에서 허용 확인).
+        // 0·음수·PROCESSING TTL(5m) 이상은 거부한다(90s는 위 테스트에서 허용 확인).
         assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofSeconds(-1)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofMinutes(3)))
+        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofMinutes(5)))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineTaskStore, never()).countStuckProcessing(any(), any(), any());
     }

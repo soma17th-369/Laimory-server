@@ -32,6 +32,10 @@ import org.springframework.stereotype.Service;
  * <p>FAILED는 terminal 저장 전에 요청 시 차감한 크레딧을 환불한다(#565) — 환불은 기록이 {@code CHARGED}일 때만
  * 일어나므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. 환불이 실패하면 전파해(500) AI 재전송에 맡긴다.
  * terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만 — 만료돼도 기록이 이미 환불돼 유실 처리는 건너뛴다).
+ *
+ * <p>FAILED는 환불 다음, terminal 저장 전에 record가 활성 Event 없는 DRAFT면 {@code ai_failed}로 soft delete한다(#593) —
+ * 실패 push·폴링을 받는 시점에 그 날짜는 이미 없는 기록이어야 한다. 삭제가 실패하면 환불처럼 전파해(500) AI 재전송에
+ * 맡긴다 — 재전송은 이미 끝난 환불을 건너뛰고 삭제만 다시 시도한다.
  */
 @Slf4j
 @Service
@@ -43,6 +47,7 @@ public class TimelineCallbackService {
     private final TimelineMetrics timelineMetrics;
     private final CreditService creditService;
     private final TimelineTaskLossTimerService timelineTaskLossTimerService;
+    private final DailyRecordService dailyRecordService;
 
     public void handleCallback(String applicationVersion, String taskId,
                                String taskToken, DraftTaskCallbackRequest request) {
@@ -92,6 +97,7 @@ public class TimelineCallbackService {
             }
             ExceptionType failureType = resolveAiFailureCode(taskId, request);
             creditService.refund(CreditCostType.TIMELINE_CREATION, taskId, CreditRefundReason.AI_FAILED);
+            dailyRecordService.softDeleteFailedDraft(task.dailyRecordId());
             if (!timelineTaskService.markFailedIfPresent(taskId, task, failureType)) {
                 log.warn("failed callback task expired before terminal write: taskId={}", taskId);
                 throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
