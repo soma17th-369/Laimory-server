@@ -43,7 +43,7 @@ public class TimelineDraftCheckService {
                 case STAY, MOVEMENT -> location = location.plus(locationDuration(item.startAt(), item.endAt()));
                 case NOTIFICATION -> notifications++;
                 case HEALTH -> {
-                    // 걸음 수는 하루 요약이라 Event의 근거가 되지 않는다 — 판정에 쓰지 않는다.
+                    // #594 정책 결정으로 판정에 쓰지 않는다 — 단독으로 통과시키지도, 다른 조건을 막지도 않는다.
                 }
             }
         }
