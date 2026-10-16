@@ -21,6 +21,7 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionResult;
 import com.laimory.server.common.privacy.RedactionType;
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.TimelineEventType;
@@ -174,7 +175,7 @@ class TimelineAiResultServiceTest {
     @Test
     void storeResult_onLostFailedTask_returns401WithoutStoring() {
         // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 결과는 어떤 token으로도 401이다(#565).
-        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008)));
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, result()))
                 .isInstanceOfSatisfying(BusinessException.class,

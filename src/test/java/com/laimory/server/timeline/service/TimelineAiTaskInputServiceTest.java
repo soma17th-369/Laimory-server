@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.privacy.RedactionType;
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskTokens;
@@ -190,7 +191,7 @@ class TimelineAiTaskInputServiceTest {
     void getInput_onLostFailedTask_returns401BeforePersonalData() {
         // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 입력 조회는 401이다(#565).
         when(timelineTaskService.find(TASK_ID))
-                .thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+                .thenReturn(Optional.of(TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008)));
 
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,

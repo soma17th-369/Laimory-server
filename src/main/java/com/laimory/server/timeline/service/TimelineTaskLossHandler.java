@@ -21,7 +21,7 @@ import org.springframework.stereotype.Service;
  * <p>환경 안의 모든 서버가 같은 알림을 받는다 — 유실 처리 잠금({@code SET NX})을 잡은 서버만 처리한다. 잠금은
  * TTL로만 풀리고 재처리는 없다: 잡은 서버의 DB 작업이 실패하면 크레딧 이력이 {@code CHARGED}로 남아 수동 환불한다.
  *
- * <p>환불이 실제로 일어났을 때만(이력이 {@code CHARGED}였을 때) 다음을 진행한다 — 이미 소비·환불됐으면 모두 건너뛰어
+ * <p>환불이 실제로 일어났을 때만(이력이 {@code CHARGED}였을 때) task를 읽어 다음을 진행한다 — 이미 소비·환불됐으면 모두 건너뛰어
  * 결과 저장 뒤 타이머 삭제가 실패해 온 알림이 성공한 생성을 실패로 덮거나 실패 push를 보내지 않게 한다.
  * task key는 처리 기한보다 오래 살아({@link TimelineTaskService#PROCESSING_TTL}) 이 시점에 아직 읽힌다(#593):
  * FAILED callback과 같은 순서로 record가 활성 Event 없는 DRAFT면 {@code ai_failed}로 soft delete하고, task를 FAILED로
@@ -51,7 +51,6 @@ public class TimelineTaskLossHandler implements RedisKeyExpirationListener {
             return;
         }
         try {
-            Optional<TimelineDraftTask> task = timelineTaskService.find(taskId.get());
             Optional<UUID> refunded = creditService.refund(
                     CreditCostType.TIMELINE_CREATION, taskId.get(), CreditRefundReason.TIMEOUT);
             if (refunded.isEmpty()) {
@@ -60,6 +59,8 @@ public class TimelineTaskLossHandler implements RedisKeyExpirationListener {
                         taskId.get());
                 return;
             }
+            // task 조회는 환불 뒤에 한다 — Redis read·역직렬화가 실패해도 환불은 지켜지고 정리·FAILED만 빠진다.
+            Optional<TimelineDraftTask> task = timelineTaskService.find(taskId.get());
             if (task.isEmpty()) {
                 log.warn("lost timeline task refunded but task already gone (빈 DRAFT 잔존 가능): taskId={}",
                         taskId.get());

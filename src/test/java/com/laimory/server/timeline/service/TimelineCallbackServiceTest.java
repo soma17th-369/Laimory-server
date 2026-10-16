@@ -21,6 +21,7 @@ import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -181,7 +182,7 @@ class TimelineCallbackServiceTest {
     @Test
     void callbackOnLostFailedTask_returns401() {
         // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 callback은 같은 FAILED라도 401이다(#565).
-        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
                 .isInstanceOfSatisfying(BusinessException.class,

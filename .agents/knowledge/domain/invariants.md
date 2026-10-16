@@ -295,8 +295,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 처리 기한까지 결과·실패 보고가 없고 크레딧 차감이 남은 task는 유실 처리가 환불한 뒤 아직 살아 있는 task를
   `markFailedIfPresent`로 FAILED(`-1008`, 24h)로 종결한다(#565·#593) — 폴링은 처리 기한 직후 404 틈 없이 FAILED를
   받는다. 이 FAILED는 `dailyRecordId`·token hash를 보존한 일반 FAILED라 늦게 온 AI 요청은 terminal task 규칙을 따른다.
-  유실 FAILED 전용 쓰기 경로(`SET NX`)는 없다 — `TimelineDraftTask.lostFailed` 형태(`dailyRecordId`·token hash 없는
-  FAILED)는 배포 전·롤링 배포 중 옛 서버가 쓴 값이 terminal TTL(24시간) 동안 남으므로 읽는 쪽 계약으로만 유지한다
+  유실 FAILED 전용 쓰기 경로(`SET NX`)는 없다 — `dailyRecordId`·token hash 없는 유실 FAILED 형태(`TimelineDraftTask`는
+  FAILED에 한해 두 값 null 허용)는 배포 전·롤링 배포 중 옛 서버가 쓴 값이 terminal TTL(24시간) 동안 남으므로 읽는 쪽 계약으로만 유지한다
   (폴링은 `error`만 읽고, null hash는 어떤 token과도 일치하지 않아 늦은 AI 요청은 401 `-1002`).
   PROCESSING key 만료는 key 소멸이지 FAILED 전이가 아니다 — 유실 처리마저 없었던 task(만료 알림 유실, 기록 소비 뒤
   타이머 잔존)의 마지막 회수이며 scheduler가 복구하지 않고 이후 폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지

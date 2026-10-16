@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.config.JacksonConfig;
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
@@ -175,7 +176,7 @@ class TimelineTaskStoreTest {
     @Test
     void find_legacyLostFailedWithoutRecordOrTokenHash_readsAsFailed() throws Exception {
         // #593 전 유실 처리가 쓴 FAILED(#565)에는 dailyRecordId·tokenHash가 없다 — 배포 뒤 24시간 동안 남는 값을 읽는다.
-        TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT, -1008);
+        TimelineDraftTask lost = TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT, -1008);
         String legacyJson = objectMapper.writeValueAsString(lost);
         when(redis.get("timeline:draft-task:abc")).thenReturn(legacyJson);
 
