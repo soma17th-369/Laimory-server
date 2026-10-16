@@ -23,6 +23,8 @@ Security filter chain, OAuth provider, JWT claim, refresh rotation, app code 또
   miss만 users PK 조회) — 회원 없음과 `WITHDRAWAL_PENDING`(탈퇴 접수)은 token 상세와 구분 없이 같은
   401 `-2001`로 수렴하고, 상태 조회 DB 장애(캐시 miss 경로)만 fail-closed 500 `-500`이다(장애를
   credential 오류로 숨기지 않음 — hit는 DB를 호출하지 않고, Redis 장애는 miss로 강등해 DB 직행).
+  Lettuce는 연결이 끊긴 동안의 명령을 버퍼링하지 않고 즉시 거절한다(#583, `RedisClientConfig`) — 그래서 Redis
+  장애 중 강등이 command timeout을 기다리지 않고 바로 일어난다(기본값이면 조회·적재 두 번의 timeout만큼 지연).
 - OpenAPI의 `bearerAuth`, timeline API `@SecurityRequirement`와 보호 operation의 401 문서가 이 계약을 표현한다.
 - 인증 principal은 `Long` userId다. timeline/push/initializer/onboarding controller의 콘텐츠 owner
   parameter는 `@CurrentSubject UUID subjectId`이며 MVC resolver가 principal을 subject mapping으로
@@ -124,6 +126,11 @@ flow의 클라이언트 책임이고(가입이 되어 있으면 동의는 전제
 7. refresh는 rotation되고 reuse가 탐지되면 해당 user의 refresh token을 모두 revoke한다.
 8. logout은 전달된 refresh token을 revoke한다.
 9. `JwtTokens.parseUserId`로 서명·만료를 검증하고 subject userId를 읽는 기능은 있다.
+
+핸드셰이크의 외부 호출(code↔token 교환, OIDC userinfo)은 connect 2초·read 5초 timeout을 건 클라이언트를 쓴다
+(#583, `OAuth2LoginSecurityConfig`). Spring Security 기본 클라이언트는 timeout이 무한이고 `spring.http.client.*`도
+받지 않아, 인증 서버가 멈추면 로그인 콜백마다 Tomcat 스레드가 무기한 묶였다. timeout은 아래 핸드셰이크 실패
+경로로 처리된다. JWK 조회는 Nimbus 캐시와 앞선 token 교환 timeout에 맡겨 기본값으로 둔다.
 
 OAuth/OIDC 핸드셰이크 실패, 성공 handler의 handoff context 누락과 로그인 완료 예외는 모두
 `?error=-2004`로 앱에 redirect한다. 세 실패 경로는 `ExceptionType.OAUTH_LOGIN_FAILED.code()`에서 값을
