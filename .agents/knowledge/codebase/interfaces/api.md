@@ -38,7 +38,7 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 34개(timeline 18 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 35개(timeline 19 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
 inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET + credit GET)는
 `bearerAuth` security requirement와
@@ -56,6 +56,15 @@ UUID(version 무관)만 허용하며 위반은 400/`-400`이다(허용값은 정
 초과는 외부 지도 API 호출 없이 400/`-400`이다 — `sourceItems` 배열 길이 제약(`maxItems`)이 아니라
 runtime 파생 계산이라 OpenAPI에는 description과 400 응답으로만 표현한다. 지오코딩 부분 실패 허용/거절
 경계는 [timeline draft runtime](../runtime/timeline-draft.md)이 소유한다.
+
+`POST /a/api/{version}/timeline/drafts/check`(#594)는 타임라인 생성 가능 확인이다. body `sourceItems`의 원소는
+`itemType`·`startAt`(필수)·`endAt`(nullable)만 받고(그 밖의 필드는 무시), 200 `body.creatable`을 반환한다 —
+PHOTO·CALENDAR 1개 이상, 위치(STAY·MOVEMENT `endAt − startAt` 합, endAt 없음·역전은 0) 30분 초과, NOTIFICATION
+3건 이상, 위치 20분 이상+NOTIFICATION 1건 이상 중 하나면 true이고 HEALTH는 세지 않으며 빈 배열은 false다.
+`sourceItems` null·null 원소·`itemType`/`startAt` 누락은 400 `-400`이며 새 error code는 없다. 판정은 받은 목록만 보고
+(같은 날 저장된 item·SAVED·크레딧·미래 날짜는 보지 않음) DB·외부 호출·저장이 없다. draft 생성 POST는 이 판정을
+강제하지 않는다(클라 버튼 활성화 힌트 전용). `TimelineApi`의 principal 계약에 따라 hidden subject를 받지만 판정에
+쓰지 않는다. 조회지만 객체 목록을 body로 받아야 해 POST다(Android HTTP client가 GET body를 거부).
 
 `GET /a/api/{version}/timeline/drafts`는 인증 사용자가 소유한 현재 진행 중(`PROCESSING`) draft 작업의
 taskId만 생성 최신순으로 `body.taskIds` 배열에 반환한다. 진행 작업이 없으면 404가 아니라 200과

@@ -17,6 +17,7 @@ import com.laimory.server.config.SecurityConfig;
 import com.laimory.server.testsupport.AuthTestSupport;
 import com.laimory.server.timeline.controller.TimelineController;
 import com.laimory.server.timeline.service.PhotoUploadService;
+import com.laimory.server.timeline.service.TimelineDraftCheckService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
@@ -37,7 +38,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 상속이 해당 예외를 정말 잡아 envelope로 바꾸는지 고정한다(깨지면 개별 @ExceptionHandler 추가로 보수).
  */
 @WebMvcTest(TimelineController.class)
-@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, TimelineDraftCheckService.class})
 class GlobalExceptionHandlerTest {
 
     private static final long USER_ID = 7L;

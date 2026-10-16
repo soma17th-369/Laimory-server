@@ -1,6 +1,8 @@
 package com.laimory.server.timeline.controller;
 
 import com.laimory.server.common.ApiResponse;
+import com.laimory.server.timeline.dto.CheckDraftRequest;
+import com.laimory.server.timeline.dto.CheckDraftResponse;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
@@ -8,6 +10,7 @@ import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.PhotoUploadCreateRequest;
 import com.laimory.server.timeline.dto.PhotoUploadCreateResponse;
 import com.laimory.server.timeline.service.PhotoUploadService;
+import com.laimory.server.timeline.service.TimelineDraftCheckService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
@@ -27,6 +30,7 @@ public class TimelineController implements TimelineApi {
     private final TimelineDraftTaskPollingService timelineDraftTaskPollingService;
     private final TimelineDraftTaskListService timelineDraftTaskListService;
     private final PhotoUploadService photoUploadService;
+    private final TimelineDraftCheckService timelineDraftCheckService;
 
     @Override
     public ResponseEntity<ApiResponse<CreateDraftTaskResponse>> createDraftTask(
@@ -34,6 +38,14 @@ public class TimelineController implements TimelineApi {
         return ResponseEntity.accepted().body(ApiResponse.success(timelineDraftTaskService.createDraftTask(
                 applicationVersion, subjectId, request.recordDate(), request.recordAt(), request.recordTimeZone(),
                 request.timelineWindow(), request.sourceItems())));
+    }
+
+    /** subjectId는 보호 API 공통 계약(hidden principal)으로 받지만 판정은 받은 기록만 보므로 넘기지 않는다. */
+    @Override
+    public ResponseEntity<ApiResponse<CheckDraftResponse>> checkDraft(
+            String applicationVersion, UUID subjectId, CheckDraftRequest request) {
+        return ResponseEntity.ok(ApiResponse.success(
+                timelineDraftCheckService.check(applicationVersion, request.sourceItems())));
     }
 
     @Override

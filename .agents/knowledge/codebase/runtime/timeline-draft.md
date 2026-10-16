@@ -104,6 +104,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 선거절하지 않는다. 공통 admission과 대체 DB lock·retry·upsert가 모두 없으며, 실제 동시 경합의 graph
 정합성은 별도 과제다.
 
+생성 가능 확인(`POST .../drafts/check`, #594)은 클라의 생성 버튼 활성화 힌트일 뿐이다 — draft 생성 POST는 이
+판정을 호출·강제하지 않으므로 데이터가 적은 요청도 위 순서대로 진행된다(판정 기준은 [API interface](../interfaces/api.md)).
+
 `app.ai.mode=noop`은 아무 요청도 만들지 않아 task가 처리 기한에 유실 처리로 FAILED가 된다.
 `fake`는 실 AI와 같은 순서로 자기 서버의 입력·결과·콜백 endpoint를 실제 HTTP로 호출하며 retry하지 않는다.
 `http`는 실 AI 연동이다.
