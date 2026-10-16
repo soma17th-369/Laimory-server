@@ -32,7 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 크레딧 leaf 검증 — 가입 기본값 60, 잔액 0의 사전 거절(-1021), 비용을 credit_costs 행에서 읽는 것(#558),
+ * 크레딧 leaf 검증 — 가입 기본값 30, 잔액 0의 사전 거절(-1021), 비용을 credit_costs 행에서 읽는 것(#558),
  * 잔액·비용 행 부재를 기본값으로 가리지 않는 계약을 고정한다.
  * 조건부 차감·삭제의 DB 의미는 {@code CreditPersistenceIntegrationTest}가 검증한다.
  */
@@ -73,10 +73,10 @@ class CreditServiceTest {
     }
 
     @Test
-    void createDefaultGrantsSixtyCreditsWithKstAuditTime() {
+    void createDefaultGrantsThirtyCreditsWithKstAuditTime() {
         service().createDefaultIfAbsent(SUBJECT_ID);
 
-        verify(subjectCreditRepository).insertIfAbsent(SUBJECT_ID.toString(), 60, NOW_KST);
+        verify(subjectCreditRepository).insertIfAbsent(SUBJECT_ID.toString(), 30, NOW_KST);
     }
 
     @Test
@@ -88,7 +88,7 @@ class CreditServiceTest {
 
     @Test
     void getCreditFailsLoudlyWhenRowIsMissing() {
-        // 행 부재는 깨진 불변식이다 — 60이나 0으로 가리면 가입·backfill 누락이 조용히 숨는다.
+        // 행 부재는 깨진 불변식이다 — 30이나 0으로 가리면 가입·backfill 누락이 조용히 숨는다.
         when(subjectCreditRepository.findBySubjectId(SUBJECT_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service().getCredit("v1", SUBJECT_ID))

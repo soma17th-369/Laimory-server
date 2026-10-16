@@ -114,7 +114,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`는 항상 null이고, 시각은 보낸 값
   그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드 규칙(title·subtitle·시간·memo)과
   사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
-- 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory·기본 크레딧(60)은 하나의 transaction으로
+- 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory·기본 크레딧(30)은 하나의 transaction으로
   commit/rollback한다(#536·#548). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **크레딧은 draft 요청 시점에 차감하고, 생성이 실패하면 돌려준다**(#565 — #548의 "결과 저장 시 차감"을 대체).
   draft 선생성 transaction(DailyRecord·staging)이 잔액이 비용 이상일 때만 조건부로 빼고(`remaining >= 비용`, 0 클램프 없음)

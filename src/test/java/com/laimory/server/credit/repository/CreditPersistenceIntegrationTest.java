@@ -95,7 +95,7 @@ class CreditPersistenceIntegrationTest {
 
         creditService.charge(SUBJECT_ID, CreditCostType.TIMELINE_CREATION, TASK_ID);
 
-        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(remaining()).isEqualTo(30 - timelineCreationCost());
         assertThat(history()).containsEntry("subject_id", SUBJECT_ID.toString())
                 .containsEntry("amount", timelineCreationCost())
                 .containsEntry("status", "CHARGED")
@@ -154,7 +154,7 @@ class CreditPersistenceIntegrationTest {
                 CreditRefundReason.AI_FAILED);
 
         assertThat(refunded).contains(SUBJECT_ID);
-        assertThat(remaining()).isEqualTo(60);
+        assertThat(remaining()).isEqualTo(30);
         assertThat(history()).containsEntry("status", "REFUNDED").containsEntry("refund_reason", "AI_FAILED");
     }
 
@@ -169,7 +169,7 @@ class CreditPersistenceIntegrationTest {
                 CreditRefundReason.TIMEOUT);
 
         assertThat(refundedAgain).isEmpty();
-        assertThat(remaining()).isEqualTo(60);
+        assertThat(remaining()).isEqualTo(30);
         assertThat(history()).containsEntry("refund_reason", "AI_FAILED");
     }
 
@@ -184,7 +184,7 @@ class CreditPersistenceIntegrationTest {
                 CreditRefundReason.TIMEOUT);
 
         assertThat(refunded).isEmpty();
-        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(remaining()).isEqualTo(30 - timelineCreationCost());
         assertThat(history()).containsEntry("status", "CONSUMED");
     }
 
@@ -207,7 +207,7 @@ class CreditPersistenceIntegrationTest {
 
         creditService.consume(CreditCostType.TIMELINE_CREATION, TASK_ID);
 
-        assertThat(remaining()).isEqualTo(60 - timelineCreationCost());
+        assertThat(remaining()).isEqualTo(30 - timelineCreationCost());
         assertThat(history()).containsEntry("status", "CONSUMED").containsEntry("refund_reason", null);
     }
 
@@ -224,7 +224,7 @@ class CreditPersistenceIntegrationTest {
 
     @Test
     void createDefaultAgainDoesNotResetSpentCredits() {
-        // 가입 재실행·rollout backfill 재실행이 이미 쓴 크레딧을 60으로 되돌리면 무한 충전이 된다.
+        // 가입 재실행·rollout backfill 재실행이 이미 쓴 크레딧을 기본값으로 되돌리면 무한 충전이 된다.
         givenRemaining(12);
 
         creditService.createDefaultIfAbsent(SUBJECT_ID);
