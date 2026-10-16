@@ -712,7 +712,7 @@ sudo systemctl start laimory-filebeat-metrics.service
 세 collector의 `up`/freshness metric이 정상인 것을 확인한 뒤, WAS SSM 작업과 겹치지 않게 앱
 변경을 정상 deploy workflow로 배포하고 health gate를 통과시킨다. 실제 배포 SHA의 build info와
 callback/FCM/PROCESSING metric을 확인한 뒤에만 monitoring host에서 Grafana를 재시작해 새 dashboard와
-alert를 provisioning한다. PROCESSING task는 각자 저장 시점의 TTL(현재 계약 3분)로 소멸하므로 배포 직후
+alert를 provisioning한다. PROCESSING task는 각자 저장 시점의 TTL(현재 계약 PROCESSING TTL 5분) 안에 소멸하므로 배포 직후
 index는 곧 새 task만 반영한다. 이 순서는 배포 도중 collector/metric 부재 alert가 Discord로
 잘못 발송되는 것을 피한다.
 
@@ -1072,15 +1072,18 @@ swap activity와 OOM 이력을 함께 확인하고, 실제 reclaim 실패나 OOM
 ### Timeline PROCESSING stuck
 
 Overview의 stuck count와 Timeline workflow/callback, Redis target 상태를 함께 본다. 이 값은 90초를 넘고
-3분 TTL 만료 전인 PROCESSING task만 센다. gauge 조회가 만료 구간(`score <= now-3m`) member를 index에서
+PROCESSING TTL(5분) 만료 전인 PROCESSING task만 센다. gauge 조회가 만료 구간(`score <= now-5m`) member를 index에서
 먼저 제거하고, task JSON 저장과 보조 sorted-set index 갱신은 원자적이며 terminal 전이 때 index에서
-제거된다. 경보 창이 90초(90s~3m)로 짧아 stuck rule은 전용 30초 group(`laimory-lifecycle-stuck`)에서
+제거된다. 결과·실패 보고가 없는 task는 처리 기한(3분)의 유실 처리가 FAILED로 종결해 빠지므로 경보 창은 보통
+90초(90s~3m)이고, 유실 처리가 없거나 건너뛴 task(만료 알림 유실, 기록 소비 뒤 callback 없음)만 5분까지 잡힌다.
+창이 짧아 stuck rule은 전용 30초 group(`laimory-lifecycle-stuck`)에서
 pending 없이(`for: 0s`) 즉시 발화한다 — resolve도 그만큼 빠르므로 지나간 발화는 Grafana alert
 history로 확인한다.
 
 draft POST가 dispatch 실패 502(-1009)를 반환한 경우에도 접수 여부 불명(UNKNOWN)이면 기존 PROCESSING
-task가 남아 stuck에 잡힐 수 있다 — 3분 안에 AI callback이 오면 terminal로 빠지고, callback 없이 만료되면
-FAILED 전이 없이 사라져 이후 폴링·콜백은 404(-1001)다. Redis 장애 시 gauge는 NaN이 되고 별도 Redis
+task가 남아 stuck에 잡힐 수 있다 — 3분 안에 AI callback이 오면 terminal로 빠지고, 보고 없이 처리 기한(3분)이
+지나면 유실 처리가 환불하고 FAILED(-1008)로 종결한다. 유실 처리마저 없으면 5분에 FAILED 전이 없이 사라져 이후
+폴링·콜백은 404(-1001)다. Redis 장애 시 gauge는 NaN이 되고 별도 Redis
 target alert가 원인을 알린다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
 
 ### Credit CHARGED stale

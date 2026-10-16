@@ -55,10 +55,10 @@ import org.springframework.stereotype.Service;
  *
  * <p>⚠️ 단계 순서가 load-bearing이다: DailyRecord 선생성 + source 저장을 <b>먼저 커밋</b>한 뒤 Redis에
  * PROCESSING을 기록하고, 마지막에 AI에 dispatch한다 — AI의 서버간 입력 조회가 선생성 record와 source를
- * 읽으므로 dispatch 시점에 두 데이터가 모두 commit돼 있어야 한다. Redis 저장 실패 시 source rows는 보상 삭제하되
- * DailyRecord는 지우지 않는다 — 이번 task가 처음 만든 record인지 durable하게 알 수 없고, 같은 날짜 기존
- * DRAFT를 잘못 지우는 것보다 empty DRAFT를 재사용하는 것이 안전하다(실패 task의 empty DRAFT는 같은 날짜
- * 재시도가 재사용하며 자동 cleanup하지 않는다).
+ * 읽으므로 dispatch 시점에 두 데이터가 모두 commit돼 있어야 한다. Redis 저장 실패·dispatch 거절로 생성을 시작하지
+ * 못하면 source rows를 보상 삭제(Redis 실패만)하고, record가 활성 Event 없는 DRAFT면 {@code ai_failed}로 soft
+ * delete한다(#593) — append UX가 없어 빈 DRAFT는 재사용할 일이 없으므로 이번 task가 처음 만든 record인지는 따지지 않고,
+ * Event가 있는 DRAFT·SAVED는 조건에서 빠져 남는다.
  *
  * <p>크레딧은 선생성 transaction이 요청 시점에 차감한다(#565). commit 뒤 유실 타이머를 건 다음 PROCESSING을
  * 기록하며, 둘 중 하나라도 실패하거나 AI가 dispatch를 거절하면(미접수 확정) 응답 전에 환불하고 타이머를 지운다.
@@ -191,7 +191,7 @@ public class TimelineDraftTaskService {
                 taskId, subjectId, recordDate, recordAt, recordTimeZone, rows);
 
         // 2. 유실 타이머 + Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
-        //    실패하면 이번 task의 source rows를 보상 삭제하고 환불한 뒤 전파한다(DailyRecord는 유지 — 클래스 주석 참고).
+        //    실패하면 이번 task의 source rows를 보상 삭제하고 환불·빈 DRAFT soft delete 뒤 전파한다(클래스 주석 참고).
         //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다.
         Instant processingStartedAt = clock.instant();
         try {
@@ -202,6 +202,7 @@ public class TimelineDraftTaskService {
         } catch (RuntimeException e) {
             timelineDraftSourceItemService.deleteByTaskId(taskId);
             refundAndCancelTimerQuietly(taskId, CreditRefundReason.TASK_SAVE_FAILED);
+            softDeleteFailedDraftQuietly(taskId, dailyRecordId);
             throw e;
         }
 
@@ -218,20 +219,21 @@ public class TimelineDraftTaskService {
             // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
             log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
             refundAndCancelTimerQuietly(taskId, CreditRefundReason.DISPATCH_REJECTED);
+            softDeleteFailedDraftQuietly(taskId, dailyRecordId);
             try {
                 timelineTaskService.markFailed(
                         taskId, subjectId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
             } catch (RuntimeException saveFailure) {
                 // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
-                // PROCESSING으로 남았다면 최초 3분 TTL이 회수한다.
+                // PROCESSING으로 남았다면 최초 PROCESSING TTL(5분)이 회수한다.
                 log.warn("timeline ai dispatch rejected, markFailed also failed (task state unknown): taskId={}",
                         taskId, saveFailure);
             }
             throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
-            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING(최초 3분 TTL)을 그대로 둔다.
-            // AI callback 또는 TTL 만료가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
+            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING을 그대로 둔다.
+            // AI callback 또는 유실 타이머 만료(처리 기한 3분)가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
             // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·유실 타이머 만료가 환불한다.
             log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
                     taskId, e.getMessage());
@@ -252,6 +254,16 @@ public class TimelineDraftTaskService {
         } catch (RuntimeException e) {
             log.warn("timeline credit refund or timer cancel failed (타이머가 남았으면 만료가 환불): taskId={}",
                     taskId, e);
+        }
+    }
+
+    /** 생성을 시작하지 못한 task의 빈 DRAFT를 정리한다. 원래 실패를 덮지 않도록 실패는 로그만 남긴다(빈 DRAFT 잔존). */
+    private void softDeleteFailedDraftQuietly(String taskId, long dailyRecordId) {
+        try {
+            dailyRecordService.softDeleteFailedDraft(dailyRecordId);
+        } catch (RuntimeException e) {
+            log.warn("failed draft soft delete failed (빈 DRAFT 잔존): taskId={} dailyRecordId={}",
+                    taskId, dailyRecordId, e);
         }
     }
 

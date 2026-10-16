@@ -77,7 +77,7 @@ Content-Type: application/json
 - 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
   pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
   runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
-- 접수 대기 상한은 SDK `apiCallTimeout`(7s)·`apiCallAttemptTimeout`(5s)이 소유하며 PROCESSING TTL의
+- 접수 대기 상한은 SDK `apiCallTimeout`(7s)·`apiCallAttemptTimeout`(5s)이 소유하며 처리 기한(3분)의
   절반보다 짧다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
 - 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
   §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
@@ -107,7 +107,7 @@ INPUT_PENDING
 - token hash+stage 교체는 native `SET XX KEEPTTL`, terminal 전이는 native `SET XX PX 24h`다 — timeline
   task에 Lua script는 없다. `XX`는 key 존재만 보고 값을 비교하지 않으므로 잘못된 요청 차단은 write 전
   token/status/stage 검증이 담당하고, missing task는 write에 실패해(404) 만료 task를 부활시키지 않는다.
-  `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 3분 만료 시각을 연장하지 않는다. 이 계약은 통제된
+  `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 저장이 정한 만료 시각(5분)을 연장하지 않는다. 이 계약은 통제된
   단일·순차 AI writer의 timeout 재시도(첫 재시도 약 3.5초 뒤)를 보장 대상으로 하며, 같은 task/token
   요청 둘을 첫 state write 전에 실제 동시 실행하는 경우는 last-write-wins로 수용한다. processing
   index는 보조 데이터로 최초 PROCESSING 생성과 terminal 전이에서만 갱신하고, 실패는 같은 의도의 명령을
@@ -225,7 +225,7 @@ clamp한다.
 재시도 창은 `app.ai.retry-window`(기본 15s)이며 **첫 요청이 서버에 도착한 시각** 기준 절대 마감이다.
 최초 시작 기준으로 고정된 PROCESSING TTL과 마찬가지로 재발급으로 미끄러지지 않는다. AI 재시도 예산
 (시도당 timeout 3s·첫 backoff 0.5s·최대 3회 — 첫 재시도 약 3.5초 뒤, 실패 확정 약 10.5초)보다 크고
-PROCESSING TTL(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
+처리 기한(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
 
 ### 5. 상태 Callback (AI → API)
 
@@ -239,7 +239,7 @@ Task-Token: <taskToken>
 - FAILED는 결과 저장 전인 `INPUT_PENDING`/미선점 `RESULT_PENDING`에서만 허용한다 — 결과 선점
   (`RESULT_PENDING` + `claimedAt`) 중에는 409 `-1017`이다. 아직 살아 있는 transaction의 commit 회전·선점
   해제(`SET XX`)보다 terminal을 먼저 확정하면 terminal 위에 PROCESSING이 되쓰이기 때문이며, 선점 뒤
-  crash한 task는 기존 계약대로 TTL 만료(404)로 끝난다.
+  commit 전에 crash한 task는 처리 기한(3분)의 유실 처리가 환불·FAILED로 종결한다.
 - terminal task의 같은 callback 재전송은 200, 상충 결과는 409 `-1017`이다.
 - terminal write(`SET XX PX 24h`)에 성공한 요청만 완료 push를 예약한다 — write 시점 만료(`XX=false`)는
   404이고 index 제거·push를 실행하지 않는다.
@@ -384,18 +384,24 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
 - 입력·결과 응답이 유실돼도 재시도 창 안의 재요청은 retry receipt로 복구된다 — 입력은 응답 재조립,
   결과는 새 callback token 재발급이며 graph는 중복되지 않는다.
 - 선점 뒤 **commit 전** 프로세스가 종료되면 stage가 `RESULT_PENDING`에 머물러 재요청이 409로 수렴하고
-  task는 PROCESSING TTL로 만료된다. 잘못된 멱등 성공을 만들지 않는 쪽이 우선이다.
+  task는 처리 기한(3분)의 유실 처리가 환불·FAILED로 종결한다. 잘못된 멱등 성공을 만들지 않는 쪽이 우선이다.
 - 창을 넘긴 재요청은 저장이 끝났더라도 401 `-1002`다. graph는 남아 일반 조회 경로로 보이므로 데이터
   손실이 아니라 task 종결 실패다.
 - 이 경로의 reconciliation과 자동 callback은 두지 않는 것이 수용된 MVP 한계다.
-- task 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다. 예외는 크레딧 유실 처리(#565)가 만료 직후
-  다시 기록한 FAILED다 — token hash가 없어 그 뒤 24시간 동안 늦게 온 입력·결과·callback은 401 `-1002`다
-  (이미 "만료·terminal 재요청"에 쓰는 응답이라 AI 쪽 처리 변경은 필요 없다).
-- PROCESSING TTL은 최초 PROCESSING 저장 기준 절대 3분이다 — token/stage 교체(`KEEPTTL`)가 연장하지 않는다. terminal TTL은 24시간이다.
+- 처리 기한(3분)까지 결과·실패 보고가 없으면 크레딧 유실 처리(#565·#593)가 환불하고 살아 있는 task를 FAILED(`-1008`)로
+  종결한다. 이 FAILED는 token hash를 보존한 일반 terminal이라 늦게 온 요청은 terminal task 규칙을 따른다 — 현재
+  token의 입력·결과는 409 `-1017`, 같은 FAILED callback은 200, SUCCESS callback은 409 `-1017`, 소비된 token은 401
+  `-1002`(모두 이미 terminal 재요청에 쓰는 응답이라 AI 쪽 처리 변경은 필요 없다). 결과 저장이 처리 기한 경계에서
+  선점 중이면 유실 처리가 이를 가려내지 않아 FAILED가 결과 저장의 token 회전으로 덮일 수 있다(AI 처리 실측 2분
+  이내라 수용).
+- task key 만료 뒤 어떤 서버간 요청도 404 `-1001`이며 task를 부활시키지 않는다. #593 전 유실 처리가 쓰던 token hash
+  없는 FAILED가 배포 전·롤링 배포 중 옛 서버에서 남아 있으면 그 24시간 동안 늦게 온 입력·결과·callback은 401 `-1002`다.
+- 처리 기한은 3분, PROCESSING TTL(task key 수명)은 최초 PROCESSING 저장 기준 절대 5분이다 — token/stage 교체(`KEEPTTL`)가
+  연장하지 않는다. terminal TTL은 24시간이다.
 
 ## Current Implementations
 
-- `noop`: dispatch하지 않아 PROCESSING task가 TTL로 만료된다.
+- `noop`: dispatch하지 않아 PROCESSING task가 처리 기한에 유실 처리로 FAILED가 된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
 - `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
@@ -435,10 +441,11 @@ timeout이 소유한다.
 ## Known Gaps
 
 - AI endpoint service authentication 미구현(이슈 #181).
-- 선점과 DB commit **사이** 장애는 stage가 `RESULT_PENDING`에 머물러 복구되지 않는다(재요청 409 → TTL
-  만료). commit 이후 구간은 재시도 창 안에서 재시도 안전하다. 어느 쪽도 자동 reconciliation·redispatch는
+- 선점과 DB commit **사이** 장애는 stage가 `RESULT_PENDING`에 머물러 복구되지 않는다(재요청 409 → 처리 기한의
+  유실 처리가 환불·FAILED 종결). commit 이후 구간은 재시도 창 안에서 재시도 안전하다. 어느 쪽도 자동 reconciliation·redispatch는
   없다.
-- 프로세스 즉사로 선점 receipt가 남으면 그 task의 재요청이 409로 막힌 채 TTL까지 간다(takeover 규칙 없음).
+- 프로세스 즉사로 선점 receipt가 남으면 그 task의 재요청이 409로 막힌 채 처리 기한의 유실 처리(commit 전)나 PROCESSING TTL 만료(commit 뒤 — 기록 소비)까지
+  간다(takeover 규칙 없음).
 - dev 동기 테스트(§7) 경로의 호출자 인증 미구현 — 켠 환경에서 무인증 호출이 가능하다. 노출 통제는
   기본 off 스위치 하나뿐이라 **prod에서 켜면 안 된다**.
 

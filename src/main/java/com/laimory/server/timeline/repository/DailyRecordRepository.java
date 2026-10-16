@@ -129,4 +129,24 @@ public interface DailyRecordRepository extends JpaRepository<DailyRecord, Long> 
             + "set r.deletedAt = :now, r.emotionType = null, r.updatedAt = :now "
             + "where r.dailyRecordId = :dailyRecordId and r.deletedAt is null")
     int softDelete(@Param("dailyRecordId") Long dailyRecordId, @Param("now") LocalDateTime now);
+
+    /**
+     * 실패한 draft task가 남긴 빈 DRAFT를 soft delete하고 {@code modified_by}에 삭제 주체를 남긴다(#593 — 사용자 삭제와
+     * 구분). 활성 Event가 없는 DRAFT만 조건에 걸리므로 SAVED·결과가 들어간 DRAFT·이미 삭제된 행은 0을 반환한다.
+     * 감정은 DRAFT라 원래 NULL이고 지울 Event도 없다. 호출부가 transaction 밖이라 자체 transaction으로 실행하며,
+     * {@code markSaved}와 같은 이유로 {@code updated_at}을 직접 채운다.
+     */
+    @Modifying
+    @Transactional
+    @Query("update DailyRecord r "
+            + "set r.deletedAt = :now, r.updatedAt = :now, r.modifiedBy = :modifiedBy "
+            + "where r.dailyRecordId = :dailyRecordId and r.status = :draft and r.deletedAt is null "
+            + "and not exists (select 1 from TimelineEvent e "
+            + "where e.dailyRecordId = r.dailyRecordId and e.deletedAt is null)")
+    int softDeleteEmptyDraft(@Param("dailyRecordId") Long dailyRecordId, @Param("now") LocalDateTime now,
+                             @Param("modifiedBy") String modifiedBy, @Param("draft") DailyRecordStatus draft);
+
+    default int softDeleteEmptyDraft(Long dailyRecordId, LocalDateTime now, String modifiedBy) {
+        return softDeleteEmptyDraft(dailyRecordId, now, modifiedBy, DailyRecordStatus.DRAFT);
+    }
 }

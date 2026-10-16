@@ -4,6 +4,7 @@ import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -89,9 +90,9 @@ class TimelineDraftTaskTest {
     }
 
     @Test
-    void lostFailed_hasOwnerAndErrorWithoutRecordOrTokenHash() {
-        // 유실 처리는 task 값이 사라진 뒤 FAILED를 다시 기록한다 — owner와 실패 코드만 있다(#565).
-        TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT_ID, -1008);
+    void failedWithoutRecordOrTokenHash_isAcceptedForLegacyLostFailed() {
+        // #593 전 유실 처리는 task 값이 사라진 뒤 FAILED를 다시 기록했다 — owner와 실패 코드만 있는 그 값을 읽는다(#565).
+        TimelineDraftTask lost = TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008);
 
         assertThat(lost.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(lost.subjectId()).isEqualTo(SUBJECT_ID);
@@ -101,9 +102,9 @@ class TimelineDraftTaskTest {
     }
 
     @Test
-    void lostFailed_matchesNoToken() {
+    void legacyLostFailed_matchesNoToken() {
         // 늦게 온 AI 요청은 어떤 token으로도 401로 끝난다 — 소비된 token 재시도 경로도 없다.
-        TimelineDraftTask lost = TimelineDraftTask.lostFailed(SUBJECT_ID, -1008);
+        TimelineDraftTask lost = TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008);
 
         assertThat(lost.matchesToken(TOKEN)).isFalse();
         assertThat(lost.matchesPreviousToken(TOKEN)).isFalse();

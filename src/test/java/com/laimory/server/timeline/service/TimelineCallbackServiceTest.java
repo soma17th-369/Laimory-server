@@ -21,6 +21,7 @@ import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.push.service.TimelineCompletionPushNotifier;
+import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.TaskTokens;
@@ -51,6 +52,8 @@ class TimelineCallbackServiceTest {
     private CreditService creditService;
     @Mock
     private TimelineTaskLossTimerService timelineTaskLossTimerService;
+    @Mock
+    private DailyRecordService dailyRecordService;
     @InjectMocks
     private TimelineCallbackService service;
 
@@ -131,6 +134,37 @@ class TimelineCallbackServiceTest {
     }
 
     @Test
+    void failedCallback_softDeletesEmptyDraftAfterRefundBeforeTerminal() {
+        // 실패 push·폴링을 받는 시점에 그 날짜는 이미 없는 기록이어야 한다(#593).
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
+
+        InOrder order = inOrder(creditService, dailyRecordService, timelineTaskService, timelineCompletionPushNotifier);
+        order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+        order.verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+        order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
+        order.verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+    }
+
+    @Test
+    void failedCallback_draftDeleteFailure_propagatesWithoutTerminalWrite() {
+        // 삭제가 실패하면 환불처럼 500으로 AI 재전송에 맡긴다 — 재전송은 끝난 환불을 건너뛰고 삭제만 다시 시도한다.
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        doThrow(new IllegalStateException("db down")).when(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+
+        assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(timelineTaskService, never()).markFailedIfPresent(anyString(), any(), any());
+        verifyNoInteractions(timelineCompletionPushNotifier);
+    }
+
+    @Test
     void failedCallback_refundFailure_propagatesWithoutTerminalWrite() {
         // 환불이 실패하면 500으로 AI 재전송에 맡긴다 — task는 PROCESSING으로 남아 재전송이 다시 환불을 시도한다.
         TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
@@ -148,7 +182,7 @@ class TimelineCallbackServiceTest {
     @Test
     void callbackOnLostFailedTask_returns401() {
         // 유실 처리가 다시 기록한 FAILED에는 token hash가 없다 — 늦게 온 callback은 같은 FAILED라도 401이다(#565).
-        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTask.lostFailed(SUBJECT_ID, -1008)));
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(TimelineDraftTaskFixtures.legacyLostFailed(SUBJECT_ID, -1008)));
 
         assertThatThrownBy(() -> service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed()))
                 .isInstanceOfSatisfying(BusinessException.class,

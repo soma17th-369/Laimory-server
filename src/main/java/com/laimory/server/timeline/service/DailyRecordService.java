@@ -21,6 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DailyRecordService {
 
+    /** AI 실패 정리가 남기는 {@code modified_by} 값 — 사용자 삭제(NULL)와 구분한다. */
+    static final String AI_FAILED_DELETER = "ai_failed";
+
     private final DailyRecordRepository dailyRecordRepository;
     private final Clock clock;
 
@@ -85,6 +88,15 @@ public class DailyRecordService {
      */
     public int softDelete(Long dailyRecordId, LocalDateTime now) {
         return dailyRecordRepository.softDelete(dailyRecordId, now);
+    }
+
+    /**
+     * 실패한 draft task의 record가 활성 Event 없는 DRAFT면 {@code modified_by='ai_failed'}로 soft delete하고 실제로
+     * 삭제 표시한 행 수를 반환한다(0 = SAVED·Event 있음·이미 삭제됨). append UX가 없어 빈 DRAFT는 쓸모가 없으므로 이번
+     * task가 처음 만든 record인지는 따지지 않는다(#593).
+     */
+    public int softDeleteFailedDraft(Long dailyRecordId) {
+        return dailyRecordRepository.softDeleteEmptyDraft(dailyRecordId, LocalDateTime.now(clock), AI_FAILED_DELETER);
     }
 
     /**

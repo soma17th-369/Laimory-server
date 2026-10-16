@@ -142,6 +142,8 @@ class TimelineAiTaskFlowIntegrationTest {
             dailyRecordRepository.deleteById(record.getDailyRecordId());
             timelineItemRepository.deleteAllByIdInBatch(itemIds);
         });
+        // 실패 정리가 soft delete한 빈 DRAFT(#593)는 위 활성 조회에 잡히지 않는다 — Event가 없어 record만 지우면 된다.
+        jdbcTemplate.update("DELETE FROM daily_records WHERE subject_id = ?", SUBJECT_ID.toString());
         createdTaskIds.forEach(id -> {
             draftSourceItemService.deleteByTaskId(id);
             // redis는 RedisGateway → 환경 prefix는 내부에서 자동 부착(논리 키만 넘김).
@@ -449,7 +451,7 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
-    void failedCallbackWithResultStageToken_keepsEmptyDraftAndSources() {
+    void failedCallbackWithResultStageToken_softDeletesEmptyDraftAndKeepsSources() {
         String taskId = createDraft(sources());
         String taskToken = capturedRequest().taskToken();
         String resultToken = inputService.getInput(VERSION, taskId, taskToken).taskToken();
@@ -460,8 +462,8 @@ class TimelineAiTaskFlowIntegrationTest {
         DraftTaskStatusResponse status = pollingService.poll(VERSION, SUBJECT_ID, taskId);
         assertThat(status.status()).isEqualTo(TaskStatus.FAILED);
         assertThat(status.error()).isEqualTo(-1008);
-        // empty DRAFT는 삭제하지 않는다 — 같은 날짜 재시도가 재사용한다. source는 retention cleanup 대상.
-        assertThat(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).isPresent();
+        // 빈 DRAFT는 ai_failed로 soft delete된다(#593 — append UX가 없어 재사용하지 않는다). source는 retention cleanup 대상.
+        assertThat(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).isEmpty();
         assertThat(draftSourceItemService.findByTaskId(taskId)).isNotEmpty();
 
         // 같은 FAILED 재전송은 성공, 상충 결과(SUCCESS)는 -1017이다.
@@ -545,6 +547,23 @@ class TimelineAiTaskFlowIntegrationTest {
 
         assertThat(remainingCredits()).isEqualTo(60);
         assertThat(historyStatus(taskId)).isEqualTo("REFUNDED");
+    }
+
+    @Test
+    void failedCallbackSoftDeletesEmptyDraftAsAiFailed() {
+        // 실패한 날짜는 없는 기록이 된다 — 같은 날짜 조회에서 사라지고 행에는 삭제 주체 ai_failed가 남는다(#593).
+        String taskId = createDraft(sources());
+        long recordId = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow()
+                .getDailyRecordId();
+        DraftTaskCallbackRequest failed = new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "inference failed");
+
+        callbackService.handleCallback(VERSION, taskId, capturedRequest().taskToken(), failed);
+
+        assertThat(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).isEmpty();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT modified_by FROM daily_records WHERE daily_record_id = ? AND deleted_at IS NOT NULL",
+                String.class, recordId)).isEqualTo("ai_failed");
+        assertThat(taskService.find(taskId).orElseThrow().status()).isEqualTo(TaskStatus.FAILED);
     }
 
     @Test

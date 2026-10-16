@@ -318,7 +318,7 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenRedisFails_compensatesByDeletingSourcesButKeepsRecord() {
+    void createDraftTask_whenRedisFails_compensatesByDeletingSourcesAndSoftDeletingEmptyDraft() {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("redis down"))
                 .when(timelineTaskService).createProcessing(anyString(), any(), anyLong(), any(), any(), any());
@@ -327,9 +327,10 @@ class TimelineDraftTaskServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("redis down");
 
-        // 보상 삭제: 이번 task의 source rows만 지운다. DailyRecord는 유지 — 이번 task가 처음 만든 record인지
-        // durable하게 알 수 없고, empty DRAFT 재사용이 안전하다. dispatch는 호출되지 않는다.
+        // 보상 삭제: 이번 task의 source rows를 지우고, record가 활성 Event 없는 DRAFT면 ai_failed로 soft delete한다(#593 —
+        // append UX가 없어 빈 DRAFT는 쓸모가 없다). 사용자 삭제 경로(softDelete)는 쓰지 않는다. dispatch는 호출되지 않는다.
         verify(timelineDraftSourceItemService).deleteByTaskId(anyString());
+        verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
         verify(dailyRecordService, never()).softDelete(anyLong(), any());
         verify(timelineAiDispatcher, never()).dispatch(any());
     }
@@ -469,6 +470,31 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
+    void createDraftTask_whenDispatchRejected_softDeletesEmptyDraft() {
+        // 미접수 확정 — 생성이 시작되지 않았으므로 빈 DRAFT를 정리한다(#593).
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
+
+        verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+    }
+
+    @Test
+    void createDraftTask_whenDraftSoftDeleteFails_keepsOriginal1009() {
+        // 정리 실패는 로그만 남긴다 — 원래 실패(502 -1009)를 덮지 않는다.
+        when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchRejectedException("4xx", null)).when(timelineAiDispatcher).dispatch(any());
+        doThrow(new IllegalStateException("db down")).when(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
+
+        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
+    }
+
+    @Test
     void createDraftTask_whenDispatchOutcomeUnknown_keepsChargeAndTimer() {
         // AI가 접수했을 수 있다 — 결과 저장이 확정하거나 FAILED callback·타이머 만료가 환불한다(#565).
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
@@ -480,6 +506,8 @@ class TimelineDraftTaskServiceTest {
 
         verify(creditService, never()).refund(any(), anyString(), any());
         verify(timelineTaskLossTimerService, never()).cancel(anyString());
+        // AI가 접수했을 수 있어 record도 남긴다 — FAILED callback·유실 처리가 정리한다.
+        verify(dailyRecordService, never()).softDeleteFailedDraft(anyLong());
     }
 
     /** 선생성 transaction에 넘긴 taskId — 실패 경로는 응답에 taskId가 없어 여기서 꺼낸다. */
