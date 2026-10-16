@@ -195,7 +195,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 60을 한 번 지급하고 충전 경로는 없다(평생 60). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — draft 요청 시 크레딧 비용만큼 조건부로 차감하고(잔액이 비용보다 적으면 403 `-1021`), 생성이 실패하면 환불한다(#565). 지급·조정까지 담는 범용 원장은 두지 않고 사용 1건당 크레딧 이력만 남긴다. |
+| 크레딧 | Credit | 현재 구현 | 기능 사용량을 제한하는 subject별 범용 재화다(#548 — 타임라인 전용이 아니라 이름에 timeline을 넣지 않는다). 가입 transaction이 30을 한 번 지급하고 충전 경로는 없다(평생 지급량). 지급량이 60이던 시기의 가입자(V6 backfill 대상 포함)는 60을 받았고, 지급량 변경은 이미 행이 있는 subject의 잔액을 바꾸지 않는다(회수·재지급 없음). `subject_credits`(PK `subject_id`)에 subject당 1행이며 저장 컬럼은 `remaining`, 앱 응답 필드는 `remainingCredits`다(`GET /a/api/{version}/credit`). 현재 소비처는 타임라인 하나다 — draft 요청 시 크레딧 비용만큼 조건부로 차감하고(잔액이 비용보다 적으면 403 `-1021`), 생성이 실패하면 환불한다(#565). 지급·조정까지 담는 범용 원장은 두지 않고 사용 1건당 크레딧 이력만 남긴다. |
 | 크레딧 이력 | Credit History | 현재 구현 | 크레딧 사용 1건의 기록(#565, `credit_histories`·`CreditHistory`) — 무엇에 썼나(`cost_type`)와 대상 id(`reference_id`, 타임라인 생성이면 taskId), 차감한 양(`amount` — 환불액의 권위), 상태, 환불 사유를 담는다. 상태(`CreditHistoryStatus`): 차감됨 `CHARGED` → 소비됨 `CONSUMED`(결과 저장) 또는 환불됨 `REFUNDED`(생성 실패·유실), 전이는 한 번. 환불 사유(`CreditRefundReason`): `AI_FAILED`·`TIMEOUT`(유실)·`DISPATCH_REJECTED`·`TASK_SAVE_FAILED`. 범용 원장이 아니다. |
 | 크레딧 비용 | Credit Cost | 현재 구현 | 크레딧을 소비하는 기능 1회의 소비량이다(#555). DB `credit_costs`의 기능 종류(`CreditCostType`)별 행이 단일 기준이고(#558 — 현재 `TIMELINE_CREATION` = 1, 0은 무료), 공개 `GET /api/{version}/credit/costs`가 `{"timelineCreation": n}`로 앱에 알린다. 앱은 하드코딩하지 않으며 값 변경은 새 Flyway migration의 `UPDATE`로만 한다. |
 

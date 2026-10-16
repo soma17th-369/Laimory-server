@@ -36,7 +36,7 @@ public class NewUserProvisioner {
     private final CreditService creditService;
 
     /**
-     * user, subject mapping, subject 축 기본 설정, 빈 User Memory와 기본 크레딧(60)을 한 transaction에서 저장한다.
+     * user, subject mapping, subject 축 기본 설정, 빈 User Memory와 기본 크레딧(30)을 한 transaction에서 저장한다.
      * {@code saveAndFlush}로 insert를 즉시 flush해 UNIQUE 위반이 이 메서드 안에서 드러나게 한다
      * (commit 시점으로 미루지 않음).
      *

@@ -8,6 +8,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(description = "크레딧 조회 응답")
 public record CreditResponse(
-        @Schema(description = "남은 크레딧", example = "60", requiredMode = Schema.RequiredMode.REQUIRED)
+        @Schema(description = "남은 크레딧", example = "30", requiredMode = Schema.RequiredMode.REQUIRED)
         int remainingCredits) {
 }

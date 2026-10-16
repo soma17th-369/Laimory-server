@@ -43,8 +43,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CreditService {
 
-    /** 가입 시 지급하는 크레딧. 평생 지급량이며 충전 경로는 없다. */
-    static final int DEFAULT_CREDITS = 60;
+    /**
+     * 가입 시 지급하는 크레딧. 평생 지급량이며 충전 경로는 없다. 행 생성이 insert-if-absent라 이 값을 바꿔도
+     * 이미 행이 있는 subject의 잔액은 바뀌지 않는다 — 60이던 시절의 가입자와 V6 backfill 대상은 60을 받았다.
+     */
+    static final int DEFAULT_CREDITS = 30;
 
     private final SubjectCreditRepository subjectCreditRepository;
     private final CreditCostRepository creditCostRepository;
