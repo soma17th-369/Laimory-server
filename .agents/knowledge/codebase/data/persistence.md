@@ -73,7 +73,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `subject_preferences → daily_notification_preferences` (#314·#318·#321·#382 — subject 축 설정 버킷이
   담은 예정 알림 마스터·앱 온보딩 완료 여부와 일일 알림의 ON/OFF·occurrence 스케줄 상태)
 - `subject_credits` (#548 — subject당 1행 크레딧 잔액 `remaining`, `CHECK (remaining >= 0)`, subject FK
-  `RESTRICT`, DB default 없음(기본 60의 권위는 `CreditService` 상수). 행은 가입 transaction과 V6 backfill만
+  `RESTRICT`, DB default 없음(가입 지급량 30의 권위는 `CreditService` 상수 — V6 backfill은 당시 값 60을 사본으로 넣었다). 행은 가입 transaction과 V6 backfill만
   만들고, 쓰기는 draft 선생성 transaction의 조건부 차감 UPDATE(`remaining >= 비용`, #565)·환불 증가 UPDATE와 탈퇴
   삭제(#302)뿐이다. V6에서 추가)
 - `credit_histories` (#565 — 크레딧 사용 1건당 1행 상태 전이 기록. 대상은 `(cost_type, reference_id)` UNIQUE

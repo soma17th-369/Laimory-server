@@ -26,7 +26,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface CreditApi {
 
     @Operation(summary = "내 크레딧 조회",
-            description = "남은 크레딧을 반환한다. 가입 시 60을 한 번 지급하며 충전 경로는 없다. 타임라인은 AI "
+            description = "남은 크레딧을 반환한다. 가입 시 30을 한 번 지급하며 충전 경로는 없다"
+                    + "(지급량이 60이던 시기의 가입자는 60을 받았다). 타임라인은 AI "
                     + "결과가 저장될 때 생성 비용(`GET /api/{version}/credit/costs`)만큼 차감된다(결과가 저장되지 않은 "
                     + "생성은 차감 없음 — draft 응답이 502였거나 폴링이 끝나기 전에 작업이 만료돼도 결과가 저장됐다면 "
                     + "차감된다). 잔액이 비용보다 적으면 타임라인 draft 생성이 403 `-1021`로 거절된다. 행 생성은 가입 transaction과 rollout backfill이 소유하며, "
