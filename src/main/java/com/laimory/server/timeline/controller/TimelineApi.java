@@ -3,6 +3,8 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
+import com.laimory.server.timeline.dto.CheckDraftRequest;
+import com.laimory.server.timeline.dto.CheckDraftResponse;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
@@ -34,7 +36,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Draft", description = "타임라인 draft 작성 작업 — 생성·폴링·사진 업로드 URL 발급")
+@Tag(name = "Timeline Draft", description = "타임라인 draft 작성 작업 — 생성 가능 확인·생성·폴링·사진 업로드 URL 발급")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline/drafts")
 public interface TimelineApi {
@@ -181,6 +183,30 @@ public interface TimelineApi {
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),
                             examples = @ExampleObject(name = "6개 itemType 전체 예시", value = CREATE_DRAFT_EXAMPLE)))
             @RequestBody CreateDraftTaskRequest request);
+
+    @Operation(summary = "타임라인 생성 가능 확인",
+            description = "draft 생성에 보낼 sourceItems를 판정에 필요한 필드(itemType·startAt·endAt)만 남겨 받아, "
+                    + "그 기록만으로 타임라인을 만들 수 있는지 body.creatable로 알려 준다. 클라이언트는 false면 생성 버튼을 "
+                    + "비활성화한다. 다음 중 하나라도 맞으면 true다: PHOTO 또는 CALENDAR 1개 이상 · 위치 시간 30분 초과 · "
+                    + "NOTIFICATION 3건 이상 · 위치 시간 20분 이상이면서 NOTIFICATION 1건 이상. "
+                    + "위치 시간은 STAY·MOVEMENT의 `endAt - startAt` 합이며 endAt이 없거나 startAt보다 앞서면 0분으로 센다. "
+                    + "HEALTH는 판정에 쓰지 않는다. 빈 배열은 false다. "
+                    + "받은 목록만 보며 같은 날 이미 저장된 item·SAVED 여부·크레딧은 보지 않는다. "
+                    + "저장·크레딧 차감·지오코딩·AI 요청이 없어 반복 호출해도 안전하다. "
+                    + "draft 생성 API는 이 판정을 강제하지 않는다. payload 등 다른 필드는 보내지 않는다(보내도 무시).")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "판정 성공 — body.creatable", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — sourceItems 누락(null), null 원소, itemType·startAt 누락, 시각 형식 오류"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+    })
+    @PostMapping("/check")
+    ResponseEntity<ApiResponse<CheckDraftResponse>> checkDraft(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @RequestBody CheckDraftRequest request);
 
     @Operation(summary = "사진 업로드 URL 발급",
             description = "업로드할 사진 목록(contentType·size)을 받아 S3 presigned PUT URL을 발급한다. "
