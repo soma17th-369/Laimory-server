@@ -1,7 +1,10 @@
 package com.laimory.server.config;
 
 import com.laimory.server.agentcore.AgentCoreProperties;
+import com.laimory.server.agentcore.AgentCoreTimelineAiDispatcher;
+import com.laimory.server.agentcore.AgentCoreUserMemoryUpdateDispatcher;
 import com.laimory.server.timeline.service.TimelineTaskService;
+import com.laimory.server.timeline.service.UserMemoryUpdateWorker;
 import java.time.Duration;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,18 +29,14 @@ import software.amazon.awssdk.services.bedrockagentcore.BedrockAgentCoreClient;
  * 멱등이 아니라 같은 {@code taskId}가 두 번 접수돼 AI가 중복 작업을 시작할 수 있으므로
  * {@link AwsRetryStrategy#doNotRetry()}로 봉인한다.
  *
- * <p>timeout은 HTTP mode의 접수 대기(connect 2s + read 5s)와 같은 크기로 고정한다 — 접수는 즉시 반환
- * 계약이고, 대기 상한이 처리 기한(3분)의 절반에 근접하면 유효한 ack를 받고도 이미 실패 처리된
- * taskId를 받게 된다. 이 불변식은 아래에서 기동 시 강제한다.
+ * <p>ack 대기 timeout은 client에 두지 않는다 — client 하나를 draft와 User Memory가 공유하는데 기다릴 수 있는
+ * 시간이 흐름마다 다르다(사용자 요청 스레드 대 배치 스레드). 각 dispatcher가 자기 값을 요청마다 건다(#600).
+ * 대기 상한이 처리 기한(3분)의 절반에 근접하면 유효한 ack를 받고도 이미 실패 처리된 taskId를 받게 되므로,
+ * 두 값 모두 그 절반 미만인지 아래에서 기동 시 강제한다.
  */
 @Configuration
 @ConditionalOnProperty(name = "app.ai.mode", havingValue = "agentcore")
 public class AgentCoreClientConfig {
-
-    /** 전체 호출(SDK 재시도 없음이므로 사실상 단일 시도)의 상한. */
-    static final Duration CALL_TIMEOUT = Duration.ofSeconds(7);
-    /** 개별 시도의 상한. */
-    static final Duration ATTEMPT_TIMEOUT = Duration.ofSeconds(5);
 
     /**
      * full Runtime ARN만 허용한다 — Runtime ID + account ID 조합은 대상이 애매해질 수 있어 쓰지 않는다
@@ -89,18 +88,23 @@ public class AgentCoreClientConfig {
         return BedrockAgentCoreClient.builder()
                 .region(Region.of(properties.region()))
                 .overrideConfiguration(override -> override
-                        .apiCallTimeout(CALL_TIMEOUT)
-                        .apiCallAttemptTimeout(ATTEMPT_TIMEOUT)
                         // 접수는 멱등이 아니다 — SDK 자동 재시도로 같은 taskId를 두 번 보내지 않는다.
                         .retryStrategy(AwsRetryStrategy.doNotRetry()))
                 .build();
     }
 
-    /** 접수 최대 대기가 처리 기한의 절반 미만인지 기동 시 강제한다(HTTP dispatcher와 같은 불변식). */
+    /** 흐름별 접수 최대 대기가 각 처리 기한의 절반 미만인지 기동 시 강제한다(HTTP dispatcher와 같은 불변식). */
     private static void requireAckWaitWithinTaskLifetime() {
-        if (CALL_TIMEOUT.compareTo(TimelineTaskService.PROCESSING_DEADLINE.dividedBy(2)) >= 0) {
-            throw new IllegalStateException(
-                    "AgentCore api-call-timeout(" + CALL_TIMEOUT + ")은 처리 기한의 절반보다 짧아야 합니다.");
+        requireAckWaitWithin("timeline", AgentCoreTimelineAiDispatcher.ACK_CALL_TIMEOUT,
+                TimelineTaskService.PROCESSING_DEADLINE);
+        requireAckWaitWithin("user-memory", AgentCoreUserMemoryUpdateDispatcher.ACK_CALL_TIMEOUT,
+                UserMemoryUpdateWorker.TASK_TTL);
+    }
+
+    private static void requireAckWaitWithin(String flow, Duration callTimeout, Duration taskLifetime) {
+        if (callTimeout.compareTo(taskLifetime.dividedBy(2)) >= 0) {
+            throw new IllegalStateException("AgentCore " + flow + " api-call-timeout(" + callTimeout
+                    + ")은 처리 기한의 절반보다 짧아야 합니다.");
         }
     }
 

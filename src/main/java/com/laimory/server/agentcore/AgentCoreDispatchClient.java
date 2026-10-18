@@ -5,6 +5,7 @@ import com.laimory.server.agentcore.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchResponse;
 import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -81,8 +82,11 @@ public class AgentCoreDispatchClient {
      *
      * @param sessionIdPrefix 흐름 구분 prefix — {@code prefix + taskId}가 runtime session id가 된다
      *                        (taskId는 난수 UUID라 사용자 원문·token이 섞이지 않는다)
+     * @param attemptTimeout  ack 대기의 시도 상한 — client를 두 흐름이 공유하므로 요청마다 흐름별 값을 건다(#600)
+     * @param callTimeout     ack 대기의 호출 전체 상한(SDK 재시도가 없어 사실상 단일 시도)
      */
-    void dispatch(AgentCoreDispatchRequest<?> wrapper, String taskId, String sessionIdPrefix) {
+    void dispatch(AgentCoreDispatchRequest<?> wrapper, String taskId, String sessionIdPrefix,
+                  Duration attemptTimeout, Duration callTimeout) {
         String sessionId = requireValidSessionId(sessionIdPrefix + taskId);
         InvokeAgentRuntimeRequest request = InvokeAgentRuntimeRequest.builder()
                 .agentRuntimeArn(properties.runtimeArn())
@@ -91,6 +95,9 @@ public class AgentCoreDispatchClient {
                 .contentType(CONTENT_TYPE)
                 .accept(CONTENT_TYPE)
                 .payload(serialize(wrapper, taskId))
+                .overrideConfiguration(override -> override
+                        .apiCallAttemptTimeout(attemptTimeout)
+                        .apiCallTimeout(callTimeout))
                 .build();
 
         Ack ack;

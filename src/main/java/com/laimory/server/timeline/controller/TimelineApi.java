@@ -138,8 +138,9 @@ public interface TimelineApi {
 
     @Operation(summary = "draft 작업 생성",
             description = "sourceItems(하루 기록 원천: 머문 곳·이동·사진·걸음 수·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
-                    + "AI 접수가 확인된 경우에만 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
-                    + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
+                    + "AI 접수가 확인됐거나 접수 결과를 알 수 없으면 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 "
+                    + "폴링해 결과를 조회한다(결과를 모를 때 AI가 끝내 받지 못했으면 폴링이 FAILED로 끝난다). "
+                    + "AI가 접수를 거절하면 502(-1009)이고 이때 응답에 taskId는 없다. "
                     + "각 sourceItem의 startAt은 필수이고 endAt은 nullable이다. "
                     + "HEALTH payload의 metric은 STEPS만 허용하며 다른 값은 저장·AI dispatch 전에 400으로 거절한다. "
                     + "지오코딩 대상 고유 좌표(rawId 중복 제거·이미 저장된 item 제외 뒤 STAY 좌표와 MOVEMENT "
@@ -169,7 +170,7 @@ public interface TimelineApi {
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`-1009`(AI 접수 실패 — AI가 거절했거나 접수 확인 불가. 응답에 taskId 없음) · "
+                    description = "`-1009`(AI가 접수를 거절함. 응답에 taskId 없음) · "
                             + "지오코딩 품질 기준 미달(고유 좌표 실패 20% 초과 또는 시간순 연속 실패 3개)이면 "
                             + "재시도 가능성으로 코드가 나뉜다 — "
                             + "`-1014`(전이적 실패 — 잠시 뒤 재시도로 해결될 수 있음) · "
