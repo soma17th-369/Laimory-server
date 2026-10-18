@@ -273,9 +273,9 @@ aggregation framework를 만들지 않는다).
 적으면 403 `-1021`(`INSUFFICIENT_CREDIT`)로 거절된다 — 현재 소비처는 타임라인 draft 생성 하나이며, 차감은 draft
 요청 시점이다(#565): `POST /a/api/{version}/timeline/drafts`가 202를 반환한 시점에 잔액은 이미 비용만큼 줄어 있다. 동시
 요청도 잔액을 넘지 못한다(잔액 1에서 두 날짜를 동시에 요청하면 하나는 403). 생성이 실패하면 돌려준다 — 폴링이
-FAILED면 이미 환불됐고, 502 `-1009`는 AI 미접수가 확정이면 응답 전에, 결과를 모르면(UNKNOWN) 결과가 오지 않을 때
-PROCESSING 시작 약 3분 뒤 환불된다(그때 FAILED 완료 push가 오고 폴링도 FAILED `-1008`). 앱은 502 직후 잔액을 단정하지 말고 다시
-조회한다. 유실 처리 전(만료 알림 지연 수 초) 폴링은 아직 PROCESSING이고, 처리가 빠진 경우 PROCESSING 시작 5분 뒤
+FAILED면 이미 환불됐고, 502 `-1009`는 AI 미접수가 확정된 경우뿐이라 응답 전에 환불된다. AI 접수 결과를 모르면(UNKNOWN)
+POST는 202와 taskId를 돌려주고(#600), 결과가 오지 않으면 PROCESSING 시작 약 3분 뒤 환불된다(그때 FAILED 완료 push가 오고
+폴링도 FAILED `-1008`). 유실 처리 전(만료 알림 지연 수 초) 폴링은 아직 PROCESSING이고, 처리가 빠진 경우 PROCESSING 시작 5분 뒤
 404 `-1001`이며 이것도 실패로 다룬다.
 
 `GET /api/{version}/credit/costs`(#555)는 작업별 크레딧 비용을 `{"timelineCreation": n}`로 반환하는 **공개**

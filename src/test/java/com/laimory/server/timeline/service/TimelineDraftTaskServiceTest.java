@@ -377,17 +377,16 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenDispatchOutcomeUnknown_keepsProcessingAndFailsWith1009() {
+    void dispatchOutcomeUnknownReturnsTaskIdAndKeepsProcessing() {
         // UNKNOWN(read timeout·5xx·계약 불일치 — Rejected가 아닌 예외) — AI가 이미 접수해 final write를 진행
-        // 중일 수 있으므로 FAILED로 덮거나 재저장(TTL 연장)하지 않고 기존 PROCESSING을 유지한 채
-        // 502(-1009)로 실패한다(AI callback 또는 TTL 만료가 종결).
+        // 중일 수 있으므로 FAILED로 덮거나 재저장(TTL 연장)하지 않고 기존 PROCESSING을 유지한다. 서버 상태가
+        // 정상 접수와 같으므로 응답도 같은 taskId다 — 결과는 폴링이 확인한다(AI callback 또는 유실 처리가 종결, #600).
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("read timeout")).when(timelineAiDispatcher).dispatch(any());
 
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
+        String taskId = service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()).taskId();
 
+        assertThat(taskId).isEqualTo(preparedTaskId());
         // 종결·재저장 없음: createProcessing은 최초 1회 그대로, markFailed 미호출.
         verify(timelineTaskService, times(1))
                 .createProcessing(anyString(), any(), anyLong(), any(), any(), any());
@@ -495,14 +494,12 @@ class TimelineDraftTaskServiceTest {
     }
 
     @Test
-    void createDraftTask_whenDispatchOutcomeUnknown_keepsChargeAndTimer() {
+    void dispatchOutcomeUnknownKeepsChargeAndTimer() {
         // AI가 접수했을 수 있다 — 결과 저장이 확정하거나 FAILED callback·타이머 만료가 환불한다(#565).
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         doThrow(new RuntimeException("read timeout")).when(timelineAiDispatcher).dispatch(any());
 
-        assertThatThrownBy(() -> service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        ex -> assertThat(ex.getErrorCode()).isEqualTo(-1009));
+        service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource());
 
         verify(creditService, never()).refund(any(), anyString(), any());
         verify(timelineTaskLossTimerService, never()).cancel(anyString());

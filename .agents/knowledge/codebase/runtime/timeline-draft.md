@@ -85,18 +85,18 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·callback 계약의 권위는 JSON이다.
 8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
    기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
-   (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며,
-   접수가 확인된 경우에만 POST가 202와 `taskId`를 반환한다.
-   **실패는 "미접수 확정 vs UNKNOWN"으로 내부 상태만 구분하고, 밖으로는 모두 502(`-1009`)다** —
-   실패 응답에 taskId는 없고 자동 재전송도 없다. 4xx 응답(미접수 확정,
+   (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며(AgentCore 대기 상한
+   attempt 5s / call 7s — 앱 draft POST 상한 10초 안에 dispatch 전 작업까지 넣는 값),
+   접수가 확인됐거나 결과를 모르면(UNKNOWN) POST가 202와 `taskId`를 반환한다(#600).
+   **502(`-1009`)는 미접수 확정뿐이다** — 이때 응답에 taskId는 없다. 자동 재전송은 없다. 4xx 응답(미접수 확정,
    `TimelineAiDispatchRejectedException`)은 먼저 차감을 환불(`DISPATCH_REJECTED`)하고 타이머를 지운 뒤
    실패 draft 정리(실패는 로그만)를 하고 FAILED(`-1009`, 24h) 종결을 시도하며, 그 저장까지 실패하면
    read-back·재저장 없이 상태를 불명으로 두고 같은 502로 끝낸다(500으로 전환하지 않음).
    read timeout·connect 실패·5xx·계약 불일치는 UNKNOWN이라 — AI가 이미 접수해 final write 중일 수
    있으므로 — FAILED로 덮거나 재저장(TTL 연장)하지 않고 PROCESSING을 유지하며 DailyRecord도 정리하지 않는다
    (AI callback이 종결하거나 처리 기한 3분의 유실 처리가 실패 처리). 차감도 그대로 둔다 — 결과 저장·FAILED
-   callback·유실 타이머 만료 중 하나가 정산한다.
-   502는 접수 확인 실패지 미접수 증명이 아니다.
+   callback·유실 타이머 만료 중 하나가 정산한다. 서버 상태가 정상 접수와 같으므로 응답도 202/`taskId`이고
+   (실패를 알린 뒤 결과가 생기는 불일치·재시도 이중 차감 방지), ERROR 로그를 남겨 ERROR 로그 경보로 운영자가 본다.
 
 같은 날짜의 draft, 수동 Event 생성/편집(non-empty `photosToAdd` 포함), Event/DailyRecord DELETE
 사이에는 공통 Redis admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 쓰지 않아

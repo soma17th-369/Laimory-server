@@ -101,9 +101,8 @@ public class TimelineDraftTaskService {
     /**
      * 작성 작업을 만들고 taskId를 담은 응답을 반환한다. recordDate는 클라이언트 선택 날짜를 계산 없이 그대로 쓴다.
      * 이미 SAVED인 daily record면 409(-1003), 기존 final rawId 제외 후 새 item이 없으면
-     * 409(-1013)로 거절한다. taskId는 dispatcher가 정상 반환(접수 확인)한 경우에만 반환하며,
-     * dispatch 실패는 내부 구분(미접수 확정 4xx → FAILED 종결 시도 / UNKNOWN → PROCESSING 유지)과
-     * 무관하게 502(-1009)로 실패한다 — 실패 응답에 taskId는 없다.
+     * 409(-1013)로 거절한다. dispatch가 미접수 확정(4xx)이면 FAILED 종결을 시도하고 502(-1009)로 실패한다 —
+     * 실패 응답에 taskId는 없다. 접수가 확인됐거나 결과를 모르면(UNKNOWN — PROCESSING 유지) taskId를 반환한다.
      */
     @WithSpan
     public CreateDraftTaskResponse createDraftTask(String applicationVersion, UUID subjectId, LocalDate recordDate,
@@ -208,9 +207,8 @@ public class TimelineDraftTaskService {
 
         // 3. AI dispatch — dailyRecordId·offset window는 유지하고 토큰 필드는 taskToken으로 통일한다.
         //    source item은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
-        //    dispatcher가 정상 반환(접수 확인)한 경우에만 202/taskId다. 실패는 내부 task 의미("미접수 확정
-        //    vs UNKNOWN")만 구분해 보존하고, 밖으로는 모두 502(-1009)로 던진다 — 응답·예외 인자에 taskId를
-        //    싣지 않으며(진단은 아래 로그가 담당), 자동 재전송도 하지 않는다.
+        //    미접수 확정(4xx 거절)만 502(-1009)로 던지고 응답·예외 인자에 taskId를 싣지 않는다(진단은 아래 로그가
+        //    담당). 접수 확인과 UNKNOWN은 둘 다 PROCESSING이 살아 있으므로 202/taskId다. 자동 재전송은 하지 않는다.
         try {
             timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
                     taskId, taskToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
@@ -233,11 +231,12 @@ public class TimelineDraftTaskService {
         } catch (RuntimeException e) {
             // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
             // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING을 그대로 둔다.
-            // AI callback 또는 유실 타이머 만료(처리 기한 3분)가 종결하며, draft도 보존한다 — 502는 접수 확인 실패지 미접수 증명이 아니다.
+            // AI callback 또는 유실 타이머 만료(처리 기한 3분)가 종결하며, draft도 보존한다.
             // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·유실 타이머 만료가 환불한다.
-            log.warn("timeline ai dispatch outcome unknown, keeping PROCESSING: taskId={} detail={}",
-                    taskId, e.getMessage());
-            throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
+            // 서버 상태가 정상 접수와 같으므로 응답도 202/taskId다 — 실패를 알린 뒤 결과가 생기는 불일치를 막고
+            // 사용자는 폴링으로 결과를 본다(#600). 운영자가 원인을 보도록 ERROR로 남긴다(ERROR 로그 경보 대상).
+            log.error("timeline ai dispatch outcome unknown, returning taskId and keeping PROCESSING: "
+                    + "taskId={} detail={}", taskId, e.getMessage());
         }
 
         return new CreateDraftTaskResponse(taskId);
