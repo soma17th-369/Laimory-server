@@ -165,6 +165,20 @@ class AgentCoreUserMemoryUpdateDispatcherTest {
     }
 
     @Test
+    void dispatch_bindsUserMemoryAckTimeoutsToRequest() {
+        // client 하나를 draft와 공유하므로 대기 상한은 요청마다 실려야 흐름별 값이 지켜진다(#600).
+        respondWith(202, "{\"taskId\":\"%s\",\"status\":\"PROCESSING\"}".formatted(TASK_ID));
+
+        dispatcher.dispatch(request());
+
+        var override = capturedRequest().overrideConfiguration().orElseThrow();
+        assertThat(override.apiCallAttemptTimeout())
+                .contains(AgentCoreUserMemoryUpdateDispatcher.ACK_ATTEMPT_TIMEOUT);
+        assertThat(override.apiCallTimeout())
+                .contains(AgentCoreUserMemoryUpdateDispatcher.ACK_CALL_TIMEOUT);
+    }
+
+    @Test
     void dispatch_taskIdMismatch_isUnknown() {
         respondWith(200, "{\"taskId\":\"other-task\",\"status\":\"PROCESSING\"}");
 

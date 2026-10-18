@@ -174,6 +174,19 @@ class AgentCoreTimelineAiDispatcherTest {
     }
 
     @Test
+    void dispatch_bindsTimelineAckTimeoutsToRequest() {
+        // client 하나를 User Memory와 공유하므로 대기 상한은 요청마다 실려야 흐름별 값이 지켜진다(#600).
+        respondWith(202, ackBody(TASK_ID, "PROCESSING"));
+
+        dispatcher.dispatch(request());
+
+        var override = capturedRequest().overrideConfiguration().orElseThrow();
+        assertThat(override.apiCallAttemptTimeout())
+                .contains(AgentCoreTimelineAiDispatcher.ACK_ATTEMPT_TIMEOUT);
+        assertThat(override.apiCallTimeout()).contains(AgentCoreTimelineAiDispatcher.ACK_CALL_TIMEOUT);
+    }
+
+    @Test
     void dispatch_acceptedAck_doesNotThrowAndDoesNotLogToken() {
         respondWith(202, ackBody(TASK_ID, "PROCESSING"));
 

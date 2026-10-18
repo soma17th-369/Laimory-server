@@ -52,7 +52,7 @@ Content-Type: application/json
   서버는 Redis task에 SHA-256 hash만 저장한다.
 - 접수 성공은 `202 Accepted` + `{"taskId":<동일>,"status":"PROCESSING"}`다.
 - dispatcher는 4xx만 미접수 확정으로 분류한다. 비202·계약 불일치·타임아웃·5xx·전송 실패는 접수 불명이라
-  PROCESSING을 유지하고 draft POST는 502 `-1009`로 끝난다.
+  PROCESSING을 유지하고 draft POST는 202 + taskId로 끝난다(#600 — 결과는 폴링, 미접수 확정 4xx만 502 `-1009`).
 - AI endpoint 자체 service authentication은 아직 없다(private network 전제).
 
 ### 1a. AgentCore transport (`app.ai.mode=agentcore`)
@@ -77,8 +77,9 @@ Content-Type: application/json
 - 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
   pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
   runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
-- 접수 대기 상한은 SDK `apiCallTimeout`(7s)·`apiCallAttemptTimeout`(5s)이 소유하며 처리 기한(3분)의
-  절반보다 짧다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
+- 접수 대기 상한은 흐름별로 dispatcher가 요청마다 건다(#600 — client 하나를 공유하므로 client 기본값은 없다):
+  timeline `apiCallAttemptTimeout` 5s·`apiCallTimeout` 7s(사용자 요청 스레드, 앱 draft POST 상한 10초 안),
+  User Memory 15s·20s(배치 스레드, 새 session cold start 흡수). 둘 다 각 처리 기한(3분)의 절반보다 짧아야 기동한다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
 - 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
   §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
 

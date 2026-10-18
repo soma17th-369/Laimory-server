@@ -33,6 +33,7 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.PhotoUploadService;
+import com.laimory.server.timeline.service.TimelineDraftCheckService;
 import com.laimory.server.timeline.service.TimelineDraftTaskListService;
 import com.laimory.server.timeline.service.TimelineDraftTaskPollingService;
 import com.laimory.server.timeline.service.TimelineDraftTaskService;
@@ -56,7 +57,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 공개 컨트롤러 슬라이스 테스트(MockMvc). 상태 매핑(202/400/409/404)을 검증한다. 인프라 0.
  */
 @WebMvcTest(TimelineController.class)
-@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class})
+@Import({SecurityConfig.class, AuthTestSupport.JwtTokensTestConfig.class, TimelineDraftCheckService.class})
 class TimelineControllerTest {
 
     private static final long USER_ID = 7L;
@@ -226,6 +227,72 @@ class TimelineControllerTest {
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.header.code").value(-1009))
                 .andExpect(header().exists("Transaction-Id"))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void checkDraft_photo_returns200WithCreatableTrue() throws Exception {
+        String body = """
+                {"sourceItems": [{"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00", "endAt": null}]}
+                """;
+
+        mockMvc.perform(post(TASKS + "/check").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.body.creatable").value(true));
+    }
+
+    @Test
+    void checkDraft_shortStayWithDraftOnlyFields_returns200WithCreatableFalse() throws Exception {
+        // 클라가 draft 생성용 sourceItem(rawId·payload 포함)을 그대로 보내도 판정 필드만 읽는다 — 25분 체류는 불가.
+        String body = """
+                {"sourceItems": [{"itemType": "STAY", "rawId": "0197b1c2-0000-7000-8000-000000000031",
+                  "startAt": "2026-06-17T09:00:00", "endAt": "2026-06-17T09:25:00",
+                  "payload": {"latitude": 37.5, "longitude": 127.0}}]}
+                """;
+
+        mockMvc.perform(post(TASKS + "/check").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(jsonPath("$.body.creatable").value(false));
+    }
+
+    @Test
+    void checkDraft_missingStartAt_returns400() throws Exception {
+        String body = """
+                {"sourceItems": [{"itemType": "PHOTO", "endAt": null}]}
+                """;
+
+        mockMvc.perform(post(TASKS + "/check").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void checkDraft_offsetStartAt_returns400() throws Exception {
+        String body = """
+                {"sourceItems": [{"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00+09:00"}]}
+                """;
+
+        mockMvc.perform(post(TASKS + "/check").with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400));
+    }
+
+    @Test
+    void checkDraft_withoutAuthentication_returns401Envelope() throws Exception {
+        String body = """
+                {"sourceItems": [{"itemType": "PHOTO", "startAt": "2026-06-17T09:00:00"}]}
+                """;
+
+        mockMvc.perform(post(TASKS + "/check").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001))
                 .andExpect(jsonPath("$.body").doesNotExist());
     }
 

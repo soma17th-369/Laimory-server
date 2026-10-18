@@ -3,6 +3,8 @@ package com.laimory.server.timeline.controller;
 import com.laimory.server.common.ApiResponse;
 import com.laimory.server.common.ApiUrls;
 import com.laimory.server.user.CurrentSubject;
+import com.laimory.server.timeline.dto.CheckDraftRequest;
+import com.laimory.server.timeline.dto.CheckDraftResponse;
 import com.laimory.server.timeline.dto.CreateDraftTaskRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.DraftTaskListResponse;
@@ -34,7 +36,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Draft", description = "타임라인 draft 작성 작업 — 생성·폴링·사진 업로드 URL 발급")
+@Tag(name = "Timeline Draft", description = "타임라인 draft 작성 작업 — 생성 가능 확인·생성·폴링·사진 업로드 URL 발급")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline/drafts")
 public interface TimelineApi {
@@ -136,8 +138,9 @@ public interface TimelineApi {
 
     @Operation(summary = "draft 작업 생성",
             description = "sourceItems(하루 기록 원천: 머문 곳·이동·사진·걸음 수·알림 등)를 받아 AI 타임라인 생성 작업을 시작한다. "
-                    + "AI 접수가 확인된 경우에만 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 폴링해 결과를 조회한다. "
-                    + "AI 접수 실패는 502(-1009)이고 이때 응답에 taskId는 없다. "
+                    + "AI 접수가 확인됐거나 접수 결과를 알 수 없으면 202와 taskId를 반환하며, taskId를 `GET /{taskId}`로 "
+                    + "폴링해 결과를 조회한다(결과를 모를 때 AI가 끝내 받지 못했으면 폴링이 FAILED로 끝난다). "
+                    + "AI가 접수를 거절하면 502(-1009)이고 이때 응답에 taskId는 없다. "
                     + "각 sourceItem의 startAt은 필수이고 endAt은 nullable이다. "
                     + "HEALTH payload의 metric은 STEPS만 허용하며 다른 값은 저장·AI dispatch 전에 400으로 거절한다. "
                     + "지오코딩 대상 고유 좌표(rawId 중복 제거·이미 저장된 item 제외 뒤 STAY 좌표와 MOVEMENT "
@@ -167,7 +170,7 @@ public interface TimelineApi {
                     description = "`-1003`(해당 날짜의 하루 기록이 이미 SAVED) · "
                             + "`-1013`(요청의 모든 item이 이미 타임라인에 저장됨 — 추가할 신규 없음)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "502",
-                    description = "`-1009`(AI 접수 실패 — AI가 거절했거나 접수 확인 불가. 응답에 taskId 없음) · "
+                    description = "`-1009`(AI가 접수를 거절함. 응답에 taskId 없음) · "
                             + "지오코딩 품질 기준 미달(고유 좌표 실패 20% 초과 또는 시간순 연속 실패 3개)이면 "
                             + "재시도 가능성으로 코드가 나뉜다 — "
                             + "`-1014`(전이적 실패 — 잠시 뒤 재시도로 해결될 수 있음) · "
@@ -181,6 +184,30 @@ public interface TimelineApi {
                     content = @Content(schema = @Schema(implementation = CreateDraftTaskRequest.class),
                             examples = @ExampleObject(name = "6개 itemType 전체 예시", value = CREATE_DRAFT_EXAMPLE)))
             @RequestBody CreateDraftTaskRequest request);
+
+    @Operation(summary = "타임라인 생성 가능 확인",
+            description = "draft 생성에 보낼 sourceItems를 판정에 필요한 필드(itemType·startAt·endAt)만 남겨 받아, "
+                    + "그 기록만으로 타임라인을 만들 수 있는지 body.creatable로 알려 준다. 클라이언트는 false면 생성 버튼을 "
+                    + "비활성화한다. 다음 중 하나라도 맞으면 true다: PHOTO 또는 CALENDAR 1개 이상 · 위치 시간 30분 초과 · "
+                    + "NOTIFICATION 3건 이상 · 위치 시간 20분 이상이면서 NOTIFICATION 1건 이상. "
+                    + "위치 시간은 STAY·MOVEMENT의 `endAt - startAt` 합이며 endAt이 없거나 startAt보다 앞서면 0분으로 센다. "
+                    + "HEALTH는 판정에 쓰지 않는다. 빈 배열은 false다. "
+                    + "받은 목록만 보며 같은 날 이미 저장된 item·SAVED 여부·크레딧은 보지 않는다. "
+                    + "저장·크레딧 차감·지오코딩·AI 요청이 없어 반복 호출해도 안전하다. "
+                    + "draft 생성 API는 이 판정을 강제하지 않는다. payload 등 다른 필드는 보내지 않는다(보내도 무시).")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "판정 성공 — body.creatable", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — sourceItems 누락(null), null 원소, itemType·startAt 누락, 시각 형식 오류"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)")
+    })
+    @PostMapping("/check")
+    ResponseEntity<ApiResponse<CheckDraftResponse>> checkDraft(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @RequestBody CheckDraftRequest request);
 
     @Operation(summary = "사진 업로드 URL 발급",
             description = "업로드할 사진 목록(contentType·size)을 받아 S3 presigned PUT URL을 발급한다. "

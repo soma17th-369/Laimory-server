@@ -43,6 +43,9 @@ final class AccessLogBodyMasker {
     // 수동 Event 생성 POST(#326/#361)의 title/subtitle/memo/photosToAdd payload도 사용자 원문이다.
     private static final List<PrivacyBodyPath> PRIVACY_REQUEST_PATHS = List.of(
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/drafts$")),
+            // 생성 가능 확인(#594)은 payload를 받지 않지만, 클라가 draft 생성용 sourceItem을 그대로 직렬화하면
+            // 알림 본문·좌표가 실린다 — DTO는 무시해도 access log에는 남으므로 draft 생성과 같은 skeleton으로 막는다.
+            new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/drafts/check$")),
             new PrivacyBodyPath("PATCH", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")),
             new PrivacyBodyPath("PUT", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+/memo$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+/events$")),

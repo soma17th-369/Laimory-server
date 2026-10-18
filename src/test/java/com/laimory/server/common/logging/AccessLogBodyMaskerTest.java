@@ -110,6 +110,7 @@ class AccessLogBodyMaskerTest {
     private static Stream<Arguments> privacyRequestPaths() {
         return Stream.of(
                 Arguments.of("POST", "/a/api/v1/timeline/drafts"),
+                Arguments.of("POST", "/a/api/v1/timeline/drafts/check"),
                 Arguments.of("PATCH", "/a/api/v12/timeline/events/42"),
                 Arguments.of("PUT", "/a/api/v1/timeline/events/42/memo"),
                 Arguments.of("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
