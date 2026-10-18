@@ -137,8 +137,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   (주기 sweeper 없음). 1시간 넘게 `CHARGED`인 기록 수를 gauge로 노출하고 경보해 놓친 건을 운영자가 알게 한다(#582).
   결과 저장과 유실 환불이 겹치면(결과 처리+타이머 삭제가 처리 기한 3분 경계에 걸림) 결과는 그대로 저장되고 그 생성 1회는 무료가 된다
   (기록은 나중에 쓴 상태). 유실 처리는 결과 저장이 진행 중인(선점된) task를 가려내지 않아 그 FAILED가 결과 저장의 token
-  회전으로 덮일 수 있다(수용). 결과가 저장됐다면 draft 응답이 UNKNOWN 502였거나 SUCCESS callback 없이 task가 만료됐어도
-  차감은 유지된다.
+  회전으로 덮일 수 있다(수용). 결과가 저장됐다면 draft dispatch가 UNKNOWN(202 응답)이었거나 SUCCESS callback 없이
+  task가 만료됐어도 차감은 유지된다.
   비용의 단일 기준은 DB `credit_costs`의 기능 종류별 행이다(#558) — 공개 비용 조회(앱 고지)·사전 검사·차감이 매 요청
   같은 행을 읽으며 따로 적지 않는다. 서버별 캐시를 두지 않는다(rolling 배포·비용 변경 직후 서버마다 값이 갈린다).
   비용 변경은 새 Flyway migration의 `UPDATE`로만 하고 직접 운영 SQL로 바꾸지 않는다(기술 차단 없이 규칙으로 금지).
@@ -299,9 +299,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   FAILED에 한해 두 값 null 허용)는 배포 전·롤링 배포 중 옛 서버가 쓴 값이 terminal TTL(24시간) 동안 남으므로 읽는 쪽 계약으로만 유지한다
   (폴링은 `error`만 읽고, null hash는 어떤 token과도 일치하지 않아 늦은 AI 요청은 401 `-1002`).
   PROCESSING key 만료는 key 소멸이지 FAILED 전이가 아니다 — 유실 처리마저 없었던 task(만료 알림 유실, 기록 소비 뒤
-  타이머 잔존)의 마지막 회수이며 scheduler가 복구하지 않고 이후 폴링·서버간 요청은 404(`-1001`)다. AI dispatch 실패 시 draft POST는 502(`-1009`)이며 taskId를 반환하지
-  않는다(202는 접수 확인에만 해당). UNKNOWN 502 뒤에도 AI가 처리 기한(3분) 안에 단계를 마치면 유효하다 — 502를
-  미접수 증명으로 삼아 자동 재전송하지 않는다.
+  타이머 잔존)의 마지막 회수이며 scheduler가 복구하지 않고 이후 폴링·서버간 요청은 404(`-1001`)다. AI dispatch가 미접수 확정(4xx)이면 draft POST는
+  502(`-1009`)이며 taskId를 반환하지 않는다. 접수 확인과 UNKNOWN은 PROCESSING이 살아 있으므로 202와 taskId다(#600) —
+  UNKNOWN 뒤에도 AI가 처리 기한(3분) 안에 단계를 마치면 유효하고, 자동 재전송하지 않는다.
 - `processingStartedAt`은 전처리·staging 저장 후 PROCESSING 저장 직전에 한 번 캡처하며 PROCESSING
   전용이다 — stage write에도 바뀌지 않고 terminal 전이 시 폐기한다.
 - subject별 진행 작업 index(`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)는 조회 후보일 뿐이다 —
