@@ -1096,7 +1096,7 @@
         "type": "grafana",
         "uid": "-- Grafana --"
       },
-      "description": "현재 firing/pending/no-data/error 상태인 Grafana 관리형 알림을 한곳에서 확인합니다.",
+      "description": "현재 firing/pending/no-data/error 상태인 Grafana 관리형 알림을 한곳에서 확인합니다. 선택한 Environment의 알림만 보이며, 공용 자산(Redis·monitoring host·Elasticsearch) 알림은 environment=dev 라벨이라 dev를 골라야 보입니다.",
       "fieldConfig": {
         "defaults": {},
         "overrides": []

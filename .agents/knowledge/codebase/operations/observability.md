@@ -350,7 +350,8 @@ Grafana는 `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs` 네 da
 provisioning한다. Prometheus datasource UID는 `prometheus`, Elasticsearch UID는 `elasticsearch-dev`다.
 네 dashboard 모두 `environment` 변수로 dev·prod를 고른다(test는 제외). Redis는 dev·test·prod 공용 1대이고
 exporter 라벨이 `environment=dev`라 Redis 패널은 environment 셀렉터 없이 항상 같은 값을 보여준다. Overview 경보
-목록은 선택한 environment의 alert instance만 보여준다. prod를 고르면 MySQL backend(prod mysqld exporter 없음),
+목록은 선택한 environment의 alert instance만 보여주므로, `environment=dev`로 고정된 공용 자산(Redis·monitoring
+host·Elasticsearch) 경보는 dev를 골라야 보인다. prod를 고르면 MySQL backend(prod mysqld exporter 없음),
 public `/status`·TLS probe(target이 dev 도메인뿐), monitoring host 전용 CloudWatch/EBS 패널은 No data다.
 Elasticsearch API key는 `laimory-*`의 read/view metadata와 cluster monitor만 갖고, Discord native
 contact point는 firing/resolved를 모두 보낸다. alert message에는 raw log/body, transactionId,
