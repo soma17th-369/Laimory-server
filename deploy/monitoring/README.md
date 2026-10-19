@@ -1123,7 +1123,7 @@ COMMIT;
 보지 않는다. rule은 매일 13:00~13:05 KST에만 참이라(`hour() == 4 and minute() < 5`, UTC) 하루 한 번 firing하고
 13:05쯤 resolved가 온다. **이 resolved는 확인 시간창이 끝났다는 뜻이지 처리 완료가 아니다.** resolved 억제
 (contact point `disableResolveMessage`·전용 route)는 그 파일들이 자동 배포 밖이라 두지 않았다. 13:00~13:05에
-Grafana·Prometheus·prod 앱이 모두 멈춰 있으면 그날 알림은 빠지고 다음 날 다시 확인한다.
+Grafana나 Prometheus가 멈추거나 prod 앱 인스턴스가 모두 내려가 있으면 그날 알림은 빠지고 다음 날 다시 확인한다.
 
 관리자 페이지에서 미처리 문의를 열어 답장 이메일로 회신한 뒤 처리됨을 표시한다. gauge는 5분마다 다시 센다.
 
