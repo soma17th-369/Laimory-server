@@ -450,7 +450,7 @@
       ],
       "title": "MySQL Backend",
       "type": "stat",
-      "description": "MySQL exporter가 dev MySQL에 연결·인증해 상태를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
+      "description": "MySQL exporter가 dev MySQL에 연결·인증해 상태를 읽을 수 있는지 보여줍니다. prod MySQL에는 exporter가 없어 prod를 고르면 No data입니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
     },
     {
       "datasource": {
@@ -679,7 +679,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "min(redis_up{job=\"redis\", environment=\"$environment\"})",
+          "expr": "min(redis_up{job=\"redis\"})",
           "instant": true,
           "legendFormat": "Redis",
           "range": false,
@@ -688,7 +688,7 @@
       ],
       "title": "Redis Backend",
       "type": "stat",
-      "description": "Redis exporter가 Redis에 연결·인증해 PING/INFO를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
+      "description": "Redis exporter가 Redis에 연결·인증해 PING/INFO를 읽을 수 있는지 보여줍니다. Redis는 dev·test·prod 공용 1대라 Environment 선택과 무관하게 같은 값을 보여줍니다. exporter HTTP scrape 자체는 target-down 알림으로 구분합니다."
     },
     {
       "datasource": {
@@ -731,7 +731,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_connected_clients{job=\"redis\", environment=\"$environment\"})",
+          "expr": "sum(redis_connected_clients{job=\"redis\"})",
           "instant": false,
           "legendFormat": "connected",
           "range": true,
@@ -743,7 +743,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_blocked_clients{job=\"redis\", environment=\"$environment\"})",
+          "expr": "sum(redis_blocked_clients{job=\"redis\"})",
           "instant": false,
           "legendFormat": "blocked",
           "range": true,
@@ -795,7 +795,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_memory_used_bytes{job=\"redis\", environment=\"$environment\"})",
+          "expr": "sum(redis_memory_used_bytes{job=\"redis\"})",
           "instant": false,
           "legendFormat": "used",
           "range": true,
@@ -807,7 +807,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_memory_max_bytes{job=\"redis\", environment=\"$environment\"})",
+          "expr": "sum(redis_memory_max_bytes{job=\"redis\"})",
           "instant": false,
           "legendFormat": "max",
           "range": true,
@@ -859,7 +859,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(redis_commands_processed_total{job=\"redis\", environment=\"$environment\"}[$__rate_interval]))",
+          "expr": "sum(rate(redis_commands_processed_total{job=\"redis\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "commands / s",
           "range": true,
@@ -871,7 +871,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(redis_evicted_keys_total{job=\"redis\", environment=\"$environment\"}[$__rate_interval]))",
+          "expr": "sum(rate(redis_evicted_keys_total{job=\"redis\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "evictions / s",
           "range": true,
@@ -925,7 +925,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(redis_keyspace_hits_total{job=\"redis\", environment=\"$environment\"}[$__rate_interval])) / clamp_min(sum(rate(redis_keyspace_hits_total{job=\"redis\", environment=\"$environment\"}[$__rate_interval])) + sum(rate(redis_keyspace_misses_total{job=\"redis\", environment=\"$environment\"}[$__rate_interval])), 0.001)",
+          "expr": "sum(rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval])) / clamp_min(sum(rate(redis_keyspace_hits_total{job=\"redis\"}[$__rate_interval])) + sum(rate(redis_keyspace_misses_total{job=\"redis\"}[$__rate_interval])), 0.001)",
           "instant": false,
           "legendFormat": "hit ratio",
           "range": true,
@@ -1977,7 +1977,7 @@
           "refId": "PrometheusVariableQueryEditor-Environment"
         },
         "refresh": 2,
-        "regex": "/^dev$/",
+        "regex": "/^(dev|prod)$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
@@ -2004,7 +2004,7 @@
           "refId": "PrometheusVariableQueryEditor-Host"
         },
         "refresh": 2,
-        "regex": "/^(monitoring|dev-was|dev-mysql|redis|elk)$/",
+        "regex": "/^(monitoring|dev-was|dev-mysql|redis|elk|prod-was-01|prod-was-02|prod-mysql)$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
