@@ -105,7 +105,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   같은 V5에서 첨부 `position`을 제거했다 — 첨부 순서는 한 transaction의 요청 순서 INSERT에 따른 PK 순서다.
   V5는 구 앱과 호환되지 않는 승인된 예외다(배포 중 구 앱 접수 실패, 구 image rollback 기동 실패).
   앱 "내 문의" 조회(#529)는 `idx_inquiries_subject`로 owner 문의를 `inquiry_id DESC` 최대 50건(`Pageable`) 읽고,
-  상세는 `(inquiry_id, subject_id)` 한 조회로 없음·비소유를 구분하지 않는다. 처리 상태는 컬럼 없이 `answered_at`에서 파생한다)
+  상세는 `(inquiry_id, subject_id)` 한 조회로 없음·비소유를 구분하지 않는다. 처리 상태는 컬럼 없이 `answered_at`에서 파생한다.
+  미처리 건수는 `laimory.inquiry.unanswered` gauge가 5분마다 `answered_at IS NULL` 인덱스 없는 count로 센다(#603))
 
 `db/migration/V1__initial_schema.sql`은 빈 DB에 업무 테이블과 필수 `app_config` 한 행을 만든다.
 Compose의 schema init mount는 없으며, 기존 DB는 구조 확인 후 명시적 baseline 1로 편입한다.

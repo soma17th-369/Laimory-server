@@ -269,6 +269,9 @@ Spring JSON stdout
   - `laimory.credit.history.charged.stale`: 1시간 넘게 `CHARGED`인 크레딧 기록 수(#582) — 유실 환불이 놓친 건.
     DB count를 scrape마다가 아니라 5분에 한 번만 다시 세고, DB 오류는 NaN이다. 모든 서버가 같은 값을 내므로
     경보는 `max by (environment)`로 환경당 하나만 만든다
+  - `laimory.inquiry.unanswered`: 처리됨(`answered_at`) 표시가 없는 문의 수(#603). 5분에 한 번 DB에서 다시 세고
+    DB 오류는 NaN이다. 경보는 prod만, 매일 13:00~13:05 KST 시간창에서만 평가해 하루 한 번 알린다 — 창이 끝나며
+    오는 resolved는 처리 완료를 뜻하지 않는다
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
     최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
     없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다

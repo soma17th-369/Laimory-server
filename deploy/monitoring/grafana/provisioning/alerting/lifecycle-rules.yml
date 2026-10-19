@@ -123,3 +123,64 @@ groups:
           service: laimory
           severity: warning
         isPaused: false
+  - orgId: 1
+    name: laimory-inquiry-unanswered
+    folder: Laimory
+    interval: 1m
+    rules:
+      - uid: laimory_inquiry_unanswered_daily
+        title: Daily unanswered inquiry check (13:00 KST)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              # hour()/minute() are UTC: 04:00-04:04 UTC = 13:00-13:04 KST (no DST in Korea).
+              expr: 'max by (environment) (laimory_inquiry_unanswered{job="spring_boot",environment="prod"}) > 0 and on() hour() == 4 and on() minute() < 5'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: '{{ $values.B.Value }} inquiry(ies) are still unanswered.'
+          description: 'Daily 13:00 KST check of inquiries without an answered mark, regardless of when they were received. The rule is only true from 13:00 to 13:05 KST, so the resolved message around 13:05 means the check window ended, not that the inquiries were answered.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#inquiry-unanswered
+        labels:
+          job: spring_boot
+          service: laimory
+          severity: warning
+        isPaused: false

@@ -260,6 +260,8 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
   log pipeline 계열(`laimory_log_pipeline_unhealthy`, `laimory_filebeat_output_failures`)과
   wildcard index를 environment terms로 나눠 평가하는 `laimory_application_error_log`는
   환경 중립이다.
+- **prod 고정 운영 업무** — `laimory_inquiry_unanswered_daily`(#603)는 장애가 아니라 회신할 문의를 알린다.
+  dev 문의는 테스트용이라 미처리로 남는 게 정상이므로 `environment="prod"`로 고정한다.
 
 새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
 수집기부터 설치한다.
@@ -1114,6 +1116,16 @@ WHERE credit_history_id = ? AND status = 'CHARGED';
 UPDATE subject_credits SET remaining = remaining + ?, updated_at = CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') WHERE subject_id = ?;
 COMMIT;
 ```
+
+### Inquiry unanswered
+
+`laimory_inquiry_unanswered_daily`는 prod에 처리됨 표시(`answered_at`)가 없는 문의가 있다는 뜻이다(#603). 접수 시각은
+보지 않는다. rule은 매일 13:00~13:05 KST에만 참이라(`hour() == 4 and minute() < 5`, UTC) 하루 한 번 firing하고
+13:05쯤 resolved가 온다. **이 resolved는 확인 시간창이 끝났다는 뜻이지 처리 완료가 아니다.** resolved 억제
+(contact point `disableResolveMessage`·전용 route)는 그 파일들이 자동 배포 밖이라 두지 않았다. 13:00~13:05에
+Grafana·Prometheus·prod 앱이 모두 멈춰 있으면 그날 알림은 빠지고 다음 날 다시 확인한다.
+
+관리자 페이지에서 미처리 문의를 열어 답장 이메일로 회신한 뒤 처리됨을 표시한다. gauge는 5분마다 다시 센다.
 
 ### Timeline orphan sweeper (PHOTO S3 삭제)
 
