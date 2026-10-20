@@ -983,7 +983,7 @@
           "refId": "PrometheusVariableQueryEditor-Environment"
         },
         "refresh": 2,
-        "regex": "/^dev$/",
+        "regex": "/^(dev|prod)$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
