@@ -936,7 +936,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "MySQL exporter가 dev MySQL에 연결·인증해 상태를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림이 담당합니다.",
+      "description": "MySQL exporter가 dev MySQL에 연결·인증해 상태를 읽을 수 있는지 보여줍니다. prod MySQL에는 exporter가 없어 prod를 고르면 No data입니다. exporter HTTP scrape 자체는 target-down 알림이 담당합니다.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1016,7 +1016,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Redis exporter가 Redis에 연결·인증해 PING/INFO를 읽을 수 있는지 보여줍니다. exporter HTTP scrape 자체는 target-down 알림이 담당합니다.",
+      "description": "Redis exporter가 Redis에 연결·인증해 PING/INFO를 읽을 수 있는지 보여줍니다. Redis는 dev·test·prod 공용 1대라 Environment 선택과 무관하게 같은 값을 보여줍니다. exporter HTTP scrape 자체는 target-down 알림이 담당합니다.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1081,7 +1081,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "min(redis_up{job=\"redis\", environment=\"$environment\"})",
+          "expr": "min(redis_up{job=\"redis\"})",
           "instant": true,
           "legendFormat": "Redis",
           "range": false,
@@ -1096,7 +1096,7 @@
         "type": "grafana",
         "uid": "-- Grafana --"
       },
-      "description": "현재 firing/pending/no-data/error 상태인 Grafana 관리형 알림을 한곳에서 확인합니다.",
+      "description": "현재 firing/pending/no-data/error 상태인 Grafana 관리형 알림을 한곳에서 확인합니다. 선택한 Environment의 알림만 보이며, 공용 자산(Redis·monitoring host·Elasticsearch) 알림은 environment=dev 라벨이라 dev를 골라야 보입니다.",
       "fieldConfig": {
         "defaults": {},
         "overrides": []
@@ -1109,7 +1109,7 @@
       },
       "id": 16,
       "options": {
-        "alertInstanceLabelFilter": "{environment=\"dev\",service=\"laimory\"}",
+        "alertInstanceLabelFilter": "{environment=\"$environment\",service=\"laimory\"}",
         "alertName": "",
         "dashboardAlerts": false,
         "groupBy": [],
@@ -1402,7 +1402,7 @@
           "refId": "PrometheusVariableQueryEditor-Environment"
         },
         "refresh": 2,
-        "regex": "/^dev$/",
+        "regex": "/^(dev|prod)$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
