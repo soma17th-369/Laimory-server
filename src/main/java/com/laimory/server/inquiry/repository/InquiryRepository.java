@@ -25,6 +25,9 @@ public interface InquiryRepository extends JpaRepository<Inquiry, Long> {
     /** 앱 "내 문의" 상세(#529) — 없음과 비소유를 한 query로 묶어 둘 다 빈 결과가 된다(존재 은닉). */
     Optional<Inquiry> findByInquiryIdAndSubjectId(Long inquiryId, UUID subjectId);
 
+    /** 처리됨 표시가 없는 문의 수 — 미처리 문의 일일 경보 gauge(#603)용. */
+    long countByAnsweredAtIsNull();
+
     /**
      * 계정 삭제(#302)의 owner 문의 전량 제거 — email PII를 포함한 행째 지운다. 첨부 행이 먼저 지워져
      * 있어야 한다(FK RESTRICT). 미존재는 0행(멱등)이며 호출자 transaction에 합류한다.
