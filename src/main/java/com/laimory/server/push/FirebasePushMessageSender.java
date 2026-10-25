@@ -104,8 +104,8 @@ class FirebasePushMessageSender implements PushMessageSender {
     private static MulticastMessage buildMessage(PushMessage message, List<String> fids) {
         MulticastMessage.Builder builder = MulticastMessage.builder()
                 .setNotification(Notification.builder()
-                        .setTitle(message.type().title())
-                        .setBody(message.type().body())
+                        .setTitle(message.copy().title())
+                        .setBody(message.copy().body())
                         .build())
                 .setAndroidConfig(AndroidConfig.builder().setTtl(ANDROID_TTL.toMillis()).build())
                 .addAllFids(fids);
