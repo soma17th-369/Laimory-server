@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.laimory.server.push.PushCopy;
 import com.laimory.server.push.PushMessage;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMessageType;
@@ -111,6 +112,22 @@ class DailyReminderPushNotifierTest {
         verify(pushMessageSender).send(messageCaptor.capture(), anyList());
         assertThat(messageCaptor.getValue().type()).isEqualTo(PushMessageType.DAILY_REMINDER);
         assertThat(messageCaptor.getValue().data()).containsOnlyKeys("route");
+    }
+
+    @Test
+    void picksDailyReminderCopyByTodaysDate() {
+        when(subjectPreferenceService.findPushEnabledBySubjectIds(any())).thenReturn(Map.of(SUBJECT_A, true));
+        when(pushRegistrationService.findFirebaseInstallationIdsBySubjectIds(any()))
+                .thenReturn(List.of("fid-a"));
+        when(pushMessageSender.send(any(), anyList())).thenReturn(new PushSendResult(1, 1, 0, List.of()));
+
+        notifier().notifyAll(List.of(claimed(SUBJECT_A)));
+
+        // CLOCK은 2026-07-21이고, 그날 epochDay(20655)를 문구 4개로 나눈 나머지는 3이라 마지막 문구가 나간다.
+        ArgumentCaptor<PushMessage> messageCaptor = ArgumentCaptor.forClass(PushMessage.class);
+        verify(pushMessageSender).send(messageCaptor.capture(), anyList());
+        assertThat(messageCaptor.getValue().copy())
+                .isEqualTo(new PushCopy("오늘의 순간들을 모아볼까요?", "흩어진 기록을 타임라인으로 만들어보세요."));
     }
 
     @Test

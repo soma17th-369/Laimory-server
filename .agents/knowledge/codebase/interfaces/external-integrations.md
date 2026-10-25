@@ -157,8 +157,10 @@ CDN 열람은 위 OAC 정책이 bucket 전체 범위라는 전제에 기댄다. 
   `setToken/addToken/addAllTokens`를 쓰지 않는다.
 - Android 선행조건: `firebase-messaging 25.1.1+`, manifest
   `firebase_messaging_installation_id_enabled=true`, `onRegistered(fid)`가 준 FID를 등록 API로 업로드.
-- sender는 typed `PushMessage`(종류 + data)와 FID 목록을 받는다(#314). 고정 title/body는
-  `PushMessageType`이 소유하고 호출자가 문구를 만들지 않는다. 결과에 따라 문구가 달라지면 종류를 나누고
+- sender는 typed `PushMessage`(종류 + 고른 문구 + data)와 FID 목록을 받는다(#314). 문구(title/body 짝)
+  후보는 `PushMessageType`이 코드로 소유하고 호출자가 문구를 만들지 않는다. 일일 리마인더는 여러 문구를
+  발송 날짜(`Asia/Seoul`)의 `epochDay % 문구 수`로 선언 순서대로 돌린다(#609) — 같은 날은 전원·전 process가
+  같은 문구를 받고 이틀 연속 같은 문구는 없다. 결과에 따라 문구가 달라지면 종류를 나누고
   (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
   `type` 차원이 늘지 않는다. 현재 모든 종류가 정보성 통지다 — 일일 리마인더는 기본 ON 일괄 발송이고
   수신거부 수단은 일일 알림 OFF다(#318). 광고성 알림을
