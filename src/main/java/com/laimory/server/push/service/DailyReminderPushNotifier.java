@@ -61,7 +61,7 @@ public class DailyReminderPushNotifier {
             return new BatchOutcome(subjectIds.size(), eligible.size(), 0, 0);
         }
 
-        PushSendResult result = pushMessageSender.send(PushMessage.dailyReminder(), targets);
+        PushSendResult result = pushMessageSender.send(PushMessage.dailyReminder(snapshotAt.toLocalDate()), targets);
         pushMetrics.record(PushMessageType.DAILY_REMINDER, result);
         // deliverableSubjects는 넘겨받은 occurrence의 subject 수다 — worker 로그의 claimed(행 수)와 라벨을 나눈다.
         log.info("daily reminder push result: deliverableSubjects={} eligibleSubjects={} targets={} accepted={} "

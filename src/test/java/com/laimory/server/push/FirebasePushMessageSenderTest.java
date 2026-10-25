@@ -21,6 +21,7 @@ import com.google.firebase.messaging.MulticastMessage;
 import com.google.firebase.messaging.Notification;
 import com.google.firebase.messaging.SendResponse;
 import com.laimory.server.timeline.TaskStatus;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -181,6 +182,20 @@ class FirebasePushMessageSenderTest {
                 Map.of("taskId", TASK_ID, "status", "SUCCESS"));
         assertThat(result.successCount()).isEqualTo(2);
         assertThat(result.invalidFirebaseInstallationIds()).isEmpty();
+    }
+
+    @Test
+    void dailyReminder_buildsNotificationFromChosenCopy() throws Exception {
+        givenAllSuccess(1);
+
+        // 2026-10-26은 순환의 첫 문구가 나오는 날이다 — sender는 enum이 아니라 메시지가 고른 문구를 싣는다.
+        sender.send(PushMessage.dailyReminder(LocalDate.of(2026, 10, 26)), targets("fid-1"));
+
+        verify(firebaseMessaging).sendEachForMulticast(messageCaptor.capture());
+        MulticastMessage message = messageCaptor.getValue();
+        assertThat(notificationTitleOf(message)).isEqualTo("오늘 하루 어땠나요?");
+        assertThat(notificationBodyOf(message)).isEqualTo("오늘의 기록으로 타임라인을 만들어보세요.");
+        assertThat(dataOf(message)).containsExactlyInAnyOrderEntriesOf(Map.of("route", "timeline/today"));
     }
 
     @Test
