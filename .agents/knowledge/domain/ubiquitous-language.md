@@ -34,7 +34,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
-| 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진으로 찍은 순간들), `MEETING`(회의), `CLASS`(수업), `WORK`(근무), `EXERCISE`(운동), `SOCIAL`(대화), `REST`(휴식), `UNKNOWN`(알 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
+| 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진 기반 순간), `MEETING`(미팅), `CLASS`(수업), `WORK`(업무), `EXERCISE`(운동), `SOCIAL`(사회 활동), `REST`(휴식), `STAY`(머무름), `SHOPPING`(쇼핑), `CULTURE`(문화생활), `ERRAND`(개인적인 용무), `UNKNOWN`(분류할 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
 | 질문 | Question | 현재 구현 | AI가 이벤트마다 생성해 사용자에게 되묻는 문장이다. AI 결과 저장에서만 채워지는 nullable 값(trim 후 최대 255자, 공백은 null)이며 일별·단건 조회 응답에 그대로 실린다. 사용자 편집 API와 답변 저장은 미구현이다. |

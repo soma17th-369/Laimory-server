@@ -5,8 +5,9 @@ package com.laimory.server.timeline;
  * 서로 변환·추론하지 않는다(Item 구성으로 Event 타입을 재추론 금지).
  *
  * <p>의미: WAKE_UP=기상, SLEEP=수면, MOVEMENT=이동, CALENDAR_EVENT=캘린더 일정, MEAL=식사,
- * PHOTO_MOMENT=사진으로 찍은 순간들, MEETING=회의, CLASS=수업, WORK=근무, EXERCISE=운동,
- * SOCIAL=대화, REST=휴식, UNKNOWN=알 수 없음.
+ * PHOTO_MOMENT=사진 기반 순간, MEETING=미팅, CLASS=수업, WORK=업무, EXERCISE=운동,
+ * SOCIAL=사회 활동, REST=휴식, STAY=머무름, SHOPPING=쇼핑, CULTURE=문화생활, ERRAND=개인적인 용무,
+ * UNKNOWN=분류할 수 없음.
  *
  * <p>{@code UNKNOWN}은 기존 데이터, 구버전 writer의 컬럼 생략(DB default), AI가 확정 타입을 판별하지
  * 못한 상태를 나타내는 fallback sentinel이다. AI 분류 경계·우선순위는 별도 결정으로 미구현이다.
@@ -27,5 +28,9 @@ public enum TimelineEventType {
     EXERCISE,
     SOCIAL,
     REST,
+    STAY,
+    SHOPPING,
+    CULTURE,
+    ERRAND,
     UNKNOWN
 }
