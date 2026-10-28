@@ -39,14 +39,14 @@ public class TimelineEventService {
     }
 
     /**
-     * 활성 Event를 {@code now} 시각으로 soft delete하고 장소명·주소를 지운다. junction·Item은 건드리지 않는다.
+     * 활성 Event를 {@code now} 시각으로 soft delete하고 장소명·주소·좌표를 지운다. junction·Item은 건드리지 않는다.
      * 실제로 삭제 표시한 행 수를 반환한다(0 = 이미 삭제됨).
      */
     public int softDelete(Long timelineEventId, LocalDateTime now) {
         return timelineEventRepository.softDelete(timelineEventId, now);
     }
 
-    /** 삭제되는 record의 활성 Event 전부를 같은 {@code now}로 soft delete하고 장소명·주소를 지운다. */
+    /** 삭제되는 record의 활성 Event 전부를 같은 {@code now}로 soft delete하고 장소명·주소·좌표를 지운다. */
     public int softDeleteByDailyRecordId(Long dailyRecordId, LocalDateTime now) {
         return timelineEventRepository.softDeleteByDailyRecordId(dailyRecordId, now);
     }

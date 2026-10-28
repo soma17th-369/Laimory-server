@@ -123,11 +123,12 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
    다시 오면 입력을 재조립하고 새 result token을 재발급한다(창 안에서만, receipt는 갱신하지 않는다).
 2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·선점 전에
-   Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로 v1 치환한 요청
-   사본을 만들고 이후 단계는 치환본만 본다 — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
+   Event `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 이름을 255자 token-aware bounded로 v1 치환한 요청
+   사본을 만들고 이후 단계는 치환본만 본다(shape 검증: Event 좌표 쌍, subtitle `{place}`에 채울 place 존재 — #612) — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
    끝난다(원문 fallback 없음).
    retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 DB 검증·시각 정규화·+10분 nudge/clamp·
-   Event/Item/junction INSERT·채택 source DELETE를 하나의 MySQL transaction으로 commit한다 — 저장된
+   Event/Item/junction·장소 후보 INSERT(후보가 있으면 `place` = 1번 후보, #612)·채택 source DELETE를 하나의
+   MySQL transaction으로 commit한다 — 저장된
    claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. 같은 transaction의 마지막에
    draft 요청 때 차감한 크레딧 기록을 `CONSUMED`로 확정한다(#565 — 상태 조건 없이 마지막에 쓴 값, 기록 없는 V10 이전
    task는 오류 없이 건너뜀; graph가 롤백되면 확정도 롤백돼 기록은 `CHARGED`로 남는다). commit 뒤 유실 타이머를
@@ -237,7 +238,7 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   컴포넌트를 사용한다.
 - 수동 Event 생성(`POST .../daily-records/{recordDate}/events`, #326)은 AI draft 흐름 밖의 동기 편집
   계열이다 — draft task·Redis stage·dispatch를 전혀 거치지 않고, 기존 record(DRAFT/SAVED)에
-  `question`/`place`/`address`가 null인 Event를 만든다. optional `photosToAdd`가 있으면 Event·PHOTO
+  `question`/`place`/`address`/좌표가 null이고 장소 후보가 없는 Event를 만든다. optional `photosToAdd`가 있으면 Event·PHOTO
   Item·junction을 하나의 transaction으로 commit하고, 실패하면 Event insert까지 rollback한다. 사진
   규칙은 PATCH와 같은 공유 컴포넌트, 상세 필드 규칙은 공통 `TimelineEventInputRules`가 소유하며 +10분
   충돌 보정은 없다(AI 결과 저장 전용). record가 없으면 404이며 DailyRecord를 만들지 않는다(선생성은
@@ -258,15 +259,15 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   후보 최초 관측을 먼저 commit하고 별도 transaction에서 처리한다. 처리 실패에도 최초 시각은 유지하며,
   표시를 해제하는 경로는 없다(관측된 Item에 junction을 다시 만드는 writer 없음, #502).
   처리 종료 뒤 담당 전체의 72시간 이상 관측된 고아를 ERROR로 알린다.
-- Event 삭제: preflight 뒤 DB transaction에서 owner 재확인 → Event soft delete(`deleted_at`, `place`·`address`
-  NULL, #568). junction·Item은 남는다. 그 Item은 다음 스위퍼 실행이 정리한다(#569). 날짜 Redis guard는 취득하지 않는다.
+- Event 삭제: preflight 뒤 DB transaction에서 owner 재확인 → Event soft delete(`deleted_at`, `place`·`address`·
+  좌표 NULL, #568) + 같은 transaction에서 장소 후보 hard DELETE(#612). junction·Item은 남는다. 그 Item은 다음 스위퍼 실행이 정리한다(#569). 날짜 Redis guard는 취득하지 않는다.
 - DailyRecord 삭제의 날짜 기반 공개 경로는 `(request subjectId, recordDate)`로 record를 찾는
   `DELETE .../daily-records/{recordDate}`다. 조회한 `dailyRecordId`를 snapshot한 뒤 기존 ID 기반
   삭제 transaction을 호출하며 transaction이 그 정확한 ID의 owner를 재확인한다. lookup 뒤 같은
   날짜 record가 재생성돼도 새 record로 대상을 바꾸지 않는다. 기존 `DELETE .../daily-records/by-id/{dailyRecordId}`는
   같은 transaction을 호출하는 deprecated 호환 경로다.
 - DailyRecord 삭제 transaction은 record를 soft delete(`emotion_type` NULL)하고, 그 record의 활성 Event에 같은
-  `deleted_at`을 찍으며 `place`·`address`를 지운다(#568). record가 이미 삭제됐으면(동시 삭제) Event 처리를
+  `deleted_at`을 찍으며 `place`·`address`·좌표와 장소 후보를 지운다(#568·#612). record가 이미 삭제됐으면(동시 삭제) Event 처리를
   건너뛴다. commit 뒤 오케스트레이터가 User Memory 미반영 큐에서 그 record를 뺀다.
 - Event-Item 연결 해제는 junction만 지우고 Item·S3는 스위퍼에 맡긴다(#551).
 

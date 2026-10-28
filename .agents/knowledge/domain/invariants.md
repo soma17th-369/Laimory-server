@@ -37,11 +37,11 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   오류 메시지에 rawId 원문을 싣지 않으며, 허용값은 서버 정규화 없이 그대로 저장한다(identity 불변).
 - 저장 경계는 v1 privacy 치환 후의 값만 쓴다 — draft staging payload(enrich본 `redactTree`,
   storage 원문 보존 필드는 `clientPhotoUri`·`filename`·`photoUrl`), AI 결과 Event
-  `title`/`subtitle`/`question`/`place`/`address`(255자
+  `title`/`subtitle`/`question`/`place`/`address`·장소 후보 이름(255자
   token-aware bounded), User Memory 문서(`redactTree`). 치환 실패는 원문 fallback 없이 그 단계 전체를
   중단한다(fail-closed — draft는 부수효과 전무, AI 결과는 callback token 미선점, User Memory는
   task/dispatch 미생성 또는 기존 문서 유지).
-- storage redaction 예외는 두 부류다. (a) 사용자 입력 원문(Event PATCH/memo PUT의 title·subtitle·memo,
+- storage redaction 예외는 두 부류다. (a) 사용자 입력 원문(Event PATCH/memo PUT/place PUT의 title·subtitle·memo·place,
   `clientPhotoUri`)은 DB·앱 응답에서 유지하고 AI 전달 DTO 조립에서만 치환한다. (b) 서버 파생 식별자
   (`filename`·`photoUrl`)는 치환하지 않고 AI에도 원문 그대로 전달한다 — AI가 `photoUrl`을 HTTP GET으로
   소비하기 때문이다. (b)에 PII가 들어올 수 없는 근거는 입력 경계의 `PhotoFilenames.requireValid`
@@ -111,9 +111,18 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 수동 Event 생성(`POST .../daily-records/{recordDate}/events`)은 기존 DailyRecord에만 허용한다
   (DRAFT/SAVED 모두, 없음·비소유 404 은닉 — DailyRecord 자동 생성 없음). 소유 record 재확인·Event
   insert·optional PHOTO Item/junction 추가는 하나의 transaction이다. 사진 분류·저장 실패 시 Event
-  insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`는 항상 null이고, 시각은 보낸 값
+  insert까지 rollback한다. 수동 Event의 `question`/`place`/`address`/좌표는 항상 null이고 장소 후보가 없으며, 시각은 보낸 값
   그대로 저장한다(+10분 충돌 보정은 AI 결과 저장 전용). 상세 필드 규칙(title·subtitle·시간·memo)과
   사진 입력 규칙은 각각 Event PATCH와 같은 단일 규칙을 공유한다.
+- **Event 장소(#612)**: Event당 장소는 `place` 하나다. `title`에는 장소가 없고 `subtitle`은 자리 표시 `{place}`를
+  담은 템플릿일 수 있으며 DB·앱 응답에는 템플릿 그대로 둔다(표시 치환은 클라, User Memory 전달 DTO는 현재
+  `place`로 채운 뒤 치환).
+  - AI 결과에 장소 후보가 있으면 `place`는 항상 1번 후보로 저장된다. 후보는 받은 순서 = id 순서 = 우선순위다.
+  - `subtitle`에 `{place}`가 있는데 저장될 `place`가 없는 AI 결과는 batch 400이다(미완성 문장 금지).
+  - 장소 지정 PUT은 `place`만 바꾼다 — `title`·`subtitle`·좌표·`address`·후보 불변. 후보 중 하나인지 검사하지
+    않는다. 후보 수명은 Event와 같다(장소 지정으로 지우지 않음).
+  - Event 좌표는 관측 위치라 AI 결과 저장 외에 쓰는 경로가 없고, 위도·경도는 항상 함께 NULL이거나 함께 값이다
+    (AI 결과의 반쪽 좌표는 batch 400).
 - 신규 회원가입의 user·subject mapping·푸시 기본 설정·빈 User Memory·기본 크레딧(30)은 하나의 transaction으로
   commit/rollback한다(#536·#548). 기존 회원 재로그인은 누적 문서를 초기화하지 않는다.
 - **크레딧은 draft 요청 시점에 차감하고, 생성이 실패하면 돌려준다**(#565 — #548의 "결과 저장 시 차감"을 대체).
@@ -171,8 +180,9 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - **Event·DailyRecord 삭제는 soft delete다(#568).** 행을 지우지 않고 `deleted_at`(NULL = 활성)을 찍으며,
   junction·Item은 그대로 둔다. 삭제 기록은 분석용으로 회원 탈퇴 시까지 남고
   계정 삭제(#302)가 hard delete한다.
-  - 같은 UPDATE에서 Event의 `place`·`address`, record의 `emotion_type`을 NULL로 지운다(삭제 기록에 위치정보·
-    감정은 남기지 않는다). 지운 값은 복구되지 않는다.
+  - 같은 UPDATE에서 Event의 `place`·`address`·좌표, record의 `emotion_type`을 NULL로 지운다(삭제 기록에 위치정보·
+    감정은 남기지 않는다). 같은 transaction에서 그 Event들의 장소 후보 행을 hard delete한다(#612). 지운 값은
+    복구되지 않는다.
   - record 삭제는 그 record의 활성 Event에도 **record와 같은 `deleted_at`**을 찍는다. 먼저 개별 삭제된 Event는
     원래 시각을 유지한다 — "하루째 삭제"(`event.deleted_at = record.deleted_at`)와 "Event만 삭제"를 시각으로
     구분한다. 삭제된 Event 판정은 `timeline_events.deleted_at`으로 충분하다. 예외는 record 삭제 commit 직후

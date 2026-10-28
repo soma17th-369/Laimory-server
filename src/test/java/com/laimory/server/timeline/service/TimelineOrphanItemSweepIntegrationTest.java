@@ -375,7 +375,7 @@ class TimelineOrphanItemSweepIntegrationTest {
 
     private Long saveEvent(String title, int hour) {
         return timelineEventRepository.save(TimelineEvent.of(recordId, TimelineEventType.UNKNOWN,
-                        DATE.atTime(hour, 0), null, title, null, null, null, null))
+                        DATE.atTime(hour, 0), null, title, null, null, null, null, null, null))
                 .getTimelineEventId();
     }
 

@@ -146,7 +146,7 @@ class DailyRecordFailedDraftSoftDeleteIntegrationTest {
 
     private static TimelineEvent event(DailyRecord record) {
         return TimelineEvent.of(record.getDailyRecordId(), TimelineEventType.UNKNOWN,
-                record.getRecordDate().atTime(10, 0), null, "산책", null, null, null, null);
+                record.getRecordDate().atTime(10, 0), null, "산책", null, null, null, null, null, null);
     }
 
     private Map<String, Object> row(Long dailyRecordId) {

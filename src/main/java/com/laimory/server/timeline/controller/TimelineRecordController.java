@@ -10,6 +10,7 @@ import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateDailyRecordEmotionRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.service.DailyRecordEmotionUpdateService;
 import com.laimory.server.timeline.service.DailyTimelineService;
@@ -87,6 +88,13 @@ public class TimelineRecordController implements TimelineRecordApi {
     public ResponseEntity<ApiResponse<Void>> updateTimelineEventMemo(
             String applicationVersion, UUID subjectId, Long timelineEventId, UpdateTimelineEventMemoRequest request) {
         timelineEventEditService.updateMemo(applicationVersion, subjectId, timelineEventId, request.memo());
+        return ResponseEntity.ok(ApiResponse.success(null));
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> updateTimelineEventPlace(
+            String applicationVersion, UUID subjectId, Long timelineEventId, UpdateTimelineEventPlaceRequest request) {
+        timelineEventEditService.updatePlace(applicationVersion, subjectId, timelineEventId, request.place());
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 

@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>통합 PATCH는 소유권 사전 확인과 입력 정규화를 먼저 수행한 뒤 별도
  * {@link TimelineEventEditTransactionService}에서 Event·memo·PHOTO Item·junction 변경을 하나의
- * transaction으로 commit한다. PROCESSING·SAVED 중에도 PATCH와 memo PUT은 허용된다.
+ * transaction으로 commit한다. PROCESSING·SAVED 중에도 PATCH와 memo·place PUT은 허용된다.
  * 상세 필드 공통 규칙(title·subtitle·시간·memo)은 {@link TimelineEventInputRules}로, 사진 입력
  * 규칙은 {@link TimelineEventPhotoAddService}로 수동 Event 생성과 공유한다.
  *
@@ -46,6 +46,17 @@ public class TimelineEventEditService {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEvent(subjectId, timelineEventId);
         event.updateMemo(TimelineEventInputRules.normalizeMemo(memo));
+    }
+
+    /**
+     * 장소 지정 API(#612). {@code place}만 교체하고 title·subtitle·좌표·주소·장소 후보는 건드리지 않는다.
+     * 후보 중 하나인지 검사하지 않으며(직접 입력 허용) 후보 없는 Event도 거절하지 않는다.
+     */
+    @Transactional
+    public void updatePlace(String applicationVersion, UUID subjectId, Long timelineEventId, String place) {
+        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
+        TimelineEvent event = findOwnedEvent(subjectId, timelineEventId);
+        event.updatePlace(TimelineEventInputRules.requireValidPlace(place));
     }
 
     /** owner 검증은 입력 검증·DB mutation보다 먼저 수행한다. */

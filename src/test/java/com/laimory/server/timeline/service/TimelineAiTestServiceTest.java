@@ -207,7 +207,7 @@ class TimelineAiTestServiceTest {
 
     private static TimelineAiTestResponse aiResult(boolean timedOut) {
         return new TimelineAiTestResponse("stub-task-id", timedOut, List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, "점심", null, null, null, null,
+                TimelineEventType.MEAL, "점심", null, null, null, null, null, null, null,
                 offset(12, 0), offset(13, 0), List.of(RAW_ID))));
     }
 }

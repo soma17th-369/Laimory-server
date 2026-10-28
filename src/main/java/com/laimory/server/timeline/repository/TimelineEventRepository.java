@@ -23,23 +23,25 @@ public interface TimelineEventRepository extends JpaRepository<TimelineEvent, Lo
             Collection<Long> dailyRecordIds);
 
     /**
-     * 활성 Event를 soft delete하고 장소명·주소를 지운다(#568 — 위치정보는 삭제 기록에 남기지 않는다).
+     * 활성 Event를 soft delete하고 장소명·주소·좌표를 지운다(#568 — 위치정보는 삭제 기록에 남기지 않는다).
      * 이미 삭제된 행은 조건에서 빠져 0을 반환하므로 동시 삭제의 첫 시각이 보존된다. bulk UPDATE는 JPA auditing을
      * 우회하므로 {@code updated_at}을 직접 채운다.
      */
     @Modifying
     @Query("update TimelineEvent e "
-            + "set e.deletedAt = :now, e.place = null, e.address = null, e.updatedAt = :now "
+            + "set e.deletedAt = :now, e.place = null, e.address = null, "
+            + "e.latitude = null, e.longitude = null, e.updatedAt = :now "
             + "where e.timelineEventId = :timelineEventId and e.deletedAt is null")
     int softDelete(@Param("timelineEventId") Long timelineEventId, @Param("now") LocalDateTime now);
 
     /**
-     * 삭제되는 DailyRecord의 활성 Event 전부를 record와 같은 시각으로 soft delete하고 장소명·주소를 지운다.
+     * 삭제되는 DailyRecord의 활성 Event 전부를 record와 같은 시각으로 soft delete하고 장소명·주소·좌표를 지운다.
      * 먼저 개별 삭제된 Event는 조건에서 빠져 원래 삭제 시각을 유지한다 — 분석은 시각 비교로 둘을 구분한다.
      */
     @Modifying
     @Query("update TimelineEvent e "
-            + "set e.deletedAt = :now, e.place = null, e.address = null, e.updatedAt = :now "
+            + "set e.deletedAt = :now, e.place = null, e.address = null, "
+            + "e.latitude = null, e.longitude = null, e.updatedAt = :now "
             + "where e.dailyRecordId = :dailyRecordId and e.deletedAt is null")
     int softDeleteByDailyRecordId(@Param("dailyRecordId") Long dailyRecordId, @Param("now") LocalDateTime now);
 }

@@ -3,6 +3,7 @@ package com.laimory.server.timeline.controller;
 import static com.laimory.server.testsupport.AuthTestSupport.authenticatedUser;
 import static com.laimory.server.testsupport.TestSubjects.id;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -78,6 +79,7 @@ class TimelineRecordControllerTest {
     private static final LocalDate RECORD_DATE = LocalDate.parse("2026-07-08");
     private static final String EVENT_PATH = "/a/api/v1/timeline/events/11";
     private static final String MEMO_PATH = EVENT_PATH + "/memo";
+    private static final String PLACE_PATH = EVENT_PATH + "/place";
     private static final String EVENT_ITEM_PATH = EVENT_PATH + "/items/21";
     private static final String DAILY_RECORDS_PATH = "/a/api/v1/timeline/daily-records";
     private static final String DAILY_RECORD_ID_PATH = "/a/api/v1/timeline/daily-records/by-id/77";
@@ -151,7 +153,7 @@ class TimelineRecordControllerTest {
                 11L, TimelineEventType.REST,
                 LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
                 "카페에서 휴식", "성수동", "누구와 함께 있었나요?",
-                "성수 카페", "서울특별시 성동구 아차산로 17", "기존 메모", List.of(item));
+                "성수 카페", "서울특별시 성동구 아차산로 17", null, null, List.of(), "기존 메모", List.of(item));
     }
 
     private DailyTimelineResponse dailyTimeline() {
@@ -422,6 +424,43 @@ class TimelineRecordControllerTest {
                 .andExpect(jsonPath("$.body.items[0].payload.filename").value("u.jpg"));
 
         verify(dailyTimelineService).getTimelineEvent("v1", SUBJECT_ID, 11L);
+    }
+
+    @Test
+    void getTimelineEvent_returnsSubtitleTemplateCoordinatesAndPlaceCandidatesInPriorityOrder() throws Exception {
+        TimelineEventResponse event = new TimelineEventResponse(
+                11L, TimelineEventType.MEAL,
+                LocalDateTime.parse("2026-07-08T12:00:00"), null,
+                "점심 식사", "{place}에서 친구와 파스타", null,
+                "성수동 카페", null, 37.5445, 127.0559,
+                List.of(new TimelineEventResponse.PlaceCandidateResponse("성수동 카페"),
+                        new TimelineEventResponse.PlaceCandidateResponse("△△공원")),
+                null, List.of());
+        when(dailyTimelineService.getTimelineEvent(any(), any(), anyLong())).thenReturn(event);
+
+        mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.subtitle").value("{place}에서 친구와 파스타"))
+                .andExpect(jsonPath("$.body.place").value("성수동 카페"))
+                .andExpect(jsonPath("$.body.latitude").value(37.5445))
+                .andExpect(jsonPath("$.body.longitude").value(127.0559))
+                .andExpect(jsonPath("$.body.placeCandidates.length()").value(2))
+                .andExpect(jsonPath("$.body.placeCandidates[0].name").value("성수동 카페"))
+                .andExpect(jsonPath("$.body.placeCandidates[1].name").value("△△공원"));
+    }
+
+    @Test
+    void getTimelineEvent_withoutCandidates_returnsEmptyArrayAndNullCoordinates() throws Exception {
+        when(dailyTimelineService.getTimelineEvent(any(), any(), anyLong())).thenReturn(updatedEvent());
+
+        mockMvc.perform(get(EVENT_PATH).with(authenticatedUser(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.body.placeCandidates").isArray())
+                .andExpect(jsonPath("$.body.placeCandidates").isEmpty())
+                .andExpect(jsonPath("$.body.latitude").hasJsonPath())
+                .andExpect(jsonPath("$.body.latitude").value(nullValue()))
+                .andExpect(jsonPath("$.body.longitude").hasJsonPath())
+                .andExpect(jsonPath("$.body.longitude").value(nullValue()));
     }
 
     @Test
@@ -754,6 +793,60 @@ class TimelineRecordControllerTest {
         mockMvc.perform(put(MEMO_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void updateTimelineEventPlace_returns200WithExplicitNullBodyAndPassesRawPlace() throws Exception {
+        String body = """
+                {"place": " △△공원 "}
+                """;
+        mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.header.code").value(0))
+                .andExpect(header().exists("Transaction-Id"))
+                .andExpect(this::assertBodyIsExplicitNull);
+
+        // 정규화(strip)·필수 검증은 서비스 책임이다 — 컨트롤러는 원문을 그대로 넘긴다.
+        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L), eq(" △△공원 "));
+    }
+
+    @Test
+    void updateTimelineEventPlace_emptyBodyPassesNullPlace() throws Exception {
+        mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+
+        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L), isNull());
+    }
+
+    @Test
+    void updateTimelineEventPlace_mapsIllegalArgumentTo400() throws Exception {
+        doThrow(new IllegalArgumentException("place is required"))
+                .when(timelineEventEditService).updatePlace(any(), any(), any(), any());
+
+        mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.header.code").value(-400))
+                .andExpect(jsonPath("$.body").doesNotExist());
+    }
+
+    @Test
+    void updateTimelineEventPlace_mapsNotFoundTo404() throws Exception {
+        doThrow(new BusinessException(ExceptionType.TIMELINE_EVENT_NOT_FOUND))
+                .when(timelineEventEditService).updatePlace(any(), any(), any(), any());
+
+        mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"place\":\"p\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.header.code").value(-404));
+    }
+
+    @Test
+    void updateTimelineEventPlace_withoutAuthentication_returns401() throws Exception {
+        mockMvc.perform(put(PLACE_PATH).contentType(MediaType.APPLICATION_JSON).content("{\"place\":\"p\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.header.code").value(-2001));
+
+        verifyNoInteractions(timelineEventEditService);
     }
 
     // --- deleteTimelineEvent ---
@@ -1189,7 +1282,7 @@ class TimelineRecordControllerTest {
         return new TimelineEventResponse(
                 99L, TimelineEventType.REST,
                 LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
-                "카페에서 휴식", "성수동", null, null, null, "책을 읽었다.", List.of());
+                "카페에서 휴식", "성수동", null, null, null, null, null, List.of(), "책을 읽었다.", List.of());
     }
 
     @Test
@@ -1581,7 +1674,7 @@ class TimelineRecordControllerTest {
         TimelineEventResponse withItems = new TimelineEventResponse(
                 99L, TimelineEventType.REST,
                 LocalDateTime.parse("2026-07-08T14:00:00"), LocalDateTime.parse("2026-07-08T15:00:00"),
-                "카페에서 휴식", "성수동", null, null, null, "책을 읽었다.", List.of(createdPhoto));
+                "카페에서 휴식", "성수동", null, null, null, null, null, List.of(), "책을 읽었다.", List.of(createdPhoto));
         when(timelineEventCreateService.createEvent(any(), any(), any(LocalDate.class), any()))
                 .thenReturn(withItems);
 

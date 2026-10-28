@@ -18,7 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code @Transactional} 메서드를 두면 self-invocation으로 트랜잭션이 조용히 무효화되므로 분리한다.
  *
  * <p>Event·DailyRecord 삭제는 soft delete다(#568). 짧은 트랜잭션 안에서 소유권을 <b>재확인</b>한 뒤
- * {@code deleted_at}만 찍고 감정·장소명·주소를 지운다. 행·junction·Item은 분석용으로 남는다 — Item 정리는
+ * {@code deleted_at}만 찍고 감정·장소명·주소·좌표를 지운다. 장소 후보(#612)는 같은 transaction에서 hard
+ * delete한다. 행·junction·Item은 분석용으로 남는다 — Item 정리는
  * 이 트랜잭션의 책임이 아니다. 삭제 표시는 조건부 bulk UPDATE라 동시 삭제의 후발 요청은
  * 0행으로 끝나고(응답은 성공) 첫 삭제 시각이 남는다.
  *
@@ -31,11 +32,12 @@ public class TimelineDeletionTransactionService {
 
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
+    private final TimelineEventPlaceCandidateService timelineEventPlaceCandidateService;
     private final TimelineItemService timelineItemService;
     private final DailyRecordService dailyRecordService;
     private final Clock clock;
 
-    /** 소유권 재확인 후 Event를 soft delete하고 장소명·주소를 지운다. */
+    /** 소유권 재확인 후 Event를 soft delete하고 장소명·주소·좌표와 장소 후보를 지운다. */
     @Transactional
     public void deleteEvent(UUID subjectId, Long timelineEventId) {
         TimelineEvent event = timelineEventService.findById(timelineEventId)
@@ -43,11 +45,12 @@ public class TimelineDeletionTransactionService {
         requireOwnedRecord(subjectId, event.getDailyRecordId(), ExceptionType.TIMELINE_EVENT_NOT_FOUND);
 
         timelineEventService.softDelete(timelineEventId, LocalDateTime.now(clock));
+        timelineEventPlaceCandidateService.deleteByTimelineEventId(timelineEventId);
     }
 
     /**
      * 소유권 재확인 후 DailyRecord와 그 활성 Event를 같은 시각으로 soft delete한다. record의 감정, Event의
-     * 장소명·주소를 지운다. 먼저 개별 삭제된 Event는 원래 시각을 유지한다. record가 이미 삭제됐으면(동시 삭제가
+     * 장소명·주소·좌표와 장소 후보를 지운다. 먼저 개별 삭제된 Event는 원래 시각을 유지한다. record가 이미 삭제됐으면(동시 삭제가
      * 먼저 commit) Event 처리도 건너뛴다 — 먼저 끝난 삭제가 같은 일을 했다.
      */
     @Transactional
@@ -59,6 +62,7 @@ public class TimelineDeletionTransactionService {
             return;
         }
         timelineEventService.softDeleteByDailyRecordId(dailyRecordId, now);
+        timelineEventPlaceCandidateService.deleteByDailyRecordId(dailyRecordId);
         // 미반영 큐 정리는 여기서 하지 않는다 — Redis는 이 transaction에 참여하지 않으므로, 여기서
         // 지우고 commit이 실패하면 record는 되살아나는데 큐 member만 사라져 그 하루가 User Memory에
         // 반영될 재시도 근거를 잃는다. 정리는 commit 이후 TimelineDeletionService가 한다.
