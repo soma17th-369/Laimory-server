@@ -113,6 +113,7 @@ class AccessLogBodyMaskerTest {
                 Arguments.of("POST", "/a/api/v1/timeline/drafts/check"),
                 Arguments.of("PATCH", "/a/api/v12/timeline/events/42"),
                 Arguments.of("PUT", "/a/api/v1/timeline/events/42/memo"),
+                Arguments.of("PUT", "/a/api/v1/timeline/events/42/place"),
                 Arguments.of("POST", "/a/api/v1/timeline/daily-records/2026-07-08/events"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/result"),
                 Arguments.of("POST", "/s/api/v1/timeline/drafts/task-281/callback"),

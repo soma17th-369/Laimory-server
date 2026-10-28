@@ -48,6 +48,8 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/drafts/check$")),
             new PrivacyBodyPath("PATCH", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+$")),
             new PrivacyBodyPath("PUT", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+/memo$")),
+            // 장소 지정(#612) — 사용자가 고르거나 직접 입력한 장소명.
+            new PrivacyBodyPath("PUT", Pattern.compile("^/a/api/v\\d+/timeline/events/[^/]+/place$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+/events$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/result$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/callback$")),

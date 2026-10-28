@@ -55,6 +55,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `app_config`
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
+- `timeline_events → timeline_event_place_candidates` (#612 — Event 장소 후보, 후보 1개 = 1행)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, retention 기준은 `created_at`)
 - `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업).
@@ -309,8 +310,20 @@ NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우�
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
 없는 `String`(Hibernate 기본 255)이다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 —
-AI 결과 저장 transaction만 쓰고, 조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에
-포함되어 있으며, 이후 구조 변경은 후속 migration으로 JPA 검증 전에 반영한다.
+조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에 포함되어 있으며, 이후 구조 변경은
+후속 migration으로 JPA 검증 전에 반영한다. `address`는 AI 결과 저장 transaction만 쓰고, `place`는 AI 결과 저장이
+초기값을 쓴 뒤 장소 지정 PUT(#612)이 dirty-checking으로 교체한다(`TimelineEvent`는 `@DynamicUpdate`).
+
+`timeline_events.latitude`·`longitude`(V14, #612)는 `DOUBLE NULL` 2컬럼이다(POINT 아님 — 공간 검색이 없고
+nullable이라 SPATIAL INDEX를 걸 수 없다). AI 결과 저장만 쓰고 편집 경로가 없으며, 항상 함께 NULL이거나
+함께 값이다(앱 검증). 기존 행은 NULL이다.
+
+`timeline_event_place_candidates`(V14, #612)는 `(timeline_event_place_candidate_id PK, timeline_event_id, name
+VARCHAR(255) NOT NULL, BaseEntity 감사 컬럼)`이다. `timeline_event_id`는 `timeline_events` FK `ON DELETE CASCADE`
+이고 `idx_timeline_event_place_candidates_event`가 FK·묶음 조회(IN)를 받친다. 우선순위 전용 컬럼은 없다 —
+AI 결과 저장 transaction이 받은 순서대로 INSERT하고 조회는 `ORDER BY id`다. writer는 AI 결과 저장(INSERT)과
+Event·DailyRecord soft delete transaction(hard DELETE)뿐이고, 장소 지정은 후보를 건드리지 않는다. 계정 삭제는
+`daily_records` → `timeline_events` → 후보 FK CASCADE로 지운다.
 
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
@@ -549,9 +562,9 @@ S3 삭제가 멱등이라 모두 `Deleted`로 수렴해 지워진다(#551).
   dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
 - staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의
-  `title`/`subtitle`/`question`/`place`/`address`, `user_memories.memory`는 v1 privacy 치환 후의 값이다
-  (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
-  title·subtitle·memo는 원문 저장이다.
+  `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 `name`, `user_memories.memory`는 v1 privacy 치환
+  후의 값이다(`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT/
+  place PUT)의 title·subtitle·memo·place는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
   Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.

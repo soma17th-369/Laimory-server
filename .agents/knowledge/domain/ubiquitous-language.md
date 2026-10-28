@@ -33,10 +33,15 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 전용 필드 `question`/`place`/`address`가 항상 null이고 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
+| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 필드 `question`/`place`/`address`/좌표가 항상 null이고 장소 후보가 없으며 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진 기반 순간), `MEETING`(미팅), `CLASS`(수업), `WORK`(업무), `EXERCISE`(운동), `SOCIAL`(사회 활동), `REST`(휴식), `STAY`(머무름), `SHOPPING`(쇼핑), `CULTURE`(문화생활), `ERRAND`(개인적인 용무), `UNKNOWN`(분류할 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
-| 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. |
-| 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. |
+| 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. 장소를 담지 않는다(#612). |
+| 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. 장소 자리에 자리 표시 `{place}`를 담은 템플릿일 수 있다(#612). |
+| 장소 자리 표시 | Place Placeholder | 현재 구현 | subtitle 안의 `{place}` literal(`TimelineEvent.PLACE_PLACEHOLDER`)이다. DB·앱 응답에는 그대로 두고, 클라가 표시할 때와 User Memory 전달 DTO에서 현재 `place`로 채운다. |
+| 장소 | Place | 현재 구현 | Event당 하나의 장소명(`place`)이다. AI 결과 저장이 초기값을 채우고(장소 후보가 있으면 1번 후보) 사용자가 장소 지정 PUT으로 바꾼다. source item payload의 복수 `places`(주변 장소 목록)와 다른 개념이다. |
+| 장소 후보 | Place Candidate | 현재 구현 | 장소가 애매한 Event에 AI가 우선순위 순서로 준 후보 장소명(`timeline_event_place_candidates`, 응답 `placeCandidates[{name}]`)이다. 순서 = id 순서 = 우선순위이고 좌표가 없다. 장소를 지정해도 남으며 Event 삭제 때만 지운다. |
+| 장소 지정 | Place Assignment | 현재 구현 | `PUT .../events/{timelineEventId}/place`로 Event `place`만 바꾸는 사용자 행위다. 후보 중에서 고르거나 직접 입력할 수 있다. "후보 해소·선택 완료" 같은 상태는 없다. |
+| 이벤트 좌표 | Event Coordinates | 현재 구현 | AI가 Event마다 주는 대표 좌표(`latitude`·`longitude`) — 사용자가 실제로 있던 관측 위치(이동 Event는 도착지)라 장소를 바꿔도 변하지 않는다. 항상 쌍이며 편집 경로가 없다. |
 | 질문 | Question | 현재 구현 | AI가 이벤트마다 생성해 사용자에게 되묻는 문장이다. AI 결과 저장에서만 채워지는 nullable 값(trim 후 최대 255자, 공백은 null)이며 일별·단건 조회 응답에 그대로 실린다. 사용자 편집 API와 답변 저장은 미구현이다. |
 | 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재·null은 변경 없음, 빈 문자열·공백뿐이면 제거, 그 외는 trim 없이 원문 저장(최대 500자 — User Memory 갱신 접수 계약의 상한). PUT memo endpoint는 다른 필드 없이 memo만 교체하며, 필드 부재·null·blank 모두 제거라는 점이 PATCH와 다르다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
@@ -97,7 +102,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | AI 접수 요청 | AI Dispatch Request | 현재 구현 | `POST /v1/timeline` body(`taskId`·`taskToken`·`dailyRecordId`·offset `window`)다. source item은 싣지 않고 AI가 토큰으로 입력 조회 API를 호출한다. 필드명은 AI 규격이 명명 권위인 contract fixture다. |
 | AI 작업 입력 | AI Task Input | 현재 구현 | 서버가 소유하는 정규 AI 입력이다(`GET /s/api/{v}/timeline/drafts/{taskId}/input`). 기록 날짜·timezone·타임라인 윈도우·source item을 담고 DB 식별자와 사용자 ID는 노출하지 않으며, 시각은 record timezone offset ISO-8601이다. |
-| AI 생성 결과 | AI Result | 현재 구현 | AI가 만든 Event, Event별 nullable 질문·장소(`place`)·주소(`address`)와 각 Event가 채택한 `rawId` 목록이다(`POST .../result`). `place`는 AI가 Event 단위로 고른 단수 장소명이라 source item payload의 복수 `places`와 이름·의미가 다르다. 서버가 검증·정규화해 Event/Item/junction으로 저장하고 채택 source를 삭제한다. confidence·추론 설명 등 저장하지 않는 출력은 계약에 없다. |
+| AI 생성 결과 | AI Result | 현재 구현 | AI가 만든 Event, Event별 nullable 질문·장소(`place`)·주소(`address`)·대표 좌표·장소 후보와 각 Event가 채택한 `rawId` 목록이다(`POST .../result`). `place`는 AI가 Event 단위로 고른 단수 장소명이라 source item payload의 복수 `places`와 이름·의미가 다르다. 서버가 검증·정규화해 Event/Item/junction으로 저장하고 채택 source를 삭제한다. confidence·추론 설명 등 저장하지 않는 출력은 계약에 없다. |
 
 ## 비동기 작성 작업
 
@@ -123,8 +128,8 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|
 | Daily Record 유일성 | 현재 구현 | 활성 행(`deleted_at` NULL)만 `(subject_id, record_date)` 유일하다 — V11 생성 컬럼 `active_marker`(활성 1, 삭제 NULL) unique. 삭제 행은 같은 날짜에 여럿 남을 수 있다(#568). |
 | 이벤트-아이템 관계 | 현재 구현 | Event↔Item은 `timeline_event_items` junction N:M이다. 한 Item이 같은 Daily Record의 여러 Event에 공유될 수 있다(same-record 규칙은 DB 제약이 아니라 writer 계약). |
-| 삭제(soft delete) | 현재 구현 | Event·DailyRecord 삭제 API는 행을 지우지 않고 `deleted_at`을 찍는다(#568). 앱 조회에서는 없는 것과 같고, 행은 분석용으로 회원 탈퇴 시까지 남는다. 같은 UPDATE에서 Event `place`·`address`, record `emotion_type`을 지운다. record 삭제는 하위 활성 Event에 같은 `deleted_at`을 찍는다. junction·Item은 남는다. 삭제된 Event에만 연결된 Item은 orphan 스위퍼가 고아로 정리한다(#569). "활성" = `deleted_at` NULL. |
-| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행의 hard delete(계정 삭제·테스트 정리)에서 자기 junction이 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 API는 soft delete라 cascade가 일어나지 않는다. |
+| 삭제(soft delete) | 현재 구현 | Event·DailyRecord 삭제 API는 행을 지우지 않고 `deleted_at`을 찍는다(#568). 앱 조회에서는 없는 것과 같고, 행은 분석용으로 회원 탈퇴 시까지 남는다. 같은 UPDATE에서 Event `place`·`address`·좌표, record `emotion_type`을 지우고, 같은 transaction에서 장소 후보를 hard delete한다. record 삭제는 하위 활성 Event에 같은 `deleted_at`을 찍는다. junction·Item은 남는다. 삭제된 Event에만 연결된 Item은 orphan 스위퍼가 고아로 정리한다(#569). "활성" = `deleted_at` NULL. |
+| Cascade 삭제 | 현재 구현 | Daily Record·Timeline Event 행의 hard delete(계정 삭제·테스트 정리)에서 자기 junction과 장소 후보가 DB FK `ON DELETE CASCADE`로 삭제된다. 삭제 API는 soft delete라 cascade가 일어나지 않는다. |
 | orphan 스위퍼 | 현재 구현 | 활성 Event 연결이 없는 final Item(junction 0 또는 soft delete된 Event에만 연결, #569 — 이것이 "고아"의 정의다)을 하루 1회(03:30 KST) 수렴시키는 스케줄 작업. non-PHOTO와 object key를 복원할 수 없는 손상 PHOTO는 즉시 hard delete하고, 유효 PHOTO는 전용 executor로 S3 삭제를 요청해 `Deleted`로 확인된 Item만 지운다(#551 — 실패하면 Item이 남아 다음 실행이 다시 요청). |
 | Event-Item 연결 해제 | 현재 구현 | DELETE items API가 Event와 PHOTO Item의 junction 한 줄만 직접 DELETE로 지운다(Event·shared Item 유지, 연결된 non-PHOTO는 400 거절, 미연결·없음·비소유는 404 은닉, 같은 junction 동시 해제의 후발 요청은 영향 행 0 → 404). Item은 분류·삭제하지 않는다 — 마지막 참조였으면 고아로 남아 orphan 스위퍼가 S3 사진과 함께 정리한다(#551). |
 | Daily Record 선생성 | 현재 구현 | draft POST가 DailyRecord find-or-create(+recordAt/timezone 갱신)와 source 저장을 한 트랜잭션으로 AI dispatch 전에 커밋한다. |

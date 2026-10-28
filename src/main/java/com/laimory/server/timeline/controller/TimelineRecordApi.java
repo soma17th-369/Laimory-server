@@ -11,6 +11,7 @@ import com.laimory.server.timeline.dto.SaveDailyRecordRequest;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateDailyRecordEmotionRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventMemoRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -45,7 +46,7 @@ import org.springframework.web.bind.annotation.RequestParam;
  *
  * <p>버전은 {@code @PathVariable applicationVersion}으로 받아 그대로 Service에 넘긴다 — 버전별 분기는 Service 책임.
  */
-@Tag(name = "Timeline Record", description = "확정 타임라인 기록 조회·편집 — DailyRecord 조회·삭제, Event 조회·수정·메모·삭제")
+@Tag(name = "Timeline Record", description = "확정 타임라인 기록 조회·편집 — DailyRecord 조회·삭제, Event 조회·수정·메모·장소·삭제")
 @SecurityRequirement(name = "bearerAuth")
 @RequestMapping(ApiUrls.AUTHENTICATED_API_URL + "/timeline")
 public interface TimelineRecordApi {
@@ -197,6 +198,27 @@ public interface TimelineRecordApi {
             @Parameter(hidden = true) @CurrentSubject UUID subjectId,
             @Parameter(description = "메모를 바꿀 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
             @RequestBody UpdateTimelineEventMemoRequest request);
+
+    @Operation(summary = "타임라인 Event 장소 지정",
+            description = "Event의 place만 요청 값으로 교체한다. title·subtitle·좌표·address·장소 후보는 그대로다 — "
+                    + "subtitle의 {place}는 클라가 표시할 때 바뀐 place로 채운다. 장소 후보 중 하나인지 검사하지 않으며"
+                    + "(직접 입력 허용) 후보가 없는 Event에도 호출할 수 있다. 같은 값으로 여러 번 호출해도 결과가 같다.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "반영 성공(body=null)", useReturnTypeSchema = true),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "`-400` — place 누락·null·공백뿐 · 앞뒤 공백 제거 후 255자 초과"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "`-404` — 이벤트가 없거나 내 소유가 아님(존재 여부는 구분해 주지 않는다)")
+    })
+    @PutMapping("/events/{timelineEventId}/place")
+    ResponseEntity<ApiResponse<Void>> updateTimelineEventPlace(
+            @Parameter(description = "API 버전", example = "v1") @PathVariable String applicationVersion,
+            @Parameter(hidden = true) @CurrentSubject UUID subjectId,
+            @Parameter(description = "장소를 지정할 타임라인 이벤트 ID") @PathVariable Long timelineEventId,
+            @RequestBody UpdateTimelineEventPlaceRequest request);
 
     @Operation(summary = "타임라인 Event 삭제",
             description = "Event를 삭제한다. 삭제한 Event는 이후 모든 조회·수정에서 사라지고 404가 된다. 서버는 "

@@ -39,9 +39,13 @@ import org.springframework.web.client.RestClient;
 public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
 
     static final String FAKE_TITLE = "[FAKE] 타임라인 이벤트 제안";
+    /** 장소 자리 표시 {@code {place}}를 쓴 subtitle — 클라 표시 치환과 장소 후보 선택을 dev에서 태워 보게 한다(#612). */
+    static final String FAKE_SUBTITLE = "[FAKE] {place}에서 보낸 시간";
     static final String FAKE_QUESTION = "[FAKE] 이 시간에 무엇을 하셨나요?";
     static final String FAKE_PLACE = "[FAKE] 장소";
     static final String FAKE_ADDRESS = "[FAKE] 서울특별시 성동구";
+    /** 1번 후보가 곧 저장되는 place다(서버가 1번 후보로 덮어쓴다). 좌표는 추론이 없어 보내지 않는다. */
+    static final List<String> FAKE_PLACE_CANDIDATES = List.of(FAKE_PLACE, "[FAKE] 장소 후보 2");
 
     // 서버간 경로는 TimelineAiTaskController/TimelineCallbackController 매핑의 복제다(서비스가 컨트롤러 상수를
     // 참조하는 레이어 역류를 피함). URL 형태는 FakeTimelineAiDispatcherTest, 컨트롤러 매핑은 각 컨트롤러
@@ -139,7 +143,7 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         }
     }
 
-    /** 조회한 source 전부를 Event 하나로 묶는다(추론 없음 — 분류는 UNKNOWN 고정). */
+    /** 조회한 source 전부를 Event 하나로 묶는다(추론 없음 — 분류는 UNKNOWN 고정, 좌표 없음). */
     private static AiTimelineResultRequest toResult(AiTimelineTaskInputResponse input) {
         List<AiTimelineTaskInputResponse.SourceItem> sources = input.sourceItems();
         OffsetDateTime startAt = resolveStartAt(sources);
@@ -150,7 +154,9 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
                 .filter(value -> !value.isBefore(startAt))
                 .orElse(null);
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, FAKE_TITLE, null, FAKE_QUESTION, FAKE_PLACE, FAKE_ADDRESS,
+                TimelineEventType.UNKNOWN, FAKE_TITLE, FAKE_SUBTITLE, FAKE_QUESTION, FAKE_PLACE, FAKE_ADDRESS,
+                null, null,
+                FAKE_PLACE_CANDIDATES.stream().map(AiTimelineResultRequest.PlaceCandidate::new).toList(),
                 startAt, endAt,
                 sources.stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }

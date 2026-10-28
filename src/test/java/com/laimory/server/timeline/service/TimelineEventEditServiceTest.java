@@ -432,6 +432,73 @@ class TimelineEventEditServiceTest {
         verifyNoInteractions(transactionService);
     }
 
+    @Test
+    void updatePlace_replacesOnlyPlaceWithStrippedValue() {
+        TimelineEvent event = TimelineEvent.of(
+                RECORD_ID, TimelineEventType.MEAL, ORIGINAL_START, ORIGINAL_END, "점심 식사", "{place}에서 친구와 파스타",
+                null, "성수동 카페", "서울특별시 성동구", 37.5445, 127.0559);
+        ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+
+        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "  △△공원  ");
+
+        assertThat(event.getPlace()).isEqualTo("△△공원");
+        assertThat(event.getTitle()).isEqualTo("점심 식사");
+        assertThat(event.getSubtitle()).isEqualTo("{place}에서 친구와 파스타");
+        assertThat(event.getAddress()).isEqualTo("서울특별시 성동구");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
+        verifyNoInteractions(transactionService);
+    }
+
+    @Test
+    void updatePlace_acceptsExactly255Chars() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        String maximumPlace = "장".repeat(255);
+
+        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, maximumPlace);
+
+        assertThat(event.getPlace()).isEqualTo(maximumPlace);
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "   "})
+    void updatePlace_rejectsMissingOrBlankWithoutMutation(String place) {
+        TimelineEvent event = stubOwnedDraftEvent();
+        ReflectionTestUtils.setField(event, "place", "기존 장소");
+
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, place))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(event.getPlace()).isEqualTo("기존 장소");
+    }
+
+    @Test
+    void updatePlace_rejects256CharsWithoutMutation() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        ReflectionTestUtils.setField(event, "place", "기존 장소");
+
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "장".repeat(256)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(event.getPlace()).isEqualTo("기존 장소");
+    }
+
+    @Test
+    void updatePlace_hidesForeignEventAs404() {
+        TimelineEvent event = originalEvent();
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
+
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "△△공원"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
+
+        assertThat(event.getPlace()).isNull();
+    }
+
     private TimelineEvent stubOwnedDraftEvent() {
         TimelineEvent event = originalEvent();
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
@@ -441,7 +508,7 @@ class TimelineEventEditServiceTest {
 
     private TimelineEvent originalEvent() {
         TimelineEvent event = TimelineEvent.of(
-                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제목", null, null, null);
+                RECORD_ID, TimelineEventType.REST, ORIGINAL_START, ORIGINAL_END, "원래 제목", "원래 부제목", null, null, null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
         return event;
     }

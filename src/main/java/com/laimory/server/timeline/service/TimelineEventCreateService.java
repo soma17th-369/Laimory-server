@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code recordAt}·{@code recordTimezone}을 이 요청만으로 정할 수 없다. 기존 편집 정책과 같이
  * DRAFT/SAVED 모두 허용하고, AI 결과 저장의 exact-start +10분 충돌 보정 없이 보낸 시각을 그대로 저장한다.
  *
- * <p>수동 Event의 AI 결과 전용 필드({@code question}/{@code place}/{@code address})는 모두 null이다.
+ * <p>수동 Event의 AI 결과 필드({@code question}/{@code place}/{@code address}/좌표)는 모두 null이고 장소 후보는 없다.
  * optional {@code photosToAdd}의 검증·분류·저장 규칙은 Event PATCH와
  * {@link TimelineEventPhotoAddService}로 공유하며(트랜잭션 안 S3 호출·업로드 존재 확인 없음),
  * 함께 연결된 PHOTO Item은 응답 {@code items}에 조회 경로와 같은 정렬로 포함한다(사진 없으면
@@ -66,11 +66,11 @@ public class TimelineEventCreateService {
                 timelineEventPhotoAddService.requireValidPhotos(request.photosToAdd());
 
         TimelineEvent event = TimelineEvent.of(record.getDailyRecordId(), request.eventType(),
-                request.startAt(), request.endAt(), title, subtitle, null, null, null);
+                request.startAt(), request.endAt(), title, subtitle, null, null, null, null, null);
         event.updateMemo(memo);
         TimelineEvent saved = timelineEventService.save(event);
         if (photos.isEmpty()) {
-            return TimelineEventResponse.from(saved, List.of());
+            return TimelineEventResponse.from(saved, List.of(), List.of());
         }
 
         // Event를 먼저 저장하고 실제 생성 ID를 target으로 넘겨 PATCH와 같은 계약을 탄다 — 신규 Event는
@@ -79,7 +79,7 @@ public class TimelineEventCreateService {
                 timelineEventPhotoAddService.resolve(saved.getTimelineEventId(), photos);
         List<Long> linkedItemIds =
                 timelineEventPhotoAddService.link(subjectId, saved.getTimelineEventId(), changes);
-        return TimelineEventResponse.from(saved, assembleItems(linkedItemIds));
+        return TimelineEventResponse.from(saved, assembleItems(linkedItemIds), List.of());
     }
 
     /** 조회 경로(DailyTimelineService)와 같은 정렬 계약 — startAt(null 먼저)·timelineItemId 오름차순. */

@@ -38,7 +38,7 @@ Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관�
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
 version별 동작은 service가 결정한다.
 
-보호 operation 35개(timeline 19 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
+보호 operation 36개(timeline 20 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +
 inquiries attachment-uploads POST·접수 POST + 내 문의 목록·상세 GET + credit GET)는
 `bearerAuth` security requirement와
@@ -110,9 +110,26 @@ Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. E
 같은 404 `-404`로 은닉하고, Item이 없으면 `items=[]`다.
 
 `TimelineEventResponse`는 일별 목록·단건 조회 모두 nullable `question`(AI가 Event마다 만든 질문)과
-nullable `place`·`address`(AI가 Event 단위로 고른 장소명과 그 주소)를 포함한다. 값이 없으면 `null`이며,
-사용자 편집 API 입력 계약에는 없어 앱이 바꿀 수 없는 읽기 전용 필드다. draft polling SUCCESS의 `result`도
-같은 DTO라 세 필드가 그대로 실린다.
+nullable `place`·`address`(Event 장소명과 그 주소)를 포함한다. 값이 없으면 `null`이다. `question`·`address`는
+사용자 편집 API 입력 계약에 없어 앱이 바꿀 수 없는 읽기 전용 필드이고, `place`는 아래 장소 지정 API로만 바꾼다.
+draft polling SUCCESS의 `result`도 같은 DTO라 그대로 실린다.
+
+장소 후보·대표 좌표(#612)도 같은 DTO의 필드다 — `TimelineEventResponse`를 싣는 응답 전부(기간 목록·일별·by-id·
+Event 단건·수동 생성 응답·draft SUCCESS polling)에 실리고, 월별 경량 조회는 Event가 없어 해당하지 않는다.
+
+- `subtitle`: 장소 자리 표시 `{place}`가 든 템플릿일 수 있다. 서버는 저장한 그대로 내려주고, 클라가 표시할 때
+  `{place}`를 현재 `place`로 채운다. `title`에는 장소가 없다.
+- `latitude`·`longitude`: nullable, 항상 쌍. AI 결과에서만 채워지는 관측 위치라 장소를 바꿔도 변하지 않고 편집
+  경로가 없다(수동 생성 Event는 null).
+- `placeCandidates: [{name}]`: 우선순위 순서, 없으면 `[]`. 장소를 지정한 뒤·SAVED 날에도 그대로 내려간다.
+  목록 조회는 event id 묶음으로 후보를 한 번에 읽는다(N+1 없음).
+
+`PUT /a/api/{version}/timeline/events/{timelineEventId}/place` `{"place": "..."}`는 Event `place`만 교체한다(#612).
+`place`는 필수(누락·null·공백뿐 400 `-400`)이고 strip 후 최대 255자다(초과 400). 후보 중 하나인지 검사하지 않고
+(직접 입력 허용) 후보 없는 Event에도 호출할 수 있다. 한 transaction에서 소유·활성 Event를 확인(없음·비소유 404
+`-404`)한 뒤 `place`만 바꾸며 `title`·`subtitle`·좌표·`address`·장소 후보는 그대로다. 같은 값 반복 호출은 결과가
+같고, 성공은 `200 + body=null`이다. 기존 PATCH 계약은 바뀌지 않았다 — subtitle PATCH로 `{place}` 템플릿 대신
+채운 문장을 보내면 이후 장소 변경이 subtitle에 반영되지 않는다(템플릿 유지 여부는 Android 계약).
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
 선택적 `title`·`subtitle`·`startAt`·`endAt`·`eventType`·`memo`와 `photosToAdd`를 처리한다.

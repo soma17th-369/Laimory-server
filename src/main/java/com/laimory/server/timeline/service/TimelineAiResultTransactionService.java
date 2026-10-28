@@ -10,6 +10,7 @@ import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventPlaceCandidate;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -36,7 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <ol>
  *   <li>DB 사실 기반 검증(record 상태, source 소유, 기존 final rawId 중복)</li>
  *   <li>record timezone wall-clock 정규화 → startAt 충돌 nudge/endAt clamp</li>
- *   <li>Item(distinct rawId당 1행)·Event·junction INSERT</li>
+ *   <li>Item(distinct rawId당 1행)·Event·junction·장소 후보 INSERT</li>
  *   <li>채택된 staging source만 DELETE</li>
  *   <li>요청 시 차감한 크레딧 기록을 소비로 확정(#565)</li>
  * </ol>
@@ -44,6 +45,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>append-only 계약을 유지한다: 기존 Event/Item/junction/memo를 수정·삭제하지 않는다. startAt 충돌
  * +10분 nudge와 endAt clamp는 AI writer가 소유하던 규칙을 그대로 이어받은 것이다(정확히 겹칠 때만 적용).
+ *
+ * <p>장소 후보(#612)는 받은 순서대로 INSERT해 id 순서가 우선순위가 되고, 후보가 있으면 Event {@code place}를
+ * 1번 후보 이름으로 덮어쓴다(AI {@code place}가 다르거나 null이어도) — "장소 미선택" 상태를 만들지 않는다.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,11 +59,13 @@ public class TimelineAiResultTransactionService {
     private static final int QUESTION_MAX_LENGTH = 255;
     private static final int PLACE_MAX_LENGTH = 255;
     private static final int ADDRESS_MAX_LENGTH = 255;
+    private static final int PLACE_CANDIDATE_NAME_MAX_LENGTH = 255;
 
     private final DailyRecordService dailyRecordService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
+    private final TimelineEventPlaceCandidateService timelineEventPlaceCandidateService;
     private final TimelineItemService timelineItemService;
     private final CreditService creditService;
 
@@ -125,19 +131,26 @@ public class TimelineAiResultTransactionService {
                 .map(TimelineEvent::getStartAt)
                 .collect(Collectors.toCollection(HashSet::new));
         List<TimelineEventItem> links = new ArrayList<>();
+        List<TimelineEventPlaceCandidate> placeCandidates = new ArrayList<>();
         for (AiTimelineResultRequest.Event event : request.events()) {
             LocalDateTime startAt = resolveNonCollidingStartAt(
                     toRecordLocal(event.startAt(), recordZone), occupiedStartAts);
             LocalDateTime endAt = clampEndAt(toRecordLocal(event.endAt(), recordZone), startAt);
+            List<String> candidateNames = placeCandidateNames(event);
+            String place = candidateNames.isEmpty() ? trimToNull(event.place()) : candidateNames.get(0);
             TimelineEvent savedEvent = timelineEventService.save(TimelineEvent.of(
                     dailyRecordId, event.eventType(), startAt, endAt,
                     event.title().trim(), trimToNull(event.subtitle()), trimToNull(event.question()),
-                    trimToNull(event.place()), trimToNull(event.address())));
+                    place, trimToNull(event.address()), event.latitude(), event.longitude()));
             for (String rawId : new LinkedHashSet<>(event.sourceRawIds())) {
                 links.add(TimelineEventItem.of(savedEvent.getTimelineEventId(), itemIdsByRawId.get(rawId)));
             }
+            for (String name : candidateNames) {
+                placeCandidates.add(TimelineEventPlaceCandidate.of(savedEvent.getTimelineEventId(), name));
+            }
         }
         timelineEventItemService.saveAll(links);
+        timelineEventPlaceCandidateService.saveAll(placeCandidates);
 
         // 5. 채택된 staging만 삭제한다(누락 source는 retention cleanup 대상으로 남긴다).
         timelineDraftSourceItemService.deleteAdopted(taskId, adoptedRawIds);
@@ -183,6 +196,19 @@ public class TimelineAiResultTransactionService {
             if (event.address() != null && event.address().trim().length() > ADDRESS_MAX_LENGTH) {
                 throw new IllegalArgumentException("event address is too long: index=" + i);
             }
+            // 좌표는 선택이지만 반쪽은 거절한다 — 조회 응답에서 Event 좌표는 항상 쌍이다. 범위는 검증하지 않는다.
+            if ((event.latitude() == null) != (event.longitude() == null)) {
+                throw new IllegalArgumentException("event coordinates must be both present or both absent: index=" + i);
+            }
+            List<String> candidateNames = placeCandidateNames(event);
+            if (candidateNames.stream().anyMatch(name -> name.length() > PLACE_CANDIDATE_NAME_MAX_LENGTH)) {
+                throw new IllegalArgumentException("event place candidate is too long: index=" + i);
+            }
+            // subtitle의 {place}는 저장될 place로 채워 보이므로, 채울 place가 없는 결과는 미완성 문장이다.
+            if (event.subtitle() != null && event.subtitle().contains(TimelineEvent.PLACE_PLACEHOLDER)
+                    && candidateNames.isEmpty() && isBlank(event.place())) {
+                throw new IllegalArgumentException("event subtitle has a place placeholder without place: index=" + i);
+            }
             if (event.startAt() == null) {
                 throw new IllegalArgumentException("event requires startAt: index=" + i);
             }
@@ -196,6 +222,20 @@ public class TimelineAiResultTransactionService {
                 throw new IllegalArgumentException("event has blank sourceRawId: index=" + i);
             }
         }
+    }
+
+    /**
+     * 저장할 장소 후보 이름을 우선순위 순서대로 모은다 — trim하고 null·공백 이름의 후보는 버린다(나머지 순서 유지).
+     * 필드 누락·null·빈 배열은 후보 없음이다.
+     */
+    static List<String> placeCandidateNames(AiTimelineResultRequest.Event event) {
+        if (event.placeCandidates() == null) {
+            return List.of();
+        }
+        return event.placeCandidates().stream()
+                .filter(candidate -> candidate != null && !isBlank(candidate.name()))
+                .map(candidate -> candidate.name().trim())
+                .toList();
     }
 
     /** 결과 전체가 채택한 rawId를 입력 순서대로 중복 없이 모은다(Item 생성 축). */

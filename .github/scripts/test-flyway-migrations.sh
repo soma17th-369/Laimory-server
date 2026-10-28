@@ -426,3 +426,28 @@ cmp -s "$WORK/refresh-expiry-before.tsv" "$WORK/refresh-expiry-after.tsv" || fai
 [ "$(mysql flyway_refresh_expiry_index_upgrade -e "SELECT CONCAT(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX), ':', MAX(NON_UNIQUE)) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'refresh_tokens' AND INDEX_NAME = 'idx_refresh_tokens_expires_at'")" = 'expires_at:1' ] || fail 'V13 expires_at index missing or not a single-column non-unique index'
 flyway flyway_refresh_expiry_index_upgrade "$MIGRATIONS" -target=13 validate >"$WORK/refresh-expiry-validate.log" 2>&1
 ok 'V12 to V13 adds a non-unique expires_at index on refresh_tokens, keeping existing rows'
+
+# V13→V14(#612): timeline_events 좌표 2컬럼(nullable) 추가 + timeline_event_place_candidates 생성. 기존 Event 보존·
+# 좌표 NULL, 후보의 Event FK 강제와 Event 삭제 시 CASCADE, 묶음 조회 index를 확인한다.
+mysql -e 'CREATE DATABASE flyway_place_candidates_upgrade;'
+flyway flyway_place_candidates_upgrade "$MIGRATIONS" -target=13 migrate >"$WORK/place-candidates-v13.log" 2>&1
+PLACE_SUBJECT='00000000-0000-4000-8000-000000000003'
+mysql flyway_place_candidates_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ef', 32)), '$PLACE_SUBJECT', 1); INSERT INTO daily_records (subject_id, record_date, record_at, record_timezone, status, created_at, updated_at) VALUES ('$PLACE_SUBJECT', '2026-01-05', '2026-01-05 10:00:00', 'Asia/Seoul', 'SAVED', NOW(6), NOW(6))"
+mysql flyway_place_candidates_upgrade -e "INSERT INTO timeline_events (daily_record_id, start_at, title, place, created_at, updated_at) SELECT daily_record_id, '2026-01-05 12:00:00', 'kept', '성수 카페', NOW(6), NOW(6) FROM daily_records"
+mysql flyway_place_candidates_upgrade -e 'SELECT timeline_event_id, daily_record_id, start_at, title, place, deleted_at FROM timeline_events ORDER BY timeline_event_id' >"$WORK/place-candidates-before.tsv"
+flyway flyway_place_candidates_upgrade "$MIGRATIONS" -target=14 migrate >"$WORK/place-candidates-v14.log" 2>&1
+mysql flyway_place_candidates_upgrade -e 'SELECT timeline_event_id, daily_record_id, start_at, title, place, deleted_at FROM timeline_events ORDER BY timeline_event_id' >"$WORK/place-candidates-after.tsv"
+cmp -s "$WORK/place-candidates-before.tsv" "$WORK/place-candidates-after.tsv" || fail 'V14 changed existing timeline_events rows'
+[ "$(mysql flyway_place_candidates_upgrade -e "SELECT COUNT(*) FROM timeline_events WHERE latitude IS NULL AND longitude IS NULL")" = 1 ] || fail 'V14 did not leave existing event coordinates NULL'
+[ "$(mysql flyway_place_candidates_upgrade -e "SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME, ':', DATA_TYPE, ':', IS_NULLABLE) ORDER BY COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timeline_events' AND COLUMN_NAME IN ('latitude', 'longitude')")" = 'latitude:double:YES,longitude:double:YES' ] || fail 'V14 coordinate columns are not nullable DOUBLE'
+[ "$(mysql flyway_place_candidates_upgrade -e "SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timeline_event_place_candidates' AND INDEX_NAME = 'idx_timeline_event_place_candidates_event'")" = 'timeline_event_id' ] || fail 'V14 candidate event index missing'
+CANDIDATE_COLUMNS="(timeline_event_id, name, created_at, updated_at)"
+if mysql flyway_place_candidates_upgrade -e "INSERT INTO timeline_event_place_candidates $CANDIDATE_COLUMNS VALUES (999999, 'x', NOW(6), NOW(6))" >/dev/null 2>&1; then
+  fail 'timeline_event_place_candidates.timeline_event_id FK is not enforced'
+fi
+mysql flyway_place_candidates_upgrade -e "INSERT INTO timeline_event_place_candidates $CANDIDATE_COLUMNS SELECT timeline_event_id, '성수 카페', NOW(6), NOW(6) FROM timeline_events; INSERT INTO timeline_event_place_candidates $CANDIDATE_COLUMNS SELECT timeline_event_id, '△△공원', NOW(6), NOW(6) FROM timeline_events"
+[ "$(mysql flyway_place_candidates_upgrade -e "SELECT GROUP_CONCAT(name ORDER BY timeline_event_place_candidate_id SEPARATOR '|') FROM timeline_event_place_candidates")" = '성수 카페|△△공원' ] || fail 'V14 candidates do not keep insertion order by id'
+mysql flyway_place_candidates_upgrade -e "DELETE FROM daily_records WHERE subject_id = '$PLACE_SUBJECT'"
+[ "$(mysql flyway_place_candidates_upgrade -e "SELECT COUNT(*) FROM timeline_event_place_candidates")" = 0 ] || fail 'deleting the record did not cascade to place candidates'
+flyway flyway_place_candidates_upgrade "$MIGRATIONS" -target=14 validate >"$WORK/place-candidates-validate.log" 2>&1
+ok 'V13 to V14 adds nullable event coordinates and place candidates with event FK CASCADE, keeping existing events'

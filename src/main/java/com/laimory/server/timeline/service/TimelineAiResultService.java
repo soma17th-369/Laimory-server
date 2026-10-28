@@ -199,11 +199,13 @@ public class TimelineAiResultService {
     }
 
     /**
-     * Event title/subtitle/question/place/address만 bounded 치환한 요청 사본을 만든다(wire DTO 필드 집합 불변).
+     * Event title/subtitle/question/place/address와 장소 후보 이름만 bounded 치환한 요청 사본을 만든다(wire DTO 필드 집합 불변).
      * 치환 전에 persistence와 같은 normalize(trim·trimToNull)를 적용한다 — shape 검증이 trim 길이로
      * 통과시킨 앞뒤 공백이 255 절단 지점을 앞당겨 token까지 잘려나가는 것을 막는다. transaction 쪽
      * 재-trim과 이중 적용돼도 의미가 같다. subtitle/question/place/address는 nullable — null은 그대로 유지된다.
      * 치환 결과는 255자 이하가 보장돼 이후 transaction의 trim·길이 검증과 충돌하지 않는다.
+     * 장소 후보는 공백 이름을 버린 순서 그대로 치환한다 — transaction이 덮어쓰는 {@code place}가 치환된 1번 후보가 된다.
+     * subtitle의 {@code {place}}는 어느 탐지 패턴에도 걸리지 않아 템플릿 그대로 남는다.
      */
     private AiTimelineResultRequest redactEventTexts(AiTimelineResultRequest request) {
         List<AiTimelineResultRequest.Event> events = new ArrayList<>(request.events().size());
@@ -221,9 +223,21 @@ public class TimelineAiResultService {
                     privacyRedactor.redactText(trimToNull(event.question()), EVENT_TEXT_MAX_LENGTH).text(),
                     privacyRedactor.redactText(trimToNull(event.place()), EVENT_TEXT_MAX_LENGTH).text(),
                     privacyRedactor.redactText(trimToNull(event.address()), EVENT_TEXT_MAX_LENGTH).text(),
+                    event.latitude(), event.longitude(), redactPlaceCandidates(event),
                     event.startAt(), event.endAt(), event.sourceRawIds()));
         }
         return new AiTimelineResultRequest(events);
+    }
+
+    /** 공백 이름을 버린 후보를 순서 그대로 치환한다. 필드 누락(null)은 null로 둔다(도입 이전 shape 유지). */
+    private List<AiTimelineResultRequest.PlaceCandidate> redactPlaceCandidates(AiTimelineResultRequest.Event event) {
+        if (event.placeCandidates() == null) {
+            return null;
+        }
+        return TimelineAiResultTransactionService.placeCandidateNames(event).stream()
+                .map(name -> new AiTimelineResultRequest.PlaceCandidate(
+                        privacyRedactor.redactText(name, EVENT_TEXT_MAX_LENGTH).text()))
+                .toList();
     }
 
     private static String trimToNull(String value) {

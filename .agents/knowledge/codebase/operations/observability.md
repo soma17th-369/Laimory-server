@@ -85,10 +85,11 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 23개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 24개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594) — request 10개(draft 생성 POST, 생성 가능 확인 POST
-  `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594, 장소 지정은 #612) — request 11개(draft 생성 POST, 생성 가능 확인 POST
+  `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT,
+  장소 지정 PUT `/a/api/v\d+/timeline/events/[^/]+/place` — 사용자가 고르거나 직접 입력한 장소명, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
   User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),

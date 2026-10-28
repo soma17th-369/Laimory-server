@@ -11,6 +11,7 @@ import com.laimory.server.timeline.dto.TimelineItemResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventPlaceCandidate;
 import com.laimory.server.timeline.entity.TimelineItem;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -45,6 +46,7 @@ public class DailyTimelineService {
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
+    private final TimelineEventPlaceCandidateService timelineEventPlaceCandidateService;
 
     /** 인증 사용자의 모든 일일 기록 graph를 recordDate·ID 내림차순으로 반환한다. */
     public DailyTimelinesResponse getDailyTimelines(String applicationVersion, UUID subjectId) {
@@ -120,7 +122,7 @@ public class DailyTimelineService {
     }
 
     /**
-     * 소유권이 확인된 record 목록을 최대 Event→junction→Item 3번의 bulk 조회로 조립한다. 입력 record 순서가
+     * 소유권이 확인된 record 목록을 최대 Event→junction→Item→장소 후보 4번의 bulk 조회로 조립한다. 입력 record 순서가
      * 응답 순서이고, Event는 leaf 쿼리 순서, Item은 startAt(null 먼저)·ID 오름차순이다.
      */
     private List<DailyTimelineResponse> assembleTimelines(List<DailyRecord> records) {
@@ -148,7 +150,7 @@ public class DailyTimelineService {
                 .toList();
     }
 
-    /** 입력 Event 순서를 유지하며 junction을 경유한 Item 응답을 조립한다. */
+    /** 입력 Event 순서를 유지하며 junction을 경유한 Item 응답과 장소 후보(우선순위 순서)를 조립한다. */
     private List<TimelineEventResponse> assembleEventResponses(List<TimelineEvent> events) {
         List<Long> eventIds = events.stream().map(TimelineEvent::getTimelineEventId).toList();
         List<TimelineEventItem> links = timelineEventItemService.findByTimelineEventIds(eventIds);
@@ -158,6 +160,10 @@ public class DailyTimelineService {
                 .collect(Collectors.toMap(TimelineItem::getTimelineItemId, Function.identity()));
         Map<Long, List<TimelineEventItem>> linksByEventId = links.stream()
                 .collect(Collectors.groupingBy(TimelineEventItem::getTimelineEventId));
+        // groupingBy의 기본 ArrayList는 입력(id 오름차순) 순서를 유지한다 — 후보 우선순위가 그대로 남는다.
+        Map<Long, List<TimelineEventPlaceCandidate>> placeCandidatesByEventId =
+                timelineEventPlaceCandidateService.findByTimelineEventIds(eventIds).stream()
+                        .collect(Collectors.groupingBy(TimelineEventPlaceCandidate::getTimelineEventId));
 
         return events.stream()
                 .map(event -> TimelineEventResponse.from(event, linksByEventId
@@ -168,7 +174,8 @@ public class DailyTimelineService {
                                         Comparator.nullsFirst(Comparator.naturalOrder()))
                                 .thenComparing(TimelineItem::getTimelineItemId))
                         .map(TimelineItemResponse::from)
-                        .toList()))
+                        .toList(),
+                        placeCandidatesByEventId.getOrDefault(event.getTimelineEventId(), List.of())))
                 .toList();
     }
 }

@@ -155,15 +155,15 @@ class ApiAuthenticationContractTest {
     }
 
     @Test
-    void protectedOperationCount_isThirtyFive() {
-        // timeline 19개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
-        // Event Item 연결 해제·월별 GET·생성 가능 확인 POST(#594) 포함)
+    void protectedOperationCount_isThirtySix() {
+        // timeline 20개(날짜 GET/DELETE·저장 POST·감정 수정 PUT·Event 수동 생성 POST·Event 단건 GET·
+        // Event Item 연결 해제·월별 GET·생성 가능 확인 POST(#594)·Event 장소 지정 PUT(#612) 포함)
         // + push-registrations PUT/DELETE 2개 + push-settings GET/PUT/PUT 3개
         // + user GET/DELETE 2개(#305 탈퇴 추가) + terms agreements GET/POST 2개
         // + initializer GET 1개 + onboarding complete POST 1개(#382)
         // + inquiries attachment-uploads POST·접수 POST 2개(#518) + 내 문의 목록·상세 GET 2개(#529)
         // + credit GET 1개(#548).
-        assertThat(protectedOperations().count()).isEqualTo(35);
+        assertThat(protectedOperations().count()).isEqualTo(36);
     }
 
     @Test

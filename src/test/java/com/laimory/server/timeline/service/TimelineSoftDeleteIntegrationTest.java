@@ -12,12 +12,14 @@ import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventPlaceCandidate;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
+import com.laimory.server.timeline.repository.TimelineEventPlaceCandidateRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.time.LocalDate;
@@ -62,6 +64,8 @@ class TimelineSoftDeleteIntegrationTest {
     private TimelineItemRepository timelineItemRepository;
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
+    @Autowired
+    private TimelineEventPlaceCandidateRepository timelineEventPlaceCandidateRepository;
     @Autowired
     private TimelineDeletionTransactionService timelineDeletionTransactionService;
     @Autowired
@@ -116,8 +120,26 @@ class TimelineSoftDeleteIntegrationTest {
     private Long saveEvent(String title, int hour) {
         return timelineEventRepository.save(
                         TimelineEvent.of(recordId, TimelineEventType.UNKNOWN, DATE.atTime(hour, 0), null, title, null, null,
-                                "카페", "서울시 중구"))
+                                "카페", "서울시 중구", null, null))
                 .getTimelineEventId();
+    }
+
+    private Long saveEventWithCoordinatesAndCandidates(String title, int hour, String... candidateNames) {
+        Long eventId = timelineEventRepository.save(
+                        TimelineEvent.of(recordId, TimelineEventType.MEAL, DATE.atTime(hour, 0), null, title,
+                                "{place}에서 점심", null, candidateNames[0], "서울시 성동구", 37.5445, 127.0559))
+                .getTimelineEventId();
+        for (String name : candidateNames) {
+            timelineEventPlaceCandidateRepository.save(TimelineEventPlaceCandidate.of(eventId, name));
+        }
+        return eventId;
+    }
+
+    private List<String> candidateNames(Long eventId) {
+        return timelineEventPlaceCandidateRepository
+                .findByTimelineEventIdInOrderByTimelineEventPlaceCandidateIdAsc(List.of(eventId)).stream()
+                .map(TimelineEventPlaceCandidate::getName)
+                .toList();
     }
 
     private Long saveItemLinkedTo(String rawId, int hour, Long... eventIds) {
@@ -201,6 +223,55 @@ class TimelineSoftDeleteIntegrationTest {
                 .extracting(TimelineEventItem::getTimelineItemId)
                 .containsExactly(itemId);
         assertThat(timelineItemRepository.findById(itemId)).isPresent();
+    }
+
+    @Test
+    void deleteEventClearsCoordinatesAndDeletesOnlyItsPlaceCandidates() {
+        Long targetEventId = saveEventWithCoordinatesAndCandidates("삭제 대상", 9, "성수동 카페", "△△공원");
+        Long siblingEventId = saveEventWithCoordinatesAndCandidates("남는 이벤트", 12, "을지로 식당");
+
+        timelineDeletionTransactionService.deleteEvent(subjectId, targetEventId);
+
+        assertThat(timelineEventRepository.findById(targetEventId)).hasValueSatisfying(event -> {
+            assertThat(event.getDeletedAt()).isNotNull();
+            assertThat(event.getLatitude()).isNull();
+            assertThat(event.getLongitude()).isNull();
+            assertThat(event.getSubtitle()).isEqualTo("{place}에서 점심");
+        });
+        assertThat(candidateNames(targetEventId)).isEmpty();
+        assertThat(timelineEventRepository.findById(siblingEventId)).hasValueSatisfying(event -> {
+            assertThat(event.getLatitude()).isEqualTo(37.5445);
+            assertThat(event.getLongitude()).isEqualTo(127.0559);
+        });
+        assertThat(candidateNames(siblingEventId)).containsExactly("을지로 식당");
+    }
+
+    @Test
+    void deleteDailyRecordClearsCoordinatesAndDeletesPlaceCandidatesOfEveryEvent() {
+        Long firstEventId = saveEventWithCoordinatesAndCandidates("점심", 12, "성수동 카페", "△△공원");
+        Long secondEventId = saveEventWithCoordinatesAndCandidates("저녁", 19, "을지로 식당");
+
+        timelineDeletionTransactionService.deleteDailyRecord(subjectId, recordId);
+
+        assertThat(timelineEventRepository.findAllById(List.of(firstEventId, secondEventId)))
+                .allSatisfy(event -> {
+                    assertThat(event.getDeletedAt()).isNotNull();
+                    assertThat(event.getLatitude()).isNull();
+                    assertThat(event.getLongitude()).isNull();
+                });
+        assertThat(candidateNames(firstEventId)).isEmpty();
+        assertThat(candidateNames(secondEventId)).isEmpty();
+    }
+
+    @Test
+    void hardDeletingRecordCascadesToPlaceCandidates() {
+        // 탈퇴 삭제(#302)는 daily_records 행을 지운다 — timeline_events를 거쳐 후보까지 FK CASCADE로 지워져야 한다.
+        Long eventId = saveEventWithCoordinatesAndCandidates("점심", 12, "성수동 카페", "△△공원");
+
+        dailyRecordRepository.deleteById(recordId);
+
+        assertThat(timelineEventRepository.findById(eventId)).isEmpty();
+        assertThat(candidateNames(eventId)).isEmpty();
     }
 
     @Test

@@ -166,9 +166,11 @@ Task-Token: <taskToken>
 ```
 
 ```json
-{"events":[{"eventType":"MEAL","title":"...","subtitle":null,
+{"events":[{"eventType":"MEAL","title":"점심 식사","subtitle":"{place}에서 친구와 파스타",
             "startAt":"...","endAt":null,"sourceRawIds":["..."],
-            "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ..."}]}
+            "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ...",
+            "latitude":37.5445,"longitude":127.0559,
+            "placeCandidates":[{"name":"성수동 카페"},{"name":"△△공원"}]}]}
 ```
 
 - 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다. **신규 저장과 재시도가 같은
@@ -182,7 +184,20 @@ Task-Token: <taskToken>
   `address`는 그 Event의 주소 문자열이며, 입력 조회 응답 source payload의 복수 `places[]`와 이름·의미가
   다르다. 누락·`null`·공백은 모두 저장 값 `null`로 수렴해 도입 이전 요청 shape가 그대로 통과하고, 서버
   배포보다 AI가 먼저 보내면 미지 필드로 무시돼 400이 아니라 값만 유실된다.
-- 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`를 255자 token-aware bounded로
+- 장소 후보와 대표 좌표(#612)도 선택 필드다. `title`에는 장소를 넣지 않고, `subtitle`의 장소 자리에는
+  자리 표시 `{place}`를 쓴다 — 서버는 템플릿 그대로 저장·응답하고 클라가 표시할 때 현재 `place`로 채운다.
+  - `placeCandidates[{name}]`: 장소가 애매한 Event의 후보 이름, **배열 순서 = 우선순위**. 누락·`null`·`[]`은
+    후보 없음이고, trim 후 공백인 이름의 후보는 버린다(나머지 순서 유지). 이름은 trim 후 255자다.
+  - 후보가 1개 이상이면 서버가 `place`를 **1번 후보 이름(치환 후 값)으로 덮어써** 저장한다 — AI `place`가
+    다르거나 null이어도 비교 없이 덮어쓴다. 후보가 없으면 AI `place` 그대로다. 후보 개수는 검증하지 않는다.
+  - `subtitle`에 `{place}`가 있는데 저장될 `place`가 없으면(후보 0개 + AI `place` 누락·공백) 결과 batch 400.
+  - `latitude`·`longitude`: Event 대표 좌표 = 사용자가 실제로 있던 관측 위치(이동 Event는 도착지)라 장소를
+    바꿔도 변하지 않는다. 둘 다 보내거나 둘 다 생략하며 한쪽만이면 결과 batch 400. 범위는 검증하지 않는다.
+    후보에는 좌표가 없다.
+  - 서버 배포 전에 AI가 먼저 보내면 미지 필드로 무시돼 좌표·후보가 유실되고 `place` 덮어쓰기도 없다.
+    `{place}` 전송은 그 환경의 서버 롤링 배포 완료 + Android 강제 업데이트 뒤에 시작한다(구버전 앱은
+    `{place}`를 그대로 보인다).
+- 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`와 후보 이름을 255자 token-aware bounded로
   v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
   전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
 - retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 MySQL transaction을 실행한다.
@@ -211,12 +226,14 @@ Task-Token: <taskToken>
 
 - event와 event별 source가 각각 1건 이상
 - `eventType`, non-blank `title`, `startAt`, `endAt >= startAt`, DB 문자열 길이
-  (`title`·`subtitle`·`question`·`place`·`address` 각각 trim 후 255자 — 한 Event의 초과가 결과 batch
+  (`title`·`subtitle`·`question`·`place`·`address`·후보 이름 각각 trim 후 255자 — 한 Event의 초과가 결과 batch
   전체를 400으로 만든다)
+- Event 좌표 쌍(한쪽만 400), `subtitle`의 `{place}`에 채울 `place` 존재
 - 모든 `sourceRawId`가 이 task staging source에 존재
 - 같은 record final graph에 채택 rawId가 아직 없음
 
-MySQL transaction은 DB 검증, Event/Item/junction INSERT와 채택 source DELETE를 함께 commit한다.
+MySQL transaction은 DB 검증, Event/Item/junction/장소 후보 INSERT와 채택 source DELETE를 함께 commit한다.
+장소 후보는 받은 순서대로 INSERT해 id 순서가 우선순위가 된다.
 offset 시각은 record timezone wall-clock으로 정규화하고 start 충돌은 +10분 nudge, end는 start 이상으로
 clamp한다.
 
@@ -283,7 +300,9 @@ POST {base-url}/v1/user-memory
   `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
 - 접수 body의 텍스트는 v1 privacy 치환본이다 — base 문서(`userMemory`)는 `redactTree`, Event
   `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이라 값에 `[REDACTED_*]`
-  token literal이 섞일 수 있다(필드 집합·구조 불변). DB에는 사용자 원문이 남고 AI 전달에서만 치환하며,
+  token literal이 섞일 수 있다(필드 집합·구조 불변). `subtitle`의 `{place}`는 치환 전에 Event의 현재 `place`로
+  채워 완성 문장으로 보낸다(`place`가 null이면 그대로 — #612). 좌표·장소 후보·`place` 필드는 싣지 않는다.
+  DB에는 사용자 원문(템플릿)이 남고 AI 전달에서만 치환하며,
   결과 대조용 base 문서 지문은 접수 body의 치환본이 아니라 DB 원본 문서로 계산한다.
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
   같은 규칙 — 상관관계는 `taskId`).
@@ -404,6 +423,7 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
 
 - `noop`: dispatch하지 않아 PROCESSING task가 처리 기한에 유실 처리로 FAILED가 된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
+  결과는 `{place}` subtitle과 장소 후보 2개를 싣고 좌표는 보내지 않는다(추론 없음).
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
 - `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
   `InvokeAgentRuntime`으로 접수시킨다(§1a).
