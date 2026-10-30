@@ -5,8 +5,11 @@ import com.laimory.server.credit.CreditHistoryStatus;
 import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.entity.CreditHistory;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -36,6 +39,19 @@ public interface CreditHistoryRepository extends JpaRepository<CreditHistory, Lo
 
     /** {@code createdAt} 이전에 생긴 해당 상태 기록 수 — 유실 환불 누락 경보 gauge(#582)용. */
     long countByStatusAndCreatedAtBefore(CreditHistoryStatus status, LocalDateTime createdAt);
+
+    /**
+     * 결말 난 기록 — 소비됐거나 {@code reasons} 사유로 환불된 기록 — 의 상태를 최신 차감순으로 {@code limit}건 읽는다.
+     * 최근 AI 실패 경보 gauge(#617)용이다. 그 밖의 사유로 환불된 기록과 진행 중({@code CHARGED})은 건너뛴다.
+     */
+    @Query("select h.status from CreditHistory h where h.costType = :costType "
+            + "and (h.status = :consumed or (h.status = :refunded and h.refundReason in :reasons)) "
+            + "order by h.creditHistoryId desc")
+    List<CreditHistoryStatus> findSettledStatuses(@Param("costType") CreditCostType costType,
+                                                  @Param("consumed") CreditHistoryStatus consumed,
+                                                  @Param("refunded") CreditHistoryStatus refunded,
+                                                  @Param("reasons") Collection<CreditRefundReason> reasons,
+                                                  Limit limit);
 
     /**
      * 결과 저장으로 차감을 확정한다. 상태를 조건으로 보지 않는다 — 유실 환불 뒤 늦게 저장된 결과도 마지막에 쓴
