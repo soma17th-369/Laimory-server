@@ -15,6 +15,7 @@ import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -203,7 +204,7 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
 
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID,
-                new UpdateTimelineEventRequest(null, null, null, null, null, null, null));
+                new UpdateTimelineEventRequest(null, null, null, null, null, null, null, null, null));
 
         ArgumentCaptor<TimelineEventEditCommand> captor = ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), captor.capture());
@@ -222,7 +223,7 @@ class TimelineEventEditServiceTest {
         stubOwnedDraftEvent();
         service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventRequest(
                 " " + "a".repeat(255) + " ", " " + "b".repeat(255) + " ", null, null, null,
-                " ".repeat(501), null));
+                " ".repeat(501), null, null, null));
 
         ArgumentCaptor<TimelineEventEditCommand> captor = ArgumentCaptor.forClass(TimelineEventEditCommand.class);
         verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), captor.capture());
@@ -243,6 +244,52 @@ class TimelineEventEditServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         verifyNoInteractions(transactionService);
+    }
+
+    @ParameterizedTest(name = "lat={0}, lng={1}")
+    @MethodSource("boundaryCoordinates")
+    void updateEvent_passesBoundaryCoordinatesToWriter(Double latitude, Double longitude) {
+        stubOwnedDraftEvent();
+
+        service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID,
+                new UpdateTimelineEventRequest(null, null, null, null, null, null, null, latitude, longitude));
+
+        ArgumentCaptor<TimelineEventEditCommand> captor = ArgumentCaptor.forClass(TimelineEventEditCommand.class);
+        verify(transactionService).updateEvent(eq(SUBJECT_ID), eq(EVENT_ID), captor.capture());
+        assertThat(captor.getValue().latitude()).isEqualTo(latitude);
+        assertThat(captor.getValue().longitude()).isEqualTo(longitude);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidCoordinates")
+    void updateEvent_rejectsHalfOrOutOfRangeCoordinatesBeforeWriter(String ignored, Double latitude,
+                                                                    Double longitude) {
+        stubOwnedDraftEvent();
+        UpdateTimelineEventRequest request =
+                new UpdateTimelineEventRequest("제목", null, null, null, null, null, null, latitude, longitude);
+
+        assertThatThrownBy(() -> service.updateEvent(VERSION, SUBJECT_ID, EVENT_ID, request))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(transactionService);
+    }
+
+    private static Stream<Arguments> boundaryCoordinates() {
+        return Stream.of(
+                Arguments.of(90.0, 180.0),
+                Arguments.of(-90.0, -180.0));
+    }
+
+    private static Stream<Arguments> invalidCoordinates() {
+        return Stream.of(
+                Arguments.of("latitude only", 37.5445, null),
+                Arguments.of("longitude only", null, 127.0559),
+                Arguments.of("latitude over 90", 90.0001, 127.0559),
+                Arguments.of("latitude under -90", -90.0001, 127.0559),
+                Arguments.of("longitude over 180", 37.5445, 180.0001),
+                Arguments.of("longitude under -180", 37.5445, -180.0001),
+                Arguments.of("latitude NaN", Double.NaN, 127.0559),
+                Arguments.of("longitude NaN", 37.5445, Double.NaN));
     }
 
     @Test
@@ -441,7 +488,7 @@ class TimelineEventEditServiceTest {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
 
-        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "  △△공원  ");
+        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventPlaceRequest("  △△공원  ", null, null));
 
         assertThat(event.getPlace()).isEqualTo("△△공원");
         assertThat(event.getTitle()).isEqualTo("점심 식사");
@@ -453,11 +500,46 @@ class TimelineEventEditServiceTest {
     }
 
     @Test
+    void updatePlace_withCoordinatesReplacesPlaceAndCoordinates() {
+        TimelineEvent event = TimelineEvent.of(
+                RECORD_ID, TimelineEventType.MEAL, ORIGINAL_START, ORIGINAL_END, "점심 식사", "{place}에서 친구와 파스타",
+                null, "성수동 카페", "서울특별시 성동구", 37.5445, 127.0559);
+        ReflectionTestUtils.setField(event, "timelineEventId", EVENT_ID);
+        when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(SUBJECT_ID)));
+
+        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID,
+                new UpdateTimelineEventPlaceRequest(" △△공원 ", 37.5512, 127.0410));
+
+        assertThat(event.getPlace()).isEqualTo("△△공원");
+        assertThat(event.getLatitude()).isEqualTo(37.5512);
+        assertThat(event.getLongitude()).isEqualTo(127.0410);
+        // 주소는 사용자 지정 경로가 없어 이전 위치 값 그대로다.
+        assertThat(event.getAddress()).isEqualTo("서울특별시 성동구");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidCoordinates")
+    void updatePlace_rejectsHalfOrOutOfRangeCoordinatesWithoutMutation(String ignored, Double latitude,
+                                                                       Double longitude) {
+        TimelineEvent event = stubOwnedDraftEvent();
+        ReflectionTestUtils.setField(event, "place", "기존 장소");
+
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID,
+                new UpdateTimelineEventPlaceRequest("△△공원", latitude, longitude)))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(event.getPlace()).isEqualTo("기존 장소");
+        assertThat(event.getLatitude()).isNull();
+        assertThat(event.getLongitude()).isNull();
+    }
+
+    @Test
     void updatePlace_acceptsExactly255Chars() {
         TimelineEvent event = stubOwnedDraftEvent();
         String maximumPlace = "장".repeat(255);
 
-        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, maximumPlace);
+        service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventPlaceRequest(maximumPlace, null, null));
 
         assertThat(event.getPlace()).isEqualTo(maximumPlace);
     }
@@ -469,7 +551,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "place", "기존 장소");
 
-        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, place))
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventPlaceRequest(place, null, null)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getPlace()).isEqualTo("기존 장소");
@@ -480,7 +562,7 @@ class TimelineEventEditServiceTest {
         TimelineEvent event = stubOwnedDraftEvent();
         ReflectionTestUtils.setField(event, "place", "기존 장소");
 
-        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "장".repeat(256)))
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventPlaceRequest("장".repeat(256), null, null)))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(event.getPlace()).isEqualTo("기존 장소");
@@ -492,7 +574,7 @@ class TimelineEventEditServiceTest {
         when(timelineEventService.findById(EVENT_ID)).thenReturn(Optional.of(event));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(draftRecordOf(OTHER_SUBJECT_ID)));
 
-        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, "△△공원"))
+        assertThatThrownBy(() -> service.updatePlace(VERSION, SUBJECT_ID, EVENT_ID, new UpdateTimelineEventPlaceRequest("△△공원", null, null)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.getErrorCode()).isEqualTo(-404));
 
@@ -543,7 +625,7 @@ class TimelineEventEditServiceTest {
             String memo,
             List<UpdateTimelineEventPhotoRequest> photos) {
         return new UpdateTimelineEventRequest(
-                title, subtitle, startAt, endAt, eventType, memo, photos);
+                title, subtitle, startAt, endAt, eventType, memo, photos, null, null);
     }
 
     private static Stream<Arguments> invalidScalarRequests() {

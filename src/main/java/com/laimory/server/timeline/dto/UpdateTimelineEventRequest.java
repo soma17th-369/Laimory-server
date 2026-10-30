@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * 타임라인 Event 부분 수정 요청. 누락·null은 기존 값 유지이며 subtitle·memo는 blank로 제거한다.
  * <b>예외: endAt은 누락·null 모두 비움(단일 시점)</b>이므로 유지하려면 현재 값을 보내야 한다.
- * photosToAdd는 PHOTO append만 표현하며 누락·null은 빈 목록이다.
+ * photosToAdd는 PHOTO append만 표현하며 누락·null은 빈 목록이다. 좌표(latitude·longitude)는 쌍으로만 교체한다.
  * 길이·공백 정규화는 서비스가, 시간 범위는 transaction 안에서 기존 startAt과 병합한 뒤 검증한다.
  */
 public record UpdateTimelineEventRequest(
@@ -37,7 +37,14 @@ public record UpdateTimelineEventRequest(
         String memo,
         @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true,
                 description = "추가할 PHOTO Item 목록. 누락·null·빈 배열은 변경 없음. 기존 Item을 교체하지 않는다.")
-        List<UpdateTimelineEventPhotoRequest> photosToAdd
+        List<UpdateTimelineEventPhotoRequest> photosToAdd,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true, example = "37.5445",
+                description = "이벤트 대표 좌표의 위도(-90~90). longitude와 둘 다 보내면 좌표를 교체하고, 둘 다 "
+                        + "누락·null이면 유지한다. 한쪽만이거나 범위 밖이면 400. 좌표를 지우는 방법은 없다.")
+        Double latitude,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true, example = "127.0559",
+                description = "이벤트 대표 좌표의 경도(-180~180). latitude와 쌍이다.")
+        Double longitude
 ) {
     public UpdateTimelineEventRequest {
         // null 원소는 그대로 보존해 서비스의 PHOTO 입력 검증에서 거절한다.

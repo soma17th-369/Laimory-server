@@ -27,6 +27,7 @@ import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.entity.TimelineEvent;
@@ -316,8 +317,10 @@ class TimelineAiTaskFlowIntegrationTest {
                 .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
                 .getFirst().getTimelineEventId();
 
-        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId, "△△공원");
-        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId, "직접 입력한 장소");
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("△△공원", null, null));
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("직접 입력한 장소", null, null));
 
         TimelineEvent event = timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(eventId).orElseThrow();
         assertThat(event.getPlace()).isEqualTo("직접 입력한 장소");

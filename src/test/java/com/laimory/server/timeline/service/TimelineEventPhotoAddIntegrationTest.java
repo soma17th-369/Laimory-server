@@ -213,7 +213,7 @@ class TimelineEventPhotoAddIntegrationTest {
                                                List<UpdateTimelineEventPhotoRequest> photos) {
         return new UpdateTimelineEventRequest(
                 title, "부제", DATE.atTime(14, 0), DATE.atTime(15, 0), null,
-                memo, photos);
+                memo, photos, null, null);
     }
 
     private UpdateTimelineEventPhotoRequest photo(String rawId) {

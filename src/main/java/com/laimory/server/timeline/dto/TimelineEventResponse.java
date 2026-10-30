@@ -33,8 +33,9 @@ public record TimelineEventResponse(
         String place,
         @Schema(description = "이 이벤트의 주소. 없으면 null이며 편집 API로 바꿀 수 없다", nullable = true)
         String address,
-        @Schema(description = "이벤트 대표 좌표의 위도 — 사용자가 실제로 있던 관측 위치(이동은 도착지). 장소를 바꿔도 "
-                + "변하지 않는다. 없으면 null이며 longitude와 항상 함께 null이거나 함께 값이다",
+        @Schema(description = "이벤트 대표 좌표의 위도. AI가 준 관측 위치(이동은 도착지)가 초기값이고, 사용자가 "
+                + "Event 생성·수정·장소 지정에서 좌표를 보내면 그 값으로 바뀐다. 없으면 null이며 longitude와 항상 "
+                + "함께 null이거나 함께 값이다",
                 nullable = true, example = "37.5445")
         Double latitude,
         @Schema(description = "이벤트 대표 좌표의 경도", nullable = true, example = "127.0559")

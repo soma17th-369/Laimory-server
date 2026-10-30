@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import java.util.List;
@@ -49,14 +50,24 @@ public class TimelineEventEditService {
     }
 
     /**
-     * 장소 지정 API(#612). {@code place}만 교체하고 title·subtitle·좌표·주소·장소 후보는 건드리지 않는다.
+     * 장소 지정 API(#612). {@code place}를 교체하고, 좌표 쌍이 오면 좌표도 교체한다(#616 — 지도로 고른 장소).
+     * 좌표를 생략하면 기존 좌표를 유지한다. title·subtitle·주소·장소 후보는 건드리지 않는다.
      * 후보 중 하나인지 검사하지 않으며(직접 입력 허용) 후보 없는 Event도 거절하지 않는다.
      */
     @Transactional
-    public void updatePlace(String applicationVersion, UUID subjectId, Long timelineEventId, String place) {
+    public void updatePlace(String applicationVersion, UUID subjectId, Long timelineEventId,
+                            UpdateTimelineEventPlaceRequest request) {
         // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineEvent event = findOwnedEvent(subjectId, timelineEventId);
-        event.updatePlace(TimelineEventInputRules.requireValidPlace(place));
+        if (request == null) {
+            throw new IllegalArgumentException("request is required");
+        }
+        String place = TimelineEventInputRules.requireValidPlace(request.place());
+        TimelineEventInputRules.requireValidCoordinates(request.latitude(), request.longitude());
+        event.updatePlace(place);
+        if (request.latitude() != null) {
+            event.updateCoordinates(request.latitude(), request.longitude());
+        }
     }
 
     /** owner 검증은 입력 검증·DB mutation보다 먼저 수행한다. */
@@ -77,10 +88,11 @@ public class TimelineEventEditService {
         String title = request.title() == null ? null : TimelineEventInputRules.requireValidTitle(request.title());
         String subtitle = TimelineEventInputRules.normalizeSubtitle(request.subtitle());
         String memo = TimelineEventInputRules.normalizeMemo(request.memo());
+        TimelineEventInputRules.requireValidCoordinates(request.latitude(), request.longitude());
         List<TimelineEventPhotoAddService.PhotoToAdd> photos =
                 timelineEventPhotoAddService.requireValidPhotos(request.photosToAdd());
         return new TimelineEventEditCommand(
                 request.eventType(), title, request.subtitle() != null, subtitle, request.startAt(), request.endAt(),
-                request.memo() != null, memo, photos);
+                request.memo() != null, memo, photos, request.latitude(), request.longitude());
     }
 }

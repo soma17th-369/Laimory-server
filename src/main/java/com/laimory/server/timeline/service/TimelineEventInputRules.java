@@ -3,7 +3,7 @@ package com.laimory.server.timeline.service;
 import java.time.LocalDateTime;
 
 /**
- * 사용자 Event 입력의 공통 상세 규칙(title·subtitle·시간 범위·memo·place) — Event PATCH/memo PUT/place PUT
+ * 사용자 Event 입력의 공통 상세 규칙(title·subtitle·시간 범위·memo·place·좌표) — Event PATCH/memo PUT/place PUT
  * ({@link TimelineEventEditService})과 수동 Event 생성({@link TimelineEventCreateService})이 공유해
  * 같은 필드 규칙이 갈라지지 않게 한다. DTO의 Bean Validation은 생성 필수값만 담당하며,
  * 정규화 후 길이·시간 관계는 이 규칙이 소유한다. PATCH의 기존 값 병합·변경 여부·PHOTO 검증은 각 서비스가 소유한다.
@@ -53,6 +53,33 @@ final class TimelineEventInputRules {
             throw new IllegalArgumentException("place is too long: length=" + stripped.length());
         }
         return stripped;
+    }
+
+    /** 수동 Event 생성의 선택 place(#616). null·공백뿐은 null(장소 없음), 그 외 strip 후 최대 255자. */
+    static String normalizePlace(String place) {
+        if (place == null || place.isBlank()) {
+            return null;
+        }
+        return requireValidPlace(place);
+    }
+
+    /**
+     * 사용자가 지정한 Event 좌표(#616). 선택이지만 쌍이다 — 둘 다 null이면 좌표 없음, 한쪽만이면 거절한다.
+     * 값이 있으면 위도 -90~90, 경도 -180~180(경계 포함). 비교를 부정형으로 써서 NaN도 범위 밖으로 거절한다.
+     */
+    static void requireValidCoordinates(Double latitude, Double longitude) {
+        if ((latitude == null) != (longitude == null)) {
+            throw new IllegalArgumentException("coordinates must be both present or both absent");
+        }
+        if (latitude == null) {
+            return;
+        }
+        if (!(latitude >= -90 && latitude <= 90)) {
+            throw new IllegalArgumentException("latitude is out of range: " + latitude);
+        }
+        if (!(longitude >= -180 && longitude <= 180)) {
+            throw new IllegalArgumentException("longitude is out of range: " + longitude);
+        }
     }
 
     /** startAt은 필수, endAt은 nullable이되 값이 있으면 startAt보다 이전일 수 없다. */

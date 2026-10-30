@@ -157,7 +157,9 @@ public interface TimelineRecordApi {
                     + "description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 생성한다. "
                     + "같은 rawId가 이 Event에 이미 연결돼 있으면 그 사진은 이미 추가된 것으로 보고 오류 없이 건너뛰며"
                     + "(같은 요청의 재시도 — 나머지 항목은 정상 처리), 아니면 새 Item이다 — 저장본과 비교하지 않는다. "
-                    + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다.")
+                    + "시간은 보낸 값 그대로 저장한다 — draft 생성의 +10분 충돌 보정은 없다. "
+                    + "latitude·longitude는 둘 다 보내면 Event 좌표를 교체하고, 둘 다 누락/null이면 유지한다"
+                    + "(좌표를 지우는 방법은 없다). 장소명 변경은 장소 지정 API가 담당한다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "수정 성공(body=null)", useReturnTypeSchema = true),
@@ -165,7 +167,7 @@ public interface TimelineRecordApi {
                     description = "`-400` — title 공백·255자 초과 · subtitle 255자 초과 · 시간 포맷 오류 · "
                             + "endAt이 수정 후 startAt보다 이전 · eventType 미지원 literal/숫자 · "
                             + "memo 500자 초과 · PHOTO 입력 오류·PHOTO 시각 소수 초·rawId·filename 충돌·"
-                            + "기존 PHOTO 입력 불일치 · "
+                            + "기존 PHOTO 입력 불일치 · 좌표 한쪽만·범위 밖(위도 -90~90, 경도 -180~180) · "
                             + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
@@ -200,14 +202,16 @@ public interface TimelineRecordApi {
             @RequestBody UpdateTimelineEventMemoRequest request);
 
     @Operation(summary = "타임라인 Event 장소 지정",
-            description = "Event의 place만 요청 값으로 교체한다. title·subtitle·좌표·address·장소 후보는 그대로다 — "
+            description = "Event의 place를 요청 값으로 교체한다. latitude·longitude를 둘 다 보내면(지도로 고른 장소) "
+                    + "좌표도 교체하고, 둘 다 누락/null이면 좌표를 유지한다. title·subtitle·address·장소 후보는 그대로다 — "
                     + "subtitle의 {place}는 클라가 표시할 때 바뀐 place로 채운다. 장소 후보 중 하나인지 검사하지 않으며"
                     + "(직접 입력 허용) 후보가 없는 Event에도 호출할 수 있다. 같은 값으로 여러 번 호출해도 결과가 같다.")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "반영 성공(body=null)", useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                    description = "`-400` — place 누락·null·공백뿐 · 앞뒤 공백 제거 후 255자 초과"),
+                    description = "`-400` — place 누락·null·공백뿐 · 앞뒤 공백 제거 후 255자 초과 · "
+                            + "좌표 한쪽만·범위 밖(위도 -90~90, 경도 -180~180)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                     description = "`-2001` — 인증 필요(Bearer access token 부재/무효/만료)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -385,20 +389,23 @@ public interface TimelineRecordApi {
                     + "여부를 확인하지 않고, description은 저장하지 않으며 photoUrl은 인증 사용자와 filename으로 "
                     + "생성한다. Event·PHOTO Item·연결은 한 트랜잭션으로 커밋된다 — 일부 실패 시 사진 없는 "
                     + "Event만 남지 않는다. 필드 규칙은 기존 Event PATCH와 같고, 시간은 보낸 값 그대로 "
-                    + "저장한다 — AI 결과 저장의 +10분 충돌 보정은 없다. 수동 Event의 question·place·address는 "
-                    + "null이고, 함께 연결된 PHOTO Item은 응답 items에 조회와 같은 정렬로 포함된다(사진 없으면 "
+                    + "저장한다 — AI 결과 저장의 +10분 충돌 보정은 없다. place는 optional 키다(누락/null/공백뿐은 "
+                    + "장소 없음, 그 외 앞뒤 공백 제거 후 최대 255자). latitude·longitude도 optional이며 둘 다 "
+                    + "보내거나 둘 다 생략한다(생략하면 좌표 없음). 수동 Event의 question·address는 null이고 장소 "
+                    + "후보는 없으며, 함께 연결된 PHOTO Item은 응답 items에 조회와 같은 정렬로 포함된다(사진 없으면 "
                     + "빈 목록). 생성 후 사진 추가는 기존 Event PATCH photosToAdd도 계속 지원한다. "
                     + "이 생성은 User Memory 갱신을 새로 등록하지 않는다(SAVED 후 편집과 같은 정책).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "생성 성공 — 생성된 timelineEventId와 Event 표현"
-                            + "(question/place/address=null, 연결 PHOTO Item 포함 items) 반환",
+                            + "(question/address=null, 연결 PHOTO Item 포함 items) 반환",
                     useReturnTypeSchema = true),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                     description = "`-400` — recordDate가 올바른 ISO 날짜 형식이 아니거나 1000-01-01~9999-12-31 범위 밖 · body 없음·깨진 JSON · "
                             + "eventType·title·startAt 누락 · eventType null/미지원 literal/숫자 등 비문자열 · "
                             + "title null/공백·255자 초과 · subtitle 255자 초과 · "
                             + "startAt null/시간 포맷 오류 · endAt이 startAt보다 이전 · memo 500자 초과 · "
+                            + "place 255자 초과 · 좌표 한쪽만·범위 밖(위도 -90~90, 경도 -180~180) · "
                             + "PHOTO 입력 오류·PHOTO 시각 소수 초·rawId·filename 충돌·기존 PHOTO 입력 불일치 · "
                             + "`-1004` — 사진 수 초과"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
