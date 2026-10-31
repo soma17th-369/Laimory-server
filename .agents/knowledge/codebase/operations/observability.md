@@ -85,13 +85,13 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 24개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 24개 요청/응답 body(폐기된 경로 포함)는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
   #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594, 장소 지정은 #612) — request 11개(draft 생성 POST, 생성 가능 확인 POST
   `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT,
   장소 지정 PUT `/a/api/v\d+/timeline/events/[^/]+/place` — 사용자가 고르거나 직접 입력한 장소명, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
-  User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
+  User Memory result POST, 폐기된 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
   response 13개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
   경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다, 앱 내 문의 목록 GET
@@ -99,12 +99,10 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   마스킹하고 ID·상태·처리 시각만 남긴다(목록 wrapper `inquiries`를 allowlist에 둬 원소 구조가 남는다),
   draft polling GET, daily-records 목록·날짜·by-id GET, Event 단건 GET, Event 수동 생성
   POST — 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 request와 함께 대상, 공개 약관 GET
-  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, AI 동기 테스트 POST — AI가 만든
-  Event 제목·부제·질문·장소를 그대로 돌려주므로 request와 함께 대상).
-  AI 동기 테스트 경로는 staging을 거치지 않아 <b>저장 시점 치환이 없는 원문</b>이 request로 들어오므로
-  마스킹이 유일한 방어선이다(치환은 AI로 나갈 때만 적용된다). 서버 발행 `taskId`는 상관키라 allowlist에
-  포함해 로그에 남기고, 응답의 `timedOut`도 사용자 값이 아닌 boolean 신호라 그대로 남긴다. 감정 수정 PUT
-  `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
+  `/api/v\d+/terms`, 동의 이력 GET `/a/api/v\d+/terms/agreements`, 폐기된 AI 동기 테스트 POST).
+  AI 동기 테스트 API는 제거돼 해당 경로가 404로 거절된다. 기존 호출자가 source payload·userMemory
+  원문을 계속 보낼 수 있으므로 해당 경로의 요청·응답 마스킹과 allowlist는 그대로 유지한다.
+  감정 수정 PUT `.../daily-records/{recordDate}/emotion`(#325)은 body가 enum뿐이라 대상이 아니다.
   skeleton 규칙은 `AccessLogBodyMasker`의 allowlist가 SSOT다: 명시된 구조 필드(시각·enum·ID·rawId·
   status·`ApiResponse` envelope의 header/code/body·약관 termType/version/
   acceptedAt 등)만 값을 남기고 목록 밖 필드는 타입 무관 `"***"`로 subtree째 붕괴한다(기본 마스크 —

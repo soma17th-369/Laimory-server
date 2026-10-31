@@ -54,8 +54,8 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/result$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/callback$")),
             new PrivacyBodyPath("POST", Pattern.compile("^/s/api/v\\d+/user-memory/updates/[^/]+/result$")),
-            // dev 전용 AI 동기 테스트(#394) — 호출자가 AI Timeline Input 원문(source payload·userMemory)을
-            // 그대로 싣는다. staging을 거치지 않아 저장 시점 치환도 없으므로 여기서 반드시 마스킹한다.
+            // 폐기된 AI 동기 테스트 경로 — 잔여 요청이 404로 거절돼도 source payload·userMemory 원문은
+            // access log에 남지 않도록 기존 마스킹을 유지한다.
             new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")),
             // 문의 접수(#518) — 답장 email과 문의 원문. presign 발급(attachment-uploads)은 메타뿐이라 제외.
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/inquiries$")));
@@ -76,7 +76,7 @@ final class AccessLogBodyMasker {
             new PrivacyBodyPath("POST", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+/events$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/api/v\\d+/terms$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/terms/agreements$")),
-            // dev 전용 AI 동기 테스트(#394) 응답 — AI가 방금 만든 Event 제목·부제·질문·장소가 실린다.
+            // 폐기된 AI 동기 테스트 경로의 기존 응답 마스킹도 유지한다.
             new PrivacyBodyPath("POST", Pattern.compile("^/t/api/v\\d+/timeline/test$")),
             // 관리자 문의 열람(#518) — 목록·상세 모두 email과 문의 원문을 echo한다. 관리자 경로도
             // 같은 access log를 타므로 여기서 마스킹한다(처리됨 토글 PUT은 시각·boolean뿐이라 제외).
@@ -97,8 +97,8 @@ final class AccessLogBodyMasker {
             // draft 생성·Event 수정 request envelope
             "recorddate", "recordat", "recordtimezone", "timelinewindow", "starttime", "endtime",
             "sourceitems", "itemtype", "rawid", "startat", "endat", "photostoadd",
-            // dev 전용 AI 동기 테스트(#394): window는 구조 필드, taskId는 서버 발행 상관키(UUID)라
-            // 로그에 남아야 AI 로그·Langfuse와 이어진다. timedOut은 사용자 값이 아닌 boolean 신호다.
+            // 폐기된 AI 동기 테스트 경로의 기존 allowlist를 유지한다: window는 구조 필드,
+            // taskId는 서버 발행 상관키(UUID), timedOut은 boolean 신호다.
             // userMemory·payload는 allowlist 밖이라 마스크된다.
             "window", "taskid", "timedout",
             // AI result·상태 전이
