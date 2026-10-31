@@ -120,8 +120,8 @@ class KakaoMapPlaceProviderTest {
         GeoPlace geo = lookup();
 
         assertThat(geo.address()).isEqualTo("서울 용산구 청파로20길 95");
-        // 건물명은 별도 필드 없이 places 맨 앞에 합류한다.
-        assertThat(geo.places()).containsExactly("서울드래곤시티");
+        // 건물명은 별도 필드 없이 places 맨 앞에 합류하고, 건물 좌표가 없어 조회한 관측 좌표를 쓴다.
+        assertThat(geo.places()).containsExactly(new NearbyPlace("서울드래곤시티", LATITUDE, LONGITUDE));
 
         RecordedRequest coord2address = takeRequest();
         assertThat(coord2address.getRequestUrl().encodedPath()).isEqualTo(COORD2ADDRESS_PATH);
@@ -200,15 +200,19 @@ class KakaoMapPlaceProviderTest {
         enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", "서울드래곤시티"));
         enqueueJson("""
                 {"documents":[
-                  {"id":"1","place_name":"가까운 카페"},
-                  {"id":"2","place_name":""},
-                  {"id":"3","place_name":"그랑씨엘"}
+                  {"id":"1","place_name":"가까운 카페","x":"126.9670","y":"37.5342"},
+                  {"id":"2","place_name":"","x":"126.9671","y":"37.5343"},
+                  {"id":"3","place_name":"그랑씨엘","x":"126.9675","y":"37.5345"}
                 ]}""");
 
         GeoPlace geo = lookup();
 
         // 단일 콜이라 응답 순서(sort=distance)를 그대로 신뢰한다. blank 이름은 제외, 건물명은 맨 앞.
-        assertThat(geo.places()).containsExactly("서울드래곤시티", "가까운 카페", "그랑씨엘");
+        // keyword 장소는 카카오가 준 장소 좌표(y=위도, x=경도)를 갖는다(#620).
+        assertThat(geo.places()).containsExactly(
+                new NearbyPlace("서울드래곤시티", LATITUDE, LONGITUDE),
+                new NearbyPlace("가까운 카페", 37.5342, 126.9670),
+                new NearbyPlace("그랑씨엘", 37.5345, 126.9675));
     }
 
     @Test
@@ -216,9 +220,10 @@ class KakaoMapPlaceProviderTest {
         // 건물 자체가 장소로도 등록된 경우(복합몰 등) 건물명이 두 번 들어가면 안 된다.
         enqueueJson(coord2addressBody("경기 하남시 미사대로 750", "스타필드 하남"));
         enqueueJson("""
-                {"documents":[{"id":"1","place_name":"스타필드 하남"}]}""");
+                {"documents":[{"id":"1","place_name":"스타필드 하남","x":"127.2238","y":"37.5455"}]}""");
 
-        assertThat(lookup().places()).containsExactly("스타필드 하남");
+        // 남는 쪽은 실제 장소 좌표를 가진 keyword 항목이다.
+        assertThat(lookup().places()).containsExactly(new NearbyPlace("스타필드 하남", 37.5455, 127.2238));
     }
 
     @Test
@@ -229,11 +234,29 @@ class KakaoMapPlaceProviderTest {
             if (i > 0) {
                 documents.append(',');
             }
-            documents.append("{\"id\":\"").append(i).append("\",\"place_name\":\"장소").append(i).append("\"}");
+            documents.append("{\"id\":\"").append(i).append("\",\"place_name\":\"장소").append(i)
+                    .append("\",\"x\":\"126.967\",\"y\":\"37.534\"}");
         }
         enqueueJson("{\"documents\":[" + documents + "]}");
 
         assertThat(lookup().places()).hasSize(10);
+    }
+
+    @Test
+    void placesWithoutValidCoordinatesAreDroppedAndNotCountedTowardTheLimit() {
+        enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", null));
+        StringBuilder documents = new StringBuilder("""
+                {"id":"a","place_name":"위도 없음","x":"126.967"},
+                {"id":"b","place_name":"경도 숫자 아님","x":"abc","y":"37.534"},
+                {"id":"c","place_name":"위도 무한대","x":"126.967","y":"Infinity"}""");
+        for (int i = 0; i < 10; i++) {
+            documents.append(",{\"id\":\"").append(i).append("\",\"place_name\":\"장소").append(i)
+                    .append("\",\"x\":\"126.967\",\"y\":\"37.534\"}");
+        }
+        enqueueJson("{\"documents\":[" + documents + "]}");
+
+        assertThat(lookup().places()).extracting(NearbyPlace::name).containsExactly(
+                "장소0", "장소1", "장소2", "장소3", "장소4", "장소5", "장소6", "장소7", "장소8", "장소9");
     }
 
     // ── T29 일부: metric tag에 좌표·주소·query 비노출 ──
@@ -283,12 +306,12 @@ class KakaoMapPlaceProviderTest {
         enqueueJson(coord2addressBody("서울 용산구 청파로20길 95", null));
         enqueueStatus(502);
         enqueueJson("""
-                {"documents":[{"id":"3","place_name":"가까운 카페"}]}""");
+                {"documents":[{"id":"3","place_name":"가까운 카페","x":"126.9670","y":"37.5342"}]}""");
 
         GeoPlace geo = lookup();
 
         // 재시도로 keyword 결과가 살아남는다.
-        assertThat(geo.places()).containsExactly("가까운 카페");
+        assertThat(geo.places()).containsExactly(new NearbyPlace("가까운 카페", 37.5342, 126.9670));
         assertThat(server.getRequestCount()).isEqualTo(3);
         assertThat(takeRequest().getRequestUrl().encodedPath()).isEqualTo(COORD2ADDRESS_PATH);
         assertThat(takeRequest().getRequestUrl().encodedPath()).isEqualTo(KEYWORD_PATH);
@@ -475,7 +498,7 @@ class KakaoMapPlaceProviderTest {
 
         assertThat(geo.address()).isEqualTo("서울 용산구 청파로20길 95");
         // 건물명은 keyword 없이도 살아남는다 — 강등 경로도 mergeBuildingName을 그대로 통과한다.
-        assertThat(geo.places()).containsExactly("서울드래곤시티");
+        assertThat(geo.places()).containsExactly(new NearbyPlace("서울드래곤시티", LATITUDE, LONGITUDE));
     }
 
     @Test

@@ -29,6 +29,7 @@ import com.laimory.server.credit.CreditCostType;
 import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.common.privacy.RedactionType;
+import com.laimory.server.geo.NearbyPlace;
 import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.HealthMetric;
@@ -956,7 +957,8 @@ class TimelineDraftTaskServiceTest {
         List<SourceItemDto> enriched = List.of(new SourceItemDto(
                 ItemType.STAY, RAW_ID_1, LocalDateTime.of(2026, 6, 17, 9, 0), null,
                 new StayPayload(37.5340, 126.9668,
-                        "서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"), "1시간45분")));
+                        "서울 용산구 청파로20길 95", List.of(
+                                new NearbyPlace("서울드래곤시티", 37.5340, 126.9668), new NearbyPlace("그랑씨엘", 37.5345, 126.9675)), "1시간45분")));
         when(sourceItemEnrichmentService.enrich(sources, SUBJECT_ID)).thenReturn(enriched);
 
         service.createDraftTask(VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, sources);

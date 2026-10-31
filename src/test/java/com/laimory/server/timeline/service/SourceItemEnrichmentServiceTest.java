@@ -15,6 +15,7 @@ import com.laimory.server.geo.Coordinate;
 import com.laimory.server.geo.GeoLookupOutcome;
 import com.laimory.server.geo.GeoMetrics;
 import com.laimory.server.geo.GeoPlace;
+import com.laimory.server.geo.NearbyPlace;
 import com.laimory.server.geo.GeocodingService;
 import com.laimory.server.geo.MapPlaceLookupException;
 import com.laimory.server.timeline.HealthMetric;
@@ -103,6 +104,11 @@ class SourceItemEnrichmentServiceTest {
         return new Coordinate(37.0 + index * 0.01, 127.0 + index * 0.01);
     }
 
+    /** 지오코딩 결과의 주변 장소(#620). 좌표 값은 enrich가 그대로 옮기는지만 보므로 고정이다. */
+    private static NearbyPlace place(String name) {
+        return new NearbyPlace(name, 37.5, 127.0);
+    }
+
     private double batchCount(String outcome, String failureKind) {
         var timer = meterRegistry.find("laimory.geo.batch")
                 .tag("outcome", outcome).tag("failure_kind", failureKind).timer();
@@ -115,14 +121,14 @@ class SourceItemEnrichmentServiceTest {
     void enrich_fillsStayAndMovementEndpoints_ignoringClientDerivedFields() {
         stubLookupAll(Map.of(
                 new Coordinate(37.5340, 126.9668),
-                new GeoPlace("서울 용산구 청파로20길 95", List.of("서울드래곤시티", "그랑씨엘"))));
+                new GeoPlace("서울 용산구 청파로20길 95", List.of(place("서울드래곤시티"), place("그랑씨엘")))));
         // 클라가 서버 파생 필드(address/places/durationText)를 위조해 보내도 서버 값으로만 재구성된다.
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.STAY, "raw-loc", T, T.plusMinutes(105),
-                        new StayPayload(37.5340, 126.9668, "위조 주소", List.of("위조 장소"), "999시간")),
+                        new StayPayload(37.5340, 126.9668, "위조 주소", List.of(place("위조 장소")), "999시간")),
                 new SourceItemDto(ItemType.MOVEMENT, "raw-mov", T, null,
                         new MovementPayload(
-                                new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of("위조 장소")),
+                                new MovementEndpoint(37.4979, 127.0276, "위조 주소", List.of(place("위조 장소"))),
                                 new MovementEndpoint(37.5340, 126.9668, null, null),
                                 "IN_VEHICLE", 5200.0)));
 
@@ -134,7 +140,7 @@ class SourceItemEnrichmentServiceTest {
 
         StayPayload stay = (StayPayload) enriched.get(0).payload();
         assertThat(stay.address()).isEqualTo("서울 용산구 청파로20길 95");
-        assertThat(stay.places()).containsExactly("서울드래곤시티", "그랑씨엘");
+        assertThat(stay.places()).containsExactly(place("서울드래곤시티"), place("그랑씨엘"));
         // durationText는 클라 위조값이 아니라 startAt/endAt(105분) 계산값.
         assertThat(stay.durationText()).isEqualTo("1시간45분");
 
@@ -143,11 +149,25 @@ class SourceItemEnrichmentServiceTest {
         assertThat(movement.start().address()).isNull();
         assertThat(movement.start().places()).isNull();
         assertThat(movement.end().address()).isEqualTo("서울 용산구 청파로20길 95");
-        assertThat(movement.end().places()).containsExactly("서울드래곤시티", "그랑씨엘");
+        assertThat(movement.end().places()).containsExactly(place("서울드래곤시티"), place("그랑씨엘"));
         assertThat(movement.transports()).isEqualTo("IN_VEHICLE");
         assertThat(movement.distanceMeters()).isEqualTo(5200.0);
         // 전 좌표 성공 batch — success/none으로 1회 계수.
         assertThat(batchCount("success", "none")).isEqualTo(1);
+    }
+
+    @Test
+    void enrichedPlacesSerializeAsNameAndCoordinateObjects() {
+        stubLookupAll(Map.of(new Coordinate(37.5340, 126.9668), new GeoPlace("서울 용산구 청파로20길 95",
+                List.of(new NearbyPlace("그랑씨엘", 37.5345, 126.9675)))));
+        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.STAY, "raw-loc", T, T.plusMinutes(30),
+                new StayPayload(37.5340, 126.9668, null, null, null)));
+
+        StayPayload stay = (StayPayload) service().enrich(sources, SUBJECT_ID).get(0).payload();
+
+        // staging에 저장되는 JSON 원소는 {name, latitude, longitude} 객체다(#620).
+        assertThat(new ObjectMapper().valueToTree(stay).path("places").toString())
+                .isEqualTo("[{\"name\":\"그랑씨엘\",\"latitude\":37.5345,\"longitude\":126.9675}]");
     }
 
     @Test
@@ -184,17 +204,17 @@ class SourceItemEnrichmentServiceTest {
         String filename = "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg";
         when(photoUrlService.buildSubjectUrl(filename, SUBJECT_ID)).thenReturn("https://cdn.example/p.jpg");
         Coordinate photoAt = new Coordinate(37.5445, 127.0559);
-        stubLookupAll(Map.of(photoAt, new GeoPlace("서울 성동구 성수이로 10", List.of("블루보틀 성수"))));
+        stubLookupAll(Map.of(photoAt, new GeoPlace("서울 성동구 성수이로 10", List.of(place("블루보틀 성수")))));
         // 클라가 보낸 address/places는 서버 파생이라 무시하고 조회 결과로만 채운다(mass assignment 방어).
         SourceItemDto photo = new SourceItemDto(ItemType.PHOTO, "raw-photo", T, null,
                 new PhotoPayload(filename, "content://x", 37.5445, 127.0559, "설명",
-                        "클라가 보낸 가짜 주소", List.of("가짜 장소"), null));
+                        "클라가 보낸 가짜 주소", List.of(place("가짜 장소")), null));
 
         PhotoPayload reconstructed = (PhotoPayload) service().enrich(List.of(photo), SUBJECT_ID)
                 .get(0).payload();
 
         assertThat(reconstructed.address()).isEqualTo("서울 성동구 성수이로 10");
-        assertThat(reconstructed.places()).containsExactly("블루보틀 성수");
+        assertThat(reconstructed.places()).containsExactly(place("블루보틀 성수"));
         assertThat(reconstructed.latitude()).isEqualTo(37.5445);
         assertThat(reconstructed.longitude()).isEqualTo(127.0559);
         assertThat(reconstructed.photoUrl()).isEqualTo("https://cdn.example/p.jpg");
@@ -204,7 +224,7 @@ class SourceItemEnrichmentServiceTest {
     void enrich_looksUpSharedCoordinateOnce_whenStayAndPhotoOverlap() {
         when(photoUrlService.buildSubjectUrl(any(), any())).thenReturn("https://cdn.example/p.jpg");
         Coordinate shared = new Coordinate(37.5340, 126.9668);
-        stubLookupAll(Map.of(shared, new GeoPlace("서울 마포구 양화로 100", List.of("합정 카페"))));
+        stubLookupAll(Map.of(shared, new GeoPlace("서울 마포구 양화로 100", List.of(place("합정 카페")))));
         List<SourceItemDto> sources = List.of(
                 new SourceItemDto(ItemType.STAY, "r1", T, T.plusHours(1),
                         new StayPayload(37.5340, 126.9668, null, null, null)),
@@ -343,7 +363,7 @@ class SourceItemEnrichmentServiceTest {
         List<SourceItemDto> sources = distinctStays(5);
         Map<Coordinate, GeoPlace> successes = new HashMap<>();
         for (int i = 1; i < 5; i++) {
-            successes.put(stayCoordinate(i), new GeoPlace("주소" + i, List.of("장소" + i)));
+            successes.put(stayCoordinate(i), new GeoPlace("주소" + i, List.of(place("장소" + i))));
         }
         stubOutcomes(successes, Map.of(
                 stayCoordinate(0), MapPlaceLookupException.remoteTransient("coord2address http 500", null)));
@@ -364,7 +384,7 @@ class SourceItemEnrichmentServiceTest {
         for (int i = 1; i < 5; i++) {
             StayPayload ok = (StayPayload) enriched.get(i).payload();
             assertThat(ok.address()).isEqualTo("주소" + i);
-            assertThat(ok.places()).containsExactly("장소" + i);
+            assertThat(ok.places()).containsExactly(place("장소" + i));
         }
         assertThat(batchCount("partial", "transient")).isEqualTo(1);
     }
