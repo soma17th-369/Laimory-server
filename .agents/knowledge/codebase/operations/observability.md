@@ -273,6 +273,10 @@ Spring JSON stdout
   - `laimory.inquiry.unanswered`: 처리됨(`answered_at`) 표시가 없는 문의 수(#603). 5분에 한 번 DB에서 다시 세고
     DB 오류는 NaN이다. 경보는 prod만, 매일 13:00~13:05 KST 시간창에서만 평가해 하루 한 번 알린다 — 창이 끝나며
     오는 resolved는 처리 완료를 뜻하지 않는다
+  - `laimory.credit.history.recent.ai.failed`: 결말 난 최근 타임라인 생성 5건(`CONSUMED` 또는 `AI_FAILED`·`TIMEOUT`·
+    `DISPATCH_REJECTED` 환불, 차감순) 중 AI 실패 수(#617). 진행 중과 `TASK_SAVE_FAILED`는 창에서 뺀다. 1분에 한 번
+    DB에서 다시 세고 DB 오류는 NaN이다. 경보는 prod만, 3 이상이면 firing하고 `notify_once` route라 firing 동안 반복
+    알림이 없다
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
     최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
     없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다
@@ -414,6 +418,8 @@ staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이
 backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 — 백업 체계 자체의 계약은
 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
+`notify_once="true"` label rule은 `repeat_interval`이 매우 긴 전용 route를 타 firing 동안 재발송하지 않고,
+resolved 뒤 다시 firing하면 새로 알린다(#617).
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
 일반 host memory는

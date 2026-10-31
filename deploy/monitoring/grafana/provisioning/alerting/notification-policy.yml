@@ -18,3 +18,9 @@ policies:
         group_wait: 10s
         group_interval: 10s
         repeat_interval: 1h
+      # firing once and resolved once: a long-lasting alert is not resent while it stays firing.
+      # A new firing after resolved is sent again because repeat_interval only covers unchanged firing.
+      - receiver: Discord
+        object_matchers:
+          - [notify_once, "=", "true"]
+        repeat_interval: 8760h
