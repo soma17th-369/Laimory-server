@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.geo.NearbyPlace;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.EmotionType;
 import com.laimory.server.timeline.ItemType;
@@ -94,7 +95,7 @@ class DailyTimelineServiceTest {
         // junction이 (22, 21) 순서로 와도 응답은 startAt·id 오름차순으로 정렬된다.
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L)))
                 .thenReturn(List.of(TimelineEventItem.of(11L, 22L), TimelineEventItem.of(11L, 21L)));
-        StayPayload stay = new StayPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of("카페"), null);
+        StayPayload stay = new StayPayload(3.0, 4.0, "서울 성동구 왕십리로 83-21", List.of(new NearbyPlace("카페", 3.0, 4.0)), null);
         TimelineItem photoItem = item(21L, ItemType.PHOTO, "raw-21", t,
                 new PhotoPayload("0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg", "content://x",
                         1.0, 2.0, null, null, null, "https://cdn.example/x"));

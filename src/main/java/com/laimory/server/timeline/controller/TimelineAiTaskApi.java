@@ -36,7 +36,8 @@ public interface TimelineAiTaskApi {
                     + "응답 유실 뒤 이미 소비한 token으로 재시도하면 같은 입력을 다시 조립해 새 result "
                     + "token과 함께 반환한다(첫 요청 도착 기준 재시도 창 안에서만). 마지막으로 받은 응답의 "
                     + "taskToken만 유효하다. 버전은 source payload의 주변 장소 목록(STAY·PHOTO places, MOVEMENT "
-                    + "start/end.places) 형태만 가른다 — v1은 이름 문자열 배열을 보장하고, v2는 저장본 그대로 낸다.")
+                    + "start/end.places) 형태만 가른다 — v1은 이름 문자열 배열을 보장하고, v2는 저장본 그대로 "
+                    + "[{name, latitude, longitude}] 객체 배열을 낸다(옛 행 출신 원소는 문자열일 수 있다).")
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                     description = "입력 반환. 재시도면 같은 입력 + 새 result token"),

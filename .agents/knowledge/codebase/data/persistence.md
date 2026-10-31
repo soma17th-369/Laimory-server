@@ -521,8 +521,10 @@ draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot�
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
 delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
 draft cleanup과 orphan 스위퍼는 저장된 PHOTO payload를 `PhotoPayload`로 통째로 읽지 않고 `filename`·`photoUrl`
-필드만 JSON 그대로 읽는다(#620) — 주변 장소 목록 `places`의 원소 형태가 행마다 다를 수 있어 한 타입으로 읽으면
-일부 행에서 파싱이 실패해 S3 삭제를 건너뛴다. 저장본 payload를 새로 읽는 코드도 이 규칙을 따른다.
+필드만 JSON 그대로 읽는다(#620) — 주변 장소 목록 `places`(STAY·PHOTO, MOVEMENT `start/end`)는 #620 이전 행의
+이름 문자열 원소와 이후 행의 `{name, latitude, longitude}` 객체 원소가 섞여 있어 한 타입으로 읽으면 일부 행에서
+파싱이 실패해 S3 삭제를 건너뛴다. 저장본 `places`를 새로 읽는 코드는 두 형태를 다 받거나 필요한 필드만 읽는다.
+일괄 변환은 #621이다.
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
 Event-Item 연결 해제는 junction만 hard delete하고 즉시 성공한다(Event/DailyRecord 삭제는 soft delete, #568).
 어느 삭제 API도 Item을 분류하거나 job을 만들지 않는다 — 연결을 잃은 Item과 그 S3 사진은 orphan 스위퍼가

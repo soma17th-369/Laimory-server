@@ -5,6 +5,7 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.geo.NearbyPlace;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -123,7 +124,8 @@ class TimelineItemPersistenceIntegrationTest {
                 "https://cdn.example/hash/photos/0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg");
         CalendarPayload calendar = new CalendarPayload("주간 회의", "회의실 A", "설명", false);
         StayPayload stay = new StayPayload(37.5445, 127.0557,
-                "서울 성동구 왕십리로 83-21", List.of("성수낙낙", "작은 카페"), "1시간45분");
+                "서울 성동구 왕십리로 83-21", List.of(
+                        new NearbyPlace("성수낙낙", 37.5446, 127.0558), new NearbyPlace("작은 카페", 37.5447, 127.0559)), "1시간45분");
 
         Long photoId = timelineItemRepository.save(
                 TimelineItem.of(ItemType.PHOTO, "raw-photo",
