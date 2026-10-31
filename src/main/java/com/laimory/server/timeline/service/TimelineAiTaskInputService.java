@@ -66,6 +66,8 @@ public class TimelineAiTaskInputService {
     }
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
+        // 버전별 처리 분기 지점: v1은 주변 장소 목록을 이름 문자열로 낸다(#620). 그 밖의 버전은 저장본 그대로다.
+        boolean placeNamesOnly = PLACE_NAMES_ONLY_VERSION.equals(applicationVersion);
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
         boolean replay = !task.matchesToken(taskToken);
@@ -100,7 +102,7 @@ public class TimelineAiTaskInputService {
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
-                sources.stream().map(source -> toSourceItem(source, recordZone, applicationVersion)).toList(),
+                sources.stream().map(source -> toSourceItem(source, recordZone, placeNamesOnly)).toList(),
                 resultToken);
 
         // 재시도는 receipt를 그대로 둔다 — previousTokenHash는 계속 최초 input token이고, 창을 갱신하면
@@ -147,12 +149,12 @@ public class TimelineAiTaskInputService {
     }
 
     private static AiTimelineTaskInputResponse.SourceItem toSourceItem(
-            TimelineDraftSourceItem source, ZoneId recordZone, String applicationVersion) {
+            TimelineDraftSourceItem source, ZoneId recordZone, boolean placeNamesOnly) {
         JsonNode payload = redactClientPhotoUri(source.getPayload());
         return new AiTimelineTaskInputResponse.SourceItem(
                 source.getRawId(), source.getItemType(),
                 toOffset(source.getStartAt(), recordZone), toOffset(source.getEndAt(), recordZone),
-                PLACE_NAMES_ONLY_VERSION.equals(applicationVersion) ? placesAsNames(payload) : payload);
+                placeNamesOnly ? placesAsNames(payload) : payload);
     }
 
     /**
