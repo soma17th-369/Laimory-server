@@ -62,16 +62,21 @@ public record TimelineEventResponse(
                 event.getAddress(),
                 event.getLatitude(),
                 event.getLongitude(),
-                placeCandidates.stream().map(candidate -> new PlaceCandidateResponse(candidate.getName())).toList(),
+                placeCandidates.stream().map(candidate -> new PlaceCandidateResponse(
+                        candidate.getName(), candidate.getLatitude(), candidate.getLongitude())).toList(),
                 event.getMemo(),
                 items
         );
     }
 
-    /** 장소 후보 하나. */
+    /** 장소 후보 하나. 좌표는 함께 있거나 함께 null이다. */
     public record PlaceCandidateResponse(
             @Schema(description = "후보 장소명", example = "성수동 카페")
-            String name
+            String name,
+            @Schema(description = "후보 장소의 위도. 좌표 없는 후보면 null", nullable = true, example = "37.5447")
+            Double latitude,
+            @Schema(description = "후보 장소의 경도. 좌표 없는 후보면 null", nullable = true, example = "127.0561")
+            Double longitude
     ) {
     }
 }

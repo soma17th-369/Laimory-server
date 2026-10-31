@@ -41,6 +41,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -321,7 +323,7 @@ class TimelineAiResultServiceTest {
         TimelineDraftTask pending = taskAt(ProcessStage.RESULT_PENDING);
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
         List<AiTimelineResultRequest.PlaceCandidate> blankOnly =
-                List.of(new AiTimelineResultRequest.PlaceCandidate("  "));
+                List.of(new AiTimelineResultRequest.PlaceCandidate("  ", null, null));
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN,
                 resultWithPlaceFields("{place}에서 친구와 파스타", " ", null, null, blankOnly)))
@@ -338,7 +340,7 @@ class TimelineAiResultServiceTest {
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceFields(
                 "{place}에서 친구와 파스타", null, 37.5445, 127.0559,
-                List.of(new AiTimelineResultRequest.PlaceCandidate("성수동 카페"))));
+                List.of(new AiTimelineResultRequest.PlaceCandidate("성수동 카페", null, null))));
 
         ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
         verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
@@ -354,7 +356,7 @@ class TimelineAiResultServiceTest {
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN, resultWithPlaceFields(
-                null, null, null, null, List.of(new AiTimelineResultRequest.PlaceCandidate("장".repeat(256))))))
+                null, null, null, null, List.of(new AiTimelineResultRequest.PlaceCandidate("장".repeat(256), null, null)))))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
@@ -366,10 +368,10 @@ class TimelineAiResultServiceTest {
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(pending));
         when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
         List<AiTimelineResultRequest.PlaceCandidate> candidates = new java.util.ArrayList<>();
-        candidates.add(new AiTimelineResultRequest.PlaceCandidate(" 성수동 카페 010-1111-2222 "));
-        candidates.add(new AiTimelineResultRequest.PlaceCandidate(" "));
+        candidates.add(new AiTimelineResultRequest.PlaceCandidate(" 성수동 카페 010-1111-2222 ", null, null));
+        candidates.add(new AiTimelineResultRequest.PlaceCandidate(" ", null, null));
         candidates.add(null);
-        candidates.add(new AiTimelineResultRequest.PlaceCandidate("△△공원"));
+        candidates.add(new AiTimelineResultRequest.PlaceCandidate("△△공원", null, null));
 
         service.storeResult(VERSION, TASK_ID, TASK_TOKEN,
                 resultWithPlaceFields(null, null, null, null, candidates));
@@ -379,6 +381,47 @@ class TimelineAiResultServiceTest {
         assertThat(stored.getValue().events().getFirst().placeCandidates())
                 .extracting(AiTimelineResultRequest.PlaceCandidate::name)
                 .containsExactly("성수동 카페 " + RedactionType.PHONE.token(), "△△공원");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "성수동 카페, 37.5447,",
+            "성수동 카페, 90.1, 127.0561",
+            "성수동 카페, 37.5447, -180.1",
+            "성수동 카페, NaN, 127.0561",
+            "' ', 91.0, 127.0561"
+    })
+    void invalidCandidateCoordinatesRejectWholeResultBeforeClaim(String name, Double latitude, Double longitude) {
+        // 반쪽·범위 밖·NaN은 장소 지정 PUT 규칙과 같이 거절한다. 이름이 공백이라 버려질 후보도 받은 그대로 검사한다.
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
+        List<AiTimelineResultRequest.PlaceCandidate> candidates =
+                List.of(new AiTimelineResultRequest.PlaceCandidate(name, latitude, longitude));
+
+        assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN,
+                resultWithPlaceFields(null, null, null, null, candidates)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageEndingWith("index=0");
+        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
+        verifyNoInteractions(timelineAiResultTransactionService);
+    }
+
+    @Test
+    void candidateCoordinatesPassRedactionUnchangedAndDropWithBlankName() {
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        List<AiTimelineResultRequest.PlaceCandidate> candidates = List.of(
+                new AiTimelineResultRequest.PlaceCandidate(" 성수동 카페 010-1111-2222 ", 90.0, -180.0),
+                new AiTimelineResultRequest.PlaceCandidate(" ", 37.5444, 127.0374),
+                new AiTimelineResultRequest.PlaceCandidate("△△공원", null, null));
+
+        service.storeResult(VERSION, TASK_ID, TASK_TOKEN,
+                resultWithPlaceFields(null, null, null, null, candidates));
+
+        ArgumentCaptor<AiTimelineResultRequest> stored = ArgumentCaptor.forClass(AiTimelineResultRequest.class);
+        verify(timelineAiResultTransactionService).store(eq(TASK_ID), eq(SUBJECT_ID), eq(RECORD_ID), stored.capture());
+        assertThat(stored.getValue().events().getFirst().placeCandidates()).containsExactly(
+                new AiTimelineResultRequest.PlaceCandidate("성수동 카페 " + RedactionType.PHONE.token(), 90.0, -180.0),
+                new AiTimelineResultRequest.PlaceCandidate("△△공원", null, null));
     }
 
     private AiTimelineResultRequest resultWithPlaceFields(String subtitle, String place, Double latitude,

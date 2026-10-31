@@ -1,10 +1,8 @@
 package com.laimory.server.timeline.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineItem;
-import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -33,7 +31,6 @@ public class TimelineOrphanItemSweepService {
 
     private final TimelineItemService timelineItemService;
     private final TimelineEventItemService timelineEventItemService;
-    private final ObjectMapper objectMapper;
     private final Clock clock;
 
     /** 후보 조회와 최초 기록을 commit한 뒤 PK만 반환해 처리 snapshot과 분리한다. */
@@ -111,29 +108,30 @@ public class TimelineOrphanItemSweepService {
 
     /**
      * 저장본에서 full object key를 복원한다. junction을 잃어 subject를 알 수 없으므로 {@code photoUrl}
-     * path가 유일한 경로다. payload 파싱 실패·filename 부재·URL 손상·URL과 payload filename 불일치는
+     * path가 유일한 경로다. payload 손상·filename 부재·URL 손상·URL과 payload filename 불일치는
      * 모두 "복원 불가"로 같은 처리(S3 삭제 생략 + 행 삭제, S3 orphan 허용)다.
+     *
+     * <p>{@code PhotoPayload}로 통째로 읽지 않고 두 필드만 꺼낸다 — 저장본 {@code places}는 문자열 원소(옛 행)와
+     * 객체 원소가 섞여 있어 한 타입으로 읽으면 한쪽 행에서 파싱이 실패한다(#620).
      */
-    private Optional<String> restoreObjectKey(TimelineItem item) {
-        PhotoPayload photo;
-        try {
-            photo = objectMapper.treeToValue(item.getPayload(), PhotoPayload.class);
-        } catch (JsonProcessingException | RuntimeException exception) {
-            log.warn("orphan PHOTO payload 파싱 실패, S3 삭제 생략: timelineItemId={} exceptionType={}",
-                    item.getTimelineItemId(), exception.getClass().getSimpleName());
-            return Optional.empty();
-        }
-        if (photo == null || photo.filename() == null || photo.filename().isBlank()) {
+    private static Optional<String> restoreObjectKey(TimelineItem item) {
+        String filename = textOrNull(item.getPayload(), "filename");
+        if (filename == null || filename.isBlank()) {
             log.warn("orphan PHOTO filename 없음, S3 삭제 생략: timelineItemId={}", item.getTimelineItemId());
             return Optional.empty();
         }
-        Optional<String> objectKey = PhotoObjectKeys.objectKeyFromServingUrl(photo.photoUrl());
-        if (objectKey.isEmpty() || !objectKey.get().endsWith("/" + photo.filename())) {
+        Optional<String> objectKey = PhotoObjectKeys.objectKeyFromServingUrl(textOrNull(item.getPayload(), "photoUrl"));
+        if (objectKey.isEmpty() || !objectKey.get().endsWith("/" + filename)) {
             log.warn("orphan PHOTO object key 복원 실패, S3 삭제 생략: timelineItemId={}",
                     item.getTimelineItemId());
             return Optional.empty();
         }
         return objectKey;
+    }
+
+    private static String textOrNull(JsonNode payload, String field) {
+        JsonNode value = payload == null ? null : payload.get(field);
+        return value != null && value.isTextual() ? value.asText() : null;
     }
 
     /** S3 삭제를 요청할 PHOTO Item과 그 full object key. */

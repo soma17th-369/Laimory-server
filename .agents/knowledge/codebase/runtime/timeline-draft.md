@@ -117,17 +117,20 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
    entity·DB·앱 응답은 원문 유지). storage 예외 중 이 필드만 치환한다 — `filename`·`photoUrl`은 서버 파생
-   식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). 성공하면 새 token hash와
+   식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). `v1` 요청이면 같은 deep copy에서
+   주변 장소 목록(`places`, MOVEMENT `start/end.places`)의 객체 원소를 이름 문자열로 바꾸고, 다른 버전은 저장본
+   그대로 낸다(#620). 성공하면 새 token hash와
    `RESULT_PENDING`을 native `SET XX KEEPTTL`로 저장하고 새 token 원문을 응답 body의 `taskToken`으로
    반환한다(최초 만료 시각 보존 — write 시점 만료면 부활 없이 404). 같은 write가
    소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
    다시 오면 입력을 재조립하고 새 result token을 재발급한다(창 안에서만, receipt는 갱신하지 않는다).
 2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·선점 전에
    Event `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 이름을 255자 token-aware bounded로 v1 치환한 요청
-   사본을 만들고 이후 단계는 치환본만 본다(shape 검증: Event 좌표 쌍, subtitle `{place}`에 채울 place 존재 — #612) — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
+   사본을 만들고 이후 단계는 치환본만 본다(shape 검증: Event 좌표 쌍, 후보 좌표 쌍·범위·NaN(#620), subtitle `{place}`에 채울 place 존재 — #612) — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
    끝난다(원문 fallback 없음).
    retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 DB 검증·시각 정규화·+10분 nudge/clamp·
-   Event/Item/junction·장소 후보 INSERT(후보가 있으면 `place` = 1번 후보, #612)·채택 source DELETE를 하나의
+   Event/Item/junction·장소 후보 INSERT(후보가 있으면 `place` = 1번 후보 #612, 1번 후보에 좌표가 있으면 Event 좌표 =
+   그 좌표 #620)·채택 source DELETE를 하나의
    MySQL transaction으로 commit한다 — 저장된
    claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. 같은 transaction의 마지막에
    draft 요청 때 차감한 크레딧 기록을 `CONSUMED`로 확정한다(#565 — 상태 조건 없이 마지막에 쓴 값, 기록 없는 V10 이전

@@ -145,6 +145,16 @@ Task-Token: <taskToken>
 
 `userId`·`dailyRecordId`·행 PK는 응답하지 않는다.
 
+`{version}`은 응답의 주변 장소 목록(STAY·PHOTO `places`, MOVEMENT `start.places`·`end.places`) 형태만
+가른다(#620). 나머지 필드·처리 규칙은 버전과 무관하고, 결과 저장·callback은 버전을 가르지 않는다.
+
+- `v1`: 이름 문자열 배열 `["모수 성수", ...]`을 보장한다. 저장본 원소가 객체면 `name`으로 바꾸고, 이미
+  문자열(옛 행)이면 그대로 둔다. 현재 AI는 `places`를 `list[str]`로 검증해 통과 못 한 아이템을 오류 없이
+  버리므로 `v1`에 객체가 섞이면 안 된다.
+- `v1`이 아닌 버전(`v2`): 저장본 그대로 낸다. 원소를 정규화하지 않으므로 옛 행 출신 원소는 문자열일 수
+  있다. AI는 그 환경의 서버 배포 완료 뒤에 `v2`로 바꾼다.
+- 재시도 재발급도 같은 조립을 타므로 요청 버전 규칙을 그대로 따른다.
+
 처리 규칙:
 
 - token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
@@ -170,7 +180,7 @@ Task-Token: <taskToken>
             "startAt":"...","endAt":null,"sourceRawIds":["..."],
             "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ...",
             "latitude":37.5445,"longitude":127.0559,
-            "placeCandidates":[{"name":"성수동 카페"},{"name":"△△공원"}]}]}
+            "placeCandidates":[{"name":"성수동 카페","latitude":37.5447,"longitude":127.0561},{"name":"△△공원"}]}]}
 ```
 
 - 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다. **신규 저장과 재시도가 같은
@@ -186,19 +196,27 @@ Task-Token: <taskToken>
   배포보다 AI가 먼저 보내면 미지 필드로 무시돼 400이 아니라 값만 유실된다.
 - 장소 후보와 대표 좌표(#612)도 선택 필드다. `title`에는 장소를 넣지 않고, `subtitle`의 장소 자리에는
   자리 표시 `{place}`를 쓴다 — 서버는 템플릿 그대로 저장·응답하고 클라가 표시할 때 현재 `place`로 채운다.
-  - `placeCandidates[{name}]`: 장소가 애매한 Event의 후보 이름, **배열 순서 = 우선순위**. 누락·`null`·`[]`은
-    후보 없음이고, trim 후 공백인 이름의 후보는 버린다(나머지 순서 유지). 이름은 trim 후 255자다.
+  - `placeCandidates[{name, latitude?, longitude?}]`: 장소가 애매한 Event의 후보, **배열 순서 = 우선순위**.
+    누락·`null`·`[]`은 후보 없음이고, trim 후 공백인 이름의 후보는 좌표째 버린다(나머지 순서 유지). 이름은
+    trim 후 255자다.
+  - 후보 좌표(#620)는 그 후보 장소의 위치이며 선택이다. 장소 지정 PUT 입력과 같은 규칙으로 검사한다 — 쌍,
+    위도 -90~90·경도 -180~180(경계 허용), NaN 거절. 위반하면 결과 batch 400이며, 이름이 공백이라 버려질
+    후보도 받은 그대로 검사한다. 저장된 후보 좌표는 앱이 후보를 고를 때 장소 지정 PUT으로 그대로 돌아오므로
+    같은 규칙이어야 서버가 저장한 후보를 서버가 거절하지 않는다.
   - 후보가 1개 이상이면 서버가 `place`를 **1번 후보 이름(치환 후 값)으로 덮어써** 저장한다 — AI `place`가
     다르거나 null이어도 비교 없이 덮어쓴다. 후보가 없으면 AI `place` 그대로다. 후보 개수는 검증하지 않는다.
   - `subtitle`에 `{place}`가 있는데 저장될 `place`가 없으면(후보 0개 + AI `place` 누락·공백) 결과 batch 400.
-  - `latitude`·`longitude`: Event 대표 좌표 = 사용자가 실제로 있던 관측 위치(이동 Event는 도착지)라 장소를
-    바꿔도 변하지 않는다. 둘 다 보내거나 둘 다 생략하며 한쪽만이면 결과 batch 400. 범위는 검증하지 않는다.
-    후보에는 좌표가 없다.
+  - `latitude`·`longitude`: Event 대표 좌표 = 사용자가 실제로 있던 관측 위치(이동 Event는 도착지). 둘 다
+    보내거나 둘 다 생략하며 한쪽만이면 결과 batch 400. 범위는 검증하지 않는다.
+  - 1번 후보(공백 이름을 버린 뒤의 첫 후보)에 좌표가 있으면 서버가 Event 좌표를 **그 후보 좌표로 덮어써**
+    저장한다(#620) — `place` 덮어쓰기와 같은 방식이라 저장 직후 `place`와 좌표가 같은 장소를 가리킨다. 1번
+    후보에 좌표가 없으면 AI Event 좌표 그대로이고, 2번 이하 후보의 좌표는 쓰지 않는다. 덮어쓴 Event에는 AI
+    관측 좌표가 남지 않는다.
   - 서버 배포 전에 AI가 먼저 보내면 미지 필드로 무시돼 좌표·후보가 유실되고 `place` 덮어쓰기도 없다.
     `{place}` 전송은 그 환경의 서버 롤링 배포 완료 + Android 강제 업데이트 뒤에 시작한다(구버전 앱은
     `{place}`를 그대로 보인다).
 - 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`와 후보 이름을 255자 token-aware bounded로
-  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
+  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변, 후보 좌표는 그대로). 치환은 shape 검증 뒤·선점
   전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
 - retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 MySQL transaction을 실행한다.
   **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
@@ -228,7 +246,7 @@ Task-Token: <taskToken>
 - `eventType`, non-blank `title`, `startAt`, `endAt >= startAt`, DB 문자열 길이
   (`title`·`subtitle`·`question`·`place`·`address`·후보 이름 각각 trim 후 255자 — 한 Event의 초과가 결과 batch
   전체를 400으로 만든다)
-- Event 좌표 쌍(한쪽만 400), `subtitle`의 `{place}`에 채울 `place` 존재
+- Event 좌표 쌍(한쪽만 400), 후보 좌표 쌍·범위·NaN, `subtitle`의 `{place}`에 채울 `place` 존재
 - 모든 `sourceRawId`가 이 task staging source에 존재
 - 같은 record final graph에 채택 rawId가 아직 없음
 
@@ -423,7 +441,7 @@ POST {app.ai.timeline-test.url}               (App Server → AI, 예: {ai-base}
 
 - `noop`: dispatch하지 않아 PROCESSING task가 처리 기한에 유실 처리로 FAILED가 된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
-  결과는 `{place}` subtitle과 장소 후보 2개를 싣고 좌표는 보내지 않는다(추론 없음).
+  입력은 `v1`로 조회하고, 결과는 `{place}` subtitle과 장소 후보 2개를 싣고 좌표는 보내지 않는다(추론 없음).
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
 - `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
   `InvokeAgentRuntime`으로 접수시킨다(§1a).

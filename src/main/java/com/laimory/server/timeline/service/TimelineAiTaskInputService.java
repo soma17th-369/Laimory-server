@@ -1,7 +1,9 @@
 package com.laimory.server.timeline.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.laimory.server.common.ApiVersion;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.RedactionType;
@@ -18,6 +20,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -61,7 +64,6 @@ public class TimelineAiTaskInputService {
     }
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
-        // applicationVersion: 버전별 처리 분기 지점(현재 단일 버전이라 분기 없음).
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
         boolean replay = !task.matchesToken(taskToken);
@@ -91,12 +93,18 @@ public class TimelineAiTaskInputService {
         }
         String resultToken = TaskTokens.generate();
 
+        List<AiTimelineTaskInputResponse.SourceItem> sourceItems =
+                sources.stream().map(source -> toSourceItem(source, recordZone)).toList();
+        // 버전별 처리 분기 지점: v2 미만은 주변 장소 목록을 이름 문자열로 낸다(#620). v2부터 저장본 그대로다.
+        if (ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.of("v2"))) {
+            sourceItems = sourceItems.stream().map(TimelineAiTaskInputService::withPlaceNames).toList();
+        }
         AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(
                 taskId,
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
-                sources.stream().map(source -> toSourceItem(source, recordZone)).toList(),
+                sourceItems,
                 resultToken);
 
         // 재시도는 receipt를 그대로 둔다 — previousTokenHash는 계속 최초 input token이고, 창을 갱신하면
@@ -148,6 +156,52 @@ public class TimelineAiTaskInputService {
                 source.getRawId(), source.getItemType(),
                 toOffset(source.getStartAt(), recordZone), toOffset(source.getEndAt(), recordZone),
                 redactClientPhotoUri(source.getPayload()));
+    }
+
+    private static AiTimelineTaskInputResponse.SourceItem withPlaceNames(AiTimelineTaskInputResponse.SourceItem item) {
+        return new AiTimelineTaskInputResponse.SourceItem(
+                item.rawId(), item.itemType(), item.startAt(), item.endAt(), placesAsNames(item.payload()));
+    }
+
+    /**
+     * {@code v2} 미만 입력은 주변 장소 목록({@code places}, MOVEMENT는 {@code start}·{@code end}의 {@code places})을
+     * 이름 문자열 배열로 낸다(#620). 저장본 원소는 {@code {name, latitude, longitude}} 객체이거나 옛 행의 이름
+     * 문자열이다. {@code v1} AI는 문자열만 검증하고 통과 못 한 아이템을 버리므로 객체를 이름으로 바꾸고, 문자열은 그대로
+     * 둔다. {@code v2} 이상은 저장본을 그대로 낸다.
+     *
+     * <p>{@link #redactClientPhotoUri}와 같은 원칙으로 바꿀 원소가 있을 때만 deep copy 뒤 바꾼다.
+     */
+    private static JsonNode placesAsNames(JsonNode payload) {
+        if (payload == null || !payload.isObject()
+                || placeArrays(payload).stream().noneMatch(TimelineAiTaskInputService::hasObjectElement)) {
+            return payload;
+        }
+        ObjectNode copy = payload.deepCopy();
+        for (ArrayNode places : placeArrays(copy)) {
+            for (int i = 0; i < places.size(); i++) {
+                if (places.get(i).isObject()) {
+                    places.set(i, places.get(i).path("name").asText());
+                }
+            }
+        }
+        return copy;
+    }
+
+    private static boolean hasObjectElement(ArrayNode places) {
+        for (JsonNode place : places) {
+            if (place.isObject()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<ArrayNode> placeArrays(JsonNode payload) {
+        return Stream.of(payload, payload.path("start"), payload.path("end"))
+                .map(holder -> holder.get("places"))
+                .filter(ArrayNode.class::isInstance)
+                .map(ArrayNode.class::cast)
+                .toList();
     }
 
     /**

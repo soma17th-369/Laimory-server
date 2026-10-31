@@ -36,8 +36,8 @@ public record AiTimelineTaskInputResponse(
     }
 
     /**
-     * 이번 task의 staging source 하나. {@code payload}는 저장된 JSON을 그대로 통과시킨다 —
-     * 타입 권위는 payload 밖의 {@code itemType}이다(재매핑 없이 무손실 전달).
+     * 이번 task의 staging source 하나. {@code payload}는 {@code clientPhotoUri} 치환과 {@code v1}의
+     * {@code places} 이름 변환 외에는 저장된 JSON 그대로다 — 타입 권위는 payload 밖의 {@code itemType}이다.
      */
     public record SourceItem(
             String rawId,
@@ -49,7 +49,7 @@ public record AiTimelineTaskInputResponse(
             @Schema(nullable = true)
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
             OffsetDateTime endAt,
-            @Schema(description = "itemType별 payload JSON(서버는 해석 없이 전달)") JsonNode payload
+            @Schema(description = "itemType별 payload JSON(clientPhotoUri 치환과 v1의 places 이름 변환 외에는 저장본 그대로)") JsonNode payload
     ) {
     }
 }

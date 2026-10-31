@@ -44,7 +44,8 @@ public record AiTimelineResultRequest(
                     nullable = true)
             String address,
             @Schema(description = "Event 대표 좌표의 위도 — 사용자가 실제로 있던 관측 위치(이동 Event는 도착지). "
-                    + "longitude와 둘 다 보내거나 둘 다 생략한다(한쪽만이면 결과 전체 400)",
+                    + "longitude와 둘 다 보내거나 둘 다 생략한다(한쪽만이면 결과 전체 400). "
+                    + "1번 장소 후보에 좌표가 있으면 서버가 그 좌표로 덮어써 저장한다",
                     nullable = true, example = "37.5445")
             Double latitude,
             @Schema(description = "Event 대표 좌표의 경도", nullable = true, example = "127.0559")
@@ -62,10 +63,16 @@ public record AiTimelineResultRequest(
     ) {
     }
 
-    /** 장소 후보 하나(#612). 좌표는 없다 — Event 좌표가 관측 위치다. */
+    /** 장소 후보 하나(#612). 좌표는 후보 장소의 위치이며 선택이다(#620). */
     public record PlaceCandidate(
             @Schema(description = "후보 장소명. trim 후 최대 255자", example = "성수동 카페")
-            String name
+            String name,
+            @Schema(description = "후보 장소의 위도. longitude와 둘 다 보내거나 둘 다 생략한다. 범위 -90~90. "
+                    + "한쪽만·범위 밖·NaN이면 결과 전체 400(이름이 공백이라 버려질 후보도 검사)",
+                    nullable = true, example = "37.5447")
+            Double latitude,
+            @Schema(description = "후보 장소의 경도. 범위 -180~180", nullable = true, example = "127.0561")
+            Double longitude
     ) {
     }
 }
